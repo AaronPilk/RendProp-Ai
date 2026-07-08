@@ -33,7 +33,7 @@ struct NewListingView: View {
                     .keyboardType(.numberPad)
             }
 
-            Section("Walkthrough") {
+            Section {
                 Button {
                     guard prepareListing() else { return }
                     showCapture = true
@@ -60,6 +60,8 @@ struct NewListingView: View {
                     Label("Import from Files (drone clip)", systemImage: "folder")
                 }
                 .disabled(!formValid)
+            } header: {
+                Text("Walkthrough")
             } footer: {
                 Text("One continuous take works best. Walk slow, keep the phone level at chest height, and end on the best exterior.")
             }
