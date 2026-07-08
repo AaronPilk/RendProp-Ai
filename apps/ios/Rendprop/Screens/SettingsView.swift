@@ -3,6 +3,7 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("wifiOnlyUploads") private var wifiOnlyUploads = true
     @AppStorage("uploadMode") private var uploadMode = Config.UploadMode.simulate.rawValue
+    @AppStorage("maxQualityCapture") private var maxQualityCapture = false
     @EnvironmentObject var uploads: UploadManager
 
     var body: some View {
@@ -62,13 +63,18 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.inkDim)
             }
 
-            Section("Advanced") {
+            Section {
+                Toggle("Max quality capture (4K · 60fps)", isOn: $maxQualityCapture)
                 Picker("Upload mode", selection: $uploadMode) {
                     ForEach(Config.UploadMode.allCases) { mode in
                         Text(mode.label).tag(mode.rawValue)
                     }
                 }
                 LabeledContent("Version", value: "0.1.0 (1)")
+            } header: {
+                Text("Advanced")
+            } footer: {
+                Text("Standard capture is 4K · 30fps — your finished tour is smoothed to 60fps either way, and video files are half the size.")
             }
         }
         .navigationTitle("Settings")

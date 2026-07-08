@@ -18,6 +18,8 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var thermalMessage: String? = nil
     @Published var interruptionMessage: String? = nil
     @Published var formatLabel: String = ""
+    @Published var isUltraWide = true               // 0.5× default — the real-estate look
+    @Published private(set) var supportsUltraWide = false
 
     let session = AVCaptureSession()
 
@@ -74,7 +76,11 @@ final class CameraManager: NSObject, ObservableObject {
         session.beginConfiguration()
         session.sessionPreset = .inputPriority
 
-        guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back),
+        // Prefer the dual-wide virtual camera: zoom factor 1.0 = ultra-wide (0.5×),
+        // switch-over factor (~2.0) = the standard wide lens (1×).
+        let picked = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back)
+            ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back)
+        guard let device = picked,
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else {
             session.commitConfiguration()
@@ -83,6 +89,8 @@ final class CameraManager: NSObject, ObservableObject {
         }
         session.addInput(input)
         self.device = device
+        let hasUltraWide = device.deviceType == .builtInDualWideCamera
+        DispatchQueue.main.async { self.supportsUltraWide = hasUltraWide }
 
         if let mic = AVCaptureDevice.default(for: .audio),
            let audioInput = try? AVCaptureDeviceInput(device: mic),
@@ -109,26 +117,36 @@ final class CameraManager: NSObject, ObservableObject {
             if connection.isVideoOrientationSupported {
                 connection.videoOrientation = .portrait
             }
+            // HEVC halves file size vs H.264 with no visible quality loss.
+            if movieOutput.availableVideoCodecTypes.contains(.hevc) {
+                movieOutput.setOutputSettings([AVVideoCodecKey: AVVideoCodecType.hevc],
+                                              for: connection)
+            }
         }
 
         session.commitConfiguration()
+        applyLens()
         session.startRunning()
         DispatchQueue.main.async { self.state = .ready }
     }
 
-    /// 4K/60 → 4K/30 → 1080p/60 → whatever the device gives us.
-    /// Under thermal pressure, prefer lower tiers.
+    /// Default: 4K/30 HEVC (half the file size; the pipeline interpolates to
+    /// 60fps anyway, so the final tour looks identical). "Max quality" setting
+    /// prefers 4K/60. Under thermal pressure, prefer lower tiers.
     private func selectBestFormat(for device: AVCaptureDevice) {
         struct Candidate { let w: Int32; let h: Int32; let fps: Double; let label: String }
         let throttled = ProcessInfo.processInfo.thermalState == .serious
             || ProcessInfo.processInfo.thermalState == .critical
-        var candidates: [Candidate] = [
-            Candidate(w: 3840, h: 2160, fps: 60, label: "4K · 60"),
-            Candidate(w: 3840, h: 2160, fps: 30, label: "4K · 30"),
-            Candidate(w: 1920, h: 1080, fps: 60, label: "1080p · 60"),
-            Candidate(w: 1920, h: 1080, fps: 30, label: "1080p · 30"),
-        ]
-        if throttled { candidates.removeFirst(2) }
+        let maxQuality = UserDefaults.standard.bool(forKey: "maxQualityCapture")
+        var candidates: [Candidate] = maxQuality
+            ? [Candidate(w: 3840, h: 2160, fps: 60, label: "4K · 60"),
+               Candidate(w: 3840, h: 2160, fps: 30, label: "4K · 30"),
+               Candidate(w: 1920, h: 1080, fps: 60, label: "1080p · 60"),
+               Candidate(w: 1920, h: 1080, fps: 30, label: "1080p · 30")]
+            : [Candidate(w: 3840, h: 2160, fps: 30, label: "4K · 30"),
+               Candidate(w: 1920, h: 1080, fps: 30, label: "1080p · 30"),
+               Candidate(w: 1920, h: 1080, fps: 60, label: "1080p · 60")]
+        if throttled && maxQuality { candidates.removeFirst() }
 
         for candidate in candidates {
             guard let format = device.formats.first(where: { format in
@@ -161,6 +179,32 @@ final class CameraManager: NSObject, ObservableObject {
         }
         // Fall through: keep the device's default format.
         DispatchQueue.main.async { self.formatLabel = "Auto" }
+    }
+
+    // MARK: - Lens (0.5× ultra-wide ↔ 1× wide)
+
+    /// On the dual-wide virtual camera, zoom 1.0 = ultra-wide (0.5×) and the
+    /// switch-over factor (usually 2.0) = the standard wide lens (1×).
+    func toggleLens() {
+        guard supportsUltraWide else { return }
+        isUltraWide.toggle()
+        Haptics.selection()
+        applyLens()
+    }
+
+    private func applyLens() {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.device,
+                  device.deviceType == .builtInDualWideCamera else { return }
+            let wideFactor = device.virtualDeviceSwitchOverVideoZoomFactors.first
+                .map { CGFloat(truncating: $0) } ?? 2.0
+            let target: CGFloat = self.isUltraWide ? 1.0 : wideFactor
+            do {
+                try device.lockForConfiguration()
+                device.ramp(toVideoZoomFactor: target, withRate: 8)
+                device.unlockForConfiguration()
+            } catch {}
+        }
     }
 
     // MARK: - Recording
@@ -250,6 +294,7 @@ final class CameraManager: NSObject, ObservableObject {
                         self.selectBestFormat(for: device)
                         self.session.commitConfiguration()
                     }
+                    self.applyLens()   // format changes can reset zoom
                 }
             default:
                 self.thermalMessage = nil

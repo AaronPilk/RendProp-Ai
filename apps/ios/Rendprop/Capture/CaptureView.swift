@@ -99,10 +99,25 @@ struct CaptureView: View {
 
             Spacer()
 
-            // Guidance instruments
+            // Guidance instruments + lens toggle
             HStack {
                 LevelBubble(roll: motion.roll, pitch: motion.pitch)
                 Spacer()
+                if camera.supportsUltraWide {
+                    Button {
+                        camera.toggleLens()
+                    } label: {
+                        Text(camera.isUltraWide ? "0.5×" : "1×")
+                            .font(.system(size: 14, weight: .semibold, design: .rounded))
+                            .foregroundStyle(camera.isUltraWide ? Theme.accent : .white)
+                            .frame(width: 44, height: 44)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(Circle().strokeBorder(camera.isUltraWide ? Theme.accent : .white.opacity(0.25),
+                                                           lineWidth: 1))
+                    }
+                    .accessibilityLabel(Text(camera.isUltraWide ? "Ultra-wide lens on" : "Standard lens"))
+                    Spacer()
+                }
                 PaceRing(pace: motion.pace, isRecording: isRecording)
             }
             .padding(.horizontal, 28)
