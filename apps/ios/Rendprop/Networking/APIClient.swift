@@ -12,7 +12,8 @@ protocol APIClient: Sendable {
     func createListing(_ listing: Listing) async throws -> Listing
     func requestUpload(filename: String, bytes: Int64) async throws -> UploadTicket
     func completeUpload(id: String, sha256: String?) async throws
-    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double) async throws -> Render
+    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double,
+                      enhancements: Enhancements) async throws -> Render
     func renderStatus(id: UUID) async throws -> Render
 }
 

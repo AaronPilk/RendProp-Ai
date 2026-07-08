@@ -23,6 +23,8 @@ A failed `upscaling` retries upscaling — never the whole chain. Dead-letter af
 | stabilize | **Gyroflow** (gyro sidecar) / vidstab fallback | the #1 handheld→drone lever; drone clips skip |
 | interpolate | RIFE/FILM → 60fps | Topaz for problem footage |
 | grade | ffmpeg eq + hqdn3d + LUT | brand LUT per org |
+| **declutter (add-on)** | SAM-2 masks + video inpainting (ProPainter-class) | removes boxes/clutter; architecture untouched; temporal-consistent; QC per segment |
+| **restage (add-on)** | structure-locked vid2vid restyle (depth/edge-conditioned; Seedance/Higgsfield i2v per room segment) | Modern/Rustic/Minimalist/Scandinavian; geometry never changes; drift QC → drop segment to original |
 | upscale (tier) | Topaz self-hosted | 4K near-$0 marginal |
 | segment | chapter timestamps | room rail |
 | hero gen (tier) | Seedance/Veo/Kling i2v | 8–15s, seeded from REAL frame, $5 ceiling, drop if drift |
@@ -50,6 +52,14 @@ ffmpeg -i in.mp4 -vf vidstabtransform=smoothing=30:input=transforms.trf,unsharp=
 -vf hqdn3d,eq=brightness=0.02:contrast=1.06:saturation=1.08:gamma=0.98
 ```
 
+## AI enhancements (declutter + restage) — see docs/AI-ENHANCEMENTS-SPEC.md
+
+Sold as per-render add-ons in the app (declutter +$19, restage +$49). Both run
+per room segment with hard QC gates; any segment that drifts (geometry/layout
+change) falls back to the original footage — never ship a morphed house.
+Renders with active enhancements set `virtually_staged=true` on the share page
+→ the player shows the mandatory "Virtually staged" disclosure chip.
+
 ## Anti-patterns (Part 38)
 
-Never full-length generative. Never a single monolithic 4K MP4. Never bake room labels into the video. Never skip the gyro sidecar path.
+Never full-length generative. Never a single monolithic 4K MP4. Never bake room labels into the video. Never skip the gyro sidecar path. Never alter architecture (walls, windows, fixtures, views) in declutter/restage — furniture and decor only. Never ship enhanced media without the staged disclosure.

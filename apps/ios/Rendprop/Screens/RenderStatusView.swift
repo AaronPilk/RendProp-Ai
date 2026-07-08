@@ -10,8 +10,7 @@ struct RenderStatusView: View {
 
     @State private var pollTask: Task<Void, Never>?
 
-    private let steps = ["Validating", "Stabilizing", "Interpolating 60fps",
-                         "Grading", "Encoding", "Packaging", "Publishing"]
+    private var steps: [String] { render.pipelineSteps }
 
     private var isReady: Bool { render.status == "ready" }
 

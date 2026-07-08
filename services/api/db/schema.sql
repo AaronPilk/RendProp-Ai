@@ -84,6 +84,9 @@ CREATE TABLE render_jobs (
   listing_id        uuid NOT NULL REFERENCES listings(id),
   capture_asset_id  uuid NOT NULL REFERENCES capture_assets(id),
   tier              text NOT NULL CHECK (tier IN ('smooth','premium4k','cinematic')),
+  -- AI enhancement add-ons: {"declutter": bool, "style": "as_is|modern|rustic|minimalist|scandinavian"}
+  -- When active, the share page MUST render the "Virtually staged" disclosure (MLS compliance).
+  enhancements      jsonb NOT NULL DEFAULT '{}',
   status            text NOT NULL DEFAULT 'created',
   current_step      text,
   error             jsonb,

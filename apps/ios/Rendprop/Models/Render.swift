@@ -1,5 +1,62 @@
 import Foundation
 
+/// Interior design style for AI virtual restaging. The pipeline re-styles
+/// furniture, wall art, and decor while keeping architecture identical.
+enum DesignStyle: String, Codable, CaseIterable, Identifiable {
+    case asIs = "as_is"
+    case modern, rustic, minimalist, scandinavian
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .asIs:         return "As-is"
+        case .modern:       return "Modern"
+        case .rustic:       return "Rustic"
+        case .minimalist:   return "Minimalist"
+        case .scandinavian: return "Scandinavian"
+        }
+    }
+
+    var blurb: String {
+        switch self {
+        case .asIs:         return "Keep the home exactly as filmed."
+        case .modern:       return "Clean lines, bold contemporary furniture and art."
+        case .rustic:       return "Warm woods, cozy textures, farmhouse character."
+        case .minimalist:   return "Airy, decluttered, quiet neutral styling."
+        case .scandinavian: return "Light woods, soft whites, hygge warmth."
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .asIs:         return "house"
+        case .modern:       return "square.on.square"
+        case .rustic:       return "leaf"
+        case .minimalist:   return "circle.dashed"
+        case .scandinavian: return "snowflake"
+        }
+    }
+}
+
+/// AI enhancement add-ons applied by the render pipeline.
+struct Enhancements: Codable, Hashable {
+    /// Remove boxes, clutter, and mess — video inpainting with temporal consistency.
+    var declutter: Bool = false
+    /// Restage furniture/decor in a chosen style (architecture never changes).
+    var style: DesignStyle = .asIs
+
+    var isActive: Bool { declutter || style != .asIs }
+
+    static let declutterPrice = Money.dollars(19)
+    static let restagePrice = Money.dollars(49)
+
+    var addOnTotal: Money {
+        Money(cents: (declutter ? Self.declutterPrice.cents : 0)
+                   + (style != .asIs ? Self.restagePrice.cents : 0))
+    }
+}
+
 struct Render: Identifiable, Codable, Hashable {
     enum Tier: String, Codable, CaseIterable, Identifiable {
         case smooth, premium4k, cinematic
@@ -39,8 +96,19 @@ struct Render: Identifiable, Codable, Hashable {
     var listingID: UUID
     var tier: Tier
     var durationS: Double
+    var enhancements = Enhancements()
     var status: String = "queued"
     var progress: Double = 0
+
+    /// Pipeline steps for this render (drives status UI). Enhancement steps
+    /// appear only when purchased.
+    var pipelineSteps: [String] {
+        var steps = ["Validating", "Stabilizing", "Interpolating 60fps"]
+        if enhancements.declutter { steps.append("Decluttering") }
+        if enhancements.style != .asIs { steps.append("Restaging · \(enhancements.style.displayName)") }
+        steps += ["Grading", "Encoding", "Packaging", "Publishing"]
+        return steps
+    }
 }
 
 /// Duration-band pricing (master spec Part 20.4). A flat price loses money on

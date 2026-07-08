@@ -121,6 +121,16 @@
   }
   #wm b { color: rgba(255,255,255,.72); font-weight: 600; }
 
+  /* Virtual-staging disclosure (MLS compliance — shown when AI enhancements applied) */
+  #staged {
+    right: 16px; bottom: calc(14px + env(safe-area-inset-bottom));
+    display: none; align-items: center; gap: 5px;
+    font-size: 10.5px; color: rgba(255,255,255,.55); letter-spacing: .04em;
+    padding: 5px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px;
+    background: rgba(11,13,16,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  }
+  #staged.on { display: flex; }
+
   /* ===== End card: agent + lead form ===== */
   #endcard {
     position: relative; z-index: 5;
@@ -205,6 +215,8 @@
     </div>
 
     <a class="chrome" id="wm" href="https://rendprop.app" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>
+
+    <div class="chrome" id="staged">✦ Virtually staged</div>
   </div>
 </div>
 
@@ -248,6 +260,9 @@
   ];
   const PX_PER_SEC = 190;            // track height scale (scroll distance per video second)
   const BUFFER_GATE = 0.96;          // begin scrubbing at ~96% buffered
+  // MLS compliance: set true when the render used declutter/restage enhancements
+  // (server-injected per share page). Shows the "Virtually staged" disclosure chip.
+  const VIRTUALLY_STAGED = false;
   const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.06 : 0.1;
   const SLUG = 'demo';               // share_pages.slug — beacon key
 
@@ -408,6 +423,7 @@
   });
 
   /* ================= Kick off ================= */
+  if (VIRTUALLY_STAGED) document.getElementById('staged').classList.add('on');
   video.muted = true;
   video.playsInline = true;
   video.load();

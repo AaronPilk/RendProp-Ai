@@ -55,10 +55,19 @@ final class LiveAPIClient: APIClient {
                                               body: try JSONEncoder().encode(Body(sha256: sha256))))
     }
 
-    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double) async throws -> Render {
-        struct Body: Codable { let listingId: UUID; let tier: String; let durationS: Double }
+    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double,
+                      enhancements: Enhancements) async throws -> Render {
+        struct Body: Codable {
+            let listingId: UUID
+            let tier: String
+            let durationS: Double
+            let enhancements: Enhancements
+        }
         return try await send(request("v1/renders", method: "POST",
-                                      body: try JSONEncoder().encode(Body(listingId: listingID, tier: tier.rawValue, durationS: durationS))))
+                                      body: try JSONEncoder().encode(Body(listingId: listingID,
+                                                                          tier: tier.rawValue,
+                                                                          durationS: durationS,
+                                                                          enhancements: enhancements))))
     }
 
     func renderStatus(id: UUID) async throws -> Render {

@@ -33,21 +33,22 @@ actor MockAPIClient: APIClient {
 
     func completeUpload(id: String, sha256: String?) async throws {}
 
-    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double) async throws -> Render {
+    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double,
+                      enhancements: Enhancements) async throws -> Render {
         let render = Render(listingID: listingID, tier: tier, durationS: durationS,
-                            status: "queued", progress: 0)
+                            enhancements: enhancements, status: "queued", progress: 0)
         renders[render.id] = (render, Date())
         return render
     }
 
     func renderStatus(id: UUID) async throws -> Render {
         guard let entry = renders[id] else { throw APIError.badResponse(404) }
-        // Simulated pipeline: ~14s from queued to ready.
+        // Simulated pipeline: ~14s base, +3s per enhancement step.
+        let steps = entry.render.pipelineSteps
+        let total = 14.0 + Double(steps.count - 7) * 3.0
         let elapsed = Date().timeIntervalSince(entry.startedAt)
         var r = entry.render
-        r.progress = min(1.0, elapsed / 14.0)
-        let steps = ["Validating", "Stabilizing", "Interpolating 60fps",
-                     "Grading", "Encoding", "Packaging", "Publishing"]
+        r.progress = min(1.0, elapsed / total)
         if r.progress >= 1.0 {
             r.status = "ready"
         } else {

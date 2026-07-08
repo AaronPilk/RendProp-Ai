@@ -10,6 +10,7 @@ struct ReviewSubmitView: View {
     @State var asset: CaptureAsset
 
     @State private var tier: Render.Tier = .smooth
+    @State private var enhancements = Enhancements()
     @State private var newTagName = ""
     @State private var showCellularPrompt = false
     @State private var goToStatus = false
@@ -17,6 +18,7 @@ struct ReviewSubmitView: View {
 
     private var band: PricingBand.Band { PricingBand.band(forDuration: asset.durationS) }
     private var price: Money { band.prices[tier] ?? .dollars(0) }
+    private var totalPrice: Money { Money(cents: price.cents + enhancements.addOnTotal.cents) }
 
     var body: some View {
         ScrollView {
@@ -24,8 +26,9 @@ struct ReviewSubmitView: View {
                 captureSummary
                 roomTags
                 tierPicker
+                enhancementsCard
                 priceSummary
-                PrimaryButton(title: "Submit render · \(price.formatted)", systemImage: "paperplane.fill") {
+                PrimaryButton(title: "Submit render · \(totalPrice.formatted)", systemImage: "paperplane.fill") {
                     submit()
                 }
                 Text("Mock checkout — Apple In-App Purchase (StoreKit 2) lands in Phase 2.")
@@ -174,6 +177,96 @@ struct ReviewSubmitView: View {
         .card()
     }
 
+    private var enhancementsCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("AI ENHANCEMENTS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+
+            // Declutter toggle
+            Toggle(isOn: $enhancements.declutter.animation()) {
+                HStack(spacing: 12) {
+                    Image(systemName: "sparkles.rectangle.stack")
+                        .font(.system(size: 18))
+                        .foregroundStyle(enhancements.declutter ? Theme.accent : Theme.inkDim)
+                        .frame(width: 28)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Auto-declutter · +\(Enhancements.declutterPrice.formatted)")
+                            .font(.rpHeadline)
+                        Text("Removes boxes, mess, and clutter from every room. Walls, floors, and fixtures stay untouched.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                    }
+                }
+            }
+            .tint(Theme.accent)
+            .onChange(of: enhancements.declutter) { _ in Haptics.selection() }
+
+            Divider().overlay(Color.white.opacity(0.08))
+
+            // Design style picker
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Design style")
+                        .font(.rpHeadline)
+                    Spacer()
+                    if enhancements.style != .asIs {
+                        Text("+\(Enhancements.restagePrice.formatted)")
+                            .font(.rpCaption.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                }
+                Text("Virtually restage furniture, art, and decor. The architecture never changes.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(DesignStyle.allCases) { style in
+                            Button {
+                                withAnimation(.spring(response: 0.3)) { enhancements.style = style }
+                                Haptics.selection()
+                            } label: {
+                                VStack(spacing: 6) {
+                                    Image(systemName: style.systemImage)
+                                        .font(.system(size: 20))
+                                        .foregroundStyle(enhancements.style == style ? Theme.accent : Theme.inkDim)
+                                    Text(style.displayName)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(enhancements.style == style ? Theme.ink : Theme.inkDim)
+                                }
+                                .frame(width: 92, height: 74)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(enhancements.style == style ? Theme.accent.opacity(0.12) : Color.white.opacity(0.03))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .strokeBorder(enhancements.style == style ? Theme.accent : Color.white.opacity(0.08),
+                                                      lineWidth: enhancements.style == style ? 1.5 : 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(Text("\(style.displayName) style. \(style.blurb)"))
+                        }
+                    }
+                    .padding(.vertical, 2)
+                }
+                if let selected = DesignStyle.allCases.first(where: { $0 == enhancements.style }), selected != .asIs {
+                    Text(selected.blurb)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+            }
+
+            if enhancements.isActive {
+                Label("The shared flythrough will carry a \"Virtually staged\" disclosure — required by MLS rules for altered media.",
+                      systemImage: "info.circle")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
     private var priceSummary: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
@@ -182,15 +275,29 @@ struct ReviewSubmitView: View {
                 Text(band.name).foregroundStyle(Theme.inkDim)
             }
             HStack {
-                Text("Tier")
+                Text("Tier · \(tier.displayName)")
                 Spacer()
-                Text(tier.displayName).foregroundStyle(Theme.inkDim)
+                Text(price.formatted).foregroundStyle(Theme.inkDim)
+            }
+            if enhancements.declutter {
+                HStack {
+                    Text("Auto-declutter")
+                    Spacer()
+                    Text("+\(Enhancements.declutterPrice.formatted)").foregroundStyle(Theme.inkDim)
+                }
+            }
+            if enhancements.style != .asIs {
+                HStack {
+                    Text("Restage · \(enhancements.style.displayName)")
+                    Spacer()
+                    Text("+\(Enhancements.restagePrice.formatted)").foregroundStyle(Theme.inkDim)
+                }
             }
             Divider().overlay(Color.white.opacity(0.1))
             HStack {
                 Text("Total").font(.rpHeadline)
                 Spacer()
-                Text(price.formatted).font(.rpTitle).foregroundStyle(Theme.accent)
+                Text(totalPrice.formatted).font(.rpTitle).foregroundStyle(Theme.accent)
             }
         }
         .font(.rpBody)
@@ -213,9 +320,11 @@ struct ReviewSubmitView: View {
         Task {
             let r = try? await model.api.createRender(listingID: listing.id,
                                                       tier: tier,
-                                                      durationS: asset.durationS)
+                                                      durationS: asset.durationS,
+                                                      enhancements: enhancements)
             await MainActor.run {
-                self.render = r ?? Render(listingID: listing.id, tier: tier, durationS: asset.durationS)
+                self.render = r ?? Render(listingID: listing.id, tier: tier,
+                                          durationS: asset.durationS, enhancements: enhancements)
                 model.setStatus(.processing, for: listing.id)
                 goToStatus = true
             }
