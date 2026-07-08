@@ -1,4 +1,4 @@
-# ROAM API / Backend
+# Rendprop API / Backend
 
 Modular monolith for v1 (Part 8.1). Postgres primary, Redis cache/queue, R2 object storage.
 

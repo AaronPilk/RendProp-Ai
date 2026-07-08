@@ -1,8 +1,8 @@
-# ROAM
+# Rendprop
 
 **Walk it. Upload it. Fly through it.** Turn any phone walkthrough into a scroll-through cinematic flythrough.
 
-An iOS-first product: an agent records a continuous walkthrough of a property with their iPhone, ROAM renders it into a drone-style cinematic glide, and the output is a shareable link where viewers scroll to fly through the home. Full product spec lives in [`docs/MASTER-BUILD-PROMPT.md`](docs/MASTER-BUILD-PROMPT.md) — that document is the single source of truth.
+An iOS-first product: an agent records a continuous walkthrough of a property with their iPhone, Rendprop renders it into a drone-style cinematic glide, and the output is a shareable link where viewers scroll to fly through the home. Full product spec lives in [`docs/MASTER-BUILD-PROMPT.md`](docs/MASTER-BUILD-PROMPT.md) — that document is the single source of truth.
 
 ## Repo layout
 

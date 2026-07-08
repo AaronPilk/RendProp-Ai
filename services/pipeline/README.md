@@ -1,4 +1,4 @@
-# ROAM Render Pipeline
+# Rendprop Render Pipeline
 
 Async job orchestrated as a state machine, fanned out to GPU workers (Modal primary, RunPod batch, fal.ai offload). Every step is idempotent, checkpointed, and writes to `render_step_costs`. Full spec: Master Build Prompt Parts 6, 28, 35, Appendix A/F.
 

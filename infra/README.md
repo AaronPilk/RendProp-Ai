@@ -1,4 +1,4 @@
-# ROAM Infra
+# Rendprop Infra
 
 IaC (Terraform/Pulumi) for: Cloudflare R2 buckets (raw / intermediates / renditions), Cloudflare Stream, WAF/DNS, Postgres, Redis, Modal/RunPod worker configs, envs (dev/staging/prod).
 

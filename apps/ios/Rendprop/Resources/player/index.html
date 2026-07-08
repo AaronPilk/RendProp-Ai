@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>1247 Hillcrest Drive — Flythrough</title>
+<meta property="og:title" content="1247 Hillcrest Drive — Cinematic Flythrough">
+<meta property="og:description" content="Scroll to fly through this home. 4 bd · 3 ba · 2,850 sqft · $1,175,000">
+<meta property="og:type" content="website">
+<style>
+  :root {
+    --bg: #0b0d10;
+    --ink: #f2f3f5;
+    --ink-dim: rgba(242,243,245,.62);
+    --accent: #d9a441;
+    --card: rgba(16,19,24,.78);
+    --radius: 16px;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { scroll-behavior: auto; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, sans-serif;
+    overscroll-behavior-y: none;
+  }
+
+  /* ===== Track & sticky stage ===== */
+  #track { position: relative; }
+  #stage {
+    position: sticky; top: 0;
+    height: 100vh; height: 100svh;
+    overflow: hidden; background: #000;
+  }
+  #scrub {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+  }
+
+  /* ===== Loader ===== */
+  #loader {
+    position: absolute; inset: 0; z-index: 30;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; background: var(--bg);
+    transition: opacity .5s ease;
+  }
+  #loader.done { opacity: 0; pointer-events: none; }
+  #loader .mark { font-size: 13px; letter-spacing: .35em; color: var(--ink-dim); text-transform: uppercase; }
+  #loader .pct { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #loader .bar { width: 140px; height: 2px; background: rgba(255,255,255,.12); border-radius: 2px; overflow: hidden; }
+  #loader .bar i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .2s ease; }
+
+  /* ===== Progress ===== */
+  #progress {
+    position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 20;
+    background: rgba(255,255,255,.10);
+  }
+  #progress i {
+    display: block; height: 100%; background: var(--accent);
+    transform-origin: 0 50%; transform: scaleX(0); will-change: transform;
+  }
+
+  /* ===== Overlay chrome ===== */
+  .chrome { position: absolute; z-index: 10; }
+  #brand {
+    top: calc(14px + env(safe-area-inset-top)); left: 16px;
+    font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--ink);
+    text-shadow: 0 1px 8px rgba(0,0,0,.6);
+  }
+  #hint {
+    left: 50%; bottom: calc(34px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+    font-size: 13px; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.7);
+    transition: opacity .6s ease; animation: bob 2.2s ease-in-out infinite;
+  }
+  #hint.gone { opacity: 0; }
+  @keyframes bob { 0%,100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(7px); } }
+  #hint svg { opacity: .9; }
+
+  /* Room label */
+  #room {
+    left: 16px; bottom: calc(96px + env(safe-area-inset-bottom));
+    opacity: 0; will-change: transform, opacity;
+  }
+  #room .kicker { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+  #room .name { font-size: 30px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.65); }
+
+  /* Chapter rail */
+  #rail {
+    right: 10px; top: 50%; transform: translateY(-50%);
+    display: flex; flex-direction: column; gap: 14px; align-items: flex-end;
+  }
+  #rail button {
+    appearance: none; border: 0; background: none; cursor: pointer;
+    display: flex; align-items: center; gap: 8px; padding: 4px;
+    color: var(--ink-dim); font-size: 11px; font-family: inherit;
+  }
+  #rail button .dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(255,255,255,.35); transition: all .25s ease;
+  }
+  #rail button .lbl { opacity: 0; transition: opacity .25s ease; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  #rail button.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+  #rail button.active .lbl { opacity: 1; color: var(--ink); }
+
+  /* Listing chip */
+  #listing {
+    top: calc(12px + env(safe-area-inset-top)); right: 16px;
+    text-align: right; text-shadow: 0 1px 8px rgba(0,0,0,.6);
+  }
+  #listing .price { font-size: 16px; font-weight: 650; }
+  #listing .meta { font-size: 11.5px; color: var(--ink-dim); margin-top: 2px; }
+
+  /* Watermark */
+  #wm {
+    left: 16px; bottom: calc(14px + env(safe-area-inset-bottom));
+    font-size: 10.5px; color: rgba(255,255,255,.45); letter-spacing: .06em;
+    text-decoration: none;
+  }
+  #wm b { color: rgba(255,255,255,.72); font-weight: 600; }
+
+  /* ===== End card: agent + lead form ===== */
+  #endcard {
+    position: relative; z-index: 5;
+    min-height: 100vh; min-height: 100svh;
+    display: flex; align-items: center; justify-content: center;
+    padding: 48px 20px calc(64px + env(safe-area-inset-bottom));
+    background: linear-gradient(180deg, rgba(11,13,16,0) 0%, var(--bg) 18%);
+  }
+  .panel {
+    width: 100%; max-width: 420px;
+    background: var(--card); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+    border: 1px solid rgba(255,255,255,.08); border-radius: var(--radius);
+    padding: 26px 22px;
+  }
+  .agent { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
+  .agent .avatar {
+    width: 52px; height: 52px; border-radius: 50%;
+    background: linear-gradient(135deg, #33404f, #1c242e);
+    display: flex; align-items: center; justify-content: center;
+    font-weight: 650; font-size: 18px; color: var(--accent);
+  }
+  .agent .who .nm { font-weight: 650; font-size: 16px; }
+  .agent .who .bk { font-size: 12.5px; color: var(--ink-dim); margin-top: 2px; }
+  .panel h2 { font-size: 21px; font-weight: 650; letter-spacing: -.01em; margin-bottom: 4px; }
+  .panel .sub { font-size: 13.5px; color: var(--ink-dim); margin-bottom: 18px; }
+  .field { margin-bottom: 12px; }
+  .field input, .field textarea {
+    width: 100%; padding: 13px 14px; border-radius: 10px;
+    border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05);
+    color: var(--ink); font-size: 15px; font-family: inherit; outline: none;
+  }
+  .field input:focus, .field textarea:focus { border-color: var(--accent); }
+  .cta {
+    width: 100%; padding: 15px; border: 0; border-radius: 12px; cursor: pointer;
+    background: var(--accent); color: #14100a; font-size: 15.5px; font-weight: 650;
+    font-family: inherit; margin-top: 4px;
+  }
+  .cta:active { transform: scale(.985); }
+  #leadok { display: none; text-align: center; padding: 26px 0 10px; }
+  #leadok .check { font-size: 40px; margin-bottom: 10px; }
+  #leadok p { color: var(--ink-dim); font-size: 14px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    #hint { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="track">
+  <div id="stage">
+    <video id="scrub" muted playsinline webkit-playsinline preload="auto"
+           disablepictureinpicture disableremoteplayback
+           src="demo.mp4"></video>
+
+    <div id="loader">
+      <div class="mark">RENDPROP</div>
+      <div class="pct">0%</div>
+      <div class="bar"><i></i></div>
+    </div>
+
+    <div id="progress"><i></i></div>
+
+    <div class="chrome" id="brand">RENDPROP</div>
+
+    <div class="chrome" id="listing">
+      <div class="price">$1,175,000</div>
+      <div class="meta">4 bd · 3 ba · 2,850 sqft</div>
+      <div class="meta">1247 Hillcrest Drive</div>
+    </div>
+
+    <div class="chrome" id="room">
+      <div class="kicker">Now entering</div>
+      <div class="name"></div>
+    </div>
+
+    <div class="chrome" id="rail"></div>
+
+    <div class="chrome" id="hint">
+      <span>Scroll to fly through</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+
+    <a class="chrome" id="wm" href="https://rendprop.app" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>
+  </div>
+</div>
+
+<section id="endcard">
+  <div class="panel">
+    <div class="agent">
+      <div class="avatar">SM</div>
+      <div class="who">
+        <div class="nm">Sarah Mitchell</div>
+        <div class="bk">Skyway Realty Group · (555) 012-3456</div>
+      </div>
+    </div>
+    <form id="leadform">
+      <h2>Book a showing</h2>
+      <p class="sub">See 1247 Hillcrest Drive in person — Sarah will text you times.</p>
+      <div class="field"><input type="text" name="name" placeholder="Your name" required autocomplete="name"></div>
+      <div class="field"><input type="tel" name="phone" placeholder="Phone" required autocomplete="tel"></div>
+      <div class="field"><input type="email" name="email" placeholder="Email (optional)" autocomplete="email"></div>
+      <button class="cta" type="submit">Book a showing</button>
+    </form>
+    <div id="leadok">
+      <div class="check">✓</div>
+      <h2>Request sent</h2>
+      <p>Sarah will reach out shortly to set up your showing.</p>
+    </div>
+  </div>
+</section>
+
+<script>
+(() => {
+  'use strict';
+
+  /* ================= Config (server-injected in prod) ================= */
+  const CHAPTERS = [
+    { t: 0,   label: 'Exterior' },
+    { t: 9.5, label: 'Living Room' },
+    { t: 18.5,label: 'Kitchen' },
+    { t: 27.5,label: 'Primary Suite' },
+    { t: 36.5,label: 'Bath' },
+    { t: 45.5,label: 'Backyard' },
+  ];
+  const PX_PER_SEC = 190;            // track height scale (scroll distance per video second)
+  const BUFFER_GATE = 0.96;          // begin scrubbing at ~96% buffered
+  const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.06 : 0.1;
+  const SLUG = 'demo';               // share_pages.slug — beacon key
+
+  /* ================= Elements ================= */
+  const track   = document.getElementById('track');
+  const video   = document.getElementById('scrub');
+  const loader  = document.getElementById('loader');
+  const pctEl   = loader.querySelector('.pct');
+  const barEl   = loader.querySelector('.bar i');
+  const progEl  = document.querySelector('#progress i');
+  const roomEl  = document.getElementById('room');
+  const roomNm  = roomEl.querySelector('.name');
+  const railEl  = document.getElementById('rail');
+  const hintEl  = document.getElementById('hint');
+
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  /* ================= Track sizing (100svh-safe, toolbar-resize-safe) ================= */
+  let duration = 0;
+  function sizeTrack() {
+    if (!duration) return;
+    // stage is sticky for the whole scrub distance + one viewport
+    track.style.height = Math.round(duration * PX_PER_SEC + innerHeight) + 'px';
+  }
+  addEventListener('resize', sizeTrack, { passive: true });
+  if (window.visualViewport) visualViewport.addEventListener('resize', sizeTrack, { passive: true });
+
+  /* ================= Chapter rail ================= */
+  const railBtns = CHAPTERS.map((c, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = `<span class="lbl">${c.label}</span><span class="dot"></span>`;
+    b.addEventListener('click', () => {
+      const p = duration ? c.t / duration : 0;
+      scrollTo({ top: p * (track.offsetHeight - innerHeight), behavior: 'smooth' });
+    });
+    railEl.appendChild(b);
+    return b;
+  });
+
+  /* ================= Core scrub loop (Part 27) ================= */
+  let curT = 0, lastSet = -1, started = false, interacted = false;
+  let longFrames = 0, lastTick = performance.now();
+
+  function updateOverlays(p) {
+    progEl.style.transform = `scaleX(${p})`;
+
+    // Room label: opacity = 1 - |p - anchor| / window ; transforms only
+    const t = p * duration;
+    let active = 0, best = 1e9;
+    for (let i = 0; i < CHAPTERS.length; i++) {
+      const d = Math.abs(t - (CHAPTERS[i].t + 2.5));
+      if (t >= CHAPTERS[i].t - 0.5 && d < best) { best = d; active = i; }
+    }
+    const c = CHAPTERS[active];
+    const dNorm = clamp(1 - Math.abs(t - (c.t + 2.0)) / 4.5, 0, 1);
+    if (roomNm.textContent !== c.label) roomNm.textContent = c.label;
+    roomEl.style.opacity = dNorm;
+    roomEl.style.transform = `translateY(${(1 - dNorm) * 14}px)`;
+    railBtns.forEach((b, i) => b.classList.toggle('active', i === active));
+  }
+
+  function tick(now) {
+    // Jank watchdog → fallback ladder
+    if (now - lastTick > 90) { if (++longFrames > 24) return fallbackLoop(); }
+    lastTick = now;
+
+    const total = track.offsetHeight - innerHeight;
+    const p = clamp(-track.getBoundingClientRect().top / total, 0, 1);
+    const target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
+    curT += (target - curT) * LERP;
+
+    if (Math.abs(video.currentTime - curT) > 0.02 && Math.abs(curT - lastSet) > 0.02) {
+      try { video.currentTime = curT; lastSet = curT; } catch (_) {}
+    }
+    updateOverlays(p);
+    meter(p, now);
+    requestAnimationFrame(tick);
+  }
+
+  function begin() {
+    if (started) return;
+    started = true;
+    loader.classList.add('done');
+    lastTick = performance.now();
+    requestAnimationFrame(tick);
+  }
+
+  /* ================= Buffer gate + % loader ================= */
+  function buffered() {
+    try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; }
+    catch (_) { return 0; }
+  }
+  function reportBuffer() {
+    if (!video.duration) return;
+    const f = clamp(buffered() / video.duration, 0, 1);
+    const pc = Math.round(f * 100);
+    pctEl.textContent = pc + '%';
+    barEl.style.width = pc + '%';
+    if (f >= BUFFER_GATE) begin();
+  }
+  video.addEventListener('progress', reportBuffer);
+  video.addEventListener('loadedmetadata', () => { duration = video.duration; sizeTrack(); reportBuffer(); });
+  video.addEventListener('canplaythrough', () => setTimeout(begin, 1200)); // fallback gate
+  setTimeout(() => { if (!started && buffered() > 5) begin(); }, 6000);    // never strand the viewer
+
+  /* ================= Fallback: autoplay loop (Low Power Mode / webview jank) ================= */
+  let fellBack = false;
+  function fallbackLoop() {
+    if (fellBack) return; fellBack = true;
+    video.loop = true;
+    video.play().catch(() => {});
+    let raf;
+    const loopTick = () => {
+      const p = video.duration ? video.currentTime / video.duration : 0;
+      updateOverlays(p);
+      raf = requestAnimationFrame(loopTick);
+    };
+    raf = requestAnimationFrame(loopTick);
+  }
+
+  /* ================= Scrub hint ================= */
+  const dismissHint = () => {
+    if (interacted) return; interacted = true;
+    hintEl.classList.add('gone');
+  };
+  addEventListener('scroll', dismissHint, { passive: true, once: true });
+  addEventListener('touchstart', dismissHint, { passive: true, once: true });
+
+  /* ================= Metering beacon (streamed minutes + scroll depth) ================= */
+  // In prod: POST /f/:slug/view batched; here we accumulate and flush on pagehide.
+  let maxDepth = 0, engagedMs = 0, lastMeter = 0;
+  function meter(p, now) {
+    maxDepth = Math.max(maxDepth, p);
+    if (lastMeter) engagedMs += Math.min(now - lastMeter, 100);
+    lastMeter = now;
+  }
+  function flushBeacon() {
+    const payload = JSON.stringify({
+      slug: SLUG,
+      minutes_streamed: +(engagedMs / 60000).toFixed(3),
+      scroll_depth: +maxDepth.toFixed(3),
+      ts: Date.now(),
+    });
+    // navigator.sendBeacon('/f/' + SLUG + '/view', payload); // prod
+    try { localStorage.setItem('rendprop_beacon_' + SLUG, payload); } catch (_) {}
+  }
+  addEventListener('pagehide', flushBeacon);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushBeacon(); });
+
+  /* ================= Lead form ================= */
+  document.getElementById('leadform').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const data = Object.fromEntries(new FormData(e.target).entries());
+    // In prod: POST /f/:slug/lead → agent push + SMS + CRM webhook
+    try { localStorage.setItem('rendprop_lead_' + SLUG, JSON.stringify({ ...data, scroll_depth: maxDepth })); } catch (_) {}
+    e.target.style.display = 'none';
+    document.getElementById('leadok').style.display = 'block';
+  });
+
+  /* ================= Kick off ================= */
+  video.muted = true;
+  video.playsInline = true;
+  video.load();
+})();
+</script>
+</body>
+</html>

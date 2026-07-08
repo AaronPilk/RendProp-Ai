@@ -1,4 +1,4 @@
-# ROAM Scroll-Scrub Player
+# Rendprop Scroll-Scrub Player
 
 The product's face — the link shared to Instagram and opened by prospects on their phones. Spec: Master Build Prompt Parts 5, 27, 37.
 
@@ -20,7 +20,7 @@ python3 -m http.server 8080
 - Chapter rail (tap a room → smooth-scroll to anchor)
 - Progress bar `scaleX(p)`; scrub hint that fades on first interaction
 - Listing chip, agent card, "Book a showing" lead form end-card
-- "Made with ROAM" watermark (growth loop)
+- "Made with Rendprop" watermark (growth loop)
 - Jank watchdog → autoplay-loop fallback (Low Power Mode / IG-webview ladder)
 - `visualViewport` resize handling (iOS toolbar show/hide), `100svh`, safe-area insets
 - Metering stub: streamed-minutes + scroll-depth accumulated, flushed on pagehide (swap `localStorage` for `navigator.sendBeacon('/f/:slug/view')` in prod)

@@ -1,0 +1,42 @@
+name: Rendprop
+options:
+  bundleIdPrefix: com.rendprop
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.9"
+    DEVELOPMENT_TEAM: ""          # set your Team ID, or pick a team in Xcode Signing & Capabilities
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: Rendprop/Info.plist
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+# NOTE: TUSKit (tus resumable-upload client) is intentionally NOT included yet —
+# the .direct (presigned PUT) and .simulate upload modes cover Phase 1 with zero
+# third-party dependencies and zero build risk. Add when a tus server exists:
+# packages:
+#   TUSKit:
+#     url: https://github.com/tus/TUSKit
+#     from: 3.4.0
+targets:
+  Rendprop:
+    type: application
+    platform: iOS
+    sources:
+      - path: Rendprop
+        excludes:
+          - "Resources/player/**"
+      - path: Rendprop/Resources/player
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rendprop.app
+        TARGETED_DEVICE_FAMILY: "1"          # iPhone only
+        SUPPORTS_MACCATALYST: NO
+        CODE_SIGN_ENTITLEMENTS: Rendprop/Rendprop.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
