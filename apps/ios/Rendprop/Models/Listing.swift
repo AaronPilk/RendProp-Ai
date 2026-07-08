@@ -17,6 +17,8 @@ struct Listing: Identifiable, Codable, Hashable {
     var metaLine: String {
         let bathsText = baths.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(baths)) : String(baths)
-        return "\(beds) bd · \(bathsText) ba · \(sqft.formatted()) sqft"
+        var parts = ["\(beds) bd", "\(bathsText) ba"]
+        if sqft > 0 { parts.append("\(sqft.formatted()) sqft") }
+        return parts.joined(separator: " · ")
     }
 }

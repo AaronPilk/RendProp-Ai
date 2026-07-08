@@ -43,6 +43,7 @@
 		E6CA545180045304CB1CF06E /* FlythroughDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */; };
 		F34ECB50446CA79CC60B2901 /* FileStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 403AF389A944AF0B9F4700B1 /* FileStore.swift */; };
 		F4A33EE7FCDDEA87E548A7C5 /* DirectUploader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61AD972518DD362511944597 /* DirectUploader.swift */; };
+		F606FF07E8D62763C101CEA6 /* KieClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0394F1A54BAA0EE5CC9E52FA /* KieClient.swift */; };
 		F92FE2AE885FED5DE3416C63 /* CaptureAsset.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F67951679D7C54B4F041675 /* CaptureAsset.swift */; };
 		FB7EB9BFCB4BCF6B59E4B78C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3FBCB5707EABFE49CFFFB45F /* Assets.xcassets */; };
 		FBC7F7530EE3641AF6FCC985 /* Typography.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80381560DC3B2225305BBD0E /* Typography.swift */; };
@@ -54,6 +55,7 @@
 
 /* Begin PBXFileReference section */
 		018491D467DE946745CF3D0F /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
+		0394F1A54BAA0EE5CC9E52FA /* KieClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KieClient.swift; sourceTree = "<group>"; };
 		159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlythroughDetailView.swift; sourceTree = "<group>"; };
 		19CC9E2E694D65DC5116B84C /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
 		1BDBD42BBBF92850C312A53F /* Secrets.example.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Secrets.example.plist; sourceTree = "<group>"; };
@@ -62,7 +64,7 @@
 		2F67951679D7C54B4F041675 /* CaptureAsset.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureAsset.swift; sourceTree = "<group>"; };
 		316485AB70E423CF1DF80718 /* RoomTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomTag.swift; sourceTree = "<group>"; };
 		3231FC8BA993B604957BA2A9 /* GuidanceOverlays.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidanceOverlays.swift; sourceTree = "<group>"; };
-		34F0E27823CF4F0E6D18CD04 /* Rendprop.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Rendprop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		34F0E27823CF4F0E6D18CD04 /* Rendprop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Rendprop.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		3FBCB5707EABFE49CFFFB45F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		403AF389A944AF0B9F4700B1 /* FileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileStore.swift; sourceTree = "<group>"; };
 		4265B3AED585A6B82A70B8E0 /* ClaudeClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ClaudeClient.swift; sourceTree = "<group>"; };
@@ -242,6 +244,7 @@
 				4265B3AED585A6B82A70B8E0 /* ClaudeClient.swift */,
 				79A33387A3B46CC883856E86 /* EnhancementEngine.swift */,
 				A9152C3A6EE64CC2EF557419 /* HiggsfieldClient.swift */,
+				0394F1A54BAA0EE5CC9E52FA /* KieClient.swift */,
 				95F7D2011E52A9DE5F1F1441 /* Secrets.swift */,
 			);
 			path = AI;
@@ -289,7 +292,6 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					E6EC28A1E47FC62776E29A13 = {
-						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -350,6 +352,7 @@
 				99AC9E74F8298C023AD05758 /* Haptics.swift in Sources */,
 				497E7293E6D9F90683DE7395 /* HiggsfieldClient.swift in Sources */,
 				FFDE430BDCDF2D536BE7BBCD /* HomeListingsView.swift in Sources */,
+				F606FF07E8D62763C101CEA6 /* KieClient.swift in Sources */,
 				23166309A38B504B2FE352A1 /* Listing.swift in Sources */,
 				975A5B03FE71859367E2BA8C /* LiveAPIClient.swift in Sources */,
 				1AF302A469774E89A13D3A73 /* MediaImporter.swift in Sources */,
@@ -384,12 +387,13 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Rendprop/Rendprop.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				INFOPLIST_FILE = Rendprop/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.rendprop.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pilk.rendprop;
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 1;
@@ -536,12 +540,13 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Rendprop/Rendprop.entitlements;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
+				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				INFOPLIST_FILE = Rendprop/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.rendprop.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.pilk.rendprop;
 				SDKROOT = iphoneos;
 				SUPPORTS_MACCATALYST = NO;
 				TARGETED_DEVICE_FAMILY = 1;

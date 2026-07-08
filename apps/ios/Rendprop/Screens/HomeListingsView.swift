@@ -14,18 +14,24 @@ struct HomeListingsView: View {
         NavigationStack {
             Group {
                 if isLoading && model.listings.isEmpty {
-                    List { ForEach(0..<3, id: \.self) { _ in SkeletonRow() } }
-                        .listStyle(.plain)
+                    loadingState
                 } else if model.listings.isEmpty {
                     emptyState
                 } else {
-                    List(filtered) { listing in
-                        NavigationLink(value: listing) {
-                            ListingRow(listing: listing)
+                    ScrollView {
+                        LazyVStack(spacing: 18) {
+                            ForEach(filtered) { listing in
+                                NavigationLink(value: listing) {
+                                    ListingCard(listing: listing)
+                                }
+                                .buttonStyle(.plain)
+                            }
                         }
+                        .padding(.horizontal)
+                        .padding(.top, 6)
+                        .padding(.bottom, 90)   // room for the New Listing button
                     }
-                    .listStyle(.plain)
-                    .searchable(text: $search, prompt: "Search listings")
+                    .searchable(text: $search, prompt: "Search homes")
                     .refreshable { await model.load() }
                 }
             }
@@ -36,15 +42,6 @@ struct HomeListingsView: View {
                 FlythroughDetailView(listing: listing)
             }
             .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    NavigationLink {
-                        NewListingView()
-                    } label: {
-                        Image(systemName: "plus")
-                            .fontWeight(.semibold)
-                    }
-                    .accessibilityLabel(Text("New listing"))
-                }
                 ToolbarItem(placement: .navigationBarLeading) {
                     NavigationLink {
                         SettingsView()
@@ -86,6 +83,20 @@ struct HomeListingsView: View {
         }
     }
 
+    private var loadingState: some View {
+        ScrollView {
+            VStack(spacing: 18) {
+                ForEach(0..<2, id: \.self) { _ in
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .fill(Theme.fillSubtle)
+                        .frame(height: 230)
+                        .redacted(reason: .placeholder)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
     private var emptyState: some View {
         VStack(spacing: 16) {
             Image(systemName: "video.badge.plus")
@@ -113,31 +124,99 @@ struct HomeListingsView: View {
     }
 }
 
-struct ListingRow: View {
+// MARK: - Aesthetic listing card
+
+struct ListingCard: View {
     let listing: Listing
 
     var body: some View {
-        HStack(spacing: 12) {
-            ZStack {
-                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(Theme.accentSoft)
-                    .frame(width: 64, height: 46)
-                Image(systemName: "house.fill")
-                    .foregroundStyle(Theme.accent)
-                    .font(.system(size: 16))
-            }
-            VStack(alignment: .leading, spacing: 3) {
-                Text(listing.address)
-                    .font(.rpHeadline)
-                    .lineLimit(1)
-                Text("\(listing.metaLine) · \(listing.price.formatted)")
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.inkDim)
-                    .lineLimit(1)
-            }
-            Spacer()
-            StatusChip(status: listing.status)
+        VStack(alignment: .leading, spacing: 0) {
+            hero
+            info
         }
-        .padding(.vertical, 4)
+        .background(Theme.card)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(Theme.border)
+        )
+        .shadow(color: Color.black.opacity(0.07), radius: 16, x: 0, y: 6)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text("\(listing.address), \(listing.metaLine), \(listing.status.label)"))
+    }
+
+    // Hero area — becomes the real tour poster once a render exists.
+    private var hero: some View {
+        ZStack {
+            LinearGradient(
+                colors: [Theme.accent.opacity(0.22),
+                         Theme.accent.opacity(0.08),
+                         Color(red: 0.93, green: 0.90, blue: 1.0)],
+                startPoint: .topLeading, endPoint: .bottomTrailing
+            )
+
+            // Subtle skyline watermark
+            Image(systemName: "house.and.flag.fill")
+                .font(.system(size: 56, weight: .ultraLight))
+                .foregroundStyle(Theme.accent.opacity(0.30))
+                .offset(y: 6)
+
+            if listing.status == .ready {
+                ZStack {
+                    Circle()
+                        .fill(.white)
+                        .frame(width: 58, height: 58)
+                        .shadow(color: Color.black.opacity(0.15), radius: 10, x: 0, y: 4)
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(Theme.accent)
+                        .offset(x: 2)
+                }
+            }
+        }
+        .frame(height: 150)
+        .overlay(alignment: .topTrailing) {
+            StatusChip(status: listing.status)
+                .padding(10)
+        }
+        .overlay(alignment: .bottomLeading) {
+            if listing.status == .ready {
+                Label("Tour ready to share", systemImage: "sparkles")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(.white.opacity(0.85), in: Capsule())
+                    .padding(10)
+            }
+        }
+    }
+
+    private var info: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(listing.address)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(Theme.inkDim)
+            }
+            HStack {
+                Text(listing.metaLine)
+                    .font(.subheadline)
+                    .foregroundStyle(Theme.inkDim)
+                Spacer()
+                if listing.price.cents > 0 {
+                    Text(listing.price.formatted)
+                        .font(.headline)
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+        }
+        .padding(16)
     }
 }
