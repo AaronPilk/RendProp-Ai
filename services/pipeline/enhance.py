@@ -106,6 +106,9 @@ def http_json(url: str, payload: dict | None = None, headers: dict | None = None
     req = urllib.request.Request(url, data=data, method="POST" if data else "GET")
     req.add_header("Content-Type", "application/json")
     req.add_header("Accept", "application/json")
+    # Cloudflare fronts platform.higgsfield.ai and rejects default urllib UA (error 1010)
+    req.add_header("User-Agent", "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36")
     for k, v in (headers or {}).items():
         req.add_header(k, v)
     with urllib.request.urlopen(req, timeout=120) as resp:
