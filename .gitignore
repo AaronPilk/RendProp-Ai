@@ -8,3 +8,6 @@ dist/
 build/
 DerivedData/
 *.xcuserstate
+
+# iOS dev secrets (never commit)
+apps/ios/Rendprop/Resources/Secrets.plist
