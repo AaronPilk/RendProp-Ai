@@ -99,6 +99,9 @@ struct EnhancementPreviewView: View {
                      : "Passed quality check on the first try.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+                Text("AI cost for this preview: about \(Money(cents: r.spentCents).formatted)")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .card()

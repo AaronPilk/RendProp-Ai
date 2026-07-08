@@ -1,23 +1,70 @@
 import AVFoundation
 import UIKit
+import CryptoKit
 
-/// The "perfect every time" loop, running natively in the app:
+// MARK: - Cost meter — the "don't get killed on API cost" guard
+//
+// Every AI call books its estimated cost BEFORE it runs. If a job would blow
+// its ceiling, it stops and falls back to original footage instead of spending.
+// KIE never charges failed tasks, and our cache never pays for the same
+// (frame + prompt) twice.
+final class CostMeter {
+    // Estimated cents per call (KIE pricing; tune as real invoices arrive)
+    enum Item {
+        case claudeCall            // plan or judge ≈ 2¢
+        case edit1K                // nano-banana-2 1K ≈ 4¢
+        case edit2K                // nano-banana-2 2K ≈ 6¢
+        case videoSecond           // seedance-2 ≈ 6¢/s (std)
+
+        var cents: Int {
+            switch self {
+            case .claudeCall:  return 2
+            case .edit1K:      return 4
+            case .edit2K:      return 6
+            case .videoSecond: return 6
+            }
+        }
+    }
+
+    private(set) var spentCents = 0
+    let ceilingCents: Int
+
+    init(ceilingCents: Int) { self.ceilingCents = ceilingCents }
+
+    /// Book a cost before making the call. Throws if it would exceed the ceiling.
+    func book(_ item: Item, units: Int = 1) throws {
+        let cost = item.cents * units
+        guard spentCents + cost <= ceilingCents else {
+            throw ClaudeClient.AIError(message:
+                "Cost limit reached for this job ($\(String(format: "%.2f", Double(ceilingCents)/100))) — remaining work keeps the original footage.")
+        }
+        spentCents += cost
+    }
+}
+
+// MARK: - Result cache — never pay twice for the same edit
+enum EnhancementCache {
+    private static var store: [String: String] = [:]   // key → result URL
+
+    static func key(frameHash: String, prompt: String) -> String {
+        let digest = SHA256.hash(data: Data((frameHash + prompt).utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func get(_ key: String) -> String? { store[key] }
+    static func set(_ key: String, url: String) { store[key] = url }
+}
+
+/// The "perfect every time, never overspend" loop, natively in the app:
 ///
-///   keyframe → PLAN (Claude) → EDIT (Higgsfield) → JUDGE (Claude)
-///                    ▲                                  │
-///                    └── retry with the judge's feedback (max 2)
-///                                                       │
-///                            fail after retries → keep ORIGINAL footage
-///
-/// Hard rules: architecture never changes; a failed edit never ships;
-/// every active enhancement carries the "Virtually staged" disclosure.
+///   keyframe → UPLOAD (free) → PLAN (Claude) → EDIT cheap-first (KIE 1K)
+///        → JUDGE (Claude) → retry w/ feedback (1K → 2K escalation, max 2)
+///        → fail? keep ORIGINAL footage. Every step booked against a ceiling.
 @MainActor
 final class EnhancementEngine: ObservableObject {
 
     enum Phase: Equatable {
-        case idle
-        case extracting
-        case planning
+        case idle, extracting, uploading, planning
         case editing(attempt: Int)
         case judging(attempt: Int)
         case done
@@ -25,13 +72,14 @@ final class EnhancementEngine: ObservableObject {
 
         var label: String {
             switch self {
-            case .idle:                return "Ready"
-            case .extracting:          return "Grabbing a frame from your video…"
-            case .planning:            return "Claude is studying the room…"
-            case .editing(let a):      return a == 1 ? "Creating the new look…" : "Improving it (try \(a))…"
-            case .judging(let a):      return a == 1 ? "Double-checking quality…" : "Re-checking quality…"
-            case .done:                return "Done"
-            case .failed(let msg):     return msg
+            case .idle:            return "Ready"
+            case .extracting:      return "Grabbing a frame from your video…"
+            case .uploading:       return "Preparing the frame…"
+            case .planning:        return "Claude is studying the room…"
+            case .editing(let a):  return a == 1 ? "Creating the new look…" : "Improving it (try \(a))…"
+            case .judging(let a):  return a == 1 ? "Double-checking quality…" : "Re-checking quality…"
+            case .done:            return "Done"
+            case .failed(let m):   return m
             }
         }
     }
@@ -44,15 +92,18 @@ final class EnhancementEngine: ObservableObject {
         let artifacts: Int
         let attempts: Int
         let roomType: String
+        let spentCents: Int
     }
 
     @Published var phase: Phase = .idle
     @Published var result: Result?
 
     private let claude = ClaudeClient()
-    private let higgsfield = HiggsfieldClient()
+    private let kie = KieClient()
     private let maxRetries = 2
     private let passScore = 80
+    /// Preview jobs are capped tight; full renders get a bigger (still hard) ceiling.
+    private let previewCeilingCents = 40
 
     private static let styleRecipes: [DesignStyle: String] = [
         .modern: "clean-lined contemporary furniture, low-profile charcoal sectional, walnut and matte-black accents, minimal abstract wall art, modern area rug",
@@ -64,26 +115,42 @@ final class EnhancementEngine: ObservableObject {
     // MARK: - Public entry
 
     func run(videoURL: URL, atSecond t: Double, declutter: Bool, style: DesignStyle) async {
+        let meter = CostMeter(ceilingCents: previewCeilingCents)
         do {
             phase = .extracting
             let frame = try await Self.keyframe(from: videoURL, at: t)
             guard let jpeg = frame.jpegData(compressionQuality: 0.82) else {
                 throw ClaudeClient.AIError(message: "Could not read a frame from the video.")
             }
+            let frameHash = SHA256.hash(data: jpeg).map { String(format: "%02x", $0) }.joined()
+
+            phase = .uploading
+            let frameURL = try await kie.uploadFrame(jpegData: jpeg)   // free
 
             phase = .planning
+            try meter.book(.claudeCall)
             let plan = try await makePlan(jpeg: jpeg, declutter: declutter, style: style)
 
-            let inputURL = "data:image/jpeg;base64,\(jpeg.base64EncodedString())"
             var prompt = basePrompt(from: plan)
             var attempts = 0
 
             while attempts <= maxRetries {
                 attempts += 1
+                let cacheKey = EnhancementCache.key(frameHash: frameHash, prompt: prompt)
+
                 phase = .editing(attempt: attempts)
-                let candidateURL = try await higgsfield.editImage(imageURL: inputURL, prompt: prompt)
+                let candidateURL: String
+                if let cached = EnhancementCache.get(cacheKey) {
+                    candidateURL = cached                              // $0 — cache hit
+                } else {
+                    // Cheap-first ladder: 1K for attempts 1–2, 2K for the last try.
+                    try meter.book(attempts <= 2 ? .edit1K : .edit2K)
+                    candidateURL = try await kie.editImage(imageURL: frameURL, prompt: prompt)
+                    EnhancementCache.set(cacheKey, url: candidateURL)
+                }
 
                 phase = .judging(attempt: attempts)
+                try meter.book(.claudeCall)
                 let verdict = try await judge(beforeJPEG: jpeg, afterURL: candidateURL, plan: plan)
                 let minScore = min(verdict.structure, verdict.completeness, verdict.artifacts)
 
@@ -94,7 +161,8 @@ final class EnhancementEngine: ObservableObject {
                                     completeness: verdict.completeness,
                                     artifacts: verdict.artifacts,
                                     attempts: attempts,
-                                    roomType: plan["room_type"] as? String ?? "Room")
+                                    roomType: plan["room_type"] as? String ?? "Room",
+                                    spentCents: meter.spentCents)
                     phase = .done
                     return
                 }
@@ -113,7 +181,7 @@ final class EnhancementEngine: ObservableObject {
             ? "No restaging — keep all furniture as-is."
             : "Plan a virtual restage in \(style.displayName.uppercased()) style: \(Self.styleRecipes[style] ?? "")."
         let clutterLine = declutter
-            ? "List every removable clutter item (boxes, mess, cords, laundry, papers, dishes)."
+            ? "List EVERY removable clutter item — boxes, mess, cords, power strips, cables, laundry, papers, dishes. Be exhaustive; missed items fail QC."
             : "Do not remove anything."
 
         let reply = try await claude.complete(blocks: [
@@ -127,7 +195,7 @@ final class EnhancementEngine: ObservableObject {
 
             Reply with ONLY JSON:
             {"room_type": "...", "clutter_items": ["..."], "keep_identical": ["..."],
-             "edit_prompt": "one complete instruction for an image-edit model"}
+             "edit_prompt": "one complete instruction for an image-edit model, explicitly naming every clutter item to remove"}
             """),
         ])
         return try ClaudeClient.extractJSON(reply)
@@ -161,7 +229,8 @@ final class EnhancementEngine: ObservableObject {
             Score the AFTER image:
             1. structure (0-100): walls, windows, doors, floors, ceiling, layout, view \
             IDENTICAL to BEFORE? Any moved/added/removed architecture = below 50.
-            2. completeness (0-100): planned edit fully done?
+            2. completeness (0-100): planned edit fully done? Check EVERY clutter item \
+            in the plan — one surviving item (a cord, a box) caps this at 70.
             3. artifacts (0-100): free of warping, smears, impossible geometry?
 
             Reply ONLY JSON:
