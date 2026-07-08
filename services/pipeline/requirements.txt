@@ -1,0 +1,2 @@
+# Only needed for local-file frame hosting (R2 upload). Everything else is stdlib.
+boto3>=1.34
