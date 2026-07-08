@@ -29,7 +29,9 @@ struct HomeListingsView: View {
                     .refreshable { await model.load() }
                 }
             }
-            .navigationTitle("My Listings")
+            .navigationTitle("My Homes")
+            .background(Theme.bg)
+            .scrollContentBackground(.hidden)
             .navigationDestination(for: Listing.self) { listing in
                 FlythroughDetailView(listing: listing)
             }
@@ -53,7 +55,29 @@ struct HomeListingsView: View {
                 }
             }
             .safeAreaInset(edge: .bottom) {
-                UploadMiniBar()
+                VStack(spacing: 10) {
+                    UploadMiniBar()
+                    if !model.listings.isEmpty {
+                        NavigationLink {
+                            NewListingView()
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "plus")
+                                Text("New Listing").fontWeight(.semibold)
+                            }
+                            .font(.body)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 16)
+                            .background(Theme.accent)
+                            .foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
+                        }
+                        .padding(.horizontal)
+                        .accessibilityLabel(Text("Start a new listing"))
+                    }
+                }
+                .padding(.bottom, 6)
             }
             .task {
                 await model.load()
@@ -67,20 +91,22 @@ struct HomeListingsView: View {
             Image(systemName: "video.badge.plus")
                 .font(.system(size: 46, weight: .light))
                 .foregroundStyle(Theme.accent)
-            Text("Shoot your first walkthrough")
+            Text("Let's film your first home")
                 .font(.rpTitle)
-            Text("Walk it. Upload it. Fly through it.")
+                .foregroundStyle(Theme.ink)
+            Text("Walk through with your phone.\nWe turn it into a stunning video tour.")
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
             NavigationLink {
                 NewListingView()
             } label: {
-                Text("New Listing")
+                Text("Get Started")
                     .fontWeight(.semibold)
-                    .padding(.horizontal, 26)
-                    .padding(.vertical, 13)
+                    .padding(.horizontal, 30)
+                    .padding(.vertical, 15)
                     .background(Theme.accent, in: Capsule())
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Color.white)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -94,11 +120,10 @@ struct ListingRow: View {
         HStack(spacing: 12) {
             ZStack {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .fill(LinearGradient(colors: [Color(white: 0.16), Color(white: 0.09)],
-                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .fill(Theme.accentSoft)
                     .frame(width: 64, height: 46)
                 Image(systemName: "house.fill")
-                    .foregroundStyle(Theme.inkDim)
+                    .foregroundStyle(Theme.accent)
                     .font(.system(size: 16))
             }
             VStack(alignment: .leading, spacing: 3) {

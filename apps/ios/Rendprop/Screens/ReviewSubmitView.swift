@@ -28,10 +28,10 @@ struct ReviewSubmitView: View {
                 tierPicker
                 enhancementsCard
                 priceSummary
-                PrimaryButton(title: "Submit render · \(totalPrice.formatted)", systemImage: "paperplane.fill") {
+                PrimaryButton(title: "Create my tour · \(totalPrice.formatted)", systemImage: "sparkles") {
                     submit()
                 }
-                Text("Mock checkout — Apple In-App Purchase (StoreKit 2) lands in Phase 2.")
+                Text("Test mode — no real charge yet.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }
@@ -60,7 +60,7 @@ struct ReviewSubmitView: View {
 
     private var captureSummary: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("WALKTHROUGH").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Text("YOUR VIDEO").font(.rpKicker).foregroundStyle(Theme.inkDim)
             HStack(spacing: 14) {
                 Image(systemName: asset.isDrone ? "airplane" : "video.fill")
                     .font(.system(size: 22))
@@ -94,7 +94,7 @@ struct ReviewSubmitView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("ROOMS").font(.rpKicker).foregroundStyle(Theme.inkDim)
             if asset.roomTags.isEmpty {
-                Text("No rooms tagged. Add them so viewers can jump to any room.")
+                Text("Add room names so buyers can jump straight to the kitchen, primary, or backyard.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }
@@ -136,7 +136,7 @@ struct ReviewSubmitView: View {
 
     private var tierPicker: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("RENDER TIER").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Text("PICK YOUR QUALITY").font(.rpKicker).foregroundStyle(Theme.inkDim)
             ForEach(Render.Tier.allCases) { t in
                 Button {
                     tier = t
@@ -162,11 +162,11 @@ struct ReviewSubmitView: View {
                     .padding(12)
                     .background(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(tier == t ? Theme.accent.opacity(0.10) : Color.white.opacity(0.03))
+                            .fill(tier == t ? Theme.accentSoft : Theme.fillSubtle)
                     )
                     .overlay(
                         RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(tier == t ? Theme.accent : Color.white.opacity(0.08),
+                            .strokeBorder(tier == t ? Theme.accent : Theme.border,
                                           lineWidth: tier == t ? 1.5 : 1)
                     )
                 }
@@ -179,7 +179,7 @@ struct ReviewSubmitView: View {
 
     private var enhancementsCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("AI ENHANCEMENTS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Text("EXTRAS").font(.rpKicker).foregroundStyle(Theme.inkDim)
 
             // Declutter toggle
             Toggle(isOn: $enhancements.declutter.animation()) {
@@ -189,9 +189,9 @@ struct ReviewSubmitView: View {
                         .foregroundStyle(enhancements.declutter ? Theme.accent : Theme.inkDim)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Auto-declutter · +\(Enhancements.declutterPrice.formatted)")
+                        Text("Clean up clutter · +\(Enhancements.declutterPrice.formatted)")
                             .font(.rpHeadline)
-                        Text("Removes boxes, mess, and clutter from every room. Walls, floors, and fixtures stay untouched.")
+                        Text("We remove boxes and mess from the video. The home itself never changes.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
                     }
@@ -200,7 +200,7 @@ struct ReviewSubmitView: View {
             .tint(Theme.accent)
             .onChange(of: enhancements.declutter) { _ in Haptics.selection() }
 
-            Divider().overlay(Color.white.opacity(0.08))
+            Divider()
 
             // Design style picker
             VStack(alignment: .leading, spacing: 8) {
@@ -214,7 +214,7 @@ struct ReviewSubmitView: View {
                             .foregroundStyle(Theme.accent)
                     }
                 }
-                Text("Virtually restage furniture, art, and decor. The architecture never changes.")
+                Text("Give the rooms new furniture and decor in a style you pick. Walls and windows stay exactly the same.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -235,11 +235,11 @@ struct ReviewSubmitView: View {
                                 .frame(width: 92, height: 74)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(enhancements.style == style ? Theme.accent.opacity(0.12) : Color.white.opacity(0.03))
+                                        .fill(enhancements.style == style ? Theme.accentSoft : Theme.fillSubtle)
                                 )
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .strokeBorder(enhancements.style == style ? Theme.accent : Color.white.opacity(0.08),
+                                        .strokeBorder(enhancements.style == style ? Theme.accent : Theme.border,
                                                       lineWidth: enhancements.style == style ? 1.5 : 1)
                                 )
                             }
@@ -257,7 +257,7 @@ struct ReviewSubmitView: View {
             }
 
             if enhancements.isActive {
-                Label("The shared flythrough will carry a \"Virtually staged\" disclosure — required by MLS rules for altered media.",
+                Label("Your shared tour will show a small \"Virtually staged\" label — real-estate rules require it for edited videos.",
                       systemImage: "info.circle")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
@@ -293,7 +293,7 @@ struct ReviewSubmitView: View {
                     Text("+\(Enhancements.restagePrice.formatted)").foregroundStyle(Theme.inkDim)
                 }
             }
-            Divider().overlay(Color.white.opacity(0.1))
+            Divider()
             HStack {
                 Text("Total").font(.rpHeadline)
                 Spacer()

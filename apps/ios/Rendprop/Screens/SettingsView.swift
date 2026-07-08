@@ -8,12 +8,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section("Uploads") {
-                Toggle("Wi-Fi only for large uploads", isOn: $wifiOnlyUploads)
-                Picker("Upload mode", selection: $uploadMode) {
-                    ForEach(Config.UploadMode.allCases) { mode in
-                        Text(mode.label).tag(mode.rawValue)
-                    }
-                }
+                Toggle("Only upload big videos on Wi-Fi", isOn: $wifiOnlyUploads)
                 if let s = uploads.state {
                     HStack {
                         Text("Current upload")
@@ -67,7 +62,12 @@ struct SettingsView: View {
                     .foregroundStyle(Theme.inkDim)
             }
 
-            Section {
+            Section("Advanced") {
+                Picker("Upload mode", selection: $uploadMode) {
+                    ForEach(Config.UploadMode.allCases) { mode in
+                        Text(mode.label).tag(mode.rawValue)
+                    }
+                }
                 LabeledContent("Version", value: "0.1.0 (1)")
             }
         }

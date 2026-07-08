@@ -5,12 +5,12 @@ struct OnboardingView: View {
     @State private var page = 0
 
     private let cards: [(icon: String, title: String, body: String)] = [
-        ("iphone.gen3", "No camera. No rig.\nJust your phone.",
-         "Record one continuous walkthrough of any property — Rendprop guides your pace, level, and light as you go."),
-        ("wand.and.stars", "AI renders it into a\ndrone-style flythrough.",
-         "Your handheld walkthrough becomes a silky, cinematic glide — stabilized, smoothed, and graded automatically."),
-        ("link", "Share a link\nthat converts.",
-         "Prospects scroll to fly through the home — right in Instagram, iMessage, or your listing — and book a showing."),
+        ("iphone.gen3", "Just your phone.\nNothing else.",
+         "Walk through the home while recording. We guide you the whole way — it's as easy as taking a video."),
+        ("wand.and.stars", "We make it look\namazing.",
+         "Your video becomes a smooth, professional home tour — like it was filmed with a drone."),
+        ("link", "Share it anywhere.\nGet more buyers.",
+         "Send one link. Buyers glide through the home on their phone and book a showing right there."),
     ]
 
     var body: some View {
@@ -53,7 +53,7 @@ struct OnboardingView: View {
                             hasOnboarded = true
                         }
                     }
-                    Text("Your first render is on us.")
+                    Text("Your first video tour is free.")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                 }

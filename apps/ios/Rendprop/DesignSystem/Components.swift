@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Primary button
+// MARK: - Primary button (big, obvious, purple)
 struct PrimaryButton: View {
     let title: String
     var systemImage: String? = nil
@@ -19,27 +19,29 @@ struct PrimaryButton: View {
                 Text(title)
                     .fontWeight(.semibold)
             }
+            .font(.body)
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 15)
+            .padding(.vertical, 16)
             .background(isDisabled ? Theme.accent.opacity(0.35) : Theme.accent)
-            .foregroundStyle(Color.black)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .foregroundStyle(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .disabled(isDisabled)
         .accessibilityLabel(Text(title))
     }
 }
 
-// MARK: - Card
+// MARK: - Card (white, soft shadow)
 struct CardBackground: ViewModifier {
     func body(content: Content) -> some View {
         content
             .padding(Theme.spacing)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08))
+                    .strokeBorder(Theme.border)
             )
+            .shadow(color: Color.black.opacity(0.05), radius: 12, x: 0, y: 4)
     }
 }
 
@@ -57,7 +59,7 @@ struct StatusChip: View {
             .foregroundStyle(status.color)
             .padding(.horizontal, 9)
             .padding(.vertical, 4)
-            .background(status.color.opacity(0.14), in: Capsule())
+            .background(status.color.opacity(0.12), in: Capsule())
             .accessibilityLabel(Text("Status: \(status.label)"))
     }
 }
@@ -72,8 +74,9 @@ struct UploadMiniBar: View {
                 Image(systemName: s.status == .paused ? "pause.circle.fill" : "arrow.up.circle.fill")
                     .foregroundStyle(Theme.accent)
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(s.status == .paused ? "Upload paused" : "Uploading walkthrough…")
+                    Text(s.status == .paused ? "Upload paused" : "Sending your video…")
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
                     ProgressView(value: s.fractionComplete)
                         .progressViewStyle(.linear)
                         .tint(Theme.accent)
@@ -84,7 +87,12 @@ struct UploadMiniBar: View {
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(Theme.border)
+            )
+            .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 3)
             .padding(.horizontal)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         }
@@ -95,11 +103,11 @@ struct UploadMiniBar: View {
 struct SkeletonRow: View {
     var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 8).fill(Color.white.opacity(0.07))
+            RoundedRectangle(cornerRadius: 8).fill(Theme.fillSubtle)
                 .frame(width: 64, height: 44)
             VStack(alignment: .leading, spacing: 6) {
-                RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.09)).frame(width: 160, height: 12)
-                RoundedRectangle(cornerRadius: 4).fill(Color.white.opacity(0.05)).frame(width: 100, height: 10)
+                RoundedRectangle(cornerRadius: 4).fill(Color.black.opacity(0.08)).frame(width: 160, height: 12)
+                RoundedRectangle(cornerRadius: 4).fill(Theme.fillSubtle).frame(width: 100, height: 10)
             }
             Spacer()
         }

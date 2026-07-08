@@ -20,7 +20,7 @@ struct RenderStatusView: View {
 
             ZStack {
                 Circle()
-                    .stroke(Color.white.opacity(0.10), lineWidth: 8)
+                    .stroke(Theme.fillSubtle, lineWidth: 8)
                 Circle()
                     .trim(from: 0, to: CGFloat(render.progress))
                     .stroke(Theme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
@@ -80,7 +80,7 @@ struct RenderStatusView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 15)
                     .background(Theme.accent)
-                    .foregroundStyle(.black)
+                    .foregroundStyle(Color.white)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .padding(.horizontal)

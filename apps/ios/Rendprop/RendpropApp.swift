@@ -62,7 +62,7 @@ struct RendpropApp: App {
             .environmentObject(model)
             .environmentObject(uploads)
             .tint(Theme.accent)
-            .preferredColorScheme(.dark)   // Rendprop is a dark, premium capture brand
+            .preferredColorScheme(.light)  // Rendprop is light, clean, white + purple
         }
     }
 }

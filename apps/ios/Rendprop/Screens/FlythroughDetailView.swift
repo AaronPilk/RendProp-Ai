@@ -19,7 +19,7 @@ struct FlythroughDetailView: View {
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                                .strokeBorder(Color.white.opacity(0.08))
+                                .strokeBorder(Theme.border)
                         )
                     Text("Scroll inside the preview to fly through.")
                         .font(.rpCaption)
@@ -38,7 +38,7 @@ struct FlythroughDetailView: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 14)
                         .background(Theme.accent)
-                        .foregroundStyle(.black)
+                        .foregroundStyle(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
 
@@ -110,6 +110,6 @@ struct FlythroughDetailView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
-        .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
     }
 }

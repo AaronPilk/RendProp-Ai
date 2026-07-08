@@ -15,7 +15,9 @@ struct CaptureView: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            // Camera chrome stays dark (it sits over live video); the
+            // permission/error states use the app's light background.
+            (isInfoState ? Theme.bg : Color.black).ignoresSafeArea()
 
             switch camera.state {
             case .denied:
@@ -43,6 +45,12 @@ struct CaptureView: View {
     }
 
     private var isRecording: Bool { camera.state == .recording }
+
+    private var isInfoState: Bool {
+        if camera.state == .denied { return true }
+        if case .failed = camera.state { return true }
+        return false
+    }
 
     // MARK: - Overlay chrome
 
