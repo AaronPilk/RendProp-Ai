@@ -11,6 +11,7 @@ struct PlayerWebView: UIViewRepresentable {
     var localVideoURL: URL? = nil
     var roomTags: [RoomTag] = []
     var listing: Listing? = nil
+    var agent: AgentCard = .current
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -26,7 +27,7 @@ struct PlayerWebView: UIViewRepresentable {
         if let remoteURL {
             webView.load(URLRequest(url: remoteURL))
         } else if let localVideoURL,
-                  let html = Self.localPreviewHTML(videoURL: localVideoURL, roomTags: roomTags, listing: listing) {
+                  let html = Self.localPreviewHTML(videoURL: localVideoURL, roomTags: roomTags, listing: listing, agent: agent) {
             // HTML sits next to the video so one read grant covers both.
             webView.loadFileURL(html, allowingReadAccessTo: localVideoURL.deletingLastPathComponent())
         } else if let index = Bundle.main.url(forResource: "index",
@@ -42,7 +43,7 @@ struct PlayerWebView: UIViewRepresentable {
     /// Rewrites the bundled player around the user's own video:
     /// swaps the video source, injects their room tags as chapters, and fills
     /// in the listing card. Written beside the video file.
-    static func localPreviewHTML(videoURL: URL, roomTags: [RoomTag], listing: Listing?) -> URL? {
+    static func localPreviewHTML(videoURL: URL, roomTags: [RoomTag], listing: Listing?, agent: AgentCard = .current) -> URL? {
         guard let template = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "player"),
               var html = try? String(contentsOf: template, encoding: .utf8) else { return nil }
 
@@ -74,6 +75,17 @@ struct PlayerWebView: UIViewRepresentable {
             html = html.replacingOccurrences(of: "1247 Hillcrest Drive", with: listing.address)
         }
 
+        // 4. Agent card → the agent's own details. Only when they've set one up;
+        //    otherwise the demo agent (Sarah Mitchell) stays so sample tours
+        //    still look complete.
+        if agent.isSet {
+            html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
+            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+                                             with: htmlEscape(agent.brokerageLine))
+            html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(agent.initials))<")
+            html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
+        }
+
         let out = videoURL.deletingLastPathComponent()
             .appendingPathComponent("preview-\(videoURL.deletingPathExtension().lastPathComponent).html")
         do {
@@ -82,5 +94,14 @@ struct PlayerWebView: UIViewRepresentable {
         } catch {
             return nil
         }
+    }
+
+    /// Escape values before injecting into HTML so names with & < > " can't
+    /// break the markup.
+    private static func htmlEscape(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+         .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
