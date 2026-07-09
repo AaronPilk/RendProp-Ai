@@ -9,7 +9,7 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    DEVELOPMENT_TEAM: ""          # select team manually in Xcode until the true Team ID is pinned
+    DEVELOPMENT_TEAM: "5F5C5G25Y6"   # Aaron Pilkington — real Team ID (OU= from signing cert)
     CODE_SIGN_STYLE: Automatic
     GENERATE_INFOPLIST_FILE: NO
     INFOPLIST_FILE: Rendprop/Info.plist
