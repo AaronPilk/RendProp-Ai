@@ -6,6 +6,19 @@ struct FlythroughDetailView: View {
     let listing: Listing
 
     private var asset: CaptureAsset? { model.assets[listing.id] }
+    private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+
+    /// Prefer the rendered tour; fall back to the raw capture.
+    private var playbackURL: URL? { tour?.url ?? asset?.localURL }
+
+    /// Room tags, rescaled when the tour was retimed (2× walk → ÷2 timestamps).
+    private var playbackTags: [RoomTag] {
+        guard let asset else { return [] }
+        guard let tour else { return asset.roomTags }
+        return asset.roomTags.map { tag in
+            RoomTag(name: tag.name, tMs: Int(Double(tag.tMs) / tour.speedFactor))
+        }
+    }
 
     private var shareURL: URL {
         URL(string: "https://rendprop.app/f/\(listing.id.uuidString.prefix(8).lowercased())")!
@@ -16,18 +29,20 @@ struct FlythroughDetailView: View {
             VStack(spacing: Theme.spacing) {
                 // Flythrough preview — the actual scroll-scrub player
                 VStack(alignment: .leading, spacing: 8) {
-                    Text(asset != nil ? "YOUR TOUR" : "SAMPLE TOUR")
+                    Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
                         .font(.rpKicker).foregroundStyle(Theme.inkDim)
-                    PlayerWebView(localAsset: asset, listing: listing)
+                    PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: listing)
                         .frame(height: 460)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                                 .strokeBorder(Theme.border)
                         )
-                    Text(asset != nil
-                         ? "Scroll inside to fly through your walkthrough. This is your raw video — the polished drone-smooth version comes from the render step."
-                         : "Sample tour — record a walkthrough to see your own home here.")
+                    Text(tour != nil
+                         ? "Scroll inside to fly through — rendered at \(String(format: "%.2g", tour!.speedFactor))× glide speed, 60fps, instant scrubbing."
+                         : (asset != nil
+                            ? "Scroll inside to fly through your walkthrough."
+                            : "Sample tour — record a walkthrough to see your own home here."))
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                 }

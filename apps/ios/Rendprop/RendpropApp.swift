@@ -25,6 +25,13 @@ final class AppModel: ObservableObject {
     @Published var renders: [UUID: Render] = [:]      // listingID → render
     @Published var assets: [UUID: CaptureAsset] = [:] // listingID → recorded/imported video
 
+    struct RenderedTour {
+        let url: URL
+        let durationS: Double
+        let speedFactor: Double
+    }
+    @Published var tours: [UUID: RenderedTour] = [:]  // listingID → rendered tour
+
     let api: APIClient = MockAPIClient()
 
     func load() async {

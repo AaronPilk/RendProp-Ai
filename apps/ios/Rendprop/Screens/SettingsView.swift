@@ -39,11 +39,11 @@ struct SettingsView: View {
             }
 
             Section("How to shoot a great walkthrough") {
-                Label("Walk slow and steady — match the haptic rhythm", systemImage: "figure.walk")
+                Label("Walk at your normal pace — steady beats slow", systemImage: "figure.walk")
+                Label("No fast spins — turn like you're showing a friend around", systemImage: "arrow.triangle.turn.up.right.diamond")
                 Label("Phone at chest height, keep the bubble level", systemImage: "level")
-                Label("One continuous take, sweep doorways slowly", systemImage: "arrow.triangle.turn.up.right.diamond")
                 Label("Lights on, blinds open", systemImage: "lightbulb")
-                Label("End on the best exterior for a strong finish", systemImage: "house")
+                Label("One continuous take; end on the best exterior", systemImage: "house")
             }
             .font(.rpBody)
 

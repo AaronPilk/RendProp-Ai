@@ -210,10 +210,10 @@ struct CaptureView: View {
         metronome?.invalidate()
         metronome = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             guard isRecording else { return }
-            if motion.pace > 0.7 {
-                Haptics.warning()      // too fast — slow down
+            if motion.pace > 1.1 {
+                Haptics.warning()      // whip pan / rushing — ease off
             } else {
-                Haptics.tick()         // match this rhythm
+                Haptics.tick()         // steady rhythm
             }
         }
     }

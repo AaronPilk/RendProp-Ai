@@ -52,9 +52,11 @@ struct PaceRing: View {
     let isRecording: Bool
 
     private var status: (color: Color, label: String) {
-        if pace < 0.35 { return (Theme.good, "Good pace") }
-        if pace < 0.7  { return (Theme.warn, "Ease off") }
-        return (Theme.bad, "Slow down")
+        // Normal walking pace is fine — the render retimes it into a glide.
+        // Only fast spins and rushing hurt quality.
+        if pace < 0.65 { return (Theme.good, "Good pace") }
+        if pace < 1.1  { return (Theme.warn, "Ease off") }
+        return (Theme.bad, "Too fast")
     }
 
     var body: some View {

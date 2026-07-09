@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// Simulated render pipeline progress (MockAPIClient drives it): step labels,
-/// progress, celebratory ready state → flythrough.
+/// Render progress. Real listings run the ON-DEVICE render engine (retime →
+/// 60fps → scrub-ready encode). Sample listings simulate.
 struct RenderStatusView: View {
     @EnvironmentObject var model: AppModel
 
@@ -9,10 +9,9 @@ struct RenderStatusView: View {
     @State var render: Render
 
     @State private var pollTask: Task<Void, Never>?
-
-    private var steps: [String] { render.pipelineSteps }
-
-    private var isReady: Bool { render.status == "ready" }
+    @State private var phaseLabel = "Queued…"
+    @State private var isReady = false
+    @State private var failureMessage: String?
 
     var body: some View {
         VStack(spacing: 26) {
@@ -25,7 +24,7 @@ struct RenderStatusView: View {
                     .trim(from: 0, to: CGFloat(render.progress))
                     .stroke(Theme.accent, style: StrokeStyle(lineWidth: 8, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                    .animation(.easeInOut(duration: 0.4), value: render.progress)
+                    .animation(.easeInOut(duration: 0.3), value: render.progress)
                 if isReady {
                     Image(systemName: "checkmark")
                         .font(.system(size: 40, weight: .semibold))
@@ -39,33 +38,22 @@ struct RenderStatusView: View {
             .frame(width: 150, height: 150)
 
             VStack(spacing: 6) {
-                Text(isReady ? "Your flythrough is ready" : (render.status == "queued" ? "Queued…" : "\(render.status)…"))
+                Text(isReady ? "Your tour is ready" : (failureMessage ?? phaseLabel))
                     .font(.rpTitle)
+                    .multilineTextAlignment(.center)
                 Text(isReady
-                     ? "Buttery. Drone-smooth. Ready to share."
+                     ? "Smooth, fast, and ready to fly through."
                      : "\(render.tier.displayName) · \(Formatters.duration(render.durationS)) walkthrough")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             }
-
-            // Step timeline
-            VStack(alignment: .leading, spacing: 10) {
-                ForEach(steps.indices, id: \.self) { i in
-                    let stepProgress = Double(i + 1) / Double(steps.count)
-                    let stepDone = render.progress >= stepProgress
-                    let isCurrent = !stepDone && render.progress >= Double(i) / Double(steps.count)
-                    HStack(spacing: 10) {
-                        Image(systemName: stepDone ? "checkmark.circle.fill" : (isCurrent ? "circle.dotted" : "circle"))
-                            .foregroundStyle(stepDone ? Theme.good : (isCurrent ? Theme.accent : Theme.inkDim))
-                        Text(steps[i])
-                            .font(.rpBody)
-                            .foregroundStyle(stepDone || isCurrent ? Theme.ink : Theme.inkDim)
-                        Spacer()
-                    }
-                }
-            }
-            .card()
             .padding(.horizontal)
+
+            if !isReady && failureMessage == nil {
+                Text("Keep the app open — this runs right on your phone.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
 
             Spacer()
 
@@ -75,7 +63,7 @@ struct RenderStatusView: View {
                 } label: {
                     HStack {
                         Image(systemName: "play.fill")
-                        Text("View flythrough").fontWeight(.semibold)
+                        Text("View my tour").fontWeight(.semibold)
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 15)
@@ -88,22 +76,62 @@ struct RenderStatusView: View {
             }
         }
         .background(Theme.bg)
-        .navigationTitle("Render")
+        .navigationTitle("Creating Tour")
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(!isReady)
-        .onAppear { startPolling() }
+        .navigationBarBackButtonHidden(!isReady && failureMessage == nil)
+        .onAppear { start() }
         .onDisappear { pollTask?.cancel() }
     }
 
-    private func startPolling() {
+    // MARK: - Drive
+
+    private func start() {
+        if let asset = model.assets[listing.id] {
+            runRealRender(asset: asset)
+        } else {
+            runSimulation()   // sample listings only
+        }
+    }
+
+    private func runRealRender(asset: CaptureAsset) {
+        pollTask?.cancel()
+        pollTask = Task {
+            do {
+                let output = try await RenderEngine.render(asset: asset) { p, label in
+                    Task { @MainActor in
+                        render.progress = p
+                        phaseLabel = label
+                    }
+                }
+                await MainActor.run {
+                    model.tours[listing.id] = AppModel.RenderedTour(url: output.url,
+                                                                    durationS: output.durationS,
+                                                                    speedFactor: output.speedFactor)
+                    model.setStatus(.ready, for: listing.id)
+                    render.progress = 1.0
+                    isReady = true
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    failureMessage = error.localizedDescription
+                    render.progress = 0
+                }
+            }
+        }
+    }
+
+    private func runSimulation() {
         pollTask?.cancel()
         pollTask = Task {
             while !Task.isCancelled {
                 if let updated = try? await model.api.renderStatus(id: render.id) {
                     await MainActor.run {
                         render = updated
+                        phaseLabel = updated.status == "queued" ? "Queued…" : "\(updated.status)…"
                         if updated.status == "ready" {
                             model.setStatus(.ready, for: listing.id)
+                            isReady = true
                             Haptics.success()
                         }
                     }

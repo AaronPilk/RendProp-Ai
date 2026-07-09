@@ -48,7 +48,7 @@ struct NewListingView: View {
 
                     bigActionButton(
                         title: "Record a walkthrough",
-                        subtitle: "We'll guide you as you walk — it's easy",
+                        subtitle: "Walk at your normal pace — we handle the rest",
                         icon: "record.circle.fill",
                         filled: true
                     ) {

@@ -8,7 +8,8 @@ import WebKit
 ///  3. fallback    — the bundled demo (sample listings only)
 struct PlayerWebView: UIViewRepresentable {
     var remoteURL: URL? = nil
-    var localAsset: CaptureAsset? = nil
+    var localVideoURL: URL? = nil
+    var roomTags: [RoomTag] = []
     var listing: Listing? = nil
 
     func makeUIView(context: Context) -> WKWebView {
@@ -24,10 +25,10 @@ struct PlayerWebView: UIViewRepresentable {
 
         if let remoteURL {
             webView.load(URLRequest(url: remoteURL))
-        } else if let localAsset,
-                  let html = Self.localPreviewHTML(for: localAsset, listing: listing) {
+        } else if let localVideoURL,
+                  let html = Self.localPreviewHTML(videoURL: localVideoURL, roomTags: roomTags, listing: listing) {
             // HTML sits next to the video so one read grant covers both.
-            webView.loadFileURL(html, allowingReadAccessTo: localAsset.localURL.deletingLastPathComponent())
+            webView.loadFileURL(html, allowingReadAccessTo: localVideoURL.deletingLastPathComponent())
         } else if let index = Bundle.main.url(forResource: "index",
                                               withExtension: "html",
                                               subdirectory: "player") {
@@ -41,16 +42,16 @@ struct PlayerWebView: UIViewRepresentable {
     /// Rewrites the bundled player around the user's own video:
     /// swaps the video source, injects their room tags as chapters, and fills
     /// in the listing card. Written beside the video file.
-    static func localPreviewHTML(for asset: CaptureAsset, listing: Listing?) -> URL? {
+    static func localPreviewHTML(videoURL: URL, roomTags: [RoomTag], listing: Listing?) -> URL? {
         guard let template = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "player"),
               var html = try? String(contentsOf: template, encoding: .utf8) else { return nil }
 
         // 1. Video source → the user's file (same directory as the HTML)
         html = html.replacingOccurrences(of: "src=\"demo.mp4\"",
-                                         with: "src=\"\(asset.localURL.lastPathComponent)\"")
+                                         with: "src=\"\(videoURL.lastPathComponent)\"")
 
         // 2. Chapters → their room tags
-        let tags = asset.roomTags.sorted { $0.tMs < $1.tMs }
+        let tags = roomTags.sorted { $0.tMs < $1.tMs }
         let chapterEntries = tags.isEmpty
             ? "{ t: 0, label: 'Home' }"
             : tags.map { tag -> String in
@@ -73,8 +74,8 @@ struct PlayerWebView: UIViewRepresentable {
             html = html.replacingOccurrences(of: "1247 Hillcrest Drive", with: listing.address)
         }
 
-        let out = asset.localURL.deletingLastPathComponent()
-            .appendingPathComponent("preview-\(asset.id.uuidString.prefix(8)).html")
+        let out = videoURL.deletingLastPathComponent()
+            .appendingPathComponent("preview-\(videoURL.deletingPathExtension().lastPathComponent).html")
         do {
             try html.write(to: out, atomically: true, encoding: .utf8)
             return out
