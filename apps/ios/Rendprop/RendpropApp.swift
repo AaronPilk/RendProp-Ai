@@ -80,6 +80,17 @@ final class AppModel: ObservableObject {
         listings[i].zillowURL = trimmed.isEmpty ? nil : trimmed
     }
 
+    func setMainPhoto(_ relPath: String?, for id: UUID) {
+        guard let i = listings.firstIndex(where: { $0.id == id }) else { return }
+        listings[i].mainPhotoRelPath = relPath
+    }
+
+    func setCoordinate(lat: Double, lon: Double, for id: UUID) {
+        guard let i = listings.firstIndex(where: { $0.id == id }) else { return }
+        listings[i].latitude = lat
+        listings[i].longitude = lon
+    }
+
     private func persist() {
         guard !isRestoring else { return }
         PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders)

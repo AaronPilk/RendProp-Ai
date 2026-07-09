@@ -3,6 +3,8 @@ import UIKit
 import PhotosUI
 import CoreImage
 import CoreImage.CIFilterBuiltins
+import MapKit
+import CoreLocation
 
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
@@ -17,6 +19,12 @@ struct FlythroughDetailView: View {
 
     private var asset: CaptureAsset? { model.assets[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
+
+    private var mapCoordinate: CLLocationCoordinate2D? {
+        let l = currentListing
+        guard let lat = l.latitude, let lon = l.longitude else { return nil }
+        return CLLocationCoordinate2D(latitude: lat, longitude: lon)
+    }
 
     /// Prefer the rendered tour; fall back to the raw capture.
     private var playbackURL: URL? { tour?.url ?? asset?.localURL }
@@ -189,13 +197,47 @@ struct FlythroughDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .card()
+
+                // Location map (appears once the address geocodes)
+                if let coord = mapCoordinate {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("LOCATION").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                        Map(coordinateRegion: .constant(
+                                MKCoordinateRegion(center: coord,
+                                                   span: MKCoordinateSpan(latitudeDelta: 0.008, longitudeDelta: 0.008))),
+                            interactionModes: [],
+                            annotationItems: [MapPin(coordinate: coord)]) { pin in
+                            MapMarker(coordinate: pin.coordinate, tint: Theme.accent)
+                        }
+                        .frame(height: 170)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .allowsHitTesting(false)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card()
+                }
             }
             .padding()
         }
         .background(Theme.bg)
         .navigationTitle("Flythrough")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { zillowText = currentListing.zillowURL ?? "" }
+        .onAppear {
+            zillowText = currentListing.zillowURL ?? ""
+            geocodeIfNeeded()
+        }
+    }
+
+    private func geocodeIfNeeded() {
+        guard !currentListing.hasCoordinate else { return }
+        let addr = listing.address.trimmingCharacters(in: .whitespaces)
+        guard !addr.isEmpty, !listing.isSample else { return }
+        CLGeocoder().geocodeAddressString(addr) { placemarks, _ in
+            guard let c = placemarks?.first?.location?.coordinate else { return }
+            DispatchQueue.main.async {
+                model.setCoordinate(lat: c.latitude, lon: c.longitude, for: listing.id)
+            }
+        }
     }
 
     private func statCard(_ value: String, _ label: String, _ icon: String) -> some View {
@@ -227,8 +269,26 @@ struct EnhancedPhoto: Identifiable, Hashable {
     let enhancedURL: URL
 }
 
+/// A single map annotation for the listing's geocoded location.
+struct MapPin: Identifiable {
+    let id = UUID()
+    let coordinate: CLLocationCoordinate2D
+}
+
 struct PhotoStudioView: View {
+    @EnvironmentObject var model: AppModel
     let listing: Listing
+
+    private var mainRelPath: String? {
+        model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
+    }
+    private func isMain(_ p: EnhancedPhoto) -> Bool {
+        mainRelPath == FileStore.relativePath(for: p.enhancedURL)
+    }
+    private func setMain(_ p: EnhancedPhoto) {
+        model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
+        Haptics.success()
+    }
 
     @State private var photos: [EnhancedPhoto] = []
     @State private var showLibrary = false
@@ -273,11 +333,20 @@ struct PhotoStudioView: View {
                     .padding(.vertical, 8)
                 }
 
+                if !photos.isEmpty {
+                    Text("Tap a photo to compare · long-press to set the main image (shown on your listing card).")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(photos) { p in
                         Button { compare = p } label: { thumb(p) }
                             .buttonStyle(.plain)
                             .contextMenu {
+                                Button { setMain(p) } label: {
+                                    Label("Set as main image", systemImage: "star")
+                                }
                                 Button(role: .destructive) { delete(p) } label: {
                                     Label("Delete", systemImage: "trash")
                                 }
@@ -323,6 +392,16 @@ struct PhotoStudioView: View {
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(Theme.border))
+        .overlay(alignment: .topLeading) {
+            if isMain(p) {
+                Label("Main", systemImage: "star.fill")
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Theme.accent, in: Capsule())
+                    .foregroundStyle(Color.white)
+                    .padding(8)
+            }
+        }
     }
 
     private func addButton(_ title: String, _ icon: String, filled: Bool,
@@ -370,15 +449,21 @@ struct PhotoStudioView: View {
             }
             DispatchQueue.main.async {
                 loadExisting()
+                // First photos added become the card's main image automatically.
+                if mainRelPath == nil, let first = photos.first { setMain(first) }
                 isProcessing = false
             }
         }
     }
 
     private func delete(_ p: EnhancedPhoto) {
+        let wasMain = isMain(p)
         try? FileManager.default.removeItem(at: p.enhancedURL)
         try? FileManager.default.removeItem(at: p.originalURL)
         loadExisting()
+        if wasMain {
+            model.setMainPhoto(photos.first.map { FileStore.relativePath(for: $0.enhancedURL) }, for: listing.id)
+        }
     }
 }
 

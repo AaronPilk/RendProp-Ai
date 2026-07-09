@@ -198,21 +198,27 @@ struct ListingCard: View {
         .accessibilityLabel(Text("\(listing.address), \(listing.metaLine), \(listing.status.label)"))
     }
 
-    // Hero area — becomes the real tour poster once a render exists.
+    // Hero area — shows the main listing photo once one is set, else a branded placeholder.
     private var hero: some View {
         ZStack {
-            LinearGradient(
-                colors: [Theme.accent.opacity(0.22),
-                         Theme.accent.opacity(0.08),
-                         Color(red: 0.93, green: 0.90, blue: 1.0)],
-                startPoint: .topLeading, endPoint: .bottomTrailing
-            )
-
-            // Subtle skyline watermark
-            Image(systemName: "house.and.flag.fill")
-                .font(.system(size: 56, weight: .ultraLight))
-                .foregroundStyle(Theme.accent.opacity(0.30))
-                .offset(y: 6)
+            if let url = listing.mainPhotoURL, let ui = UIImage(contentsOfFile: url.path) {
+                Image(uiImage: ui)
+                    .resizable()
+                    .scaledToFill()
+                LinearGradient(colors: [.clear, Color.black.opacity(0.18)],
+                               startPoint: .center, endPoint: .bottom)
+            } else {
+                LinearGradient(
+                    colors: [Theme.accent.opacity(0.22),
+                             Theme.accent.opacity(0.08),
+                             Color(red: 0.93, green: 0.90, blue: 1.0)],
+                    startPoint: .topLeading, endPoint: .bottomTrailing
+                )
+                Image(systemName: "house.and.flag.fill")
+                    .font(.system(size: 56, weight: .ultraLight))
+                    .foregroundStyle(Theme.accent.opacity(0.30))
+                    .offset(y: 6)
+            }
 
             if listing.status == .ready {
                 ZStack {
@@ -228,6 +234,7 @@ struct ListingCard: View {
             }
         }
         .frame(height: 150)
+        .clipped()
         .overlay(alignment: .topTrailing) {
             StatusChip(status: listing.status)
                 .padding(10)
