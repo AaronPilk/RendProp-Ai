@@ -80,14 +80,16 @@ struct PlayerWebView: UIViewRepresentable {
         //    still look complete.
         if agent.isSet {
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
+            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+                                             with: htmlEscape(agent.brokerageLine))
 
-            // brokerage · phone, plus a clickable website link when set
-            var bk = htmlEscape(agent.brokerageLine)
-            if let site = agent.websiteURL {
-                let link = "<a href=\"\(htmlEscape(site.absoluteString))\" target=\"_blank\" rel=\"noopener\" style=\"color:inherit;text-decoration:underline\">\(htmlEscape(agent.websiteDisplay))</a>"
-                bk += bk.isEmpty ? link : " · " + link
-            }
-            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456", with: bk)
+            // Social row: website + Instagram + LinkedIn + TikTok (whichever are set)
+            var socialLinks = [String]()
+            if let u = agent.websiteURL   { socialLinks.append(anchor(u, agent.websiteDisplay.isEmpty ? "Website" : agent.websiteDisplay)) }
+            if let u = agent.instagramURL { socialLinks.append(anchor(u, "Instagram")) }
+            if let u = agent.linkedinURL  { socialLinks.append(anchor(u, "LinkedIn")) }
+            if let u = agent.tiktokURL    { socialLinks.append(anchor(u, "TikTok")) }
+            html = html.replacingOccurrences(of: "<!--SOCIAL-->", with: socialLinks.joined())
 
             // Avatar: the agent's headshot (base64-embedded) if they added one,
             // otherwise their initials.
@@ -100,6 +102,12 @@ struct PlayerWebView: UIViewRepresentable {
             }
 
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
+        }
+
+        // Zillow (per-listing) — a secondary link under the booking form.
+        if let z = listing?.zillowURLValue {
+            let btn = "<a class=\"zillow-link\" href=\"\(htmlEscape(z.absoluteString))\" target=\"_blank\" rel=\"noopener\">↗ View on Zillow</a>"
+            html = html.replacingOccurrences(of: "<!--ZILLOW-->", with: btn)
         }
 
         let out = videoURL.deletingLastPathComponent()
@@ -119,5 +127,9 @@ struct PlayerWebView: UIViewRepresentable {
          .replacingOccurrences(of: "<", with: "&lt;")
          .replacingOccurrences(of: ">", with: "&gt;")
          .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+
+    private static func anchor(_ url: URL, _ label: String) -> String {
+        "<a href=\"\(htmlEscape(url.absoluteString))\" target=\"_blank\" rel=\"noopener\">\(htmlEscape(label))</a>"
     }
 }

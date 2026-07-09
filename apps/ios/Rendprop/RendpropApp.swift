@@ -69,6 +69,17 @@ final class AppModel: ObservableObject {
         listings[i].status = status       // persists via didSet
     }
 
+    func setSold(_ sold: Bool, for id: UUID) {
+        guard let i = listings.firstIndex(where: { $0.id == id }) else { return }
+        listings[i].soldAt = sold ? Date() : nil   // persists via didSet
+    }
+
+    func setZillow(_ url: String, for id: UUID) {
+        guard let i = listings.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = url.trimmingCharacters(in: .whitespaces)
+        listings[i].zillowURL = trimmed.isEmpty ? nil : trimmed
+    }
+
     private func persist() {
         guard !isRestoring else { return }
         PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders)
@@ -190,7 +201,7 @@ struct RendpropApp: App {
         WindowGroup {
             Group {
                 if hasOnboarded {
-                    HomeListingsView()
+                    RootTabView()
                 } else {
                     OnboardingView()
                 }
@@ -199,6 +210,21 @@ struct RendpropApp: App {
             .environmentObject(uploads)
             .tint(Theme.accent)
             .preferredColorScheme(.light)  // Rendprop is light, clean, white + purple
+        }
+    }
+}
+
+// MARK: - Root tab bar
+// Replaces the hidden settings gear with real navigation: Homes, Profile, Settings.
+struct RootTabView: View {
+    var body: some View {
+        TabView {
+            HomeListingsView()
+                .tabItem { Label("Homes", systemImage: "house.fill") }
+            ProfileView()
+                .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
+            NavigationStack { SettingsView() }
+                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
     }
 }

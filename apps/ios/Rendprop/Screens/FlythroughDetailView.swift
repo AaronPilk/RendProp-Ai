@@ -8,6 +8,13 @@ struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     let listing: Listing
 
+    @State private var zillowText = ""
+
+    /// Live copy from the model (listing here is a value snapshot).
+    private var currentListing: Listing {
+        model.listings.first(where: { $0.id == listing.id }) ?? listing
+    }
+
     private var asset: CaptureAsset? { model.assets[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
 
@@ -108,6 +115,45 @@ struct FlythroughDetailView: View {
                 }
                 .buttonStyle(.plain)
 
+                // Manage — sold status + Zillow link
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("MANAGE").font(.rpKicker).foregroundStyle(Theme.inkDim)
+
+                    Button {
+                        model.setSold(!currentListing.isSold, for: listing.id)
+                        Haptics.success()
+                    } label: {
+                        Label(currentListing.isSold ? "Mark as active" : "Mark as sold",
+                              systemImage: currentListing.isSold ? "arrow.uturn.backward" : "checkmark.seal.fill")
+                            .font(.rpBody.weight(.semibold))
+                            .foregroundStyle(currentListing.isSold ? Theme.inkDim : Theme.accent)
+                    }
+
+                    Divider()
+
+                    Text("Zillow listing").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    HStack {
+                        TextField("Paste Zillow URL", text: $zillowText)
+                            .textFieldStyle(.roundedBorder)
+                            .keyboardType(.URL)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        Button("Save") {
+                            model.setZillow(zillowText, for: listing.id)
+                            Haptics.selection()
+                        }
+                        .disabled(zillowText == (currentListing.zillowURL ?? ""))
+                    }
+                    if let z = currentListing.zillowURLValue {
+                        Link(destination: z) {
+                            Label("View on Zillow", systemImage: "arrow.up.right.square")
+                                .font(.rpCaption).foregroundStyle(Theme.accent)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+
                 // Performance: sample listings demo the stats; real listings
                 // stay honest until the beacon pipeline ships.
                 VStack(alignment: .leading, spacing: 12) {
@@ -149,6 +195,7 @@ struct FlythroughDetailView: View {
         .background(Theme.bg)
         .navigationTitle("Flythrough")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { zillowText = currentListing.zillowURL ?? "" }
     }
 
     private func statCard(_ value: String, _ label: String, _ icon: String) -> some View {

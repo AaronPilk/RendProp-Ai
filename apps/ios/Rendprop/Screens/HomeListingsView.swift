@@ -5,10 +5,14 @@ struct HomeListingsView: View {
     @State private var isLoading = true
     @State private var search = ""
 
+    /// Active (not sold) listings, plus search.
     private var filtered: [Listing] {
-        guard !search.isEmpty else { return model.listings }
-        return model.listings.filter { $0.address.localizedCaseInsensitiveContains(search) }
+        let active = model.listings.filter { !$0.isSold }
+        guard !search.isEmpty else { return active }
+        return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
+
+    private var soldCount: Int { model.listings.filter { $0.isSold }.count }
 
     var body: some View {
         NavigationStack {
@@ -20,6 +24,10 @@ struct HomeListingsView: View {
                 } else {
                     ScrollView {
                         LazyVStack(spacing: 18) {
+                            if soldCount > 0 {
+                                NavigationLink { SoldListingsView() } label: { soldFolderRow }
+                                    .buttonStyle(.plain)
+                            }
                             ForEach(filtered) { listing in
                                 NavigationLink(value: listing) {
                                     ListingCard(listing: listing)
@@ -40,16 +48,6 @@ struct HomeListingsView: View {
             .scrollContentBackground(.hidden)
             .navigationDestination(for: Listing.self) { listing in
                 FlythroughDetailView(listing: listing)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    NavigationLink {
-                        SettingsView()
-                    } label: {
-                        Image(systemName: "gearshape")
-                    }
-                    .accessibilityLabel(Text("Settings"))
-                }
             }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
@@ -121,6 +119,61 @@ struct HomeListingsView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var soldFolderRow: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "checkmark.seal.fill")
+                .font(.title2)
+                .foregroundStyle(Theme.accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Sold").font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text("\(soldCount) home\(soldCount == 1 ? "" : "s")")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.bold)).foregroundStyle(Theme.inkDim)
+        }
+        .padding(16)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.border))
+    }
+}
+
+// MARK: - Sold folder
+
+struct SoldListingsView: View {
+    @EnvironmentObject var model: AppModel
+
+    private var sold: [Listing] {
+        model.listings.filter { $0.isSold }
+            .sorted { ($0.soldAt ?? .distantPast) > ($1.soldAt ?? .distantPast) }
+    }
+
+    var body: some View {
+        Group {
+            if sold.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "checkmark.seal").font(.largeTitle).foregroundStyle(Theme.inkDim)
+                    Text("No sold homes yet.").font(.rpBody).foregroundStyle(Theme.inkDim)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 18) {
+                        ForEach(sold) { listing in
+                            NavigationLink(value: listing) { ListingCard(listing: listing) }
+                                .buttonStyle(.plain)
+                        }
+                    }
+                    .padding()
+                }
+            }
+        }
+        .navigationTitle("Sold")
+        .navigationBarTitleDisplayMode(.inline)
+        .background(Theme.bg)
     }
 }
 

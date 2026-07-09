@@ -109,6 +109,9 @@ struct AgentCard {
     var phone: String
     var email: String
     var website: String
+    var instagram: String = ""
+    var linkedin: String = ""
+    var tiktok: String = ""
 
     static var current: AgentCard {
         let d = UserDefaults.standard
@@ -116,7 +119,23 @@ struct AgentCard {
                          brokerage: d.string(forKey: "agent.brokerage") ?? "",
                          phone: d.string(forKey: "agent.phone") ?? "",
                          email: d.string(forKey: "agent.email") ?? "",
-                         website: d.string(forKey: "agent.website") ?? "")
+                         website: d.string(forKey: "agent.website") ?? "",
+                         instagram: d.string(forKey: "agent.instagram") ?? "",
+                         linkedin: d.string(forKey: "agent.linkedin") ?? "",
+                         tiktok: d.string(forKey: "agent.tiktok") ?? "")
+    }
+
+    // MARK: Social links (accept a full URL or a @handle)
+    var instagramURL: URL? { Self.socialURL(instagram, base: "https://instagram.com/") }
+    var tiktokURL: URL? { Self.socialURL(tiktok, base: "https://tiktok.com/@") }
+    var linkedinURL: URL? { Self.socialURL(linkedin, base: "https://linkedin.com/in/") }
+
+    private static func socialURL(_ raw: String, base: String) -> URL? {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        if t.lowercased().hasPrefix("http") { return URL(string: t) }
+        let handle = t.hasPrefix("@") ? String(t.dropFirst()) : t
+        return URL(string: base + handle)
     }
 
     // MARK: Headshot (saved to disk, ~512px)
@@ -177,6 +196,9 @@ struct AgentCardEditorView: View {
     @AppStorage("agent.phone") private var phone = ""
     @AppStorage("agent.email") private var email = ""
     @AppStorage("agent.website") private var website = ""
+    @AppStorage("agent.instagram") private var instagram = ""
+    @AppStorage("agent.linkedin") private var linkedin = ""
+    @AppStorage("agent.tiktok") private var tiktok = ""
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var headshot: UIImage?
@@ -236,6 +258,16 @@ struct AgentCardEditorView: View {
                 Text("This is the card buyers see at the end of every flythrough — how they reach you to book a showing.")
             }
 
+            Section {
+                socialField("Instagram", "camera.aperture", $instagram)
+                socialField("LinkedIn", "briefcase", $linkedin)
+                socialField("TikTok", "music.note", $tiktok)
+            } header: {
+                Text("Social")
+            } footer: {
+                Text("Paste a full link or just your @handle. These show on your profile and on every shared tour.")
+            }
+
             Section("How it looks on your tour") {
                 AgentCardPreview(
                     card: AgentCard(name: name, brokerage: brokerage, phone: phone, email: email, website: website),
@@ -255,6 +287,16 @@ struct AgentCardEditorView: View {
                     await MainActor.run { headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path) }
                 }
             }
+        }
+    }
+
+    private func socialField(_ label: String, _ icon: String, _ text: Binding<String>) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: icon).foregroundStyle(Theme.accent).frame(width: 22)
+            TextField(label, text: text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.URL)
         }
     }
 }
@@ -295,5 +337,79 @@ struct AgentCardPreview: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+// MARK: - Profile tab (the friendly "about me / contact card" view)
+struct ProfileView: View {
+    @State private var card = AgentCard.current
+    @State private var headshot: UIImage?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: Theme.spacing) {
+                    VStack(spacing: 12) {
+                        ZStack {
+                            Circle().fill(Theme.accent.opacity(0.18))
+                            if let headshot {
+                                Image(uiImage: headshot).resizable().scaledToFill().clipShape(Circle())
+                            } else {
+                                Text(card.isSet ? card.initials : "•")
+                                    .font(.system(size: 34, design: .rounded).weight(.bold))
+                                    .foregroundStyle(Theme.accent)
+                            }
+                        }
+                        .frame(width: 96, height: 96)
+
+                        Text(card.isSet ? card.name : "Set up your card").font(.rpTitle)
+                        if !card.brokerageLine.isEmpty {
+                            Text(card.brokerageLine).font(.rpBody).foregroundStyle(Theme.inkDim)
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+
+                    socialRow
+
+                    NavigationLink { AgentCardEditorView() } label: {
+                        Label(card.isSet ? "Edit card" : "Set up card", systemImage: "pencil")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(Theme.accent).foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle("Profile")
+            .navigationBarTitleDisplayMode(.inline)
+            .background(Theme.bg)
+            .onAppear {
+                card = AgentCard.current
+                headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+            }
+        }
+    }
+
+    private var socialRow: some View {
+        let links: [(String, URL?)] = [
+            ("globe", card.websiteURL),
+            ("camera.aperture", card.instagramURL),
+            ("briefcase", card.linkedinURL),
+            ("music.note", card.tiktokURL),
+        ]
+        return HStack(spacing: 14) {
+            ForEach(links.indices, id: \.self) { i in
+                if let url = links[i].1 {
+                    Link(destination: url) {
+                        Image(systemName: links[i].0)
+                            .font(.title3).foregroundStyle(Theme.accent)
+                            .frame(width: 48, height: 48)
+                            .background(Theme.accentSoft, in: Circle())
+                    }
+                }
+            }
+        }
     }
 }
