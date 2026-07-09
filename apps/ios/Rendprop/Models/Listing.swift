@@ -12,6 +12,8 @@ struct Listing: Identifiable, Codable, Hashable {
     var sqft: Int
     var price: Money
     var status: Status = .draft
+    /// Seeded demo listings show sample stats; real listings never do.
+    var isSample = false
     var createdAt = Date()
 
     var metaLine: String {

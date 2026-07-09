@@ -334,6 +334,7 @@ struct ReviewSubmitView: View {
     }
 
     private func start(cellularApproved: Bool) {
+        model.assets[listing.id] = asset            // so the flythrough plays YOUR video
         uploads.begin(fileURL: asset.localURL, cellularApproved: cellularApproved)
         model.setStatus(.uploading, for: listing.id)
         Task {

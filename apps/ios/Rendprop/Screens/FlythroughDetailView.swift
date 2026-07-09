@@ -2,7 +2,10 @@ import SwiftUI
 import UIKit
 
 struct FlythroughDetailView: View {
+    @EnvironmentObject var model: AppModel
     let listing: Listing
+
+    private var asset: CaptureAsset? { model.assets[listing.id] }
 
     private var shareURL: URL {
         URL(string: "https://rendprop.app/f/\(listing.id.uuidString.prefix(8).lowercased())")!
@@ -13,15 +16,18 @@ struct FlythroughDetailView: View {
             VStack(spacing: Theme.spacing) {
                 // Flythrough preview — the actual scroll-scrub player
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("FLYTHROUGH").font(.rpKicker).foregroundStyle(Theme.inkDim)
-                    PlayerWebView()
+                    Text(asset != nil ? "YOUR TOUR" : "SAMPLE TOUR")
+                        .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                    PlayerWebView(localAsset: asset, listing: listing)
                         .frame(height: 460)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                         .overlay(
                             RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
                                 .strokeBorder(Theme.border)
                         )
-                    Text("Scroll inside the preview to fly through.")
+                    Text(asset != nil
+                         ? "Scroll inside to fly through your walkthrough. This is your raw video — the polished drone-smooth version comes from the render step."
+                         : "Sample tour — record a walkthrough to see your own home here.")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                 }
@@ -62,20 +68,29 @@ struct FlythroughDetailView: View {
                     .font(.rpBody)
                 }
 
-                // Mock analytics (real beacons in Phase 2 — master spec Part 13)
+                // Performance: sample listings demo the stats; real listings
+                // stay honest until the beacon pipeline ships.
                 VStack(alignment: .leading, spacing: 12) {
                     Text("PERFORMANCE").font(.rpKicker).foregroundStyle(Theme.inkDim)
-                    HStack(spacing: 10) {
-                        statCard("3,214", "Views", "eye")
-                        statCard("1:42", "Avg watch", "clock")
+                    if listing.isSample {
+                        HStack(spacing: 10) {
+                            statCard("3,214", "Views", "eye")
+                            statCard("1:42", "Avg watch", "clock")
+                        }
+                        HStack(spacing: 10) {
+                            statCard("78%", "Scroll depth", "arrow.down.circle")
+                            statCard("12", "Leads", "person.crop.circle.badge.checkmark")
+                        }
+                        Text("Sample data — this is what your dashboard will look like.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                    } else {
+                        Label("Views, watch time, and leads appear here once your tour is shared.",
+                              systemImage: "chart.bar")
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .padding(.vertical, 8)
                     }
-                    HStack(spacing: 10) {
-                        statCard("78%", "Scroll depth", "arrow.down.circle")
-                        statCard("12", "Leads", "person.crop.circle.badge.checkmark")
-                    }
-                    Text("Sample data — live analytics arrive with the beacon pipeline.")
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
                 }
                 .card()
 

@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 final class AppModel: ObservableObject {
     @Published var listings: [Listing] = []
     @Published var renders: [UUID: Render] = [:]      // listingID → render
+    @Published var assets: [UUID: CaptureAsset] = [:] // listingID → recorded/imported video
 
     let api: APIClient = MockAPIClient()
 

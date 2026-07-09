@@ -6,15 +6,12 @@ actor MockAPIClient: APIClient {
     private var renders: [UUID: (render: Render, startedAt: Date)] = [:]
 
     private static let sampleListings: [Listing] = [
-        Listing(address: "1247 Hillcrest Drive", beds: 4, baths: 3, sqft: 2850,
-                price: .dollars(1_175_000), status: .ready,
+        Listing(address: "1247 Hillcrest Drive (Sample)", beds: 4, baths: 3, sqft: 2850,
+                price: .dollars(1_175_000), status: .ready, isSample: true,
                 createdAt: Date().addingTimeInterval(-86_400 * 2)),
-        Listing(address: "88 Marina Vista #501", beds: 2, baths: 2, sqft: 1240,
-                price: .dollars(689_000), status: .processing,
+        Listing(address: "88 Marina Vista #501 (Sample)", beds: 2, baths: 2, sqft: 1240,
+                price: .dollars(689_000), status: .processing, isSample: true,
                 createdAt: Date().addingTimeInterval(-3_600 * 5)),
-        Listing(address: "402 Sycamore Lane", beds: 5, baths: 4.5, sqft: 4620,
-                price: .dollars(2_450_000), status: .draft,
-                createdAt: Date().addingTimeInterval(-3_600)),
     ]
 
     func listings() async throws -> [Listing] {
