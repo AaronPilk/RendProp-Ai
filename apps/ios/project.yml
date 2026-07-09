@@ -9,7 +9,7 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    DEVELOPMENT_TEAM: "WY2F35GG95"   # Aaron Pilkington — confirmed from a working build's pbxproj
+    DEVELOPMENT_TEAM: ""          # select team manually in Xcode until the true Team ID is pinned
     CODE_SIGN_STYLE: Automatic
     GENERATE_INFOPLIST_FILE: NO
     INFOPLIST_FILE: Rendprop/Info.plist
