@@ -1,4 +1,6 @@
 import SwiftUI
+import UIKit
+import PhotosUI
 
 struct SettingsView: View {
     @AppStorage("wifiOnlyUploads") private var wifiOnlyUploads = true
@@ -15,15 +17,18 @@ struct SettingsView: View {
                     HStack {
                         Text("Current upload")
                         Spacer()
-                        Text("\(s.status.rawValue) · \(s.fractionComplete.formatted(.percent.precision(.fractionLength(0))))")
-                            .foregroundStyle(Theme.inkDim)
+                        Text("\(s.status == .done ? "Complete" : s.status.rawValue.capitalized) · \(s.fractionComplete.formatted(.percent.precision(.fractionLength(0))))")
+                            .foregroundStyle(s.status == .done ? Theme.good : Theme.inkDim)
                     }
                     if s.status == .uploading {
                         Button("Pause upload") { uploads.pause() }
                     } else if s.status == .paused || s.status == .failed {
                         Button("Resume upload") { uploads.resume() }
                     }
-                    Button("Cancel upload", role: .destructive) { uploads.cancel() }
+                    // No cancel once it's finished — nothing left to cancel.
+                    if s.status != .done {
+                        Button("Cancel upload", role: .destructive) { uploads.cancel() }
+                    }
                 }
             }
 
@@ -103,13 +108,46 @@ struct AgentCard {
     var brokerage: String
     var phone: String
     var email: String
+    var website: String
 
     static var current: AgentCard {
         let d = UserDefaults.standard
         return AgentCard(name: d.string(forKey: "agent.name") ?? "",
                          brokerage: d.string(forKey: "agent.brokerage") ?? "",
                          phone: d.string(forKey: "agent.phone") ?? "",
-                         email: d.string(forKey: "agent.email") ?? "")
+                         email: d.string(forKey: "agent.email") ?? "",
+                         website: d.string(forKey: "agent.website") ?? "")
+    }
+
+    // MARK: Headshot (saved to disk, ~512px)
+    static var headshotURL: URL { FileStore.documents.appendingPathComponent("agent-headshot.jpg") }
+    var hasHeadshot: Bool { FileManager.default.fileExists(atPath: Self.headshotURL.path) }
+    var headshotBase64: String? {
+        guard let data = try? Data(contentsOf: Self.headshotURL) else { return nil }
+        return data.base64EncodedString()
+    }
+
+    static func saveHeadshot(_ image: UIImage) {
+        let maxDim: CGFloat = 512
+        let scale = min(1, maxDim / max(image.size.width, image.size.height))
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let scaled = UIGraphicsImageRenderer(size: size).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: size))
+        }
+        if let data = scaled.jpegData(compressionQuality: 0.85) {
+            try? data.write(to: headshotURL, options: .atomic)
+        }
+    }
+    static func removeHeadshot() { try? FileManager.default.removeItem(at: headshotURL) }
+
+    // MARK: Website
+    var websiteURL: URL? {
+        let t = website.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        return URL(string: t.lowercased().hasPrefix("http") ? t : "https://\(t)")
+    }
+    var websiteDisplay: String {
+        (websiteURL?.host ?? website).replacingOccurrences(of: "www.", with: "")
     }
 
     var isSet: Bool { !name.trimmingCharacters(in: .whitespaces).isEmpty }
@@ -138,9 +176,43 @@ struct AgentCardEditorView: View {
     @AppStorage("agent.brokerage") private var brokerage = ""
     @AppStorage("agent.phone") private var phone = ""
     @AppStorage("agent.email") private var email = ""
+    @AppStorage("agent.website") private var website = ""
+
+    @State private var pickerItem: PhotosPickerItem?
+    @State private var headshot: UIImage?
 
     var body: some View {
         Form {
+            Section {
+                HStack(spacing: 14) {
+                    ZStack {
+                        Circle().fill(Theme.accent.opacity(0.18))
+                        if let headshot {
+                            Image(uiImage: headshot).resizable().scaledToFill().clipShape(Circle())
+                        } else {
+                            Image(systemName: "person.fill").font(.title2).foregroundStyle(Theme.accent)
+                        }
+                    }
+                    .frame(width: 60, height: 60)
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        PhotosPicker(selection: $pickerItem, matching: .images) {
+                            Label(headshot == nil ? "Add photo" : "Change photo", systemImage: "camera")
+                        }
+                        if headshot != nil {
+                            Button(role: .destructive) {
+                                AgentCard.removeHeadshot(); headshot = nil; pickerItem = nil
+                            } label: {
+                                Label("Remove", systemImage: "trash").font(.rpCaption)
+                            }
+                        }
+                    }
+                    Spacer()
+                }
+            } header: {
+                Text("Headshot")
+            }
+
             Section {
                 TextField("Full name", text: $name)
                     .textContentType(.name)
@@ -153,6 +225,11 @@ struct AgentCardEditorView: View {
                     .keyboardType(.emailAddress)
                     .textContentType(.emailAddress)
                     .textInputAutocapitalization(.never)
+                TextField("Website (optional)", text: $website)
+                    .keyboardType(.URL)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
             } header: {
                 Text("Your details")
             } footer: {
@@ -160,12 +237,25 @@ struct AgentCardEditorView: View {
             }
 
             Section("How it looks on your tour") {
-                AgentCardPreview(card: AgentCard(name: name, brokerage: brokerage, phone: phone, email: email))
+                AgentCardPreview(
+                    card: AgentCard(name: name, brokerage: brokerage, phone: phone, email: email, website: website),
+                    headshot: headshot)
                     .padding(.vertical, 6)
             }
         }
         .navigationTitle("Agent card")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path) }
+        .onChange(of: pickerItem) { newItem in
+            guard let newItem else { return }
+            Task {
+                if let data = try? await newItem.loadTransferable(type: Data.self),
+                   let img = UIImage(data: data) {
+                    AgentCard.saveHeadshot(img)
+                    await MainActor.run { headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path) }
+                }
+            }
+        }
     }
 }
 
@@ -173,14 +263,19 @@ struct AgentCardEditorView: View {
 /// buyers will see.
 struct AgentCardPreview: View {
     let card: AgentCard
+    var headshot: UIImage? = nil
 
     var body: some View {
         HStack(spacing: 12) {
             ZStack {
                 Circle().fill(Theme.accent.opacity(0.18))
-                Text(card.isSet ? card.initials : "•")
-                    .font(.system(.headline, design: .rounded).weight(.bold))
-                    .foregroundStyle(Theme.accent)
+                if let headshot {
+                    Image(uiImage: headshot).resizable().scaledToFill().clipShape(Circle())
+                } else {
+                    Text(card.isSet ? card.initials : "•")
+                        .font(.system(.headline, design: .rounded).weight(.bold))
+                        .foregroundStyle(Theme.accent)
+                }
             }
             .frame(width: 46, height: 46)
 
@@ -191,6 +286,11 @@ struct AgentCardPreview: View {
                 Text(card.brokerageLine.isEmpty ? "Brokerage · phone" : card.brokerageLine)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+                if card.websiteURL != nil {
+                    Text(card.websiteDisplay)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.accent)
+                }
             }
             Spacer()
         }

@@ -80,9 +80,25 @@ struct PlayerWebView: UIViewRepresentable {
         //    still look complete.
         if agent.isSet {
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
-            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
-                                             with: htmlEscape(agent.brokerageLine))
-            html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(agent.initials))<")
+
+            // brokerage · phone, plus a clickable website link when set
+            var bk = htmlEscape(agent.brokerageLine)
+            if let site = agent.websiteURL {
+                let link = "<a href=\"\(htmlEscape(site.absoluteString))\" target=\"_blank\" rel=\"noopener\" style=\"color:inherit;text-decoration:underline\">\(htmlEscape(agent.websiteDisplay))</a>"
+                bk += bk.isEmpty ? link : " · " + link
+            }
+            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456", with: bk)
+
+            // Avatar: the agent's headshot (base64-embedded) if they added one,
+            // otherwise their initials.
+            if let b64 = agent.headshotBase64 {
+                html = html.replacingOccurrences(
+                    of: "<div class=\"avatar\">SM</div>",
+                    with: "<div class=\"avatar\" style=\"background-image:url('data:image/jpeg;base64,\(b64)');background-size:cover;background-position:center\"></div>")
+            } else {
+                html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(agent.initials))<")
+            }
+
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
         }
 
