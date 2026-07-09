@@ -9,7 +9,10 @@ settings:
     MARKETING_VERSION: "0.1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
-    DEVELOPMENT_TEAM: "WY2F35GG95"   # Aaron Pilkington (personal team)
+    DEVELOPMENT_TEAM: ""          # pick your team in Xcode Signing & Capabilities
+                                  # (to pin it: after picking, run
+                                  #  grep -m1 DEVELOPMENT_TEAM Rendprop.xcodeproj/project.pbxproj
+                                  #  and put that value here)
     CODE_SIGN_STYLE: Automatic
     GENERATE_INFOPLIST_FILE: NO
     INFOPLIST_FILE: Rendprop/Info.plist
