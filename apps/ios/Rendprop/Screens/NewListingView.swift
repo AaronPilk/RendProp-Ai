@@ -47,23 +47,23 @@ struct NewListingView: View {
                         .foregroundStyle(Theme.ink)
 
                     bigActionButton(
-                        title: "Record a walkthrough",
-                        subtitle: "Walk at your normal pace — we handle the rest",
-                        icon: "record.circle.fill",
+                        title: "Upload a video",
+                        subtitle: "Use a clip from your Photos or a drone — the easiest way",
+                        icon: "square.and.arrow.up.fill",
                         filled: true
                     ) {
                         guard prepareListing() else { return }
-                        showCapture = true
+                        showUploadChoice = true
                     }
 
                     bigActionButton(
-                        title: "Use a video I already have",
-                        subtitle: "From your Photos or a drone clip",
-                        icon: "square.and.arrow.up.fill",
+                        title: "Record a walkthrough",
+                        subtitle: "Prefer to film now? We'll coach your pace",
+                        icon: "record.circle.fill",
                         filled: false
                     ) {
                         guard prepareListing() else { return }
-                        showUploadChoice = true
+                        showCapture = true
                     }
 
                     if !formValid {
