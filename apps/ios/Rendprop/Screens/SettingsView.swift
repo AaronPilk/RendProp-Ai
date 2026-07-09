@@ -4,6 +4,7 @@ struct SettingsView: View {
     @AppStorage("wifiOnlyUploads") private var wifiOnlyUploads = true
     @AppStorage("uploadMode") private var uploadMode = Config.UploadMode.simulate.rawValue
     @AppStorage("maxQualityCapture") private var maxQualityCapture = false
+    @AppStorage("hasOnboarded") private var hasOnboarded = true
     @EnvironmentObject var uploads: UploadManager
 
     var body: some View {
@@ -49,6 +50,11 @@ struct SettingsView: View {
 
             Section("Account") {
                 LabeledContent("Signed in as", value: "Dev Agent")
+                Button {
+                    hasOnboarded = false   // flips the root back to the intro
+                } label: {
+                    Label("Watch the intro again", systemImage: "play.rectangle")
+                }
                 Button("Delete account", role: .destructive) {
                     // TODO Phase 2: real account deletion + GDPR erasure across
                     // Stream/R2/DB (master spec Part 15) — App Store requirement.
