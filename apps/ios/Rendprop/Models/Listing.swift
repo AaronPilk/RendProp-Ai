@@ -27,6 +27,20 @@ struct Listing: Identifiable, Codable, Hashable {
     /// Short description used by non-real-estate businesses in place of beds/baths
     /// (e.g. "Rooftop cocktail bar", "12,000 sq ft event hall").
     var tagline: String? = nil
+    /// Industry-specific fields keyed by DetailField.key (e.g. cuisineType,
+    /// membershipPrice, weeklySpecial). Optional/Codable-safe.
+    var details: [String: String]? = nil
+
+    func detail(_ key: String) -> String { details?[key] ?? "" }
+
+    /// The primary deep-link action URL for this listing's business type
+    /// (reservations, booking, online store, website), if the owner set one.
+    var actionURL: URL? {
+        guard let key = SpaceType.current.actionURLKey else { return nil }
+        let raw = detail(key).trimmingCharacters(in: .whitespaces)
+        guard !raw.isEmpty else { return nil }
+        return URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)")
+    }
 
     var isSold: Bool { soldAt != nil }
     var hasCoordinate: Bool { latitude != nil && longitude != nil }
@@ -147,6 +161,94 @@ enum SpaceType: String, CaseIterable, Identifiable {
     var archiveNoun: String { self == .realEstate ? "Sold" : "Archived" }
     var archiveVerb: String { self == .realEstate ? "sold" : "archived" }
 
+    /// The details key whose URL the tour's primary CTA deep-links to
+    /// (reservations / booking / online store / website). nil = use the lead form.
+    var actionURLKey: String? {
+        switch self {
+        case .realEstate: return nil          // uses Zillow field instead
+        case .venue:      return "bookingUrl"
+        case .restaurant: return "reservationUrl"
+        case .retail:     return "onlineStoreUrl"
+        case .fitness:    return "bookingUrl"
+        case .other:      return "website"
+        }
+    }
+
+    /// Industry-specific owner input schema. Real estate keeps its dedicated
+    /// beds/baths/sqft/price; every other type is data-driven from here.
+    var detailFields: [DetailField] {
+        switch self {
+        case .realEstate:
+            return []
+        case .venue:
+            return [
+                DetailField("capacitySeated", "Max seated guests", .number),
+                DetailField("capacityStanding", "Max standing", .number),
+                DetailField("startingPrice", "Starting price", .price),
+                DetailField("eventTypes", "Event types", .multiSelect(
+                    ["Wedding", "Corporate", "Birthday", "Party", "Gala", "Conference", "Photo Shoot"])),
+                DetailField("catering", "Catering", .singleSelect(
+                    ["In-house", "In-house or outside", "Outside only", "None"])),
+                DetailField("spaceSetting", "Indoor / Outdoor", .singleSelect(
+                    ["Indoor", "Outdoor", "Both"])),
+                DetailField("amenities", "Amenities", .multiSelect(
+                    ["Tables & Chairs", "AV / Sound", "Stage", "Dance Floor", "Bridal Suite",
+                     "Parking", "Wheelchair Accessible", "Kitchen", "WiFi", "Bar"])),
+                DetailField("bookingUrl", "Booking / inquiry link", .url),
+            ]
+        case .restaurant:
+            return [
+                DetailField("cuisineType", "Cuisine", .multiSelect(
+                    ["Italian", "Japanese", "Mexican", "American", "Steakhouse", "Seafood",
+                     "Indian", "Thai", "Mediterranean", "French", "BBQ", "Vegan", "Cafe",
+                     "Bar", "Cocktail Bar", "Wine Bar"])),
+                DetailField("priceRange", "Price", .priceRange),
+                DetailField("hours", "Hours", .hours),
+                DetailField("reservationUrl", "Reservations link", .url),
+                DetailField("menuUrl", "Menu link", .url),
+                DetailField("amenities", "Features", .multiSelect(
+                    ["Outdoor Seating", "Private Dining", "Live Music", "Happy Hour", "Full Bar",
+                     "Takeout", "Delivery", "Wheelchair Accessible", "Parking", "Rooftop"])),
+                DetailField("phone", "Phone", .text),
+            ]
+        case .retail:
+            return [
+                DetailField("storeCategory", "Store type", .singleSelect(
+                    ["Grocery", "Convenience", "Specialty Food", "Bakery", "Liquor / Wine",
+                     "Pharmacy", "Apparel", "Home & Hardware", "Boutique", "General Retail"])),
+                DetailField("hours", "Hours", .hours),
+                DetailField("phone", "Phone", .text),
+                DetailField("onlineStoreUrl", "Online store / website", .url),
+                DetailField("weeklySpecial", "Weekly special / promo", .multilineText),
+                DetailField("shoppingOptions", "How to shop", .multiSelect(
+                    ["In-store", "Curbside Pickup", "Local Delivery", "Online Order", "Ships Nationwide"])),
+                DetailField("departments", "Departments", .multiSelect(
+                    ["Produce", "Meat & Seafood", "Deli", "Bakery", "Dairy", "Frozen",
+                     "Pantry", "Beverages", "Household", "Health & Beauty", "Floral"])),
+            ]
+        case .fitness:
+            return [
+                DetailField("facilityType", "Facility type", .singleSelect(
+                    ["Gym", "Yoga Studio", "CrossFit", "Boutique / Classes", "Pilates", "Martial Arts"])),
+                DetailField("membershipPrice", "Membership / mo", .price),
+                DetailField("dayPassPrice", "Day pass", .price),
+                DetailField("is247", "Open 24/7", .toggle),
+                DetailField("hours", "Hours", .hours),
+                DetailField("amenities", "Amenities", .multiSelect(
+                    ["Showers", "Sauna", "Steam Room", "Childcare", "Parking", "Towel Service",
+                     "Lockers", "Pool", "Smoothie Bar", "Recovery"])),
+                DetailField("freeTrialOffer", "Free trial / intro offer", .text),
+                DetailField("bookingUrl", "Booking / schedule link", .url),
+            ]
+        case .other:
+            return [
+                DetailField("hours", "Hours", .hours),
+                DetailField("phone", "Phone", .text),
+                DetailField("website", "Website", .url),
+            ]
+        }
+    }
+
     /// Quick area tags offered while tagging the walkthrough.
     var quickTags: [String] {
         switch self {
@@ -167,6 +269,49 @@ enum SpaceType: String, CaseIterable, Identifiable {
                     "Cardio", "Locker Room", "Showers"]
         case .other:
             return ["Entrance", "Main Area", "Front", "Back", "Outside", "Restrooms"]
+        }
+    }
+}
+
+// MARK: - Dynamic detail fields
+// A typed input schema so each business type collects and displays the right
+// data without hardcoding a screen per industry.
+enum FieldInputType: Equatable {
+    case text
+    case number
+    case price
+    case priceRange
+    case hours
+    case multilineText
+    case toggle
+    case url
+    case singleSelect([String])
+    case multiSelect([String])
+}
+
+struct DetailField: Identifiable {
+    let key: String
+    let label: String
+    let type: FieldInputType
+    var id: String { key }
+
+    init(_ key: String, _ label: String, _ type: FieldInputType) {
+        self.key = key
+        self.label = label
+        self.type = type
+    }
+
+    var isURL: Bool { if case .url = type { return true }; return false }
+
+    /// Human-readable rendering of a stored value for the customer-facing detail.
+    func display(_ raw: String) -> String {
+        switch type {
+        case .toggle:
+            return raw == "true" ? "Yes" : "No"
+        case .multiSelect:
+            return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " · ")
+        default:
+            return raw
         }
     }
 }

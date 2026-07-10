@@ -56,6 +56,22 @@ struct FlythroughDetailView: View {
         return CLLocationCoordinate2D(latitude: lat, longitude: lon)
     }
 
+    // Industry-specific detail fields the owner filled (non-real-estate).
+    private var detailRowFields: [DetailField] {
+        SpaceType.current.detailFields.filter { !$0.isURL && !currentListing.detail($0.key).isEmpty }
+    }
+    private var detailLinkFields: [DetailField] {
+        SpaceType.current.detailFields.filter { $0.isURL && !currentListing.detail($0.key).isEmpty }
+    }
+    private func normalizedURL(_ raw: String) -> URL? {
+        let t = raw.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        return URL(string: t.lowercased().hasPrefix("http") ? t : "https://\(t)")
+    }
+    private func linkLabel(_ f: DetailField) -> String {
+        f.key == SpaceType.current.actionURLKey ? SpaceType.current.ctaTitle : f.label
+    }
+
     /// Prefer the rendered tour; fall back to the raw capture.
     private var playbackURL: URL? { tour?.url ?? asset?.localURL }
 
@@ -226,6 +242,34 @@ struct FlythroughDetailView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .card()
+
+                // Business details (non real estate) — fields + action links
+                if !SpaceType.current.showsPropertyDetails,
+                   !detailRowFields.isEmpty || !detailLinkFields.isEmpty {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("DETAILS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                        ForEach(detailRowFields) { f in
+                            HStack(alignment: .top, spacing: 12) {
+                                Text(f.label).font(.rpBody).foregroundStyle(Theme.inkDim)
+                                Spacer()
+                                Text(f.display(currentListing.detail(f.key)))
+                                    .font(.rpBody).foregroundStyle(Theme.ink)
+                                    .multilineTextAlignment(.trailing)
+                            }
+                        }
+                        ForEach(detailLinkFields) { f in
+                            if let url = normalizedURL(currentListing.detail(f.key)) {
+                                Link(destination: url) {
+                                    Label(linkLabel(f), systemImage: "arrow.up.right.square")
+                                        .font(.rpBody.weight(.semibold))
+                                        .foregroundStyle(Theme.accent)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card()
+                }
 
                 // Location map (appears once the address geocodes)
                 if let coord = mapCoordinate {
