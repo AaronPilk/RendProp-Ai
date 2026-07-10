@@ -12,6 +12,21 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section {
+                Picker(selection: $spaceTypeRaw) {
+                    ForEach(SpaceType.allCases) { t in
+                        Label(t.displayName, systemImage: t.systemImage).tag(t.rawValue)
+                    }
+                } label: {
+                    Text("Business type")
+                }
+                .pickerStyle(.inline)
+            } header: {
+                Text("Business type")
+            } footer: {
+                Text("Tap any type to instantly re-theme the app — no new account needed. Changes the wording, capture area tags, and your tour's call-to-action.")
+            }
+
             Section("Uploads") {
                 Toggle("Only upload big videos on Wi-Fi", isOn: $wifiOnlyUploads)
                 if let s = uploads.state {
@@ -31,20 +46,6 @@ struct SettingsView: View {
                         Button("Cancel upload", role: .destructive) { uploads.cancel() }
                     }
                 }
-            }
-
-            Section {
-                Picker(selection: $spaceTypeRaw) {
-                    ForEach(SpaceType.allCases) { t in
-                        Label(t.displayName, systemImage: t.systemImage).tag(t.rawValue)
-                    }
-                } label: {
-                    Text("Business type")
-                }
-            } header: {
-                Text("Business")
-            } footer: {
-                Text("Tailors wording, capture area tags, and the tour's call-to-action for your business.")
             }
 
             Section("Brand kit") {
