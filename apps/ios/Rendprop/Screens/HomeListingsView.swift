@@ -2,19 +2,27 @@ import SwiftUI
 
 struct HomeListingsView: View {
     @EnvironmentObject var model: AppModel
-    // Observed so the title/labels refresh live when the business type changes.
+    // LOAD-BEARING: observing this key is what makes `filtered`/`soldCount`
+    // recompute when the business type changes (they read SpaceType.current,
+    // which isn't itself observable). Do not remove — filtering would silently
+    // stop updating on type switch.
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var isLoading = true
     @State private var search = ""
 
-    /// Active (not sold) listings, plus search.
+    /// Only listings for the CURRENT business type (a gym never sees houses),
+    /// active (not sold), plus search.
     private var filtered: [Listing] {
-        let active = model.listings.filter { !$0.isSold }
+        let active = model.listings.filter { $0.belongsToCurrentType && !$0.isSold }
         guard !search.isEmpty else { return active }
         return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
 
-    private var soldCount: Int { model.listings.filter { $0.isSold }.count }
+    /// Archived count for THIS industry only — real-estate sold houses don't
+    /// show up in the Food or Gym archive.
+    private var soldCount: Int {
+        model.listings.filter { $0.belongsToCurrentType && $0.isSold }.count
+    }
 
     var body: some View {
         NavigationStack {
@@ -151,7 +159,7 @@ struct SoldListingsView: View {
     @EnvironmentObject var model: AppModel
 
     private var sold: [Listing] {
-        model.listings.filter { $0.isSold }
+        model.listings.filter { $0.belongsToCurrentType && $0.isSold }
             .sorted { ($0.soldAt ?? .distantPast) > ($1.soldAt ?? .distantPast) }
     }
 

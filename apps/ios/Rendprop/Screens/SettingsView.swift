@@ -363,7 +363,9 @@ struct ProfileView: View {
     @State private var portfolioURL: URL?
     @State private var showPortfolioShare = false
 
-    private var shareableCount: Int { model.listings.filter { !$0.isSample }.count }
+    private var shareableCount: Int {
+        model.listings.filter { !$0.isSample && $0.belongsToCurrentType }.count
+    }
 
     var body: some View {
         NavigationStack {
@@ -468,7 +470,9 @@ struct ShareSheet: UIViewControllerRepresentable {
 /// becomes a hosted URL once the backend ships.
 enum PortfolioExporter {
     static func build(listings: [Listing], agent: AgentCard) -> URL? {
-        let active = listings.filter { !$0.isSample && !$0.isSold }
+        // Only the current industry's tours — a real-estate portfolio never
+        // bundles in food places.
+        let active = listings.filter { !$0.isSample && !$0.isSold && $0.belongsToCurrentType }
         guard !active.isEmpty else { return nil }
 
         let cards = active.map { l -> String in

@@ -14,6 +14,11 @@ struct Listing: Identifiable, Codable, Hashable {
     var status: Status = .draft
     /// Seeded demo listings show sample stats; real listings never do.
     var isSample = false
+    /// Which business type created this listing. Optional so listings saved
+    /// before this field existed still decode — those legacy listings are
+    /// treated as real estate (the original default). A gym only ever sees gym
+    /// listings; real-estate sold houses never leak into Food mode.
+    var spaceTypeRaw: String? = nil
     var createdAt = Date()
     /// Optional so listings saved before these fields existed still decode.
     var soldAt: Date? = nil
@@ -32,6 +37,18 @@ struct Listing: Identifiable, Codable, Hashable {
     var details: [String: String]? = nil
 
     func detail(_ key: String) -> String { details?[key] ?? "" }
+
+    /// The business type this listing belongs to. Legacy listings (nil) and
+    /// samples default to real estate.
+    var spaceType: SpaceType {
+        SpaceType(rawValue: spaceTypeRaw ?? "") ?? .realEstate
+    }
+
+    /// True when this listing belongs to the currently-selected business type.
+    /// Samples are always shown (they're reseeded per type already).
+    var belongsToCurrentType: Bool {
+        isSample || spaceType == SpaceType.current
+    }
 
     /// The primary deep-link action URL for this listing's business type
     /// (reservations, booking, online store, website), if the owner set one.

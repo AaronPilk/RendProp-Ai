@@ -243,6 +243,7 @@ struct NewListingView: View {
                                   sqft: isRE ? (Int(sqft) ?? 0) : 0,
                                   price: .dollars(isRE ? (Int(priceDollars) ?? 0) : 0),
                                   status: .draft,
+                                  spaceTypeRaw: SpaceType.current.rawValue,  // stamp the industry
                                   latitude: pendingCoord?.latitude,
                                   longitude: pendingCoord?.longitude,
                                   tagline: trimmedTagline.isEmpty ? nil : trimmedTagline,
