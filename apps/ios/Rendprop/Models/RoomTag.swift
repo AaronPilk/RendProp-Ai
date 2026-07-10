@@ -8,8 +8,7 @@ struct RoomTag: Identifiable, Codable, Hashable {
 
     var tSeconds: Double { Double(tMs) / 1000.0 }
 
-    static let quickNames = [
-        "Exterior", "Entry", "Living Room", "Kitchen", "Dining",
-        "Primary", "Bedroom", "Bath", "Office", "Garage", "Backyard"
-    ]
+    /// Quick tags adapt to the selected business type (homes → rooms, a bar →
+    /// Dining/Bar/Patio, a store → Aisles/Checkout, etc.).
+    static var quickNames: [String] { SpaceType.current.quickTags }
 }

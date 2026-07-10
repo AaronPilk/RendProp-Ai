@@ -16,6 +16,7 @@ struct NewListingView: View {
     @State private var baths = 2.0
     @State private var sqft = ""
     @State private var priceDollars = ""
+    @State private var tagline = ""
 
     @State private var showCapture = false
     @State private var showUploadChoice = false
@@ -93,33 +94,48 @@ struct NewListingView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .card()
 
-                // Optional details — tucked away
-                DisclosureGroup {
-                    VStack(spacing: 14) {
-                        Stepper("Bedrooms: \(beds)", value: $beds, in: 0...12)
-                        Stepper(String(format: "Bathrooms: %g", baths), value: $baths, in: 0...12, step: 0.5)
-                        TextField("Square feet", text: $sqft)
-                            .keyboardType(.numberPad)
-                            .padding(12)
-                            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        TextField("Asking price", text: $priceDollars)
-                            .keyboardType(.numberPad)
-                            .padding(12)
-                            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                // Optional details — real estate gets beds/baths/sqft/price;
+                // other businesses get a short description instead.
+                if SpaceType.current.showsPropertyDetails {
+                    DisclosureGroup {
+                        VStack(spacing: 14) {
+                            Stepper("Bedrooms: \(beds)", value: $beds, in: 0...12)
+                            Stepper(String(format: "Bathrooms: %g", baths), value: $baths, in: 0...12, step: 0.5)
+                            TextField("Square feet", text: $sqft)
+                                .keyboardType(.numberPad)
+                                .padding(12)
+                                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            TextField("Asking price", text: $priceDollars)
+                                .keyboardType(.numberPad)
+                                .padding(12)
+                                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
+                        .padding(.top, 8)
+                    } label: {
+                        Label("Home details (optional)", systemImage: "list.bullet")
+                            .font(.rpHeadline)
+                            .foregroundStyle(Theme.ink)
                     }
-                    .padding(.top, 8)
-                } label: {
-                    Label("Home details (optional)", systemImage: "list.bullet")
-                        .font(.rpHeadline)
-                        .foregroundStyle(Theme.ink)
+                    .tint(Theme.inkDim)
+                    .card()
+                } else {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Label("Description (optional)", systemImage: "text.alignleft")
+                            .font(.rpHeadline)
+                            .foregroundStyle(Theme.ink)
+                        TextField("e.g. Rooftop cocktail bar with skyline views", text: $tagline)
+                            .font(.body)
+                            .padding(14)
+                            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .card()
                 }
-                .tint(Theme.inkDim)
-                .card()
             }
             .padding()
         }
         .background(Theme.bg)
-        .navigationTitle("New Listing")
+        .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(isPresented: $showCapture) {
             CaptureView { asset in
@@ -202,6 +218,7 @@ struct NewListingView: View {
     private func prepareListing() -> Bool {
         guard formValid else { return false }
         if createdListing == nil {
+            let trimmedTagline = tagline.trimmingCharacters(in: .whitespaces)
             let listing = Listing(address: address.trimmingCharacters(in: .whitespaces),
                                   beds: beds,
                                   baths: baths,
@@ -209,7 +226,8 @@ struct NewListingView: View {
                                   price: .dollars(Int(priceDollars) ?? 0),
                                   status: .draft,
                                   latitude: pendingCoord?.latitude,
-                                  longitude: pendingCoord?.longitude)
+                                  longitude: pendingCoord?.longitude,
+                                  tagline: trimmedTagline.isEmpty ? nil : trimmedTagline)
             createdListing = listing
             model.add(listing)
         }

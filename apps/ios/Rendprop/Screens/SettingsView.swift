@@ -7,6 +7,7 @@ struct SettingsView: View {
     @AppStorage("uploadMode") private var uploadMode = Config.UploadMode.simulate.rawValue
     @AppStorage("maxQualityCapture") private var maxQualityCapture = false
     @AppStorage("hasOnboarded") private var hasOnboarded = true
+    @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @EnvironmentObject var uploads: UploadManager
 
     var body: some View {
@@ -30,6 +31,20 @@ struct SettingsView: View {
                         Button("Cancel upload", role: .destructive) { uploads.cancel() }
                     }
                 }
+            }
+
+            Section {
+                Picker(selection: $spaceTypeRaw) {
+                    ForEach(SpaceType.allCases) { t in
+                        Label(t.displayName, systemImage: t.systemImage).tag(t.rawValue)
+                    }
+                } label: {
+                    Text("Business type")
+                }
+            } header: {
+                Text("Business")
+            } footer: {
+                Text("Tailors wording, capture area tags, and the tour's call-to-action for your business.")
             }
 
             Section("Brand kit") {
@@ -238,7 +253,7 @@ struct AgentCardEditorView: View {
             Section {
                 TextField("Full name", text: $name)
                     .textContentType(.name)
-                TextField("Brokerage", text: $brokerage)
+                TextField(SpaceType.current.businessLabel, text: $brokerage)
                     .textContentType(.organizationName)
                 TextField("Phone", text: $phone)
                     .keyboardType(.phonePad)

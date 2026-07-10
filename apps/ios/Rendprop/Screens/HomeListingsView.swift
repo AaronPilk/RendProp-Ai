@@ -2,6 +2,8 @@ import SwiftUI
 
 struct HomeListingsView: View {
     @EnvironmentObject var model: AppModel
+    // Observed so the title/labels refresh live when the business type changes.
+    @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var isLoading = true
     @State private var search = ""
 
@@ -45,7 +47,7 @@ struct HomeListingsView: View {
                     .refreshable { await model.load() }
                 }
             }
-            .navigationTitle("My Homes")
+            .navigationTitle(SpaceType.current.collectionTitle)
             .background(Theme.bg)
             .scrollContentBackground(.hidden)
             .safeAreaInset(edge: .bottom) {
@@ -57,7 +59,7 @@ struct HomeListingsView: View {
                         } label: {
                             HStack(spacing: 8) {
                                 Image(systemName: "plus")
-                                Text("New Listing").fontWeight(.semibold)
+                                Text(SpaceType.current.newItemTitle).fontWeight(.semibold)
                             }
                             .font(.body)
                             .frame(maxWidth: .infinity)
@@ -99,7 +101,7 @@ struct HomeListingsView: View {
             Image(systemName: "video.badge.plus")
                 .font(.system(size: 46, weight: .light))
                 .foregroundStyle(Theme.accent)
-            Text("Let's film your first home")
+            Text("Let's film your first \(SpaceType.current.spaceNoun)")
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
             Text("Walk through with your phone.\nWe turn it into a stunning video tour.")
@@ -126,8 +128,8 @@ struct HomeListingsView: View {
                 .font(.title2)
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
-                Text("Sold").font(.rpHeadline).foregroundStyle(Theme.ink)
-                Text("\(soldCount) home\(soldCount == 1 ? "" : "s")")
+                Text(SpaceType.current.archiveNoun).font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text("\(soldCount) \(SpaceType.current.spaceNoun)\(soldCount == 1 ? "" : "s")")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
             Spacer()
@@ -155,7 +157,7 @@ struct SoldListingsView: View {
             if sold.isEmpty {
                 VStack(spacing: 8) {
                     Image(systemName: "checkmark.seal").font(.largeTitle).foregroundStyle(Theme.inkDim)
-                    Text("No sold homes yet.").font(.rpBody).foregroundStyle(Theme.inkDim)
+                    Text("Nothing here yet.").font(.rpBody).foregroundStyle(Theme.inkDim)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -174,7 +176,7 @@ struct SoldListingsView: View {
                 }
             }
         }
-        .navigationTitle("Sold")
+        .navigationTitle(SpaceType.current.archiveNoun)
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.bg)
     }
@@ -269,7 +271,7 @@ struct ListingCard: View {
                     .foregroundStyle(Theme.inkDim)
             }
             HStack {
-                Text(listing.metaLine)
+                Text(listing.subtitleLine)
                     .font(.subheadline)
                     .foregroundStyle(Theme.inkDim)
                 Spacer()

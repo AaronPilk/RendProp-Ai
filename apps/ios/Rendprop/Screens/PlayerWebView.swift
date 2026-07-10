@@ -104,6 +104,12 @@ struct PlayerWebView: UIViewRepresentable {
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
         }
 
+        // Call-to-action adapts to the business type (real estate keeps
+        // "Book a showing"; a bar becomes "Book a table", etc.).
+        if SpaceType.current != .realEstate {
+            html = html.replacingOccurrences(of: "Book a showing", with: htmlEscape(SpaceType.current.ctaTitle))
+        }
+
         // Zillow (per-listing) — a secondary link under the booking form.
         if let z = listing?.zillowURLValue {
             let btn = "<a class=\"zillow-link\" href=\"\(htmlEscape(z.absoluteString))\" target=\"_blank\" rel=\"noopener\">↗ View on Zillow</a>"

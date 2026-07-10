@@ -159,7 +159,7 @@ struct FlythroughDetailView: View {
                         model.setSold(!currentListing.isSold, for: listing.id)
                         Haptics.success()
                     } label: {
-                        Label(currentListing.isSold ? "Mark as active" : "Mark as sold",
+                        Label(currentListing.isSold ? "Mark as active" : "Mark as \(SpaceType.current.archiveVerb)",
                               systemImage: currentListing.isSold ? "arrow.uturn.backward" : "checkmark.seal.fill")
                             .font(.rpBody.weight(.semibold))
                             .foregroundStyle(currentListing.isSold ? Theme.inkDim : Theme.accent)
@@ -219,7 +219,8 @@ struct FlythroughDetailView: View {
                 // Listing info
                 VStack(alignment: .leading, spacing: 6) {
                     Text(listing.address).font(.rpTitle)
-                    Text("\(listing.metaLine) · \(listing.price.formatted)")
+                    Text([listing.subtitleLine, listing.price.cents > 0 ? listing.price.formatted : ""]
+                            .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.rpBody)
                         .foregroundStyle(Theme.inkDim)
                 }
