@@ -52,7 +52,7 @@ struct SettingsView: View {
                 NavigationLink {
                     AgentCardEditorView()
                 } label: {
-                    LabeledContent("Agent card",
+                    LabeledContent(SpaceType.current.profileCardName,
                                    value: AgentCard.current.isSet ? AgentCard.current.name : "Set up")
                 }
                 // TODO Phase 2: org brand kit (logo, colors, CTA) — master spec 4.5
@@ -247,13 +247,13 @@ struct AgentCardEditorView: View {
                     Spacer()
                 }
             } header: {
-                Text("Headshot")
+                Text(SpaceType.current.profilePhotoLabel)
             }
 
             Section {
-                TextField("Full name", text: $name)
+                TextField(SpaceType.current.profileNameLabel, text: $name)
                     .textContentType(.name)
-                TextField(SpaceType.current.businessLabel, text: $brokerage)
+                TextField(SpaceType.current.profileOrgLabel, text: $brokerage)
                     .textContentType(.organizationName)
                 TextField("Phone", text: $phone)
                     .keyboardType(.phonePad)
@@ -290,7 +290,7 @@ struct AgentCardEditorView: View {
                     .padding(.vertical, 6)
             }
         }
-        .navigationTitle("Agent card")
+        .navigationTitle(SpaceType.current.profileCardName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path) }
         .onChange(of: pickerItem) { newItem in

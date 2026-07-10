@@ -283,6 +283,14 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Profile identity flips per type: real estate profiles the AGENT
+    /// (person + brokerage); every other type profiles the BUSINESS
+    /// (business name + owner). Same storage, different meaning.
+    var profileCardName: String { self == .realEstate ? "Agent card" : "Business card" }
+    var profileNameLabel: String { self == .realEstate ? "Full name" : "Business name" }
+    var profileOrgLabel: String { self == .realEstate ? "Brokerage" : "Owner or manager (optional)" }
+    var profilePhotoLabel: String { self == .realEstate ? "Headshot" : "Logo or photo" }
+
     /// Who watches this type's tours — used everywhere the copy says "buyers".
     var customerNoun: String {
         switch self {
