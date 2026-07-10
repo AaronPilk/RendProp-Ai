@@ -5,6 +5,8 @@ import CoreImage
 import CoreImage.CIFilterBuiltins
 import MapKit
 import CoreLocation
+import RoomPlan
+import QuickLook
 
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
@@ -112,6 +114,28 @@ struct FlythroughDetailView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Listing photos").font(.rpHeadline).foregroundStyle(Theme.ink)
                             Text("Turn phone photos into pro listing images")
+                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(Theme.inkDim)
+                    }
+                    .card()
+                }
+                .buttonStyle(.plain)
+
+                // Floor plan — LiDAR 3D room scan
+                NavigationLink {
+                    FloorPlanView(listing: listing)
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: "cube.transparent")
+                            .font(.title3)
+                            .foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Floor plan").font(.rpHeadline).foregroundStyle(Theme.ink)
+                            Text("Scan the space into a 3D floor plan")
                                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         }
                         Spacer()
@@ -617,6 +641,241 @@ struct CameraPicker: UIViewControllerRepresentable {
 
         func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
             picker.dismiss(animated: true)
+        }
+    }
+}
+
+// MARK: - Floor plan (Apple RoomPlan → USDZ "dollhouse")
+// LiDAR-only (iPhone/iPad Pro). Scans a room into a 3D model, exports USDZ,
+// and previews it with QuickLook. Per-listing file in Documents/FloorPlans/.
+
+struct FloorPlanView: View {
+    let listing: Listing
+
+    @State private var showScanner = false
+    @State private var showViewer = false
+    @State private var planExists = false
+
+    private var usdzURL: URL {
+        let dir = FileStore.documents.appendingPathComponent("FloorPlans", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("\(listing.id.uuidString).usdz")
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: Theme.spacing) {
+                if RoomCaptureSession.isSupported {
+                    VStack(spacing: 10) {
+                        Image(systemName: planExists ? "cube.fill" : "cube.transparent")
+                            .font(.system(size: 44, weight: .light))
+                            .foregroundStyle(Theme.accent)
+                        Text(planExists ? "Floor plan ready" : "Scan the room")
+                            .font(.rpTitle)
+                        Text(planExists
+                             ? "View your 3D floor plan, or re-scan to update it."
+                             : "Walk the room slowly with your phone. Rendprop builds a 3D dollhouse floor plan you can share.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+
+                    if planExists {
+                        primaryButton("View floor plan", "rotate.3d") { showViewer = true }
+                        secondaryButton("Re-scan room", "arrow.clockwise") { showScanner = true }
+                        ShareLink(item: usdzURL) {
+                            Label("Share floor plan", systemImage: "square.and.arrow.up")
+                                .font(.rpBody.weight(.semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    } else {
+                        primaryButton("Start scan", "cube.transparent") { showScanner = true }
+                    }
+                } else {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.system(size: 40, weight: .light))
+                            .foregroundStyle(Theme.inkDim)
+                        Text("3D scanning needs LiDAR")
+                            .font(.rpTitle)
+                        Text("Floor-plan scanning requires a LiDAR sensor — available on iPhone Pro and iPad Pro models. Your photos and video tour still work on every device.")
+                            .font(.rpBody).foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                }
+            }
+            .padding()
+        }
+        .background(Theme.bg)
+        .navigationTitle("Floor plan")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { planExists = FileManager.default.fileExists(atPath: usdzURL.path) }
+        .fullScreenCover(isPresented: $showScanner) {
+            RoomScanView(exportURL: usdzURL) { url in
+                showScanner = false
+                planExists = FileManager.default.fileExists(atPath: usdzURL.path)
+            }
+            .ignoresSafeArea()
+        }
+        .fullScreenCover(isPresented: $showViewer) {
+            NavigationStack {
+                USDZQuickLook(url: usdzURL)
+                    .ignoresSafeArea()
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showViewer = false }
+                        }
+                    }
+            }
+        }
+    }
+
+    private func primaryButton(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                .background(Theme.accent).foregroundStyle(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+    private func secondaryButton(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                .background(Theme.fillSubtle).foregroundStyle(Theme.ink)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+}
+
+/// Hosts RoomPlan's scanning UI + Done/Cancel, exports USDZ on finish.
+struct RoomScanView: UIViewControllerRepresentable {
+    let exportURL: URL
+    let onFinish: (URL?) -> Void
+
+    func makeUIViewController(context: Context) -> RoomScanController {
+        let c = RoomScanController(exportURL: exportURL)
+        c.onFinish = onFinish
+        return c
+    }
+    func updateUIViewController(_ uiViewController: RoomScanController, context: Context) {}
+}
+
+final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
+    private let roomCaptureView = RoomCaptureView(frame: .zero)
+    private let config = RoomCaptureSession.Configuration()
+    private var isScanning = false
+    let exportURL: URL
+    var onFinish: ((URL?) -> Void)?
+
+    init(exportURL: URL) {
+        self.exportURL = exportURL
+        super.init(nibName: nil, bundle: nil)
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.backgroundColor = .black
+        roomCaptureView.translatesAutoresizingMaskIntoConstraints = false
+        roomCaptureView.delegate = self
+        view.addSubview(roomCaptureView)
+
+        let cancel = makeButton("Cancel", filled: false, action: #selector(cancelTapped))
+        let done = makeButton("Done", filled: true, action: #selector(doneTapped))
+        let stack = UIStackView(arrangedSubviews: [cancel, done])
+        stack.axis = .horizontal
+        stack.spacing = 12
+        stack.distribution = .fillEqually
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(stack)
+
+        NSLayoutConstraint.activate([
+            roomCaptureView.topAnchor.constraint(equalTo: view.topAnchor),
+            roomCaptureView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            roomCaptureView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            roomCaptureView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
+            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
+            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            stack.heightAnchor.constraint(equalToConstant: 50),
+        ])
+    }
+
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        roomCaptureView.captureSession.run(configuration: config)
+        isScanning = true
+    }
+
+    override func viewWillDisappear(_ animated: Bool) {
+        super.viewWillDisappear(animated)
+        if isScanning { roomCaptureView.captureSession.stop(); isScanning = false }
+    }
+
+    @objc private func doneTapped() {
+        // Stops scanning and triggers processing; the delegate fires with the result.
+        roomCaptureView.captureSession.stop()
+        isScanning = false
+    }
+
+    @objc private func cancelTapped() {
+        roomCaptureView.captureSession.stop()
+        isScanning = false
+        onFinish?(nil)
+    }
+
+    // Let RoomPlan process the scan into a final result.
+    func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool { true }
+
+    func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
+        do {
+            try processedResult.export(to: exportURL, exportOptions: .parametric)
+            onFinish?(exportURL)
+        } catch {
+            onFinish?(nil)
+        }
+    }
+
+    private func makeButton(_ title: String, filled: Bool, action: Selector) -> UIButton {
+        let b = UIButton(type: .system)
+        b.setTitle(title, for: .normal)
+        b.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        b.backgroundColor = filled ? UIColor.systemPurple : UIColor.secondarySystemBackground
+        b.setTitleColor(filled ? .white : .systemPurple, for: .normal)
+        b.layer.cornerRadius = 12
+        b.addTarget(self, action: action, for: .touchUpInside)
+        return b
+    }
+}
+
+/// QuickLook preview for the exported USDZ floor plan.
+struct USDZQuickLook: UIViewControllerRepresentable {
+    let url: URL
+
+    func makeUIViewController(context: Context) -> QLPreviewController {
+        let c = QLPreviewController()
+        c.dataSource = context.coordinator
+        return c
+    }
+    func updateUIViewController(_ uiViewController: QLPreviewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(url: url) }
+
+    final class Coordinator: NSObject, QLPreviewControllerDataSource {
+        let url: URL
+        init(url: URL) { self.url = url }
+        func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
+        func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
+            url as NSURL
         }
     }
 }

@@ -342,8 +342,13 @@ struct AgentCardPreview: View {
 
 // MARK: - Profile tab (the friendly "about me / contact card" view)
 struct ProfileView: View {
+    @EnvironmentObject var model: AppModel
     @State private var card = AgentCard.current
     @State private var headshot: UIImage?
+    @State private var portfolioURL: URL?
+    @State private var showPortfolioShare = false
+
+    private var shareableCount: Int { model.listings.filter { !$0.isSample }.count }
 
     var body: some View {
         NavigationStack {
@@ -379,6 +384,22 @@ struct ProfileView: View {
                             .background(Theme.accent).foregroundStyle(Color.white)
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
+
+                    if shareableCount > 0 {
+                        Button {
+                            portfolioURL = PortfolioExporter.build(listings: model.listings, agent: AgentCard.current)
+                            showPortfolioShare = portfolioURL != nil
+                        } label: {
+                            Label("Share my portfolio (\(shareableCount))", systemImage: "square.and.arrow.up")
+                                .font(.rpBody.weight(.semibold))
+                                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                        Text("One link with all your listings — send it to a buyer to browse everything you have.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                    }
                 }
                 .padding()
             }
@@ -388,6 +409,9 @@ struct ProfileView: View {
             .onAppear {
                 card = AgentCard.current
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+            }
+            .sheet(isPresented: $showPortfolioShare) {
+                if let u = portfolioURL { ShareSheet(items: [u]) }
             }
         }
     }
@@ -411,5 +435,91 @@ struct ProfileView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Portfolio share (one page with all listings)
+
+struct ShareSheet: UIViewControllerRepresentable {
+    let items: [Any]
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        UIActivityViewController(activityItems: items, applicationActivities: nil)
+    }
+    func updateUIViewController(_ uiViewController: UIActivityViewController, context: Context) {}
+}
+
+/// Builds a self-contained HTML portfolio of the agent's active listings —
+/// main photos embedded, each linking to its tour. Shareable as a file today;
+/// becomes a hosted URL once the backend ships.
+enum PortfolioExporter {
+    static func build(listings: [Listing], agent: AgentCard) -> URL? {
+        let active = listings.filter { !$0.isSample && !$0.isSold }
+        guard !active.isEmpty else { return nil }
+
+        let cards = active.map { l -> String in
+            var img = "<div class=\"ph ph-empty\">RENDPROP</div>"
+            if let url = l.mainPhotoURL, let data = try? Data(contentsOf: url) {
+                img = "<div class=\"ph\" style=\"background-image:url('data:image/jpeg;base64,\(data.base64EncodedString())')\"></div>"
+            }
+            let tour = "https://rendprop.app/f/\(l.id.uuidString.prefix(8).lowercased())"
+            let price = l.price.cents > 0 ? " · " + esc(l.price.formatted) : ""
+            return """
+            <a class="card" href="\(tour)" target="_blank" rel="noopener">\(img)<div class="meta"><div class="addr">\(esc(l.address))</div><div class="sub">\(esc(l.metaLine))\(price)</div></div></a>
+            """
+        }.joined(separator: "\n")
+
+        var avatar = ""
+        if let b64 = agent.headshotBase64 {
+            avatar = "<div class=\"avatar\" style=\"background-image:url('data:image/jpeg;base64,\(b64)')\"></div>"
+        } else if agent.isSet {
+            avatar = "<div class=\"avatar\">\(esc(agent.initials))</div>"
+        }
+        let contact = [agent.brokerageLine, agent.email].filter { !$0.isEmpty }.map { esc($0) }.joined(separator: " · ")
+        let header = agent.isSet
+            ? "<header>\(avatar)<div><div class=\"nm\">\(esc(agent.name))</div><div class=\"ct\">\(contact)</div></div></header>"
+            : ""
+
+        let html = """
+        <!doctype html><html lang="en"><head><meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>\(esc(agent.isSet ? agent.name : "My Listings")) · Rendprop</title>
+        <style>
+          :root{--accent:#7c4dff}
+          *{box-sizing:border-box;margin:0;padding:0}
+          body{font-family:-apple-system,system-ui,sans-serif;background:#f6f6f8;color:#12121a;padding:20px;max-width:760px;margin:0 auto}
+          header{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+          .avatar{width:56px;height:56px;border-radius:50%;background:#ece6ff;background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center;font-weight:700;color:var(--accent)}
+          header .nm{font-size:20px;font-weight:700}
+          header .ct{font-size:13px;color:#6b6b78;margin-top:2px}
+          .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+          @media(max-width:520px){.grid{grid-template-columns:1fr}}
+          .card{display:block;background:#fff;border-radius:16px;overflow:hidden;text-decoration:none;color:inherit;box-shadow:0 6px 18px rgba(0,0,0,.06)}
+          .ph{height:160px;background:#ece6ff;background-size:cover;background-position:center;display:flex;align-items:center;justify-content:center}
+          .ph-empty{color:var(--accent);font-weight:700;letter-spacing:.15em;font-size:13px}
+          .meta{padding:12px 14px}
+          .addr{font-weight:650;font-size:15px}
+          .sub{color:#6b6b78;font-size:13px;margin-top:3px}
+          footer{text-align:center;color:#9a9aa6;font-size:12px;margin-top:24px}
+        </style></head><body>
+        \(header)
+        <div class="grid">\(cards)</div>
+        <footer>Made with Rendprop</footer>
+        </body></html>
+        """
+
+        let out = FileStore.documents.appendingPathComponent("rendprop-portfolio.html")
+        do {
+            try html.write(to: out, atomically: true, encoding: .utf8)
+            return out
+        } catch {
+            return nil
+        }
+    }
+
+    private static func esc(_ s: String) -> String {
+        s.replacingOccurrences(of: "&", with: "&amp;")
+         .replacingOccurrences(of: "<", with: "&lt;")
+         .replacingOccurrences(of: ">", with: "&gt;")
+         .replacingOccurrences(of: "\"", with: "&quot;")
     }
 }
