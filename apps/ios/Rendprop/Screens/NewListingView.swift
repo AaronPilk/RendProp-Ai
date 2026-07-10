@@ -36,10 +36,12 @@ struct NewListingView: View {
             VStack(spacing: Theme.spacing) {
                 // Step 1 — address
                 VStack(alignment: .leading, spacing: 10) {
-                    Label("Step 1 · The home", systemImage: "house.fill")
+                    Label("Step 1 · The \(SpaceType.current.spaceNoun)", systemImage: SpaceType.current.systemImage)
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
-                    TextField("Type the home's address", text: $address)
+                    TextField(SpaceType.current.showsPropertyDetails
+                              ? "Type the home's address"
+                              : "Name or address of your \(SpaceType.current.spaceNoun)", text: $address)
                         .textContentType(.fullStreetAddress)
                         .font(.body)
                         .padding(14)
@@ -114,7 +116,7 @@ struct NewListingView: View {
                         }
                         .padding(.top, 8)
                     } label: {
-                        Label("Home details (optional)", systemImage: "list.bullet")
+                        Label("\(SpaceType.current.spaceNounCap) details (optional)", systemImage: "list.bullet")
                             .font(.rpHeadline)
                             .foregroundStyle(Theme.ink)
                     }

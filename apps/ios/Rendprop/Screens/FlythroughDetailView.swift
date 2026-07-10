@@ -116,7 +116,7 @@ struct FlythroughDetailView: View {
                 VStack(spacing: 10) {
                     ShareLink(item: shareURL,
                               subject: Text(listing.address),
-                              message: Text("Fly through \(listing.address) — scroll to walk the home.")) {
+                              message: Text("Fly through \(listing.address) — scroll to walk the \(SpaceType.current.spaceNoun).")) {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
                             Text("Share flythrough").fontWeight(.semibold)

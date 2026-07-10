@@ -70,6 +70,40 @@ struct Listing: Identifiable, Codable, Hashable {
     var subtitleLine: String {
         SpaceType.current.showsPropertyDetails ? metaLine : (tagline ?? "")
     }
+
+    /// Per-industry info chips for the listing card — a venue shows capacity
+    /// and starting price, a restaurant its cuisine/$$$/hours, a gym its
+    /// membership. Real estate keeps beds/baths/price in the classic layout.
+    var cardChips: [String] {
+        var chips: [String] = []
+        func add(_ s: String) {
+            let t = s.trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty { chips.append(t) }
+        }
+        switch SpaceType.current {
+        case .realEstate:
+            break
+        case .venue:
+            if !detail("capacitySeated").isEmpty { add("Seats \(detail("capacitySeated"))") }
+            if let v = Int(detail("startingPrice")) { add("From \(Money.dollars(v).formatted)") }
+            add(detail("eventTypes").components(separatedBy: ",").first ?? "")
+        case .restaurant:
+            add(detail("cuisineType").components(separatedBy: ",").first ?? "")
+            add(detail("priceRange"))
+            add(detail("hours"))
+        case .retail:
+            add(detail("storeCategory"))
+            add(detail("hours"))
+            if !detail("weeklySpecial").isEmpty { add("★ \(detail("weeklySpecial"))") }
+        case .fitness:
+            if let m = Int(detail("membershipPrice")) { add("\(Money.dollars(m).formatted)/mo") }
+            if detail("is247") == "true" { add("Open 24/7") }
+            if !detail("freeTrialOffer").isEmpty { add("Free trial") }
+        case .other:
+            add(detail("hours"))
+        }
+        return Array(chips.prefix(3))
+    }
 }
 
 // MARK: - Business type
@@ -246,6 +280,30 @@ enum SpaceType: String, CaseIterable, Identifiable {
                 DetailField("phone", "Phone", .text),
                 DetailField("website", "Website", .url),
             ]
+        }
+    }
+
+    /// Who watches this type's tours — used everywhere the copy says "buyers".
+    var customerNoun: String {
+        switch self {
+        case .realEstate: return "buyers"
+        case .venue:      return "planners"
+        case .restaurant: return "guests"
+        case .retail:     return "shoppers"
+        case .fitness:    return "members"
+        case .other:      return "customers"
+        }
+    }
+
+    /// One-line pitch for the Business tab type cards.
+    var pitch: String {
+        switch self {
+        case .realEstate: return "Sell homes with cinematic tours"
+        case .venue:      return "Book more events"
+        case .restaurant: return "Fill more tables"
+        case .retail:     return "Bring shoppers through the door"
+        case .fitness:    return "Sign up more members"
+        case .other:      return "Show off any space"
         }
     }
 

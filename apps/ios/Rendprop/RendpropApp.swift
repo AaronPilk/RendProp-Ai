@@ -247,6 +247,8 @@ struct RootTabView: View {
                     Label("\(SpaceType.current.spaceNounCap)s",
                           systemImage: SpaceType.current.systemImage)
                 }
+            NavigationStack { BusinessTypeView() }
+                .tabItem { Label("Business", systemImage: "square.grid.2x2.fill") }
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
             NavigationStack { SettingsView() }

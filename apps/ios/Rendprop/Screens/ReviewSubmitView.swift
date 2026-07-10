@@ -106,7 +106,7 @@ struct ReviewSubmitView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("ROOMS").font(.rpKicker).foregroundStyle(Theme.inkDim)
             if asset.roomTags.isEmpty {
-                Text("Tag rooms on the video so buyers can tap a dot and jump straight to the kitchen, primary, or backyard.")
+                Text("Tag areas on the video so \(SpaceType.current.customerNoun) can tap a dot and jump straight to \(SpaceType.current.quickTags.prefix(2).map { $0.lowercased() }.joined(separator: " or ")).")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }

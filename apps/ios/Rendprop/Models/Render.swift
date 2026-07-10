@@ -20,7 +20,7 @@ enum DesignStyle: String, Codable, CaseIterable, Identifiable {
 
     var blurb: String {
         switch self {
-        case .asIs:         return "Keep the home exactly as filmed."
+        case .asIs:         return "Keep the \(SpaceType.current.spaceNoun) exactly as filmed."
         case .modern:       return "Clean lines, bold contemporary furniture and art."
         case .rustic:       return "Warm woods, cozy textures, farmhouse character."
         case .minimalist:   return "Airy, decluttered, quiet neutral styling."

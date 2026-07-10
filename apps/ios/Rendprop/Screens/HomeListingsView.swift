@@ -286,6 +286,23 @@ struct ListingCard: View {
                         .foregroundStyle(Theme.accent)
                 }
             }
+
+            // Per-industry info chips: a venue shows "Seats 220 · From $3,500",
+            // a restaurant "Italian · $$$ · Tue–Sun", a gym "$49/mo · Open 24/7".
+            if !listing.cardChips.isEmpty {
+                HStack(spacing: 6) {
+                    ForEach(Array(listing.cardChips.enumerated()), id: \.offset) { _, chip in
+                        Text(chip)
+                            .font(.caption)
+                            .lineLimit(1)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Theme.accentSoft, in: Capsule())
+                            .foregroundStyle(Theme.accent)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
         }
         .padding(16)
     }

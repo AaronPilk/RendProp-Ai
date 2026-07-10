@@ -30,12 +30,88 @@ struct PlayerWebView: UIViewRepresentable {
                   let html = Self.localPreviewHTML(videoURL: localVideoURL, roomTags: roomTags, listing: listing, agent: agent) {
             // HTML sits next to the video so one read grant covers both.
             webView.loadFileURL(html, allowingReadAccessTo: localVideoURL.deletingLastPathComponent())
+        } else if let demo = Self.demoHTML(listing: listing, agent: agent) {
+            // Sample tours: the bundled demo REWRITTEN for the current business
+            // type — a gym's sample never shows "Living Room" or "Book a showing".
+            webView.loadFileURL(demo.html, allowingReadAccessTo: demo.dir)
         } else if let index = Bundle.main.url(forResource: "index",
                                               withExtension: "html",
                                               subdirectory: "player") {
             webView.loadFileURL(index, allowingReadAccessTo: index.deletingLastPathComponent())
         }
         return webView
+    }
+
+    /// Type-adapted demo: copies the bundled demo video into Caches once, then
+    /// rewrites the player HTML around the CURRENT business type — its sample
+    /// name/tagline, its area tags as chapters, and its call-to-action.
+    static func demoHTML(listing: Listing?, agent: AgentCard = .current) -> (html: URL, dir: URL)? {
+        guard let template = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "player"),
+              let demoVideo = Bundle.main.url(forResource: "demo", withExtension: "mp4", subdirectory: "player"),
+              var html = try? String(contentsOf: template, encoding: .utf8) else { return nil }
+
+        let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("player-demo", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let videoCopy = dir.appendingPathComponent("demo.mp4")
+        if !FileManager.default.fileExists(atPath: videoCopy.path) {
+            try? FileManager.default.copyItem(at: demoVideo, to: videoCopy)
+        }
+        guard FileManager.default.fileExists(atPath: videoCopy.path) else { return nil }
+
+        let type = SpaceType.current
+
+        // Chapters → this type's area tags, spread across the 55s demo.
+        let tags = Array(type.quickTags.prefix(6))
+        let step = 50.0 / Double(max(1, tags.count))
+        let chapterEntries = tags.isEmpty
+            ? "{ t: 0, label: '\(type.spaceNounCap)' }"
+            : tags.enumerated().map { i, name in
+                "{ t: \(String(format: "%.1f", Double(i) * step)), label: '\(name.replacingOccurrences(of: "'", with: ""))' }"
+              }.joined(separator: ",\n    ")
+        if let start = html.range(of: "const CHAPTERS = ["),
+           let end = html.range(of: "];", range: start.upperBound..<html.endIndex) {
+            html.replaceSubrange(start.lowerBound..<end.upperBound,
+                                 with: "const CHAPTERS = [\n    \(chapterEntries)\n  ];")
+        }
+
+        // Listing chip → this type's sample identity (or the tapped listing's).
+        let sample = type.sampleListings.first
+        let name = (listing?.address ?? sample?.address ?? "Sample Tour")
+            .replacingOccurrences(of: " (Sample)", with: "")
+        let sub = listing?.subtitleLine.isEmpty == false
+            ? listing!.subtitleLine
+            : (sample?.tagline ?? "")
+        html = html.replacingOccurrences(of: "1247 Hillcrest Drive", with: htmlEscape(name))
+        if type != .realEstate {
+            html = html.replacingOccurrences(of: "$1,175,000", with: "")
+            html = html.replacingOccurrences(of: "4 bd · 3 ba · 2,850 sqft", with: htmlEscape(sub))
+            html = html.replacingOccurrences(of: "this home", with: "this \(type.spaceNoun)")
+            html = html.replacingOccurrences(of: "Book a showing", with: htmlEscape(type.ctaTitle))
+        }
+
+        // Agent card (same treatment as real tours).
+        if agent.isSet {
+            html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
+            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+                                             with: htmlEscape(agent.brokerageLine))
+            html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
+            if let b64 = agent.headshotBase64 {
+                html = html.replacingOccurrences(
+                    of: "<div class=\"avatar\">SM</div>",
+                    with: "<div class=\"avatar\" style=\"background-image:url('data:image/jpeg;base64,\(b64)');background-size:cover;background-position:center\"></div>")
+            } else {
+                html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(agent.initials))<")
+            }
+        }
+
+        let out = dir.appendingPathComponent("demo-\(type.rawValue).html")
+        do {
+            try html.write(to: out, atomically: true, encoding: .utf8)
+            return (out, dir)
+        } catch {
+            return nil
+        }
     }
 
     func updateUIView(_ webView: WKWebView, context: Context) {}
@@ -111,7 +187,8 @@ struct PlayerWebView: UIViewRepresentable {
         }
 
         // Zillow (per-listing) — a secondary link under the booking form.
-        if let z = listing?.zillowURLValue {
+        // Real estate only: a gym or bar never shows a Zillow link.
+        if SpaceType.current == .realEstate, let z = listing?.zillowURLValue {
             let btn = "<a class=\"zillow-link\" href=\"\(htmlEscape(z.absoluteString))\" target=\"_blank\" rel=\"noopener\">↗ View on Zillow</a>"
             html = html.replacingOccurrences(of: "<!--ZILLOW-->", with: btn)
         }

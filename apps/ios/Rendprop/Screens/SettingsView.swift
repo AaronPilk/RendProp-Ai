@@ -13,18 +13,17 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Picker(selection: $spaceTypeRaw) {
-                    ForEach(SpaceType.allCases) { t in
-                        Label(t.displayName, systemImage: t.systemImage).tag(t.rawValue)
-                    }
-                } label: {
-                    Text("Business type")
+                HStack {
+                    Label(SpaceType.current.displayName, systemImage: SpaceType.current.systemImage)
+                    Spacer()
+                    Text("Business tab")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
                 }
-                .pickerStyle(.inline)
             } header: {
                 Text("Business type")
             } footer: {
-                Text("Tap any type to instantly re-theme the app — no new account needed. Changes the wording, capture area tags, and your tour's call-to-action.")
+                Text("Switch your business type any time from the Business tab — the whole app re-themes instantly.")
             }
 
             Section("Uploads") {
@@ -70,7 +69,7 @@ struct SettingsView: View {
                 Label("No fast spins — turn like you're showing a friend around", systemImage: "arrow.triangle.turn.up.right.diamond")
                 Label("Phone at chest height, keep the bubble level", systemImage: "level")
                 Label("Lights on, blinds open", systemImage: "lightbulb")
-                Label("One continuous take; end on the best exterior", systemImage: "house")
+                Label("One continuous take; end on your best shot", systemImage: SpaceType.current.systemImage)
             }
             .font(.rpBody)
 
@@ -271,7 +270,7 @@ struct AgentCardEditorView: View {
             } header: {
                 Text("Your details")
             } footer: {
-                Text("This is the card buyers see at the end of every flythrough — how they reach you to book a showing.")
+                Text("This is the card \(SpaceType.current.customerNoun) see at the end of every tour — how they reach you to \(SpaceType.current.ctaTitle.lowercased()).")
             }
 
             Section {
@@ -341,7 +340,7 @@ struct AgentCardPreview: View {
                 Text(card.isSet ? card.name : "Your name")
                     .font(.rpHeadline)
                     .foregroundStyle(card.isSet ? Theme.ink : Theme.inkDim)
-                Text(card.brokerageLine.isEmpty ? "Brokerage · phone" : card.brokerageLine)
+                Text(card.brokerageLine.isEmpty ? "\(SpaceType.current.businessLabel) · phone" : card.brokerageLine)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                 if card.websiteURL != nil {
@@ -412,7 +411,7 @@ struct ProfileView: View {
                                 .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        Text("One link with all your listings — send it to a buyer to browse everything you have.")
+                        Text("One link with all your \(SpaceType.current.spaceNoun)s — send it to \(SpaceType.current.customerNoun) to browse everything you have.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
@@ -537,5 +536,135 @@ enum PortfolioExporter {
          .replacingOccurrences(of: "<", with: "&lt;")
          .replacingOccurrences(of: ">", with: "&gt;")
          .replacingOccurrences(of: "\"", with: "&quot;")
+    }
+}
+
+// MARK: - Business tab
+// The business type is a first-class tab: pick what you show off, and the
+// whole app re-themes — samples, tab identity, fields, area tags, and the
+// tour's call-to-action. Lives in this in-target file (new-file rule).
+struct BusinessTypeView: View {
+    @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @EnvironmentObject var model: AppModel
+
+    private var current: SpaceType { SpaceType(rawValue: spaceTypeRaw) ?? .realEstate }
+    private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Text("What do you show off?")
+                    .font(.rpTitle)
+                    .foregroundStyle(Theme.ink)
+                Text("Pick your business — Rendprop becomes an app built just for it.")
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+
+                LazyVGrid(columns: columns, spacing: 12) {
+                    ForEach(SpaceType.allCases) { type in
+                        Button {
+                            spaceTypeRaw = type.rawValue
+                            model.reseedSamples()
+                            Haptics.selection()
+                        } label: {
+                            typeCard(type)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+
+                previewCard
+            }
+            .padding()
+            .padding(.bottom, 24)
+        }
+        .background(Theme.bg)
+        .navigationTitle("Business")
+    }
+
+    private func typeCard(_ type: SpaceType) -> some View {
+        let selected = type == current
+        return VStack(alignment: .leading, spacing: 8) {
+            Image(systemName: type.systemImage)
+                .font(.system(size: 26))
+                .foregroundStyle(selected ? Color.white : Theme.accent)
+            Text(type.displayName)
+                .font(.rpHeadline)
+                .foregroundStyle(selected ? Color.white : Theme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(type.pitch)
+                .font(.caption)
+                .foregroundStyle(selected ? Color.white.opacity(0.85) : Theme.inkDim)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+        }
+        .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(selected ? Theme.accent : Theme.card)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(selected ? Theme.accent : Theme.border)
+        )
+        .shadow(color: selected ? Theme.accent.opacity(0.28) : Color.black.opacity(0.05),
+                radius: selected ? 10 : 6, x: 0, y: 4)
+        .accessibilityLabel(Text("\(type.displayName). \(type.pitch)\(selected ? ". Selected" : "")"))
+    }
+
+    private var previewCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("How \(current.displayName) mode works", systemImage: current.systemImage)
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("TOUR STOPS \(current.customerNoun.uppercased()) CAN JUMP TO")
+                    .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                chipsRow(Array(current.quickTags.prefix(6)))
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("DETAILS YOU CAN SHOW")
+                    .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                chipsRow(current.showsPropertyDetails
+                         ? ["Beds", "Baths", "Sq ft", "Price"]
+                         : Array(current.detailFields.prefix(5).map { $0.label }))
+            }
+
+            HStack(spacing: 8) {
+                Text("YOUR TOUR'S BUTTON")
+                    .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Spacer()
+                Text(current.ctaTitle)
+                    .font(.caption.weight(.semibold))
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(Theme.accent, in: Capsule())
+                    .foregroundStyle(Color.white)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(Theme.border))
+    }
+
+    private func chipsRow(_ items: [String]) -> some View {
+        // Simple wrapping via a vertical stack of horizontal lines would need
+        // layout math; a horizontal scroll keeps it one-line and simple.
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                ForEach(items, id: \.self) { item in
+                    Text(item)
+                        .font(.caption)
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(Theme.accentSoft, in: Capsule())
+                        .foregroundStyle(Theme.accent)
+                        .lineLimit(1)
+                }
+            }
+        }
     }
 }
