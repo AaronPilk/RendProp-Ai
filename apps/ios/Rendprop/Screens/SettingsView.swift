@@ -128,16 +128,26 @@ struct AgentCard {
     var linkedin: String = ""
     var tiktok: String = ""
 
+    /// Storage key NAMESPACED by business type, so each industry keeps its own
+    /// card — a restaurant's card is separate from a real-estate agent's.
+    /// Real estate uses the original un-namespaced keys so any card set up
+    /// before this change is preserved.
+    static func key(_ field: String) -> String {
+        SpaceType.current == .realEstate
+            ? "agent.\(field)"
+            : "agent.\(SpaceType.current.rawValue).\(field)"
+    }
+
     static var current: AgentCard {
         let d = UserDefaults.standard
-        return AgentCard(name: d.string(forKey: "agent.name") ?? "",
-                         brokerage: d.string(forKey: "agent.brokerage") ?? "",
-                         phone: d.string(forKey: "agent.phone") ?? "",
-                         email: d.string(forKey: "agent.email") ?? "",
-                         website: d.string(forKey: "agent.website") ?? "",
-                         instagram: d.string(forKey: "agent.instagram") ?? "",
-                         linkedin: d.string(forKey: "agent.linkedin") ?? "",
-                         tiktok: d.string(forKey: "agent.tiktok") ?? "")
+        return AgentCard(name: d.string(forKey: key("name")) ?? "",
+                         brokerage: d.string(forKey: key("brokerage")) ?? "",
+                         phone: d.string(forKey: key("phone")) ?? "",
+                         email: d.string(forKey: key("email")) ?? "",
+                         website: d.string(forKey: key("website")) ?? "",
+                         instagram: d.string(forKey: key("instagram")) ?? "",
+                         linkedin: d.string(forKey: key("linkedin")) ?? "",
+                         tiktok: d.string(forKey: key("tiktok")) ?? "")
     }
 
     // MARK: Social links (accept a full URL or a @handle)
@@ -153,8 +163,13 @@ struct AgentCard {
         return URL(string: base + handle)
     }
 
-    // MARK: Headshot (saved to disk, ~512px)
-    static var headshotURL: URL { FileStore.documents.appendingPathComponent("agent-headshot.jpg") }
+    // MARK: Headshot (saved to disk, ~512px) — per business type
+    static var headshotURL: URL {
+        let file = SpaceType.current == .realEstate
+            ? "agent-headshot.jpg"
+            : "agent-headshot-\(SpaceType.current.rawValue).jpg"
+        return FileStore.documents.appendingPathComponent(file)
+    }
     var hasHeadshot: Bool { FileManager.default.fileExists(atPath: Self.headshotURL.path) }
     var headshotBase64: String? {
         guard let data = try? Data(contentsOf: Self.headshotURL) else { return nil }
@@ -206,14 +221,17 @@ struct AgentCard {
 }
 
 struct AgentCardEditorView: View {
-    @AppStorage("agent.name") private var name = ""
-    @AppStorage("agent.brokerage") private var brokerage = ""
-    @AppStorage("agent.phone") private var phone = ""
-    @AppStorage("agent.email") private var email = ""
-    @AppStorage("agent.website") private var website = ""
-    @AppStorage("agent.instagram") private var instagram = ""
-    @AppStorage("agent.linkedin") private var linkedin = ""
-    @AppStorage("agent.tiktok") private var tiktok = ""
+    // Keys namespaced by the current business type (AgentCard.key) so editing
+    // the restaurant card never touches the real-estate card. The editor is
+    // pushed fresh each time, so these resolve to the active industry.
+    @AppStorage(AgentCard.key("name")) private var name = ""
+    @AppStorage(AgentCard.key("brokerage")) private var brokerage = ""
+    @AppStorage(AgentCard.key("phone")) private var phone = ""
+    @AppStorage(AgentCard.key("email")) private var email = ""
+    @AppStorage(AgentCard.key("website")) private var website = ""
+    @AppStorage(AgentCard.key("instagram")) private var instagram = ""
+    @AppStorage(AgentCard.key("linkedin")) private var linkedin = ""
+    @AppStorage(AgentCard.key("tiktok")) private var tiktok = ""
 
     @State private var pickerItem: PhotosPickerItem?
     @State private var headshot: UIImage?
@@ -358,6 +376,8 @@ struct AgentCardPreview: View {
 // MARK: - Profile tab (the friendly "about me / contact card" view)
 struct ProfileView: View {
     @EnvironmentObject var model: AppModel
+    // Observed so the card reloads the moment the business type changes.
+    @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var card = AgentCard.current
     @State private var headshot: UIImage?
     @State private var portfolioURL: URL?
@@ -425,6 +445,10 @@ struct ProfileView: View {
             .background(Theme.bg)
             .onAppear {
                 card = AgentCard.current
+                headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+            }
+            .onChange(of: spaceTypeRaw) { _ in
+                card = AgentCard.current   // load THIS industry's card
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
             }
             .sheet(isPresented: $showPortfolioShare) {
