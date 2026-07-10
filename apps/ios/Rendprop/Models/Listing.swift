@@ -249,6 +249,83 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
 
+    /// One line of flavor under the empty-state headline, per industry.
+    var emptyStateLine: String {
+        switch self {
+        case .realEstate: return "Walk through with your phone.\nWe turn it into a stunning video tour."
+        case .venue:      return "Walk the space with your phone.\nCouples and planners tour it before they ever call."
+        case .restaurant: return "Walk the room with your phone.\nGuests feel the vibe before they book a table."
+        case .retail:     return "Walk the aisles with your phone.\nShoppers see the store before they visit."
+        case .fitness:    return "Walk the floor with your phone.\nMembers tour the gym before their first visit."
+        case .other:      return "Walk through with your phone.\nCustomers tour your space before they arrive."
+        }
+    }
+
+    /// Believable seeded sample(s) for this business type — so the first screen
+    /// a venue owner sees is a venue, not a house. Never persisted (isSample).
+    var sampleListings: [Listing] {
+        switch self {
+        case .realEstate:
+            return [
+                Listing(address: "1247 Hillcrest Drive (Sample)", beds: 4, baths: 3, sqft: 2850,
+                        price: .dollars(1_175_000), status: .ready, isSample: true),
+                Listing(address: "88 Marina Vista #501 (Sample)", beds: 2, baths: 2, sqft: 1240,
+                        price: .dollars(689_000), status: .processing, isSample: true),
+            ]
+        case .venue:
+            var l = Listing(address: "The Grand Atrium (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true)
+            l.tagline = "Historic ballroom · Seats 220"
+            l.details = [
+                "capacitySeated": "220", "capacityStanding": "350",
+                "startingPrice": "3500",
+                "eventTypes": "Wedding, Corporate, Gala",
+                "catering": "In-house or outside", "spaceSetting": "Both",
+                "amenities": "Tables & Chairs, AV / Sound, Stage, Dance Floor, Parking, Bar",
+            ]
+            return [l]
+        case .restaurant:
+            var l = Listing(address: "Bella Notte (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true)
+            l.tagline = "Italian · Wine Bar · $$$"
+            l.details = [
+                "cuisineType": "Italian, Wine Bar", "priceRange": "$$$",
+                "hours": "Tue–Sun 5–11pm",
+                "amenities": "Outdoor Seating, Full Bar, Private Dining, Happy Hour",
+                "phone": "(555) 014-2200",
+            ]
+            return [l]
+        case .retail:
+            var l = Listing(address: "Fresh Market (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true)
+            l.tagline = "Neighborhood grocery · Open daily 7am–9pm"
+            l.details = [
+                "storeCategory": "Grocery", "hours": "Daily 7am–9pm",
+                "weeklySpecial": "Local strawberries — 2 for 1 this week",
+                "shoppingOptions": "In-store, Curbside Pickup, Local Delivery",
+                "departments": "Produce, Deli, Bakery, Dairy, Frozen",
+            ]
+            return [l]
+        case .fitness:
+            var l = Listing(address: "Iron & Oak Strength Co. (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true)
+            l.tagline = "Strength gym · Open 24/7 · Classes daily"
+            l.details = [
+                "facilityType": "Gym", "membershipPrice": "49", "dayPassPrice": "15",
+                "is247": "true",
+                "amenities": "Showers, Sauna, Lockers, Parking, Smoothie Bar",
+                "freeTrialOffer": "7-day free trial",
+            ]
+            return [l]
+        case .other:
+            var l = Listing(address: "The Workshop (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true)
+            l.tagline = "Creative studio & community space"
+            l.details = ["hours": "Mon–Sat 9am–6pm"]
+            return [l]
+        }
+    }
+
     /// Quick area tags offered while tagging the walkthrough.
     var quickTags: [String] {
         switch self {

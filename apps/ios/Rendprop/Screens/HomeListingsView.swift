@@ -43,9 +43,12 @@ struct HomeListingsView: View {
                         .padding(.top, 6)
                         .padding(.bottom, 90)   // room for the New Listing button
                     }
-                    .searchable(text: $search, prompt: "Search homes")
+                    .searchable(text: $search, prompt: "Search \(SpaceType.current.spaceNoun)s")
                     .refreshable { await model.load() }
                 }
+            }
+            .onChange(of: spaceTypeRaw) { _ in
+                model.reseedSamples()   // venue owners see venues, not houses
             }
             .navigationTitle(SpaceType.current.collectionTitle)
             .background(Theme.bg)
@@ -98,13 +101,13 @@ struct HomeListingsView: View {
 
     private var emptyState: some View {
         VStack(spacing: 16) {
-            Image(systemName: "video.badge.plus")
+            Image(systemName: SpaceType.current.systemImage)
                 .font(.system(size: 46, weight: .light))
                 .foregroundStyle(Theme.accent)
             Text("Let's film your first \(SpaceType.current.spaceNoun)")
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
-            Text("Walk through with your phone.\nWe turn it into a stunning video tour.")
+            Text(SpaceType.current.emptyStateLine)
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -200,7 +203,7 @@ struct ListingCard: View {
         )
         .shadow(color: Color.black.opacity(0.07), radius: 16, x: 0, y: 6)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("\(listing.address), \(listing.metaLine), \(listing.status.label)"))
+        .accessibilityLabel(Text("\(listing.address), \(listing.subtitleLine), \(listing.status.label)"))
     }
 
     // Hero area — shows the main listing photo once one is set, else a branded placeholder.
@@ -219,7 +222,9 @@ struct ListingCard: View {
                              Color(red: 0.93, green: 0.90, blue: 1.0)],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
-                Image(systemName: "house.and.flag.fill")
+                Image(systemName: SpaceType.current == .realEstate
+                                  ? "house.and.flag.fill"
+                                  : SpaceType.current.systemImage)
                     .font(.system(size: 56, weight: .ultraLight))
                     .foregroundStyle(Theme.accent.opacity(0.30))
                     .offset(y: 6)

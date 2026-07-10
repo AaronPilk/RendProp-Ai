@@ -53,11 +53,20 @@ final class AppModel: ObservableObject {
         renders = saved.renders
         isRestoring = false
 
-        // 2. Append fresh sample listings (never persisted; deduped by address).
-        let samples = ((try? await api.listings()) ?? []).filter { $0.isSample }
-        for sample in samples where !listings.contains(where: { $0.isSample && $0.address == sample.address }) {
+        // 2. Append fresh sample listings for the CURRENT business type
+        //    (never persisted; a venue owner sees a venue, not a house).
+        for sample in SpaceType.current.sampleListings
+        where !listings.contains(where: { $0.isSample && $0.address == sample.address }) {
             listings.append(sample)
         }
+    }
+
+    /// Swap the seeded samples when the business type changes, so the home
+    /// screen instantly reflects the new industry. Real listings untouched;
+    /// samples are never persisted, so this is safe.
+    func reseedSamples() {
+        listings.removeAll { $0.isSample }
+        listings.append(contentsOf: SpaceType.current.sampleListings)
     }
 
     func add(_ listing: Listing) {
@@ -226,12 +235,18 @@ struct RendpropApp: App {
 }
 
 // MARK: - Root tab bar
-// Replaces the hidden settings gear with real navigation: Homes, Profile, Settings.
+// First tab wears the current business type's identity (Homes/Venues/Places/
+// Stores/Studios/Spaces + matching icon) and re-renders live on type change.
 struct RootTabView: View {
+    @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+
     var body: some View {
         TabView {
             HomeListingsView()
-                .tabItem { Label("Homes", systemImage: "house.fill") }
+                .tabItem {
+                    Label("\(SpaceType.current.spaceNounCap)s",
+                          systemImage: SpaceType.current.systemImage)
+                }
             ProfileView()
                 .tabItem { Label("Profile", systemImage: "person.crop.circle.fill") }
             NavigationStack { SettingsView() }
