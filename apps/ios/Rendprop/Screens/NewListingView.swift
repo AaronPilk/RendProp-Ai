@@ -234,11 +234,14 @@ struct NewListingView: View {
         guard formValid else { return false }
         if createdListing == nil {
             let trimmedTagline = tagline.trimmingCharacters(in: .whitespaces)
+            // Beds/baths/sqft/price are real-estate concepts — never store the
+            // UI's default 3bd/2ba on a venue/gym/restaurant listing.
+            let isRE = SpaceType.current.showsPropertyDetails
             let listing = Listing(address: address.trimmingCharacters(in: .whitespaces),
-                                  beds: beds,
-                                  baths: baths,
-                                  sqft: Int(sqft) ?? 0,
-                                  price: .dollars(Int(priceDollars) ?? 0),
+                                  beds: isRE ? beds : 0,
+                                  baths: isRE ? baths : 0,
+                                  sqft: isRE ? (Int(sqft) ?? 0) : 0,
+                                  price: .dollars(isRE ? (Int(priceDollars) ?? 0) : 0),
                                   status: .draft,
                                   latitude: pendingCoord?.latitude,
                                   longitude: pendingCoord?.longitude,

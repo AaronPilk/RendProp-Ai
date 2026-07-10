@@ -104,7 +104,8 @@ struct ReviewSubmitView: View {
 
     private var roomTags: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("ROOMS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Text(SpaceType.current == .realEstate ? "ROOMS" : "AREAS")
+                .font(.rpKicker).foregroundStyle(Theme.inkDim)
             if asset.roomTags.isEmpty {
                 Text("Tag areas on the video so \(SpaceType.current.customerNoun) can tap a dot and jump straight to \(SpaceType.current.quickTags.prefix(2).map { $0.lowercased() }.joined(separator: " or ")).")
                     .font(.rpCaption)
@@ -130,7 +131,9 @@ struct ReviewSubmitView: View {
             Button {
                 showRoomTagger = true
             } label: {
-                Label(asset.roomTags.isEmpty ? "Tag rooms on the video" : "Edit room tags",
+                Label(asset.roomTags.isEmpty
+                      ? (SpaceType.current == .realEstate ? "Tag rooms on the video" : "Tag areas on the video")
+                      : (SpaceType.current == .realEstate ? "Edit room tags" : "Edit area tags"),
                       systemImage: "mappin.and.ellipse")
                     .font(.rpBody.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -200,7 +203,7 @@ struct ReviewSubmitView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Clean up clutter · +\(Enhancements.declutterPrice.formatted)")
                             .font(.rpHeadline)
-                        Text("We remove boxes and mess from the video. The home itself never changes.")
+                        Text("We remove boxes and mess from the video. The \(SpaceType.current.spaceNoun) itself never changes.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
                     }
@@ -279,7 +282,9 @@ struct ReviewSubmitView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Label("Your shared tour will show a small \"Virtually staged\" label — real-estate rules require it for edited videos.",
+                Label(SpaceType.current == .realEstate
+                      ? "Your shared tour will show a small \"Virtually staged\" label — real-estate rules require it for edited videos."
+                      : "Your shared tour will show a small \"Virtually staged\" label so viewers know the video was edited.",
                       systemImage: "info.circle")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.warn)
@@ -476,7 +481,7 @@ struct RoomTaggerView: View {
             }
             .padding(.top)
             .background(Theme.bg)
-            .navigationTitle("Tag rooms")
+            .navigationTitle(SpaceType.current == .realEstate ? "Tag rooms" : "Tag areas")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {

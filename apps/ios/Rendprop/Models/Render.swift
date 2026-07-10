@@ -75,9 +75,9 @@ struct Render: Identifiable, Codable, Hashable {
         var blurb: String {
             switch self {
             case .smooth:
-                return "A silky drone-style glide in HD. Perfect for most listings."
+                return "A silky drone-style glide in HD. Perfect for most tours."
             case .premium4k:
-                return "Ultra-crisp 4K glide — the premium look for luxury listings."
+                return "Ultra-crisp 4K glide — the premium look for standout spaces."
             case .cinematic:
                 return "Adds an AI aerial opener and cinematic transitions. The scroll-stopping version for social."
             }

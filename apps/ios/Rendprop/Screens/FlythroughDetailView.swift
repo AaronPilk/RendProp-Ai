@@ -156,7 +156,8 @@ struct FlythroughDetailView: View {
                     .buttonStyle(.plain)
 
                     Button { showRoomTagger = true } label: {
-                        toolButton("Tag rooms", "mappin.and.ellipse", dimmed: asset == nil)
+                        toolButton(SpaceType.current == .realEstate ? "Tag rooms" : "Tag areas",
+                                   "mappin.and.ellipse", dimmed: asset == nil)
                     }
                     .buttonStyle(.plain)
                     .disabled(asset == nil)
@@ -181,25 +182,30 @@ struct FlythroughDetailView: View {
                             .foregroundStyle(currentListing.isSold ? Theme.inkDim : Theme.accent)
                     }
 
-                    Divider()
+                    // Zillow is a real-estate concept — a gym or bar never sees it.
+                    // Non-RE types manage their booking/reservation/store links
+                    // through the Details card's URL fields instead.
+                    if SpaceType.current == .realEstate {
+                        Divider()
 
-                    Text("Zillow listing").font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    HStack {
-                        TextField("Paste Zillow URL", text: $zillowText)
-                            .textFieldStyle(.roundedBorder)
-                            .keyboardType(.URL)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        Button("Save") {
-                            model.setZillow(zillowText, for: listing.id)
-                            Haptics.selection()
+                        Text("Zillow listing").font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        HStack {
+                            TextField("Paste Zillow URL", text: $zillowText)
+                                .textFieldStyle(.roundedBorder)
+                                .keyboardType(.URL)
+                                .textInputAutocapitalization(.never)
+                                .autocorrectionDisabled()
+                            Button("Save") {
+                                model.setZillow(zillowText, for: listing.id)
+                                Haptics.selection()
+                            }
+                            .disabled(zillowText == (currentListing.zillowURL ?? ""))
                         }
-                        .disabled(zillowText == (currentListing.zillowURL ?? ""))
-                    }
-                    if let z = currentListing.zillowURLValue {
-                        Link(destination: z) {
-                            Label("View on Zillow", systemImage: "arrow.up.right.square")
-                                .font(.rpCaption).foregroundStyle(Theme.accent)
+                        if let z = currentListing.zillowURLValue {
+                            Link(destination: z) {
+                                Label("View on Zillow", systemImage: "arrow.up.right.square")
+                                    .font(.rpCaption).foregroundStyle(Theme.accent)
+                            }
                         }
                     }
                 }

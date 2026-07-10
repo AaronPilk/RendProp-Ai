@@ -25,9 +25,9 @@
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSCameraUsageDescription</key>
-	<string>Rendprop uses your camera to record a walkthrough of the property.</string>
+	<string>Rendprop uses your camera to record a walkthrough of your space.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>Rendprop uses your location to fill in a listing's address automatically.</string>
+	<string>Rendprop uses your location to fill in your space's address automatically.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Rendprop records audio with your walkthrough (optional; muted in the flythrough).</string>
 	<key>NSMotionUsageDescription</key>

@@ -180,10 +180,11 @@ struct PlayerWebView: UIViewRepresentable {
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
         }
 
-        // Call-to-action adapts to the business type (real estate keeps
-        // "Book a showing"; a bar becomes "Book a table", etc.).
+        // Call-to-action + copy adapt to the business type (real estate keeps
+        // "Book a showing"; a bar becomes "Book a table", "this home" → "this bar").
         if SpaceType.current != .realEstate {
             html = html.replacingOccurrences(of: "Book a showing", with: htmlEscape(SpaceType.current.ctaTitle))
+            html = html.replacingOccurrences(of: "this home", with: "this \(SpaceType.current.spaceNoun)")
         }
 
         // Zillow (per-listing) — a secondary link under the booking form.

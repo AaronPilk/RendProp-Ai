@@ -479,7 +479,7 @@ enum PortfolioExporter {
             let tour = "https://rendprop.app/f/\(l.id.uuidString.prefix(8).lowercased())"
             let price = l.price.cents > 0 ? " · " + esc(l.price.formatted) : ""
             return """
-            <a class="card" href="\(tour)" target="_blank" rel="noopener">\(img)<div class="meta"><div class="addr">\(esc(l.address))</div><div class="sub">\(esc(l.metaLine))\(price)</div></div></a>
+            <a class="card" href="\(tour)" target="_blank" rel="noopener">\(img)<div class="meta"><div class="addr">\(esc(l.address))</div><div class="sub">\(esc(l.subtitleLine))\(price)</div></div></a>
             """
         }.joined(separator: "\n")
 
