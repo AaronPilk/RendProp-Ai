@@ -29,7 +29,9 @@ struct HomeListingsView: View {
                                     .buttonStyle(.plain)
                             }
                             ForEach(filtered) { listing in
-                                NavigationLink(value: listing) {
+                                NavigationLink {
+                                    FlythroughDetailView(listing: listing)
+                                } label: {
                                     ListingCard(listing: listing)
                                 }
                                 .buttonStyle(.plain)
@@ -46,9 +48,6 @@ struct HomeListingsView: View {
             .navigationTitle("My Homes")
             .background(Theme.bg)
             .scrollContentBackground(.hidden)
-            .navigationDestination(for: Listing.self) { listing in
-                FlythroughDetailView(listing: listing)
-            }
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     UploadMiniBar()
@@ -163,8 +162,12 @@ struct SoldListingsView: View {
                 ScrollView {
                     LazyVStack(spacing: 18) {
                         ForEach(sold) { listing in
-                            NavigationLink(value: listing) { ListingCard(listing: listing) }
-                                .buttonStyle(.plain)
+                            NavigationLink {
+                                FlythroughDetailView(listing: listing)
+                            } label: {
+                                ListingCard(listing: listing)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                     .padding()
