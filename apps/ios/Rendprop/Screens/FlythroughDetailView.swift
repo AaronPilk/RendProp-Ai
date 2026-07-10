@@ -13,10 +13,38 @@ struct FlythroughDetailView: View {
     let listing: Listing
 
     @State private var zillowText = ""
+    @State private var showRoomTagger = false
+    @State private var playerRefresh = UUID()
 
     /// Live copy from the model (listing here is a value snapshot).
     private var currentListing: Listing {
         model.listings.first(where: { $0.id == listing.id }) ?? listing
+    }
+
+    /// Two-way binding into the model's asset so the room tagger edits persist
+    /// and the player refreshes.
+    private var roomTagsBinding: Binding<[RoomTag]> {
+        Binding(
+            get: { model.assets[listing.id]?.roomTags ?? [] },
+            set: { newTags in
+                if var a = model.assets[listing.id] {
+                    a.roomTags = newTags
+                    model.assets[listing.id] = a
+                }
+            }
+        )
+    }
+
+    private func toolButton(_ title: String, _ icon: String, dimmed: Bool = false) -> some View {
+        VStack(spacing: 6) {
+            Image(systemName: icon).font(.title3)
+            Text(title).font(.rpCaption)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .foregroundStyle(dimmed ? Theme.inkDim : Theme.accent)
+        .opacity(dimmed ? 0.55 : 1)
     }
 
     private var asset: CaptureAsset? { model.assets[listing.id] }
@@ -52,6 +80,7 @@ struct FlythroughDetailView: View {
                     Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
                         .font(.rpKicker).foregroundStyle(Theme.inkDim)
                     PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: listing)
+                        .id(playerRefresh)
                         .frame(height: 460)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                         .overlay(
@@ -103,49 +132,24 @@ struct FlythroughDetailView: View {
                     .font(.rpBody)
                 }
 
-                // Listing photos — turn phone photos into pro listing images
-                NavigationLink {
-                    PhotoStudioView(listing: listing)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.title3)
-                            .foregroundStyle(Theme.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Listing photos").font(.rpHeadline).foregroundStyle(Theme.ink)
-                            Text("Turn phone photos into pro listing images")
-                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Theme.inkDim)
+                // Tools — always visible right under the tour
+                HStack(spacing: 10) {
+                    NavigationLink { PhotoStudioView(listing: listing) } label: {
+                        toolButton("Photos", "photo.on.rectangle.angled")
                     }
-                    .card()
-                }
-                .buttonStyle(.plain)
+                    .buttonStyle(.plain)
 
-                // Floor plan — LiDAR 3D room scan
-                NavigationLink {
-                    FloorPlanView(listing: listing)
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: "cube.transparent")
-                            .font(.title3)
-                            .foregroundStyle(Theme.accent)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Floor plan").font(.rpHeadline).foregroundStyle(Theme.ink)
-                            Text("Scan the space into a 3D floor plan")
-                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(Theme.inkDim)
+                    Button { showRoomTagger = true } label: {
+                        toolButton("Tag rooms", "mappin.and.ellipse", dimmed: asset == nil)
                     }
-                    .card()
+                    .buttonStyle(.plain)
+                    .disabled(asset == nil)
+
+                    NavigationLink { FloorPlanView(listing: listing) } label: {
+                        toolButton("Floor plan", "cube.transparent")
+                    }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
 
                 // Manage — sold status + Zillow link
                 VStack(alignment: .leading, spacing: 12) {
@@ -249,6 +253,11 @@ struct FlythroughDetailView: View {
         .onAppear {
             zillowText = currentListing.zillowURL ?? ""
             geocodeIfNeeded()
+        }
+        .sheet(isPresented: $showRoomTagger, onDismiss: { playerRefresh = UUID() }) {
+            if let a = asset {
+                RoomTaggerView(videoURL: a.localURL, tags: roomTagsBinding)
+            }
         }
     }
 

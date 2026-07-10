@@ -300,9 +300,13 @@ enum RenderEngine {
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
             ],
             AVVideoCompressionPropertiesKey: [
-                AVVideoAverageBitRateKey: 8_000_000,
-                AVVideoMaxKeyFrameIntervalKey: 6,          // keyframe every ~0.1s
-                AVVideoAllowFrameReorderingKey: false,
+                // ALL-INTRA: every frame is a keyframe. Any scrub position decodes
+                // exactly and instantly → buttery, drone-smooth scrubbing (no
+                // stepping between sparse keyframes). Costs more bitrate/size, worth
+                // it for the scroll-scrub feel. Higher bitrate keeps it crisp.
+                AVVideoAverageBitRateKey: 14_000_000,
+                AVVideoMaxKeyFrameIntervalKey: 1,          // keyframe every frame (all-intra)
+                AVVideoAllowFrameReorderingKey: false,     // no B-frames → every frame independent
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
             ],
         ])

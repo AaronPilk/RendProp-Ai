@@ -26,6 +26,8 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Rendprop uses your camera to record a walkthrough of the property.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Rendprop uses your location to fill in a listing's address automatically.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Rendprop records audio with your walkthrough (optional; muted in the flythrough).</string>
 	<key>NSMotionUsageDescription</key>

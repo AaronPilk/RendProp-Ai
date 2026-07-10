@@ -1,10 +1,15 @@
 import SwiftUI
+import CoreLocation
 
 /// Stupid-simple: type the address, then one of two big buttons —
 /// Record or Upload. Everything else is optional and out of the way.
 struct NewListingView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.dismiss) private var dismiss
+
+    @StateObject private var locator = OneShotLocation()
+    @State private var locating = false
+    @State private var pendingCoord: CLLocationCoordinate2D?
 
     @State private var address = ""
     @State private var beds = 3
@@ -36,6 +41,19 @@ struct NewListingView: View {
                         .font(.body)
                         .padding(14)
                         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    Button {
+                        useCurrentLocation()
+                    } label: {
+                        HStack(spacing: 8) {
+                            if locating { ProgressView() }
+                            else { Image(systemName: "location.fill") }
+                            Text(locating ? "Finding you…" : "Use current location")
+                        }
+                        .font(.rpBody.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                    }
+                    .disabled(locating)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .card()
@@ -189,15 +207,90 @@ struct NewListingView: View {
                                   baths: baths,
                                   sqft: Int(sqft) ?? 0,
                                   price: .dollars(Int(priceDollars) ?? 0),
-                                  status: .draft)
+                                  status: .draft,
+                                  latitude: pendingCoord?.latitude,
+                                  longitude: pendingCoord?.longitude)
             createdListing = listing
             model.add(listing)
         }
         return true
     }
 
+    private func useCurrentLocation() {
+        locating = true
+        locator.request { loc in
+            guard let loc else { locating = false; return }
+            pendingCoord = loc.coordinate
+            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+                if let p = placemarks?.first {
+                    address = Self.formatAddress(p)
+                }
+                locating = false
+            }
+        }
+    }
+
+    private static func formatAddress(_ p: CLPlacemark) -> String {
+        var parts: [String] = []
+        let line1 = [p.subThoroughfare, p.thoroughfare].compactMap { $0 }.joined(separator: " ")
+        if !line1.isEmpty { parts.append(line1) }
+        if let city = p.locality { parts.append(city) }
+        let stateZip = [p.administrativeArea, p.postalCode].compactMap { $0 }.joined(separator: " ")
+        if !stateZip.isEmpty { parts.append(stateZip) }
+        return parts.joined(separator: ", ")
+    }
+
     private func receive(_ asset: CaptureAsset) {
         pendingAsset = asset
         goToReview = true
+    }
+}
+
+/// One-shot Core Location fetch: asks permission if needed, returns a single fix.
+final class OneShotLocation: NSObject, ObservableObject, CLLocationManagerDelegate {
+    private let manager = CLLocationManager()
+    private var completion: ((CLLocation?) -> Void)?
+
+    override init() {
+        super.init()
+        manager.delegate = self
+        manager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+    }
+
+    func request(_ completion: @escaping (CLLocation?) -> Void) {
+        self.completion = completion
+        switch manager.authorizationStatus {
+        case .notDetermined:
+            manager.requestWhenInUseAuthorization()   // fix arrives via the delegate callback
+        case .authorizedWhenInUse, .authorizedAlways:
+            manager.requestLocation()
+        default:
+            finish(nil)
+        }
+    }
+
+    func locationManagerDidChangeAuthorization(_ manager: CLLocationManager) {
+        switch manager.authorizationStatus {
+        case .authorizedWhenInUse, .authorizedAlways:
+            if completion != nil { manager.requestLocation() }
+        case .denied, .restricted:
+            finish(nil)
+        default:
+            break
+        }
+    }
+
+    func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        finish(locations.first)
+    }
+
+    func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
+        finish(nil)
+    }
+
+    private func finish(_ location: CLLocation?) {
+        let c = completion
+        completion = nil
+        DispatchQueue.main.async { c?(location) }
     }
 }

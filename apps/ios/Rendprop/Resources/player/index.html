@@ -264,12 +264,12 @@
     { t: 36.5,label: 'Bath' },
     { t: 45.5,label: 'Backyard' },
   ];
-  const PX_PER_SEC = 190;            // track height scale (scroll distance per video second)
+  const PX_PER_SEC = 240;            // track height scale — more scroll per second = a slower, more controlled drone glide
   const BUFFER_GATE = 0.96;          // begin scrubbing at ~96% buffered
   // MLS compliance: set true when the render used declutter/restage enhancements
   // (server-injected per share page). Shows the "Virtually staged" disclosure chip.
   const VIRTUALLY_STAGED = false;
-  const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.06 : 0.1;
+  const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.08 : 0.14;  // a touch more responsive; all-intra video keeps it smooth
   const SLUG = 'demo';               // share_pages.slug — beacon key
 
   /* ================= Elements ================= */
@@ -340,7 +340,8 @@
     const target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
     curT += (target - curT) * LERP;
 
-    if (Math.abs(video.currentTime - curT) > 0.02 && Math.abs(curT - lastSet) > 0.02) {
+    // ~1 frame @60fps — finer updates now that every frame is a keyframe (all-intra).
+    if (Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016) {
       try { video.currentTime = curT; lastSet = curT; } catch (_) {}
     }
     updateOverlays(p);
