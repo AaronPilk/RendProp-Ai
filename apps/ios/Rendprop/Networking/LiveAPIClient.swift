@@ -1,8 +1,17 @@
 import Foundation
 
-/// Real client against services/api (master spec Part 8.3). Endpoint shapes are
-/// in place; flesh out bodies when the backend exists. All POSTs that create or
-/// charge must send an Idempotency-Key.
+/// Live client against the Supabase Edge Functions API
+/// (docs/BACKEND-ARCHITECTURE.md §2). Base = `https://<ref>.supabase.co/functions/v1`.
+///
+/// Every request carries:
+///   • `apikey: <supabase anon key>`      (public, RLS enforces access)
+///   • `Authorization: Bearer <jwt>`      (owner routes; from AuthStore)
+///   • `Idempotency-Key`                  (on all writes — safe retries)
+///
+/// Wire JSON is snake_case. We decode into private DTOs (snake_case → camelCase
+/// via `.convertFromSnakeCase`) and map to the app's models, and we build write
+/// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
+/// so the app models never have to match the DB column names.
 final class LiveAPIClient: APIClient {
     private let base: URL
     private let session: URLSession
@@ -13,64 +22,260 @@ final class LiveAPIClient: APIClient {
         self.session = URLSession(configuration: .default)
     }
 
-    private func request(_ path: String, method: String = "GET", body: Data? = nil) -> URLRequest {
-        var req = URLRequest(url: base.appendingPathComponent(path))
+    // MARK: - Request plumbing
+
+    /// Build a URL by appending path segments individually (never string-joins,
+    /// so ids with slashes/odd chars can't corrupt the path).
+    private func url(_ segments: [String], query: [URLQueryItem] = []) -> URL {
+        var u = base
+        for s in segments { u.appendPathComponent(s) }
+        guard !query.isEmpty,
+              var comps = URLComponents(url: u, resolvingAgainstBaseURL: false) else { return u }
+        comps.queryItems = query
+        return comps.url ?? u
+    }
+
+    private func makeRequest(url: URL, method: String = "GET", json: [String: Any]? = nil) -> URLRequest {
+        var req = URLRequest(url: url)
         req.httpMethod = method
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        if let token = AuthStore.currentAccessToken {
+            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         if method != "GET" {
             req.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         }
-        // TODO Phase 2: attach JWT from AuthStore (master spec Part 4.5)
-        req.httpBody = body
+        if let json {
+            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            req.httpBody = try? JSONSerialization.data(withJSONObject: json)
+        }
         return req
     }
 
-    private func send<T: Decodable>(_ req: URLRequest) async throws -> T {
+    private func execute(_ req: URLRequest) async throws -> Data {
         let (data, resp) = try await session.data(for: req)
         guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
             throw APIError.badResponse((resp as? HTTPURLResponse)?.statusCode ?? -1)
         }
-        return try JSONDecoder().decode(T.self, from: data)
+        return data
     }
 
+    // Decoder built per call (JSONDecoder isn't Sendable — no shared static).
+    private func decode<T: Decodable>(_ data: Data) throws -> T {
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        return try d.decode(T.self, from: data)
+    }
+
+    /// ISO8601 → Date, tolerant of fractional seconds (Supabase timestamps).
+    private static func parseDate(_ s: String?) -> Date? {
+        guard let s, !s.isEmpty else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: s) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: s)
+    }
+
+    /// Date → ISO8601 string for write bodies (e.g. sold_at on PATCH).
+    private static func isoString(from date: Date) -> String {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.string(from: date)
+    }
+
+    // MARK: - Listings
+
     func listings() async throws -> [Listing] {
-        try await send(request("v1/listings"))
+        let data = try await execute(makeRequest(url: url(["listings"])))
+        let dtos: [ListingDTO] = try decode(data)
+        return dtos.map(mapListing)
     }
 
     func createListing(_ listing: Listing) async throws -> Listing {
-        try await send(request("v1/listings", method: "POST",
-                               body: try JSONEncoder().encode(listing)))
+        let data = try await execute(makeRequest(url: url(["listings"]), method: "POST",
+                                                 json: listingBody(listing, includeStatus: false)))
+        return mapListing(try decode(data))
     }
 
-    func requestUpload(filename: String, bytes: Int64) async throws -> UploadTicket {
-        struct Body: Codable { let filename: String; let bytes: Int64 }
-        return try await send(request("v1/uploads/session", method: "POST",
-                                      body: try JSONEncoder().encode(Body(filename: filename, bytes: bytes))))
+    func updateListing(_ listing: Listing) async throws -> Listing {
+        let data = try await execute(makeRequest(url: url(["listings", listing.id.uuidString]),
+                                                 method: "PATCH",
+                                                 json: listingBody(listing, includeStatus: true)))
+        return mapListing(try decode(data))
+    }
+
+    // MARK: - Uploads
+
+    func requestUpload(filename: String, bytes: Int64,
+                       listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
+        var body: [String: Any] = ["filename": filename, "bytes": bytes, "kind": kind]
+        if let listingID { body["listing_id"] = listingID.uuidString }
+        if let sha256 { body["sha256"] = sha256 }
+        let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body))
+        let dto: UploadTicketDTO = try decode(data)
+        return UploadTicket(id: dto.assetId, putURL: dto.putUrl, storageKey: dto.storageKey)
     }
 
     func completeUpload(id: String, sha256: String?) async throws {
-        struct Body: Codable { let sha256: String? }
-        struct Empty: Codable {}
-        let _: Empty = try await send(request("v1/uploads/\(id)/complete", method: "POST",
-                                              body: try JSONEncoder().encode(Body(sha256: sha256))))
+        var body: [String: Any] = [:]
+        if let sha256 { body["sha256"] = sha256 }
+        // TODO: thread probe metadata through so we can post the full contract body
+        // {duration_s,fps,width,height,codec,is_drone,has_gyro}. Server can also
+        // derive most of it from the uploaded file for now.
+        _ = try await execute(makeRequest(url: url(["uploads", id, "complete"]),
+                                          method: "POST", json: body))
     }
 
-    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double,
+    // MARK: - Renders
+
+    func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
                       enhancements: Enhancements) async throws -> Render {
-        struct Body: Codable {
-            let listingId: UUID
-            let tier: String
-            let durationS: Double
-            let enhancements: Enhancements
-        }
-        return try await send(request("v1/renders", method: "POST",
-                                      body: try JSONEncoder().encode(Body(listingId: listingID,
-                                                                          tier: tier.rawValue,
-                                                                          durationS: durationS,
-                                                                          enhancements: enhancements))))
+        // NOTE: `assetID` must be the server capture_assets id returned by
+        // /uploads. Today the call site passes the local CaptureAsset.id (the
+        // upload runs async in the background), so wiring the real live path
+        // requires threading the server asset_id back from createUpload → here.
+        // See ReviewSubmitView.start() (TODO).
+        let body: [String: Any] = [
+            "listing_id": listingID.uuidString,
+            "asset_id": assetID.uuidString,
+            "tier": tier.rawValue,
+            "duration_s": durationS,
+            "enhancements": ["declutter": enhancements.declutter,
+                             "style": enhancements.style.rawValue],
+        ]
+        let data = try await execute(makeRequest(url: url(["renders"]), method: "POST", json: body))
+        let dto: RenderDTO = try decode(data)
+        return mapRender(dto, fallbackListingID: listingID, fallbackTier: tier,
+                         fallbackDuration: durationS, fallbackEnhancements: enhancements)
     }
 
     func renderStatus(id: UUID) async throws -> Render {
-        try await send(request("v1/renders/\(id.uuidString)"))
+        let data = try await execute(makeRequest(url: url(["renders", id.uuidString])))
+        let dto: RenderDTO = try decode(data)
+        return mapRender(dto, fallbackListingID: nil, fallbackTier: .smooth,
+                         fallbackDuration: 0, fallbackEnhancements: Enhancements(), fallbackID: id)
+    }
+
+    // MARK: - Account / usage
+
+    func me() async throws -> UsageSummary {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        let dto: MeDTO = try decode(data)
+        return UsageSummary(aiSpendCents: dto.usage?.aiSpendCents,
+                            renderCount: dto.usage?.renderCount,
+                            leadCount: dto.usage?.leadCount,
+                            planName: dto.plan?.name)
+    }
+
+    // MARK: - Write bodies (explicit snake_case; omit nil/empty so PATCH is partial)
+
+    private func listingBody(_ l: Listing, includeStatus: Bool) -> [String: Any] {
+        var b: [String: Any] = [
+            "space_type": l.spaceType.rawValue,
+            "address": l.address,
+        ]
+        if l.price.cents > 0 { b["price_cents"] = l.price.cents }
+        if l.beds > 0 { b["beds"] = l.beds }
+        if l.baths > 0 { b["baths"] = l.baths }
+        if l.sqft > 0 { b["sqft"] = l.sqft }
+        if let t = l.tagline, !t.trimmingCharacters(in: .whitespaces).isEmpty { b["tagline"] = t }
+        if let d = l.details, !d.isEmpty { b["details"] = d }
+        if let lat = l.latitude { b["lat"] = lat }
+        if let lng = l.longitude { b["lng"] = lng }
+        if includeStatus { b["status"] = l.status.rawValue }
+        if let sold = l.soldAt { b["sold_at"] = Self.isoString(from: sold) }
+        return b
+    }
+
+    // MARK: - DTO → model mapping
+
+    private func mapListing(_ dto: ListingDTO) -> Listing {
+        Listing(
+            id: dto.id.flatMap(UUID.init(uuidString:)) ?? UUID(),
+            address: dto.address ?? "",
+            beds: dto.beds ?? 0,
+            baths: dto.baths ?? 0,
+            sqft: dto.sqft ?? 0,
+            price: Money(cents: dto.priceCents ?? 0),
+            status: Listing.Status(rawValue: dto.status ?? "") ?? .draft,
+            isSample: false,
+            spaceTypeRaw: dto.spaceType,
+            createdAt: Self.parseDate(dto.createdAt) ?? Date(),
+            soldAt: Self.parseDate(dto.soldAt),
+            zillowURL: nil,
+            mainPhotoRelPath: nil,          // main_photo_key is a remote R2 key, not a local path (TODO)
+            latitude: dto.lat,
+            longitude: dto.lng,
+            tagline: dto.tagline,
+            details: dto.details
+        )
+    }
+
+    private func mapRender(_ dto: RenderDTO, fallbackListingID: UUID?, fallbackTier: Render.Tier,
+                           fallbackDuration: Double, fallbackEnhancements: Enhancements,
+                           fallbackID: UUID? = nil) -> Render {
+        var r = Render(
+            listingID: dto.listingId.flatMap(UUID.init(uuidString:)) ?? fallbackListingID ?? UUID(),
+            tier: dto.tier.flatMap(Render.Tier.init(rawValue:)) ?? fallbackTier,
+            durationS: dto.durationS ?? fallbackDuration,
+            enhancements: dto.enhancements ?? fallbackEnhancements,
+            status: dto.status ?? "queued",
+            progress: dto.progress ?? 0
+        )
+        if let idStr = dto.id, let uuid = UUID(uuidString: idStr) { r.id = uuid }
+        else if let fallbackID { r.id = fallbackID }
+        return r
+    }
+
+    // MARK: - Wire DTOs (snake_case decoded via .convertFromSnakeCase)
+
+    private struct ListingDTO: Decodable {
+        let id: String?
+        let spaceType: String?
+        let address: String?
+        let tagline: String?
+        let details: [String: String]?
+        let priceCents: Int?
+        let beds: Int?
+        let baths: Double?
+        let sqft: Int?
+        let lat: Double?
+        let lng: Double?
+        let status: String?
+        let soldAt: String?
+        let createdAt: String?
+    }
+
+    private struct UploadTicketDTO: Decodable {
+        let assetId: String
+        let putUrl: URL?
+        let storageKey: String?
+    }
+
+    private struct RenderDTO: Decodable {
+        let id: String?
+        let listingId: String?
+        let assetId: String?
+        let tier: String?
+        let durationS: Double?
+        let status: String?
+        let progress: Double?
+        let enhancements: Enhancements?
+        let costCents: Int?
+        let currentStep: String?
+    }
+
+    private struct MeDTO: Decodable {
+        struct Plan: Decodable { let name: String? }
+        struct Usage: Decodable {
+            let aiSpendCents: Int?
+            let renderCount: Int?
+            let leadCount: Int?
+        }
+        let plan: Plan?
+        let usage: Usage?
     }
 }

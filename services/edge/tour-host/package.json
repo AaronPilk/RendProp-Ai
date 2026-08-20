@@ -1,0 +1,19 @@
+{
+  "name": "rendprop-tour-host",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloudflare Worker serving Rendprop public tour (/f/:slug) and portfolio (/a/:handle) pages.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250408.0",
+    "typescript": "^5.6.3",
+    "wrangler": "^3.114.0"
+  }
+}

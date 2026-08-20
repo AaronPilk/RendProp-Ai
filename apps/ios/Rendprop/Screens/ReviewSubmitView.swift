@@ -343,10 +343,14 @@ struct ReviewSubmitView: View {
 
     private func start(cellularApproved: Bool) {
         model.assets[listing.id] = asset            // so the flythrough plays YOUR video
-        uploads.begin(fileURL: asset.localURL, cellularApproved: cellularApproved)
+        uploads.begin(fileURL: asset.localURL, listingID: listing.id, cellularApproved: cellularApproved)
         model.setStatus(.uploading, for: listing.id)
         Task {
+            // Contract requires asset_id on POST /renders. We pass the local
+            // CaptureAsset.id today; TODO thread the server asset_id returned by
+            // createUpload once upload→render sequencing is wired for live.
             let r = try? await model.api.createRender(listingID: listing.id,
+                                                      assetID: asset.id,
                                                       tier: tier,
                                                       durationS: asset.durationS,
                                                       enhancements: enhancements)

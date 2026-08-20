@@ -1,0 +1,32 @@
+name = "rendprop-tour-host"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+workers_dev = true
+
+# ---------------------------------------------------------------------------
+# Routes — bind the two public path prefixes on the apex domain to this Worker.
+# Requires rendprop.app to be an active zone on this Cloudflare account. The
+# tour-host owns ONLY /f/* and /a/*; the marketing site keeps everything else.
+# ---------------------------------------------------------------------------
+routes = [
+  { pattern = "rendprop.app/f/*", zone_name = "rendprop.app" },
+  { pattern = "rendprop.app/a/*", zone_name = "rendprop.app" },
+]
+
+[vars]
+# Base URL of the Supabase Edge Functions (no trailing slash needed).
+SUPABASE_FUNCTIONS_URL = "https://YOUR_PROJECT_REF.supabase.co/functions/v1"
+
+# Supabase anon (publishable) key. This is PUBLIC by design — RLS enforces
+# access and it already ships in every Supabase client. It's the apikey/Bearer
+# on the server->tours read and on the browser's lead/beacon calls.
+# Prefer setting it as a secret instead of committing a real key:
+#   wrangler secret put SUPABASE_ANON_KEY
+SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"
+
+# Optional: edge cache TTL (seconds) for rendered tour/portfolio HTML.
+# 0 disables the edge cache. Default is 60 when unset.
+TOUR_CACHE_TTL = "60"
+
+[observability]
+enabled = true

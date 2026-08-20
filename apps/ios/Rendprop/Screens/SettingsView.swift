@@ -9,6 +9,11 @@ struct SettingsView: View {
     @AppStorage("hasOnboarded") private var hasOnboarded = true
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @EnvironmentObject var uploads: UploadManager
+    @EnvironmentObject var model: AppModel
+
+    // Live-backend usage/cost (contract: GET /me). Loaded only when useLiveBackend.
+    @State private var usage: UsageSummary?
+    @State private var usageFailed = false
 
     var body: some View {
         Form {
@@ -86,6 +91,10 @@ struct SettingsView: View {
                 }
             }
 
+            if Config.useLiveBackend {
+                usageSection
+            }
+
             Section("Legal") {
                 Link("Terms of Service", destination: URL(string: "https://rendprop.app/terms")!)
                 Link("Privacy Policy", destination: URL(string: "https://rendprop.app/privacy")!)
@@ -110,6 +119,48 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await loadUsage() }
+    }
+
+    // MARK: - Usage (live backend only)
+
+    @ViewBuilder
+    private var usageSection: some View {
+        Section {
+            if let usage {
+                LabeledContent("AI spend this month", value: usage.aiSpend.formatted)
+                LabeledContent("Renders", value: "\(usage.renderCount ?? 0)")
+                LabeledContent("Leads", value: "\(usage.leadCount ?? 0)")
+                if let plan = usage.planName, !plan.isEmpty {
+                    LabeledContent("Plan", value: plan)
+                }
+            } else if usageFailed {
+                Text("Couldn't load usage. Pull to refresh or check your connection.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            } else {
+                HStack {
+                    Text("Loading usage…").foregroundStyle(Theme.inkDim)
+                    Spacer()
+                    ProgressView()
+                }
+            }
+        } header: {
+            Text("Usage")
+        } footer: {
+            Text("This month's AI spend, renders, and leads for your account.")
+        }
+    }
+
+    @MainActor
+    private func loadUsage() async {
+        guard Config.useLiveBackend else { return }
+        do {
+            usage = try await model.api.me()
+            usageFailed = false
+        } catch {
+            usageFailed = true
+        }
     }
 }
 

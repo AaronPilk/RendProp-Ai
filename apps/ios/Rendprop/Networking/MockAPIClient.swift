@@ -23,19 +23,29 @@ actor MockAPIClient: APIClient {
         listing
     }
 
-    func requestUpload(filename: String, bytes: Int64) async throws -> UploadTicket {
+    func updateListing(_ listing: Listing) async throws -> Listing {
+        listing
+    }
+
+    func requestUpload(filename: String, bytes: Int64,
+                       listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
         // Offline dev: no presigned URL → UploadManager falls back to Simulate.
-        UploadTicket(id: UUID().uuidString, putURL: nil)
+        UploadTicket(id: UUID().uuidString, putURL: nil, storageKey: nil)
     }
 
     func completeUpload(id: String, sha256: String?) async throws {}
 
-    func createRender(listingID: UUID, tier: Render.Tier, durationS: Double,
+    func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
                       enhancements: Enhancements) async throws -> Render {
         let render = Render(listingID: listingID, tier: tier, durationS: durationS,
                             enhancements: enhancements, status: "queued", progress: 0)
         renders[render.id] = (render, Date())
         return render
+    }
+
+    func me() async throws -> UsageSummary {
+        // Believable offline sample — only shown when useLiveBackend is true.
+        UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: "Dev")
     }
 
     func renderStatus(id: UUID) async throws -> Render {

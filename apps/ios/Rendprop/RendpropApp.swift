@@ -35,7 +35,8 @@ final class AppModel: ObservableObject {
     }
     @Published var tours: [UUID: RenderedTour] = [:]   { didSet { persist() } } // listingID → rendered tour
 
-    let api: APIClient = MockAPIClient()
+    // Mock by default (offline dev); LiveAPIClient when Config.useLiveBackend.
+    let api: APIClient = Config.makeAPIClient()
 
     private var hasLoaded = false
     private var isRestoring = false

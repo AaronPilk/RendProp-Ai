@@ -24,6 +24,9 @@ final class UploadManager: NSObject, ObservableObject {
         var uploadID: String?             // server-side upload session id
         var sha256: String?
         var retryCount: Int = 0
+        /// Owning listing — sent as listing_id when requesting the presigned PUT.
+        /// Optional so older persisted upload state still decodes.
+        var listingID: UUID?
 
         var fractionComplete: Double {
             bytesTotal > 0 ? Double(bytesSent) / Double(bytesTotal) : 0
@@ -41,7 +44,8 @@ final class UploadManager: NSObject, ObservableObject {
     private let monitor = NWPathMonitor()
     private(set) var pathIsExpensive = false
     private var simulateTimer: Timer?
-    private var api: APIClient = MockAPIClient()
+    // Mock by default; LiveAPIClient when Config.useLiveBackend (presigned PUT path).
+    private var api: APIClient = Config.makeAPIClient()
 
     private lazy var backgroundSession: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: "com.rendprop.upload")
@@ -75,7 +79,7 @@ final class UploadManager: NSObject, ObservableObject {
         return pathIsExpensive && (wifiOnly || bytes > Config.cellularWarnBytes)
     }
 
-    func begin(fileURL: URL, cellularApproved: Bool = false) {
+    func begin(fileURL: URL, listingID: UUID? = nil, cellularApproved: Bool = false) {
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0 else { return }
 
@@ -86,6 +90,7 @@ final class UploadManager: NSObject, ObservableObject {
 
         let relative = fileURL.path.replacingOccurrences(of: FileStore.documents.path + "/", with: "")
         var newState = State(filePath: relative, bytesTotal: bytes, mode: Config.uploadMode.rawValue)
+        newState.listingID = listingID
         newState.status = (shouldWarnCellular(bytes: bytes) && !cellularApproved) ? .queued : .uploading
         state = newState
         persist()
@@ -186,7 +191,10 @@ final class UploadManager: NSObject, ObservableObject {
         Task {
             do {
                 let ticket = try await api.requestUpload(filename: s.fileURL.lastPathComponent,
-                                                         bytes: s.bytesTotal)
+                                                         bytes: s.bytesTotal,
+                                                         listingID: s.listingID,
+                                                         sha256: s.sha256,
+                                                         kind: "video")
                 await MainActor.run {
                     self.mutate { $0.uploadID = ticket.id }
                     guard let putURL = ticket.putURL else {
