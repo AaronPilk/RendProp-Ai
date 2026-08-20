@@ -1,6 +1,9 @@
 -- Rendprop — Supabase schema v1 (source of truth). Money in integer cents.
 -- Multi-business (space_type + details jsonb). RLS on everything.
 -- Video bytes NEVER live here — only rows + R2/Stream keys/URLs.
+--
+-- DEPLOYED to the dedicated RendProp project `ymgqpbnjpztwjsyvceld` (public
+-- schema — its own project, no sharing). See ../DEPLOYMENT.md.
 
 -- ============================ Identity & org ============================
 -- Profiles mirror auth.users (id == auth.users.id). Created by a trigger on signup.

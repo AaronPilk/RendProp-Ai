@@ -13,7 +13,7 @@ enum Config {
     static let supabaseURL: URL? = {
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_URL") as? String,
            !s.isEmpty, let u = URL(string: s) { return u }
-        return URL(string: "https://YOUR-PROJECT-REF.supabase.co")   // TODO: real project ref
+        return URL(string: "https://ymgqpbnjpztwjsyvceld.supabase.co")   // dedicated RendProp project (Pro)
     }()
 
     /// Supabase Edge Functions base — the API surface LiveAPIClient talks to
@@ -29,7 +29,8 @@ enum Config {
     static let supabaseAnonKey: String = {
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_ANON_KEY") as? String,
            !s.isEmpty { return s }
-        return ""   // TODO: real anon key
+        // Supabase anon key (public by design; RLS enforces access).
+        return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltZ3FwYm5qcHp0d2pzeXZjZWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMzk5OTAsImV4cCI6MjEwMjgxNTk5MH0.oUknRmqxoRGWPaYJCaOudGaXwe5w4tfKqqZ9cAPbfW0"
     }()
 
     /// Master switch. false = MockAPIClient (fully offline dev — DEFAULT).

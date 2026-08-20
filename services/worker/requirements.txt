@@ -1,0 +1,11 @@
+# Rendprop render worker deps.
+# The AI-enhancement PIPELINE (services/pipeline) is stdlib-only and needs no
+# install — the worker just imports it. These are the worker's own needs:
+
+boto3>=1.34          # R2 (S3 API): download capture, upload mp4/poster, presign
+requests>=2.31       # Supabase PostgREST + Cloudflare Stream REST
+
+# System binaries (NOT pip): ffmpeg + ffprobe are REQUIRED (the encode + poster +
+# the pipeline's keyframe extraction). The Dockerfile installs them. Locally:
+#   macOS:  brew install ffmpeg
+#   debian: apt-get install -y ffmpeg
