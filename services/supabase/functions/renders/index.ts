@@ -135,6 +135,96 @@ Deno.serve(async (req) => {
       return json({ ...render, share_url: shareUrl(render.slug as string) }, 201);
     }
 
+    // ---- POST /renders/publish-app ----
+    // The app publishes its OWN on-device render (already uploaded to the renders
+    // bucket via /uploads role=render). No Python worker needed: create a ready
+    // job + a published render row pointing at the uploaded mp4, store chapters
+    // (room tags → tap-to-jump dots), and mint the public slug.
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "publish-app") {
+      const body = await readJson<Record<string, unknown>>(req);
+      const listingId = body.listing_id as string;
+      const assetId = body.asset_id as string;
+      assert(listingId, 400, "listing_id is required");
+      assert(assetId, 400, "asset_id is required");
+
+      // The uploaded render mp4 must belong to this listing and be completed.
+      const { data: asset, error: aErr } = await db
+        .from("capture_assets")
+        .select("id, listing_id, storage_key, bucket, uploaded, duration_s")
+        .eq("id", assetId)
+        .eq("listing_id", listingId)
+        .maybeSingle();
+      if (aErr) throw new HttpError(400, `Asset lookup failed: ${aErr.message}`);
+      if (!asset) throw new HttpError(404, "Render asset not found for this listing");
+      assert(asset.bucket === "renders", 400, "asset_id must be a role=render upload");
+      assert(asset.uploaded === true, 409, "Render asset upload is not complete");
+
+      let durationS = body.duration_s as number | undefined;
+      if (durationS == null && asset.duration_s != null) durationS = Number(asset.duration_s);
+      assert(durationS != null, 400, "duration_s is required");
+
+      const enhancements = (body.enhancements as Record<string, unknown>) ?? {};
+      const tier = (body.tier as string) ?? "smooth";
+      const staged = typeof body.staged === "boolean" ? body.staged : isStaged(enhancements);
+
+      // A ready job keeps the schema invariant (renders.job_id NOT NULL) and links
+      // chapters (render_jobs.capture_asset_id → capture_chapters.asset_id). status
+      // 'ready' is NOT in the worker's claim set, so the worker never touches it.
+      const { data: job, error: jErr } = await db
+        .from("render_jobs")
+        .insert({
+          listing_id: listingId,
+          capture_asset_id: assetId,
+          tier: TIERS.includes(tier) ? tier : "smooth",
+          enhancements,
+          status: "ready",
+          progress: 1,
+          finished_at: new Date().toISOString(),
+        })
+        .select("id")
+        .single();
+      if (jErr) throw new HttpError(400, `Job create failed: ${jErr.message}`);
+
+      // Chapters (room/area tags) → tap-to-jump dots on the public tour.
+      const rawChapters = Array.isArray(body.chapters)
+        ? body.chapters as Array<Record<string, unknown>>
+        : [];
+      if (rawChapters.length > 0) {
+        const rows = rawChapters
+          .map((c, i) => ({
+            asset_id: assetId,
+            label: String(c.label ?? c.name ?? "").slice(0, 80),
+            t_ms: Math.max(0, Math.round(Number(c.t_ms ?? c.tMs ?? 0))),
+            sort: Number.isFinite(Number(c.sort)) ? Number(c.sort) : i,
+          }))
+          .filter((r) => r.label.length > 0);
+        if (rows.length > 0) await db.from("capture_chapters").insert(rows);
+      }
+
+      const base = {
+        job_id: job.id,
+        listing_id: listingId,
+        duration_s: durationS,
+        speed_factor: (body.speed_factor as number) ?? 2.0,
+        video_key: asset.storage_key as string,
+        poster_key: (body.poster_key as string) ?? null,
+        staged,
+        published_at: new Date().toISOString(),
+      };
+
+      let render: Record<string, unknown> | null = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const slug = nanoid(10);
+        const { data, error } = await db.from("renders").insert({ ...base, slug }).select().single();
+        if (!error) { render = data; break; }
+        if (error.code !== "23505") throw new HttpError(400, `Publish failed: ${error.message}`);
+      }
+      if (!render) throw new HttpError(500, "Could not allocate a unique slug");
+
+      await db.from("listings").update({ status: "ready" }).eq("id", listingId);
+      return json({ ...render, share_url: shareUrl(render.slug as string) }, 201);
+    }
+
     // ---- GET /renders/:id ----
     if (req.method === "GET" && seg.length === 1) {
       const jobId = seg[0];
@@ -153,18 +243,24 @@ Deno.serve(async (req) => {
         .not("published_at", "is", null)
         .maybeSingle();
 
-      const tour = render
-        ? {
-            slug: render.slug,
-            share_url: shareUrl(render.slug as string),
-            video_url: streamHlsUrl(render.stream_uid as string) ??
-              publicR2Url(render.video_key as string),
-            poster: publicR2Url(render.poster_key as string),
-            staged: render.staged,
-            duration_s: render.duration_s,
-            published_at: render.published_at,
-          }
-        : null;
+      // Prefer the all-intra R2 mp4 (byte-range, frame-accurate scrub); HLS is the
+      // adaptive fallback only. See tours/index.ts for the full rationale.
+      let tour: Record<string, unknown> | null = null;
+      if (render) {
+        const scrubUrl = publicR2Url(render.video_key as string);
+        const hlsUrl = streamHlsUrl(render.stream_uid as string);
+        tour = {
+          slug: render.slug,
+          share_url: shareUrl(render.slug as string),
+          video_url: scrubUrl ?? hlsUrl,
+          scrub_url: scrubUrl,
+          hls_url: hlsUrl,
+          poster: publicR2Url(render.poster_key as string),
+          staged: render.staged,
+          duration_s: render.duration_s,
+          published_at: render.published_at,
+        };
+      }
 
       return json({
         status: job.status,

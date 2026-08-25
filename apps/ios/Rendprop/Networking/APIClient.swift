@@ -1,19 +1,62 @@
 import Foundation
 
-struct UploadTicket: Codable {
-    let id: String       // server capture_assets id (contract: asset_id)
-    let putURL: URL?     // presigned PUT (R2/S3-style); nil in offline dev
-    /// R2 object key the file lands at (contract: storage_key). Optional so the
-    /// offline Mock and any legacy decode still work.
+/// Result of `POST /uploads`. Expresses BOTH server modes (contract §2.1):
+///  • `.single`    — one presigned PUT (`putURL`), files ≤ 64 MB / photos.
+///  • `.multipart` — R2/S3 multipart (`uploadID` + `partSize` + `partCount`),
+///                   large video, resumable, per-part retry.
+/// Fields are optional per mode so one type covers both wire shapes and the
+/// offline Mock (which returns a single-mode ticket with a nil `putURL`).
+struct UploadTicket: Codable, Sendable {
+    enum Mode: String, Codable, Sendable { case single, multipart }
+
+    let assetID: String        // server capture_assets id (contract: asset_id)
+    let mode: Mode
+    // single
+    var putURL: URL? = nil     // presigned PUT; nil in offline dev
+    // multipart
+    var uploadID: String? = nil   // R2/S3 multipart upload id
+    var partSize: Int64? = nil    // uniform part size (last part smaller)
+    var partCount: Int? = nil     // ceil(bytes / partSize)
+    // both
+    var storageKey: String? = nil // R2 object key the file lands at
+}
+
+/// Probed video metadata threaded into `POST /uploads/:id/complete` (contract
+/// §2.3). All optional — the server derives what it can; we send what we know.
+struct UploadMetadata: Codable, Sendable, Hashable {
+    var durationS: Double? = nil
+    var fps: Double? = nil
+    var width: Int? = nil
+    var height: Int? = nil
+    var codec: String? = nil
+    var isDrone: Bool? = nil
+    var hasGyro: Bool? = nil
+    var bytes: Int64? = nil
+    var sha256: String? = nil
+}
+
+/// One file in a photo batch request (`POST /uploads/batch`, contract §2.5).
+struct PhotoUploadRequest: Codable, Sendable {
+    let filename: String
+    var bytes: Int64? = nil
+    var sha256: String? = nil
+    var contentType: String? = nil
+}
+
+/// One returned photo slot from `POST /uploads/batch`.
+struct PhotoTicket: Codable, Sendable {
+    let index: Int
+    let assetID: String
+    let putURL: URL
     var storageKey: String? = nil
 }
 
 /// This-month usage/cost rollup for the signed-in org (contract: GET /me → usage).
 struct UsageSummary: Codable, Hashable {
-    var aiSpendCents: Int? = nil   // usage.ai_spend_cents
-    var renderCount: Int? = nil    // usage.render_count
-    var leadCount: Int? = nil      // usage.lead_count
-    var planName: String? = nil    // plan.name
+    var aiSpendCents: Int? = nil   // usage.cost_cents (total infra+AI spend this month)
+    var renderCount: Int? = nil    // usage.renders
+    var leadCount: Int? = nil      // usage.leads
+    var planName: String? = nil    // plan (scalar string)
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
@@ -21,23 +64,89 @@ struct UsageSummary: Codable, Hashable {
 
 /// The app talks only to this protocol. MockAPIClient makes the whole app run
 /// offline; LiveAPIClient points at the Supabase Edge Functions API
-/// (docs/BACKEND-ARCHITECTURE.md §2).
+/// (docs/UPLOAD-AND-PUBLISH-CONTRACT.md §2).
 protocol APIClient: Sendable {
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
     func updateListing(_ listing: Listing) async throws -> Listing
-    /// POST /uploads → presigned R2 PUT + storage_key + asset_id. `listingID`,
+
+    // MARK: Uploads (contract §2)
+
+    /// POST /uploads → an `UploadTicket` (single OR multipart). `listingID`,
     /// `sha256`, and `kind` complete the contract body; all optional-friendly so
-    /// callers that only have a file can still request a ticket.
+    /// callers that only have a file can still request a ticket. The server
+    /// decides the mode (video > 64 MB → multipart).
+    ///
+    /// `role` routes the object: "capture" (default) → private uploads bucket;
+    /// "render" → the PUBLIC renders bucket for an app-rendered tour (contract
+    /// §2.7). A convenience overload below defaults `role` to "capture" so
+    /// existing capture call sites are unchanged.
     func requestUpload(filename: String, bytes: Int64,
-                       listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket
+                       listingID: UUID?, sha256: String?, kind: String,
+                       role: String) async throws -> UploadTicket
+
+    /// POST /uploads/:asset_id/part-urls → presigned URLs for the given 1-based
+    /// part numbers. URLs expire in ~1 h, so request them as you go / on resume.
+    func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL]
+
+    /// POST /uploads/:asset_id/complete. `parts` non-nil ⇒ multipart (ETag
+    /// manifest, REQUIRED); `parts` nil ⇒ single. `metadata` carries the probed
+    /// video fields.
+    func completeUpload(assetID: String,
+                        parts: [(number: Int, etag: String)]?,
+                        metadata: UploadMetadata) async throws
+
+    /// POST /uploads/:asset_id/abort — tears down the in-flight R2 multipart
+    /// session. Safe to call on cancel.
+    func abortUpload(assetID: String) async throws
+
+    /// POST /uploads/batch → one presigned PUT slot per photo (contract §2.5).
+    func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket]
+
+    /// Legacy single-complete kept for source compatibility (offline dev / any
+    /// caller still on the old signature). Prefer `completeUpload(assetID:parts:metadata:)`.
     func completeUpload(id: String, sha256: String?) async throws
+
+    // MARK: Renders / account
+
     /// POST /renders — the contract REQUIRES `asset_id`, so it flows through here.
     func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
                       enhancements: Enhancements) async throws -> Render
     func renderStatus(id: UUID) async throws -> Render
+
+    /// POST /renders/publish-app (contract §2.7) — publishes the app's ON-DEVICE
+    /// render as the hosted tour (no Python worker). `assetID` MUST be the SERVER
+    /// asset_id of the role=render upload (from `requestUpload`/`/complete`).
+    /// `chapters` are room tags mapped to `[{label, t_ms, sort}]`. Returns the
+    /// real server slug + public share URL.
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, staged: Bool, tier: Render.Tier,
+                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour
+
     /// GET /me — usage/cost for the Settings "Usage" section.
     func me() async throws -> UsageSummary
+}
+
+extension APIClient {
+    /// Back-compat overload — capture uploads (the common case) don't specify a
+    /// role. Forwards to the role-aware requirement with `role: "capture"`.
+    func requestUpload(filename: String, bytes: Int64,
+                       listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
+        try await requestUpload(filename: filename, bytes: bytes, listingID: listingID,
+                                sha256: sha256, kind: kind, role: "capture")
+    }
+}
+
+/// Result of `POST /renders/publish-app` — the app-published tour's public
+/// identity. `slug`/`shareURL` are the REAL server values (never fabricated).
+struct PublishedTour: Sendable, Hashable {
+    let slug: String
+    let shareURL: String
+    var videoURL: String? = nil
+    var posterURL: String? = nil
+    var durationS: Double? = nil
+    var staged: Bool? = nil
+    var renderID: UUID? = nil
 }
 
 enum APIError: LocalizedError {

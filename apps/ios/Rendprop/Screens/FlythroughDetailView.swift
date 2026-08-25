@@ -7,6 +7,8 @@ import MapKit
 import CoreLocation
 import RoomPlan
 import QuickLook
+import simd
+import UniformTypeIdentifiers
 
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
@@ -84,8 +86,12 @@ struct FlythroughDetailView: View {
         }
     }
 
+    /// Prefer the REAL server slug once the tour is published to the cloud; fall
+    /// back to the local-only preview link before it's published (contract §4/§5:
+    /// never fabricate a slug when a real one exists).
     private var shareURL: URL {
-        URL(string: "https://rendprop.app/f/\(listing.id.uuidString.prefix(8).lowercased())")!
+        currentListing.serverShareURL
+            ?? URL(string: "https://rendprop.app/f/\(listing.id.uuidString.prefix(8).lowercased())")!
     }
 
     var body: some View {
@@ -713,13 +719,88 @@ struct FloorPlanView: View {
     let listing: Listing
 
     @State private var showScanner = false
-    @State private var showViewer = false
-    @State private var planExists = false
+    @State private var showViewer = false       // 3D / AR (USDZ via QuickLook)
+    @State private var showPlan2D = false        // flat top-down 2D plan
+    @State private var showImporter = false      // PDF/image blueprint picker
+    @State private var showUpload = false        // view the uploaded blueprint
+    @State private var planExists = false        // USDZ present
+    @State private var plan2DExists = false      // JSON geometry present (new scans)
+    @State private var uploadedURL: URL?         // uploaded PDF/image blueprint, if any
+    @State private var importError: String?
 
-    private var usdzURL: URL {
+    private var floorPlanDir: URL {
         let dir = FileStore.documents.appendingPathComponent("FloorPlans", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir.appendingPathComponent("\(listing.id.uuidString).usdz")
+        return dir
+    }
+
+    private var usdzURL: URL {
+        floorPlanDir.appendingPathComponent("\(listing.id.uuidString).usdz")
+    }
+
+    /// CapturedRoom geometry saved alongside the USDZ — powers the 2D plan.
+    private var planJSONURL: URL {
+        usdzURL.deletingPathExtension().appendingPathExtension("json")
+    }
+
+    /// An uploaded blueprint is stored as `<listing.id>-upload.<ext>` (pdf/png/jpg…).
+    private func existingUpload() -> URL? {
+        let prefix = "\(listing.id.uuidString)-upload"
+        let items = (try? FileManager.default.contentsOfDirectory(
+            at: floorPlanDir, includingPropertiesForKeys: nil)) ?? []
+        return items.first { $0.deletingPathExtension().lastPathComponent == prefix }
+    }
+
+    private func refreshState() {
+        planExists = FileManager.default.fileExists(atPath: usdzURL.path)
+        plan2DExists = FileManager.default.fileExists(atPath: planJSONURL.path)
+        uploadedURL = existingUpload()
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let picked = urls.first else {
+            if case .failure(let err) = result { importError = err.localizedDescription }
+            return
+        }
+        let scoped = picked.startAccessingSecurityScopedResource()
+        defer { if scoped { picked.stopAccessingSecurityScopedResource() } }
+        let ext = picked.pathExtension.isEmpty ? "pdf" : picked.pathExtension.lowercased()
+        // Clear any previous upload, then copy the new file in.
+        if let old = existingUpload() { try? FileManager.default.removeItem(at: old) }
+        let dest = floorPlanDir.appendingPathComponent("\(listing.id.uuidString)-upload.\(ext)")
+        do {
+            try FileManager.default.copyItem(at: picked, to: dest)
+            refreshState()
+        } catch {
+            importError = error.localizedDescription
+        }
+    }
+
+    /// Upload-a-blueprint section — shown in both the LiDAR and no-LiDAR paths.
+    @ViewBuilder private var uploadSection: some View {
+        if let uploadedURL {
+            VStack(spacing: 6) {
+                Image(systemName: "doc.richtext")
+                    .font(.system(size: 30, weight: .light)).foregroundStyle(Theme.accent)
+                Text("Blueprint uploaded").font(.rpHeadline)
+                Text(uploadedURL.lastPathComponent)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity).padding(.top, 6)
+            primaryButton("View blueprint", "doc.text.magnifyingglass") { showUpload = true }
+            secondaryButton("Replace blueprint", "arrow.triangle.2.circlepath") { showImporter = true }
+            ShareLink(item: uploadedURL) {
+                Label("Share blueprint", systemImage: "square.and.arrow.up")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        } else {
+            secondaryButton("Upload floor plan (PDF or image)", "square.and.arrow.up.on.square") {
+                showImporter = true
+            }
+        }
     }
 
     var body: some View {
@@ -733,8 +814,8 @@ struct FloorPlanView: View {
                         Text(planExists ? "Floor plan ready" : "Scan the room")
                             .font(.rpTitle)
                         Text(planExists
-                             ? "View your 3D floor plan, or re-scan to update it."
-                             : "Walk the room slowly with your phone. Rendprop builds a 3D dollhouse floor plan you can share.")
+                             ? "View your floor plan as a flat top-down layout, in 3D, or re-scan to update it."
+                             : "Walk the room slowly with your phone. Rendprop builds a floor plan you can view flat or in 3D and share.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
@@ -742,7 +823,16 @@ struct FloorPlanView: View {
                     .padding(.vertical, 24)
 
                     if planExists {
-                        primaryButton("View floor plan", "rotate.3d") { showViewer = true }
+                        if plan2DExists {
+                            primaryButton("View floor plan", "map") { showPlan2D = true }
+                            secondaryButton("View in 3D", "rotate.3d") { showViewer = true }
+                        } else {
+                            // Older scan: only the 3D model was saved. Re-scan for the flat plan.
+                            primaryButton("View in 3D", "rotate.3d") { showViewer = true }
+                            Text("Re-scan to generate the flat 2D floor plan.")
+                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                .multilineTextAlignment(.center)
+                        }
                         secondaryButton("Re-scan room", "arrow.clockwise") { showScanner = true }
                         ShareLink(item: usdzURL) {
                             Label("Share floor plan", systemImage: "square.and.arrow.up")
@@ -754,19 +844,26 @@ struct FloorPlanView: View {
                     } else {
                         primaryButton("Start scan", "cube.transparent") { showScanner = true }
                     }
+
+                    Divider().padding(.vertical, 6)
+                    Text("Already have blueprints or measurements?")
+                        .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    uploadSection
                 } else {
                     VStack(spacing: 10) {
-                        Image(systemName: "exclamationmark.triangle")
+                        Image(systemName: uploadedURL != nil ? "doc.richtext" : "square.and.arrow.up.on.square")
                             .font(.system(size: 40, weight: .light))
-                            .foregroundStyle(Theme.inkDim)
-                        Text("3D scanning needs LiDAR")
+                            .foregroundStyle(Theme.accent)
+                        Text(uploadedURL != nil ? "Floor plan ready" : "Add a floor plan")
                             .font(.rpTitle)
-                        Text("Floor-plan scanning requires a LiDAR sensor — available on iPhone Pro and iPad Pro models. Your photos and video tour still work on every device.")
+                        Text("This device has no LiDAR for 3D scanning — but you can upload a PDF or image of your floor plan or blueprints. Your photos and video tour work on every device.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 40)
+                    .padding(.vertical, 28)
+                    uploadSection
                 }
             }
             .padding()
@@ -774,11 +871,11 @@ struct FloorPlanView: View {
         .background(Theme.bg)
         .navigationTitle("Floor plan")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { planExists = FileManager.default.fileExists(atPath: usdzURL.path) }
+        .onAppear { refreshState() }
         .fullScreenCover(isPresented: $showScanner) {
             RoomScanView(exportURL: usdzURL) { url in
                 showScanner = false
-                planExists = FileManager.default.fileExists(atPath: usdzURL.path)
+                refreshState()
             }
             .ignoresSafeArea()
         }
@@ -793,6 +890,50 @@ struct FloorPlanView: View {
                         }
                     }
             }
+        }
+        .fullScreenCover(isPresented: $showPlan2D) {
+            NavigationStack {
+                FloorPlan2DView(jsonURL: planJSONURL, address: listing.address)
+                    .navigationTitle("Floor plan")
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) {
+                            Button("Done") { showPlan2D = false }
+                        }
+                        ToolbarItem(placement: .primaryAction) {
+                            Button { showPlan2D = false; showViewer = true } label: {
+                                Label("3D", systemImage: "rotate.3d")
+                            }
+                        }
+                    }
+            }
+        }
+        .fileImporter(isPresented: $showImporter,
+                      allowedContentTypes: [.pdf, .image],
+                      allowsMultipleSelection: false) { result in
+            handleImport(result)
+        }
+        .fullScreenCover(isPresented: $showUpload) {
+            if let uploadedURL {
+                NavigationStack {
+                    // QuickLook renders PDFs and images flat (no AR) — reused here.
+                    USDZQuickLook(url: uploadedURL)
+                        .ignoresSafeArea()
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("Done") { showUpload = false }
+                            }
+                        }
+                }
+            }
+        }
+        .alert("Couldn't add that file",
+               isPresented: Binding(get: { importError != nil },
+                                    set: { if !$0 { importError = nil } })) {
+            Button("OK", role: .cancel) { importError = nil }
+        } message: {
+            Text(importError ?? "")
         }
     }
 
@@ -899,6 +1040,12 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
         do {
             try processedResult.export(to: exportURL, exportOptions: .parametric)
+            // Also persist the CapturedRoom as JSON so we can draw a flat 2D
+            // top-down floor plan (apartment-listing style), not just the 3D model.
+            let jsonURL = exportURL.deletingPathExtension().appendingPathExtension("json")
+            if let data = try? JSONEncoder().encode(processedResult) {
+                try? data.write(to: jsonURL, options: .atomic)
+            }
             onFinish?(exportURL)
         } catch {
             onFinish?(nil)
@@ -936,6 +1083,205 @@ struct USDZQuickLook: UIViewControllerRepresentable {
         func numberOfPreviewItems(in controller: QLPreviewController) -> Int { 1 }
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem {
             url as NSURL
+        }
+    }
+}
+
+// MARK: - 2D top-down floor plan (drawn from the RoomPlan CapturedRoom)
+// Renders the scan as a flat blueprint — walls, doors (with swing arcs), windows,
+// and labeled furniture — viewed straight down, like an apartment listing.
+// Reads the CapturedRoom JSON saved next to the USDZ at scan time.
+
+struct FloorPlan2DView: View {
+    let jsonURL: URL
+    let address: String
+
+    @State private var room: CapturedRoom?
+    @State private var loadFailed = false
+
+    var body: some View {
+        ZStack {
+            Theme.bg.ignoresSafeArea()
+            if let room {
+                if room.walls.isEmpty {
+                    emptyState("No walls were detected in this scan. Try re-scanning the room slowly.")
+                } else {
+                    Canvas { ctx, size in
+                        FloorPlanRenderer.draw(room: room, in: &ctx, size: size)
+                    }
+                    .padding(14)
+                }
+            } else if loadFailed {
+                emptyState("Couldn't open this floor plan. Try re-scanning the room.")
+            } else {
+                ProgressView().tint(Theme.accent)
+            }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func emptyState(_ msg: String) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: "map").font(.system(size: 40, weight: .light)).foregroundStyle(Theme.inkDim)
+            Text(msg).font(.rpBody).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center).padding(.horizontal, 40)
+        }
+    }
+
+    private func load() {
+        guard room == nil, !loadFailed else { return }
+        let url = jsonURL
+        DispatchQueue.global(qos: .userInitiated).async {
+            let decoded: CapturedRoom? = {
+                guard let data = try? Data(contentsOf: url) else { return nil }
+                return try? JSONDecoder().decode(CapturedRoom.self, from: data)
+            }()
+            DispatchQueue.main.async {
+                if let decoded { self.room = decoded } else { self.loadFailed = true }
+            }
+        }
+    }
+}
+
+/// Pure drawing of a CapturedRoom as a flat top-down plan. Projects every surface
+/// and object onto the floor (X–Z) plane and draws it with SwiftUI Canvas.
+enum FloorPlanRenderer {
+    private struct Seg { var a: SIMD2<Float>; var b: SIMD2<Float> }
+
+    /// A wall/door/window/opening → its 2D floor segment (endpoints).
+    private static func seg(_ s: CapturedRoom.Surface) -> Seg {
+        let t = s.transform
+        let center = SIMD2<Float>(t.columns.3.x, t.columns.3.z)
+        var dir = SIMD2<Float>(t.columns.0.x, t.columns.0.z)   // local X = length axis
+        let l = simd_length(dir)
+        dir = l > 1e-5 ? dir / l : SIMD2<Float>(1, 0)
+        let half = s.dimensions.x / 2
+        return Seg(a: center - dir * half, b: center + dir * half)
+    }
+
+    /// An object → its 4 floor-plane footprint corners.
+    private static func corners(_ o: CapturedRoom.Object) -> [SIMD2<Float>] {
+        let t = o.transform
+        let center = SIMD2<Float>(t.columns.3.x, t.columns.3.z)
+        var xa = SIMD2<Float>(t.columns.0.x, t.columns.0.z)
+        var za = SIMD2<Float>(t.columns.2.x, t.columns.2.z)
+        let lx = simd_length(xa); xa = lx > 1e-5 ? xa / lx : SIMD2<Float>(1, 0)
+        let lz = simd_length(za); za = lz > 1e-5 ? za / lz : SIMD2<Float>(0, 1)
+        let hw = o.dimensions.x / 2, hd = o.dimensions.z / 2
+        return [center + xa*hw + za*hd, center + xa*hw - za*hd,
+                center - xa*hw - za*hd, center - xa*hw + za*hd]
+    }
+
+    static func draw(room: CapturedRoom, in ctx: inout GraphicsContext, size: CGSize) {
+        let walls = room.walls.map(seg)
+        guard !walls.isEmpty else { return }
+        let doors = room.doors.map(seg)
+        let windows = room.windows.map(seg)
+        let openings = room.openings.map(seg)
+
+        // Bounds over wall endpoints + object footprints.
+        var minX = Float.greatestFiniteMagnitude, minY = Float.greatestFiniteMagnitude
+        var maxX = -Float.greatestFiniteMagnitude, maxY = -Float.greatestFiniteMagnitude
+        func expand(_ p: SIMD2<Float>) {
+            minX = min(minX, p.x); maxX = max(maxX, p.x)
+            minY = min(minY, p.y); maxY = max(maxY, p.y)
+        }
+        for w in walls { expand(w.a); expand(w.b) }
+        for o in room.objects { for c in corners(o) { expand(c) } }
+
+        let pad: CGFloat = 24
+        let spanX = max(CGFloat(maxX - minX), 0.001)
+        let spanY = max(CGFloat(maxY - minY), 0.001)
+        let scale = min((size.width - pad*2) / spanX, (size.height - pad*2) / spanY)
+        let drawW = spanX * scale, drawH = spanY * scale
+        let ox = (size.width - drawW) / 2
+        let oy = (size.height - drawH) / 2
+        func P(_ p: SIMD2<Float>) -> CGPoint {
+            CGPoint(x: ox + CGFloat(p.x - minX) * scale,
+                    y: oy + CGFloat(maxY - p.y) * scale)   // flip vertical → reads upright
+        }
+
+        let wallWidth = max(4, 0.10 * scale)   // draw ~10 cm-thick walls
+
+        // Furniture footprints (under the walls).
+        for o in room.objects {
+            let pts = corners(o).map(P)
+            guard pts.count == 4 else { continue }
+            var path = Path()
+            path.move(to: pts[0]); path.addLine(to: pts[1])
+            path.addLine(to: pts[2]); path.addLine(to: pts[3]); path.closeSubpath()
+            ctx.fill(path, with: .color(Theme.accent.opacity(0.10)))
+            ctx.stroke(path, with: .color(Theme.inkDim.opacity(0.7)), lineWidth: 1)
+            let name = label(o.category)
+            if !name.isEmpty {
+                let cx = (pts[0].x + pts[2].x) / 2
+                let cy = (pts[0].y + pts[2].y) / 2
+                ctx.draw(Text(name).font(.system(size: 9, weight: .medium)),
+                         at: CGPoint(x: cx, y: cy))
+            }
+        }
+
+        // Walls (thick dark lines).
+        for w in walls {
+            var p = Path(); p.move(to: P(w.a)); p.addLine(to: P(w.b))
+            ctx.stroke(p, with: .color(Theme.ink),
+                       style: StrokeStyle(lineWidth: wallWidth, lineCap: .round))
+        }
+
+        // Cut openings/doors/windows out of the walls (over-stroke in bg color).
+        for s in openings + doors + windows {
+            var p = Path(); p.move(to: P(s.a)); p.addLine(to: P(s.b))
+            ctx.stroke(p, with: .color(Theme.bg),
+                       style: StrokeStyle(lineWidth: wallWidth + 1.5, lineCap: .butt))
+        }
+
+        // Windows: a thin glass line across the gap.
+        for s in windows {
+            var p = Path(); p.move(to: P(s.a)); p.addLine(to: P(s.b))
+            ctx.stroke(p, with: .color(Theme.accent), style: StrokeStyle(lineWidth: 2, lineCap: .butt))
+        }
+
+        // Doors: a leaf + a quarter-circle swing arc (classic floor-plan symbol).
+        for s in doors {
+            drawDoor(a: P(s.a), b: P(s.b), in: &ctx)
+        }
+    }
+
+    private static func drawDoor(a: CGPoint, b: CGPoint, in ctx: inout GraphicsContext) {
+        let len = hypot(b.x - a.x, b.y - a.y)
+        guard len > 1 else { return }
+        let perp = CGPoint(x: -(b.y - a.y) / len, y: (b.x - a.x) / len)
+        let leafEnd = CGPoint(x: a.x + perp.x * len, y: a.y + perp.y * len)
+        var leaf = Path(); leaf.move(to: a); leaf.addLine(to: leafEnd)
+        ctx.stroke(leaf, with: .color(Theme.inkDim), lineWidth: 1.5)
+        var arc = Path()
+        let start = Double(atan2(b.y - a.y, b.x - a.x))
+        let end = Double(atan2(leafEnd.y - a.y, leafEnd.x - a.x))
+        arc.addArc(center: a, radius: len,
+                   startAngle: .radians(start), endAngle: .radians(end), clockwise: false)
+        ctx.stroke(arc, with: .color(Theme.inkDim.opacity(0.55)),
+                   style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+    }
+
+    private static func label(_ c: CapturedRoom.Object.Category) -> String {
+        switch c {
+        case .bed: return "Bed"
+        case .sofa: return "Sofa"
+        case .table: return "Table"
+        case .chair: return "Chair"
+        case .storage: return "Storage"
+        case .refrigerator: return "Fridge"
+        case .stove: return "Stove"
+        case .oven: return "Oven"
+        case .sink: return "Sink"
+        case .toilet: return "Toilet"
+        case .bathtub: return "Bath"
+        case .washerDryer: return "Laundry"
+        case .dishwasher: return "Dishwasher"
+        case .television: return "TV"
+        case .fireplace: return "Fireplace"
+        case .stairs: return "Stairs"
+        @unknown default: return ""
         }
     }
 }

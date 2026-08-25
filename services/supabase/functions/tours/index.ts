@@ -93,8 +93,14 @@ Deno.serve(async (req) => {
       handle: (brand.handle as string) ?? org?.handle ?? null,
     };
 
-    const video_url = streamHlsUrl(render.stream_uid as string) ??
-      publicR2Url(render.video_key as string);
+    // Scrub fidelity: the scroll-scrub player seeks frame-accurately, which only
+    // works on the all-intra mp4 served over HTTP byte-range. Cloudflare Stream
+    // (HLS) re-encodes away the all-intra GOP and snaps seeks to keyframes, so it
+    // degrades scrubbing to keyframe-stepping. Therefore the R2 mp4 is the PRIMARY
+    // scrub source; HLS is exposed separately as an adaptive fallback (long/4K).
+    const scrub_url = publicR2Url(render.video_key as string);
+    const hls_url = streamHlsUrl(render.stream_uid as string);
+    const video_url = scrub_url ?? hls_url;
 
     const staged = Boolean(render.staged);
 
@@ -115,6 +121,8 @@ Deno.serve(async (req) => {
         lng: listing.lng,
       },
       video_url,
+      scrub_url,   // all-intra mp4 (byte-range) — use this for frame-accurate scrubbing
+      hls_url,     // Cloudflare Stream HLS — adaptive fallback for very long / 4K tours
       poster: publicR2Url(render.poster_key as string),
       duration_s: render.duration_s,
       speed_factor: render.speed_factor,

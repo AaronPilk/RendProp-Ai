@@ -36,7 +36,30 @@ struct Listing: Identifiable, Codable, Hashable {
     /// membershipPrice, weeklySpecial). Optional/Codable-safe.
     var details: [String: String]? = nil
 
+    // MARK: - Cloud sync (local-first + cloud-publish, contract §4)
+    // All optional so listings saved before these fields existed still decode.
+    /// The server `listings.id` adopted on first publish. Once set, every server
+    /// call for this listing (uploads, publish) uses this id, not the local `id`.
+    var serverID: UUID? = nil
+    /// The published tour's server slug (never fabricated from the local UUID).
+    var shareSlug: String? = nil
+    /// The full public share URL returned by the server (e.g. rendprop.app/f/<slug>).
+    var shareURL: String? = nil
+
     func detail(_ key: String) -> String { details?[key] ?? "" }
+
+    /// The public server share link for this listing's published tour, if any.
+    /// Prefer the full `shareURL`; else rebuild the canonical link from the slug.
+    /// Nil when the tour hasn't been published to the cloud yet — callers then
+    /// fall back to the local-only preview link.
+    var serverShareURL: URL? {
+        if let s = shareURL?.trimmingCharacters(in: .whitespaces), !s.isEmpty,
+           let u = URL(string: s) { return u }
+        if let slug = shareSlug?.trimmingCharacters(in: .whitespaces), !slug.isEmpty {
+            return URL(string: "https://rendprop.app/f/\(slug)")
+        }
+        return nil
+    }
 
     /// The business type this listing belongs to. Legacy listings (nil) and
     /// samples default to real estate.

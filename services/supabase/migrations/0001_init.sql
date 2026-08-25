@@ -231,12 +231,20 @@ create policy "org metering" on metering for select using (is_org_member(org_id)
 -- Edge layer (service role), NOT direct table access — so no public RLS policies
 -- are granted on the base tables. See functions: tours/, leads/, beacon.
 
--- Auto-create a profile on signup.
+-- Auto-provision on signup: profile + a personal org + an owner membership.
+-- listings.org_id / agent_id are NOT NULL with no default, so a brand-new user
+-- MUST already belong to an org before their first POST /listings — otherwise
+-- orgForUser() 403s and nothing can be created. This trigger guarantees that.
+-- (Matches what is deployed on project ymgqpbnjpztwjsyvceld.)
 create or replace function handle_new_user() returns trigger
-language plpgsql security definer as $$
+language plpgsql security definer set search_path = public as $$
+declare new_org uuid;
 begin
   insert into public.profiles (id, email, name)
-  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'name', ''));
+  values (new.id, new.email, coalesce(new.raw_user_meta_data->>'name', ''))
+  on conflict (id) do nothing;
+  insert into public.orgs (name) values (coalesce(new.email, 'My business')) returning id into new_org;
+  insert into public.memberships (user_id, org_id, role) values (new.id, new_org, 'owner');
   return new;
 end; $$;
 drop trigger if exists on_auth_user_created on auth.users;

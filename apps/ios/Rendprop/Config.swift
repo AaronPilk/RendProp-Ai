@@ -33,10 +33,13 @@ enum Config {
         return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltZ3FwYm5qcHp0d2pzeXZjZWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMzk5OTAsImV4cCI6MjEwMjgxNTk5MH0.oUknRmqxoRGWPaYJCaOudGaXwe5w4tfKqqZ9cAPbfW0"
     }()
 
-    /// Master switch. false = MockAPIClient (fully offline dev — DEFAULT).
-    /// true = LiveAPIClient against Supabase. Flip only once the backend is
-    /// deployed and `supabaseURL` / `supabaseAnonKey` are real.
-    static let useLiveBackend = false
+    /// Master switch. false = MockAPIClient (fully offline dev).
+    /// true = LiveAPIClient against Supabase (LIVE). The backend (edge functions +
+    /// schema) is deployed on project ymgqpbnjpztwjsyvceld. Going live still needs
+    /// the operator to set function secrets (R2 + provider keys), enable a public
+    /// URL on the rendprop-renders bucket, and turn on Apple auth — see
+    /// services/supabase/DEPLOYMENT.md. Until then, owner calls will error (expected).
+    static let useLiveBackend = true
 
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
     /// the live client can't be constructed (e.g. no base URL). Single source of
@@ -71,7 +74,12 @@ enum Config {
     // Phase 2 flags — keep false until wired (master spec Parts 4.5, 9, 18)
     // enableAuth now means: Sign in with Apple → Supabase Auth (apple provider) →
     // JWT held by AuthStore. false = dev stub (always "signed in", no token).
-    static let enableAuth = false      // TODO: real Sign in with Apple exchange + Keychain
+    // Live requires auth: owner edge functions need a Supabase JWT, which comes
+    // from Sign in with Apple. Gating is at PUBLISH time only — capture + on-device
+    // render stay usable offline. Needs the "Sign in with Apple" capability +
+    // entitlement and the Apple provider enabled in Supabase Auth before publish
+    // will actually succeed (DEPLOYMENT.md).
+    static let enableAuth = true       // Keychain token storage still TODO (UserDefaults for now)
     static let enableIAP  = false      // TODO: StoreKit 2 consumable credits + subs
     static let enablePush = false      // TODO: APNs render-ready / lead-received
 }

@@ -343,7 +343,27 @@ struct ReviewSubmitView: View {
 
     private func start(cellularApproved: Bool) {
         model.assets[listing.id] = asset            // so the flythrough plays YOUR video
-        uploads.begin(fileURL: asset.localURL, listingID: listing.id, cellularApproved: cellularApproved)
+
+        // LIVE (local-first + cloud-publish): the on-device render IS the tour.
+        // Do NOT upload the raw capture and do NOT create a server render job here
+        // (that was the Python-worker path). Rendering + publishing happen in
+        // RenderStatusView → AppModel.publishTour after the on-device render.
+        if Config.useLiveBackend {
+            self.render = Render(listingID: listing.id, tier: tier,
+                                 durationS: asset.durationS, enhancements: enhancements)
+            model.setStatus(.processing, for: listing.id)
+            goToStatus = true
+            return
+        }
+
+        // OFFLINE / worker path (unchanged): upload the raw capture + create the
+        // render job so the simulated pipeline can track it.
+        let meta = UploadMetadata(durationS: asset.durationS, fps: asset.fps,
+                                  width: asset.width, height: asset.height,
+                                  isDrone: asset.isDrone, hasGyro: asset.hasGyro,
+                                  bytes: asset.bytes)
+        uploads.begin(fileURL: asset.localURL, listingID: listing.id,
+                      metadata: meta, cellularApproved: cellularApproved)
         model.setStatus(.uploading, for: listing.id)
         Task {
             // Contract requires asset_id on POST /renders. We pass the local

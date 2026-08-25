@@ -29,12 +29,16 @@ poll rendprop.render_jobs where status in (created, queued)
   └─ any failure          → status = failed + error jsonb
 ```
 
-Everything hits the **`rendprop`** Postgres schema (not `public`) — every REST
-call carries `Accept-Profile: rendprop` / `Content-Profile: rendprop`.
+Everything hits the **`public`** Postgres schema on the dedicated RendProp
+project `ymgqpbnjpztwjsyvceld` — matching the edge functions and
+`migrations/0001_init.sql`. `SUPABASE_DB_SCHEMA` defaults to `public`; only set
+it if you deliberately isolate the tables into a named schema.
 
-Chapters: the app already wrote `rendprop.capture_chapters`; the tour function
-reads them at serve time, so the worker only *reads* them (to segment rooms for
-AI enhancement) — it never copies them.
+Chapters: the app writes `capture_chapters` when the walkthrough's room tags are
+posted to the server (via `/uploads/:id/complete`); the tour function reads them
+at serve time. The worker only *reads* them (to segment rooms for AI
+enhancement) — it never writes them. If an asset has no chapters yet, the worker
+proceeds without room segmentation.
 
 ---
 

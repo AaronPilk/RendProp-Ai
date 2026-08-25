@@ -101,6 +101,76 @@ final class AppModel: ObservableObject {
         listings[i].longitude = lon
     }
 
+    // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
+
+    /// Return the server listing id for a local listing, creating the server
+    /// listing on first publish and adopting its id as the listing's server
+    /// identity (persisted). All later server calls for this listing use it.
+    func ensureServerListing(_ listing: Listing) async throws -> UUID {
+        let localID = listing.id
+        if let existing = listings.first(where: { $0.id == localID })?.serverID {
+            return existing
+        }
+        // Sync using the freshest local copy (address/details may have changed).
+        let live = listings.first(where: { $0.id == localID }) ?? listing
+        let created = try await api.createListing(live)
+        let serverID = created.id
+        if let i = listings.firstIndex(where: { $0.id == localID }) {
+            listings[i].serverID = serverID   // persists via didSet
+        }
+        return serverID
+    }
+
+    /// Publish the app's ON-DEVICE render as the hosted tour (contract §2.7):
+    /// ensure a server listing → upload the scrub-master mp4 (role=render) →
+    /// POST /renders/publish-app with room-tag chapters → persist the REAL slug
+    /// on the listing. Returns the published tour (slug + share URL).
+    func publishTour(listing: Listing,
+                     renderOutputURL: URL,
+                     durationS: Double,
+                     speedFactor: Double,
+                     roomTags: [RoomTag],
+                     enhancements: Enhancements,
+                     tier: Render.Tier) async throws -> PublishedTour {
+        // 1. Adopt (or create) the server listing identity.
+        let serverID = try await ensureServerListing(listing)
+
+        // 2. Upload the rendered mp4 to the PUBLIC renders bucket; get server assetID.
+        let bytes = FileStore.fileSize(renderOutputURL)
+        let meta = UploadMetadata(durationS: durationS, bytes: bytes)
+        let assetID = try await UploadManager.shared.upload(
+            fileURL: renderOutputURL, listingID: serverID, role: "render", metadata: meta)
+
+        // 3. Room tags → tap-to-jump chapters, sorted by time.
+        // Room tags are timed against the ORIGINAL capture, but the published mp4
+        // is retimed by `speedFactor` (a 2× walk halves timestamps). Rescale to the
+        // RENDERED timeline so the public player's dots (which read t_ms against the
+        // rendered duration_s — see tour-host player.ts) land exactly where the
+        // in-app preview shows them (FlythroughDetailView.playbackTags does the
+        // same tMs / speedFactor mapping).
+        let sf = speedFactor > 0 ? speedFactor : 1.0
+        let chapters: [[String: Any]] = roomTags
+            .sorted { $0.tMs < $1.tMs }
+            .enumerated()
+            .map { idx, tag in
+                ["label": tag.name, "t_ms": Int((Double(tag.tMs) / sf).rounded()), "sort": idx]
+            }
+
+        // 4. Publish. "Virtually staged" when any AI enhancement altered the space.
+        let staged = enhancements.isActive
+        let published = try await api.publishApp(
+            listingID: serverID, assetID: assetID, durationS: durationS,
+            speedFactor: speedFactor, staged: staged, tier: tier,
+            enhancements: enhancements, chapters: chapters)
+
+        // 5. Persist the REAL server slug/URL onto the local listing (never fabricated).
+        if let i = listings.firstIndex(where: { $0.id == listing.id }) {
+            listings[i].shareSlug = published.slug
+            listings[i].shareURL = published.shareURL   // persists via didSet
+        }
+        return published
+    }
+
     private func persist() {
         guard !isRestoring else { return }
         PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders)

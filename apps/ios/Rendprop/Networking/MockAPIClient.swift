@@ -28,9 +28,34 @@ actor MockAPIClient: APIClient {
     }
 
     func requestUpload(filename: String, bytes: Int64,
-                       listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
-        // Offline dev: no presigned URL → UploadManager falls back to Simulate.
-        UploadTicket(id: UUID().uuidString, putURL: nil, storageKey: nil)
+                       listingID: UUID?, sha256: String?, kind: String,
+                       role: String) async throws -> UploadTicket {
+        // Offline dev: single-mode ticket with no presigned URL → UploadManager
+        // falls back to Simulate. `role` is irrelevant with no real buckets.
+        UploadTicket(assetID: UUID().uuidString, mode: .single, putURL: nil, storageKey: nil)
+    }
+
+    func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
+        // Offline: no real R2 targets. The multipart path only runs under
+        // useLiveBackend, so this is never exercised offline.
+        [:]
+    }
+
+    func completeUpload(assetID: String,
+                        parts: [(number: Int, etag: String)]?,
+                        metadata: UploadMetadata) async throws {}
+
+    func abortUpload(assetID: String) async throws {}
+
+    func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
+        // Offline: synthetic slots so callers get the right shape. The placeholder
+        // host is never hit unless useLiveBackend is on (which uses LiveAPIClient).
+        files.enumerated().map { (i, _) in
+            let placeholder = URL(string: "https://offline.rendprop.invalid/\(UUID().uuidString)")
+                ?? URL(fileURLWithPath: NSTemporaryDirectory())
+            return PhotoTicket(index: i, assetID: UUID().uuidString,
+                               putURL: placeholder, storageKey: nil)
+        }
     }
 
     func completeUpload(id: String, sha256: String?) async throws {}
@@ -41,6 +66,17 @@ actor MockAPIClient: APIClient {
                             enhancements: enhancements, status: "queued", progress: 0)
         renders[render.id] = (render, Date())
         return render
+    }
+
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, staged: Bool, tier: Render.Tier,
+                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour {
+        // Offline dev: synthesize a believable local slug so the flow completes.
+        // Never reached in the live path (publishTour is gated on useLiveBackend,
+        // which uses LiveAPIClient).
+        let slug = String(UUID().uuidString.prefix(8)).lowercased()
+        return PublishedTour(slug: slug, shareURL: "https://rendprop.app/f/\(slug)",
+                             durationS: durationS, staged: staged)
     }
 
     func me() async throws -> UsageSummary {

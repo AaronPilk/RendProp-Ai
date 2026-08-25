@@ -67,8 +67,12 @@ def _bool(name: str, default: bool = False) -> bool:
 
 
 # The Postgres schema the Rendprop tables live in. ALL Supabase REST calls target
-# it via Accept-Profile (reads) / Content-Profile (writes). NOT `public`.
-DB_SCHEMA = os.environ.get("SUPABASE_DB_SCHEMA", "rendprop")
+# it via Accept-Profile (reads) / Content-Profile (writes).
+# The dedicated RendProp project (ymgqpbnjpztwjsyvceld) deployed the schema into
+# the standard `public` schema — so this MUST default to `public`, matching the
+# edge functions (which use the default public client) and migrations/0001_init.sql.
+# Override with SUPABASE_DB_SCHEMA only if you deliberately isolate into a named schema.
+DB_SCHEMA = os.environ.get("SUPABASE_DB_SCHEMA", "public")
 
 
 @dataclass(frozen=True)

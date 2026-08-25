@@ -100,6 +100,15 @@ struct Render: Identifiable, Codable, Hashable {
     var status: String = "queued"
     var progress: Double = 0
 
+    // Worker-path published tour (GET /renders/:id → `tour`). Nil for local and
+    // app-published renders — those carry their public slug on the Listing.
+    // Optional so renders persisted before these fields existed still decode.
+    var shareSlug: String? = nil
+    var shareURL: String? = nil
+    var scrubURL: String? = nil
+    var videoURL: String? = nil
+    var posterURL: String? = nil
+
     /// Pipeline steps for this render (drives status UI). Enhancement steps
     /// appear only when purchased.
     var pipelineSteps: [String] {

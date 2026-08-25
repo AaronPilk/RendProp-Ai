@@ -107,26 +107,85 @@ final class LiveAPIClient: APIClient {
         return mapListing(try decode(data))
     }
 
-    // MARK: - Uploads
+    // MARK: - Uploads (contract §2)
 
     func requestUpload(filename: String, bytes: Int64,
-                       listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
-        var body: [String: Any] = ["filename": filename, "bytes": bytes, "kind": kind]
+                       listingID: UUID?, sha256: String?, kind: String,
+                       role: String) async throws -> UploadTicket {
+        var body: [String: Any] = ["filename": filename, "bytes": bytes, "kind": kind, "role": role]
         if let listingID { body["listing_id"] = listingID.uuidString }
         if let sha256 { body["sha256"] = sha256 }
         let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body))
         let dto: UploadTicketDTO = try decode(data)
-        return UploadTicket(id: dto.assetId, putURL: dto.putUrl, storageKey: dto.storageKey)
+        let mode = UploadTicket.Mode(rawValue: dto.mode ?? "single") ?? .single
+        return UploadTicket(assetID: dto.assetId, mode: mode,
+                            putURL: dto.putUrl, uploadID: dto.uploadId,
+                            partSize: dto.partSize, partCount: dto.partCount,
+                            storageKey: dto.storageKey)
+    }
+
+    func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
+        let body: [String: Any] = ["numbers": numbers]
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "part-urls"]),
+                                                 method: "POST", json: body))
+        let dto: PartURLsDTO = try decode(data)
+        var out: [Int: URL] = [:]
+        for entry in dto.urls {
+            if let u = URL(string: entry.url) { out[entry.number] = u }
+        }
+        return out
+    }
+
+    func completeUpload(assetID: String,
+                        parts: [(number: Int, etag: String)]?,
+                        metadata: UploadMetadata) async throws {
+        var body: [String: Any] = [:]
+        if let parts {   // multipart: ETag manifest is REQUIRED
+            body["parts"] = parts.map { ["number": $0.number, "etag": $0.etag] }
+        }
+        if let v = metadata.durationS { body["duration_s"] = v }
+        if let v = metadata.fps       { body["fps"] = v }
+        if let v = metadata.width     { body["width"] = v }
+        if let v = metadata.height    { body["height"] = v }
+        if let v = metadata.codec     { body["codec"] = v }
+        if let v = metadata.isDrone   { body["is_drone"] = v }
+        if let v = metadata.hasGyro   { body["has_gyro"] = v }
+        if let v = metadata.bytes     { body["bytes"] = v }
+        if let v = metadata.sha256    { body["sha256"] = v }
+        _ = try await execute(makeRequest(url: url(["uploads", assetID, "complete"]),
+                                          method: "POST", json: body))
+    }
+
+    func abortUpload(assetID: String) async throws {
+        _ = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
+                                          method: "POST", json: [:]))
+    }
+
+    func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
+        let body: [String: Any] = [
+            "listing_id": listingID.uuidString,
+            "kind": "photo",
+            "files": files.map { f -> [String: Any] in
+                var d: [String: Any] = ["filename": f.filename]
+                if let b = f.bytes { d["bytes"] = b }
+                if let s = f.sha256 { d["sha256"] = s }
+                if let c = f.contentType { d["content_type"] = c }
+                return d
+            },
+        ]
+        let data = try await execute(makeRequest(url: url(["uploads", "batch"]), method: "POST", json: body))
+        let dto: PhotoBatchDTO = try decode(data)
+        return dto.assets.compactMap { slot in
+            guard let put = slot.putUrl else { return nil }
+            return PhotoTicket(index: slot.index, assetID: slot.assetId,
+                               putURL: put, storageKey: slot.storageKey)
+        }
     }
 
     func completeUpload(id: String, sha256: String?) async throws {
-        var body: [String: Any] = [:]
-        if let sha256 { body["sha256"] = sha256 }
-        // TODO: thread probe metadata through so we can post the full contract body
-        // {duration_s,fps,width,height,codec,is_drone,has_gyro}. Server can also
-        // derive most of it from the uploaded file for now.
-        _ = try await execute(makeRequest(url: url(["uploads", id, "complete"]),
-                                          method: "POST", json: body))
+        // Legacy single-complete. Delegates to the richer path with a minimal body.
+        try await completeUpload(assetID: id, parts: nil,
+                                 metadata: UploadMetadata(sha256: sha256))
     }
 
     // MARK: - Renders
@@ -159,15 +218,44 @@ final class LiveAPIClient: APIClient {
                          fallbackDuration: 0, fallbackEnhancements: Enhancements(), fallbackID: id)
     }
 
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, staged: Bool, tier: Render.Tier,
+                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour {
+        var body: [String: Any] = [
+            "listing_id": listingID.uuidString,
+            "asset_id": assetID,
+            "duration_s": durationS,
+            "speed_factor": speedFactor,
+            "staged": staged,
+            "tier": tier.rawValue,
+            "enhancements": ["declutter": enhancements.declutter,
+                             "style": enhancements.style.rawValue],
+        ]
+        if !chapters.isEmpty { body["chapters"] = chapters }
+        let data = try await execute(makeRequest(url: url(["renders", "publish-app"]),
+                                                 method: "POST", json: body))
+        let dto: PublishAppDTO = try decode(data)
+        guard let slug = dto.slug, let share = dto.shareUrl else {
+            throw APIError.badResponse(-1)   // server didn't return a slug/share_url
+        }
+        return PublishedTour(slug: slug, shareURL: share,
+                             videoURL: nil, posterURL: nil,
+                             durationS: dto.durationS, staged: dto.staged,
+                             renderID: dto.id.flatMap(UUID.init(uuidString:)))
+    }
+
     // MARK: - Account / usage
 
     func me() async throws -> UsageSummary {
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
-        return UsageSummary(aiSpendCents: dto.usage?.aiSpendCents,
-                            renderCount: dto.usage?.renderCount,
-                            leadCount: dto.usage?.leadCount,
-                            planName: dto.plan?.name)
+        // /me returns `plan` as a string and `usage.{cost_cents,leads,renders,listings}`
+        // (see services/supabase/functions/me/index.ts). cost_cents can be fractional
+        // (round4), so decode it as Double and round to whole cents for Money.
+        return UsageSummary(aiSpendCents: dto.usage?.costCents.map { Int($0.rounded()) },
+                            renderCount: dto.usage?.renders,
+                            leadCount: dto.usage?.leads,
+                            planName: dto.plan)
     }
 
     // MARK: - Write bodies (explicit snake_case; omit nil/empty so PATCH is partial)
@@ -227,6 +315,13 @@ final class LiveAPIClient: APIClient {
         )
         if let idStr = dto.id, let uuid = UUID(uuidString: idStr) { r.id = uuid }
         else if let fallbackID { r.id = fallbackID }
+        if let t = dto.tour {
+            r.shareSlug = t.slug
+            r.shareURL = t.shareUrl
+            r.scrubURL = t.scrubUrl
+            r.videoURL = t.videoUrl
+            r.posterURL = t.poster
+        }
         return r
     }
 
@@ -251,8 +346,27 @@ final class LiveAPIClient: APIClient {
 
     private struct UploadTicketDTO: Decodable {
         let assetId: String
+        let mode: String?
         let putUrl: URL?
+        let uploadId: String?
+        let partSize: Int64?
+        let partCount: Int?
         let storageKey: String?
+    }
+
+    private struct PartURLsDTO: Decodable {
+        struct Entry: Decodable { let number: Int; let url: String }
+        let urls: [Entry]
+    }
+
+    private struct PhotoBatchDTO: Decodable {
+        struct Slot: Decodable {
+            let index: Int
+            let assetId: String
+            let putUrl: URL?
+            let storageKey: String?
+        }
+        let assets: [Slot]
     }
 
     private struct RenderDTO: Decodable {
@@ -266,16 +380,41 @@ final class LiveAPIClient: APIClient {
         let enhancements: Enhancements?
         let costCents: Int?
         let currentStep: String?
+        let tour: TourDTO?
+
+        /// Nested `tour` on GET /renders/:id (contract §2.6) — the worker-path
+        /// published tour. Keys arrive snake_case (share_url, scrub_url, …) and
+        /// are mapped via `.convertFromSnakeCase`.
+        struct TourDTO: Decodable {
+            let slug: String?
+            let shareUrl: String?
+            let scrubUrl: String?
+            let videoUrl: String?
+            let poster: String?
+        }
+    }
+
+    private struct PublishAppDTO: Decodable {
+        let id: String?
+        let slug: String?
+        let shareUrl: String?      // share_url
+        let durationS: Double?     // duration_s
+        let staged: Bool?
+        let videoKey: String?      // video_key (R2 object key, not a URL)
+        let posterKey: String?     // poster_key
     }
 
     private struct MeDTO: Decodable {
-        struct Plan: Decodable { let name: String? }
+        // /me returns `plan` as a scalar string and a `usage` rollup — see
+        // services/supabase/functions/me/index.ts.
         struct Usage: Decodable {
-            let aiSpendCents: Int?
-            let renderCount: Int?
-            let leadCount: Int?
+            let month: String?
+            let costCents: Double?   // cost_cents (round4 → may be fractional)
+            let leads: Int?
+            let renders: Int?
+            let listings: Int?
         }
-        let plan: Plan?
+        let plan: String?
         let usage: Usage?
     }
 }

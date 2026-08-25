@@ -1,4 +1,8 @@
 import Foundation
+import AuthenticationServices
+import CryptoKit
+import Security
+import UIKit
 
 /// Holds the Supabase session (JWT) for the app.
 ///
@@ -17,6 +21,10 @@ final class AuthStore: ObservableObject {
     @Published var isSignedIn: Bool
     @Published var userName: String
     @Published var orgName: String
+
+    /// Strong ref to the in-flight Sign in with Apple coordinator — the delegate
+    /// must outlive `performRequests()` until its callback fires.
+    private var appleCoordinator: AppleSignInCoordinator?
 
     private enum Keys {
         static let accessToken  = "auth.supabase.accessToken"
@@ -70,19 +78,68 @@ final class AuthStore: ObservableObject {
 
     // MARK: - Sign in with Apple → Supabase
 
-    /// Entry point for the Sign in with Apple button. Behind `enableAuth`.
-    ///
-    /// TODO (remaining real-flow wiring): present an `ASAuthorizationController`
-    /// with `ASAuthorizationAppleIDProvider().createRequest()` (scopes: .fullName,
-    /// .email; set a `nonce`), grab `credential.identityToken` in the delegate,
-    /// then call `exchangeAppleIdentityToken(idToken:nonce:)`. The exchange +
-    /// token persistence below are already implemented and tested-ready.
+    /// Programmatic Sign in with Apple. Behind `enableAuth`. Generates a random
+    /// nonce (+ its SHA256), presents an `ASAuthorizationController` for the
+    /// Apple ID credential, then exchanges the identity token with Supabase
+    /// (passing the RAW nonce — Supabase re-hashes and compares to the token's
+    /// `nonce` claim). `SignInView` uses `SignInWithAppleButton` for the same
+    /// exchange; this method is the equivalent entry point for non-SwiftUI call
+    /// sites / re-auth.
     func signInWithApple() async throws {
-        guard Config.enableAuth else { return }         // dev stub: no-op
-        // let idToken = <ASAuthorizationAppleIDCredential.identityToken as UTF-8>
-        // let nonce   = <the nonce you attached to the request>
-        // try await exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
-        throw APIError.notConfigured                     // until the Apple credential flow is wired
+        guard Config.enableAuth else { return }          // dev stub: no-op
+        let raw = Self.randomNonceString()
+        let hashed = Self.sha256(raw)
+        let idToken = try await requestAppleIDToken(hashedNonce: hashed)
+        try await exchangeAppleIdentityToken(idToken: idToken, nonce: raw)
+    }
+
+    /// Present the system Apple ID sheet and return the identity token (UTF-8).
+    @MainActor
+    private func requestAppleIDToken(hashedNonce: String) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            let request = ASAuthorizationAppleIDProvider().createRequest()
+            request.requestedScopes = [.fullName, .email]
+            request.nonce = hashedNonce
+
+            let coordinator = AppleSignInCoordinator { [weak self] result in
+                self?.appleCoordinator = nil            // release after the callback
+                continuation.resume(with: result)
+            }
+            self.appleCoordinator = coordinator          // keep alive until it fires
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = coordinator
+            controller.presentationContextProvider = coordinator
+            controller.performRequests()
+        }
+    }
+
+    // MARK: - Nonce (shared with SignInView)
+
+    /// A cryptographically-random nonce string (raw form kept for the exchange).
+    static func randomNonceString(length: Int = 32) -> String {
+        let charset: [Character] =
+            Array("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz-._")
+        var result = ""
+        var remaining = length
+        while remaining > 0 {
+            var randoms = [UInt8](repeating: 0, count: 16)
+            if SecRandomCopyBytes(kSecRandomDefault, randoms.count, &randoms) != errSecSuccess {
+                randoms = randoms.map { _ in UInt8.random(in: 0...255) }   // fallback (rare)
+            }
+            for random in randoms where remaining > 0 {
+                let idx = Int(random)
+                if idx < charset.count {
+                    result.append(charset[idx])
+                    remaining -= 1
+                }
+            }
+        }
+        return result
+    }
+
+    /// Lowercase-hex SHA256 of `input` — the value sent as the request `nonce`.
+    static func sha256(_ input: String) -> String {
+        SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 
     /// Exchange an Apple identity token for a Supabase session, then persist it.
@@ -123,5 +180,49 @@ final class AuthStore: ObservableObject {
             case accessToken = "access_token"
             case refreshToken = "refresh_token"
         }
+    }
+}
+
+// MARK: - Sign in with Apple delegate
+/// Bridges `ASAuthorizationController`'s delegate callbacks to a single Result
+/// completion (delivered once). Also provides the presentation anchor.
+private final class AppleSignInCoordinator: NSObject,
+    ASAuthorizationControllerDelegate,
+    ASAuthorizationControllerPresentationContextProviding {
+
+    private let completion: (Result<String, Error>) -> Void
+    private var didComplete = false
+
+    init(completion: @escaping (Result<String, Error>) -> Void) {
+        self.completion = completion
+    }
+
+    private func finish(_ result: Result<String, Error>) {
+        guard !didComplete else { return }
+        didComplete = true
+        completion(result)
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithAuthorization authorization: ASAuthorization) {
+        guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential,
+              let tokenData = credential.identityToken,
+              let token = String(data: tokenData, encoding: .utf8) else {
+            finish(.failure(APIError.notConfigured))
+            return
+        }
+        finish(.success(token))
+    }
+
+    func authorizationController(controller: ASAuthorizationController,
+                                 didCompleteWithError error: Error) {
+        finish(.failure(error))
+    }
+
+    func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        let scenes = UIApplication.shared.connectedScenes
+        let active = scenes.first { $0.activationState == .foregroundActive } as? UIWindowScene
+        let scene = active ?? scenes.first as? UIWindowScene
+        return scene?.keyWindow ?? scene?.windows.first ?? ASPresentationAnchor()
     }
 }

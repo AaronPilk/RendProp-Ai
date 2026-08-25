@@ -555,7 +555,10 @@ enum PortfolioExporter {
             if let url = l.mainPhotoURL, let data = try? Data(contentsOf: url) {
                 img = "<div class=\"ph\" style=\"background-image:url('data:image/jpeg;base64,\(data.base64EncodedString())')\"></div>"
             }
-            let tour = "https://rendprop.app/f/\(l.id.uuidString.prefix(8).lowercased())"
+            // Prefer the REAL published slug; fall back to the local preview link
+            // only when the tour hasn't been published to the cloud yet.
+            let tour = l.serverShareURL?.absoluteString
+                ?? "https://rendprop.app/f/\(l.id.uuidString.prefix(8).lowercased())"
             let price = l.price.cents > 0 ? " · " + esc(l.price.formatted) : ""
             return """
             <a class="card" href="\(tour)" target="_blank" rel="noopener">\(img)<div class="meta"><div class="addr">\(esc(l.address))</div><div class="sub">\(esc(l.subtitleLine))\(price)</div></div></a>

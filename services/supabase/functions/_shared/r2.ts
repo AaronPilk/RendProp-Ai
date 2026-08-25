@@ -92,3 +92,127 @@ export function extFromFilename(filename: string | undefined, kind: "video" | "p
   if (ext) return ext;
   return kind === "photo" ? "jpg" : "mov";
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Multipart upload (S3/R2) — resumable, multi-GB safe.
+//
+// A single presigned PUT cannot resume after a dropped connection and R2 caps
+// single-object PUTs at 5 GB. Large video (a 9-minute 4K walkthrough is 2–8 GB)
+// therefore uses S3 multipart: CreateMultipartUpload → UploadPart ×N → Complete
+// (or Abort). Create / Complete / Abort are signed server-side here; each
+// UploadPart URL is PRESIGNED so the iOS background URLSession streams chunks
+// straight to R2. Parts (except the last) must be uniform and ≥ 5 MiB.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** R2/S3 multipart minimums/maximums (S3 spec). */
+export const R2_MIN_PART_BYTES = 5 * 1024 * 1024;      // 5 MiB floor (except last part)
+export const R2_MAX_PARTS = 10_000;
+
+function firstTag(xml: string, tag: string): string | null {
+  const m = new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`).exec(xml);
+  return m ? m[1] : null;
+}
+
+/** ETags are returned quoted (e.g. "\"abc\""). Complete requires the quotes. */
+function normalizeEtag(etag: string): string {
+  const t = etag.trim();
+  return t.startsWith('"') && t.endsWith('"') ? t : `"${t.replace(/^"|"$/g, "")}"`;
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** Begin a multipart upload; returns the R2 UploadId. */
+export async function createMultipartUpload(
+  args: { bucket: string; key: string; contentType?: string },
+): Promise<string> {
+  const { bucket, key, contentType } = args;
+  const url = `${endpoint()}/${bucket}/${encodeKey(key)}?uploads`;
+  const res = await client().fetch(url, {
+    method: "POST",
+    headers: contentType ? { "content-type": contentType } : undefined,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new HttpError(502, `R2 CreateMultipartUpload failed (${res.status}): ${text.slice(0, 300)}`);
+  }
+  const uploadId = firstTag(text, "UploadId");
+  if (!uploadId) throw new HttpError(502, "R2 CreateMultipartUpload: no UploadId in response");
+  return uploadId;
+}
+
+/** Presign a single UploadPart URL (app PUTs the chunk, reads the ETag header). */
+export async function presignUploadPart(
+  args: { bucket: string; key: string; uploadId: string; partNumber: number; expiresIn?: number },
+): Promise<string> {
+  const { bucket, key, uploadId, partNumber, expiresIn = 3600 } = args;
+  const url = new URL(`${endpoint()}/${bucket}/${encodeKey(key)}`);
+  url.searchParams.set("partNumber", String(partNumber));
+  url.searchParams.set("uploadId", uploadId);
+  url.searchParams.set("X-Amz-Expires", String(expiresIn));
+  const signed = await client().sign(url.toString(), { method: "PUT", aws: { signQuery: true } });
+  return signed.url;
+}
+
+export interface CompletedPart {
+  partNumber: number;
+  etag: string;
+}
+
+/** Finalize a multipart upload from the collected part ETags. */
+export async function completeMultipartUpload(
+  args: { bucket: string; key: string; uploadId: string; parts: CompletedPart[] },
+): Promise<void> {
+  const { bucket, key, uploadId, parts } = args;
+  if (parts.length === 0) throw new HttpError(400, "completeMultipartUpload: no parts");
+  const sorted = [...parts].sort((a, b) => a.partNumber - b.partNumber);
+  const body = `<CompleteMultipartUpload>${
+    sorted
+      .map((p) =>
+        `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${escapeXml(normalizeEtag(p.etag))}</ETag></Part>`
+      )
+      .join("")
+  }</CompleteMultipartUpload>`;
+
+  const url = new URL(`${endpoint()}/${bucket}/${encodeKey(key)}`);
+  url.searchParams.set("uploadId", uploadId);
+  const res = await client().fetch(url.toString(), {
+    method: "POST",
+    body,
+    headers: { "content-type": "application/xml" },
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new HttpError(502, `R2 CompleteMultipartUpload failed (${res.status}): ${text.slice(0, 300)}`);
+  }
+  // S3/R2 can return 200 with an <Error> body when completion actually failed.
+  if (/<Error>/.test(text)) {
+    throw new HttpError(502, `R2 CompleteMultipartUpload error: ${text.slice(0, 300)}`);
+  }
+}
+
+/** Abort a multipart upload (cleanup); 404 is treated as already-gone. */
+export async function abortMultipartUpload(
+  args: { bucket: string; key: string; uploadId: string },
+): Promise<void> {
+  const { bucket, key, uploadId } = args;
+  const url = new URL(`${endpoint()}/${bucket}/${encodeKey(key)}`);
+  url.searchParams.set("uploadId", uploadId);
+  const res = await client().fetch(url.toString(), { method: "DELETE" });
+  if (!res.ok && res.status !== 404) {
+    const text = await res.text();
+    throw new HttpError(502, `R2 AbortMultipartUpload failed (${res.status}): ${text.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Pick a uniform part size that keeps part_count within S3 limits.
+ * Starts at 32 MiB and doubles until ceil(bytes/size) ≤ 8000 (headroom under 10k).
+ */
+export function choosePartSize(bytes: number): number {
+  const BASE = 32 * 1024 * 1024;
+  let size = BASE;
+  while (Math.ceil(bytes / size) > 8000) size *= 2;
+  return Math.max(size, R2_MIN_PART_BYTES);
+}
