@@ -517,3 +517,6 @@ html[data-theme="dark"] .tract-on-dark { display: block; }
   html:not([data-theme="light"]) .tract-on-light { display: none; }
   html:not([data-theme="light"]) .tract-on-dark { display: block; }
 }
+
+/* Wholesale Mortgage Lending mark (single purple version — reads on both themes) */
+.foot-brands .wml-logo { height: 20px; width: auto; }
