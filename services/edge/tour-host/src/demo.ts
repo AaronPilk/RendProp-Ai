@@ -35,7 +35,11 @@ export function buildDemoTour(): Tour {
         acres: "0.7",
         garage: "4-car",
         frontage: "180'",
-        reel_url: "https://pilk.ai/experience/clips/intro.mp4",
+        // Self-hosted (2026-08-26 fix): pilk.ai's server returns 206 responses
+        // WITHOUT a Content-Range header, which fetch() tolerates but Chrome's
+        // media stack rejects — every <video> pointed there sat at readyState 0
+        // forever. All demo media now ships from this Worker's own /assets.
+        reel_url: "/assets/demo-reel.mp4",
         reel_poster: "/assets/hero-twilight-modern-home.webp",
         story:
           "Set on a private ridge above the canyon, 1180 Crestline was designed around a single idea: erase the wall between the house and the view. Floor-to-ceiling glass slides fully away, so the great room, the pool deck, and the horizon become one continuous space.\n\n" +
@@ -90,19 +94,21 @@ export function buildDemoTour(): Tour {
         },
       },
     },
-    video_url: "https://pilk.ai/experience/mansion-v4/scrub.mp4",
-    scrub_url: "https://pilk.ai/experience/mansion-v4/scrub.mp4",
+    // Same-origin scrub master (the proven 55s all-intra demo walkthrough the
+    // iOS app bundles) — served by Workers assets with correct Range support.
+    video_url: "/assets/demo-tour.mp4",
+    scrub_url: "/assets/demo-tour.mp4",
     hls_url: null,
     poster: "/assets/hero-twilight-modern-home.webp",
-    duration_s: 24,
+    duration_s: 55,
     speed_factor: 1,
     chapters: [
       { label: "Arrival", t_ms: 0, sort: 0 },
-      { label: "Great room", t_ms: 4000, sort: 1 },
-      { label: "Chef's kitchen", t_ms: 8000, sort: 2 },
-      { label: "Primary suite", t_ms: 12000, sort: 3 },
-      { label: "Pool deck", t_ms: 16000, sort: 4 },
-      { label: "Rooftop", t_ms: 20000, sort: 5 },
+      { label: "Great room", t_ms: 9000, sort: 1 },
+      { label: "Chef's kitchen", t_ms: 18000, sort: 2 },
+      { label: "Primary suite", t_ms: 27000, sort: 3 },
+      { label: "Pool deck", t_ms: 36000, sort: 4 },
+      { label: "Rooftop", t_ms: 45000, sort: 5 },
     ],
     agent_card: {
       name: "Alexandra Reyes",

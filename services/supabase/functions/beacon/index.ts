@@ -46,6 +46,11 @@ Deno.serve(async (req) => {
     const slug = seg[0] ?? body.slug;
     assert(slug, 400, "slug is required (path or body)");
 
+    // The public demo tour has no DB render row — its metrics aren't recorded,
+    // but the player still beacons. Acknowledge instead of 404ing every viewer
+    // (2026-08-26 rig test found constant failing beacons on /f/estate-demo).
+    if (slug === "estate-demo" || slug === "demo") return json({ ok: true, demo: true });
+
     const admin = adminClient();
 
     const { data: render, error: rErr } = await admin
