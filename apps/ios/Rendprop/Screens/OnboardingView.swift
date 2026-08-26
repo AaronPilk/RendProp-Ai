@@ -6,13 +6,21 @@ struct OnboardingView: View {
     @State private var page = 0
     @State private var choosingType = false
 
-    private let cards: [(icon: String, title: String, body: String)] = [
-        ("iphone.gen3", "Just your phone.\nNothing else.",
-         "Walk through the space while recording. We guide you the whole way — it's as easy as taking a video."),
-        ("wand.and.stars", "We make it look\namazing.",
-         "Your video becomes a smooth, professional tour — like it was filmed with a drone."),
-        ("link", "Share it anywhere.\nWin more customers.",
-         "Send one link. People glide through your space on their phone and reach out right there."),
+    // Feature-first: each page is one headline feature wearing its signature
+    // gradient (the same one it wears on Home's showroom).
+    private let cards: [(icon: String, gradient: LinearGradient, title: String, body: String)] = [
+        ("video.fill", RPGradient.drone,
+         "Film with your phone.\nGet a drone-style tour.",
+         "Walk through once while recording. Rendprop turns it into a smooth, cinematic flythrough people scroll to explore."),
+        ("wand.and.stars", RPGradient.photo,
+         "An AI photo studio\nin your pocket.",
+         "Twilight skies, decluttered rooms, virtual staging — pro listing photos from the ones you already have."),
+        ("film.stack", RPGradient.reel,
+         "Reels and floor plans,\ndone for you.",
+         "AI animates your photos into a social-ready reel, and your phone scans a real floor plan."),
+        ("link", RPGradient.share,
+         "One link.\nReal leads.",
+         "Share your tour anywhere. Your card rides along, and every viewer can reach you in a tap."),
     ]
 
     var body: some View {
@@ -36,12 +44,18 @@ struct OnboardingView: View {
 
             TabView(selection: $page) {
                 ForEach(cards.indices, id: \.self) { i in
-                    VStack(spacing: 22) {
+                    VStack(spacing: 24) {
                         Image(systemName: cards[i].icon)
-                            .font(.system(size: 54, weight: .light))
-                            .foregroundStyle(Theme.accent)
+                            .font(.system(size: 40, weight: .semibold))
+                            .symbolRenderingMode(.hierarchical)
+                            .foregroundStyle(Color.white)
+                            .frame(width: 92, height: 92)
+                            .background(cards[i].gradient,
+                                        in: RoundedRectangle(cornerRadius: 26, style: .continuous))
+                            .shadow(color: Color.black.opacity(0.18), radius: 14, x: 0, y: 8)
                         Text(cards[i].title)
                             .font(.rpLargeTitle)
+                            .foregroundStyle(Theme.ink)
                             .multilineTextAlignment(.center)
                         Text(cards[i].body)
                             .font(.rpBody)
@@ -54,6 +68,9 @@ struct OnboardingView: View {
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
+            // Give the page dots a capsule backing — the bare dots are
+            // near-invisible on the light background.
+            .indexViewStyle(.page(backgroundDisplayMode: .always))
 
             VStack(spacing: 12) {
                 PrimaryButton(title: page < cards.count - 1 ? "Continue" : "Get started",
@@ -84,6 +101,7 @@ struct OnboardingView: View {
             VStack(spacing: 8) {
                 Text("What do you\nshowcase?")
                     .font(.rpLargeTitle)
+                    .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
                 Text("We'll tailor the app to your business. You can change this anytime in Settings.")
                     .font(.rpBody)
@@ -102,20 +120,26 @@ struct OnboardingView: View {
                         } label: {
                             HStack(spacing: 14) {
                                 Image(systemName: type.systemImage)
-                                    .font(.title3).foregroundStyle(Theme.accent).frame(width: 30)
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .symbolRenderingMode(.hierarchical)
+                                    .foregroundStyle(Color.white)
+                                    .frame(width: 38, height: 38)
+                                    .background(RPGradient.drone,
+                                                in: RoundedRectangle(cornerRadius: 11, style: .continuous))
                                 Text(type.displayName).font(.rpHeadline).foregroundStyle(Theme.ink)
                                 Spacer()
                                 if spaceTypeRaw == type.rawValue {
                                     Image(systemName: "checkmark.circle.fill").foregroundStyle(Theme.accent)
                                 }
                             }
-                            .padding(16)
+                            .padding(14)
                             .background(spaceTypeRaw == type.rawValue ? Theme.accentSoft : Theme.card,
                                         in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
                                 .strokeBorder(spaceTypeRaw == type.rawValue ? Theme.accent : Theme.border))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ScalePressStyle())
+                        .accessibilityAddTraits(spaceTypeRaw == type.rawValue ? [.isSelected] : [])
                     }
                 }
                 .padding()

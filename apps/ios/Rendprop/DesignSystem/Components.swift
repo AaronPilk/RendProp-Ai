@@ -31,7 +31,9 @@ struct PrimaryButton: View {
     }
 }
 
-// MARK: - Card (white, soft shadow)
+// MARK: - Card (adaptive surface: white in light, elevated indigo in dark)
+// The hairline border does the separation work in dark mode; the soft black
+// shadow is intentionally modest (it simply fades out on dark backgrounds).
 struct CardBackground: ViewModifier {
     func body(content: Content) -> some View {
         content
@@ -95,6 +97,7 @@ struct UploadMiniBar: View {
             .shadow(color: Color.black.opacity(0.06), radius: 10, x: 0, y: 3)
             .padding(.horizontal)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+            .accessibilityElement(children: .combine)
         }
     }
 }
@@ -106,7 +109,9 @@ struct SkeletonRow: View {
             RoundedRectangle(cornerRadius: 8).fill(Theme.fillSubtle)
                 .frame(width: 64, height: 44)
             VStack(alignment: .leading, spacing: 6) {
-                RoundedRectangle(cornerRadius: 4).fill(Color.black.opacity(0.08)).frame(width: 160, height: 12)
+                // Theme.ink (not Color.black) so the shimmer bar stays visible
+                // on dark cards — ink flips to near-white in dark mode.
+                RoundedRectangle(cornerRadius: 4).fill(Theme.ink.opacity(0.08)).frame(width: 160, height: 12)
                 RoundedRectangle(cornerRadius: 4).fill(Theme.fillSubtle).frame(width: 100, height: 10)
             }
             Spacer()

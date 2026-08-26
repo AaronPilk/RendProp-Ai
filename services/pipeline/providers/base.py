@@ -95,6 +95,29 @@ def download_bytes(url: str, *, timeout: int = 120) -> bytes:
         raise ProviderError(f"Network error downloading {url}: {e.reason}") from e
 
 
+def put_bytes(url: str, data: bytes, *, content_type: str = "application/octet-stream",
+              timeout: int = 300) -> None:
+    """PUT raw bytes to a (usually pre-signed) URL — used for CDN uploads.
+
+    No auth header is added: the upload URL from a CDN "initiate" step already
+    carries its own credentials. Raises ProviderError on non-2xx / network error.
+    """
+    req = urllib.request.Request(url, data=data, method="PUT")
+    req.add_header("Content-Type", content_type)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            resp.read()
+    except urllib.error.HTTPError as e:
+        detail = ""
+        try:
+            detail = e.read().decode()[:2000]
+        except Exception:  # noqa: BLE001
+            pass
+        raise ProviderError(f"HTTP {e.code} uploading to {url}: {detail}") from e
+    except urllib.error.URLError as e:
+        raise ProviderError(f"Network error uploading to {url}: {e.reason}") from e
+
+
 # ── Encoding helpers ──────────────────────────────────────────────────────────
 
 def b64(data: bytes) -> str:

@@ -49,6 +49,12 @@ enum MediaImporter {
 // MARK: - Photos picker (videos only, file representation)
 struct PhotoVideoPicker: UIViewControllerRepresentable {
     let onPicked: (URL) -> Void
+    /// Import progress 0…1 while Photos exports/downloads the file (a 4K or
+    /// iCloud video can take a while — without this the UI looks frozen).
+    /// Called on the main thread.
+    var onProgress: ((Double) -> Void)? = nil
+    /// Called on the main thread when the import fails, so the UI can reset.
+    var onFailed: (() -> Void)? = nil
 
     func makeUIViewController(context: Context) -> PHPickerViewController {
         var config = PHPickerConfiguration()
@@ -61,27 +67,64 @@ struct PhotoVideoPicker: UIViewControllerRepresentable {
 
     func updateUIViewController(_ uiViewController: PHPickerViewController, context: Context) {}
 
-    func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onPicked: onPicked, onProgress: onProgress, onFailed: onFailed)
+    }
 
     final class Coordinator: NSObject, PHPickerViewControllerDelegate {
         let onPicked: (URL) -> Void
-        init(onPicked: @escaping (URL) -> Void) { self.onPicked = onPicked }
+        let onProgress: ((Double) -> Void)?
+        let onFailed: (() -> Void)?
+        private var progressObservation: NSKeyValueObservation?
+        /// Main-thread flag: once finished, late progress callbacks are dropped
+        /// so a straggler can't resurrect the progress UI.
+        private var isFinished = false
+
+        init(onPicked: @escaping (URL) -> Void,
+             onProgress: ((Double) -> Void)?,
+             onFailed: (() -> Void)?) {
+            self.onPicked = onPicked
+            self.onProgress = onProgress
+            self.onFailed = onFailed
+        }
 
         func picker(_ picker: PHPickerViewController, didFinishPicking results: [PHPickerResult]) {
             picker.dismiss(animated: true)
             guard let provider = results.first?.itemProvider,
                   provider.hasItemConformingToTypeIdentifier(UTType.movie.identifier) else { return }
 
+            onProgress?(0)   // delegate runs on main — show the import UI immediately
+
             // loadFileRepresentation streams to a temp file — no memory spike.
-            provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
-                guard let url else { return }
-                let dest = FileStore.importsDir
-                    .appendingPathComponent("import-\(UUID().uuidString.prefix(8))-\(url.lastPathComponent)")
-                do {
-                    try FileManager.default.copyItem(at: url, to: dest)
-                    DispatchQueue.main.async { self.onPicked(dest) }
-                } catch {
-                    // Temp file vanished or copy failed — surface nothing; user retries.
+            // Its returned Progress covers the Photos export (and any iCloud
+            // download), which is the long silent part for big 4K videos.
+            let progress = provider.loadFileRepresentation(forTypeIdentifier: UTType.movie.identifier) { url, _ in
+                var copied: URL?
+                if let url {
+                    let dest = FileStore.importsDir
+                        .appendingPathComponent("import-\(UUID().uuidString.prefix(8))-\(url.lastPathComponent)")
+                    do {
+                        try FileManager.default.copyItem(at: url, to: dest)
+                        copied = dest
+                    } catch {
+                        // Temp file vanished or copy failed — fall through; user retries.
+                    }
+                }
+                DispatchQueue.main.async {
+                    self.isFinished = true
+                    self.progressObservation = nil
+                    if let copied {
+                        self.onPicked(copied)
+                    } else {
+                        self.onFailed?()
+                    }
+                }
+            }
+            progressObservation = progress.observe(\.fractionCompleted, options: [.new]) { [weak self] prog, _ in
+                let fraction = prog.fractionCompleted
+                DispatchQueue.main.async {
+                    guard let self, !self.isFinished else { return }
+                    self.onProgress?(fraction)
                 }
             }
         }

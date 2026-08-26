@@ -40,11 +40,16 @@ from providers.base import (
     ProviderTimeout,
     data_uri,
     download_bytes,
+    put_bytes,
     request_json,
     sniff_mime,
 )
 
 QUEUE_BASE = "https://queue.fal.run"
+# fal CDN upload (initiate → PUT). Video model runners DOWNLOAD their inputs
+# server-side, so a `data:` URI is rejected ("URL scheme 'data' is not allowed").
+# Large / video inputs must be real URLs — upload the bytes first, pass the URL.
+FAL_CDN_INITIATE = "https://rest.alpha.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3"
 
 # KNOWN unit costs (from providers/costs.py — the single table).
 DECLUTTER_UNIT_COST_CENTS = costs.UNIT_COSTS_CENTS["declutter_flux_fill"]
@@ -63,6 +68,25 @@ def _headers() -> dict:
     if not SETTINGS.fal_key:
         raise MissingKey("FAL_KEY is not set — cannot call fal.ai.")
     return {"Authorization": f"Key {SETTINGS.fal_key}"}
+
+
+def upload_to_cdn(data: bytes, *, content_type: str, file_name: str = "upload.bin") -> str:
+    """Upload bytes to fal's CDN; return the public file URL.
+
+    Two-step REST flow (no SDK): POST /storage/upload/initiate → { upload_url,
+    file_url }, then PUT the raw bytes to upload_url. Needed for any input the fal
+    model downloads server-side (e.g. the Topaz video endpoint, which rejects
+    `data:` URIs). Images on many endpoints still accept data URIs.
+    """
+    init = request_json(FAL_CDN_INITIATE, method="POST",
+                        payload={"content_type": content_type, "file_name": file_name},
+                        headers=_headers(), timeout=60)
+    upload_url = init.get("upload_url")
+    file_url = init.get("file_url")
+    if not upload_url or not file_url:
+        raise ProviderError(f"fal CDN initiate returned no upload/file url: {init}")
+    put_bytes(upload_url, data, content_type=content_type, timeout=SETTINGS.fal_timeout_s)
+    return file_url
 
 
 def _run(model_id: str, arguments: dict, *, timeout_s: int | None = None) -> dict:
@@ -175,4 +199,43 @@ def hero_clip_result(first_frame: bytes, prompt: str, seconds: int = 5) -> Provi
         data=data, provider="fal", model=SETTINGS.fal_hero_model, feature="hero",
         units=dur, unit_cost_cents=HERO_UNIT_COST_CENTS_PER_SEC, total_cents=total,
         meta={"seconds": dur, "resolution": "1080p"},
+    )
+
+
+# ── "Smooth drone" render — Topaz Video AI on fal ─────────────────────────────
+# One call = motion interpolation (→ hi-fps glide) + upscale (→ 4K) + denoise.
+# Turns handheld ultra-wide walkthrough footage into a buttery, steady, cinematic
+# drone-style glide. Input is a VIDEO; for production the worker passes an R2 URL,
+# but a base64 data URI works for short clips / the cost-test CLI.
+DRONE_RENDER_MODEL = "fal-ai/topaz/upscale/video"
+
+
+def drone_render(video: bytes, *, model: str = "Proteus", upscale_factor: int = 2,
+                 target_fps: int = 60, video_url: str | None = None) -> bytes:
+    # Topaz downloads the input server-side and rejects `data:` URIs, so local
+    # bytes must be uploaded to fal's CDN first. Production passes an R2 URL via
+    # `video_url` and skips the upload entirely.
+    src_url = video_url or upload_to_cdn(video, content_type="video/mp4",
+                                         file_name="drone_input.mp4")
+    result = _run(DRONE_RENDER_MODEL, {
+        "video_url": src_url,
+        "model": model,               # "Proteus" (natural) | "Starlight Fast 2" (max cinematic)
+        "upscale_factor": upscale_factor,
+        "target_fps": target_fps,     # the glide (60fps)
+        "H264_output": True,
+    })
+    return _video_bytes(result)
+
+
+def drone_render_result(video: bytes, *, out_seconds: float, tier: str = "4k30",
+                        model: str = "Proteus", upscale_factor: int = 2,
+                        target_fps: int = 60, video_url: str | None = None) -> ProviderResult:
+    data = drone_render(video, model=model, upscale_factor=upscale_factor,
+                        target_fps=target_fps, video_url=video_url)
+    total = costs.drone_render_cost_cents(out_seconds, tier)
+    per_s_key = costs.DRONE_RENDER_TIERS.get(tier, "drone_render_4k30_per_s")
+    return ProviderResult(
+        data=data, provider="fal", model=DRONE_RENDER_MODEL, feature="drone_render",
+        units=round(out_seconds, 2), unit_cost_cents=costs.UNIT_COSTS_CENTS[per_s_key],
+        total_cents=total, meta={"tier": tier, "topaz_model": model, "target_fps": target_fps},
     )

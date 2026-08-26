@@ -71,15 +71,17 @@ struct Render: Identifiable, Codable, Hashable {
             }
         }
 
-        /// Plain-agent-language copy (master spec Part 39).
+        /// Plain-agent-language copy (master spec Part 39). Honest: the AI tiers
+        /// describe what actually runs today — Topaz motion smoothing + upscale
+        /// on our render farm (/ai-video/drone).
         var blurb: String {
             switch self {
             case .smooth:
                 return "A silky drone-style glide in HD. Perfect for most tours."
             case .premium4k:
-                return "Ultra-crisp 4K glide — the premium look for standout spaces."
+                return "AI motion smoothing + true 4K upscale on our render farm — the premium look for standout spaces."
             case .cinematic:
-                return "Adds an AI aerial opener and cinematic transitions. The scroll-stopping version for social."
+                return "AI motion smoothing + 4K upscale at 60fps on our render farm. The scroll-stopping version for social."
             }
         }
 

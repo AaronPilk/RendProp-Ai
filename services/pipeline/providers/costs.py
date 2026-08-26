@@ -32,9 +32,16 @@ UNIT_COSTS_CENTS: dict[str, float] = {
     "restage_fal_kontext":   4.0,   # Flux Kontext [pro] (fal fallback)
     "restage_kie":           9.0,   # KIE one-key route (at scale / fallback)
     "declutter_flux_fill":   4.0,   # Flux Fill masked inpaint (fal)
+    "photo_edit_gemini":     3.9,   # twilight / sky replace / lawn repair (Gemini image edit)
     "upscale_realesrgan":    1.0,   # optional low-res upscale
-    # video — per SECOND of generated clip
+    # video — per SECOND of generated/rendered clip
     "hero_seedance_per_s":   4.8,   # Seedance 1.0 Pro Fast 1080p ($0.24 / 5s)
+    # "smooth drone" render — Topaz Video AI on fal, billed per SECOND of OUTPUT
+    # (interpolate→hi-fps + upscale + denoise). fal: $0.02/s→1080p, $0.08/s>1080p,
+    # ×2 for 60fps output. See docs research (Aug 2026).
+    "drone_render_1080p60_per_s":  4.0,   # $0.04/s
+    "drone_render_4k30_per_s":     8.0,   # $0.08/s
+    "drone_render_4k60_per_s":    16.0,   # $0.16/s (premium buttery)
     # QC — flat per 4-image call (PRE-call estimate only)
     "qc_haiku_call":         0.9,
     "qc_sonnet_call":        1.7,
@@ -75,6 +82,25 @@ def declutter_cost_cents() -> float:
 
 def hero_cost_cents(seconds: float) -> float:
     return round(UNIT_COSTS_CENTS["hero_seedance_per_s"] * float(seconds), 4)
+
+
+def photo_edit_cost_cents() -> float:
+    """Twilight / sky-replace / lawn-repair — one Gemini image edit per photo."""
+    return UNIT_COSTS_CENTS["photo_edit_gemini"]
+
+
+# "Smooth drone" render tiers → per-output-second cost key.
+DRONE_RENDER_TIERS = {
+    "1080p60": "drone_render_1080p60_per_s",
+    "4k30":    "drone_render_4k30_per_s",
+    "4k60":    "drone_render_4k60_per_s",
+}
+
+
+def drone_render_cost_cents(out_seconds: float, tier: str = "4k30") -> float:
+    """Topaz render cost = per-output-second rate × output duration."""
+    key = DRONE_RENDER_TIERS.get(tier, "drone_render_4k30_per_s")
+    return round(UNIT_COSTS_CENTS[key] * float(out_seconds), 4)
 
 
 def qc_estimate_cents(model: str) -> float:

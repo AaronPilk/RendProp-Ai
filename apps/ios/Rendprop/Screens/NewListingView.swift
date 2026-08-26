@@ -28,6 +28,11 @@ struct NewListingView: View {
     @State private var pendingAsset: CaptureAsset?
     @State private var goToReview = false
     @State private var createdListing: Listing?
+    /// Non-nil while a picked video is copying out of the Photos library
+    /// (0…1). Big 4K / iCloud clips take a while — this drives the visible
+    /// "Importing video…" progress so the screen never looks frozen.
+    @State private var importProgress: Double?
+    @State private var importFailed = false
 
     private var formValid: Bool { !address.trimmingCharacters(in: .whitespaces).isEmpty }
 
@@ -43,6 +48,7 @@ struct NewListingView: View {
                               ? "Type the home's address"
                               : "Name or address of your \(SpaceType.current.spaceNoun)", text: $address)
                         .textContentType(.fullStreetAddress)
+                        .submitLabel(.done)
                         .font(.body)
                         .padding(14)
                         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -93,6 +99,22 @@ struct NewListingView: View {
                         Label("Type the address first, then pick one.", systemImage: "info.circle")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
+                    }
+
+                    if let p = importProgress {
+                        let clamped = min(max(p, 0), 1)
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: clamped) {
+                                Text("Importing video… \(Int(clamped * 100))%")
+                                    .font(.rpCaption.weight(.semibold))
+                                    .foregroundStyle(Theme.ink)
+                            }
+                            .tint(Theme.accent)
+                            Text("Big videos can take a minute — keep the app open.")
+                                .font(.rpCaption)
+                                .foregroundStyle(Theme.inkDim)
+                        }
+                        .padding(.top, 4)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -150,6 +172,7 @@ struct NewListingView: View {
             .padding()
         }
         .background(Theme.bg)
+        .scrollDismissesKeyboard(.interactively)
         .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
         .fullScreenCover(isPresented: $showCapture) {
@@ -169,12 +192,21 @@ struct NewListingView: View {
             Button("Cancel", role: .cancel) {}
         }
         .sheet(isPresented: $showPhotoPicker) {
-            PhotoVideoPicker { url in
-                Task {
-                    let asset = await MediaImporter.makeAsset(from: url, isDrone: false)
-                    await MainActor.run { receive(asset) }
-                }
-            }
+            PhotoVideoPicker(
+                onPicked: { url in
+                    Task {
+                        let asset = await MediaImporter.makeAsset(from: url, isDrone: false)
+                        await MainActor.run {
+                            importProgress = nil
+                            receive(asset)
+                        }
+                    }
+                },
+                onProgress: { importProgress = $0 },
+                onFailed: {
+                    importProgress = nil
+                    importFailed = true
+                })
             .ignoresSafeArea()
         }
         .sheet(isPresented: $showFilesPicker) {
@@ -190,6 +222,11 @@ struct NewListingView: View {
             if let listing = createdListing, let asset = pendingAsset {
                 ReviewSubmitView(listing: listing, asset: asset)
             }
+        }
+        .alert("Couldn't import that video", isPresented: $importFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("Please try again. If the video is in iCloud, keep the app open while it downloads.")
         }
     }
 
@@ -222,35 +259,54 @@ struct NewListingView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(filled ? Theme.accent : Theme.accentSoft)
             )
-            .opacity(formValid ? 1 : 0.5)
+            .opacity(formValid && importProgress == nil ? 1 : 0.5)
         }
         .buttonStyle(.plain)
-        .disabled(!formValid)
+        .disabled(!formValid || importProgress != nil)   // no double-imports mid-copy
         .accessibilityLabel(Text("\(title). \(subtitle)"))
     }
 
     @discardableResult
     private func prepareListing() -> Bool {
         guard formValid else { return false }
-        if createdListing == nil {
-            let trimmedTagline = tagline.trimmingCharacters(in: .whitespaces)
-            // Beds/baths/sqft/price are real-estate concepts — never store the
-            // UI's default 3bd/2ba on a venue/gym/restaurant listing.
-            let isRE = SpaceType.current.showsPropertyDetails
-            let listing = Listing(address: address.trimmingCharacters(in: .whitespaces),
-                                  beds: isRE ? beds : 0,
-                                  baths: isRE ? baths : 0,
-                                  sqft: isRE ? (Int(sqft) ?? 0) : 0,
-                                  price: .dollars(isRE ? (Int(priceDollars) ?? 0) : 0),
-                                  status: .draft,
-                                  spaceTypeRaw: SpaceType.current.rawValue,  // stamp the industry
-                                  latitude: pendingCoord?.latitude,
-                                  longitude: pendingCoord?.longitude,
-                                  tagline: trimmedTagline.isEmpty ? nil : trimmedTagline,
-                                  details: pendingDetails.isEmpty ? nil : pendingDetails)
-            createdListing = listing
-            model.add(listing)
+        let trimmedTagline = tagline.trimmingCharacters(in: .whitespaces)
+        // Beds/baths/sqft/price are real-estate concepts — never store the
+        // UI's default 3bd/2ba on a venue/gym/restaurant listing.
+        let isRE = SpaceType.current.showsPropertyDetails
+
+        // Already created (they tapped a picker earlier, backed out, THEN filled
+        // in beds/baths/sqft or edited the address)? Re-sync the form into the
+        // existing listing — otherwise the finished tour shows the stale
+        // 3 bd / 2 ba defaults instead of what the user typed.
+        if let id = createdListing?.id {
+            model.modify(id) { l in
+                l.address = address.trimmingCharacters(in: .whitespaces)
+                l.beds = isRE ? beds : 0
+                l.baths = isRE ? baths : 0
+                l.sqft = isRE ? (Int(sqft) ?? 0) : 0
+                l.price = .dollars(isRE ? (Int(priceDollars) ?? 0) : 0)
+                l.tagline = trimmedTagline.isEmpty ? nil : trimmedTagline
+                l.details = pendingDetails.isEmpty ? nil : pendingDetails
+            }
+            if let updated = model.listings.first(where: { $0.id == id }) {
+                createdListing = updated
+            }
+            return true
         }
+
+        let listing = Listing(address: address.trimmingCharacters(in: .whitespaces),
+                              beds: isRE ? beds : 0,
+                              baths: isRE ? baths : 0,
+                              sqft: isRE ? (Int(sqft) ?? 0) : 0,
+                              price: .dollars(isRE ? (Int(priceDollars) ?? 0) : 0),
+                              status: .draft,
+                              spaceTypeRaw: SpaceType.current.rawValue,  // stamp the industry
+                              latitude: pendingCoord?.latitude,
+                              longitude: pendingCoord?.longitude,
+                              tagline: trimmedTagline.isEmpty ? nil : trimmedTagline,
+                              details: pendingDetails.isEmpty ? nil : pendingDetails)
+        createdListing = listing
+        model.add(listing)
         return true
     }
 

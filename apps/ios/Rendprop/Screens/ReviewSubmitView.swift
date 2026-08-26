@@ -78,10 +78,11 @@ struct ReviewSubmitView: View {
                     .font(.system(size: 22))
                     .foregroundStyle(Theme.accent)
                     .frame(width: 44, height: 44)
-                    .background(Theme.accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
                 VStack(alignment: .leading, spacing: 3) {
                     Text("\(Formatters.duration(asset.durationS)) · \(asset.resolutionLabel) · \(Int(asset.fps.rounded())) fps")
                         .font(.rpHeadline)
+                        .foregroundStyle(Theme.ink)
                     HStack(spacing: 8) {
                         Text(Formatters.bytes(asset.bytes))
                         if asset.hasGyro {
@@ -160,7 +161,7 @@ struct ReviewSubmitView: View {
                             .foregroundStyle(tier == t ? Theme.accent : Theme.inkDim)
                             .frame(width: 28)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(t.displayName).font(.rpHeadline)
+                            Text(t.displayName).font(.rpHeadline).foregroundStyle(Theme.ink)
                             Text(t.blurb)
                                 .font(.rpCaption)
                                 .foregroundStyle(Theme.inkDim)
@@ -201,9 +202,12 @@ struct ReviewSubmitView: View {
                         .foregroundStyle(enhancements.declutter ? Theme.accent : Theme.inkDim)
                         .frame(width: 28)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Clean up clutter · +\(Enhancements.declutterPrice.formatted)")
+                        // Honest copy: today's AI declutter runs on listing PHOTOS
+                        // (ai-photo). Full-video declutter isn't wired into the tour
+                        // flow yet (Bria caps video input at <5 s).
+                        Text("AI declutter (photos) · +\(Enhancements.declutterPrice.formatted)")
                             .font(.rpHeadline)
-                        Text("We remove boxes and mess from the video. The \(SpaceType.current.spaceNoun) itself never changes.")
+                        Text("Removes clutter from your listing photos with AI. Full-video declutter is coming — clips under 5s already supported.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
                     }
@@ -276,6 +280,7 @@ struct ReviewSubmitView: View {
                     } label: {
                         Label("Preview this look on my video", systemImage: "eye")
                             .font(.rpHeadline)
+                            .foregroundStyle(Theme.accent)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 12)
                             .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -308,7 +313,7 @@ struct ReviewSubmitView: View {
             }
             if enhancements.declutter {
                 HStack {
-                    Text("Auto-declutter")
+                    Text("AI declutter (photos)")
                     Spacer()
                     Text("+\(Enhancements.declutterPrice.formatted)").foregroundStyle(Theme.inkDim)
                 }
@@ -328,6 +333,7 @@ struct ReviewSubmitView: View {
             }
         }
         .font(.rpBody)
+        .foregroundStyle(Theme.ink)
         .card()
     }
 
@@ -435,6 +441,7 @@ struct RoomTaggerView: View {
                                 .font(.title)
                                 .foregroundStyle(Theme.accent)
                         }
+                        .accessibilityLabel(Text(isPlaying ? "Pause" : "Play"))
                         Spacer()
                         Text(timeLabel(duration)).font(.rpMono).foregroundStyle(Theme.inkDim)
                     }
@@ -469,6 +476,7 @@ struct RoomTaggerView: View {
                         Image(systemName: "plus.circle.fill").font(.title3)
                     }
                     .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityLabel(Text("Add custom room tag"))
                 }
                 .padding(.horizontal)
 
@@ -496,6 +504,7 @@ struct RoomTaggerView: View {
                                 } label: {
                                     Image(systemName: "trash").foregroundStyle(Theme.inkDim)
                                 }
+                                .accessibilityLabel(Text("Remove \(tag.name) tag"))
                             }
                             .padding(.horizontal)
                             .padding(.vertical, 4)
@@ -539,6 +548,7 @@ struct RoomTaggerView: View {
     private func togglePlay() {
         if isPlaying { player.pause() } else { player.play() }
         isPlaying.toggle()
+        Haptics.selection()
     }
 
     private func seek(to t: Double) {

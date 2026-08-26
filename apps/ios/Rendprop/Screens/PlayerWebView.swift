@@ -88,6 +88,13 @@ struct PlayerWebView: UIViewRepresentable {
             html = html.replacingOccurrences(of: "4 bd · 3 ba · 2,850 sqft", with: htmlEscape(sub))
             html = html.replacingOccurrences(of: "this home", with: "this \(type.spaceNoun)")
             html = html.replacingOccurrences(of: "Book a showing", with: htmlEscape(type.ctaTitle))
+        } else if let listing, !listing.isSample {
+            // A REAL home shown over the demo reel (its own video not ready yet):
+            // never keep the demo $1,175,000 / 4 bd · 3 ba — use the listing's values.
+            html = html.replacingOccurrences(of: "$1,175,000",
+                                             with: listing.price.cents > 0 ? htmlEscape(listing.price.formatted) : "")
+            html = html.replacingOccurrences(of: "4 bd · 3 ba · 2,850 sqft",
+                                             with: htmlEscape(metaText(for: listing)))
         }
 
         // Agent card (same treatment as real tours).
@@ -103,6 +110,13 @@ struct PlayerWebView: UIViewRepresentable {
             } else {
                 html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(agent.initials))<")
             }
+        } else if let listing, !listing.isSample {
+            // Real listing, no profile card yet: never show the fake demo agent
+            // on the user's own tour — hide the identity row and neutralize the
+            // copy ("Sarah will text you times" → "We'll text you times").
+            html = html.replacingOccurrences(of: "<div class=\"agent\">",
+                                             with: "<div class=\"agent\" style=\"display:none\">")
+            html = html.replacingOccurrences(of: "Sarah will", with: "We'll")
         }
 
         let out = dir.appendingPathComponent("demo-\(type.rawValue).html")
@@ -130,7 +144,7 @@ struct PlayerWebView: UIViewRepresentable {
         // 2. Chapters → their room tags
         let tags = roomTags.sorted { $0.tMs < $1.tMs }
         let chapterEntries = tags.isEmpty
-            ? "{ t: 0, label: 'Home' }"
+            ? "{ t: 0, label: '\(SpaceType.current.spaceNounCap)' }"
             : tags.map { tag -> String in
                 let safe = tag.name
                     .replacingOccurrences(of: "'", with: "")
@@ -143,17 +157,21 @@ struct PlayerWebView: UIViewRepresentable {
                                  with: "const CHAPTERS = [\n    \(chapterEntries)\n  ];")
         }
 
-        // 3. Listing card → real details
+        // 3. Listing card → real details (title, og tags, chip, and the
+        //    lead-form copy all carry the demo's "1247 Hillcrest Drive" /
+        //    "4 bd · 3 ba · 2,850 sqft" / "$1,175,000" — every occurrence is
+        //    swapped for the listing's real values, hidden when unset).
         if let listing {
             html = html.replacingOccurrences(of: "$1,175,000",
-                                             with: listing.price.cents > 0 ? listing.price.formatted : "")
-            html = html.replacingOccurrences(of: "4 bd · 3 ba · 2,850 sqft", with: listing.metaLine)
-            html = html.replacingOccurrences(of: "1247 Hillcrest Drive", with: listing.address)
+                                             with: listing.price.cents > 0 ? htmlEscape(listing.price.formatted) : "")
+            html = html.replacingOccurrences(of: "4 bd · 3 ba · 2,850 sqft",
+                                             with: htmlEscape(metaText(for: listing)))
+            html = html.replacingOccurrences(of: "1247 Hillcrest Drive", with: htmlEscape(listing.address))
         }
 
-        // 4. Agent card → the agent's own details. Only when they've set one up;
-        //    otherwise the demo agent (Sarah Mitchell) stays so sample tours
-        //    still look complete.
+        // 4. Agent card → the agent's own details when they've set one up.
+        //    Without one, SAMPLE tours keep the demo agent (Sarah Mitchell) so
+        //    they look complete — but a REAL listing hides it (see else below).
         if agent.isSet {
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
             html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
@@ -178,6 +196,14 @@ struct PlayerWebView: UIViewRepresentable {
             }
 
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
+        } else if listing?.isSample == false {
+            // REAL tour with no profile card set up: never show the fake demo
+            // agent ("Sarah Mitchell") on the user's own listing — hide the
+            // identity row and neutralize the copy ("Sarah will text you times"
+            // → "We'll text you times", ditto the confirmation message).
+            html = html.replacingOccurrences(of: "<div class=\"agent\">",
+                                             with: "<div class=\"agent\" style=\"display:none\">")
+            html = html.replacingOccurrences(of: "Sarah will", with: "We'll")
         }
 
         // Call-to-action + copy adapt to the business type (real estate keeps
@@ -202,6 +228,22 @@ struct PlayerWebView: UIViewRepresentable {
         } catch {
             return nil
         }
+    }
+
+    /// The listing chip's second line, hidden gracefully when unset: real
+    /// estate shows only the parts that are > 0 (never "0 bd · 0 ba"), and
+    /// non-property types show their tagline instead of beds/baths.
+    private static func metaText(for listing: Listing) -> String {
+        guard listing.spaceType.showsPropertyDetails else { return listing.tagline ?? "" }
+        var parts: [String] = []
+        if listing.beds > 0 { parts.append("\(listing.beds) bd") }
+        if listing.baths > 0 {
+            let baths = listing.baths.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(listing.baths)) : String(listing.baths)
+            parts.append("\(baths) ba")
+        }
+        if listing.sqft > 0 { parts.append("\(listing.sqft.formatted()) sqft") }
+        return parts.joined(separator: " · ")
     }
 
     /// Escape values before injecting into HTML so names with & < > " can't

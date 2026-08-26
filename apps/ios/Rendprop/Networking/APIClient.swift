@@ -125,6 +125,34 @@ protocol APIClient: Sendable {
 
     /// GET /me — usage/cost for the Settings "Usage" section.
     func me() async throws -> UsageSummary
+
+    /// POST /ai-photo — single-image AI edit. `edit` = "twilight" | "sky" |
+    /// "lawn" | "declutter" | "stage" | "custom". `style` applies to stage only
+    /// ("modern" | "rustic" | "minimalist" | "scandinavian"); `prompt` to custom
+    /// only (free text, ≤ 600 chars). Pass nil for both on the preset edits.
+    /// Sends the photo as base64, returns the edited image as base64 (PNG).
+    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
+                     style: String?, prompt: String?) async throws -> String
+
+    // MARK: AI video (ai-video edge function — async fal submit + poll)
+
+    /// POST /ai-video/drone — Topaz motion smoothing + upscale of an UPLOADED
+    /// role="render" asset (public renders bucket, or the server 400s).
+    /// `tier` = "1080p60" | "4k30" | "4k60". Returns the queued job to poll.
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob
+
+    /// POST /ai-video/aerial — SYNTHETIC AI establishing shot (Veo), inspired by
+    /// the address. `seconds` snaps to 4/6/8; `aspect` = "16:9" | "9:16".
+    /// The UI must always disclose the result as AI-generated footage.
+    func aiVideoAerial(address: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob
+
+    /// POST /ai-video/reel-clip — animate a photo (base64) into a 2–12 s motion
+    /// clip (Seedance image-to-video).
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob
+
+    /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
+    /// download the video promptly on `.completed`.
+    func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
 }
 
 extension APIClient {
@@ -135,6 +163,24 @@ extension APIClient {
         try await requestUpload(filename: filename, bytes: bytes, listingID: listingID,
                                 sha256: sha256, kind: kind, role: "capture")
     }
+}
+
+/// One submitted ai-video job (202 from `POST /ai-video/*`). Carries fal's own
+/// queue URLs verbatim — stateless v1: nothing is persisted server-side, the
+/// app holds these and polls `aiVideoStatus` until completed/failed.
+struct AIVideoJob: Codable, Sendable {
+    let requestId: String       // request_id
+    let statusUrl: String       // status_url (queue.fal.run — polled via our server)
+    let responseUrl: String     // response_url
+    let kind: String            // "drone" | "aerial" | "reel" | "declutter"
+}
+
+/// One poll of `GET /ai-video/status`.
+enum AIVideoStatus: Sendable {
+    case processing(queuePosition: Int?)
+    /// fal result URLs EXPIRE — download the file promptly.
+    case completed(videoURL: URL)
+    case failed(String)
 }
 
 /// Result of `POST /renders/publish-app` — the app-published tour's public

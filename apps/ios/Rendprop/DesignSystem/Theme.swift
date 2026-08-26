@@ -1,20 +1,67 @@
 import SwiftUI
+import UIKit
 
-/// Rendprop design tokens — light, clean, white + purple.
-/// Simple and friendly: big buttons, plain language, nothing techy.
+/// Rendprop design tokens — clean white + purple in light mode, deep
+/// indigo-black + luminous purple in dark mode. Every token is ADAPTIVE
+/// (resolves per trait collection), so screens that use Theme.* re-theme for
+/// free. The Settings "Appearance" picker (System / Light / Dark) drives the
+/// scheme via @AppStorage("appearance") in RendpropApp.
 enum Theme {
-    static let accent  = Color(red: 124/255, green: 58/255,  blue: 237/255)  // #7C3AED purple
-    static let bg      = Color(red: 250/255, green: 250/255, blue: 252/255)  // near-white
-    static let card    = Color.white
-    static let ink     = Color(red: 28/255,  green: 25/255,  blue: 45/255)   // near-black
-    static let inkDim  = Color(red: 28/255,  green: 25/255,  blue: 45/255).opacity(0.55)
-    static let border  = Color.black.opacity(0.08)
-    static let fillSubtle = Color.black.opacity(0.04)
-    static let accentSoft = Color(red: 124/255, green: 58/255, blue: 237/255).opacity(0.10)
 
-    static let good = Color(red: 22/255,  green: 163/255, blue: 74/255)
-    static let warn = Color(red: 202/255, green: 138/255, blue: 4/255)
-    static let bad  = Color(red: 220/255, green: 38/255,  blue: 38/255)
+    // MARK: Adaptive helper
+
+    /// A Color that resolves differently in light vs dark trait environments.
+    private static func dynamic(light: UIColor, dark: UIColor) -> Color {
+        Color(UIColor { traits in
+            traits.userInterfaceStyle == .dark ? dark : light
+        })
+    }
+
+    private static func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> UIColor {
+        UIColor(red: r / 255, green: g / 255, blue: b / 255, alpha: a)
+    }
+
+    // MARK: Core palette (adaptive)
+
+    /// Brand purple — a touch brighter in dark so it glows instead of muddying.
+    static let accent = dynamic(light: rgb(124, 58, 237),   // #7C3AED
+                                dark:  rgb(155, 109, 255))  // #9B6DFF
+
+    /// App background — near-white ↔ deep indigo-black.
+    static let bg = dynamic(light: rgb(250, 250, 252),
+                            dark:  rgb(14, 13, 20))         // #0E0D14
+
+    /// Card / elevated surface.
+    static let card = dynamic(light: .white,
+                              dark:  rgb(26, 24, 37))       // #1A1825
+
+    /// Primary text — near-black ↔ near-white.
+    static let ink = dynamic(light: rgb(28, 25, 45),
+                             dark:  rgb(242, 240, 250))
+
+    /// Secondary text.
+    static let inkDim = dynamic(light: rgb(28, 25, 45, 0.55),
+                                dark:  rgb(242, 240, 250, 0.60))
+
+    /// Hairline borders.
+    static let border = dynamic(light: UIColor.black.withAlphaComponent(0.08),
+                                dark:  UIColor.white.withAlphaComponent(0.12))
+
+    /// Subtle fills (chips, tool tiles, list rows).
+    static let fillSubtle = dynamic(light: UIColor.black.withAlphaComponent(0.04),
+                                    dark:  UIColor.white.withAlphaComponent(0.07))
+
+    /// Soft purple wash (badges, selected states, secondary buttons).
+    static let accentSoft = dynamic(light: rgb(124, 58, 237, 0.10),
+                                    dark:  rgb(155, 109, 255, 0.20))
+
+    // MARK: Status colors (brightened in dark for contrast)
+
+    static let good = dynamic(light: rgb(22, 163, 74),  dark: rgb(74, 222, 128))
+    static let warn = dynamic(light: rgb(202, 138, 4),  dark: rgb(251, 191, 36))
+    static let bad  = dynamic(light: rgb(220, 38, 38),  dark: rgb(248, 113, 113))
+
+    // MARK: Metrics
 
     static let radius: CGFloat = 16
     static let spacing: CGFloat = 16

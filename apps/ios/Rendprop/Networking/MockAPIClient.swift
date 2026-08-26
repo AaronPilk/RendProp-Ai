@@ -84,6 +84,49 @@ actor MockAPIClient: APIClient {
         UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: "Dev")
     }
 
+    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
+                     style: String?, prompt: String?) async throws -> String {
+        // Offline dev: no Gemini — echo the original back so the UI flow runs
+        // (style/prompt are ignored offline).
+        try? await Task.sleep(nanoseconds: 500_000_000)
+        return imageBase64
+    }
+
+    // MARK: - AI video (offline stubs — the real flows run only on LiveAPIClient)
+
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "drone")
+    }
+
+    func aiVideoAerial(address: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "aerial")
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "reel")
+    }
+
+    func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
+        // Offline dev: "complete" after a short beat with a local placeholder file
+        // so any caller's poll → download flow finishes instead of hanging. Not a
+        // real video — the AI video features are gated on useLiveBackend anyway.
+        try? await Task.sleep(nanoseconds: 1_200_000_000)
+        let placeholder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mock-ai-video-\(job.requestId).mp4")
+        if !FileManager.default.fileExists(atPath: placeholder.path) {
+            try? Data("rendprop offline placeholder".utf8).write(to: placeholder)
+        }
+        return .completed(videoURL: placeholder)
+    }
+
+    private static func mockAIVideoJob(kind: String) -> AIVideoJob {
+        let id = UUID().uuidString.lowercased()
+        return AIVideoJob(requestId: id,
+                          statusUrl: "https://queue.fal.run/mock/requests/\(id)/status",
+                          responseUrl: "https://queue.fal.run/mock/requests/\(id)",
+                          kind: kind)
+    }
+
     func renderStatus(id: UUID) async throws -> Render {
         guard let entry = renders[id] else { throw APIError.badResponse(404) }
         // Simulated pipeline: ~14s base, +3s per enhancement step.

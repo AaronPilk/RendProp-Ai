@@ -16,8 +16,11 @@ struct RoomTagBar: View {
                         tags.append(RoomTag(name: name, tMs: Int(elapsed * 1000)))
                         Haptics.selection()
                     } label: {
+                        // Explicit white — this rides the camera feed, where the
+                        // chrome is dark in both app appearances.
                         Text(name)
                             .font(.caption.weight(.semibold))
+                            .foregroundStyle(.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
                             .background(.ultraThinMaterial, in: Capsule())

@@ -25,10 +25,18 @@ struct CaptureView: View {
             case .failed(let message):
                 failure(message)
             default:
-                CameraPreview(session: camera.session)
-                    .ignoresSafeArea()
-                ThirdsGrid().ignoresSafeArea()
-                overlays
+                // Camera chrome is ALWAYS dark, regardless of the app's
+                // appearance: forcing the dark trait here makes materials
+                // render as dark smoke and every adaptive Theme token resolve
+                // to its bright dark-mode variant — correct over live video
+                // in both app modes.
+                Group {
+                    CameraPreview(session: camera.session)
+                        .ignoresSafeArea()
+                    ThirdsGrid().ignoresSafeArea()
+                    overlays
+                }
+                .environment(\.colorScheme, .dark)
             }
         }
         .statusBarHidden()
@@ -63,6 +71,7 @@ struct CaptureView: View {
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(.white)
                         .padding(12)
                         .background(.ultraThinMaterial, in: Circle())
                 }
@@ -76,14 +85,19 @@ struct CaptureView: View {
                             Circle().fill(Theme.bad).frame(width: 8, height: 8)
                             Text(Formatters.duration(camera.elapsed))
                                 .font(.rpMono)
+                                .foregroundStyle(.white)
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 6)
                         .background(.ultraThinMaterial, in: Capsule())
+                        .accessibilityElement(children: .combine)
+                        .accessibilityLabel(Text("Recording, \(Formatters.duration(camera.elapsed))"))
                     }
+                    // Explicit white (never adaptive ink) — this text sits
+                    // directly on the video feed.
                     Text(camera.formatLabel)
                         .font(.caption2)
-                        .foregroundStyle(Theme.inkDim)
+                        .foregroundStyle(Color.white.opacity(0.85))
                         .shadow(radius: 2)
                 }
             }
@@ -106,6 +120,7 @@ struct CaptureView: View {
                 if camera.supportsUltraWide {
                     Button {
                         camera.toggleLens()
+                        Haptics.selection()
                     } label: {
                         Text(camera.isUltraWide ? "0.5×" : "1×")
                             .font(.system(size: 14, weight: .semibold, design: .rounded))
@@ -174,6 +189,7 @@ struct CaptureView: View {
                 .foregroundStyle(Theme.inkDim)
             Text("Camera access is off")
                 .font(.rpTitle)
+                .foregroundStyle(Theme.ink)
             Text("Rendprop needs the camera to record a walkthrough. Enable it in Settings.")
                 .font(.rpBody)
                 .foregroundStyle(Theme.inkDim)
@@ -197,6 +213,7 @@ struct CaptureView: View {
                 .foregroundStyle(Theme.warn)
             Text(message)
                 .font(.rpBody)
+                .foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
             Button("Close") { dismiss() }
                 .buttonStyle(.borderedProminent)
@@ -222,6 +239,7 @@ struct CaptureView: View {
 
     private func handleFinished(_ url: URL) {
         metronome?.invalidate()
+        Haptics.success()   // clip saved — mirror the heavy tap that started it
         let sidecar = motion.endLogging(besideVideoAt: url,
                                         fps: camera.activeFPS,
                                         width: camera.activeWidth,

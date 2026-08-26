@@ -8,6 +8,8 @@ struct SettingsView: View {
     @AppStorage("maxQualityCapture") private var maxQualityCapture = false
     @AppStorage("hasOnboarded") private var hasOnboarded = true
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    // Drives .preferredColorScheme at the app root (RendpropApp reads the same key).
+    @AppStorage("appearance") private var appearanceRaw = Appearance.system.rawValue
     @EnvironmentObject var uploads: UploadManager
     @EnvironmentObject var model: AppModel
 
@@ -21,14 +23,28 @@ struct SettingsView: View {
                 HStack {
                     Label(SpaceType.current.displayName, systemImage: SpaceType.current.systemImage)
                     Spacer()
-                    Text("Business tab")
+                    Text("Home tab")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                 }
             } header: {
                 Text("Business type")
             } footer: {
-                Text("Switch your business type any time from the Business tab — the whole app re-themes instantly.")
+                Text("Switch your business type any time from the Home tab — the whole app re-themes instantly.")
+            }
+
+            Section {
+                Picker("Appearance", selection: $appearanceRaw) {
+                    ForEach(Appearance.allCases) { a in
+                        Label(a.label, systemImage: a.systemImage).tag(a.rawValue)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appearanceRaw) { _ in Haptics.selection() }
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("System follows your iPhone. The whole app re-themes instantly.")
             }
 
             Section("Uploads") {
@@ -61,6 +77,18 @@ struct SettingsView: View {
                                    value: AgentCard.current.isSet ? AgentCard.current.name : "Set up")
                 }
                 // TODO Phase 2: org brand kit (logo, colors, CTA) — master spec 4.5
+            }
+
+            Section {
+                NavigationLink {
+                    AIPhotoStudioView()
+                } label: {
+                    Label("AI Photo Studio", systemImage: "wand.and.stars")
+                }
+            } header: {
+                Text("AI tools")
+            } footer: {
+                Text("Twilight, sky replacement, lawn repair, decluttering, virtual staging, and custom AI edits on any listing photo.")
             }
 
             Section("Notifications") {
@@ -161,6 +189,237 @@ struct SettingsView: View {
         } catch {
             usageFailed = true
         }
+    }
+}
+
+// MARK: - AI Photo Studio
+// Twilight / sky-replace / lawn-repair on a listing photo via the `ai-photo`
+// edge function (Gemini). Inlined here (in a compiled file) so it can't be
+// dropped from the build target — same rule as AgentCard below.
+
+struct AIPhotoStudioView: View {
+    @EnvironmentObject var model: AppModel
+
+    private enum Edit: String, CaseIterable, Identifiable {
+        case twilight, sky, lawn, declutter, stage, custom
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .twilight:  return "Twilight"
+            case .sky:       return "Blue sky"
+            case .lawn:      return "Green lawn"
+            case .declutter: return "Declutter"
+            case .stage:     return "Staging"
+            case .custom:    return "Custom"
+            }
+        }
+    }
+
+    /// Furnishing look for `edit = .stage` — mirrors the ai-photo contract.
+    private enum StageStyle: String, CaseIterable, Identifiable {
+        case modern, rustic, minimalist, scandinavian
+        var id: String { rawValue }
+        var label: String { rawValue.capitalized }
+    }
+
+    @State private var pickerItem: PhotosPickerItem?
+    @State private var original: UIImage?
+    @State private var edited: UIImage?
+    @State private var edit: Edit = .twilight
+    @State private var stageStyle: StageStyle = .modern
+    @State private var customPrompt = ""
+    @State private var isWorking = false
+    @State private var errorMsg: String?
+
+    private var customPromptTrimmed: String {
+        customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: Theme.spacing) {
+                if let edited {
+                    resultCard(edited)
+                } else if let original {
+                    Image(uiImage: original)
+                        .resizable().scaledToFit()
+                        .frame(maxWidth: .infinity)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    editChips
+                    if edit == .stage {
+                        Picker("Style", selection: $stageStyle) {
+                            ForEach(StageStyle.allCases) { Text($0.label).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        Text("Empty or dated rooms get furnished in the style you pick.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if edit == .custom {
+                        TextField("Describe the change — e.g. 'make it look freshly painted white with warm evening light'",
+                                  text: $customPrompt, axis: .vertical)
+                            .lineLimit(3...6)
+                            .textFieldStyle(.roundedBorder)
+                        Text("\(customPrompt.count)/600")
+                            .font(.rpCaption)
+                            .foregroundStyle(customPrompt.count >= 600 ? Theme.warn : Theme.inkDim)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                    Button(action: enhance) {
+                        HStack {
+                            if isWorking { ProgressView().tint(.white) }
+                            Text(isWorking ? "Enhancing…" : "Enhance photo · $0.04")
+                                .fontWeight(.semibold)
+                        }
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Theme.accent).foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(isWorking || (edit == .custom && customPromptTrimmed.isEmpty))
+                    PhotosPicker(selection: $pickerItem, matching: .images) {
+                        Text("Choose a different photo").font(.rpBody).foregroundStyle(Theme.accent)
+                    }
+                } else {
+                    emptyState
+                }
+
+                if let errorMsg {
+                    Text(errorMsg).font(.rpCaption).foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding()
+        }
+        .background(Theme.bg)
+        .navigationTitle("AI Photo Studio")
+        .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: pickerItem) { _ in loadPicked() }
+        .onChange(of: customPrompt) { newValue in
+            if newValue.count > 600 { customPrompt = String(newValue.prefix(600)) }
+        }
+    }
+
+    /// One tappable chip per edit — six options don't fit a segmented control.
+    private var editChips: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Edit.allCases) { e in
+                    Button {
+                        edit = e
+                        Haptics.selection()
+                    } label: {
+                        Text(e.label)
+                            .font(.rpCaption.weight(.semibold))
+                            .padding(.horizontal, 13).padding(.vertical, 8)
+                            .background(edit == e ? Theme.accent : Theme.accentSoft, in: Capsule())
+                            .foregroundStyle(edit == e ? Color.white : Theme.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 48, weight: .light)).foregroundStyle(Theme.accent)
+            Text("Turn a listing photo into a twilight, blue-sky, or green-lawn shot — or declutter it, stage it virtually, and describe any edit in your own words.")
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center).padding(.horizontal)
+            PhotosPicker(selection: $pickerItem, matching: .images) {
+                Label("Choose a photo", systemImage: "photo.on.rectangle")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        }
+        .padding(.top, 40)
+    }
+
+    private func resultCard(_ img: UIImage) -> some View {
+        VStack(spacing: 12) {
+            Text("Before → After").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            if let original {
+                HStack(spacing: 8) {
+                    Image(uiImage: original).resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    Image(uiImage: img).resizable().scaledToFit()
+                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+            }
+            Image(uiImage: img).resizable().scaledToFit()
+                .frame(maxWidth: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            Button {
+                UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
+                Haptics.success()
+            } label: {
+                Label("Save to Photos", systemImage: "square.and.arrow.down")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            ShareLink(item: Image(uiImage: img),
+                      preview: SharePreview("Enhanced photo", image: Image(uiImage: img))) {
+                Label("Share", systemImage: "square.and.arrow.up")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            Button("Try another look") { edited = nil }
+                .font(.rpBody).foregroundStyle(Theme.accent).padding(.top, 2)
+        }
+    }
+
+    private func loadPicked() {
+        guard let item = pickerItem else { return }
+        Task {
+            if let data = try? await item.loadTransferable(type: Data.self),
+               let ui = UIImage(data: data) {
+                await MainActor.run { original = ui; edited = nil; errorMsg = nil }
+            }
+        }
+    }
+
+    private func enhance() {
+        guard let original else { return }
+        isWorking = true; errorMsg = nil
+        Task {
+            do {
+                let scaled = Self.downscaled(original, maxDimension: 2048)
+                guard let jpeg = scaled.jpegData(compressionQuality: 0.9) else {
+                    throw NSError(domain: "AIPhoto", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
+                }
+                let outB64 = try await model.api.aiPhotoEdit(
+                    imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg", edit: edit.rawValue,
+                    style: edit == .stage ? stageStyle.rawValue : nil,
+                    prompt: edit == .custom ? String(customPromptTrimmed.prefix(600)) : nil)
+                guard let outData = Data(base64Encoded: outB64), let outImg = UIImage(data: outData) else {
+                    throw NSError(domain: "AIPhoto", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "The AI didn't return an image. Try again."])
+                }
+                await MainActor.run { edited = outImg; isWorking = false; Haptics.success() }
+            } catch {
+                await MainActor.run { errorMsg = error.localizedDescription; isWorking = false }
+            }
+        }
+    }
+
+    /// Downscale so the base64 upload stays small (and cheaper) without visible loss.
+    private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let w = image.size.width, h = image.size.height
+        let longest = max(w, h)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let size = CGSize(width: w * scale, height: h * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
     }
 }
 
@@ -509,21 +768,24 @@ struct ProfileView: View {
     }
 
     private var socialRow: some View {
-        let links: [(String, URL?)] = [
-            ("globe", card.websiteURL),
-            ("camera.aperture", card.instagramURL),
-            ("briefcase", card.linkedinURL),
-            ("music.note", card.tiktokURL),
+        // (name, icon, url) — the name doubles as the VoiceOver label, since
+        // these links are icon-only.
+        let links: [(name: String, icon: String, url: URL?)] = [
+            ("Website", "globe", card.websiteURL),
+            ("Instagram", "camera.aperture", card.instagramURL),
+            ("LinkedIn", "briefcase", card.linkedinURL),
+            ("TikTok", "music.note", card.tiktokURL),
         ]
         return HStack(spacing: 14) {
             ForEach(links.indices, id: \.self) { i in
-                if let url = links[i].1 {
+                if let url = links[i].url {
                     Link(destination: url) {
-                        Image(systemName: links[i].0)
+                        Image(systemName: links[i].icon)
                             .font(.title3).foregroundStyle(Theme.accent)
                             .frame(width: 48, height: 48)
                             .background(Theme.accentSoft, in: Circle())
                     }
+                    .accessibilityLabel(Text(links[i].name))
                 }
             }
         }

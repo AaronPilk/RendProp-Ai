@@ -30,8 +30,12 @@ import router
 from config import SETTINGS, STYLES, style_prompt
 from cost_ledger import CostLedger
 from providers import costs
-from providers.base import ProviderError
+from providers.base import ProviderError, sniff_mime
 from router import BudgetExceeded, JobBudget, JobContext
+
+# Image MIME → file extension for saved outputs (Gemini/fal may return PNG even
+# when the source was JPEG, so we label the file by its actual bytes).
+_IMG_EXT = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
 
 HERO_MOTION = ("smooth steady walkthrough glide forward through the room, cinematic "
                "gimbal motion, keep the room geometry and architecture identical")
@@ -86,18 +90,30 @@ def _single_estimate_cents(feature: str, args: argparse.Namespace) -> float:
         return costs.declutter_cost_cents() if args.mask else costs.restage_cost_cents("gemini")
     if feature == "hero":
         return costs.hero_cost_cents(args.seconds)
+    if feature == "photo_edit":
+        return costs.photo_edit_cost_cents()
+    if feature == "drone_render":
+        return costs.drone_render_cost_cents(args.seconds, args.tier)
     raise SystemExit(f"Unknown feature '{feature}'")
 
 
 def cmd_run(args: argparse.Namespace) -> None:
     feature = args.feature
-    image_path = Path(args.image)
-    if not image_path.exists():
-        sys.exit(f"Image not found: {image_path}")
+    # drone_render takes a --video; every other feature takes a --image.
+    if feature == "drone_render":
+        src = Path(args.video) if args.video else None
+        if not src or not src.exists():
+            sys.exit("drone_render needs --video <clip.mp4>")
+    else:
+        src = Path(args.image) if args.image else None
+        if not src or not src.exists():
+            sys.exit(f"{feature} needs --image <photo.jpg>")
 
     est = _single_estimate_cents(feature, args)
-    print(f"\n{feature} on {image_path.name} — estimated {_money(est)} "
-          f"(route='{args.route}')")
+    # The restage route only matters for restage / prompt-edit declutter — don't
+    # print a misleading route on hero / photo_edit / drone_render.
+    route_note = f" (route='{args.route}')" if feature in ("restage", "declutter") else ""
+    print(f"\n{feature} on {src.name} — estimated {_money(est)}{route_note}")
 
     if args.dry_run:
         print("  --dry-run: no API call made.\n")
@@ -110,22 +126,31 @@ def cmd_run(args: argparse.Namespace) -> None:
     if not ctx.ledger.enabled:
         print("  (no SUPABASE_URL/SERVICE_ROLE_KEY → ledger runs local; cost still printed)")
 
-    image = image_path.read_bytes()
+    media = src.read_bytes()
     try:
         if feature == "restage":
             if not args.style:
                 sys.exit("restage needs --style modern|rustic|minimalist|scandinavian")
-            res = router.restage(ctx, image, style_prompt(args.style))
-            _save(res.data, image_path, "restage", args)
+            res = router.restage(ctx, media, style_prompt(args.style))
+            _save(res.data, src, "restage", args)
         elif feature == "declutter":
             mask = Path(args.mask).read_bytes() if args.mask else None
-            res = router.declutter(ctx, image, mask)
-            _save(res.data, image_path, "declutter", args)
+            res = router.declutter(ctx, media, mask)
+            _save(res.data, src, "declutter", args)
         elif feature == "hero":
-            res = router.hero_clip(ctx, image, HERO_MOTION, args.seconds)
-            _save(res.data, image_path, "hero", args, ext="mp4")
+            res = router.hero_clip(ctx, media, HERO_MOTION, args.seconds)
+            _save(res.data, src, "hero", args, ext="mp4")
+        elif feature == "photo_edit":
+            if not args.edit:
+                sys.exit("photo_edit needs --edit twilight|sky|lawn")
+            res = router.photo_edit(ctx, media, args.edit)
+            _save(res.data, src, f"photo-{args.edit}", args)
+        elif feature == "drone_render":
+            res = router.drone_render(ctx, media, out_seconds=args.seconds, tier=args.tier,
+                                      model=args.model, target_fps=args.target_fps)
+            _save(res.data, src, f"drone-{args.tier}", args, ext="mp4")
         else:
-            sys.exit(f"--feature must be restage|declutter|hero (got {feature})")
+            sys.exit(f"--feature must be restage|declutter|hero|photo_edit|drone_render (got {feature})")
     except BudgetExceeded as e:
         sys.exit(f"Aborted by cost cap: {e}")
     except ProviderError as e:
@@ -139,7 +164,10 @@ def cmd_run(args: argparse.Namespace) -> None:
           f"({len(ctx.ledger.rows)} row this run)\n")
 
 
-def _save(data: bytes, src: Path, feature: str, args: argparse.Namespace, ext: str = "jpg") -> None:
+def _save(data: bytes, src: Path, feature: str, args: argparse.Namespace, ext: str | None = None) -> None:
+    # ext=None → derive from the actual image bytes (image features); video
+    # callers pass ext="mp4" explicitly. If --out is given, honor it verbatim.
+    ext = ext or _IMG_EXT.get(sniff_mime(data), "jpg")
     out = Path(args.out) if args.out else src.with_name(f"{src.stem}-{feature}.{ext}")
     out.write_bytes(data)
     print(f"  output → {out}  ({len(data):,} bytes)")
@@ -162,11 +190,20 @@ def build_parser() -> argparse.ArgumentParser:
     est.set_defaults(func=cmd_estimate)
 
     run = sub.add_parser("run", help="one real provider call + cost + ledger row")
-    run.add_argument("--image", required=True)
-    run.add_argument("--feature", required=True, choices=["restage", "declutter", "hero"])
+    run.add_argument("--image", default=None, help="input photo (all features except drone_render)")
+    run.add_argument("--video", default=None, help="input clip (drone_render)")
+    run.add_argument("--feature", required=True,
+                     choices=["restage", "declutter", "hero", "photo_edit", "drone_render"])
     run.add_argument("--style", choices=list(STYLES), default=None)
+    run.add_argument("--edit", choices=["twilight", "sky", "lawn"], default=None,
+                     help="photo_edit type")
     run.add_argument("--mask", default=None, help="declutter mask (white = clutter)")
-    run.add_argument("--seconds", type=int, default=5, help="hero clip length (2–12)")
+    run.add_argument("--seconds", type=int, default=5,
+                     help="hero clip length, or drone_render OUTPUT duration for cost (2–12 / any)")
+    run.add_argument("--tier", choices=["1080p60", "4k30", "4k60"], default="4k30",
+                     help="drone_render output tier")
+    run.add_argument("--model", default="Proteus", help="Topaz model for drone_render")
+    run.add_argument("--target-fps", type=int, default=60, dest="target_fps")
     run.add_argument("--route", default=SETTINGS.restage_route, choices=["gemini", "fal", "kie"])
     run.add_argument("--out", default=None)
     run.add_argument("--job-id", default=None)

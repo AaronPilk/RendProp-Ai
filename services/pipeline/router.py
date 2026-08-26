@@ -169,6 +169,57 @@ def hero_clip(ctx: JobContext, first_frame: bytes, prompt: str, seconds: int = 5
     return _meter(ctx, "hero", est, lambda: fal.hero_clip_result(first_frame, prompt, dur))
 
 
+# ── Photo edits (twilight / sky replace / lawn repair) — Gemini image edit ────
+
+PHOTO_EDIT_PROMPTS = {
+    "twilight": (
+        "Convert this daytime exterior real-estate photo into a stunning twilight/dusk shot: "
+        "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle "
+        "landscape/path lighting, professional dusk real-estate photography. Keep the house "
+        "architecture, structure, landscaping, driveway, and composition EXACTLY the same — only "
+        "change the sky and lighting. " + ARCHITECTURE_LOCK
+    ),
+    "sky": (
+        "Replace the dull, grey, or overcast sky in this real-estate photo with a bright, clear "
+        "blue sky with soft natural clouds. Keep the house, trees, and ground exactly the same and "
+        "match the lighting, shadows, and reflections naturally. " + ARCHITECTURE_LOCK
+    ),
+    "lawn": (
+        "Repair and green the lawn in this real-estate photo: lush, healthy, vibrant green grass; "
+        "remove brown/dead patches, dirt, and weeds. Keep the house, hardscape, driveway, plants, "
+        "and everything else identical. " + ARCHITECTURE_LOCK
+    ),
+}
+
+
+def photo_edit(ctx: JobContext, image: bytes, edit: str) -> ProviderResult:
+    """Single-image real-estate edit (twilight | sky | lawn) via Gemini image edit."""
+    prompt = PHOTO_EDIT_PROMPTS.get(edit)
+    if not prompt:
+        raise ProviderError(f"Unknown photo edit '{edit}' (twilight|sky|lawn).")
+    est = costs.photo_edit_cost_cents()
+
+    def produce() -> ProviderResult:
+        pr = gemini.restage_result(image, prompt)   # generic Gemini image edit
+        pr.feature = "photo_edit"
+        pr.meta = {**pr.meta, "edit": edit}
+        return pr
+
+    return _meter(ctx, "photo_edit", est, produce)
+
+
+# ── "Smooth drone" render (Topaz Video AI on fal) ─────────────────────────────
+
+def drone_render(ctx: JobContext, video: bytes, *, out_seconds: float, tier: str = "4k30",
+                 model: str = "Proteus", upscale_factor: int = 2, target_fps: int = 60,
+                 video_url: str | None = None) -> ProviderResult:
+    """Interpolate → hi-fps + upscale → 4K + denoise: the cinematic drone glide."""
+    est = costs.drone_render_cost_cents(out_seconds, tier)
+    return _meter(ctx, "drone_render", est, lambda: fal.drone_render_result(
+        video, out_seconds=out_seconds, tier=tier, model=model,
+        upscale_factor=upscale_factor, target_fps=target_fps, video_url=video_url))
+
+
 # ── QC drift judge (Haiku → Sonnet tiering) ───────────────────────────────────
 
 def _record_qc(ctx: JobContext, r: QCResult, image_count: int) -> None:

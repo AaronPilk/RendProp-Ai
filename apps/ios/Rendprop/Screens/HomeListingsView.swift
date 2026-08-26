@@ -108,29 +108,79 @@ struct HomeListingsView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 16) {
-            Image(systemName: SpaceType.current.systemImage)
-                .font(.system(size: 46, weight: .light))
-                .foregroundStyle(Theme.accent)
-            Text("Let's film your first \(SpaceType.current.spaceNoun)")
-                .font(.rpTitle)
-                .foregroundStyle(Theme.ink)
-            Text(SpaceType.current.emptyStateLine)
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-            NavigationLink {
-                NewListingView()
-            } label: {
-                Text("Get Started")
-                    .fontWeight(.semibold)
-                    .padding(.horizontal, 30)
-                    .padding(.vertical, 15)
-                    .background(Theme.accent, in: Capsule())
-                    .foregroundStyle(Color.white)
+        ScrollView {
+            VStack(spacing: 16) {
+                // Invitation card — same gradient language as Home's showroom.
+                VStack(spacing: 12) {
+                    Image(systemName: SpaceType.current.systemImage)
+                        .font(.system(size: 38, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(Color.white)
+                        .frame(width: 76, height: 76)
+                        .background(Color.white.opacity(0.16),
+                                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    Text("Your first tour is\n10 minutes away")
+                        .font(.system(size: 26, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.white)
+                        .multilineTextAlignment(.center)
+                    Text(SpaceType.current.emptyStateLine)
+                        .font(.rpBody)
+                        .foregroundStyle(Color.white.opacity(0.88))
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 32).padding(.horizontal, 20)
+                .background(RPGradient.drone)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .shadow(color: Theme.accent.opacity(0.3), radius: 16, x: 0, y: 8)
+
+                HStack(spacing: 8) {
+                    emptyStep("1", "Film")
+                    stepArrow
+                    emptyStep("2", "Enhance")
+                    stepArrow
+                    emptyStep("3", "Share")
+                }
+
+                NavigationLink {
+                    NewListingView()
+                } label: {
+                    Label("Start filming", systemImage: "video.fill")
+                        .fontWeight(.semibold)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Theme.accent)
+                        .foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(ScalePressStyle())
+
+                Text("No drone. No editor. Just walk.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
+            .padding(20)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func emptyStep(_ n: String, _ label: String) -> some View {
+        VStack(spacing: 5) {
+            Text(n)
+                .font(.rpCaption.weight(.bold))
+                .frame(width: 26, height: 26)
+                .background(Theme.accentSoft, in: Circle())
+                .foregroundStyle(Theme.accent)
+            Text(label).font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 12)
+        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.border))
+    }
+
+    private var stepArrow: some View {
+        Image(systemName: "chevron.right")
+            .font(.caption2.weight(.bold))
+            .foregroundStyle(Theme.inkDim)
     }
 
     private var soldFolderRow: some View {
@@ -224,10 +274,12 @@ struct ListingCard: View {
                 LinearGradient(colors: [.clear, Color.black.opacity(0.18)],
                                startPoint: .center, endPoint: .bottom)
             } else {
+                // All-adaptive purple wash — the old hardcoded lavender stop
+                // glowed like a light leak on dark cards.
                 LinearGradient(
                     colors: [Theme.accent.opacity(0.22),
                              Theme.accent.opacity(0.08),
-                             Color(red: 0.93, green: 0.90, blue: 1.0)],
+                             Theme.accentSoft],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
                 Image(systemName: SpaceType.current == .realEstate
@@ -254,17 +306,22 @@ struct ListingCard: View {
         .frame(height: 150)
         .clipped()
         .overlay(alignment: .topTrailing) {
+            // Material halo keeps the status color readable over any photo.
             StatusChip(status: listing.status)
-                .padding(10)
+                .padding(3)
+                .background(.ultraThinMaterial, in: Capsule())
+                .padding(8)
         }
         .overlay(alignment: .bottomLeading) {
             if listing.status == .ready {
+                // Material (not hardcoded white) so the badge frosts correctly
+                // over any photo in both modes — same halo as the status chip.
                 Label("Tour ready to share", systemImage: "sparkles")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 5)
-                    .background(.white.opacity(0.85), in: Capsule())
+                    .background(.ultraThinMaterial, in: Capsule())
                     .padding(10)
             }
         }
@@ -298,17 +355,20 @@ struct ListingCard: View {
             // Per-industry info chips: a venue shows "Seats 220 · From $3,500",
             // a restaurant "Italian · $$$ · Tue–Sun", a gym "$49/mo · Open 24/7".
             if !listing.cardChips.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(Array(listing.cardChips.enumerated()), id: \.offset) { _, chip in
-                        Text(chip)
-                            .font(.caption)
-                            .lineLimit(1)
-                            .padding(.horizontal, 10)
-                            .padding(.vertical, 5)
-                            .background(Theme.accentSoft, in: Capsule())
-                            .foregroundStyle(Theme.accent)
+                // Horizontal scroll so chips never squeeze or truncate at
+                // large Dynamic Type — they just run off-card and pan.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(listing.cardChips.enumerated()), id: \.offset) { _, chip in
+                            Text(chip)
+                                .font(.caption)
+                                .lineLimit(1)
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(Theme.accentSoft, in: Capsule())
+                                .foregroundStyle(Theme.accent)
+                        }
                     }
-                    Spacer(minLength: 0)
                 }
             }
         }

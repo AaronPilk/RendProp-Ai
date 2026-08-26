@@ -9,6 +9,8 @@ import RoomPlan
 import QuickLook
 import simd
 import UniformTypeIdentifiers
+import AVFoundation   // Reel Studio: composition + stitch + export
+import AVKit          // Reel Studio: VideoPlayer preview
 
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
@@ -17,6 +19,7 @@ struct FlythroughDetailView: View {
     @State private var zillowText = ""
     @State private var showRoomTagger = false
     @State private var playerRefresh = UUID()
+    @State private var showAerialIntro = false
 
     /// Live copy from the model (listing here is a value snapshot).
     private var currentListing: Listing {
@@ -37,16 +40,39 @@ struct FlythroughDetailView: View {
         )
     }
 
-    private func toolButton(_ title: String, _ icon: String, dimmed: Bool = false) -> some View {
-        VStack(spacing: 6) {
-            Image(systemName: icon).font(.title3)
-            Text(title).font(.rpCaption)
+    /// Toolbox mini feature card — the feature's signature gradient (same one
+    /// it wears on Home), white icon, name, and a short promise.
+    private func toolCard(_ title: String, _ sub: String, _ icon: String,
+                          _ gradient: LinearGradient, ai: Bool = false,
+                          dimmed: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Image(systemName: icon)
+                    .font(.system(size: 20, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color.white)
+                Spacer()
+                if ai { AIPill() }
+            }
+            Spacer(minLength: 8)
+            Text(title)
+                .font(.subheadline.weight(.bold))
+                .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Text(sub)
+                .font(.caption2)
+                .foregroundStyle(Color.white.opacity(0.88))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .padding(.top, 1)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 14)
-        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .foregroundStyle(dimmed ? Theme.inkDim : Theme.accent)
-        .opacity(dimmed ? 0.55 : 1)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 96)
+        .background(gradient)
+        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        .opacity(dimmed ? 0.45 : 1)
     }
 
     private var asset: CaptureAsset? { model.assets[listing.id] }
@@ -101,7 +127,7 @@ struct FlythroughDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
                         .font(.rpKicker).foregroundStyle(Theme.inkDim)
-                    PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: listing)
+                    PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: currentListing)
                         .id(playerRefresh)
                         .frame(height: 460)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
@@ -154,24 +180,52 @@ struct FlythroughDetailView: View {
                     .font(.rpBody)
                 }
 
-                // Tools — always visible right under the tour
-                HStack(spacing: 10) {
-                    NavigationLink { PhotoStudioView(listing: listing) } label: {
-                        toolButton("Photos", "photo.on.rectangle.angled")
-                    }
-                    .buttonStyle(.plain)
+                // Toolbox — every feature for this listing, one tap away.
+                // Same gradient language as Home's showroom, same destinations
+                // the old icon row had (plus reel + agent card surfaced).
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                                        GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                        NavigationLink { PhotoStudioView(listing: listing) } label: {
+                            toolCard("Photos & AI edits", "Twilight · staging · declutter",
+                                     "wand.and.stars", RPGradient.photo, ai: true)
+                        }
+                        .buttonStyle(ScalePressStyle())
 
-                    Button { showRoomTagger = true } label: {
-                        toolButton(SpaceType.current == .realEstate ? "Tag rooms" : "Tag areas",
-                                   "mappin.and.ellipse", dimmed: asset == nil)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(asset == nil)
+                        NavigationLink { PhotoStudioView(listing: listing) } label: {
+                            toolCard("Make a reel", "Photos → social video",
+                                     "film.stack", RPGradient.reel, ai: true)
+                        }
+                        .buttonStyle(ScalePressStyle())
 
-                    NavigationLink { FloorPlanView(listing: listing) } label: {
-                        toolButton("Floor plan", "cube.transparent")
+                        Button { showRoomTagger = true } label: {
+                            toolCard(SpaceType.current == .realEstate ? "Tag rooms" : "Tag areas",
+                                     asset == nil ? "Needs your own video" : "Tap-to-jump chapters",
+                                     "mappin.and.ellipse", RPGradient.rooms, dimmed: asset == nil)
+                        }
+                        .buttonStyle(ScalePressStyle())
+                        .disabled(asset == nil)
+
+                        NavigationLink { FloorPlanView(listing: listing) } label: {
+                            toolCard("Floor plan", "Scan in 3D or upload",
+                                     "cube.transparent", RPGradient.plan)
+                        }
+                        .buttonStyle(ScalePressStyle())
+
+                        Button { showAerialIntro = true } label: {
+                            toolCard("Aerial intro", "AI opening shot",
+                                     "airplane.departure", RPGradient.aerial, ai: true)
+                        }
+                        .buttonStyle(ScalePressStyle())
+
+                        NavigationLink { AgentCardEditorView() } label: {
+                            toolCard(SpaceType.current.profileCardName, "On every link you share",
+                                     "person.text.rectangle.fill", RPGradient.agent)
+                        }
+                        .buttonStyle(ScalePressStyle())
                     }
-                    .buttonStyle(.plain)
                 }
 
                 // Manage — sold status + Zillow link
@@ -246,7 +300,7 @@ struct FlythroughDetailView: View {
 
                 // Listing info
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(listing.address).font(.rpTitle)
+                    Text(listing.address).font(.rpTitle).foregroundStyle(Theme.ink)
                     Text([listing.subtitleLine, listing.price.cents > 0 ? listing.price.formatted : ""]
                             .filter { !$0.isEmpty }.joined(separator: " · "))
                         .font(.rpBody)
@@ -316,6 +370,10 @@ struct FlythroughDetailView: View {
                 RoomTaggerView(videoURL: a.localURL, tags: roomTagsBinding)
             }
         }
+        .sheet(isPresented: $showAerialIntro) {
+            AerialIntroSheet(listing: currentListing)
+                .environmentObject(model)
+        }
     }
 
     private func geocodeIfNeeded() {
@@ -338,13 +396,19 @@ struct FlythroughDetailView: View {
             Text(value)
                 .font(.system(.title3, design: .rounded).weight(.semibold))
                 .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.7)
             Text(label)
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 12)
         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -384,7 +448,17 @@ struct PhotoStudioView: View {
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var isProcessing = false
+    @State private var processingText = "Enhancing…"
     @State private var compare: EnhancedPhoto?
+    @State private var aiError: String?
+    @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
+    @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
+    @State private var showReelStudio = false            // multi-photo → stitched social reel
+    @State private var animateTask: Task<Void, Never>?   // photo→clip poll; cancelled on disappear
+    @State private var wandPhoto: EnhancedPhoto?         // photo under the visible wand button
+    @State private var showWandDialog = false            // wand → AI enhance chooser
+    @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
+    @State private var showStageDialog = false           // staging style chooser
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -404,36 +478,58 @@ struct PhotoStudioView: View {
                     }
                 }
 
+                // Reel Studio, front and center once there's enough to work with.
+                if photos.count >= 2 {
+                    reelBanner
+                }
+
                 if photos.isEmpty && !isProcessing {
-                    VStack(spacing: 8) {
-                        Image(systemName: "photo.on.rectangle.angled")
-                            .font(.largeTitle).foregroundStyle(Theme.inkDim)
-                        Text("Add photos of the property and Rendprop enhances them into bright, crisp listing images — no photographer needed.")
-                            .font(.rpBody).foregroundStyle(Theme.inkDim)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.vertical, 40)
+                    emptyShowcase
                 }
 
                 if isProcessing {
                     HStack(spacing: 8) {
                         ProgressView()
-                        Text("Enhancing…").foregroundStyle(Theme.inkDim)
+                        Text(processingText).foregroundStyle(Theme.inkDim)
                     }
                     .padding(.vertical, 8)
                 }
 
                 if !photos.isEmpty {
-                    Text("Tap a photo to compare · long-press to set the main image (shown on your listing card).")
+                    Text("Tap a photo to compare before & after · tap the wand for AI edits · long-press for more.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(photos) { p in
+                        // Wand overlay is a SIBLING of the thumb button (a Button
+                        // inside another Button's label never gets the tap).
+                        ZStack(alignment: .bottomTrailing) {
                         Button { compare = p } label: { thumb(p) }
                             .buttonStyle(.plain)
+                            .accessibilityLabel(Text("Listing photo — opens before-and-after compare"))
                             .contextMenu {
+                                Menu {
+                                    Button { aiEdit(p, "twilight") } label: { Label("Twilight", systemImage: "moon.stars") }
+                                    Button { aiEdit(p, "sky") } label: { Label("Blue sky", systemImage: "cloud.sun") }
+                                    Button { aiEdit(p, "lawn") } label: { Label("Green lawn", systemImage: "leaf") }
+                                    Button { aiEdit(p, "declutter") } label: { Label("Declutter", systemImage: "sparkles.rectangle.stack") }
+                                    Menu {
+                                        Button { aiEdit(p, "stage", style: "modern") } label: { Text("Modern") }
+                                        Button { aiEdit(p, "stage", style: "rustic") } label: { Text("Rustic") }
+                                        Button { aiEdit(p, "stage", style: "minimalist") } label: { Text("Minimalist") }
+                                        Button { aiEdit(p, "stage", style: "scandinavian") } label: { Text("Scandinavian") }
+                                    } label: {
+                                        Label("Virtual staging", systemImage: "sofa")
+                                    }
+                                    Button { customEditPhoto = p } label: { Label("Custom edit…", systemImage: "text.bubble") }
+                                } label: {
+                                    Label("AI enhance", systemImage: "wand.and.stars")
+                                }
+                                Button { animate(p) } label: {
+                                    Label("Animate (5s clip)", systemImage: "play.rectangle.on.rectangle")
+                                }
                                 Button { setMain(p) } label: {
                                     Label("Set as main image", systemImage: "star")
                                 }
@@ -441,6 +537,8 @@ struct PhotoStudioView: View {
                                     Label("Delete", systemImage: "trash")
                                 }
                             }
+                            wandButton(p)
+                        }
                     }
                 }
 
@@ -460,6 +558,7 @@ struct PhotoStudioView: View {
         .navigationTitle("Listing photos")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: loadExisting)
+        .onDisappear { animateTask?.cancel() }
         .sheet(isPresented: $showLibrary) {
             LibraryImagePicker { imgs in ingest(imgs) }.ignoresSafeArea()
         }
@@ -467,6 +566,178 @@ struct PhotoStudioView: View {
             CameraPicker { img in ingest([img]) }.ignoresSafeArea()
         }
         .fullScreenCover(item: $compare) { p in PhotoCompareView(photo: p) }
+        .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
+        .sheet(item: $customEditPhoto) { p in
+            CustomEditSheet { prompt in
+                aiEdit(p, "custom", prompt: prompt)
+            }
+        }
+        .fullScreenCover(isPresented: $showReelStudio) {
+            ReelStudioView(listing: listing, photos: photos)
+                .environmentObject(model)
+        }
+        // The wand's visible menu — same edits as the long-press path, one tap.
+        .confirmationDialog("AI enhance", isPresented: $showWandDialog,
+                            titleVisibility: .visible, presenting: wandPhoto) { p in
+            Button("Twilight sky") { aiEdit(p, "twilight") }
+            Button("Blue sky") { aiEdit(p, "sky") }
+            Button("Green lawn") { aiEdit(p, "lawn") }
+            Button("Declutter") { aiEdit(p, "declutter") }
+            Button("Virtual staging…") {
+                stagePhoto = p
+                // Present after this dialog finishes dismissing.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showStageDialog = true }
+            }
+            Button("Custom edit…") { customEditPhoto = p }
+            Button("Animate (5s clip)") { animate(p) }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Each edit saves as a new photo — the original stays.")
+        }
+        .confirmationDialog("Staging style", isPresented: $showStageDialog,
+                            titleVisibility: .visible, presenting: stagePhoto) { p in
+            Button("Modern") { aiEdit(p, "stage", style: "modern") }
+            Button("Rustic") { aiEdit(p, "stage", style: "rustic") }
+            Button("Minimalist") { aiEdit(p, "stage", style: "minimalist") }
+            Button("Scandinavian") { aiEdit(p, "stage", style: "scandinavian") }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("AI furnishes the room in the style you pick.")
+        }
+        .alert("AI enhance failed", isPresented: Binding(
+            get: { aiError != nil }, set: { if !$0 { aiError = nil } })) {
+            Button("OK", role: .cancel) { aiError = nil }
+        } message: { Text(aiError ?? "") }
+    }
+
+    /// AI edit (twilight | sky | lawn | declutter | stage | custom) via the
+    /// `ai-photo` edge function. `style` rides along for stage, `prompt` for
+    /// custom. Saves the result as a NEW photo (keeps the original) and opens
+    /// the before/after.
+    private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
+                        style: String? = nil, prompt: String? = nil) {
+        guard let ui = UIImage(contentsOfFile: p.enhancedURL.path) else { return }
+        isProcessing = true
+        processingText = "Enhancing…"
+        Task {
+            do {
+                let scaled = Self.downscaled(ui, maxDimension: 2048)
+                guard let jpeg = scaled.jpegData(compressionQuality: 0.9) else {
+                    throw NSError(domain: "AIPhoto", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
+                }
+                let outB64 = try await model.api.aiPhotoEdit(
+                    imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg", edit: edit,
+                    style: style, prompt: prompt)
+                guard let data = Data(base64Encoded: outB64),
+                      let outImg = UIImage(data: data),
+                      let outJPEG = outImg.jpegData(compressionQuality: 0.95) else {
+                    throw NSError(domain: "AIPhoto", code: 2,
+                                  userInfo: [NSLocalizedDescriptionKey: "The AI didn't return an image. Try again."])
+                }
+                // Save with the same enh-/orig- convention as ingested photos: a
+                // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
+                // on relaunch. Timestamp id sorts newest-first alongside ingests;
+                // the copied "before" keeps the compare working after relaunch.
+                let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
+                    + "-" + String(UUID().uuidString.prefix(4))
+                let outURL = dir.appendingPathComponent("enh-\(id).jpg")
+                try outJPEG.write(to: outURL, options: .atomic)
+                let beforeURL = dir.appendingPathComponent("orig-\(id).jpg")
+                try? FileManager.default.copyItem(at: p.enhancedURL, to: beforeURL)
+                // Never point originalURL at another photo's live file — delete()
+                // removes it, so fall back to self, not the source, if the copy fails.
+                let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
+                    ? beforeURL : outURL
+                await MainActor.run {
+                    let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
+                    photos.insert(newPhoto, at: 0)
+                    isProcessing = false
+                    Haptics.success()
+                    compare = newPhoto   // show the before/after immediately
+                }
+            } catch {
+                await MainActor.run { isProcessing = false; aiError = error.localizedDescription }
+            }
+        }
+    }
+
+    /// Animate a photo into a short AI motion clip (Seedance image-to-video via
+    /// the `ai-video` edge function): downscale → base64 → submit → poll every
+    /// 6 s → download the mp4 into this listing's Photos dir → offer save/share.
+    /// Failures reuse the aiError alert. fal result URLs expire, so the download
+    /// happens immediately on completion.
+    private func animate(_ p: EnhancedPhoto) {
+        guard !isProcessing, let ui = UIImage(contentsOfFile: p.enhancedURL.path) else { return }
+        isProcessing = true
+        processingText = "Animating photo — about a minute…"
+        Haptics.selection()
+        let api = model.api          // snapshot on the main actor
+        let targetDir = dir
+        animateTask = Task {
+            do {
+                let scaled = Self.downscaled(ui, maxDimension: 1280)
+                guard let jpeg = scaled.jpegData(compressionQuality: 0.85) else {
+                    throw NSError(domain: "AIVideo", code: 1,
+                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
+                }
+                let job = try await api.aiVideoReelClip(
+                    imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg",
+                    prompt: nil, seconds: 5)
+
+                let deadline = Date().addingTimeInterval(10 * 60)
+                var remoteURL: URL?
+                while remoteURL == nil {
+                    guard Date() < deadline else {
+                        throw NSError(domain: "AIVideo", code: 2,
+                                      userInfo: [NSLocalizedDescriptionKey: "The clip took too long. Please try again."])
+                    }
+                    try await Task.sleep(nanoseconds: 6_000_000_000)
+                    switch try await api.aiVideoStatus(job) {
+                    case .processing:
+                        break   // keep waiting; the grid shows the in-flight label
+                    case .completed(let videoURL):
+                        remoteURL = videoURL
+                    case .failed(let message):
+                        throw NSError(domain: "AIVideo", code: 3,
+                                      userInfo: [NSLocalizedDescriptionKey: message])
+                    }
+                }
+                guard let remoteURL else {
+                    throw NSError(domain: "AIVideo", code: 4,
+                                  userInfo: [NSLocalizedDescriptionKey: "The AI didn't return a clip. Try again."])
+                }
+
+                let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
+                if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    throw APIError.badResponse(http.statusCode)
+                }
+                let dest = targetDir.appendingPathComponent(
+                    "clip-\(p.id)-\(UUID().uuidString.prefix(4)).mp4")
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.moveItem(at: tmp, to: dest)
+
+                await MainActor.run {
+                    isProcessing = false
+                    animatedClip = AnimatedClip(url: dest)
+                    Haptics.success()
+                }
+            } catch is CancellationError {
+                // View dismissed mid-animate — stop polling quietly, no error alert.
+            } catch {
+                await MainActor.run { isProcessing = false; aiError = error.localizedDescription }
+            }
+        }
+    }
+
+    /// Downscale so the base64 upload stays small (and cheaper) without visible loss.
+    private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
     }
 
     private func thumb(_ p: EnhancedPhoto) -> some View {
@@ -506,9 +777,110 @@ struct PhotoStudioView: View {
         }
     }
 
+    /// Gradient banner for the reel maker — shown once ≥2 photos exist, so the
+    /// studio's biggest payoff is impossible to miss.
+    private var reelBanner: some View {
+        Button { showReelStudio = true } label: {
+            HStack(spacing: 14) {
+                Image(systemName: "film.stack")
+                    .font(.system(size: 22, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Color.white)
+                    .frame(width: 48, height: 48)
+                    .background(Color.white.opacity(0.18),
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text("Make a reel").font(.rpHeadline).foregroundStyle(Color.white)
+                        AIPill()
+                    }
+                    Text("AI animates your photos and stitches one social-ready video.")
+                        .font(.rpCaption).foregroundStyle(Color.white.opacity(0.9))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Color.white.opacity(0.9))
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RPGradient.reel)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+    }
+
+    /// The visible AI entry point on every thumb — opens the same edits as the
+    /// long-press menu, no long-press required.
+    private func wandButton(_ p: EnhancedPhoto) -> some View {
+        Button {
+            wandPhoto = p
+            showWandDialog = true
+            Haptics.selection()
+        } label: {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(Color.white)
+                .frame(width: 32, height: 32)
+                .background(RPGradient.photo, in: Circle())
+                .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 2)
+        }
+        .buttonStyle(ScalePressStyle())
+        .padding(8)
+        .accessibilityLabel(Text("AI enhance this photo"))
+    }
+
+    /// Empty state = a menu of what the AI can do, not a blank box.
+    private var emptyShowcase: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 32, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white)
+                .frame(width: 64, height: 64)
+                .background(RPGradient.photo,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Every photo gets the studio treatment")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+            Text("Add a photo above — then one tap does any of this:")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                                GridItem(.flexible(), spacing: 8)], spacing: 8) {
+                showcaseChip("moon.stars.fill", "Twilight sky")
+                showcaseChip("cloud.sun.fill", "Blue sky")
+                showcaseChip("leaf.fill", "Green lawn")
+                showcaseChip("sparkles.rectangle.stack.fill", "Declutter")
+                showcaseChip("sofa.fill", "Virtual staging")
+                showcaseChip("play.rectangle.on.rectangle.fill", "Animate to video")
+            }
+        }
+        .padding(.vertical, 22)
+    }
+
+    private func showcaseChip(_ icon: String, _ label: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Theme.accent)
+            Text(label)
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12).padding(.vertical, 10)
+        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     private func loadExisting() {
         let fm = FileManager.default
-        let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        let files = (try? fm.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.creationDateKey])) ?? []
         photos = files
             .filter { $0.lastPathComponent.hasPrefix("enh-") }
             .map { e -> EnhancedPhoto in
@@ -518,12 +890,23 @@ struct PhotoStudioView: View {
                 let origURL = fm.fileExists(atPath: orig.path) ? orig : e
                 return EnhancedPhoto(id: id, originalURL: origURL, enhancedURL: e)
             }
-            .sorted { $0.id < $1.id }
+            // Newest first (matches the AI-edit insert-at-top). Sort by real file
+            // creation date, not the id string — mixing UUID and timestamp ids
+            // reordered AI edits vs ingests unpredictably across relaunches.
+            .sorted { a, b in
+                let da = fileCreationDate(a.enhancedURL), db = fileCreationDate(b.enhancedURL)
+                return da != db ? da > db : a.id > b.id
+            }
+    }
+
+    private func fileCreationDate(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
     }
 
     private func ingest(_ images: [UIImage]) {
         guard !images.isEmpty else { return }
         isProcessing = true
+        processingText = "Enhancing…"
         let targetDir = dir
         DispatchQueue.global(qos: .userInitiated).async {
             for img in images {
@@ -614,6 +997,7 @@ struct PhotoCompareView: View {
                 Spacer()
                 if let ui = UIImage(contentsOfFile: (showOriginal ? photo.originalURL : photo.enhancedURL).path) {
                     Image(uiImage: ui).resizable().scaledToFit()
+                        .accessibilityLabel(Text(showOriginal ? "Original photo" : "Enhanced photo"))
                 }
                 Spacer()
                 Picker("", selection: $showOriginal) {
@@ -631,10 +1015,982 @@ struct PhotoCompareView: View {
                             .font(.title).foregroundStyle(Color.white.opacity(0.9))
                     }
                     .padding()
+                    .accessibilityLabel(Text("Close"))
                 }
                 Spacer()
             }
         }
+        // Media viewer — always dark chrome (segmented control, buttons),
+        // regardless of the app's light/dark appearance. The photo sits on
+        // black in both modes anyway.
+        .environment(\.colorScheme, .dark)
+    }
+}
+
+/// Free-text AI edit — describe any change and it runs through the same
+/// `ai-photo` path as the presets (`edit: "custom"`, prompt capped at 600
+/// chars, matching the server). Inline here per the new-file-not-in-target rule.
+struct CustomEditSheet: View {
+    let onGenerate: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var prompt = ""
+
+    private var trimmed: String {
+        prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 14) {
+                Text("Tell the AI what to change — it edits this photo and keeps the original.")
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+
+                TextField("Describe the change — e.g. 'make it look freshly painted white with warm evening light'",
+                          text: $prompt, axis: .vertical)
+                    .lineLimit(4...8)
+                    .textFieldStyle(.roundedBorder)
+
+                Text("\(prompt.count)/600")
+                    .font(.rpCaption)
+                    .foregroundStyle(prompt.count >= 600 ? Theme.warn : Theme.inkDim)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+
+                Button {
+                    let text = String(trimmed.prefix(600))
+                    Haptics.selection()
+                    dismiss()
+                    onGenerate(text)
+                } label: {
+                    Label("Generate", systemImage: "wand.and.stars")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Theme.accent).foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .disabled(trimmed.isEmpty)
+
+                Spacer()
+            }
+            .padding()
+            .background(Theme.bg)
+            .navigationTitle("Custom AI edit")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .onChange(of: prompt) { newValue in
+                if newValue.count > 600 { prompt = String(newValue.prefix(600)) }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+}
+
+// MARK: - AI video results (photo→clip + aerial intro)
+// Inline in this file (not standalone files) so they're always in the Xcode
+// target without re-running xcodegen — see the repo's new-file-not-in-target rule.
+
+/// A finished AI motion clip on disk — Identifiable so it can drive .sheet(item:).
+struct AnimatedClip: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
+/// Small result sheet for a finished photo animation — save/share the clip.
+struct AnimatedClipSheet: View {
+    let clip: AnimatedClip
+    @Environment(\.dismiss) private var dismiss
+    @State private var saved = false
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "play.rectangle.on.rectangle")
+                .font(.system(size: 44, weight: .light))
+                .foregroundStyle(Theme.accent)
+                .padding(.top, 26)
+            Text("Clip ready")
+                .font(.rpTitle)
+                .foregroundStyle(Theme.ink)
+            Text("Your photo is now a 5-second motion clip — perfect for reels and stories. Made with AI motion; the photo itself is unchanged.")
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+
+            Button {
+                UISaveVideoAtPathToSavedPhotosAlbum(clip.url.path, nil, nil, nil)
+                saved = true
+                Haptics.success()
+            } label: {
+                Label(saved ? "Saved to Photos" : "Save to Photos",
+                      systemImage: saved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .disabled(saved)
+
+            ShareLink(item: clip.url) {
+                Label("Share clip", systemImage: "square.and.arrow.up")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            Button("Done") { dismiss() }
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+
+            Spacer()
+        }
+        .padding()
+        .background(Theme.bg)
+        .presentationDetents([.medium, .large])
+    }
+}
+
+/// AI aerial "establishing shot" generator (POST /ai-video/aerial — Veo on fal).
+/// The footage is SYNTHETIC — AI-generated scenery inspired by the address, not
+/// real drone footage of the property — and the sheet discloses that at all
+/// times. Requires the live backend + a signed-in account (the job runs on the
+/// owner's org); shows a sign-in hint otherwise.
+struct AerialIntroSheet: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+    @Environment(\.dismiss) private var dismiss
+    let listing: Listing
+
+    @State private var seconds = 8
+    @State private var isGenerating = false
+    @State private var statusText = "Submitting…"
+    @State private var clipURL: URL?
+    @State private var errorMessage: String?
+    @State private var savedToPhotos = false
+    @State private var showSignIn = false
+    @State private var workTask: Task<Void, Never>?
+
+    private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
+    private var available: Bool { Config.useLiveBackend && signedIn }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: Theme.spacing) {
+                    VStack(spacing: 10) {
+                        Image(systemName: "airplane.departure")
+                            .font(.system(size: 40, weight: .light))
+                            .foregroundStyle(Theme.accent)
+                        Text("Aerial intro")
+                            .font(.rpTitle)
+                            .foregroundStyle(Theme.ink)
+                        Text("Generate a cinematic AI aerial establishing shot for this listing. It's AI-generated scenery inspired by the address — not actual drone footage of the property.")
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
+
+                    // Synthetic-footage disclosure — ALWAYS visible, every state.
+                    Label("AI-generated footage — not real video of this property. Disclose it when you share.",
+                          systemImage: "sparkles")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+                    if let clipURL {
+                        resultSection(clipURL)
+                    } else if isGenerating {
+                        progressSection
+                    } else {
+                        formSection
+                    }
+
+                    if let errorMessage {
+                        Text(errorMessage)
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                    }
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .onDisappear { workTask?.cancel() }
+        .sheet(isPresented: $showSignIn) { SignInView() }
+    }
+
+    // MARK: - Sections
+
+    @ViewBuilder private var formSection: some View {
+        if available {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("LENGTH").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Picker("Length", selection: $seconds) {
+                    Text("4s").tag(4)
+                    Text("6s").tag(6)
+                    Text("8s").tag(8)
+                }
+                .pickerStyle(.segmented)
+                Text("Landscape 16:9 — made to sit in front of your tour or social cut.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+
+            Button { generate() } label: {
+                Label("Generate aerial", systemImage: "sparkles")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+        } else if !Config.useLiveBackend {
+            Label("Aerial intros need the live backend — this build is running offline.",
+                  systemImage: "wifi.slash")
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .padding(.vertical, 12)
+        } else {
+            VStack(spacing: 10) {
+                Label("Sign in to generate aerials — the AI runs on your account.",
+                      systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                Button { showSignIn = true } label: {
+                    Text("Sign in")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private var progressSection: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .scaleEffect(1.3)
+                .padding(.top, 16)
+            Text(statusText)
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+            Text("Usually about a minute. Keep this sheet open — the clip downloads the moment it's ready.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 14)
+    }
+
+    private func resultSection(_ url: URL) -> some View {
+        VStack(spacing: 12) {
+            Label("Aerial ready", systemImage: "checkmark.circle.fill")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.good)
+
+            Button {
+                UISaveVideoAtPathToSavedPhotosAlbum(url.path, nil, nil, nil)
+                savedToPhotos = true
+                Haptics.success()
+            } label: {
+                Label(savedToPhotos ? "Saved to Photos" : "Save to Photos",
+                      systemImage: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(Theme.accent).foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .disabled(savedToPhotos)
+
+            ShareLink(item: url) {
+                Label("Share aerial", systemImage: "square.and.arrow.up")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            Button("Generate another") {
+                clipURL = nil
+                savedToPhotos = false
+                errorMessage = nil
+            }
+            .font(.rpBody)
+            .foregroundStyle(Theme.inkDim)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    // MARK: - Generate (submit → poll → download; fal URLs expire, so download now)
+
+    private func generate() {
+        guard available, !isGenerating else { return }
+        isGenerating = true
+        errorMessage = nil
+        statusText = "Submitting…"
+        Haptics.selection()
+        let api = model.api          // snapshot on the main actor
+        let address = listing.address
+        let secs = seconds
+        let listingID = listing.id
+        workTask = Task {
+            do {
+                let job = try await api.aiVideoAerial(address: address, prompt: nil,
+                                                      seconds: secs, aspect: "16:9")
+                let deadline = Date().addingTimeInterval(10 * 60)
+                var remoteURL: URL?
+                while remoteURL == nil {
+                    guard Date() < deadline else {
+                        throw NSError(domain: "AIVideo", code: 1,
+                                      userInfo: [NSLocalizedDescriptionKey: "The aerial took too long. Please try again."])
+                    }
+                    try await Task.sleep(nanoseconds: 6_000_000_000)
+                    switch try await api.aiVideoStatus(job) {
+                    case .processing(let queuePosition):
+                        let label = queuePosition.flatMap { q in
+                            q > 0 ? "Generating aerial… (#\(q) in queue)" : nil
+                        } ?? "Generating aerial…"
+                        await MainActor.run { statusText = label }
+                    case .completed(let videoURL):
+                        remoteURL = videoURL
+                    case .failed(let message):
+                        throw NSError(domain: "AIVideo", code: 2,
+                                      userInfo: [NSLocalizedDescriptionKey: message])
+                    }
+                }
+                guard let remoteURL else {
+                    throw NSError(domain: "AIVideo", code: 3,
+                                  userInfo: [NSLocalizedDescriptionKey: "The AI didn't return a video. Try again."])
+                }
+
+                await MainActor.run { statusText = "Downloading your aerial…" }
+                let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
+                if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                    throw APIError.badResponse(http.statusCode)
+                }
+                let dest = FileStore.documents
+                    .appendingPathComponent("aerial-\(listingID.uuidString).mp4")
+                try? FileManager.default.removeItem(at: dest)
+                try FileManager.default.moveItem(at: tmp, to: dest)
+
+                await MainActor.run {
+                    clipURL = dest
+                    isGenerating = false
+                    Haptics.success()
+                }
+            } catch is CancellationError {
+                // Sheet closed mid-generate — drop the work quietly.
+            } catch {
+                await MainActor.run {
+                    isGenerating = false
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Reel Studio (multi-photo → AI motion clips → one stitched social video)
+// Pick 2–8 listing photos; each becomes a 5 s Seedance motion clip via
+// POST /ai-video/reel-clip (sequential submit → poll → download), then the
+// clips are stitched ON-DEVICE with AVFoundation into a single 9:16 or 16:9
+// mp4 saved to Documents/reels/. Inline here per the new-file-not-in-target rule.
+
+struct ReelStudioView: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+    @Environment(\.dismiss) private var dismiss
+    let listing: Listing
+    let photos: [EnhancedPhoto]
+
+    private enum Phase { case setup, generating, stitching, done, failed }
+
+    @State private var phase: Phase = .setup
+    @State private var selected: [String] = []      // photo ids in tap order = clip order
+    @State private var portrait = true              // 9:16 (true) vs 16:9 (false)
+    @State private var motionPrompt = ""
+    @State private var completedClips = 0
+    @State private var totalClips = 0
+    @State private var failedClips = 0
+    @State private var statusText = ""
+    @State private var reelURL: URL?
+    @State private var player: AVPlayer?
+    @State private var savedToPhotos = false
+    @State private var errorMessage: String?
+    @State private var showSignIn = false
+    @State private var workTask: Task<Void, Never>?
+
+    private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
+    private var available: Bool { Config.useLiveBackend && signedIn }
+
+    private let selectColumns = [GridItem(.flexible(), spacing: 8),
+                                 GridItem(.flexible(), spacing: 8),
+                                 GridItem(.flexible(), spacing: 8)]
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: Theme.spacing) {
+                    switch phase {
+                    case .setup:      setupSection
+                    case .generating: generatingSection
+                    case .stitching:  stitchingSection
+                    case .done:       doneSection
+                    case .failed:     failedSection
+                    }
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .navigationTitle("Reel Studio")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { dismiss() }
+                }
+            }
+        }
+        .onDisappear { workTask?.cancel() }
+        .sheet(isPresented: $showSignIn) { SignInView() }
+    }
+
+    // MARK: Sections
+
+    @ViewBuilder private var setupSection: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "film.stack")
+                .font(.system(size: 40, weight: .light))
+                .foregroundStyle(Theme.accent)
+            Text("Make a reel")
+                .font(.rpTitle)
+                .foregroundStyle(Theme.ink)
+            Text("Pick 2–8 photos in the order you want them. Each becomes a 5-second AI motion clip, stitched into one video ready for Reels, TikTok, or YouTube.")
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, 8)
+
+        if available {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("PHOTOS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                    Spacer()
+                    Text("\(selected.count)/8 selected")
+                        .font(.rpCaption)
+                        .foregroundStyle(selected.count >= 2 ? Theme.accent : Theme.inkDim)
+                }
+                LazyVGrid(columns: selectColumns, spacing: 8) {
+                    ForEach(photos) { p in selectThumb(p) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("FORMAT").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Picker("Format", selection: $portrait) {
+                    Text("9:16 · Reels").tag(true)
+                    Text("16:9 · Wide").tag(false)
+                }
+                .pickerStyle(.segmented)
+
+                Text("MOTION (OPTIONAL)")
+                    .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                    .padding(.top, 6)
+                TextField("Optional: describe the motion — e.g. 'slow push-in, golden-hour feel'",
+                          text: $motionPrompt, axis: .vertical)
+                    .lineLimit(2...4)
+                    .textFieldStyle(.roundedBorder)
+                Text("Each clip runs 5 seconds. Leave blank for a smooth cinematic push-in.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+
+            Label(costText, systemImage: "dollarsign.circle")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            Button { generate() } label: {
+                Label(selected.count < 2 ? "Select at least 2 photos"
+                                         : "Generate reel (\(selected.count) clips)",
+                      systemImage: "sparkles")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 14)
+                    .background(selected.count < 2 ? Theme.fillSubtle : Theme.accent)
+                    .foregroundStyle(selected.count < 2 ? Theme.inkDim : Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .disabled(selected.count < 2)
+
+            Text("Made with AI motion — the photos themselves are unchanged.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .frame(maxWidth: .infinity, alignment: .center)
+        } else if !Config.useLiveBackend {
+            Label("Reels need the live backend — this build is running offline.",
+                  systemImage: "wifi.slash")
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .padding(.vertical, 12)
+        } else {
+            VStack(spacing: 10) {
+                Label("Sign in to make reels — the AI runs on your account.",
+                      systemImage: "person.crop.circle.badge.exclamationmark")
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                Button { showSignIn = true } label: {
+                    Text("Sign in")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private var costText: String {
+        guard !selected.isEmpty else { return "About $0.24 per clip (5-second AI motion)." }
+        let total = String(format: "$%.2f", Double(selected.count) * 0.24)
+        return "About $0.24 per clip — \(selected.count) selected ≈ \(total)."
+    }
+
+    private var generatingSection: some View {
+        VStack(spacing: 14) {
+            ProgressView(value: Double(completedClips), total: Double(max(totalClips, 1)))
+                .tint(Theme.accent)
+            Text(statusText)
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+            Text("Each clip takes about a minute. Keep this screen open — the reel stitches itself when the clips are done.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+            if failedClips > 0 {
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — continuing with the rest.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+            }
+            Button("Cancel", role: .destructive) { cancelWork() }
+                .font(.rpBody)
+                .padding(.top, 6)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    private var stitchingSection: some View {
+        VStack(spacing: 12) {
+            ProgressView()
+                .scaleEffect(1.3)
+                .padding(.top, 16)
+            Text("Stitching your reel…")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+            Text("Joining the clips into one \(portrait ? "9:16" : "16:9") video on your phone.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+            if failedClips > 0 {
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    @ViewBuilder private var doneSection: some View {
+        VStack(spacing: 12) {
+            Label("Reel ready", systemImage: "checkmark.circle.fill")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.good)
+            if failedClips > 0 {
+                Text("\(failedClips) clip\(failedClips == 1 ? "" : "s") failed — the reel uses the rest.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+            }
+            if let player {
+                VideoPlayer(player: player)
+                    .frame(height: portrait ? 460 : 230)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                    .onAppear { player.play() }
+            }
+            if let reelURL {
+                Button {
+                    UISaveVideoAtPathToSavedPhotosAlbum(reelURL.path, nil, nil, nil)
+                    savedToPhotos = true
+                    Haptics.success()
+                } label: {
+                    Label(savedToPhotos ? "Saved to Photos" : "Save to Photos",
+                          systemImage: savedToPhotos ? "checkmark.circle.fill" : "square.and.arrow.down")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Theme.accent).foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .disabled(savedToPhotos)
+
+                ShareLink(item: reelURL) {
+                    Label("Share reel", systemImage: "square.and.arrow.up")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+            }
+            Button("Make another") { resetToSetup() }
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private var failedSection: some View {
+        VStack(spacing: 12) {
+            Label("Couldn't make the reel", systemImage: "exclamationmark.triangle")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.warn)
+            Text(errorMessage ?? "Something went wrong. Please try again.")
+                .font(.rpBody)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+            Button("Try again") { resetToSetup() }
+                .font(.rpBody.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(.top, 4)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
+    }
+
+    // MARK: Selection
+
+    private func selectThumb(_ p: EnhancedPhoto) -> some View {
+        let order = selected.firstIndex(of: p.id)
+        return Button { toggle(p) } label: {
+            ZStack(alignment: .topTrailing) {
+                Group {
+                    if let ui = UIImage(contentsOfFile: p.enhancedURL.path) {
+                        Image(uiImage: ui).resizable().scaledToFill()
+                    } else {
+                        Rectangle().fill(Theme.fillSubtle)
+                    }
+                }
+                .frame(height: 100)
+                .frame(maxWidth: .infinity)
+                .clipped()
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(order != nil ? Theme.accent : Theme.border,
+                                      lineWidth: order != nil ? 2 : 1)
+                )
+                .opacity(order == nil && selected.count >= 8 ? 0.4 : 1)
+
+                if let order {
+                    Text("\(order + 1)")
+                        .font(.caption2.weight(.bold))
+                        .frame(width: 22, height: 22)
+                        .background(Theme.accent, in: Circle())
+                        .foregroundStyle(Color.white)
+                        .padding(5)
+                } else {
+                    Image(systemName: "circle")
+                        .font(.system(size: 17))
+                        .foregroundStyle(Color.white.opacity(0.9))
+                        .shadow(radius: 2)
+                        .padding(7)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text(order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
+                                 ?? "Photo not in reel. Tap to add."))
+    }
+
+    private func toggle(_ p: EnhancedPhoto) {
+        if let idx = selected.firstIndex(of: p.id) {
+            selected.remove(at: idx)
+        } else if selected.count < 8 {
+            selected.append(p.id)
+            Haptics.selection()
+        }
+    }
+
+    private func cancelWork() {
+        workTask?.cancel()
+        workTask = nil
+        resetToSetup()
+    }
+
+    private func resetToSetup() {
+        player?.pause()
+        player = nil
+        reelURL = nil
+        savedToPhotos = false
+        errorMessage = nil
+        completedClips = 0
+        totalClips = 0
+        failedClips = 0
+        phase = .setup
+    }
+
+    // MARK: Generate (sequential clips → on-device stitch)
+
+    private func generate() {
+        guard available, phase == .setup else { return }
+        let chosen = selected.compactMap { id in photos.first(where: { $0.id == id }) }
+        guard chosen.count >= 2 else { return }
+        let api = model.api                       // snapshot on the main actor
+        let isPortrait = portrait
+        let prompt = motionPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let listingID = listing.id
+        phase = .generating
+        completedClips = 0
+        totalClips = chosen.count
+        failedClips = 0
+        errorMessage = nil
+        statusText = "Clip 1 of \(chosen.count) — animating…"
+        Haptics.selection()
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("reel-\(UUID().uuidString)", isDirectory: true)
+        workTask = Task {
+            do {
+                try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+                var clipURLs: [URL] = []
+                for (i, photo) in chosen.enumerated() {
+                    try Task.checkCancellation()
+                    await MainActor.run { statusText = "Clip \(i + 1) of \(chosen.count) — animating…" }
+                    do {
+                        let clip = try await Self.makeClip(photo: photo, prompt: prompt,
+                                                           api: api, into: tmpDir, index: i)
+                        clipURLs.append(clip)
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        // One bad clip never kills the reel — note it and move on.
+                        await MainActor.run { failedClips += 1 }
+                    }
+                    await MainActor.run { completedClips = i + 1 }
+                }
+                guard !clipURLs.isEmpty else {
+                    throw NSError(domain: "ReelStudio", code: 20,
+                                  userInfo: [NSLocalizedDescriptionKey: "None of the clips could be generated. Please try again."])
+                }
+                try Task.checkCancellation()
+                await MainActor.run { phase = .stitching }
+
+                let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
+                                            : CGSize(width: 1920, height: 1080)
+                let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+                try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
+                let stamp = Int(Date().timeIntervalSince1970)
+                let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
+                try await Self.stitch(clips: clipURLs, renderSize: renderSize, output: outURL)
+                try? FileManager.default.removeItem(at: tmpDir)
+
+                try Task.checkCancellation()
+                await MainActor.run {
+                    reelURL = outURL
+                    player = AVPlayer(url: outURL)
+                    phase = .done
+                    Haptics.success()
+                }
+            } catch {
+                try? FileManager.default.removeItem(at: tmpDir)
+                if error is CancellationError || Task.isCancelled { return }
+                await MainActor.run {
+                    phase = .failed
+                    errorMessage = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// One photo → 5 s AI motion clip: downscale ≤1280 → jpeg b64 → submit
+    /// `ai-video/reel-clip` → poll every 5 s (cap 5 min) → download the mp4 into
+    /// `dir`. fal result URLs expire, so the download happens immediately.
+    nonisolated private static func makeClip(photo: EnhancedPhoto, prompt: String,
+                                             api: APIClient, into dir: URL, index: Int) async throws -> URL {
+        guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
+            throw NSError(domain: "ReelStudio", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
+        }
+        let scaled = downscaledForReel(ui, maxDimension: 1280)
+        guard let jpeg = scaled.jpegData(compressionQuality: 0.85) else {
+            throw NSError(domain: "ReelStudio", code: 2,
+                          userInfo: [NSLocalizedDescriptionKey: "Couldn't prepare that photo."])
+        }
+        let motion = prompt.isEmpty
+            ? "Slow, smooth cinematic camera push-in through the scene. Keep the space exactly as photographed — no added objects or people."
+            : prompt
+        let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
+                                                mime: "image/jpeg", prompt: motion, seconds: 5)
+
+        let deadline = Date().addingTimeInterval(5 * 60)
+        var remoteURL: URL?
+        while remoteURL == nil {
+            guard Date() < deadline else {
+                throw NSError(domain: "ReelStudio", code: 3,
+                              userInfo: [NSLocalizedDescriptionKey: "The clip took too long."])
+            }
+            try await Task.sleep(nanoseconds: 5_000_000_000)
+            switch try await api.aiVideoStatus(job) {
+            case .processing:
+                break   // keep polling — the caller shows "Clip X of N"
+            case .completed(let videoURL):
+                remoteURL = videoURL
+            case .failed(let message):
+                throw NSError(domain: "ReelStudio", code: 4,
+                              userInfo: [NSLocalizedDescriptionKey: message])
+            }
+        }
+        guard let remoteURL else {
+            throw NSError(domain: "ReelStudio", code: 5,
+                          userInfo: [NSLocalizedDescriptionKey: "The AI didn't return a clip."])
+        }
+
+        let (tmp, resp) = try await URLSession.shared.download(from: remoteURL)
+        if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+            throw APIError.badResponse(http.statusCode)
+        }
+        let dest = dir.appendingPathComponent("clip-\(index).mp4")
+        try? FileManager.default.removeItem(at: dest)
+        try FileManager.default.moveItem(at: tmp, to: dest)
+        return dest
+    }
+
+    // MARK: Stitch (AVFoundation — back-to-back, aspect-fill, one export)
+
+    /// Stitch the clips back-to-back into one mp4 at `renderSize`. Every clip is
+    /// aspect-FILLED (scale to cover + center-crop) with a layer-instruction
+    /// transform computed from its track's naturalSize + preferredTransform, so
+    /// portrait/rotated sources render upright. Export waits on a continuation.
+    nonisolated private static func stitch(clips: [URL], renderSize: CGSize, output: URL) async throws {
+        let composition = AVMutableComposition()
+        guard let videoTrack = composition.addMutableTrack(
+            withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+            throw NSError(domain: "ReelStudio", code: 30,
+                          userInfo: [NSLocalizedDescriptionKey: "Couldn't start the video composition."])
+        }
+        // One composition track + one layer instruction whose transform is
+        // re-keyed at each clip boundary (no transitions, so no second track).
+        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
+
+        var cursor = CMTime.zero
+        var inserted = 0
+        for clipURL in clips {
+            do {
+                let asset = AVURLAsset(url: clipURL)
+                guard let srcTrack = try await asset.loadTracks(withMediaType: .video).first else { continue }
+                let (naturalSize, preferredTransform) = try await srcTrack.load(.naturalSize, .preferredTransform)
+                let timeRange = try await srcTrack.load(.timeRange)
+                try videoTrack.insertTimeRange(
+                    CMTimeRange(start: timeRange.start, duration: timeRange.duration),
+                    of: srcTrack, at: cursor)
+                layerInstruction.setTransform(
+                    fillTransform(naturalSize: naturalSize,
+                                  preferredTransform: preferredTransform,
+                                  renderSize: renderSize),
+                    at: cursor)
+                cursor = CMTimeAdd(cursor, timeRange.duration)
+                inserted += 1
+            } catch {
+                continue   // unreadable clip — skip it; the reel uses the rest
+            }
+        }
+        guard inserted > 0, cursor > .zero else {
+            throw NSError(domain: "ReelStudio", code: 31,
+                          userInfo: [NSLocalizedDescriptionKey: "No usable clips to stitch."])
+        }
+
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
+        instruction.layerInstructions = [layerInstruction]
+
+        let videoComposition = AVMutableVideoComposition()
+        videoComposition.renderSize = renderSize
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
+        videoComposition.instructions = [instruction]
+
+        guard let export = AVAssetExportSession(asset: composition,
+                                                presetName: AVAssetExportPresetHighestQuality) else {
+            throw NSError(domain: "ReelStudio", code: 32,
+                          userInfo: [NSLocalizedDescriptionKey: "Couldn't create the video exporter."])
+        }
+        try? FileManager.default.removeItem(at: output)
+        export.outputURL = output
+        export.outputFileType = .mp4
+        export.videoComposition = videoComposition
+        export.shouldOptimizeForNetworkUse = true
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            export.exportAsynchronously { cont.resume() }
+        }
+        guard export.status == .completed else {
+            throw export.error ?? NSError(domain: "ReelStudio", code: 33,
+                                          userInfo: [NSLocalizedDescriptionKey: "Couldn't export the stitched reel."])
+        }
+    }
+
+    /// Raw buffer space → `renderSize`, aspect-FILL. Applies the source's
+    /// preferredTransform first (normalized back to a (0,0) origin — 90°/270°
+    /// portrait transforms land the displayed rect at a negative origin), then
+    /// scales to cover the render size and centers the overflow (center-crop).
+    nonisolated private static func fillTransform(naturalSize: CGSize, preferredTransform: CGAffineTransform,
+                                                  renderSize: CGSize) -> CGAffineTransform {
+        let displayRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
+        let displayW = abs(displayRect.width)
+        let displayH = abs(displayRect.height)
+        guard displayW > 0, displayH > 0 else { return .identity }
+
+        var t = preferredTransform
+        t.tx -= displayRect.minX
+        t.ty -= displayRect.minY
+
+        let scale = max(renderSize.width / displayW, renderSize.height / displayH)
+        t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
+        t = t.concatenating(CGAffineTransform(
+            translationX: (renderSize.width - displayW * scale) / 2,
+            y: (renderSize.height - displayH * scale) / 2))
+        return t
+    }
+
+    /// Downscale so the base64 upload stays small (and cheaper) without visible loss.
+    nonisolated private static func downscaledForReel(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
     }
 }
 
@@ -782,7 +2138,7 @@ struct FloorPlanView: View {
             VStack(spacing: 6) {
                 Image(systemName: "doc.richtext")
                     .font(.system(size: 30, weight: .light)).foregroundStyle(Theme.accent)
-                Text("Blueprint uploaded").font(.rpHeadline)
+                Text("Blueprint uploaded").font(.rpHeadline).foregroundStyle(Theme.ink)
                 Text(uploadedURL.lastPathComponent)
                     .font(.rpCaption).foregroundStyle(Theme.inkDim).lineLimit(1)
             }
@@ -813,6 +2169,7 @@ struct FloorPlanView: View {
                             .foregroundStyle(Theme.accent)
                         Text(planExists ? "Floor plan ready" : "Scan the room")
                             .font(.rpTitle)
+                            .foregroundStyle(Theme.ink)
                         Text(planExists
                              ? "View your floor plan as a flat top-down layout, in 3D, or re-scan to update it."
                              : "Walk the room slowly with your phone. Rendprop builds a floor plan you can view flat or in 3D and share.")
@@ -857,6 +2214,7 @@ struct FloorPlanView: View {
                             .foregroundStyle(Theme.accent)
                         Text(uploadedURL != nil ? "Floor plan ready" : "Add a floor plan")
                             .font(.rpTitle)
+                            .foregroundStyle(Theme.ink)
                         Text("This device has no LiDAR for 3D scanning — but you can upload a PDF or image of your floor plan or blueprints. Your photos and video tour work on every device.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
@@ -1110,6 +2468,7 @@ struct FloorPlan2DView: View {
                         FloorPlanRenderer.draw(room: room, in: &ctx, size: size)
                     }
                     .padding(14)
+                    .accessibilityLabel(Text("Floor plan of \(address)"))
                 }
             } else if loadFailed {
                 emptyState("Couldn't open this floor plan. Try re-scanning the room.")
@@ -1203,20 +2562,33 @@ enum FloorPlanRenderer {
 
         let wallWidth = max(4, 0.10 * scale)   // draw ~10 cm-thick walls
 
-        // Furniture footprints (under the walls).
+        // Furniture footprints (under the walls). RoomPlan over-guesses uncertain
+        // items as "Storage", which clutters the plan — so skip low-confidence
+        // detections, draw the box for everything confident, and only LABEL
+        // recognizable items (not the generic Storage catch-all) that are big
+        // enough on screen to fit readable text.
         for o in room.objects {
+            if o.confidence == .low { continue }
             let pts = corners(o).map(P)
             guard pts.count == 4 else { continue }
             var path = Path()
             path.move(to: pts[0]); path.addLine(to: pts[1])
             path.addLine(to: pts[2]); path.addLine(to: pts[3]); path.closeSubpath()
-            ctx.fill(path, with: .color(Theme.accent.opacity(0.10)))
+            // accentSoft = adaptive wash (10% light / 20% dark) — plain
+            // accent.opacity(0.10) was near-invisible on the dark background.
+            ctx.fill(path, with: .color(Theme.accentSoft))
             ctx.stroke(path, with: .color(Theme.inkDim.opacity(0.7)), lineWidth: 1)
+
             let name = label(o.category)
-            if !name.isEmpty {
+            let boxW = hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
+            let boxH = hypot(pts[3].x - pts[0].x, pts[3].y - pts[0].y)
+            if !name.isEmpty, o.category != .storage, min(boxW, boxH) > 26 {
                 let cx = (pts[0].x + pts[2].x) / 2
                 let cy = (pts[0].y + pts[2].y) / 2
-                ctx.draw(Text(name).font(.system(size: 9, weight: .medium)),
+                // Explicit ink so labels resolve per light/dark trait (Canvas
+                // text gets no default foreground from the surrounding view).
+                ctx.draw(Text(name).font(.system(size: 9, weight: .medium))
+                            .foregroundColor(Theme.ink),
                          at: CGPoint(x: cx, y: cy))
             }
         }

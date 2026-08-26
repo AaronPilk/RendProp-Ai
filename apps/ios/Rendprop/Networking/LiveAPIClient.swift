@@ -246,6 +246,96 @@ final class LiveAPIClient: APIClient {
 
     // MARK: - Account / usage
 
+    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
+                     style: String?, prompt: String?) async throws -> String {
+        var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": edit]
+        if let style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["style"] = style                       // stage only
+        }
+        if let prompt {
+            let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }   // custom only, server cap 600
+        }
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body))
+        struct Resp: Decodable { let imageB64: String }
+        let r: Resp = try decode(data)
+        return r.imageB64
+    }
+
+    // MARK: - AI video (ai-video edge function — async fal submit + poll)
+
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
+        var body: [String: Any] = ["asset_id": assetID, "tier": tier]
+        if let targetFps { body["target_fps"] = targetFps }
+        return try await submitAIVideo(path: "drone", body: body, fallbackKind: "drone")
+    }
+
+    func aiVideoAerial(address: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
+        var body: [String: Any] = ["seconds": seconds, "aspect": aspect]
+        if let address, !address.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["address"] = address
+        }
+        if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["prompt"] = prompt
+        }
+        return try await submitAIVideo(path: "aerial", body: body, fallbackKind: "aerial")
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
+        var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
+        if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["prompt"] = prompt
+        }
+        return try await submitAIVideo(path: "reel-clip", body: body, fallbackKind: "reel")
+    }
+
+    /// Shared submit → decode for the three generate routes (202 responses).
+    private func submitAIVideo(path: String, body: [String: Any],
+                               fallbackKind: String) async throws -> AIVideoJob {
+        let data = try await execute(makeRequest(url: url(["ai-video", path]),
+                                                 method: "POST", json: body))
+        let dto: AIVideoJobDTO = try decode(data)
+        guard let requestId = dto.requestId, !requestId.isEmpty,
+              let statusUrl = dto.statusUrl, !statusUrl.isEmpty,
+              let responseUrl = dto.responseUrl, !responseUrl.isEmpty else {
+            throw APIError.badResponse(-1)   // server didn't return the fal job ids
+        }
+        return AIVideoJob(requestId: requestId, statusUrl: statusUrl,
+                          responseUrl: responseUrl, kind: dto.kind ?? fallbackKind)
+    }
+
+    func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
+        // status_url/response_url are full fal URLs — percent-encode them FULLY
+        // (URLComponents.percentEncodedQuery) so nothing inside them (:, /, or
+        // any future ? & =) can corrupt our own query string.
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "-._~")
+        func enc(_ s: String) -> String {
+            s.addingPercentEncoding(withAllowedCharacters: allowed) ?? s
+        }
+        let plain = url(["ai-video", "status"])
+        var comps = URLComponents(url: plain, resolvingAgainstBaseURL: false)
+        comps?.percentEncodedQuery = "status_url=\(enc(job.statusUrl))&response_url=\(enc(job.responseUrl))"
+        // Fallback keeps this total (a missing query just 400s server-side and
+        // surfaces as a normal APIError to the caller's retry/fallback path).
+        let target = comps?.url ?? plain
+
+        let data = try await execute(makeRequest(url: target))
+        let dto: AIVideoStatusDTO = try decode(data)
+        switch dto.status {
+        case "completed":
+            guard let s = dto.videoUrl, let videoURL = URL(string: s) else {
+                throw APIError.badResponse(-1)   // completed but no video url
+            }
+            return .completed(videoURL: videoURL)
+        case "failed":
+            return .failed(dto.error ?? "The AI video job failed.")
+        default:
+            // "processing" and anything unknown → keep polling (tolerant decode).
+            return .processing(queuePosition: dto.queuePosition)
+        }
+    }
+
     func me() async throws -> UsageSummary {
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
@@ -298,8 +388,41 @@ final class LiveAPIClient: APIClient {
             latitude: dto.lat,
             longitude: dto.lng,
             tagline: dto.tagline,
-            details: dto.details
+            details: dto.details?.value
         )
+    }
+
+    /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
+    /// stringified and null/nested values are DROPPED (never thrown) — so one
+    /// off-type value (e.g. a future MLS import writing {"year_built": 1998})
+    /// can't fail the entire /listings array decode.
+    struct TolerantStringMap: Decodable {
+        let value: [String: String]
+
+        private struct AnyKey: CodingKey {
+            var stringValue: String
+            var intValue: Int? { nil }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
+
+        init(from decoder: Decoder) throws {
+            var out: [String: String] = [:]
+            let c = try decoder.container(keyedBy: AnyKey.self)
+            for key in c.allKeys {
+                if let s = try? c.decode(String.self, forKey: key) {
+                    out[key.stringValue] = s
+                } else if let i = try? c.decode(Int.self, forKey: key) {
+                    out[key.stringValue] = String(i)
+                } else if let d = try? c.decode(Double.self, forKey: key) {
+                    out[key.stringValue] = String(d)
+                } else if let b = try? c.decode(Bool.self, forKey: key) {
+                    out[key.stringValue] = String(b)
+                }
+                // null / arrays / objects: skipped — tolerate, never throw.
+            }
+            value = out
+        }
     }
 
     private func mapRender(_ dto: RenderDTO, fallbackListingID: UUID?, fallbackTier: Render.Tier,
@@ -332,7 +455,7 @@ final class LiveAPIClient: APIClient {
         let spaceType: String?
         let address: String?
         let tagline: String?
-        let details: [String: String]?
+        let details: TolerantStringMap?
         let priceCents: Int?
         let beds: Int?
         let baths: Double?
@@ -402,6 +525,25 @@ final class LiveAPIClient: APIClient {
         let staged: Bool?
         let videoKey: String?      // video_key (R2 object key, not a URL)
         let posterKey: String?     // poster_key
+    }
+
+    /// 202 body of POST /ai-video/{drone,aerial,reel-clip} — fal's queue ids
+    /// verbatim plus the route's `kind`. Extra fields (model_id, tier, synthetic,
+    /// …) are ignored. All optional → tolerant decode; required ones re-checked
+    /// in `submitAIVideo`.
+    private struct AIVideoJobDTO: Decodable {
+        let requestId: String?     // request_id
+        let statusUrl: String?     // status_url
+        let responseUrl: String?   // response_url
+        let kind: String?
+    }
+
+    /// Body of GET /ai-video/status — one of processing/completed/failed.
+    private struct AIVideoStatusDTO: Decodable {
+        let status: String?
+        let queuePosition: Int?    // queue_position (processing only, may be null)
+        let videoUrl: String?      // video_url (completed only — EXPIRES)
+        let error: String?         // failed only
     }
 
     private struct MeDTO: Decodable {

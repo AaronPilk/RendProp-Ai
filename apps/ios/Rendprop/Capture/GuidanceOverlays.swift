@@ -29,6 +29,11 @@ struct LevelBubble: View {
 
     var body: some View {
         ZStack {
+            // Explicit black smoke disc (never adaptive) — keeps the
+            // instrument legible over bright scenes like white walls.
+            Circle()
+                .fill(Color.black.opacity(0.22))
+                .frame(width: 64, height: 64)
             Circle()
                 .strokeBorder(Color.white.opacity(0.35), lineWidth: 1.5)
                 .frame(width: 64, height: 64)
@@ -62,6 +67,10 @@ struct PaceRing: View {
     var body: some View {
         VStack(spacing: 4) {
             ZStack {
+                // Same explicit smoke backing as the level bubble — legible
+                // over any scene, in either app appearance.
+                Circle()
+                    .fill(Color.black.opacity(0.22))
                 Circle()
                     .stroke(Color.white.opacity(0.18), lineWidth: 4)
                 Circle()
@@ -78,7 +87,9 @@ struct PaceRing: View {
                 Text(status.label)
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(status.color)
-                    .shadow(radius: 3)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.35), in: Capsule())
             }
         }
         .accessibilityLabel(Text(status.label))

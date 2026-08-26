@@ -70,6 +70,7 @@ struct EnhancementPreviewView: View {
                     .resizable()
                     .scaledToFit()
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .accessibilityLabel(Text("Before — original frame from your video"))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .card()
@@ -88,6 +89,7 @@ struct EnhancementPreviewView: View {
                     ProgressView().frame(maxWidth: .infinity).padding(40)
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .accessibilityLabel(Text("After — AI-enhanced frame"))
 
                 HStack(spacing: 10) {
                     scoreBadge("Structure", r.structure)
@@ -138,13 +140,17 @@ struct EnhancementPreviewView: View {
         VStack(spacing: 2) {
             Text("\(value)")
                 .font(.system(.headline, design: .rounded))
+                .monospacedDigit()
                 .foregroundStyle(value >= 80 ? Theme.good : Theme.warn)
             Text(label)
                 .font(.caption2)
                 .foregroundStyle(Theme.inkDim)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
-        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10))
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+        .accessibilityElement(children: .combine)
     }
 }
