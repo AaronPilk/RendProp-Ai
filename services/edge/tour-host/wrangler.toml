@@ -9,15 +9,12 @@ workers_dev = true
 # tour-host owns /f/*, /a/*, and the legal pages (/terms, /privacy — linked
 # from the iOS app's Settings); the marketing site keeps everything else.
 # ---------------------------------------------------------------------------
-# DISABLED until the rendprop.com zone is added to this Cloudflare account —
-# an inactive zone makes `wrangler deploy` fail. Testing on *.workers.dev first;
-# uncomment + redeploy once the domain is on Cloudflare.
-# routes = [
-#   { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
-#   { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
-#   { pattern = "rendprop.com/terms*", zone_name = "rendprop.com" },
-#   { pattern = "rendprop.com/privacy*", zone_name = "rendprop.com" },
-# ]
+routes = [
+  { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/terms*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/privacy*", zone_name = "rendprop.com" },
+]
 
 [vars]
 # Base URL of the Supabase Edge Functions (no trailing slash needed).
