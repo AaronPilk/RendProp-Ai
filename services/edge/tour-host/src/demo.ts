@@ -40,18 +40,20 @@ export function buildDemoTour(): Tour {
         // media stack rejects — every <video> pointed there sat at readyState 0
         // forever. All demo media now ships from this Worker's own /assets.
         reel_url: "/assets/demo-reel.mp4",
-        reel_poster: "/assets/hero-twilight-modern-home.webp",
+        reel_poster: "/assets/demo-poster.webp",
         story:
           "Set on a private ridge above the canyon, 1180 Crestline was designed around a single idea: erase the wall between the house and the view. Floor-to-ceiling glass slides fully away, so the great room, the pool deck, and the horizon become one continuous space.\n\n" +
           "Materials were chosen for how they age — wide-plank European oak that warms with time, honed stone cut from a single block, bronze and glass detailing that catches the evening light. Nothing here is loud. Everything is considered.\n\n" +
           "Offered turnkey, it is a rare modern estate that lives as beautifully at golden hour as it photographs at dusk.",
+        // Gallery stills extracted FROM the tour footage itself, so the whole
+        // demo is one coherent property (2026-08-26 media fix).
         gallery: [
-          { url: "/assets/hero-twilight-modern-home.webp", label: "Dusk exterior" },
-          { url: "/assets/glass-house-exterior.webp", label: "Glass wing" },
-          { url: "/assets/luxury-kitchen-interior.webp", label: "Chef's kitchen" },
-          { url: "/assets/living-room-walkthrough.webp", label: "Great room" },
-          { url: "/assets/modern-home-exterior-tour.webp", label: "Arrival court" },
-          { url: "/assets/hospitality-spa-detail.webp", label: "Spa & wellness" },
+          { url: "/assets/demo-g1.webp", label: "Twilight arrival" },
+          { url: "/assets/demo-g2.webp", label: "Chef's kitchen" },
+          { url: "/assets/demo-g3.webp", label: "Great room" },
+          { url: "/assets/demo-g4.webp", label: "Primary bath" },
+          { url: "/assets/demo-g5.webp", label: "Sunken lounge" },
+          { url: "/assets/demo-g6.webp", label: "The estate" },
         ],
         features: {
           Interior: [
@@ -94,21 +96,22 @@ export function buildDemoTour(): Tour {
         },
       },
     },
-    // Same-origin scrub master (the proven 55s all-intra demo walkthrough the
-    // iOS app bundles) — served by Workers assets with correct Range support.
+    // Same-origin scrub master — the REAL 137s twilight-mansion walkthrough
+    // (mansion-v4), self-hosted so video elements get well-formed responses.
     video_url: "/assets/demo-tour.mp4",
     scrub_url: "/assets/demo-tour.mp4",
     hls_url: null,
-    poster: "/assets/hero-twilight-modern-home.webp",
-    duration_s: 55,
+    poster: "/assets/demo-poster.webp",
+    duration_s: 137,
     speed_factor: 1,
+    // Chapter times matched to the actual footage.
     chapters: [
       { label: "Arrival", t_ms: 0, sort: 0 },
-      { label: "Great room", t_ms: 9000, sort: 1 },
-      { label: "Chef's kitchen", t_ms: 18000, sort: 2 },
-      { label: "Primary suite", t_ms: 27000, sort: 3 },
-      { label: "Pool deck", t_ms: 36000, sort: 4 },
-      { label: "Rooftop", t_ms: 45000, sort: 5 },
+      { label: "Chef's kitchen", t_ms: 14000, sort: 1 },
+      { label: "Primary suite", t_ms: 55000, sort: 2 },
+      { label: "Spa bath", t_ms: 66000, sort: 3 },
+      { label: "Great room", t_ms: 82000, sort: 4 },
+      { label: "The grounds", t_ms: 105000, sort: 5 },
     ],
     agent_card: {
       name: "Alexandra Reyes",
