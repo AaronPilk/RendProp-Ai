@@ -506,3 +506,14 @@ img.brand-dot { background: none; object-fit: contain; padding: 0; }
   opacity: .82; transition: opacity .2s var(--ease-out); }
 .foot-brands a:hover { opacity: 1; }
 .foot-brands img { height: 15px; width: auto; display: block; }
+
+/* Real Tract wordmark — theme-swapped (dark art on light bg, light art on dark bg) */
+.foot-brands .tract-logo { height: 22px; width: auto; }
+.tract-on-dark { display: none; }
+.tract-on-light { display: block; }
+html[data-theme="dark"] .tract-on-light { display: none; }
+html[data-theme="dark"] .tract-on-dark { display: block; }
+@media (prefers-color-scheme: dark) {
+  html:not([data-theme="light"]) .tract-on-light { display: none; }
+  html:not([data-theme="light"]) .tract-on-dark { display: block; }
+}
