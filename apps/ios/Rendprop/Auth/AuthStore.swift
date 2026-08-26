@@ -178,9 +178,14 @@ final class AuthStore: ObservableObject {
 
     @MainActor
     func signOut() {
-        Self.clearTokens()
+        // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
+        // after sign-out would call applySession and re-persist tokens, silently
+        // signing the user back in (audit 2026-08-26).
+        refreshInFlight?.cancel()
+        refreshInFlight = nil
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
+        Self.clearTokens()
         isSignedIn = Config.enableAuth ? false : true
     }
 

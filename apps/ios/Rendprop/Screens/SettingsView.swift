@@ -307,6 +307,23 @@ struct SettingsView: View {
         try? fm.removeItem(at: FileStore.importsDir)
         try? fm.removeItem(at: FileStore.documents.appendingPathComponent("rendprop-portfolio.html"))
 
+        // Listing photos + AI edits, enhanced/aerial render masters, and the
+        // personalized player-demo cache — "account deleted" must leave none of
+        // the user's media on the device (audit 2026-08-26).
+        try? fm.removeItem(at: FileStore.documents.appendingPathComponent("Photos"))
+        if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
+            try? fm.removeItem(at: caches.appendingPathComponent("player-demo"))
+        }
+        if let docs = try? fm.contentsOfDirectory(at: FileStore.documents,
+                                                  includingPropertiesForKeys: nil) {
+            for url in docs {
+                let n = url.lastPathComponent
+                if (n.hasPrefix("enhanced-") || n.hasPrefix("aerial-") || n.hasPrefix("preview-")) {
+                    try? fm.removeItem(at: url)
+                }
+            }
+        }
+
         // Profile cards + headshots for EVERY business type (keys are
         // namespaced per industry; real estate uses the legacy bare keys).
         let d = UserDefaults.standard
@@ -941,7 +958,12 @@ enum PortfolioExporter {
     static func build(listings: [Listing], agent: AgentCard) -> URL? {
         // Only the current industry's tours — a real-estate portfolio never
         // bundles in food places.
-        let active = listings.filter { !$0.isSample && !$0.isSold && $0.belongsToCurrentType }
+        // Only PUBLISHED tours — a portfolio must never contain fabricated,
+        // never-existed /f/<uuid-prefix> links that 404 for every recipient
+        // (audit 2026-08-26). A tour with no real server slug is skipped.
+        let active = listings.filter {
+            !$0.isSample && !$0.isSold && $0.belongsToCurrentType && $0.serverShareURL != nil
+        }
         guard !active.isEmpty else { return nil }
 
         let cards = active.map { l -> String in
@@ -949,10 +971,9 @@ enum PortfolioExporter {
             if let url = l.mainPhotoURL, let data = try? Data(contentsOf: url) {
                 img = "<div class=\"ph\" style=\"background-image:url('data:image/jpeg;base64,\(data.base64EncodedString())')\"></div>"
             }
-            // Prefer the REAL published slug; fall back to the local preview link
-            // only when the tour hasn't been published to the cloud yet.
-            let tour = l.serverShareURL?.absoluteString
-                ?? "https://rendprop.com/f/\(l.id.uuidString.prefix(8).lowercased())"
+            // esc() the server URL too — it lands in an href and a buggy/hostile
+            // server response shouldn't be able to inject markup into the export.
+            let tour = esc(l.serverShareURL?.absoluteString ?? "")
             let price = l.price.cents > 0 ? " · " + esc(l.price.formatted) : ""
             return """
             <a class="card" href="\(tour)" target="_blank" rel="noopener">\(img)<div class="meta"><div class="addr">\(esc(l.address))</div><div class="sub">\(esc(l.subtitleLine))\(price)</div></div></a>
