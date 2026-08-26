@@ -77,6 +77,24 @@ Deno.serve(async (req) => {
     assert(body.slug, 400, "slug is required");
     assert(body.name || body.phone || body.email, 400, "name, phone, or email is required");
 
+    // Validate + bound the public input (#14). Reject malformed contact info and
+    // cap every field so a bot can't stuff the DB or the CRM with junk.
+    const clip = (s: unknown, n: number) =>
+      typeof s === "string" ? s.trim().slice(0, n) : undefined;
+    body.name = clip(body.name, 120);
+    body.email = clip(body.email, 200);
+    body.phone = clip(body.phone, 40);
+    if (body.email) {
+      assert(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(body.email), 400, "email is not valid");
+    }
+    if (body.phone) {
+      assert(/^[+()\d\s.-]{7,40}$/.test(body.phone), 400, "phone is not valid");
+    }
+    if (body.extra !== undefined) {
+      const size = JSON.stringify(body.extra).length;
+      assert(size <= 4000, 400, "extra is too large");
+    }
+
     const admin = adminClient();
 
     // Resolve the published render for this slug.

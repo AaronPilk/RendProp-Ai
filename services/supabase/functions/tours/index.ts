@@ -85,13 +85,21 @@ Deno.serve(async (req) => {
       }));
     }
 
-    // 4. Assemble the safe agent card from the org's brand kit (public by design).
+    // 4. Assemble the safe agent card from the org's brand kit. This response is
+    //    PUBLIC, so allow-list the display fields rather than spreading the whole
+    //    brand_kit jsonb (which could contain internal keys ever written to it).
     const brand = (org?.brand_kit as Record<string, unknown> | null) ?? {};
-    const agent_card = {
-      ...brand,
+    const AGENT_CARD_FIELDS = [
+      "name", "handle", "title", "brokerage", "phone", "email", "website",
+      "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent",
+    ] as const;
+    const agent_card: Record<string, unknown> = {
       name: (brand.name as string) ?? org?.name ?? null,
       handle: (brand.handle as string) ?? org?.handle ?? null,
     };
+    for (const f of AGENT_CARD_FIELDS) {
+      if (brand[f] != null && agent_card[f] == null) agent_card[f] = brand[f];
+    }
 
     // Scrub fidelity: the scroll-scrub player seeks frame-accurately, which only
     // works on the all-intra mp4 served over HTTP byte-range. Cloudflare Stream

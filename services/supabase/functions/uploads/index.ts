@@ -50,6 +50,13 @@ const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // 64 MB
 const MAX_PART_URLS_PER_CALL = 256;
 const MAX_PHOTOS_PER_BATCH = 200;
 
+// #16 restrict uploads: hard size ceilings + a content-type allowlist so a
+// caller can't presign an arbitrary-type or absurdly large object.
+const MAX_VIDEO_BYTES = 12 * 1024 * 1024 * 1024; // 12 GB (a 4K / 9-min walkthrough is ~8 GB)
+const MAX_PHOTO_BYTES = 50 * 1024 * 1024;        // 50 MB
+const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/x-m4v"];
+const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"];
+
 interface CreateBody {
   listing_id: string;
   filename?: string;
@@ -225,6 +232,16 @@ Deno.serve(async (req) => {
       const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
       const contentType = body.content_type ??
         (role === "render" ? "video/mp4" : (kind === "photo" ? "image/jpeg" : "video/quicktime"));
+
+      // #16 restrict uploads: bound the size and require a known media type.
+      const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
+      if (body.bytes != null) {
+        assert(body.bytes > 0 && body.bytes <= maxBytes, 400,
+          `bytes must be between 1 and ${maxBytes} for a ${kind}`);
+      }
+      const allowedTypes = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+      assert(allowedTypes.includes(contentType), 400,
+        `content_type "${contentType}" is not an allowed ${kind} type`);
 
       // Decide single vs multipart. Photos are always single; video goes multipart
       // when explicitly requested or when it's large enough that resumability matters.
