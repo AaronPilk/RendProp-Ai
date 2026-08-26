@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en" data-resolution="portrait">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1080, height=1920" />
+<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:1080px;height:1920px;overflow:hidden;background:#07060d;color:#fff;
+    font-family:"Inter","Helvetica Neue",Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  #root{position:absolute;inset:0}
+  .bg{position:absolute;inset:0;background:linear-gradient(160deg,#0b0a12 0%,#170f2b 52%,#0b0a12 100%)}
+  .bg.tint{background:radial-gradient(90% 55% at 50% 30%,rgba(124,58,237,.22),transparent 62%)}
+  #brand{position:absolute;top:56px;left:60px;display:flex;align-items:center;gap:14px;z-index:6}
+  #brand .mk{width:48px;height:48px;border-radius:13px;background:linear-gradient(135deg,#9b6dff,#7c3aed);
+    box-shadow:0 10px 26px rgba(124,58,237,.55);display:grid;place-items:center}
+  #brand .wm{font-weight:800;letter-spacing:.34em;font-size:27px}
+  #tag{position:absolute;top:70px;right:60px;font-size:19px;letter-spacing:.26em;text-transform:uppercase;
+    color:rgba(255,255,255,.66);z-index:6}
+  #band{position:absolute;top:340px;left:60px;width:960px;height:604px;border-radius:30px;overflow:hidden;
+    border:1px solid rgba(255,255,255,.10);box-shadow:0 44px 96px rgba(0,0,0,.6)}
+  #video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform-origin:50% 45%}
+  #band .glass{position:absolute;inset:auto 0 0 0;height:38%;background:linear-gradient(0deg,rgba(6,5,12,.7),transparent)}
+  #band .live{position:absolute;left:22px;bottom:22px;display:flex;align-items:center;gap:9px;
+    font-size:20px;font-weight:700;padding:11px 18px;border-radius:999px;
+    background:rgba(16,14,24,.5);border:1px solid rgba(255,255,255,.2);backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px)}
+  #band .live b{width:11px;height:11px;border-radius:50%;background:#9b6dff;box-shadow:0 0 12px #9b6dff}
+  .cap{position:absolute;left:60px;right:60px;top:1030px}
+  .kick{display:inline-flex;align-items:center;gap:13px;font-size:22px;letter-spacing:.26em;text-transform:uppercase;
+    color:#c4a8ff;font-weight:700;margin-bottom:20px}
+  .kick::before{content:"";width:32px;height:2px;border-radius:2px;background:linear-gradient(90deg,#7c3aed,#9b6dff)}
+  h1{font-size:104px;line-height:.96;font-weight:800;letter-spacing:-.025em;text-shadow:0 6px 40px rgba(0,0,0,.5)}
+  .sub{margin-top:22px;font-size:31px;line-height:1.34;color:rgba(255,255,255,.8);max-width:20ch}
+  .hero{font-size:82px;line-height:1.02;font-weight:800;letter-spacing:-.02em;text-shadow:0 6px 40px rgba(0,0,0,.5)}
+  .row{display:flex;flex-wrap:wrap;gap:15px}
+  .chip{font-size:32px;font-weight:700;padding:17px 26px;border-radius:17px;background:rgba(24,21,36,.55);
+    border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px)}
+  .chip.sm{font-size:27px;padding:14px 22px}
+  .lab{font-size:27px;letter-spacing:.24em;text-transform:uppercase;color:rgba(255,255,255,.68);margin-bottom:14px}
+  .amt{font-size:126px;font-weight:800;letter-spacing:-.03em;line-height:1;
+    background:linear-gradient(115deg,#e9defc,#c4a8ff 52%,#9b6dff);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  #cta{position:absolute;left:60px;right:60px;top:1120px}
+  #cta .in{padding:44px 46px;border-radius:30px;text-align:center;background:rgba(18,15,28,.55);
+    border:1px solid rgba(255,255,255,.16);backdrop-filter:blur(18px);-webkit-backdrop-filter:blur(18px);box-shadow:0 34px 80px rgba(0,0,0,.5)}
+  #cta .big{font-size:60px;font-weight:800;letter-spacing:-.01em}
+  #cta .url{margin-top:16px;font-size:32px;color:#c4a8ff;font-weight:700;letter-spacing:.03em}
+  #prog{position:absolute;left:0;right:0;bottom:0;height:9px;background:rgba(255,255,255,.12)}
+  #prog i{display:block;height:100%;transform-origin:0 50%;transform:scaleX(0);background:linear-gradient(90deg,#9b6dff,#7c3aed)}
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="main" data-start="0" data-duration="22" data-width="1080" data-height="1920">
+  <div class="bg"></div>
+  <div class="bg tint"></div>
+
+  <div id="band">
+    <video id="video" class="clip" src="clip.mp4" muted playsinline data-start="0" data-duration="22" data-track-index="0"></video>
+    <div class="glass"></div>
+    <div class="live"><b></b>Live walkthrough</div>
+  </div>
+
+  <div id="brand">
+    <span class="mk"><svg width="27" height="27" viewBox="0 0 64 64"><path d="M15 47 C 26 51, 27 34, 33 26 C 37 20.5, 41 18.5, 46 15.5" fill="none" stroke="#fff" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M40.5 13.5 L 51 11 L 48.5 21.5 Z" fill="#fff"/></svg></span>
+    <span class="wm">RENDPROP</span>
+  </div>
+  <div id="tag">Private Tour</div>
+
+  <div id="addr" class="cap clip" data-start="0.3" data-duration="4.0" data-track-index="1"><div class="in">
+    <div class="kick">Private Listing</div>
+    <h1>1180 Crestline<br>Ridge</h1>
+    <div class="sub">A glass-and-oak modern estate above the canyon.</div>
+  </div></div>
+
+  <div id="stats" class="cap clip" data-start="4.3" data-duration="4.0" data-track-index="1"><div class="in row">
+    <span class="chip">5 Beds</span><span class="chip">6 Baths</span><span class="chip">6,200 Sq Ft</span><span class="chip">0.7 Acres</span>
+  </div></div>
+
+  <div id="hero1" class="cap clip" data-start="8.3" data-duration="4.3" data-track-index="1"><div class="in">
+    <div class="kick">The life here</div>
+    <div class="hero">Vanishing-edge pool.<br>180&deg; of open water.</div>
+  </div></div>
+
+  <div id="feats" class="cap clip" data-start="12.6" data-duration="4.0" data-track-index="1"><div class="in row">
+    <span class="chip sm">Chef&rsquo;s kitchen</span><span class="chip sm">European white oak</span><span class="chip sm">Glass wine wall</span><span class="chip sm">Rooftop terrace</span>
+  </div></div>
+
+  <div id="price" class="cap clip" data-start="16.6" data-duration="3.6" data-track-index="1"><div class="in">
+    <div class="lab">Offered at</div>
+    <div class="amt">$4,250,000</div>
+  </div></div>
+
+  <div id="cta" class="clip" data-start="19.9" data-duration="2.1" data-track-index="1"><div class="in">
+    <div class="big">Book a private showing</div>
+    <div class="url">rendprop.com</div>
+  </div></div>
+
+  <div id="prog"><i></i></div>
+</div>
+
+<script>
+  window.__timelines = window.__timelines || {};
+  var tl = gsap.timeline({ paused: true });
+  tl.fromTo("#video",{scale:1.04},{scale:1.13,duration:22,ease:"none"},0);
+  tl.fromTo("#prog i",{scaleX:0},{scaleX:1,duration:22,ease:"none"},0);
+  function grp(sel,start,dur,rise){
+    var inr=sel+" .in";
+    tl.fromTo(inr,{opacity:0,y:(rise==null?48:rise)},{opacity:1,y:0,duration:.72,ease:"power3.out"},start);
+    tl.to(inr,{opacity:0,y:-18,duration:.42,ease:"power2.in"},start+dur-0.42);
+    tl.set(inr,{opacity:0,y:0},start+dur);
+  }
+  function chips(sel,start,dur){
+    tl.fromTo(sel+" .chip",{opacity:0,y:30},{opacity:1,y:0,duration:.5,ease:"power3.out",stagger:.09},start);
+    tl.to(sel+" .in",{opacity:0,duration:.35,ease:"power2.in"},start+dur-0.35);
+    tl.set(sel+" .in",{opacity:0},start+dur);
+  }
+  grp("#addr",0.3,4.0);
+  chips("#stats",4.3,4.0);
+  grp("#hero1",8.3,4.3);
+  chips("#feats",12.6,4.0);
+  grp("#price",16.6,3.6,64);
+  tl.fromTo("#cta .in",{opacity:0,y:44,scale:.96},{opacity:1,y:0,scale:1,duration:.72,ease:"power3.out"},19.9);
+  tl.set("#cta .in",{opacity:0},22.0);
+  window.__timelines["main"] = tl;
+</script>
+</body>
+</html>
