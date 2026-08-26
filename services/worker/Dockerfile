@@ -25,10 +25,18 @@ RUN pip install --no-cache-dir -r /app/worker/requirements.txt
 COPY pipeline /app/pipeline
 COPY worker   /app/worker
 
+# Run as a non-root user — the pipeline processes untrusted, user-uploaded video
+# with ffmpeg. A non-root runtime contains the blast radius of any ffmpeg CVE or
+# path-handling bug. The workdir must be owned by that user.
+RUN useradd --create-home --uid 10001 appuser \
+    && mkdir -p /tmp/rendprop-worker \
+    && chown -R appuser:appuser /app /tmp/rendprop-worker
+
 ENV PIPELINE_DIR=/app/pipeline \
     WORKER_WORKDIR=/tmp/rendprop-worker \
     PYTHONUNBUFFERED=1
 
+USER appuser
 WORKDIR /app/worker
 
 # Long-running poller by default. For a triggered/serverless run, override with:

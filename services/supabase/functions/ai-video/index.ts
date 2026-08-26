@@ -32,8 +32,22 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { getUser, userClient } from "../_shared/supabase.ts";
+import { getUser, orgForUser, userClient } from "../_shared/supabase.ts";
+import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { publicR2Url } from "../_shared/r2.ts";
+
+// Denial-of-wallet guard: every generate route hits a paid GPU queue, so cap
+// how many an org can submit per window. (Interim control until per-org monthly
+// spend caps are read from cost_ledger — see docs/RELEASE-GATE-AUDIT.md.)
+const GEN_MAX_PER_WINDOW = 12;
+const GEN_WINDOW_SECONDS = 300; // 12 video jobs / 5 min / org
+
+async function guardGenerate(userId: string): Promise<void> {
+  const orgId = await orgForUser(userId);
+  if (!(await durableRateLimit(`aivideo:${orgId}`, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
+    throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.");
+  }
+}
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const FAL_KEY = Deno.env.get("FAL_KEY");
@@ -91,9 +105,14 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
-    await getUser(req); // auth required on every route (also guards the FAL key)
+    const user = await getUser(req); // auth required on every route (also guards the FAL key)
     const db = userClient(req); // RLS: the caller only sees their own org's assets
     const seg = pathSegments(req, "ai-video");
+
+    // Per-org rate limit on the paid generate routes (NOT status polling).
+    const isGenerate = req.method === "POST" &&
+      seg.length === 1 && ["drone", "declutter", "aerial", "reel-clip"].includes(seg[0]);
+    if (isGenerate) await guardGenerate(user.id);
 
     // ---- POST /ai-video/drone ----
     if (req.method === "POST" && seg.length === 1 && seg[0] === "drone") {

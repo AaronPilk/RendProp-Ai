@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -133,6 +134,16 @@ def extract_keyframe(video: Path, t: float, out: Path) -> Path:
     return out
 
 
+def _safe_name(name, fallback: str) -> str:
+    """Chapter/room labels are user-controlled and get used to build file paths
+    (extract_keyframe writes ``workdir / f"{name}.jpg"``). Slugify to a bounded,
+    separator-free token so a label like ``../../etc`` or an absolute path can't
+    escape the workdir (path traversal / arbitrary write, worse because the
+    worker container runs the pipeline)."""
+    slug = re.sub(r"[^A-Za-z0-9_-]", "_", str(name)).strip("_")[:64]
+    return slug or fallback
+
+
 def segment_video(video: Path, chapters: list | None) -> list:
     """Room segments from chapter tags (the app records them), else 8s slices."""
     dur = probe_duration(video)
@@ -141,7 +152,7 @@ def segment_video(video: Path, chapters: list | None) -> list:
         for i, c in enumerate(chapters):
             start = c["t"]
             end = chapters[i + 1]["t"] if i + 1 < len(chapters) else dur
-            segs.append({"name": c["name"], "start": start, "end": end})
+            segs.append({"name": _safe_name(c.get("name"), f"segment-{i + 1}"), "start": start, "end": end})
         return segs
     return [{"name": f"segment-{i + 1}", "start": t, "end": min(t + 8, dur)}
             for i, t in enumerate(range(0, int(dur), 8))]

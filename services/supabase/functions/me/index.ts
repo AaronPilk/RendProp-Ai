@@ -209,12 +209,13 @@ async function handleDelete(userId: string): Promise<Response> {
     const assetIds = await selectIds("asset ids", "capture_assets", "id", "listing_id", listingIds);
 
     for (const ids of chunk(listingIds)) {
+      // capture_assets: raw uploads + app-rendered tour mp4s (bucket-tagged).
       try {
         const { data, error } = await admin
           .from("capture_assets")
           .select("storage_key, bucket")
           .in("listing_id", ids);
-        if (error) { warnings.push(`storage keys: ${error.message}`); continue; }
+        if (error) { warnings.push(`storage keys (assets): ${error.message}`); }
         for (const row of (data ?? []) as { storage_key: string | null; bucket: string | null }[]) {
           if (row.storage_key) {
             purgeObjs.push({
@@ -224,9 +225,43 @@ async function handleDelete(userId: string): Promise<Response> {
           }
         }
       } catch (e) {
-        warnings.push(`storage keys: ${e instanceof Error ? e.message : String(e)}`);
+        warnings.push(`storage keys (assets): ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      // photos: original (uploads bucket) + AI-enhanced (public/renders bucket).
+      try {
+        const { data, error } = await admin
+          .from("photos")
+          .select("original_key, enhanced_key")
+          .in("listing_id", ids);
+        if (error) { warnings.push(`storage keys (photos): ${error.message}`); }
+        for (const row of (data ?? []) as { original_key: string | null; enhanced_key: string | null }[]) {
+          if (row.original_key) purgeObjs.push({ bucket: R2_BUCKET_UPLOADS, key: row.original_key });
+          if (row.enhanced_key) purgeObjs.push({ bucket: R2_BUCKET_RENDERS, key: row.enhanced_key });
+        }
+      } catch (e) {
+        warnings.push(`storage keys (photos): ${e instanceof Error ? e.message : String(e)}`);
+      }
+
+      // renders: worker-hosted tour mp4 + poster (renders bucket). A 404 on any
+      // wrong-bucket guess is treated as already-deleted, so this is safe.
+      try {
+        const { data, error } = await admin
+          .from("renders")
+          .select("video_key, poster_key")
+          .in("listing_id", ids);
+        if (error) { warnings.push(`storage keys (renders): ${error.message}`); }
+        for (const row of (data ?? []) as { video_key: string | null; poster_key: string | null }[]) {
+          if (row.video_key) purgeObjs.push({ bucket: R2_BUCKET_RENDERS, key: row.video_key });
+          if (row.poster_key) purgeObjs.push({ bucket: R2_BUCKET_RENDERS, key: row.poster_key });
+        }
+      } catch (e) {
+        warnings.push(`storage keys (renders): ${e instanceof Error ? e.message : String(e)}`);
       }
     }
+    // NOTE: Cloudflare Stream assets (renders.stream_uid) are NOT deleted here —
+    // that needs the Stream API token, not the R2 S3 creds. Tracked as a
+    // follow-up in docs/RELEASE-GATE-AUDIT.md (the batch cleaner will sweep them).
 
     // Rows that reference the org directly (their listing/job FKs are set-null,
     // so deleting them first also removes the user's lead/usage/spend data).

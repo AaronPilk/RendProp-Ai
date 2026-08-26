@@ -25,7 +25,14 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
-import { getUser } from "../_shared/supabase.ts";
+import { getUser, orgForUser } from "../_shared/supabase.ts";
+import { durableRateLimit } from "../_shared/ratelimit.ts";
+
+// Denial-of-wallet guard: image edits bill Gemini per call. Cap per org per
+// window. (Interim control until per-org monthly spend caps land — see
+// docs/RELEASE-GATE-AUDIT.md.)
+const EDIT_MAX_PER_WINDOW = 40;
+const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
 
 const MODEL = Deno.env.get("GEMINI_IMAGE_MODEL") ?? "gemini-2.5-flash-image";
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
@@ -117,9 +124,15 @@ function customPrompt(userText: string): string {
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
   try {
-    await getUser(req); // owner auth; RLS not needed (no DB touch)
+    const user = await getUser(req); // owner auth; RLS not needed (no DB touch)
     if (req.method !== "POST") throw new HttpError(405, "POST only");
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set");
+
+    // Per-org rate limit — the paid Gemini image/text call is next.
+    const orgId = await orgForUser(user.id);
+    if (!(await durableRateLimit(`aiphoto:${orgId}`, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
+      throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.");
+    }
 
     const body = await readJson<Body>(req);
     const edit = body.edit ?? "twilight";

@@ -22,7 +22,7 @@ TOML
 cd "$STAGE"
 
 # Owner routes (require a valid JWT — default).
-for f in listings uploads renders me ai-enhance; do
+for f in listings uploads renders me ai-enhance ai-photo ai-video; do
   echo "→ deploy $f"
   supabase functions deploy "$f" --project-ref "$REF"
 done
