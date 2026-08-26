@@ -79,7 +79,8 @@ enum Config {
     // render stay usable offline. Needs the "Sign in with Apple" capability +
     // entitlement and the Apple provider enabled in Supabase Auth before publish
     // will actually succeed (DEPLOYMENT.md).
-    static let enableAuth = true       // Keychain token storage still TODO (UserDefaults for now)
+    static let enableAuth = true       // Sign in with Apple → Supabase; tokens in Keychain
     static let enableIAP  = false      // TODO: StoreKit 2 consumable credits + subs
     static let enablePush = false      // TODO: APNs render-ready / lead-received
+    static let showTutorials = false   // flip on once tutorial videos are filmed (no "coming soon" placeholders ship)
 }

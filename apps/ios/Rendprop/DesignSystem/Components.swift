@@ -26,6 +26,7 @@ struct PrimaryButton: View {
             .foregroundStyle(Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
+        .buttonStyle(ScalePressStyle())   // same crisp press as every card CTA
         .disabled(isDisabled)
         .accessibilityLabel(Text(title))
     }

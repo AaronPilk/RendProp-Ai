@@ -146,7 +146,9 @@ struct ReviewSubmitView: View {
             Text("PICK YOUR QUALITY").font(.rpKicker).foregroundStyle(Theme.inkDim)
             ForEach(Render.Tier.allCases) { t in
                 Button {
-                    tier = t
+                    // Match the design-style picker below: the fill/border glide
+                    // between rows instead of snapping.
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
                     Haptics.selection()
                 } label: {
                     HStack(spacing: 12) {

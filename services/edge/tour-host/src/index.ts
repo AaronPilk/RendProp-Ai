@@ -46,9 +46,12 @@ function htmlResponse(html: string, status = 200, extraHeaders: Record<string, s
         "img-src 'self' https: data: blob:",
         "media-src 'self' https: data: blob:",
         "style-src 'self' 'unsafe-inline'",
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+        // cdnjs = hls.js fallback; challenges.cloudflare.com = Turnstile widget.
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://challenges.cloudflare.com",
         "worker-src 'self' blob:",
-        "child-src 'self' blob:",
+        // Turnstile renders its challenge in an iframe from challenges.cloudflare.com.
+        "child-src 'self' blob: https://challenges.cloudflare.com",
+        "frame-src 'self' https://challenges.cloudflare.com",
         "connect-src 'self' https:",
         "font-src 'self' data:",
         "form-action 'self' https:",
@@ -114,7 +117,7 @@ async function handleTour(slug: string, req: Request, url: URL, env: Env, ctx: E
   }
 
   const t = ttl(env);
-  const html = renderTourPage(tour, functionsBase(env), env.SUPABASE_ANON_KEY || "");
+  const html = renderTourPage(tour, functionsBase(env), env.SUPABASE_ANON_KEY || "", env.TURNSTILE_SITE_KEY || "");
   const resp = htmlResponse(html, 200, {
     "Cache-Control": `public, max-age=${t}, s-maxage=${t}`,
   });

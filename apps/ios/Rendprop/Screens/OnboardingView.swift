@@ -115,7 +115,7 @@ struct OnboardingView: View {
                 VStack(spacing: 12) {
                     ForEach(SpaceType.allCases) { type in
                         Button {
-                            spaceTypeRaw = type.rawValue
+                            withAnimation(.easeInOut(duration: 0.2)) { spaceTypeRaw = type.rawValue }
                             Haptics.selection()
                         } label: {
                             HStack(spacing: 14) {

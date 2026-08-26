@@ -6,7 +6,7 @@ options:
   createIntermediateGroups: true
 settings:
   base:
-    MARKETING_VERSION: "0.1.0"
+    MARKETING_VERSION: "1.0"
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_TEAM: "5F5C5G25Y6"   # Aaron Pilkington — real Team ID (OU= from signing cert)
@@ -34,6 +34,9 @@ targets:
           # calls go through the Supabase edge functions.
           - "Resources/Secrets.plist"
           - "**/Secrets.plist"
+          # Don't ship the placeholder example either — it leaks provider/model names.
+          - "Resources/Secrets.example.plist"
+          - "**/Secrets.example.plist"
       - path: Rendprop/Resources/player
         type: folder
         buildPhase: resources

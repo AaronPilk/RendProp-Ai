@@ -438,6 +438,7 @@ struct RootTabView: View {
 struct HomeDashboardView: View {
     @EnvironmentObject var model: AppModel
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var goToListings: () -> Void = {}
 
     @State private var revealed = false          // staggers the sections in on first appear
@@ -469,8 +470,13 @@ struct HomeDashboardView: View {
                     .modifier(Reveal(index: 2, on: revealed))
                 howItWorksSection
                     .modifier(Reveal(index: 3, on: revealed))
-                tutorialsSection
-                    .modifier(Reveal(index: 4, on: revealed))
+                // Tutorials are hidden until the videos are filmed — no "coming
+                // soon" placeholder ships to App Review (2.1). Flip the flag once
+                // tutorialSlot destinations play real content.
+                if Config.showTutorials {
+                    tutorialsSection
+                        .modifier(Reveal(index: 4, on: revealed))
+                }
                 listingsShortcut
                     .modifier(Reveal(index: 5, on: revealed))
             }
@@ -566,7 +572,8 @@ struct HomeDashboardView: View {
     /// while a soft highlight orbits. Alive, never distracting; 20fps cap.
     private var animatedHeroBackground: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 20.0)) { context in
-            let t = context.date.timeIntervalSinceReferenceDate
+            // Reduce Motion freezes the drift/hue-shift to a calm static wash.
+            let t = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
             ZStack {
                 LinearGradient(
                     colors: [Color(red: 109/255, green: 40/255, blue: 217/255),
@@ -898,12 +905,15 @@ enum RPGradient {
         startPoint: .topLeading, endPoint: .bottomTrailing)
 }
 
-/// Springy press-down for any card-shaped button.
+/// Crisp press-down for any card-shaped button. A near-critically-damped
+/// spring (no visible overshoot) reads as a quick ease-out while staying
+/// interruptible for rapid taps — a toy-like bounce on a discrete tap is
+/// exactly the kind of motion Apple's own controls avoid.
 struct ScalePressStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(configuration.isPressed ? 0.96 : 1)
-            .animation(.spring(response: 0.3, dampingFraction: 0.7),
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.spring(response: 0.3, dampingFraction: 0.85),
                        value: configuration.isPressed)
     }
 }
@@ -921,14 +931,16 @@ struct AIPill: View {
 }
 
 /// Staggered fade-up on first appear — flip `on` once and each indexed section
-/// springs in with a small cascade.
+/// springs in with a small cascade. Honors Reduce Motion: the vertical travel
+/// is dropped for a plain staggered fade so nothing slides for those users.
 struct Reveal: ViewModifier {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let index: Int
     let on: Bool
     func body(content: Content) -> some View {
         content
             .opacity(on ? 1 : 0)
-            .offset(y: on ? 0 : 18)
+            .offset(y: on || reduceMotion ? 0 : 18)
             .animation(.spring(response: 0.55, dampingFraction: 0.85)
                         .delay(Double(index) * 0.07), value: on)
     }

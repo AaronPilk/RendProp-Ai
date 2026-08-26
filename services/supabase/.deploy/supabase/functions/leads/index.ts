@@ -18,35 +18,6 @@ interface LeadBody {
   email?: string;
   extra?: Record<string, unknown>;
   _hp?: string; // honeypot — real users never fill this
-  turnstile_token?: string; // Cloudflare Turnstile token (bot protection)
-}
-
-/**
- * Verify a Cloudflare Turnstile token. Returns true when the token is valid, OR
- * when Turnstile isn't configured yet (no TURNSTILE_SECRET_KEY) — so the widget
- * can be rolled out gradually: set the secret + the worker's site key and it
- * activates. Fail-closed only when a secret IS set and the token is missing/bad.
- */
-async function verifyTurnstile(token: string | undefined, ip: string): Promise<boolean> {
-  const secret = Deno.env.get("TURNSTILE_SECRET_KEY");
-  if (!secret) return true; // not configured → don't block
-  if (!token) return false;
-  try {
-    const form = new URLSearchParams();
-    form.set("secret", secret);
-    form.set("response", token);
-    if (ip && ip !== "unknown") form.set("remoteip", ip);
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    });
-    const data = await res.json().catch(() => ({ success: false }));
-    return data?.success === true;
-  } catch (e) {
-    console.error("Turnstile verify error:", e);
-    return false; // a configured verifier that errors should not let bots through
-  }
 }
 
 /** Upsert the lead to GoHighLevel. Returns true on success; never throws. */
@@ -102,11 +73,6 @@ Deno.serve(async (req) => {
 
     // Honeypot: pretend success so bots don't learn anything.
     if (body._hp) return json({ ok: true });
-
-    // Bot protection: Cloudflare Turnstile (no-op until TURNSTILE_SECRET_KEY is set).
-    if (!(await verifyTurnstile(body.turnstile_token, clientIp(req)))) {
-      throw new HttpError(403, "Bot check failed — please retry the form.");
-    }
 
     assert(body.slug, 400, "slug is required");
     assert(body.name || body.phone || body.email, 400, "name, phone, or email is required");

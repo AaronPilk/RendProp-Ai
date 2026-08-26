@@ -18,6 +18,10 @@ export interface Env {
   SUPABASE_ANON_KEY?: string;
   /** Optional: edge cache TTL (seconds) for published tour/portfolio HTML. */
   TOUR_CACHE_TTL?: string;
+  /** Optional Cloudflare Turnstile SITE key (public). When set, the tour lead
+   *  form renders the Turnstile widget; the leads function verifies the token
+   *  with its matching TURNSTILE_SECRET_KEY. Both must be set to activate. */
+  TURNSTILE_SITE_KEY?: string;
 }
 
 export interface Chapter {

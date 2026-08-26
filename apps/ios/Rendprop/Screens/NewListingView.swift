@@ -261,7 +261,7 @@ struct NewListingView: View {
             )
             .opacity(formValid && importProgress == nil ? 1 : 0.5)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ScalePressStyle())
         .disabled(!formValid || importProgress != nil)   // no double-imports mid-copy
         .accessibilityLabel(Text("\(title). \(subtitle)"))
     }

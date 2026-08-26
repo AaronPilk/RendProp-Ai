@@ -36,7 +36,7 @@ struct HomeListingsView: View {
                         LazyVStack(spacing: 18) {
                             if soldCount > 0 {
                                 NavigationLink { SoldListingsView() } label: { soldFolderRow }
-                                    .buttonStyle(.plain)
+                                    .buttonStyle(ScalePressStyle())
                             }
                             ForEach(filtered) { listing in
                                 NavigationLink {
@@ -44,7 +44,7 @@ struct HomeListingsView: View {
                                 } label: {
                                     ListingCard(listing: listing)
                                 }
-                                .buttonStyle(.plain)
+                                .buttonStyle(ScalePressStyle())
                             }
                         }
                         .padding(.horizontal)
@@ -80,6 +80,7 @@ struct HomeListingsView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                             .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
                         }
+                        .buttonStyle(ScalePressStyle())
                         .padding(.horizontal)
                         .accessibilityLabel(Text("Start a new listing"))
                     }
@@ -230,7 +231,7 @@ struct SoldListingsView: View {
                             } label: {
                                 ListingCard(listing: listing)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ScalePressStyle())
                         }
                     }
                     .padding()

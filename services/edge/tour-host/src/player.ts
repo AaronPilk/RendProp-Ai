@@ -199,10 +199,17 @@ function deeplinkCopy(tour: Tour): { headline: string; sub: string } {
   }
 }
 
-function renderLeadForm(tour: Tour): string {
+function renderLeadForm(tour: Tour, turnstileSiteKey = ""): string {
   const cta: Cta = tour.cta;
   const fields = cta.lead_fields || [];
   const emailOnly = fields.length === 1 && fields[0] === "email";
+  // Turnstile widget (bot protection). Rendered only when a site key is
+  // configured; the implicit widget injects a `cf-turnstile-response` field the
+  // submit handler forwards to /leads as `turnstile_token`.
+  const turnstile = turnstileSiteKey
+    ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-theme="auto" data-size="flexible"></div>`
+    : "";
 
   const base = emailOnly
     ? textInput("email", "email", "Email address", true, "email")
@@ -221,6 +228,7 @@ function renderLeadForm(tour: Tour): string {
       ${base}
       ${extras}
       <input class="hp" type="text" name="_hp" tabindex="-1" autocomplete="off" aria-hidden="true">
+      ${turnstile}
       <button class="cta" type="submit">${escapeHtml(cta.label)}</button>
     </form>
     ${renderSecondary(cta.secondary)}
@@ -231,7 +239,7 @@ function renderLeadForm(tour: Tour): string {
     </div>`;
 }
 
-function renderCtaBlock(tour: Tour): string {
+function renderCtaBlock(tour: Tour, turnstileSiteKey = ""): string {
   const cta = tour.cta;
   if (cta.mode === "deeplink" && cta.url) {
     const copy = deeplinkCopy(tour);
@@ -240,7 +248,7 @@ function renderCtaBlock(tour: Tour): string {
       <a class="cta cta-link" href="${escapeAttr(cta.url)}" target="_blank" rel="noopener nofollow">${escapeHtml(cta.label)}</a>
       ${renderSecondary(cta.secondary)}`;
   }
-  return renderLeadForm(tour);
+  return renderLeadForm(tour, turnstileSiteKey);
 }
 
 // ---------------------------------------------------------------------------
@@ -530,6 +538,7 @@ const ENGINE_JS = `
       fd.forEach(function(v, k){
         if (k === 'name' || k === 'phone' || k === 'email'){ if (v) top[k] = v; }
         else if (k === '_hp'){ top._hp = v; }
+        else if (k === 'cf-turnstile-response'){ if (v) top.turnstile_token = v; }
         else if (v) top.extra[k] = v;
       });
       var btn = form.querySelector('button[type=submit]');
@@ -617,7 +626,7 @@ const ENGINE_JS = `
 // Full page
 // ---------------------------------------------------------------------------
 
-export function renderTourPage(tour: Tour, functionsBase: string, anonKey: string): string {
+export function renderTourPage(tour: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = ""): string {
   const agent = extractAgent(tour.agent_card || {});
   const header = buildHeader(tour);
   const poster = tour.poster || "";
@@ -731,7 +740,7 @@ ${accentOverride}
 <section id="endcard">
   <div class="panel">
     ${renderAgentCard(agent)}
-    ${renderCtaBlock(tour)}
+    ${renderCtaBlock(tour, turnstileSiteKey)}
     ${disclosurePanel}
   </div>
 </section>

@@ -14,6 +14,7 @@ import AuthenticationServices
 /// never dead-ended.
 struct RenderStatusView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let listing: Listing
     @State var render: Render
@@ -58,6 +59,12 @@ struct RenderStatusView: View {
                     Image(systemName: "checkmark")
                         .font(.system(size: 40, weight: .semibold))
                         .foregroundStyle(Theme.good)
+                        // The one earned "delight" beat in the whole flow — the
+                        // check pops in on the same frame Haptics.success() fires.
+                        // Reduce Motion gets a straight fade instead of the pop.
+                        .transition(reduceMotion
+                                    ? .opacity
+                                    : .scale(scale: 0.7).combined(with: .opacity))
                 } else if isPublishing {
                     ProgressView()
                         .scaleEffect(1.4)
@@ -69,6 +76,10 @@ struct RenderStatusView: View {
                 }
             }
             .frame(width: 150, height: 150)
+            .animation(reduceMotion
+                       ? .easeOut(duration: 0.2)
+                       : .spring(response: 0.42, dampingFraction: 0.62),
+                       value: isReady)
             .accessibilityElement(children: .combine)
 
             VStack(spacing: 6) {
@@ -124,7 +135,7 @@ struct RenderStatusView: View {
                         .background(Theme.accentSoft)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(ScalePressStyle())
                 .disabled(didSkipEnhance)
                 .padding(.horizontal)
                 .padding(.bottom, 6)

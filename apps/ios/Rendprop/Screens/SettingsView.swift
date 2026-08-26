@@ -100,10 +100,14 @@ struct SettingsView: View {
                 Text("Twilight, sky replacement, lawn repair, decluttering, virtual staging, and custom AI edits on any listing photo.")
             }
 
-            Section("Notifications") {
-                LabeledContent("Render ready", value: "Coming soon")
-                LabeledContent("New lead", value: "Coming soon")
-                // TODO Phase 2 (internal): APNs — Config.enablePush (master spec Part 18)
+            // Notifications section is hidden until push (APNs) is wired — a
+            // reviewer must never see "Coming soon" placeholder rows (App Store
+            // 2.1). Re-enable this block behind Config.enablePush when APNs ships.
+            if Config.enablePush {
+                Section("Notifications") {
+                    LabeledContent("Render ready", value: "On")
+                    LabeledContent("New lead", value: "On")
+                }
             }
 
             Section("How to shoot a great walkthrough") {
@@ -417,7 +421,7 @@ struct AIPhotoStudioView: View {
                     Button(action: enhance) {
                         HStack {
                             if isWorking { ProgressView().tint(.white) }
-                            Text(isWorking ? "Enhancing…" : "Enhance photo · $0.04")
+                            Text(isWorking ? "Enhancing…" : "Enhance photo")
                                 .fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity).padding(.vertical, 14)
@@ -438,6 +442,9 @@ struct AIPhotoStudioView: View {
                 }
             }
             .padding()
+            // The AI result is the payoff — crossfade to the before/after card
+            // instead of snapping when the enhanced image lands.
+            .animation(.easeInOut(duration: 0.3), value: edited != nil)
         }
         .background(Theme.bg)
         .navigationTitle("AI Photo Studio")
@@ -454,7 +461,7 @@ struct AIPhotoStudioView: View {
             HStack(spacing: 8) {
                 ForEach(Edit.allCases) { e in
                     Button {
-                        edit = e
+                        withAnimation(.easeInOut(duration: 0.2)) { edit = e }
                         Haptics.selection()
                     } label: {
                         Text(e.label)
@@ -1066,7 +1073,7 @@ struct BusinessTypeView: View {
                         } label: {
                             typeCard(type)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ScalePressStyle())
                     }
                 }
 
@@ -1108,6 +1115,9 @@ struct BusinessTypeView: View {
         )
         .shadow(color: selected ? Theme.accent.opacity(0.28) : Color.black.opacity(0.05),
                 radius: selected ? 10 : 6, x: 0, y: 4)
+        // Selecting a business re-themes the whole app — let the picked card's
+        // fill/glow settle in rather than snapping as the grid reseeds.
+        .animation(.easeInOut(duration: 0.22), value: selected)
         .accessibilityLabel(Text("\(type.displayName). \(type.pitch)\(selected ? ". Selected" : "")"))
     }
 

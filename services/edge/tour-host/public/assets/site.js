@@ -20,7 +20,14 @@
     var cur = storedTheme();
     var next = cur === "" ? "light" : cur === "light" ? "dark" : "";
     try { next ? localStorage.setItem(KEY, next) : localStorage.removeItem(KEY); } catch (e) {}
+    // Suppress every transition for the swap so the palette flips instantly (no half-second sweep).
+    var de = document.documentElement;
+    de.classList.add("theme-switch");
     applyTheme(next);
+    void de.offsetWidth; // force the class + new palette to commit before we release the guard
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () { de.classList.remove("theme-switch"); });
+    });
   };
   applyTheme(storedTheme());
 

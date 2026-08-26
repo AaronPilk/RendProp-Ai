@@ -508,7 +508,7 @@ struct PhotoStudioView: View {
                         // inside another Button's label never gets the tap).
                         ZStack(alignment: .bottomTrailing) {
                         Button { compare = p } label: { thumb(p) }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ScalePressStyle())
                             .accessibilityLabel(Text("Listing photo — opens before-and-after compare"))
                             .contextMenu {
                                 Menu {
@@ -542,6 +542,9 @@ struct PhotoStudioView: View {
                         }
                     }
                 }
+                // New AI edits and deletions settle into the grid instead of
+                // popping — keyed on count so only inserts/removes animate.
+                .animation(.spring(response: 0.35, dampingFraction: 0.85), value: photos.count)
 
                 if !photos.isEmpty {
                     ShareLink(items: photos.map { $0.enhancedURL }) {
@@ -1335,7 +1338,7 @@ struct SuggestSheet: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("\(Self.friendlyName(s.edit)). \(s.reason)"))
     }
 }
@@ -2004,7 +2007,7 @@ struct ReelStudioView: View {
                 }
             }
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text(order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
     }

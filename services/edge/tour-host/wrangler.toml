@@ -44,5 +44,13 @@ SUPABASE_FUNCTIONS_URL = "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1"
 # 0 disables the edge cache. Default is 60 when unset.
 TOUR_CACHE_TTL = "60"
 
+# Cloudflare Turnstile SITE key (PUBLIC — safe to commit). When set, the tour
+# lead form renders the Turnstile widget. Create a widget at
+# Cloudflare dash → Turnstile, then paste the site key here and set the matching
+# SECRET on the Supabase leads function:
+#   npx supabase secrets set TURNSTILE_SECRET_KEY=<secret>   (or the dashboard)
+# Both must be set to activate bot protection; until then it's a no-op.
+# TURNSTILE_SITE_KEY = "0x4AAAAAAA..."
+
 [observability]
 enabled = true
