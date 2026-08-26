@@ -497,3 +497,12 @@ html.theme-switch, html.theme-switch *, html.theme-switch *::before, html.theme-
   .plx-wrap img { transform: none; }
   * { transition-duration: .01ms !important; }
 }
+
+/* ---------- Logo mark (real Rendprop arrow) + footer brand family ---------- */
+img.brand-dot { background: none; object-fit: contain; padding: 0; }
+.foot-brands { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 14px 0 4px;
+  color: var(--faint); font-size: 12.5px; }
+.foot-brands a { color: var(--dim); text-decoration: none; display: inline-flex; align-items: center;
+  opacity: .82; transition: opacity .2s var(--ease-out); }
+.foot-brands a:hover { opacity: 1; }
+.foot-brands img { height: 15px; width: auto; display: block; }

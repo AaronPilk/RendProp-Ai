@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Rendprop">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+    <linearGradient id="rpbg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#9b6dff"/>
       <stop offset="1" stop-color="#7c3aed"/>
     </linearGradient>
   </defs>
-  <rect width="64" height="64" rx="16" fill="url(#g)"/>
+  <rect width="64" height="64" rx="16" fill="url(#rpbg)"/>
   <path d="M15 47 C 26 51, 27 34, 33 26 C 37 20.5, 41 18.5, 46 15.5"
         fill="none" stroke="#fff" stroke-width="6.4" stroke-linecap="round" stroke-linejoin="round"/>
   <path d="M40.5 13.5 L 51 11 L 48.5 21.5 Z" fill="#fff"/>
