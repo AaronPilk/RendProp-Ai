@@ -1442,6 +1442,7 @@ struct AerialIntroSheet: View {
     let listing: Listing
 
     @State private var seconds = 8
+    @State private var styleHint = ""
     @State private var isGenerating = false
     @State private var statusText = "Submitting…"
     @State private var clipURL: URL?
@@ -1490,10 +1491,23 @@ struct AerialIntroSheet: View {
                     }
 
                     if let errorMessage {
-                        Text(errorMessage)
-                            .font(.rpCaption)
-                            .foregroundStyle(Theme.warn)
-                            .multilineTextAlignment(.center)
+                        // Loud, unmissable failure state — a quiet caption here
+                        // read as "it never finished" in testing (2026-08-26).
+                        VStack(alignment: .leading, spacing: 6) {
+                            Label("That one didn't generate", systemImage: "exclamationmark.triangle.fill")
+                                .font(.rpHeadline)
+                                .foregroundStyle(Theme.warn)
+                            Text(errorMessage)
+                                .font(.rpCaption)
+                                .foregroundStyle(Theme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Tweak the look below and generate again — retries are free while it fails.")
+                                .font(.rpCaption)
+                                .foregroundStyle(Theme.inkDim)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(14)
+                        .background(Theme.warn.opacity(0.12), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                 }
                 .padding()
@@ -1514,6 +1528,20 @@ struct AerialIntroSheet: View {
 
     @ViewBuilder private var formSection: some View {
         if available {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("LOOK & FEEL").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                TextField("e.g. modern two-story home with a pool, palm trees",
+                          text: $styleHint, axis: .vertical)
+                    .lineLimit(2...3)
+                    .textFieldStyle(.roundedBorder)
+                Text("Describe the kind of property to fly toward — the AI invents the scenery, so this is how you steer it. Leave blank for a classic golden-hour home.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+
             VStack(alignment: .leading, spacing: 10) {
                 Text("LENGTH").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 Picker("Length", selection: $seconds) {
@@ -1569,7 +1597,7 @@ struct AerialIntroSheet: View {
             Text(statusText)
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
-            Text("Usually about a minute. Keep this sheet open — the clip downloads the moment it's ready.")
+            Text("Usually 1–3 minutes. Keep this sheet open — the clip downloads the moment it's ready.")
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
@@ -1626,12 +1654,13 @@ struct AerialIntroSheet: View {
         statusText = "Submitting…"
         Haptics.selection()
         let api = model.api          // snapshot on the main actor
-        let address = listing.address
+        let style = styleHint.trimmingCharacters(in: .whitespacesAndNewlines)
         let secs = seconds
         let listingID = listing.id
         workTask = Task {
             do {
-                let job = try await api.aiVideoAerial(address: address, prompt: nil,
+                let job = try await api.aiVideoAerial(style: style.isEmpty ? nil : style,
+                                                      prompt: nil,
                                                       seconds: secs, aspect: "16:9")
                 let deadline = Date().addingTimeInterval(10 * 60)
                 var remoteURL: URL?

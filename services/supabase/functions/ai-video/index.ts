@@ -103,6 +103,9 @@ interface DeclutterBody {
 interface AerialBody {
   prompt?: string;
   address?: string;
+  /** Optional look-and-feel hint ("modern glass house with a pool, golden
+   *  hour") woven into the guarded default prompt. ≤ 200 chars. */
+  style?: string;
   seconds?: number;
   aspect?: string;
 }
@@ -182,13 +185,19 @@ Deno.serve(async (req) => {
       const wanted = Number(body.seconds ?? 8);
       const duration = wanted <= 4 ? "4s" : wanted <= 6 ? "6s" : "8s";
 
-      const address = (body.address ?? "").trim();
+      // NOTE (2026-08-26 fix): the street address is deliberately NOT put in the
+      // prompt anymore. Veo's safety filter can reject prompts that name real
+      // residential addresses (reads as location/PII), which failed jobs within
+      // seconds — and the address added nothing visually since the model has
+      // never seen the property. `address` is still accepted for back-compat
+      // but ignored. An optional `style` hint personalizes the look instead.
+      const style = (body.style ?? "").trim().slice(0, 200)
+        .replace(/[\r\n]+/g, " ");
       // Anti-hallucination scaffolding: t2v aerials drift into morphing houses
       // and toy-town scale — pin one consistent property with stable geometry.
       const prompt = cleanPrompt(body.prompt) ??
         ("Cinematic aerial drone establishing shot, slowly descending and gliding toward a " +
-          "beautiful residential property" +
-          (address ? `, a home like the one at ${address}` : "") +
+          (style ? `beautiful residential property — ${style} — ` : "beautiful residential property") +
           ". One single consistent property for the entire shot — the same house, roofline, " +
           "lot, and street throughout, with stable, coherent geometry and no morphing or " +
           "warping structures. Realistic suburban scale and proportions. Golden-hour light, " +
@@ -278,8 +287,11 @@ Deno.serve(async (req) => {
         return json({ status: "completed", video_url: videoUrl });
       }
 
-      // FAILED / ERROR / anything unexpected.
-      return json({ status: "failed", error: await failureError(st, responseUrl) });
+      // FAILED / ERROR / anything unexpected. Log the provider's reason so
+      // failures are diagnosable from the function logs (audit follow-up).
+      const failMsg = await failureError(st, responseUrl);
+      console.error("ai-video job failed:", failMsg);
+      return json({ status: "failed", error: failMsg });
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);

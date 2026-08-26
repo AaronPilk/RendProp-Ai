@@ -153,6 +153,15 @@ struct PlayerWebView: UIViewRepresentable {
             html = html.replacingOccurrences(of: "Demo Realty Group · (555) 012-3456",
                                              with: htmlEscape(agent.brokerageLine))
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
+
+            // Social row — website + socials, same as localPreviewHTML. Without
+            // this the demo's end card dropped the Website link (bug 2026-08-26).
+            var socialLinks = [String]()
+            if let u = agent.websiteURL   { socialLinks.append(anchor(u, agent.websiteDisplay.isEmpty ? "Website" : agent.websiteDisplay)) }
+            if let u = agent.instagramURL { socialLinks.append(anchor(u, "Instagram")) }
+            if let u = agent.linkedinURL  { socialLinks.append(anchor(u, "LinkedIn")) }
+            if let u = agent.tiktokURL    { socialLinks.append(anchor(u, "TikTok")) }
+            html = html.replacingOccurrences(of: "<!--SOCIAL-->", with: socialLinks.joined())
             if let b64 = agent.headshotBase64 {
                 html = html.replacingOccurrences(
                     of: "<div class=\"avatar\">SM</div>",

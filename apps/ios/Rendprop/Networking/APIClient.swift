@@ -169,10 +169,13 @@ protocol APIClient: Sendable {
     /// `tier` = "1080p60" | "4k30" | "4k60". Returns the queued job to poll.
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob
 
-    /// POST /ai-video/aerial — SYNTHETIC AI establishing shot (Veo), inspired by
-    /// the address. `seconds` snaps to 4/6/8; `aspect` = "16:9" | "9:16".
+    /// POST /ai-video/aerial — SYNTHETIC AI establishing shot (Veo). `style` is
+    /// an optional look-and-feel hint ("modern glass house with a pool") woven
+    /// into the server's guarded prompt; the street address is deliberately NOT
+    /// sent — Veo's safety filter rejects prompts naming real addresses, and it
+    /// adds nothing visually. `seconds` snaps to 4/6/8; `aspect` = "16:9"|"9:16".
     /// The UI must always disclose the result as AI-generated footage.
-    func aiVideoAerial(address: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob
+    func aiVideoAerial(style: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob
 
     /// POST /ai-video/reel-clip — animate a photo (base64) into a 2–12 s motion
     /// clip (Seedance image-to-video).

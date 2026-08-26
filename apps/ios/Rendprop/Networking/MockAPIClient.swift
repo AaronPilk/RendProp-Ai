@@ -129,7 +129,7 @@ actor MockAPIClient: APIClient {
         Self.mockAIVideoJob(kind: "drone")
     }
 
-    func aiVideoAerial(address: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
+    func aiVideoAerial(style: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
         Self.mockAIVideoJob(kind: "aerial")
     }
 

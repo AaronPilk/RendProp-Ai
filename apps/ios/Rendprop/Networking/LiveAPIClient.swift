@@ -307,10 +307,12 @@ final class LiveAPIClient: APIClient {
         return try await submitAIVideo(path: "drone", body: body, fallbackKind: "drone")
     }
 
-    func aiVideoAerial(address: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
+    func aiVideoAerial(style: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
         var body: [String: Any] = ["seconds": seconds, "aspect": aspect]
-        if let address, !address.trimmingCharacters(in: .whitespaces).isEmpty {
-            body["address"] = address
+        // No address on the wire (2026-08-26): Veo's safety filter can reject
+        // prompts that name real residential addresses — jobs failed in seconds.
+        if let style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
+            body["style"] = String(style.prefix(200))
         }
         if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
             body["prompt"] = prompt

@@ -927,6 +927,18 @@ struct ProfileView: View {
             .onAppear {
                 card = AgentCard.current
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+                // Heal older installs: push the card into the org brand kit so
+                // HOSTED tour pages show it (website link included) without
+                // requiring an edit first. Cheap, idempotent, fire-and-forget.
+                if card.isSet, Config.useLiveBackend, AuthStore.currentAccessToken != nil {
+                    let fields: [String: String] = [
+                        "name": card.name, "brokerage": card.brokerage, "phone": card.phone,
+                        "email": card.email, "website": card.website,
+                        "instagram": card.instagram, "linkedin": card.linkedin, "tiktok": card.tiktok,
+                    ]
+                    let api = model.api
+                    Task.detached { try? await api.updateBrand(fields) }
+                }
             }
             .onChange(of: spaceTypeRaw) { _ in
                 card = AgentCard.current   // load THIS industry's card

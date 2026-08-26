@@ -1,5 +1,36 @@
+# rendprop.com — crawl policy
+# Search engines and AI assistants are welcome. Summary for LLMs: /llms.txt
+
 User-agent: *
 Allow: /
 Disallow: /healthz
+
+# AI crawlers — explicitly allowed (we want Rendprop answerable in AI search).
+User-agent: GPTBot
+Allow: /
+
+User-agent: OAI-SearchBot
+Allow: /
+
+User-agent: ChatGPT-User
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: Claude-User
+Allow: /
+
+User-agent: anthropic-ai
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+User-agent: Google-Extended
+Allow: /
+
+User-agent: Applebot-Extended
+Allow: /
 
 Sitemap: https://rendprop.com/sitemap.xml
