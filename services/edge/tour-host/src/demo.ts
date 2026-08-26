@@ -35,6 +35,8 @@ export function buildDemoTour(): Tour {
         acres: "0.7",
         garage: "4-car",
         frontage: "180'",
+        reel_url: "https://pilk.ai/experience/clips/intro.mp4",
+        reel_poster: "/assets/hero-twilight-modern-home.webp",
         story:
           "Set on a private ridge above the canyon, 1180 Crestline was designed around a single idea: erase the wall between the house and the view. Floor-to-ceiling glass slides fully away, so the great room, the pool deck, and the horizon become one continuous space.\n\n" +
           "Materials were chosen for how they age — wide-plank European oak that warms with time, honed stone cut from a single block, bronze and glass detailing that catches the evening light. Nothing here is loud. Everything is considered.\n\n" +

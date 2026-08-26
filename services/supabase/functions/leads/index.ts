@@ -131,34 +131,48 @@ Deno.serve(async (req) => {
 
     const admin = adminClient();
 
-    // Resolve the published render for this slug.
-    const { data: render, error: rErr } = await admin
-      .from("renders")
-      .select("id, listing_id")
-      .eq("slug", body.slug)
-      .not("published_at", "is", null)
-      .maybeSingle();
-    if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
-    if (!render) throw new HttpError(404, "Tour not found");
+    // The public demo tour (rendprop.com/f/estate-demo) has no DB render row —
+    // it's rendered from a hardcoded Tour. Still capture its leads (they route to
+    // GHL like any other), tagged source "tour-demo", with null render/listing.
+    const isDemo = body.slug === "estate-demo" || body.slug === "demo";
 
-    // org via the listing.
-    const { data: listing } = await admin
-      .from("listings")
-      .select("id, org_id")
-      .eq("id", render.listing_id)
-      .maybeSingle();
+    let renderId: string | null = null;
+    let listingId: string | null = null;
+    let orgId: string | null = null;
+
+    if (!isDemo) {
+      // Resolve the published render for this slug.
+      const { data: render, error: rErr } = await admin
+        .from("renders")
+        .select("id, listing_id")
+        .eq("slug", body.slug)
+        .not("published_at", "is", null)
+        .maybeSingle();
+      if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
+      if (!render) throw new HttpError(404, "Tour not found");
+      renderId = render.id as string;
+      listingId = render.listing_id as string;
+
+      // org via the listing.
+      const { data: listing } = await admin
+        .from("listings")
+        .select("id, org_id")
+        .eq("id", render.listing_id)
+        .maybeSingle();
+      orgId = (listing?.org_id as string | null) ?? null;
+    }
 
     const { data: lead, error: insErr } = await admin
       .from("leads")
       .insert({
-        render_id: render.id,
-        listing_id: render.listing_id,
-        org_id: listing?.org_id ?? null,
+        render_id: renderId,
+        listing_id: listingId,
+        org_id: orgId,
         name: body.name ?? null,
         phone: body.phone ?? null,
         email: body.email ?? null,
         extra: body.extra ?? {},
-        source: "tour",
+        source: isDemo ? "tour-demo" : "tour",
         synced_crm: false,
       })
       .select("id")

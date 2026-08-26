@@ -644,8 +644,8 @@ interface PromoItem { name: string; tagline: string; url: string; }
 const PROMO: { mortgage: PromoItem; agency: PromoItem; partner: PromoItem } = {
   mortgage: {
     name: "Wholesale Mortgage Lending",
-    tagline: "Get pre-approved fast with a dedicated lending partner.",
-    url: "https://pilk.ai/mortgage/",
+    tagline: "Get pre-approved fast with our in-house lending team.",
+    url: "https://wsmlending.com/",
   },
   agency: {
     name: "Pilk.ai",
@@ -654,8 +654,8 @@ const PROMO: { mortgage: PromoItem; agency: PromoItem; partner: PromoItem } = {
   },
   partner: {
     name: "Tract",
-    tagline: "Smarter tools for real estate teams.",
-    url: "https://pilk.ai/",
+    tagline: "The all-in-one real estate platform we built.",
+    url: "https://tractrealestate.com/",
   },
 };
 
@@ -789,6 +789,23 @@ function sec(id: string, eyebrow: string, title: string, inner: string): string 
   </div></section>`;
 }
 
+/** Vertical social reel — the auto-made cut, ready to post. Shows only when a
+ *  reel_url is set on the listing (details.reel_url). Tap-to-play so it never
+ *  fights the scroll-scrub hero for autoplay/bandwidth. */
+function reelSection(tour: Tour): string {
+  const reel = detStr(tour, "reel_url", "reel");
+  if (!reel) return "";
+  const poster = detStr(tour, "reel_poster", "reel_thumb");
+  return `<section class="lp-sec" id="reel"><div class="lp-wrap">
+    <div class="lp-eyebrow">Social reel</div>
+    <h2 class="lp-h">The vertical cut, ready to post</h2>
+    <p class="lp-tag">Auto-made from this listing — drop it straight onto Reels, TikTok, or Shorts.</p>
+    <div class="lp-reel-wrap"><div class="lp-phone">
+      <video class="lp-reelvid" src="${escapeAttr(reel)}"${poster ? ` poster="${escapeAttr(poster)}"` : ""} controls playsinline preload="none" loop></video>
+    </div></div>
+  </div></section>`;
+}
+
 /** The full editorial page below the flythrough. */
 function renderListingSections(tour: Tour): string {
   const l = tour.listing;
@@ -824,6 +841,9 @@ function renderListingSections(tour: Tour): string {
     out.push(sec("gallery", "Inside the tour", "Every room, one scroll",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>`).join("")}</div>`));
   }
+
+  // Social reel (vertical cut) — appears when a reel_url is set.
+  out.push(reelSection(tour));
 
   // Features & finishes.
   const groups = featureGroups(tour);
@@ -940,6 +960,11 @@ const EDITORIAL_CSS = `
   @media (hover:hover) and (pointer:fine) { .lp-btn:hover { transform:translateY(-2px); box-shadow:0 16px 40px rgba(124,58,237,.45); } }
   .lp-btn:active { transform:scale(.98); }
   .lp-fine { color:var(--faint); font-size:12px; line-height:1.5; margin-top:16px; max-width:44em; }
+  /* Social reel — vertical phone frame */
+  .lp-reel-wrap { display:flex; justify-content:center; margin-top:10px; }
+  .lp-phone { width:min(300px,78vw); aspect-ratio:9/16; border-radius:30px; overflow:hidden;
+    border:1px solid rgba(255,255,255,.12); background:#000; box-shadow:0 30px 80px rgba(0,0,0,.5); }
+  .lp-reelvid { width:100%; height:100%; object-fit:cover; display:block; background:#000; }
   /* Endcard cohesion with the editorial flow + white CTA text on purple. */
   #endcard { background:var(--bg) !important; }
   .panel .cta, .cta { color:#fff !important; }

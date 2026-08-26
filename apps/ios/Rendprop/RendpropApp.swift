@@ -866,9 +866,9 @@ struct HomeDashboardView: View {
                 partnerRow("Pilk.ai", "Custom sites, apps & AI marketing systems",
                            "sparkles", "https://pilk.ai/")
                 partnerRow("Wholesale Mortgage Lending", "Get your buyers pre-approved fast",
-                           "banknote", "https://pilk.ai/mortgage/")
-                partnerRow("Tract", "Smarter tools for real estate teams",
-                           "map", "https://pilk.ai/")
+                           "banknote", "https://wsmlending.com/")
+                partnerRow("Tract", "The real estate system we built",
+                           "map", "https://tractrealestate.com/")
             }
         }
     }

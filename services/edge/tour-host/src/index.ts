@@ -102,12 +102,15 @@ async function handleTour(slug: string, req: Request, url: URL, env: Env, ctx: E
   // in-app Home demo). demo:true makes the lead form confirm locally.
   if (isDemoSlug(slug)) {
     const t = ttl(env);
+    // demo:false so the Book-a-showing form posts for real — the leads function
+    // has a demo-slug branch that captures it (source "tour-demo") without a DB
+    // render row. embed=1 still renders just the flythrough for the in-app card.
     const html = renderTourPage(
       buildDemoTour(),
       functionsBase(env),
       env.SUPABASE_ANON_KEY || "",
       env.TURNSTILE_SITE_KEY || "",
-      { embed, demo: true },
+      { embed },
     );
     const resp = htmlResponse(html, 200, { "Cache-Control": `public, max-age=${t}, s-maxage=${t}` });
     if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
