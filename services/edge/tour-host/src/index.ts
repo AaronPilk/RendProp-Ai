@@ -180,12 +180,66 @@ export default {
 
     if (path === "/healthz") return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
 
-    // The routes only send /f/* and /a/*, but be friendly if the Worker is hit
-    // directly (e.g. `wrangler dev`): bare / and /f, /a → marketing site.
+    // Root: the Worker now owns the whole domain (catch-all route), so serve a
+    // real landing page here — a redirect to the apex would loop forever.
     if (path === "/" || path === "/f" || path === "/a") {
-      return Response.redirect("https://rendprop.com", 302);
+      const resp = htmlResponse(landingPage(), 200, {
+        "Cache-Control": "public, max-age=300",
+      });
+      return req.method === "HEAD" ? new Response(null, resp) : resp;
     }
 
     return htmlResponse(notFoundPage(), 404);
   },
 } satisfies ExportedHandler<Env>;
+
+/** Minimal branded landing for the apex domain until the marketing site ships. */
+function landingPage(): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Rendprop — drone-style tours from a phone walkthrough</title>
+<meta name="description" content="Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style tour buyers scroll through — with AI photos, reels, and floor plans.">
+<meta name="theme-color" content="#0e0d14">
+<style>
+  :root { --accent:#7c3aed; --accent2:#9b6dff; --bg:#faf9fc; --ink:#1c192d; --dim:rgba(28,25,45,.6); --card:#fff; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0e0d14; --ink:#f2f0fa; --dim:rgba(242,240,250,.6); --card:#1a1825; --accent:#9b6dff; }
+  }
+  * { margin:0; box-sizing:border-box; }
+  body { font:16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+         background:var(--bg); color:var(--ink); min-height:100svh;
+         display:flex; flex-direction:column; align-items:center; justify-content:center;
+         text-align:center; padding:32px 20px; }
+  .mark { font-weight:800; letter-spacing:.28em; font-size:13px; color:var(--accent); margin-bottom:28px; }
+  h1 { font-size:clamp(30px,6vw,52px); line-height:1.12; font-weight:800; max-width:16em;
+       background:linear-gradient(120deg, var(--accent), var(--accent2)); -webkit-background-clip:text;
+       background-clip:text; -webkit-text-fill-color:transparent; }
+  p.sub { max-width:34em; color:var(--dim); margin:18px auto 30px; font-size:clamp(15px,2.4vw,18px); }
+  .pill { display:inline-block; padding:12px 22px; border-radius:999px; font-weight:700;
+          background:var(--accent); color:#fff; text-decoration:none; }
+  .soon { display:inline-block; margin-left:10px; padding:12px 18px; border-radius:999px;
+          font-weight:600; color:var(--accent); background:color-mix(in srgb, var(--accent) 12%, transparent);
+          text-decoration:none; }
+  footer { margin-top:56px; font-size:13px; color:var(--dim); }
+  footer a { color:var(--dim); text-decoration:none; margin:0 8px; }
+  footer a:hover { color:var(--accent); }
+</style>
+</head>
+<body>
+  <div class="mark">RENDPROP</div>
+  <h1>Film it on your phone.<br>Show it like a film.</h1>
+  <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
+  photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
+  <div>
+    <a class="pill" href="mailto:aaron@skyway.media">Get early access</a>
+    <span class="soon">iOS app — coming soon</span>
+  </div>
+  <footer>
+    <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:aaron@skyway.media">Contact</a>
+  </footer>
+</body>
+</html>`;
+}

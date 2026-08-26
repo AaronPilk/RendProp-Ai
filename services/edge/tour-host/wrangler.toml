@@ -9,11 +9,12 @@ workers_dev = true
 # tour-host owns /f/*, /a/*, and the legal pages (/terms, /privacy — linked
 # from the iOS app's Settings); the marketing site keeps everything else.
 # ---------------------------------------------------------------------------
+# Catch-all: the Worker owns the whole apex (serves the landing page at /,
+# tours at /f/*, portfolios at /a/*, and the legal pages). Without this, any
+# un-routed path (like the bare domain) falls through to the placeholder DNS
+# record and 525s.
 routes = [
-  { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
-  { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
-  { pattern = "rendprop.com/terms*", zone_name = "rendprop.com" },
-  { pattern = "rendprop.com/privacy*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
 ]
 
 [vars]
