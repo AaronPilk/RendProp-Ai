@@ -180,9 +180,14 @@ export default {
 
     if (path === "/healthz") return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
 
-    // Root: the Worker now owns the whole domain (catch-all route), so serve a
-    // real landing page here — a redirect to the apex would loop forever.
-    if (path === "/" || path === "/f" || path === "/a") {
+    // Bare /f and /a aren't tours — send them to the marketing site.
+    if (path === "/f" || path === "/a") {
+      return Response.redirect(`${url.origin}/`, 302);
+    }
+
+    // Root: normally served by the static assets (public/index.html) before the
+    // Worker ever runs. This branch is a safety net in case assets are missing.
+    if (path === "/") {
       const resp = htmlResponse(landingPage(), 200, {
         "Cache-Control": "public, max-age=300",
       });
@@ -234,11 +239,11 @@ function landingPage(): string {
   <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
   photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
   <div>
-    <a class="pill" href="mailto:aaron@skyway.media">Get early access</a>
+    <a class="pill" href="mailto:aaron@pilk.ai">Get early access</a>
     <span class="soon">iOS app — coming soon</span>
   </div>
   <footer>
-    <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:aaron@skyway.media">Contact</a>
+    <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:aaron@pilk.ai">Contact</a>
   </footer>
 </body>
 </html>`;

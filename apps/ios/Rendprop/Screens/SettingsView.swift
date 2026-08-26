@@ -654,7 +654,7 @@ struct AgentCard {
 
     var firstName: String { name.split(separator: " ").first.map(String.init) ?? "there" }
 
-    /// "Skyway Realty Group · (555) 012-3456" — drops whichever part is empty.
+    /// "Demo Realty Group · (555) 012-3456" — drops whichever part is empty.
     var brokerageLine: String {
         [brokerage, phone].map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }

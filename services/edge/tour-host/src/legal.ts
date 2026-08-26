@@ -10,7 +10,7 @@
 // light/dark via prefers-color-scheme.
 
 const EFFECTIVE_DATE = "August 26, 2026";
-const CONTACT_EMAIL = "aaron@skyway.media";
+const CONTACT_EMAIL = "aaron@pilk.ai";
 
 const LEGAL_CSS = `
   :root {

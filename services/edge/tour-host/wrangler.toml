@@ -17,6 +17,15 @@ routes = [
   { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
 ]
 
+# ---------------------------------------------------------------------------
+# Static assets — the marketing site. Requests that exactly match a file in
+# ./public (/, /assets/*, /favicon.svg, /robots.txt, /sitemap.xml) are served
+# directly from the edge; everything else (e.g. /f/*, /a/*, /terms, /privacy)
+# falls through to the Worker script.
+# ---------------------------------------------------------------------------
+[assets]
+directory = "./public"
+
 [vars]
 # Base URL of the Supabase Edge Functions (no trailing slash needed).
 SUPABASE_FUNCTIONS_URL = "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1"

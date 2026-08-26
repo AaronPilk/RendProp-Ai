@@ -150,7 +150,7 @@ struct PlayerWebView: UIViewRepresentable {
         // Agent card (same treatment as real tours).
         if agent.isSet {
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
-            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+            html = html.replacingOccurrences(of: "Demo Realty Group · (555) 012-3456",
                                              with: htmlEscape(agent.brokerageLine))
             html = html.replacingOccurrences(of: "Sarah will", with: "\(htmlEscape(agent.firstName)) will")
             if let b64 = agent.headshotBase64 {
@@ -171,7 +171,7 @@ struct PlayerWebView: UIViewRepresentable {
             // Sample tour, no business card yet: show the sample BUSINESS's
             // identity — never the demo real-estate agent on a venue/gym/bar.
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(name))
-            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+            html = html.replacingOccurrences(of: "Demo Realty Group · (555) 012-3456",
                                              with: htmlEscape(sub))
             html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(businessInitials(name)))<")
         }
@@ -246,7 +246,7 @@ struct PlayerWebView: UIViewRepresentable {
         //    they look complete — but a REAL listing hides it (see else below).
         if agent.isSet {
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(agent.name))
-            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+            html = html.replacingOccurrences(of: "Demo Realty Group · (555) 012-3456",
                                              with: htmlEscape(agent.brokerageLine))
 
             // Social row: website + Instagram + LinkedIn + TikTok (whichever are set)
@@ -283,7 +283,7 @@ struct PlayerWebView: UIViewRepresentable {
                 .replacingOccurrences(of: " (Sample)", with: "")
             let line = listing?.tagline ?? SpaceType.current.sampleListings.first?.tagline ?? ""
             html = html.replacingOccurrences(of: "Sarah Mitchell", with: htmlEscape(biz))
-            html = html.replacingOccurrences(of: "Skyway Realty Group · (555) 012-3456",
+            html = html.replacingOccurrences(of: "Demo Realty Group · (555) 012-3456",
                                              with: htmlEscape(line))
             html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(businessInitials(biz)))<")
         }

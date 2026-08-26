@@ -71,7 +71,7 @@ Notes: motion/gyro data is processed on-device for stabilization and not collect
 - [ ] Keywords: real estate tour, virtual tour, listing video, property video, virtual staging, walkthrough, open house
 - [ ] Support URL: `https://rendprop.com` · Marketing URL (optional): same
 - [ ] Privacy Policy URL: `https://rendprop.com/privacy` (**must be live — see §1**)
-- [ ] Copyright: 2026 Skyway Media
+- [ ] Copyright: 2026 Rendprop
 
 ## 7. App Review Information (copy-paste template)
 
@@ -87,7 +87,7 @@ Sign-in required: **No demo account needed** — the app is fully usable as a gu
 >
 > AI-GENERATED CONTENT DISCLOSURE: Optional AI features (virtual staging, declutter, aerial intro shots) produce synthetic imagery. Any tour altered by AI displays a persistent "Virtually staged" label to viewers, and aerial intros are presented as AI-generated in-app. Prices shown next to render tiers are informational; nothing is charged in this version ("Included with your plan during early access").
 >
-> Contact: aaron@skyway.media
+> Contact: aaron@pilk.ai
 
 - [ ] Attach a phone number in the review contact fields
 
