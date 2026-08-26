@@ -459,6 +459,19 @@ struct HomeDashboardView: View {
     /// Best listing to open a feature on: the user's own, else the demo.
     private var heroListing: Listing? { firstRealListing ?? demoListing }
 
+    /// The hosted demo listing page (real estate only). The Home card shows just
+    /// the flythrough hero (?embed=1); "Open the full demo tour" opens the whole
+    /// auto-generated listing microsite — exactly what buyers get from a shared
+    /// link. Other business types keep the bundled sample player.
+    private var estateDemoEmbedURL: URL? {
+        SpaceType.current == .realEstate
+            ? URL(string: "https://rendprop.com/f/estate-demo?embed=1") : nil
+    }
+    private var estateDemoFullURL: URL? {
+        SpaceType.current == .realEstate
+            ? URL(string: "https://rendprop.com/f/estate-demo") : nil
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
@@ -477,8 +490,10 @@ struct HomeDashboardView: View {
                     tutorialsSection
                         .modifier(Reveal(index: 4, on: revealed))
                 }
-                listingsShortcut
+                partnersSection
                     .modifier(Reveal(index: 5, on: revealed))
+                listingsShortcut
+                    .modifier(Reveal(index: 6, on: revealed))
             }
             .padding()
             // The whole tab re-themes when the business type changes (top-left menu).
@@ -596,7 +611,13 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: 10) {
                 sectionTitle("See it in action")
                 ZStack(alignment: .topTrailing) {
-                    PlayerWebView(listing: demo)
+                    Group {
+                        if let url = estateDemoEmbedURL {
+                            PlayerWebView(remoteURL: url)   // hosted estate flythrough
+                        } else {
+                            PlayerWebView(listing: demo)    // bundled sample (other types)
+                        }
+                    }
                         .id(spaceTypeRaw)   // demo re-renders when the business type changes
                         .frame(height: 300)
                         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
@@ -615,7 +636,18 @@ struct HomeDashboardView: View {
                 Label("Scroll inside the video — this is the tour your \(customer) get.",
                       systemImage: "arrow.up.arrow.down")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                NavigationLink { FlythroughDetailView(listing: demo) } label: {
+                NavigationLink {
+                    if let url = estateDemoFullURL {
+                        // The full hosted listing microsite — flythrough → the
+                        // whole auto-built landing page buyers scroll.
+                        PlayerWebView(remoteURL: url)
+                            .ignoresSafeArea(edges: .bottom)
+                            .navigationTitle("Demo listing page")
+                            .navigationBarTitleDisplayMode(.inline)
+                    } else {
+                        FlythroughDetailView(listing: demo)
+                    }
+                } label: {
                     HStack {
                         Label("Open the full demo tour", systemImage: "play.rectangle.fill")
                             .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
@@ -820,6 +852,48 @@ struct HomeDashboardView: View {
                 Image(systemName: "chevron.right").font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
             .padding(16)
+            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+    }
+
+    // MARK: More from us — the Pilk.ai family, quietly cross-promoted
+
+    private var partnersSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            sectionTitle("More from us")
+            VStack(spacing: 10) {
+                partnerRow("Pilk.ai", "Custom sites, apps & AI marketing systems",
+                           "sparkles", "https://pilk.ai/")
+                partnerRow("Wholesale Mortgage Lending", "Get your buyers pre-approved fast",
+                           "banknote", "https://pilk.ai/mortgage/")
+                partnerRow("Tract", "Smarter tools for real estate teams",
+                           "map", "https://pilk.ai/")
+            }
+        }
+    }
+
+    private func partnerRow(_ name: String, _ sub: String, _ icon: String, _ urlString: String) -> some View {
+        Link(destination: URL(string: urlString) ?? URL(string: "https://pilk.ai/")!) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 42, height: 42)
+                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.rpHeadline).foregroundStyle(Theme.ink)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                    Text(sub).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "arrow.up.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
         .buttonStyle(ScalePressStyle())

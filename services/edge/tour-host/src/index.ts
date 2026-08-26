@@ -15,6 +15,7 @@
 // Routes are bound in wrangler.toml: rendprop.com/f/* and rendprop.com/a/*.
 
 import type { Env, Portfolio, Tour } from "./types";
+import { buildDemoTour, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
 import { renderTourPage } from "./player";
@@ -87,10 +88,31 @@ async function handleTour(slug: string, req: Request, url: URL, env: Env, ctx: E
   // Slugs are nanoid (base64url) — reject anything else fast.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) return htmlResponse(notFoundPage(), 404);
 
+  // ?embed=1 renders ONLY the flythrough hero (for the in-app "See it in
+  // action" card); the full page is served otherwise. Keep separate cache keys.
+  const embed = url.searchParams.has("embed");
+
   const cache = caches.default;
-  const key = cacheKeyFor(url, `/f/${slug}`);
+  const key = cacheKeyFor(url, `/f/${slug}${embed ? "?embed=1" : ""}`);
   const hit = await cache.match(key);
   if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+
+  // Demo tour — self-contained, no DB. Renders through the SAME renderer a real
+  // listing uses, so rendprop.com/f/estate-demo IS the product (and powers the
+  // in-app Home demo). demo:true makes the lead form confirm locally.
+  if (isDemoSlug(slug)) {
+    const t = ttl(env);
+    const html = renderTourPage(
+      buildDemoTour(),
+      functionsBase(env),
+      env.SUPABASE_ANON_KEY || "",
+      env.TURNSTILE_SITE_KEY || "",
+      { embed, demo: true },
+    );
+    const resp = htmlResponse(html, 200, { "Cache-Control": `public, max-age=${t}, s-maxage=${t}` });
+    if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
 
   let upstream: Response;
   try {
@@ -117,7 +139,7 @@ async function handleTour(slug: string, req: Request, url: URL, env: Env, ctx: E
   }
 
   const t = ttl(env);
-  const html = renderTourPage(tour, functionsBase(env), env.SUPABASE_ANON_KEY || "", env.TURNSTILE_SITE_KEY || "");
+  const html = renderTourPage(tour, functionsBase(env), env.SUPABASE_ANON_KEY || "", env.TURNSTILE_SITE_KEY || "", { embed });
   const resp = htmlResponse(html, 200, {
     "Cache-Control": `public, max-age=${t}, s-maxage=${t}`,
   });

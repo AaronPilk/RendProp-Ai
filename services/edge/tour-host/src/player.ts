@@ -25,6 +25,7 @@ import {
   escapeAttr,
   escapeHtml,
   extractAgent,
+  first,
   humanize,
   isHlsUrl,
   jsonForScript,
@@ -533,6 +534,14 @@ const ENGINE_JS = `
   if (form){
     form.addEventListener('submit', function(e){
       e.preventDefault();
+      // Demo page: never hit the live leads API (this slug has no DB row) —
+      // just show the confirmation so the booking flow can be shown off.
+      if (CFG.demo){
+        form.style.display = 'none';
+        var okd = document.getElementById('leadok');
+        if (okd) okd.style.display = 'block';
+        return;
+      }
       var fd = new FormData(form);
       var top = { slug: CFG.slug, extra: {} };
       fd.forEach(function(v, k){
@@ -622,11 +631,342 @@ const ENGINE_JS = `
 })();
 `;
 
+// ===========================================================================
+// Listing microsite — the full editorial page rendered BELOW the flythrough.
+// Everything is driven by the listing's own data (core fields + the freeform
+// `details` JSON bag + chapters). Every section hides when its data is absent,
+// so a bare listing renders clean and a rich one becomes a full website. No
+// schema changes: `details` already flows through GET /tours/:slug untouched.
+// ===========================================================================
+
+// House promo — SINGLE SOURCE OF TRUTH. Buyer-facing, tasteful. Edit here.
+interface PromoItem { name: string; tagline: string; url: string; }
+const PROMO: { mortgage: PromoItem; agency: PromoItem; partner: PromoItem } = {
+  mortgage: {
+    name: "Wholesale Mortgage Lending",
+    tagline: "Get pre-approved fast with a dedicated lending partner.",
+    url: "https://pilk.ai/mortgage/",
+  },
+  agency: {
+    name: "Pilk.ai",
+    tagline: "Custom sites, apps, and AI marketing systems for modern brands.",
+    url: "https://pilk.ai/",
+  },
+  partner: {
+    name: "Tract",
+    tagline: "Smarter tools for real estate teams.",
+    url: "https://pilk.ai/",
+  },
+};
+
+// --- details readers (defensive: the bag is freeform jsonb) ---
+function det(tour: Tour, ...keys: string[]): unknown {
+  const d = (tour.listing.details || {}) as Record<string, unknown>;
+  for (const k of keys) if (d[k] != null && d[k] !== "") return d[k];
+  return undefined;
+}
+function detStr(tour: Tour, ...keys: string[]): string {
+  return first(det(tour, ...keys));
+}
+function toLines(v: unknown): string[] {
+  if (Array.isArray(v)) return v.map((x) => first(x)).filter(Boolean);
+  const s = first(v);
+  return s ? s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean) : [];
+}
+function paragraphs(v: unknown): string[] {
+  const s = first(v);
+  return s ? s.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean) : [];
+}
+
+function overviewTiles(tour: Tour): Array<{ v: string; k: string }> {
+  const l = tour.listing;
+  const tiles: Array<{ v: string; k: string }> = [];
+  if (l.beds != null) tiles.push({ v: String(l.beds), k: "Beds" });
+  if (l.baths != null) tiles.push({ v: String(l.baths), k: "Baths" });
+  if (l.sqft != null) tiles.push({ v: fmtInt(l.sqft), k: "Sq Ft" });
+  const extra: Array<[string, string]> = [
+    ["Acres", detStr(tour, "acres", "lot_acres")],
+    ["Lot", detStr(tour, "lot", "lot_size")],
+    ["Year built", detStr(tour, "year_built", "year")],
+    ["Garage", detStr(tour, "garage", "parking")],
+    ["Frontage", detStr(tour, "frontage", "water_frontage")],
+    ["HOA", detStr(tour, "hoa")],
+  ];
+  for (const [k, v] of extra) if (v) tiles.push({ v, k });
+  return tiles;
+}
+
+function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
+  const g = det(tour, "gallery", "photos");
+  const out: Array<{ url: string; label: string }> = [];
+  if (Array.isArray(g)) {
+    for (const it of g) {
+      if (typeof it === "string") { if (it) out.push({ url: it, label: "" }); }
+      else if (it && typeof it === "object") {
+        const o = it as Record<string, unknown>;
+        const url = first(o.url, o.src, o.image);
+        if (url) out.push({ url, label: first(o.label, o.caption, o.name) });
+      }
+    }
+  }
+  return out;
+}
+
+function featureGroups(tour: Tour): Array<{ title: string; items: string[] }> {
+  const f = det(tour, "features", "finishes");
+  const groups: Array<{ title: string; items: string[] }> = [];
+  if (Array.isArray(f)) {
+    const items = f.map((x) => first(x)).filter(Boolean);
+    if (items.length) groups.push({ title: "Highlights", items });
+  } else if (f && typeof f === "object") {
+    for (const [title, val] of Object.entries(f as Record<string, unknown>)) {
+      const items = toLines(val);
+      if (items.length) groups.push({ title: humanize(title), items });
+    }
+  }
+  return groups;
+}
+
+function floorLevels(tour: Tour): Array<{ name: string; sqft: string; blurb: string }> {
+  const fp = det(tour, "floorplan", "floor_plan");
+  const levels = fp && typeof fp === "object" ? (fp as Record<string, unknown>).levels : undefined;
+  const out: Array<{ name: string; sqft: string; blurb: string }> = [];
+  if (Array.isArray(levels)) {
+    for (const lv of levels) {
+      const o = (lv || {}) as Record<string, unknown>;
+      const name = first(o.name, o.level);
+      if (name) out.push({ name, sqft: first(o.sqft, o.area), blurb: first(o.blurb, o.description) });
+    }
+  }
+  return out;
+}
+function floorImage(tour: Tour): string {
+  const fp = det(tour, "floorplan", "floor_plan");
+  const o = fp && typeof fp === "object" ? (fp as Record<string, unknown>) : {};
+  return first(detStr(tour, "floorplan_url", "floor_plan_url"), o.image_url, o.image);
+}
+
+function commuteItems(tour: Tour): Array<{ time: string; label: string }> {
+  const n = det(tour, "neighborhood", "location");
+  let arr: unknown = det(tour, "commute");
+  if (!arr && n && typeof n === "object") arr = (n as Record<string, unknown>).commute;
+  const out: Array<{ time: string; label: string }> = [];
+  if (Array.isArray(arr)) {
+    for (const it of arr) {
+      const o = (it || {}) as Record<string, unknown>;
+      const time = first(o.time, o.minutes);
+      const label = first(o.label, o.place, o.name);
+      if (time || label) out.push({ time, label });
+    }
+  }
+  return out;
+}
+function neighborhoodBlurb(tour: Tour): string {
+  const n = det(tour, "neighborhood", "location");
+  if (typeof n === "string") return n;
+  if (n && typeof n === "object") return first((n as Record<string, unknown>).blurb, (n as Record<string, unknown>).description, (n as Record<string, unknown>).text);
+  return "";
+}
+
+/** Rough monthly P&I for the financing block (illustrative only). */
+function monthlyEstimate(priceCents: number | null | undefined): number | null {
+  if (!priceCents) return null;
+  const price = Number(priceCents) / 100;
+  const down = 0.2, r = 0.065 / 12, n = 360;
+  const loan = price * (1 - down);
+  const m = (loan * r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+  return Number.isFinite(m) ? Math.round(m) : null;
+}
+function usd(n: number): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
+}
+
+function sec(id: string, eyebrow: string, title: string, inner: string): string {
+  return `<section class="lp-sec" id="${id}"><div class="lp-wrap">
+    <div class="lp-eyebrow">${escapeHtml(eyebrow)}</div>
+    <h2 class="lp-h">${escapeHtml(title)}</h2>
+    ${inner}
+  </div></section>`;
+}
+
+/** The full editorial page below the flythrough. */
+function renderListingSections(tour: Tour): string {
+  const l = tour.listing;
+  const isRE = tour.space_type === "real_estate";
+  const out: string[] = [];
+
+  // Overview (always — built from core listing data).
+  const tiles = overviewTiles(tour);
+  const priceBig = l.price ? `<div class="lp-price">${escapeHtml(l.price)}</div>` : "";
+  const heading = l.address ? escapeHtml(l.address) : (l.tagline ? escapeHtml(l.tagline) : escapeHtml(spaceLabel(tour.space_type)));
+  const tagline = l.tagline && l.address ? `<p class="lp-tag">${escapeHtml(l.tagline)}</p>` : "";
+  out.push(`<section class="lp-sec lp-lead" id="overview"><div class="lp-wrap">
+    <div class="lp-eyebrow">${escapeHtml(isRE ? "The residence" : spaceLabel(tour.space_type))}</div>
+    <h2 class="lp-h">${heading}</h2>
+    ${priceBig}
+    ${tagline}
+    ${tiles.length ? `<div class="lp-stats">${tiles.map((t) => `<div class="lp-stat"><span class="v">${escapeHtml(t.v)}</span><span class="k">${escapeHtml(t.k)}</span></div>`).join("")}</div>` : ""}
+  </div></section>`);
+
+  // Story.
+  const story = paragraphs(det(tour, "story", "description", "about"));
+  if (story.length) {
+    out.push(sec("story", "The story", detStr(tour, "story_title") || "How this home lives",
+      `<div class="lp-prose">${story.map((p) => `<p>${escapeHtml(p)}</p>`).join("")}</div>`));
+  }
+
+  // Gallery — real images if provided, else the chapter list as a teaser.
+  const imgs = galleryItems(tour);
+  if (imgs.length) {
+    out.push(sec("gallery", "Gallery", "A closer look",
+      `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || heading)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}</div>`));
+  } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
+    out.push(sec("gallery", "Inside the tour", "Every room, one scroll",
+      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>`).join("")}</div>`));
+  }
+
+  // Features & finishes.
+  const groups = featureGroups(tour);
+  if (groups.length) {
+    out.push(sec("features", "Features & finishes", "Built to a standard you can feel",
+      `<div class="lp-feat">${groups.map((g) => `<div class="lp-fcol"><h3>${escapeHtml(g.title)}</h3><ul>${g.items.map((i) => `<li>${escapeHtml(i)}</li>`).join("")}</ul></div>`).join("")}</div>`));
+  }
+
+  // Floor plans.
+  const levels = floorLevels(tour);
+  const fpImg = floorImage(tour);
+  if (levels.length || fpImg) {
+    const lv = levels.length ? `<div class="lp-levels">${levels.map((x) => `<div class="lp-level"><div class="lp-lvhead"><span class="nm">${escapeHtml(x.name)}</span>${x.sqft ? `<span class="sf">${escapeHtml(x.sqft)}</span>` : ""}</div>${x.blurb ? `<p>${escapeHtml(x.blurb)}</p>` : ""}</div>`).join("")}</div>` : "";
+    const im = fpImg ? `<div class="lp-fpimg"><img src="${escapeAttr(fpImg)}" alt="Floor plan" loading="lazy" decoding="async"></div>` : "";
+    out.push(sec("floorplan", "Floor plans", "How it all fits together", lv + im));
+  }
+
+  // Neighborhood / commute.
+  const nb = neighborhoodBlurb(tour);
+  const commute = commuteItems(tour);
+  if (nb || commute.length) {
+    const c = commute.length ? `<div class="lp-commute">${commute.map((x) => `<div class="lp-cm"><span class="t">${escapeHtml(x.time)}</span><span class="l">${escapeHtml(x.label)}</span></div>`).join("")}</div>` : "";
+    out.push(sec("location", "The location", detStr(tour, "neighborhood_title") || "The neighborhood",
+      `${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
+  }
+
+  // Financing — powered by Wholesale Mortgage Lending.
+  const est = isRE ? monthlyEstimate(l.price_cents) : null;
+  if (est) {
+    out.push(`<section class="lp-sec" id="financing"><div class="lp-wrap lp-fin">
+      <div class="lp-eyebrow">Financing</div>
+      <h2 class="lp-h">Estimated from ${escapeHtml(usd(est))}/mo</h2>
+      <p class="lp-tag">Powered by ${escapeHtml(PROMO.mortgage.name)} — ${escapeHtml(PROMO.mortgage.tagline)}</p>
+      <a class="lp-btn" href="${escapeAttr(PROMO.mortgage.url)}" target="_blank" rel="noopener nofollow">Get pre-approved</a>
+      <p class="lp-fine">Illustrative only — 30-yr fixed at 6.5% with 20% down; taxes and insurance excluded. Not a commitment to lend.</p>
+    </div></section>`);
+  }
+
+  return `<div id="listing-page">${out.join("")}</div>`;
+}
+
+/** Footer + house partner strip (Pilk.ai · Wholesale Mortgage · Tract). */
+function renderFooter(): string {
+  const cards = [PROMO.agency, PROMO.mortgage, PROMO.partner]
+    .map((x) => `<a class="lp-partner" href="${escapeAttr(x.url)}" target="_blank" rel="noopener nofollow"><span class="nm">${escapeHtml(x.name)}</span><span class="tg">${escapeHtml(x.tagline)}</span></a>`)
+    .join("");
+  return `<footer class="lp-foot"><div class="lp-wrap">
+    <div class="lp-eyebrow">More from us</div>
+    <div class="lp-partners">${cards}</div>
+    <div class="lp-madeby"><a href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
+    <div class="lp-legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></div>
+  </div></footer>`;
+}
+
+// Editorial CSS — Rendprop purple system layered over the player tokens. The
+// :root override flips the player's default accent (gold) to brand purple; a
+// per-agent accent override (injected after this) still wins when set.
+const EDITORIAL_CSS = `
+  :root {
+    --accent:#9b6dff; --accent-2:#7c3aed; --accent-3:#c4a8ff;
+    --accent-soft:rgba(155,109,255,.12);
+    --faint:rgba(242,243,245,.42);
+    --grad:linear-gradient(135deg,#9b6dff,#7c3aed);
+    --grad-text:linear-gradient(115deg,#e9defc,#c4a8ff 55%,#9b6dff);
+    --ease:cubic-bezier(0.23,1,0.32,1);
+  }
+  #listing-page { position: relative; z-index: 5; background: var(--bg); }
+  .lp-wrap { max-width: 1080px; margin: 0 auto; padding: 0 22px; }
+  .lp-sec { padding: clamp(54px,9vw,104px) 0; border-top: 1px solid rgba(255,255,255,.06); }
+  .lp-lead { border-top: 0; background: linear-gradient(180deg, rgba(11,13,16,0), var(--bg) 14%); }
+  .lp-eyebrow { display:flex; align-items:center; gap:8px; color:var(--accent-3);
+    letter-spacing:.24em; text-transform:uppercase; font-size:12px; font-weight:700; margin-bottom:14px; }
+  .lp-eyebrow::before { content:""; width:20px; height:2px; border-radius:2px;
+    background:linear-gradient(90deg,var(--accent-2),var(--accent)); }
+  .lp-h { font-size:clamp(26px,4.4vw,44px); font-weight:800; letter-spacing:-.02em; line-height:1.08; }
+  .lp-price { font-size:clamp(20px,3vw,28px); font-weight:800; margin-top:12px;
+    background:var(--grad-text); -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .lp-tag { color:var(--ink-dim); margin-top:14px; font-size:16px; line-height:1.6; max-width:44em; }
+  .lp-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(88px,1fr)); gap:12px; margin-top:30px; }
+  .lp-stat { background:var(--card); border:1px solid rgba(255,255,255,.07); border-radius:14px; padding:16px 12px; text-align:center; }
+  .lp-stat .v { display:block; font-size:22px; font-weight:750; }
+  .lp-stat .k { display:block; font-size:11px; letter-spacing:.12em; text-transform:uppercase; color:var(--ink-dim); margin-top:5px; }
+  .lp-prose p { color:var(--ink-dim); font-size:17px; line-height:1.75; margin-top:14px; max-width:46em; }
+  .lp-gal { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:12px; }
+  .lp-gcell { position:relative; border-radius:16px; overflow:hidden; aspect-ratio:4/3; background:var(--card); border:1px solid rgba(255,255,255,.06); }
+  .lp-gcell img { width:100%; height:100%; object-fit:cover; transition:transform .5s var(--ease); }
+  .lp-gcell figcaption { position:absolute; left:0; right:0; bottom:0; padding:16px 14px 12px; font-size:13px; font-weight:600;
+    background:linear-gradient(0deg, rgba(0,0,0,.62), transparent); }
+  @media (hover:hover) and (pointer:fine) { .lp-gcell:hover img { transform:scale(1.04); } }
+  .lp-chips { display:flex; flex-wrap:wrap; gap:10px; }
+  .lp-chip { padding:9px 14px; border-radius:999px; background:var(--accent-soft);
+    border:1px solid rgba(155,109,255,.24); color:var(--accent-3); font-size:13.5px; font-weight:600; }
+  .lp-feat { display:grid; grid-template-columns:repeat(auto-fit,minmax(240px,1fr)); gap:28px; }
+  .lp-fcol h3 { font-size:15px; letter-spacing:.01em; margin-bottom:14px; }
+  .lp-fcol ul { list-style:none; }
+  .lp-fcol li { position:relative; padding-left:22px; color:var(--ink-dim); font-size:15px; line-height:1.5; margin-bottom:11px; }
+  .lp-fcol li::before { content:""; position:absolute; left:2px; top:8px; width:7px; height:7px; border-radius:2px;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2)); }
+  .lp-levels { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; }
+  .lp-level { background:var(--card); border:1px solid rgba(255,255,255,.07); border-radius:16px; padding:18px; }
+  .lp-lvhead { display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+  .lp-lvhead .nm { font-weight:700; font-size:16px; }
+  .lp-lvhead .sf { color:var(--accent-3); font-size:13px; font-weight:600; }
+  .lp-level p { color:var(--ink-dim); font-size:14px; line-height:1.5; margin-top:8px; }
+  .lp-fpimg { margin-top:16px; border-radius:16px; overflow:hidden; border:1px solid rgba(255,255,255,.07); }
+  .lp-commute { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-top:22px; }
+  .lp-cm { background:var(--card); border:1px solid rgba(255,255,255,.07); border-radius:14px; padding:16px; }
+  .lp-cm .t { display:block; font-size:20px; font-weight:750; color:var(--accent-3); }
+  .lp-cm .l { display:block; font-size:13.5px; color:var(--ink-dim); margin-top:5px; line-height:1.4; }
+  .lp-btn { display:inline-flex; align-items:center; justify-content:center; margin-top:22px; padding:14px 26px;
+    border-radius:999px; font-weight:700; font-size:15.5px; text-decoration:none; color:#fff;
+    background:linear-gradient(135deg,var(--accent),var(--accent-2)); box-shadow:0 10px 30px rgba(124,58,237,.35);
+    transition:transform .2s var(--ease), box-shadow .3s var(--ease); }
+  @media (hover:hover) and (pointer:fine) { .lp-btn:hover { transform:translateY(-2px); box-shadow:0 16px 40px rgba(124,58,237,.45); } }
+  .lp-btn:active { transform:scale(.98); }
+  .lp-fine { color:var(--faint); font-size:12px; line-height:1.5; margin-top:16px; max-width:44em; }
+  /* Endcard cohesion with the editorial flow + white CTA text on purple. */
+  #endcard { background:var(--bg) !important; }
+  .panel .cta, .cta { color:#fff !important; }
+  /* Footer + partner strip */
+  footer.lp-foot { padding:clamp(48px,7vw,80px) 0 calc(40px + env(safe-area-inset-bottom));
+    border-top:1px solid rgba(255,255,255,.07); background:var(--bg); }
+  .lp-partners { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+  .lp-partner { display:flex; flex-direction:column; gap:6px; padding:18px; border-radius:16px;
+    background:var(--card); border:1px solid rgba(255,255,255,.08); text-decoration:none;
+    transition:border-color .25s var(--ease), transform .25s var(--ease); }
+  .lp-partner .nm { font-weight:750; font-size:16px; color:var(--ink); }
+  .lp-partner .tg { font-size:13.5px; color:var(--ink-dim); line-height:1.45; }
+  @media (hover:hover) and (pointer:fine) { .lp-partner:hover { border-color:rgba(155,109,255,.42); transform:translateY(-2px); } }
+  .lp-madeby { margin-top:26px; font-size:13px; color:var(--ink-dim); }
+  .lp-madeby a { color:var(--ink-dim); text-decoration:none; }
+  .lp-madeby b { color:var(--ink); }
+  .lp-legal { margin-top:10px; font-size:12.5px; }
+  .lp-legal a { color:var(--ink-dim); text-decoration:none; margin-right:12px; }
+`;
+
 // ---------------------------------------------------------------------------
 // Full page
 // ---------------------------------------------------------------------------
 
-export function renderTourPage(tour: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = ""): string {
+export interface RenderOpts { embed?: boolean; demo?: boolean; }
+
+export function renderTourPage(tour: Tour, functionsBase: string, anonKey: string, turnstileSiteKey = "", opts: RenderOpts = {}): string {
   const agent = extractAgent(tour.agent_card || {});
   const header = buildHeader(tour);
   const poster = tour.poster || "";
@@ -681,10 +1021,24 @@ export function renderTourPage(tour: Tour, functionsBase: string, anonKey: strin
     bufferGate: 0.96,
     hasChapters,
     staged,
+    demo: !!opts.demo,
     chapters: chapters.map((c) => ({ t: c.t_ms / 1000, label: c.label })),
     hlsSrc: HLS_SRC,
     hlsSri: HLS_SRI,
   };
+
+  // Embed mode (?embed=1): render ONLY the flythrough hero — for the in-app
+  // "See it in action" card. Otherwise render the full listing microsite.
+  const embed = !!opts.embed;
+  const sectionsHtml = embed ? "" : renderListingSections(tour);
+  const endcardHtml = embed ? "" : `<section id="endcard">
+  <div class="panel">
+    ${renderAgentCard(agent)}
+    ${renderCtaBlock(tour, turnstileSiteKey)}
+    ${disclosurePanel}
+  </div>
+</section>`;
+  const footerHtml = embed ? "" : renderFooter();
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -700,8 +1054,9 @@ export function renderTourPage(tour: Tour, functionsBase: string, anonKey: strin
 ${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
 <meta name="twitter:card" content="summary_large_image">
 ${ogImage}
+<style>${PLAYER_CSS}
+${EDITORIAL_CSS}</style>
 ${accentOverride}
-<style>${PLAYER_CSS}</style>
 </head>
 <body>
 
@@ -737,13 +1092,9 @@ ${accentOverride}
   </div>
 </div>
 
-<section id="endcard">
-  <div class="panel">
-    ${renderAgentCard(agent)}
-    ${renderCtaBlock(tour, turnstileSiteKey)}
-    ${disclosurePanel}
-  </div>
-</section>
+${sectionsHtml}
+${endcardHtml}
+${footerHtml}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
 <script>${ENGINE_JS}</script>
