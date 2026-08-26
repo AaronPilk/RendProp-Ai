@@ -690,6 +690,7 @@ struct AgentCardEditorView: View {
     // Keys namespaced by the current business type (AgentCard.key) so editing
     // the restaurant card never touches the real-estate card. The editor is
     // pushed fresh each time, so these resolve to the active industry.
+    @EnvironmentObject private var model: AppModel
     @AppStorage(AgentCard.key("name")) private var name = ""
     @AppStorage(AgentCard.key("brokerage")) private var brokerage = ""
     @AppStorage(AgentCard.key("phone")) private var phone = ""
@@ -777,6 +778,20 @@ struct AgentCardEditorView: View {
         .navigationTitle(SpaceType.current.profileCardName)
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path) }
+        .onDisappear {
+            // Sync the card to the org's brand kit so it renders on every
+            // HOSTED share link — the public tour page reads these fields
+            // (2026-08-26 audit P0-1). Best-effort fire-and-forget: offline or
+            // signed-out just keeps the local card, and the next edit retries.
+            guard Config.useLiveBackend, AuthStore.currentAccessToken != nil else { return }
+            let fields: [String: String] = [
+                "name": name, "brokerage": brokerage, "phone": phone,
+                "email": email, "website": website, "instagram": instagram,
+                "linkedin": linkedin, "tiktok": tiktok,
+            ]
+            let api = model.api
+            Task.detached { try? await api.updateBrand(fields) }
+        }
         .onChange(of: pickerItem) { newItem in
             guard let newItem else { return }
             Task {

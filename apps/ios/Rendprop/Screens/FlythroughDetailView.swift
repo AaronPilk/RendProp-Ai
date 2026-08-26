@@ -112,12 +112,12 @@ struct FlythroughDetailView: View {
         }
     }
 
-    /// Prefer the REAL server slug once the tour is published to the cloud; fall
-    /// back to the local-only preview link before it's published (contract §4/§5:
-    /// never fabricate a slug when a real one exists).
-    private var shareURL: URL {
+    /// The REAL hosted share link — exists only after publish. NEVER fabricate
+    /// a /f/<uuid-prefix> URL: it has no server row and 404s for the recipient
+    /// (2026-08-26 audit P0-2; PortfolioExporter enforces the same rule).
+    /// Share actions below are gated on this being non-nil.
+    private var shareURL: URL? {
         currentListing.serverShareURL
-            ?? URL(string: "https://rendprop.com/f/\(listing.id.uuidString.prefix(8).lowercased())")!
     }
 
     var body: some View {
@@ -144,40 +144,62 @@ struct FlythroughDetailView: View {
                         .foregroundStyle(Theme.inkDim)
                 }
 
-                // Share actions
-                VStack(spacing: 10) {
-                    ShareLink(item: shareURL,
-                              subject: Text(listing.address),
-                              message: Text("Fly through \(listing.address) — scroll to walk the \(SpaceType.current.spaceNoun).")) {
-                        HStack {
-                            Image(systemName: "square.and.arrow.up")
-                            Text("Share flythrough").fontWeight(.semibold)
+                // Share actions — only once the REAL hosted link exists. Before
+                // publish there is nothing at any URL, so sharing would send a
+                // dead 404 link (audit P0-2).
+                if let shareURL {
+                    VStack(spacing: 10) {
+                        ShareLink(item: shareURL,
+                                  subject: Text(listing.address),
+                                  message: Text("Fly through \(listing.address) — scroll to walk the \(SpaceType.current.spaceNoun).")) {
+                            HStack {
+                                Image(systemName: "square.and.arrow.up")
+                                Text("Share flythrough").fontWeight(.semibold)
+                            }
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Theme.accent)
+                            .foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                        .background(Theme.accent)
-                        .foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
 
-                    HStack(spacing: 10) {
-                        Button {
-                            UIPasteboard.general.url = shareURL
-                            Haptics.success()
-                        } label: {
-                            Label("Copy link", systemImage: "link")
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                        HStack(spacing: 10) {
+                            Button {
+                                UIPasteboard.general.url = shareURL
+                                Haptics.success()
+                            } label: {
+                                Label("Copy link", systemImage: "link")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            }
+                            ShareLink(item: shareURL) {
+                                Label("QR / More", systemImage: "qrcode")
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 12)
+                                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                            }
                         }
-                        ShareLink(item: shareURL) {
-                            Label("QR / More", systemImage: "qrcode")
-                                .frame(maxWidth: .infinity)
-                                .padding(.vertical, 12)
-                                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                        }
+                        .font(.rpBody)
                     }
-                    .font(.rpBody)
+                } else {
+                    // Honest pre-publish state: the link appears the moment the
+                    // tour is published to the cloud.
+                    HStack(spacing: 12) {
+                        Image(systemName: "link.badge.plus")
+                            .font(.system(size: 20, weight: .semibold))
+                            .foregroundStyle(Theme.accent)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Publish to get your share link")
+                                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                            Text("Create your tour and it becomes a live rendprop.com page you can send to \(SpaceType.current.customerNoun).")
+                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(14)
+                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
 
                 // Toolbox — every feature for this listing, one tap away.
@@ -1852,9 +1874,9 @@ struct ReelStudioView: View {
     }
 
     private var costText: String {
-        guard !selected.isEmpty else { return "About $0.24 per clip (5-second AI motion)." }
-        let total = String(format: "$%.2f", Double(selected.count) * 0.24)
-        return "About $0.24 per clip — \(selected.count) selected ≈ \(total)."
+        // No per-unit dollar figures in UI while IAP is off (App Store 3.1.1).
+        guard !selected.isEmpty else { return "Each photo becomes a 5-second AI motion clip." }
+        return "\(selected.count) selected — each becomes a 5-second AI motion clip."
     }
 
     private var generatingSection: some View {

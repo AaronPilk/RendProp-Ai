@@ -29,6 +29,7 @@ import {
   humanize,
   isHlsUrl,
   jsonForScript,
+  safeUrl,
   spaceLabel,
   TOKENS_CSS,
 } from "./html";
@@ -47,8 +48,9 @@ function telHref(phone: string): string {
 }
 
 function renderAgentCard(a: AgentModel): string {
-  const avatar = a.photo
-    ? `<div class="avatar photo"><img src="${escapeAttr(a.photo)}" alt="${escapeAttr(a.name || "Agent")}" loading="lazy" decoding="async"></div>`
+  const photoUrl = safeUrl(a.photo);
+  const avatar = photoUrl
+    ? `<div class="avatar photo"><img src="${escapeAttr(photoUrl)}" alt="${escapeAttr(a.name || "Agent")}" loading="lazy" decoding="async"></div>`
     : `<div class="avatar">${escapeHtml(a.initials)}</div>`;
 
   const subBits: string[] = [];
@@ -173,7 +175,8 @@ function textInput(type: string, name: string, ph: string, required: boolean, au
 function renderSecondary(links: SecondaryLink[]): string {
   if (!links || !links.length) return "";
   return `<div class="secondary">${links
-    .map((s) => `<a class="slink" href="${escapeAttr(s.url)}" target="_blank" rel="noopener nofollow">${escapeHtml(s.label)}</a>`)
+    .filter((s) => safeUrl(s.url, ["tel", "mailto"]))
+    .map((s) => `<a class="slink" href="${escapeAttr(safeUrl(s.url, ["tel", "mailto"]))}" target="_blank" rel="noopener nofollow">${escapeHtml(s.label)}</a>`)
     .join("")}</div>`;
 }
 
@@ -242,11 +245,14 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = ""): string {
 
 function renderCtaBlock(tour: Tour, turnstileSiteKey = ""): string {
   const cta = tour.cta;
-  if (cta.mode === "deeplink" && cta.url) {
+  // Scheme-allowlist the publisher-supplied deeplink (audit P1: javascript:
+  // URLs would execute on click). An unsafe URL falls back to the lead form.
+  const deeplink = cta.mode === "deeplink" ? safeUrl(cta.url, ["tel", "mailto"]) : "";
+  if (cta.mode === "deeplink" && deeplink) {
     const copy = deeplinkCopy(tour);
     return `<h2>${escapeHtml(copy.headline)}</h2>
       ${copy.sub ? `<p class="sub">${escapeHtml(copy.sub)}</p>` : ""}
-      <a class="cta cta-link" href="${escapeAttr(cta.url)}" target="_blank" rel="noopener nofollow">${escapeHtml(cta.label)}</a>
+      <a class="cta cta-link" href="${escapeAttr(deeplink)}" target="_blank" rel="noopener nofollow">${escapeHtml(cta.label)}</a>
       ${renderSecondary(cta.secondary)}`;
   }
   return renderLeadForm(tour, turnstileSiteKey);
@@ -701,10 +707,10 @@ function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
   const out: Array<{ url: string; label: string }> = [];
   if (Array.isArray(g)) {
     for (const it of g) {
-      if (typeof it === "string") { if (it) out.push({ url: it, label: "" }); }
+      if (typeof it === "string") { const u = safeUrl(it); if (u) out.push({ url: u, label: "" }); }
       else if (it && typeof it === "object") {
         const o = it as Record<string, unknown>;
-        const url = first(o.url, o.src, o.image);
+        const url = safeUrl(first(o.url, o.src, o.image));
         if (url) out.push({ url, label: first(o.label, o.caption, o.name) });
       }
     }
@@ -743,7 +749,7 @@ function floorLevels(tour: Tour): Array<{ name: string; sqft: string; blurb: str
 function floorImage(tour: Tour): string {
   const fp = det(tour, "floorplan", "floor_plan");
   const o = fp && typeof fp === "object" ? (fp as Record<string, unknown>) : {};
-  return first(detStr(tour, "floorplan_url", "floor_plan_url"), o.image_url, o.image);
+  return safeUrl(first(detStr(tour, "floorplan_url", "floor_plan_url"), o.image_url, o.image));
 }
 
 function commuteItems(tour: Tour): Array<{ time: string; label: string }> {
@@ -793,9 +799,9 @@ function sec(id: string, eyebrow: string, title: string, inner: string): string 
  *  reel_url is set on the listing (details.reel_url). Tap-to-play so it never
  *  fights the scroll-scrub hero for autoplay/bandwidth. */
 function reelSection(tour: Tour): string {
-  const reel = detStr(tour, "reel_url", "reel");
+  const reel = safeUrl(detStr(tour, "reel_url", "reel"));
   if (!reel) return "";
-  const poster = detStr(tour, "reel_poster", "reel_thumb");
+  const poster = safeUrl(detStr(tour, "reel_poster", "reel_thumb"));
   return `<section class="lp-sec" id="reel"><div class="lp-wrap">
     <div class="lp-eyebrow">Social reel</div>
     <h2 class="lp-h">The vertical cut, ready to post</h2>
@@ -1022,8 +1028,16 @@ export function renderTourPage(tour: Tour, functionsBase: string, anonKey: strin
     ? `<p class="disclosure">${escapeHtml(tour.staged_disclosure)}</p>`
     : "";
 
-  const ogImage = poster ? `<meta property="og:image" content="${escapeAttr(poster)}">\n<meta name="twitter:image" content="${escapeAttr(poster)}">` : "";
+  // Social scrapers need an ABSOLUTE og:image (audit P2 — the demo's poster is
+  // root-relative). Resolve relative posters against the share URL's origin.
   const shareUrl = tour.share_url || "";
+  let ogPoster = poster;
+  if (ogPoster.startsWith("/")) {
+    let origin = "https://rendprop.com";
+    try { if (shareUrl) origin = new URL(shareUrl).origin; } catch { /* keep default */ }
+    ogPoster = origin + ogPoster;
+  }
+  const ogImage = ogPoster ? `<meta property="og:image" content="${escapeAttr(ogPoster)}">\n<meta name="twitter:image" content="${escapeAttr(ogPoster)}">` : "";
 
   // Contract: scrub_url (all-intra R2 mp4) is the PRIMARY scrub source and
   // hls_url is fallback-only. Older payloads may only carry video_url

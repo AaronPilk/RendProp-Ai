@@ -33,6 +33,8 @@ import { durableRateLimit } from "../_shared/ratelimit.ts";
 // docs/RELEASE-GATE-AUDIT.md.)
 const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
+const EDIT_MAX_PER_MONTH = 3000; // rolling 30 days / org — hard abuse wall
+const MONTH_SECONDS = 30 * 86400;
 
 const MODEL = Deno.env.get("GEMINI_IMAGE_MODEL") ?? "gemini-2.5-flash-image";
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
@@ -128,10 +130,20 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") throw new HttpError(405, "POST only");
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set");
 
-    // Per-org rate limit — the paid Gemini image/text call is next.
+    // Per-org rate limits — the paid Gemini image/text call is next (audit
+    // P1-3: burst window + rolling-month ceiling + idempotency soft-dedupe).
     const orgId = await orgForUser(user.id);
+    const idem = req.headers.get("idempotency-key")?.trim();
+    if (idem && idem.length <= 128) {
+      if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
+        throw new HttpError(409, "Duplicate submission — this edit was already started.");
+      }
+    }
     if (!(await durableRateLimit(`aiphoto:${orgId}`, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
       throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.");
+    }
+    if (!(await durableRateLimit(`aiphotomo:${orgId}`, EDIT_MAX_PER_MONTH, MONTH_SECONDS))) {
+      throw new HttpError(429, "This workspace has reached its monthly AI edit limit — contact support to raise it.");
     }
 
     const body = await readJson<Body>(req);

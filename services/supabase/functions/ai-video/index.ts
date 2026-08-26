@@ -36,16 +36,29 @@ import { getUser, orgForUser, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 
-// Denial-of-wallet guard: every generate route hits a paid GPU queue, so cap
-// how many an org can submit per window. (Interim control until per-org monthly
-// spend caps are read from cost_ledger — see docs/RELEASE-GATE-AUDIT.md.)
+// Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
+// queue, so cap submissions per burst window AND per rolling month per org,
+// and soft-dedupe retried submits via the Idempotency-Key header.
 const GEN_MAX_PER_WINDOW = 12;
 const GEN_WINDOW_SECONDS = 300; // 12 video jobs / 5 min / org
+const GEN_MAX_PER_MONTH = 400;  // rolling 30 days / org — well above any real
+const MONTH_SECONDS = 30 * 86400; // plan's usage, a hard wall for runaway abuse
 
-async function guardGenerate(userId: string): Promise<void> {
+async function guardGenerate(userId: string, req: Request): Promise<void> {
   const orgId = await orgForUser(userId);
+  // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
+  // duplicate submit inside 2 minutes is rejected instead of double-billed.
+  const idem = req.headers.get("idempotency-key")?.trim();
+  if (idem && idem.length <= 128) {
+    if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
+      throw new HttpError(409, "Duplicate submission — this job was already started.");
+    }
+  }
   if (!(await durableRateLimit(`aivideo:${orgId}`, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.");
+  }
+  if (!(await durableRateLimit(`aivideomo:${orgId}`, GEN_MAX_PER_MONTH, MONTH_SECONDS))) {
+    throw new HttpError(429, "This workspace has reached its monthly AI video limit — contact support to raise it.");
   }
 }
 
@@ -112,7 +125,7 @@ Deno.serve(async (req) => {
     // Per-org rate limit on the paid generate routes (NOT status polling).
     const isGenerate = req.method === "POST" &&
       seg.length === 1 && ["drone", "declutter", "aerial", "reel-clip"].includes(seg[0]);
-    if (isGenerate) await guardGenerate(user.id);
+    if (isGenerate) await guardGenerate(user.id, req);
 
     // ---- POST /ai-video/drone ----
     if (req.method === "POST" && seg.length === 1 && seg[0] === "drone") {

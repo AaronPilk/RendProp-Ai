@@ -1,7 +1,9 @@
 name = "rendprop-tour-host"
 main = "src/index.ts"
 compatibility_date = "2024-09-23"
-workers_dev = true
+# No *.workers.dev hostname in prod (duplicate content + un-branded URL) — the
+# apex route below is the only public entry.
+workers_dev = false
 
 # ---------------------------------------------------------------------------
 # Routes — bind the public paths on the apex domain to this Worker.

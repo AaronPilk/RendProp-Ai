@@ -56,7 +56,10 @@ function htmlResponse(html: string, status = 200, extraHeaders: Record<string, s
         "connect-src 'self' https:",
         "font-src 'self' data:",
         "form-action 'self' https:",
-        "frame-ancestors 'self' https:",
+        // 'self' only (audit P2): tour pages carry the lead form — don't let
+        // arbitrary https sites iframe them (clickjacking). The iOS demo card
+        // loads pages top-level in a WKWebView, which frame-ancestors ignores.
+        "frame-ancestors 'self'",
       ].join("; "),
       ...extraHeaders,
     },

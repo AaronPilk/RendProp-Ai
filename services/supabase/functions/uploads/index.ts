@@ -27,6 +27,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { getUser, userClient } from "../_shared/supabase.ts";
 import {
   abortMultipartUpload,
@@ -56,6 +57,22 @@ const MAX_VIDEO_BYTES = 12 * 1024 * 1024 * 1024; // 12 GB (a 4K / 9-min walkthro
 const MAX_PHOTO_BYTES = 50 * 1024 * 1024;        // 50 MB
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/x-m4v"];
 const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"];
+
+// Audit P1-1 (denial-of-wallet): a per-org daily ceiling on upload *tickets*
+// (each ticket presigns R2 PUTs). Generous for real use — a heavy team doing
+// 20 listings/day with 70 photos each stays under it — but stops an abusive
+// account from minting unbounded presigned URLs against our storage bill.
+const MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY = 2000;
+
+/** Bound + validate one file's claimed size/type for its kind. */
+function validateFileMeta(kind: "video" | "photo", bytes: number | null | undefined, contentType: string, label = "") {
+  const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
+  assert(bytes != null && Number.isFinite(bytes) && bytes > 0 && bytes <= maxBytes, 400,
+    `bytes is required and must be between 1 and ${maxBytes} for a ${kind}${label}`);
+  const allowed = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+  assert(allowed.includes(contentType), 400,
+    `content_type "${contentType}" is not an allowed ${kind} type${label}`);
+}
 
 interface CreateBody {
   listing_id: string;
@@ -115,6 +132,19 @@ Deno.serve(async (req) => {
       const kind: "video" | "photo" = body.kind === "video" ? "video" : "photo";
 
       const listing = await requireListing(db, body.listing_id);
+
+      // Per-org daily ticket ceiling (counts each file in the batch).
+      if (!(await durableRateLimit(`uploads:${listing.org_id}`, MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY, 86400))) {
+        throw new HttpError(429, "Daily upload limit reached for this workspace");
+      }
+
+      // Validate every file's claimed size + type BEFORE creating any rows
+      // (audit P1-1 — the batch path previously skipped these checks).
+      for (let i = 0; i < files.length; i++) {
+        const f = files[i];
+        const ct = f.content_type ?? (kind === "photo" ? "image/jpeg" : "video/mp4");
+        validateFileMeta(kind, f.bytes, ct, ` (files[${i}])`);
+      }
 
       const assets = [];
       for (let i = 0; i < files.length; i++) {
@@ -233,15 +263,15 @@ Deno.serve(async (req) => {
       const contentType = body.content_type ??
         (role === "render" ? "video/mp4" : (kind === "photo" ? "image/jpeg" : "video/quicktime"));
 
-      // #16 restrict uploads: bound the size and require a known media type.
-      const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
-      if (body.bytes != null) {
-        assert(body.bytes > 0 && body.bytes <= maxBytes, 400,
-          `bytes must be between 1 and ${maxBytes} for a ${kind}`);
+      // Per-org daily ticket ceiling (audit P1-1).
+      if (!(await durableRateLimit(`uploads:${listing.org_id}`, MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY, 86400))) {
+        throw new HttpError(429, "Daily upload limit reached for this workspace");
       }
-      const allowedTypes = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
-      assert(allowedTypes.includes(contentType), 400,
-        `content_type "${contentType}" is not an allowed ${kind} type`);
+
+      // #16 restrict uploads: bound the size and require a known media type.
+      // bytes is now REQUIRED (audit P1-1 — previously skipped when omitted,
+      // making the ceiling advisory; the app always sends it).
+      validateFileMeta(kind, body.bytes, contentType);
 
       // Decide single vs multipart. Photos are always single; video goes multipart
       // when explicitly requested or when it's large enough that resumability matters.

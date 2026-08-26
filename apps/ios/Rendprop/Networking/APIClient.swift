@@ -136,6 +136,12 @@ protocol APIClient: Sendable {
     /// GET /me — usage/cost for the Settings "Usage" section.
     func me() async throws -> UsageSummary
 
+    /// PATCH /me/brand — push the agent/business card into the org's brand kit
+    /// so it renders on every HOSTED tour page (the public tours/portfolio
+    /// functions allow-list exactly these fields). Empty-string values clear
+    /// the field server-side. Best-effort: callers fire-and-forget.
+    func updateBrand(_ fields: [String: String]) async throws
+
     /// POST /ai-photo — single-image AI edit. `edit` = "twilight" | "sky" |
     /// "lawn" | "declutter" | "stage" | "custom". `style` applies to stage only
     /// ("modern" | "rustic" | "minimalist" | "scandinavian"); `prompt` to custom

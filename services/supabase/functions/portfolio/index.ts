@@ -89,12 +89,20 @@ Deno.serve(async (req) => {
       };
     });
 
+    // PUBLIC response: allow-list display fields rather than spreading the whole
+    // brand_kit jsonb (audit P1-4 — same discipline as tours/index.ts).
     const brand = (org.brand_kit as Record<string, unknown> | null) ?? {};
-    const agent_card = {
-      ...brand,
+    const AGENT_CARD_FIELDS = [
+      "name", "handle", "title", "brokerage", "phone", "email", "website",
+      "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent",
+    ] as const;
+    const agent_card: Record<string, unknown> = {
       name: (brand.name as string) ?? org.name ?? null,
       handle: org.handle ?? null,
     };
+    for (const f of AGENT_CARD_FIELDS) {
+      if (brand[f] != null && agent_card[f] == null) agent_card[f] = brand[f];
+    }
 
     return json({
       org: { name: org.name, handle: org.handle, space_type: org.space_type },

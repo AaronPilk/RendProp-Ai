@@ -47,6 +47,23 @@ export function safeColor(v: unknown): string | null {
   return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/.test(s) ? s : null;
 }
 
+/**
+ * Scheme-allowlist for publisher-supplied URLs (audit P1: a `javascript:` URL
+ * in cta.url/secondary executed on click because CSP allows unsafe-inline).
+ * Returns the URL when its scheme is safe, else "" so call sites degrade to
+ * not rendering the link/media. Scheme-relative and relative URLs are allowed
+ * (they resolve against our own https origin).
+ */
+export function safeUrl(v: unknown, extraSchemes: string[] = []): string {
+  const s = String(v ?? "").trim();
+  if (!s) return "";
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(s);
+  if (!m) return s; // relative / anchor / query — resolves on our origin
+  const scheme = m[1].toLowerCase();
+  const allowed = ["http", "https", ...extraSchemes];
+  return allowed.includes(scheme) ? s : "";
+}
+
 /** "party_size" -> "Party Size". */
 export function humanize(key: string): string {
   return String(key || "")
@@ -249,7 +266,7 @@ export function errorPage(): string {
     title: "Temporarily unavailable — Rendprop",
     heading: "We couldn't load this tour",
     body: "Something went wrong on our side. Please try again in a moment.",
-    cta: { label: "Retry", href: "javascript:location.reload()" },
+    cta: { label: "Retry", href: "" },
   });
 }
 

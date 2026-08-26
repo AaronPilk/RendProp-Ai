@@ -1,6 +1,10 @@
 // me — the signed-in user, their org, plan, and a usage rollup (owner).
 //
-//   GET    /me -> { user, org, plan, usage }
+//   GET    /me       -> { user, org, plan, usage }
+//   PATCH  /me/brand -> { ok, brand_kit }   (agent card → org.brand_kit; the
+//                        public tours/portfolio functions read these fields, so
+//                        this is what puts the agent's identity on every
+//                        hosted share link)
 //   DELETE /me -> { ok: true, deleted_orgs, left_orgs, warnings? }   (App Store account deletion)
 //
 // GET usage: this-month AI/infra spend (sum of cost_ledger.total_cents for the
@@ -19,7 +23,7 @@
 // for the async batch cleaner.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, json, respondError, round4 } from "../_shared/http.ts";
+import { HttpError, assert, json, pathSegments, readJson, respondError, round4 } from "../_shared/http.ts";
 import {
   deleteObjects,
   R2_BUCKET_RENDERS,
@@ -41,9 +45,14 @@ Deno.serve(async (req) => {
     const user = await getUser(req);
 
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
+    if (req.method === "PATCH") {
+      const seg = pathSegments(req, "me");
+      if (seg[0] === "brand") return await handleBrandPatch(req, user.id);
+      throw new HttpError(404, "Unknown route — PATCH /me/brand");
+    }
     if (req.method === "DELETE") return await handleDelete(user.id);
 
-    throw new HttpError(405, "Only GET and DELETE are supported");
+    throw new HttpError(405, "Only GET, PATCH, and DELETE are supported");
   } catch (err) {
     return respondError(err);
   }
@@ -87,6 +96,63 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       listings: listingsRes.count ?? 0,
     },
   });
+}
+
+// ── PATCH /me/brand ───────────────────────────────────────────────────────────
+//
+// Writes the agent/business card into org.brand_kit. The PUBLIC tours and
+// portfolio functions allow-list exactly these display fields, so this is the
+// single write path that makes the card appear on every hosted share link.
+// Uses the user client: RLS + the column-scoped grant (migration 0005) restrict
+// the update to orgs the caller is a member of, and `plan` stays untouchable.
+
+const BRAND_FIELDS = [
+  "name", "title", "brokerage", "phone", "email", "website",
+  "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent",
+] as const;
+const MAX_BRAND_FIELD_CHARS = 300;
+const MAX_BRAND_KIT_BYTES = 8_000;
+const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+
+async function handleBrandPatch(req: Request, userId: string): Promise<Response> {
+  const db = userClient(req);
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  const body = await readJson<Record<string, unknown>>(req);
+
+  // Validate + collect only known fields. `null` clears a field; strings are
+  // trimmed and bounded; accent must be a strict hex color (CSS-injection safe —
+  // the tour page injects it into a <style> block).
+  const patch: Record<string, string | null> = {};
+  for (const f of BRAND_FIELDS) {
+    if (!(f in body)) continue;
+    const v = body[f];
+    if (v === null || v === "") { patch[f] = null; continue; }
+    assert(typeof v === "string", 400, `${f} must be a string`);
+    const s = (v as string).trim();
+    assert(s.length <= MAX_BRAND_FIELD_CHARS, 400, `${f} is too long (max ${MAX_BRAND_FIELD_CHARS} chars)`);
+    if (f === "accent") assert(HEX_COLOR.test(s), 400, "accent must be a hex color like #7c3aed");
+    patch[f] = s;
+  }
+  assert(Object.keys(patch).length > 0, 400,
+    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}`);
+
+  // Merge over the existing kit (RLS scopes the read to the caller's org).
+  const { data: org, error: oErr } = await db
+    .from("orgs").select("id, brand_kit").eq("id", orgId).maybeSingle();
+  if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
+  if (!org) throw new HttpError(404, "Org not found");
+
+  const merged: Record<string, unknown> = { ...((org.brand_kit as Record<string, unknown> | null) ?? {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (v === null) delete merged[k];
+    else merged[k] = v;
+  }
+  assert(JSON.stringify(merged).length <= MAX_BRAND_KIT_BYTES, 400, "brand kit is too large");
+
+  const { error: upErr } = await db.from("orgs").update({ brand_kit: merged }).eq("id", orgId);
+  if (upErr) throw new HttpError(500, `Brand update failed: ${upErr.message}`);
+
+  return json({ ok: true, brand_kit: merged });
 }
 
 // ── DELETE /me ────────────────────────────────────────────────────────────────

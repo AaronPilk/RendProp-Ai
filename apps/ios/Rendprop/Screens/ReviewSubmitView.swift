@@ -31,7 +31,10 @@ struct ReviewSubmitView: View {
                 tierPicker
                 enhancementsCard
                 priceSummary
-                PrimaryButton(title: "Create my tour · \(totalPrice.formatted)", systemImage: "sparkles") {
+                // No dollar amounts anywhere in the UI while enableIAP is false —
+                // quoting USD prices with no purchase mechanism is an App Store
+                // 3.1.1/2.3.1 rejection risk (2026-08-26 audit P0-3).
+                PrimaryButton(title: "Create my tour", systemImage: "sparkles") {
                     submit()
                 }
                 Text("Included with your plan during early access.")
@@ -202,7 +205,7 @@ struct ReviewSubmitView: View {
                         // (ai-photo). Full-video declutter isn't wired into the tour
                         // flow yet (Bria caps video input at <5 s) — no future
                         // promises in user-facing copy (App Store 2.3.1).
-                        Text("AI declutter (photos) · +\(Enhancements.declutterPrice.formatted)")
+                        Text("AI declutter (photos)")
                             .font(.rpHeadline)
                         Text("Removes clutter and personal items from your listing photos with AI.")
                             .font(.rpCaption)
@@ -222,7 +225,7 @@ struct ReviewSubmitView: View {
                         .font(.rpHeadline)
                     Spacer()
                     if enhancements.style != .asIs {
-                        Text("+\(Enhancements.restagePrice.formatted)")
+                        Text("Included")
                             .font(.rpCaption.weight(.semibold))
                             .foregroundStyle(Theme.accent)
                     }
@@ -294,27 +297,27 @@ struct ReviewSubmitView: View {
             HStack {
                 Text("Tier · \(tier.displayName)")
                 Spacer()
-                Text(price.formatted).foregroundStyle(Theme.inkDim)
+                Text("Included").foregroundStyle(Theme.inkDim)
             }
             if enhancements.declutter {
                 HStack {
                     Text("AI declutter (photos)")
                     Spacer()
-                    Text("+\(Enhancements.declutterPrice.formatted)").foregroundStyle(Theme.inkDim)
+                    Text("Included").foregroundStyle(Theme.inkDim)
                 }
             }
             if enhancements.style != .asIs {
                 HStack {
                     Text("Restage · \(enhancements.style.displayName)")
                     Spacer()
-                    Text("+\(Enhancements.restagePrice.formatted)").foregroundStyle(Theme.inkDim)
+                    Text("Included").foregroundStyle(Theme.inkDim)
                 }
             }
             Divider()
             HStack {
-                Text("Total").font(.rpHeadline)
+                Text("Your plan").font(.rpHeadline)
                 Spacer()
-                Text(totalPrice.formatted).font(.rpTitle).foregroundStyle(Theme.accent)
+                Text("Early access").font(.rpHeadline).foregroundStyle(Theme.accent)
             }
         }
         .font(.rpBody)

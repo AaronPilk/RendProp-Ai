@@ -84,6 +84,11 @@ actor MockAPIClient: APIClient {
         UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: "Dev")
     }
 
+    func updateBrand(_ fields: [String: String]) async throws {
+        // Offline: the card already lives in UserDefaults; nothing to sync.
+        _ = fields
+    }
+
     func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
                      style: String?, prompt: String?) async throws -> String {
         // Offline dev: no Gemini — echo the original back so the UI flow runs

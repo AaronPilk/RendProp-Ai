@@ -22,6 +22,14 @@ interface BeaconBody {
 
 const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 
+// Per-call clamps (audit P1-2): beacon is public, so a single POST must never
+// move the counters more than a real session plausibly could. The player
+// batches ~20s intervals, so 5 min of watch and 60 streamed minutes per call
+// are generous ceilings; anything above is a spam/inflation attempt.
+const MAX_WATCH_MS_PER_CALL = 5 * 60 * 1000;
+const MAX_STREAMED_MIN_PER_CALL = 60;
+const clampN = (v: unknown, max: number) => Math.min(max, Math.max(0, num(v)));
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -72,9 +80,9 @@ Deno.serve(async (req) => {
       org_id: listing?.org_id ?? null,
       day,
       views: num(existing?.views) + (body.view_start ? 1 : 0),
-      watch_ms: num(existing?.watch_ms) + Math.max(0, Math.round(num(body.watch_ms))),
+      watch_ms: num(existing?.watch_ms) + Math.round(clampN(body.watch_ms, MAX_WATCH_MS_PER_CALL)),
       streamed_minutes: Number(
-        (num(existing?.streamed_minutes) + Math.max(0, num(body.streamed_minutes))).toFixed(2),
+        (num(existing?.streamed_minutes) + clampN(body.streamed_minutes, MAX_STREAMED_MIN_PER_CALL)).toFixed(2),
       ),
       max_scroll_depth: Math.min(
         1,

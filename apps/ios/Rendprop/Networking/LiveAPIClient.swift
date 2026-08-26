@@ -373,6 +373,13 @@ final class LiveAPIClient: APIClient {
         }
     }
 
+    func updateBrand(_ fields: [String: String]) async throws {
+        // PATCH /me/brand — the org brand kit is what the PUBLIC tour/portfolio
+        // pages render as the agent card, so this is what puts the agent's
+        // identity on every hosted share link (2026-08-26 audit P0-1).
+        _ = try await execute(makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields))
+    }
+
     func me() async throws -> UsageSummary {
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
