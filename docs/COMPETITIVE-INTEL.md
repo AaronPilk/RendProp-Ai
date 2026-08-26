@@ -89,3 +89,13 @@ Both competitors are **photo→AI-video generators**: they animate still listing
 - AutoReel shipping anything mobile or any real-video ingestion (would signal a pivot at us).
 - Mirino's admin-gated "agents" reaching GA + any traction spike from Meta ads.
 - Both: pricing moves after our launch (AutoReel will defend margin; Mirino's unlimited tier limits their floor).
+
+---
+
+## Addendum (26 Aug 2026): Arvaum Studio & Rendy
+
+**Arvaum Studio (arvaum.io).** Desktop-first (macOS/Windows + new browser app) AI *photo* editor by Marcus Martinez, a working RE photographer (Rancho Cucamonga). Virtual staging, twilight, declutter, "A&D lighting," custom prompts w/ AI enhancement, 4K photo output, local file storage, 5 concurrent lanes. Pricing: Starter $29/mo (90 cr), Crusher $49/mo (175), Pro $149/mo (600); packs $0.28–0.44/cr; ~$0.25–0.32/edit effective; explicit **no-refund policy**; referral = 50 cr both sides. Video "coming soon." **Cross-promotes Rendy** (invite link on their site — they're partners, not rivals to each other). No mobile app, no real-footage ingestion, no tours/floor plans/leads. Useful to us: their own ROI section anchors outsourced staging at **$5–15/photo**, twilight ~$5 — quote those anchors on our pricing page.
+
+**Rendy (rendy.io).** ZERO21 MEDIA LLC. Photos→Reels for **photographers as an upsell** ("Add $75–150 per shoot"), apply-for-access gated, claims 3.4k+ photographer users. Camera moves (push/slide/parallax), 50+ VFX (day-to-night, helicopter reveal, animated water/fire), animated virtual staging, 6 reels per listing in one click, sales academy + marketing kits. Pricing not public. Positions on "**No hallucinations** — accurately represents the home," yet motion is still synthesized from stills — which validates our real-footage wedge. No mobile app, no hosted tour, no floor plans, no lead capture.
+
+**Net:** all four competitors are photos-in→MP4-out, web/desktop only. The Rendprop wedge (real walkthrough footage, iOS-native capture, hosted scroll tour, floor plans, leads, multi-industry) holds against the entire field.
