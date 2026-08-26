@@ -216,3 +216,54 @@ export function choosePartSize(bytes: number): number {
   while (Math.ceil(bytes / size) > 8000) size *= 2;
   return Math.max(size, R2_MIN_PART_BYTES);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Object deletion — used by DELETE /me so "delete your account" actually
+// removes the media, not just the rows (the privacy policy promises this).
+// Signed server-side requests (aws4fetch header signing); a 404 counts as
+// deleted so retries stay idempotent.
+
+export interface R2Object {
+  bucket: string;
+  key: string;
+}
+
+/** Delete one object. Returns true if gone (204 or already absent). */
+export async function deleteObject(bucket: string, key: string): Promise<boolean> {
+  const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;
+  const resp = await client().fetch(url, { method: "DELETE" });
+  // R2/S3 returns 204 on delete; 404 means it was never there / already gone.
+  if (resp.ok || resp.status === 404) return true;
+  throw new Error(`R2 DELETE ${bucket}/${key} -> ${resp.status}`);
+}
+
+/**
+ * Best-effort bulk delete with bounded concurrency and a hard cap (edge
+ * functions shouldn't fan out unbounded work). Never throws — failures come
+ * back as messages so the caller can surface them as warnings.
+ */
+export async function deleteObjects(
+  objects: R2Object[],
+  concurrency = 8,
+  cap = 5000,
+): Promise<{ deleted: number; errors: string[] }> {
+  const todo = objects.slice(0, cap);
+  const errors: string[] = [];
+  if (objects.length > cap) {
+    errors.push(`object count ${objects.length} exceeds cap ${cap}; ${objects.length - cap} left for the batch cleaner`);
+  }
+  let deleted = 0;
+  let i = 0;
+  async function workerLoop() {
+    while (i < todo.length) {
+      const obj = todo[i++];
+      try {
+        if (await deleteObject(obj.bucket, obj.key)) deleted++;
+      } catch (e) {
+        errors.push(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, workerLoop));
+  return { deleted, errors };
+}

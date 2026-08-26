@@ -8,7 +8,8 @@
 // service-role client; no public RLS policy exists on `metering` by design.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, clientIp, json, pathSegments, rateLimit, readJson, respondError } from "../_shared/http.ts";
+import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient } from "../_shared/supabase.ts";
 
 interface BeaconBody {
@@ -27,9 +28,8 @@ Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") throw new HttpError(405, "Only POST is supported");
 
-    // Best-effort rate limit — beacons are frequent, so this is generous.
-    // TODO: durable limiter + Turnstile before launch (see leads).
-    if (!rateLimit(`beacon:${clientIp(req)}`, 120, 60_000)) {
+    // Durable per-IP limit — beacons are frequent, so this is generous.
+    if (!(await durableRateLimit(`beacon:${clientIp(req)}`, 120, 60))) {
       throw new HttpError(429, "Too many requests");
     }
 

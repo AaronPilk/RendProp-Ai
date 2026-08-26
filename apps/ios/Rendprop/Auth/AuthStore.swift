@@ -13,8 +13,10 @@ import UIKit
 ///   persist the JWT. LiveAPIClient reads `AuthStore.currentAccessToken` on
 ///   every request.
 ///
-/// MVP token storage is UserDefaults. TODO: move to Keychain (secure, survives
-/// backup rules) before shipping — see the persist helpers below.
+/// Tokens live in the KEYCHAIN (kSecClassGenericPassword, AfterFirstUnlock,
+/// ThisDeviceOnly). Sessions persisted by earlier builds in UserDefaults are
+/// migrated on first read and removed from UserDefaults. Only the non-secret
+/// expiry timestamp and display names stay in UserDefaults.
 final class AuthStore: ObservableObject {
     static let shared = AuthStore()
 
@@ -42,8 +44,65 @@ final class AuthStore: ObservableObject {
         static let orgName      = "auth.orgName"
     }
 
+    // MARK: - Keychain-backed secret storage
+
+    /// Minimal generic-password Keychain wrapper. AfterFirstUnlock so the
+    /// background auto-refresh loop can read tokens; ThisDeviceOnly so they
+    /// never ride an unencrypted backup to another device.
+    private enum SecureStore {
+        private static let service = "com.rendprop.app.auth"
+
+        private static func baseQuery(_ key: String) -> [String: Any] {
+            [kSecClass as String: kSecClassGenericPassword,
+             kSecAttrService as String: service,
+             kSecAttrAccount as String: key]
+        }
+
+        static func get(_ key: String) -> String? {
+            var query = baseQuery(key)
+            query[kSecReturnData as String] = true
+            query[kSecMatchLimit as String] = kSecMatchLimitOne
+            var out: CFTypeRef?
+            guard SecItemCopyMatching(query as CFDictionary, &out) == errSecSuccess,
+                  let data = out as? Data,
+                  let str = String(data: data, encoding: .utf8) else { return nil }
+            return str
+        }
+
+        static func set(_ key: String, _ value: String) {
+            let data = Data(value.utf8)
+            var query = baseQuery(key)
+            let update: [String: Any] = [kSecValueData as String: data]
+            let status = SecItemUpdate(query as CFDictionary, update as CFDictionary)
+            if status == errSecItemNotFound {
+                query[kSecValueData as String] = data
+                query[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+                SecItemAdd(query as CFDictionary, nil)
+            }
+        }
+
+        static func remove(_ key: String) {
+            SecItemDelete(baseQuery(key) as CFDictionary)
+        }
+    }
+
+    /// Keychain first; falls back to (and silently migrates from) the legacy
+    /// UserDefaults slot so pre-Keychain sessions survive the update.
+    private static func secret(_ key: String) -> String? {
+        if let v = SecureStore.get(key) { return v }
+        if let legacy = UserDefaults.standard.string(forKey: key) {
+            SecureStore.set(key, legacy)
+            UserDefaults.standard.removeObject(forKey: key)
+            return legacy
+        }
+        return nil
+    }
+
+    static func storedAccessToken() -> String? { secret(Keys.accessToken) }
+    private static func storedRefreshToken() -> String? { secret(Keys.refreshToken) }
+
     init() {
-        let hasToken = UserDefaults.standard.string(forKey: Keys.accessToken) != nil
+        let hasToken = Self.storedAccessToken() != nil
         // Dev stub stays "signed in"; real auth gates on a persisted token.
         self.isSignedIn = Config.enableAuth ? hasToken : true
         self.userName = UserDefaults.standard.string(forKey: Keys.userName) ?? "Dev Agent"
@@ -69,11 +128,10 @@ final class AuthStore: ObservableObject {
 
     /// Current Supabase JWT, or nil when signed out. Read at request-build time.
     /// May be STALE right at launch — `validAccessToken()` is the async accessor
-    /// that guarantees freshness. TODO: back this with Keychain instead of
-    /// UserDefaults.
+    /// that guarantees freshness. Backed by the Keychain.
     static var currentAccessToken: String? {
         _ = AuthStore.shared   // first touch arms the auto-refresh loop
-        return UserDefaults.standard.string(forKey: Keys.accessToken)
+        return storedAccessToken()
     }
 
     /// Unix-time expiry of the current access token. Nil for sessions persisted
@@ -88,20 +146,23 @@ final class AuthStore: ObservableObject {
     /// anywhere that can `await`.
     static func validAccessToken() async -> String? {
         await shared.refreshIfNeeded()
-        return UserDefaults.standard.string(forKey: Keys.accessToken)
+        return storedAccessToken()
     }
 
     private static func persistTokens(access: String, refresh: String?, expiresAt: Date?) {
-        // TODO: Keychain. UserDefaults is fine for dev/TestFlight only.
-        let d = UserDefaults.standard
-        d.set(access, forKey: Keys.accessToken)
-        if let refresh { d.set(refresh, forKey: Keys.refreshToken) }
-        if let expiresAt { d.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt) }
+        SecureStore.set(Keys.accessToken, access)
+        if let refresh { SecureStore.set(Keys.refreshToken, refresh) }
+        // Expiry is non-secret scheduling metadata — UserDefaults is fine.
+        if let expiresAt {
+            UserDefaults.standard.set(expiresAt.timeIntervalSince1970, forKey: Keys.expiresAt)
+        }
     }
 
     private static func clearTokens() {
+        SecureStore.remove(Keys.accessToken)
+        SecureStore.remove(Keys.refreshToken)
         let d = UserDefaults.standard
-        d.removeObject(forKey: Keys.accessToken)
+        d.removeObject(forKey: Keys.accessToken)    // legacy slots, belt-and-braces
         d.removeObject(forKey: Keys.refreshToken)
         d.removeObject(forKey: Keys.expiresAt)
     }
@@ -133,7 +194,7 @@ final class AuthStore: ObservableObject {
     @discardableResult
     func refreshIfNeeded(leeway: TimeInterval = 60) async -> Bool {
         guard Config.enableAuth, isSignedIn else { return true }   // dev stub / signed out
-        guard UserDefaults.standard.string(forKey: Keys.refreshToken) != nil else {
+        guard Self.storedRefreshToken() != nil else {
             return true   // legacy session without a refresh token — nothing to do
         }
         if let expiry = Self.tokenExpiresAt, Date() < expiry.addingTimeInterval(-leeway) {
@@ -152,7 +213,7 @@ final class AuthStore: ObservableObject {
     /// 4xx (revoked/expired refresh token) signs the user out so the publish
     /// gate re-prompts; network errors keep the session for a later retry.
     private func performRefresh() async -> Bool {
-        guard let refreshToken = UserDefaults.standard.string(forKey: Keys.refreshToken),
+        guard let refreshToken = Self.storedRefreshToken(),
               let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty,
               var comps = URLComponents(url: authBase.appendingPathComponent("token"),
@@ -191,7 +252,7 @@ final class AuthStore: ObservableObject {
     private func scheduleAutoRefresh() {
         autoRefreshTask?.cancel()
         guard Config.enableAuth,
-              UserDefaults.standard.string(forKey: Keys.refreshToken) != nil else { return }
+              Self.storedRefreshToken() != nil else { return }
         autoRefreshTask = Task { [weak self] in
             while !Task.isCancelled {
                 let wait: TimeInterval

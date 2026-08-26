@@ -16,7 +16,6 @@ struct ReviewSubmitView: View {
     @State private var newTagName = ""
     @State private var showRoomTagger = false
     @State private var showCellularPrompt = false
-    @State private var showPreview = false
     @State private var goToStatus = false
     @State private var render: Render?
 
@@ -60,11 +59,6 @@ struct ReviewSubmitView: View {
             if let render {
                 RenderStatusView(listing: listing, render: render)
             }
-        }
-        .sheet(isPresented: $showPreview) {
-            EnhancementPreviewView(asset: asset,
-                                   declutter: enhancements.declutter,
-                                   style: enhancements.style)
         }
     }
 
@@ -274,20 +268,8 @@ struct ReviewSubmitView: View {
             }
 
             if enhancements.isActive {
-                if Secrets.aiEnabled {
-                    Button {
-                        showPreview = true
-                        Haptics.selection()
-                    } label: {
-                        Label("Preview this look on my video", systemImage: "eye")
-                            .font(.rpHeadline)
-                            .foregroundStyle(Theme.accent)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 12)
-                            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .buttonStyle(.plain)
-                }
+                // AI preview/enhancement runs server-side after upload (see
+                // RenderStatusView). No provider keys ship in the app binary.
                 Label(SpaceType.current == .realEstate
                       ? "Your shared tour will show a small \"Virtually staged\" label — real-estate rules require it for edited videos."
                       : "Your shared tour will show a small \"Virtually staged\" label so viewers know the video was edited.",

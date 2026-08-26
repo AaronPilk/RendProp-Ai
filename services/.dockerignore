@@ -1,0 +1,13 @@
+# Build context = services/ (see worker/Dockerfile). This file keeps secrets
+# and junk OUT of image layers. A .env in an image layer is a leaked .env —
+# even if a later layer deletes it.
+**/.env
+**/.env.*
+!**/.env.example
+**/__pycache__/
+**/*.pyc
+**/.DS_Store
+**/node_modules/
+edge/
+supabase/
+**/.git

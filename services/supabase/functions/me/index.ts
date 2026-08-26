@@ -14,12 +14,18 @@
 // individual failure is collected as a warning and we keep going. The request
 // only fails (500) if the final auth-user deletion itself fails.
 //
-// TODO(storage): R2 objects (uploads/renders/photos) are NOT deleted here —
-// edge functions shouldn't fan out thousands of S3 deletes inline. Ship an
-// async batch cleaner that sweeps R2 keys for org ids with no surviving rows.
+// Storage: R2 objects for purged orgs ARE deleted (capped, bounded-concurrency
+// best-effort — see step 3b). Anything beyond the cap is reported in warnings
+// for the async batch cleaner.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, json, respondError, round4 } from "../_shared/http.ts";
+import {
+  deleteObjects,
+  R2_BUCKET_RENDERS,
+  R2_BUCKET_UPLOADS,
+  type R2Object,
+} from "../_shared/r2.ts";
 import {
   adminClient,
   getUser,
@@ -193,11 +199,34 @@ async function handleDelete(userId: string): Promise<Response> {
   }
 
   // 3. Solely-owned orgs: purge everything, children first (FK-safe order).
+  //    Collect R2 storage keys BEFORE the rows disappear — the media purge
+  //    below is how "delete your account" actually deletes your content.
+  const purgeObjs: R2Object[] = [];
   for (const orgId of soloOrgs) {
     const listingIds = await selectIds("listing ids", "listings", "id", "org_id", [orgId]);
     const jobIds = await selectIds("render_job ids", "render_jobs", "id", "listing_id", listingIds);
     const renderIds = await selectIds("render ids", "renders", "id", "listing_id", listingIds);
     const assetIds = await selectIds("asset ids", "capture_assets", "id", "listing_id", listingIds);
+
+    for (const ids of chunk(listingIds)) {
+      try {
+        const { data, error } = await admin
+          .from("capture_assets")
+          .select("storage_key, bucket")
+          .in("listing_id", ids);
+        if (error) { warnings.push(`storage keys: ${error.message}`); continue; }
+        for (const row of (data ?? []) as { storage_key: string | null; bucket: string | null }[]) {
+          if (row.storage_key) {
+            purgeObjs.push({
+              bucket: row.bucket === "renders" ? R2_BUCKET_RENDERS : R2_BUCKET_UPLOADS,
+              key: row.storage_key,
+            });
+          }
+        }
+      } catch (e) {
+        warnings.push(`storage keys: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
 
     // Rows that reference the org directly (their listing/job FKs are set-null,
     // so deleting them first also removes the user's lead/usage/spend data).
@@ -224,6 +253,20 @@ async function handleDelete(userId: string): Promise<Response> {
     await step(`delete org ${orgId}`, () => admin.from("orgs").delete().eq("id", orgId));
   }
 
+  // 3b. Purge the media itself from R2 (best effort; failures become warnings
+  //     rather than blocking the account deletion the user asked for).
+  let deletedObjects = 0;
+  if (purgeObjs.length) {
+    try {
+      const { deleted, errors } = await deleteObjects(purgeObjs);
+      deletedObjects = deleted;
+      for (const msg of errors.slice(0, 5)) warnings.push(`r2 purge: ${msg}`);
+      if (errors.length > 5) warnings.push(`r2 purge: +${errors.length - 5} more failures`);
+    } catch (e) {
+      warnings.push(`r2 purge: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
   // 4. The user's profile row (auth cascade would get it too — be explicit).
   await step("delete profile", () => admin.from("profiles").delete().eq("id", userId));
 
@@ -244,6 +287,7 @@ async function handleDelete(userId: string): Promise<Response> {
     ok: true,
     deleted_orgs: soloOrgs.length,
     left_orgs: sharedOrgs.length,
+    deleted_objects: deletedObjects,
     ...(warnings.length ? { warnings } : {}),
   });
 }

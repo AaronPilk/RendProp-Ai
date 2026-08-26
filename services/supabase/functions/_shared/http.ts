@@ -89,9 +89,9 @@ export function round4(n: number): number {
 
 // ---------------------------------------------------------------------------
 // Best-effort rate limiting for public routes (/leads, /beacon).
-// NOTE: this is per-instance and resets on cold start — it blunts obvious
-// abuse but is NOT a real limiter. TODO: back with Cloudflare Turnstile +
-// a durable store (Upstash Redis / CF KV) before launch. See leads/beacon.
+// NOTE: this is per-instance and resets on cold start — the durable limiter
+// in _shared/ratelimit.ts (Postgres bump_rate) is the primary; this is its
+// fallback.
 // ---------------------------------------------------------------------------
 const buckets = new Map<string, { count: number; reset: number }>();
 

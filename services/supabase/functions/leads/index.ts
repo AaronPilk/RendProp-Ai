@@ -7,7 +7,8 @@
 // contact to GoHighLevel when GHL_API_KEY + GHL_LOCATION_ID are set.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, clientIp, json, rateLimit, readJson, respondError } from "../_shared/http.ts";
+import { HttpError, assert, clientIp, json, readJson, respondError } from "../_shared/http.ts";
+import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient } from "../_shared/supabase.ts";
 
 interface LeadBody {
@@ -62,9 +63,9 @@ Deno.serve(async (req) => {
   try {
     if (req.method !== "POST") throw new HttpError(405, "Only POST is supported");
 
-    // Best-effort rate limit per IP. TODO: add Cloudflare Turnstile verification
-    // + a durable limiter (Upstash/CF KV) before launch — this resets per instance.
-    if (!rateLimit(`leads:${clientIp(req)}`, 20, 60_000)) {
+    // Durable per-IP limit (Postgres-backed, shared across instances; falls
+    // back to the in-memory limiter if the RPC is unavailable).
+    if (!(await durableRateLimit(`leads:${clientIp(req)}`, 20, 60))) {
       throw new HttpError(429, "Too many requests, slow down");
     }
 

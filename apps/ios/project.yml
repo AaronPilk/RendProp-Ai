@@ -29,6 +29,11 @@ targets:
       - path: Rendprop
         excludes:
           - "Resources/player/**"
+          # SECURITY: never bundle local secrets into the .app. The legacy
+          # direct-AI-provider path was removed (audit 2026-08-26); all AI
+          # calls go through the Supabase edge functions.
+          - "Resources/Secrets.plist"
+          - "**/Secrets.plist"
       - path: Rendprop/Resources/player
         type: folder
         buildPhase: resources
