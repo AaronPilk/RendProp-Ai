@@ -53,8 +53,16 @@ const DEFAULT_DECLUTTER_PROMPT =
   "remove clutter, shoes, bags, boxes, cords, laundry, dishes, and personal items " +
   "from the floor and surfaces; keep the room, furniture, and architecture unchanged";
 
+// Anti-hallucination scaffolding: i2v models love to "help" by inventing decor,
+// people, or a different room. Pin the clip to the exact photographed scene and
+// allow only grounded camera motion.
 const DEFAULT_REEL_PROMPT =
-  "slow cinematic camera push-in, subtle parallax, keep the scene exactly as photographed";
+  "Photorealistic live continuation of this exact photographed scene. The architecture, " +
+  "furniture, decor, materials, lighting, and exposure stay identical to the source photo. " +
+  "Camera: one slow, subtle, grounded push-in with gentle natural parallax — no cuts, no " +
+  "transitions, and no panning that reveals unseen areas. Do not add, remove, or move any " +
+  "objects; no people, no animals, no text or watermarks; no scene changes, style shifts, " +
+  "warping, or flicker.";
 
 interface DroneBody {
   asset_id?: string;
@@ -143,12 +151,17 @@ Deno.serve(async (req) => {
       const duration = wanted <= 4 ? "4s" : wanted <= 6 ? "6s" : "8s";
 
       const address = (body.address ?? "").trim();
+      // Anti-hallucination scaffolding: t2v aerials drift into morphing houses
+      // and toy-town scale — pin one consistent property with stable geometry.
       const prompt = cleanPrompt(body.prompt) ??
         ("Cinematic aerial drone establishing shot, slowly descending and gliding toward a " +
           "beautiful residential property" +
           (address ? `, a home like the one at ${address}` : "") +
-          ". Golden-hour light, smooth stabilized gimbal motion, gentle parallax over rooftops " +
-          "and trees, photorealistic, rich natural detail, no people, no text.");
+          ". One single consistent property for the entire shot — the same house, roofline, " +
+          "lot, and street throughout, with stable, coherent geometry and no morphing or " +
+          "warping structures. Realistic suburban scale and proportions. Golden-hour light, " +
+          "smooth stabilized gimbal motion, gentle parallax over rooftops and trees, " +
+          "photorealistic, rich natural detail. No people, no text, no watermarks, no logos.");
 
       const sub = await falSubmit(MODEL_AERIAL, {
         prompt,

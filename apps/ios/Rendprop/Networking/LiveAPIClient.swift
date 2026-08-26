@@ -262,6 +262,43 @@ final class LiveAPIClient: APIClient {
         return r.imageB64
     }
 
+    func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
+        let body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": "suggest"]
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body))
+        // Tolerant decode: every field optional, malformed entries dropped, and
+        // only the five runnable preset edits pass through (so every row the UI
+        // shows maps to a real aiPhotoEdit mode). Cap at 3 per the contract.
+        struct Resp: Decodable {
+            struct Item: Decodable { let edit: String?; let reason: String?; let confidence: Double? }
+            let suggestions: [Item]?
+        }
+        let allowed: Set<String> = ["twilight", "sky", "lawn", "declutter", "stage"]
+        let r: Resp = try decode(data)
+        let mapped = (r.suggestions ?? []).compactMap { item -> AIEditSuggestion? in
+            guard let edit = item.edit?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+                  allowed.contains(edit) else { return nil }
+            return AIEditSuggestion(edit: edit,
+                                    reason: item.reason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                                    confidence: item.confidence)
+        }
+        return Array(mapped.prefix(3))
+    }
+
+    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
+        let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body: [String: Any] = ["image_b64": imageBase64, "mime": mime,
+                                   "edit": "improve_prompt",
+                                   "prompt": String(rough.prefix(300))]   // contract: rough idea ≤ 300
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body))
+        struct Resp: Decodable { let prompt: String? }
+        let r: Resp = try decode(data)
+        guard let improved = r.prompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !improved.isEmpty else {
+            throw APIError.badResponse(-1)   // server didn't return an improved prompt
+        }
+        return improved
+    }
+
     // MARK: - AI video (ai-video edge function — async fal submit + poll)
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {

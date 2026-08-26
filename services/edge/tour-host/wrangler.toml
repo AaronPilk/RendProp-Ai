@@ -4,13 +4,16 @@ compatibility_date = "2024-09-23"
 workers_dev = true
 
 # ---------------------------------------------------------------------------
-# Routes — bind the two public path prefixes on the apex domain to this Worker.
+# Routes — bind the public paths on the apex domain to this Worker.
 # Requires rendprop.app to be an active zone on this Cloudflare account. The
-# tour-host owns ONLY /f/* and /a/*; the marketing site keeps everything else.
+# tour-host owns /f/*, /a/*, and the legal pages (/terms, /privacy — linked
+# from the iOS app's Settings); the marketing site keeps everything else.
 # ---------------------------------------------------------------------------
 routes = [
   { pattern = "rendprop.app/f/*", zone_name = "rendprop.app" },
   { pattern = "rendprop.app/a/*", zone_name = "rendprop.app" },
+  { pattern = "rendprop.app/terms*", zone_name = "rendprop.app" },
+  { pattern = "rendprop.app/privacy*", zone_name = "rendprop.app" },
 ]
 
 [vars]

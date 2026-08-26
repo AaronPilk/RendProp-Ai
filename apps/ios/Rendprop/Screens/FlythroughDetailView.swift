@@ -459,6 +459,7 @@ struct PhotoStudioView: View {
     @State private var showWandDialog = false            // wand → AI enhance chooser
     @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
     @State private var showStageDialog = false           // staging style chooser
+    @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -568,8 +569,15 @@ struct PhotoStudioView: View {
         .fullScreenCover(item: $compare) { p in PhotoCompareView(photo: p) }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto) { p in
-            CustomEditSheet { prompt in
+            CustomEditSheet(photo: p, api: model.api) { prompt in
                 aiEdit(p, "custom", prompt: prompt)
+            }
+        }
+        .sheet(item: $suggestResult) { r in
+            SuggestSheet(suggestions: r.suggestions) { edit in
+                // stage needs a style — default to modern (the dialog's first).
+                if edit == "stage" { aiEdit(r.photo, "stage", style: "modern") }
+                else { aiEdit(r.photo, edit) }
             }
         }
         .fullScreenCover(isPresented: $showReelStudio) {
@@ -579,6 +587,7 @@ struct PhotoStudioView: View {
         // The wand's visible menu — same edits as the long-press path, one tap.
         .confirmationDialog("AI enhance", isPresented: $showWandDialog,
                             titleVisibility: .visible, presenting: wandPhoto) { p in
+            Button("✨ Suggest edits for this photo") { suggestEdits(p) }
             Button("Twilight sky") { aiEdit(p, "twilight") }
             Button("Blue sky") { aiEdit(p, "sky") }
             Button("Green lawn") { aiEdit(p, "lawn") }
@@ -655,6 +664,35 @@ struct PhotoStudioView: View {
                     isProcessing = false
                     Haptics.success()
                     compare = newPhoto   // show the before/after immediately
+                }
+            } catch {
+                await MainActor.run { isProcessing = false; aiError = error.localizedDescription }
+            }
+        }
+    }
+
+    /// Ask the AI which preset edits would most improve this photo
+    /// (`POST /ai-photo`, edit: "suggest"). Results open in SuggestSheet;
+    /// tapping one runs the normal aiEdit path. Errors reuse the aiError alert.
+    private func suggestEdits(_ p: EnhancedPhoto) {
+        guard !isProcessing, let ui = UIImage(contentsOfFile: p.enhancedURL.path) else { return }
+        isProcessing = true
+        processingText = "Analyzing photo…"
+        Haptics.selection()
+        let api = model.api          // snapshot on the main actor
+        Task {
+            do {
+                let scaled = Self.downscaled(ui, maxDimension: 1024)
+                guard let jpeg = scaled.jpegData(compressionQuality: 0.8) else {
+                    throw NSError(domain: "AIPhoto", code: 3,
+                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
+                }
+                let results = try await api.aiPhotoSuggest(
+                    imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg")
+                await MainActor.run {
+                    isProcessing = false
+                    suggestResult = SuggestResult(photo: p, suggestions: results)
+                    Haptics.success()
                 }
             } catch {
                 await MainActor.run { isProcessing = false; aiError = error.localizedDescription }
@@ -1031,9 +1069,13 @@ struct PhotoCompareView: View {
 /// `ai-photo` path as the presets (`edit: "custom"`, prompt capped at 600
 /// chars, matching the server). Inline here per the new-file-not-in-target rule.
 struct CustomEditSheet: View {
+    let photo: EnhancedPhoto             // the photo this prompt will edit
+    let api: APIClient                   // snapshot from the presenting view
     let onGenerate: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var prompt = ""
+    @State private var isImproving = false       // "Improve my prompt" in flight
+    @State private var improveError: String?
 
     private var trimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1056,6 +1098,30 @@ struct CustomEditSheet: View {
                     .foregroundStyle(prompt.count >= 600 ? Theme.warn : Theme.inkDim)
                     .frame(maxWidth: .infinity, alignment: .trailing)
 
+                // Rough idea in → sharper prompt back (replaces the field text;
+                // still fully editable before Generate).
+                Button { improvePrompt() } label: {
+                    HStack(spacing: 8) {
+                        if isImproving {
+                            ProgressView().tint(Theme.accent)
+                            Text("Improving your prompt…")
+                        } else {
+                            Text("✨ Improve my prompt")
+                        }
+                    }
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity).padding(.vertical, 13)
+                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .disabled(trimmed.isEmpty || isImproving)
+
+                if let improveError {
+                    Text(improveError)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                }
+
                 Button {
                     let text = String(trimmed.prefix(600))
                     Haptics.selection()
@@ -1068,7 +1134,7 @@ struct CustomEditSheet: View {
                         .background(Theme.accent).foregroundStyle(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
-                .disabled(trimmed.isEmpty)
+                .disabled(trimmed.isEmpty || isImproving)
 
                 Spacer()
             }
@@ -1086,6 +1152,191 @@ struct CustomEditSheet: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    /// Send the rough idea + this photo through `ai-photo` (edit:
+    /// "improve_prompt") and REPLACE the field with the sharper version. The
+    /// user can still edit before Generate; the 600-char cap stays enforced by
+    /// onChange above.
+    private func improvePrompt() {
+        let rough = trimmed
+        guard !rough.isEmpty, !isImproving,
+              let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else { return }
+        isImproving = true
+        improveError = nil
+        Haptics.selection()
+        let api = self.api
+        Task {
+            do {
+                let scaled = Self.downscaledForPrompt(ui, maxDimension: 1024)
+                guard let jpeg = scaled.jpegData(compressionQuality: 0.8) else {
+                    throw NSError(domain: "AIPhoto", code: 4,
+                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
+                }
+                let improved = try await api.aiImprovePrompt(
+                    imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg",
+                    prompt: String(rough.prefix(300)))
+                await MainActor.run {
+                    prompt = String(improved.prefix(600))
+                    isImproving = false
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isImproving = false
+                    improveError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Downscale so the base64 upload stays small (mirrors PhotoStudioView's
+    /// helper — that one is private to its type, so this sheet keeps its own).
+    private static func downscaledForPrompt(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
+        let longest = max(image.size.width, image.size.height)
+        guard longest > maxDimension else { return image }
+        let scale = maxDimension / longest
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let renderer = UIGraphicsImageRenderer(size: size)
+        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
+    }
+}
+
+// MARK: - AI edit suggestions ("what would help this photo")
+// Inline here per the new-file-not-in-target rule.
+
+/// Payload for the suggestions sheet — the analyzed photo + its results.
+struct SuggestResult: Identifiable {
+    let id = UUID()
+    let photo: EnhancedPhoto
+    let suggestions: [AIEditSuggestion]
+}
+
+/// AI "suggest edits" results — up to three preset edits, each a tappable row
+/// (friendly name + reason + a confidence dot) that runs the normal aiEdit
+/// path in the presenting PhotoStudioView. Empty = the photo already looks good.
+struct SuggestSheet: View {
+    let suggestions: [AIEditSuggestion]
+    let onPick: (String) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    /// edit key → the same user-facing names the wand dialog uses.
+    private static func friendlyName(_ edit: String) -> String {
+        switch edit {
+        case "twilight":  return "Twilight sky"
+        case "sky":       return "Blue sky"
+        case "lawn":      return "Green lawn"
+        case "declutter": return "Declutter"
+        case "stage":     return "Virtual staging"
+        default:          return edit.capitalized
+        }
+    }
+
+    private static func icon(_ edit: String) -> String {
+        switch edit {
+        case "twilight":  return "moon.stars"
+        case "sky":       return "cloud.sun"
+        case "lawn":      return "leaf"
+        case "declutter": return "sparkles.rectangle.stack"
+        case "stage":     return "sofa"
+        default:          return "wand.and.stars"
+        }
+    }
+
+    /// Confidence dot: green = strong call, accent = decent, dim = tentative/unknown.
+    private static func confidenceColor(_ c: Double?) -> Color {
+        guard let c else { return Theme.inkDim }
+        if c >= 0.75 { return Theme.good }
+        if c >= 0.5 { return Theme.accent }
+        return Theme.inkDim
+    }
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if suggestions.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "checkmark.seal")
+                            .font(.system(size: 36, weight: .light))
+                            .foregroundStyle(Theme.good)
+                        Text("This photo already looks great — try a custom edit.")
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 28)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView {
+                        VStack(spacing: 10) {
+                            Text("Tap a suggestion to run it — each edit saves as a new photo.")
+                                .font(.rpCaption)
+                                .foregroundStyle(Theme.inkDim)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            ForEach(Array(suggestions.enumerated()), id: \.offset) { _, s in
+                                row(s)
+                            }
+                        }
+                        .padding()
+                    }
+                }
+            }
+            .background(Theme.bg)
+            .navigationTitle("Suggested edits")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func row(_ s: AIEditSuggestion) -> some View {
+        Button {
+            Haptics.selection()
+            dismiss()
+            onPick(s.edit)
+        } label: {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: Self.icon(s.edit))
+                    .font(.system(size: 17, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.accent)
+                    .frame(width: 36, height: 36)
+                    .background(Theme.accentSoft,
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(Self.friendlyName(s.edit))
+                            .font(.rpBody.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                        Circle()
+                            .fill(Self.confidenceColor(s.confidence))
+                            .frame(width: 7, height: 7)
+                            .accessibilityHidden(true)
+                    }
+                    if !s.reason.isEmpty {
+                        Text(s.reason)
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold))
+                    .foregroundStyle(Theme.inkDim)
+                    .padding(.top, 10)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Text("\(Self.friendlyName(s.edit)). \(s.reason)"))
     }
 }
 
@@ -1425,9 +1676,18 @@ struct ReelStudioView: View {
 
     private enum Phase { case setup, generating, stitching, done, failed }
 
+    /// Text burned onto the exported reel. Plain Sendable strings — resolved on
+    /// the main actor in generate(), rendered as CALayers inside stitch.
+    struct ReelCaptions: Sendable {
+        let title: String        // listing address (never empty — safe fallback)
+        let subtitle: String     // beds/baths/sqft or tagline; "" hides the line
+        let watermark: String    // "Made with Rendprop"
+    }
+
     @State private var phase: Phase = .setup
     @State private var selected: [String] = []      // photo ids in tap order = clip order
     @State private var portrait = true              // 9:16 (true) vs 16:9 (false)
+    @State private var captionsOn = true            // intro title card + Rendprop mark on export
     @State private var motionPrompt = ""
     @State private var completedClips = 0
     @State private var totalClips = 0
@@ -1515,6 +1775,19 @@ struct ReelStudioView: View {
                     Text("16:9 · Wide").tag(false)
                 }
                 .pickerStyle(.segmented)
+
+                Toggle(isOn: $captionsOn) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Captions")
+                            .font(.rpBody.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                        Text("Opens on the \(SpaceType.current == .realEstate ? "address" : "name"), plus a small Rendprop mark.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                    }
+                }
+                .tint(Theme.accent)
+                .padding(.top, 6)
 
                 Text("MOTION (OPTIONAL)")
                     .font(.rpKicker).foregroundStyle(Theme.inkDim)
@@ -1773,6 +2046,9 @@ struct ReelStudioView: View {
         let isPortrait = portrait
         let prompt = motionPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let listingID = listing.id
+        // Caption text is resolved HERE (main actor, plain Sendable strings) —
+        // the CALayers themselves are built inside the nonisolated stitch.
+        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
         phase = .generating
         completedClips = 0
         totalClips = chosen.count
@@ -1814,7 +2090,8 @@ struct ReelStudioView: View {
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
                 let stamp = Int(Date().timeIntervalSince1970)
                 let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
-                try await Self.stitch(clips: clipURLs, renderSize: renderSize, output: outURL)
+                try await Self.stitch(clips: clipURLs, renderSize: renderSize,
+                                      captions: captions, output: outURL)
                 try? FileManager.default.removeItem(at: tmpDir)
 
                 try Task.checkCancellation()
@@ -1894,7 +2171,11 @@ struct ReelStudioView: View {
     /// aspect-FILLED (scale to cover + center-crop) with a layer-instruction
     /// transform computed from its track's naturalSize + preferredTransform, so
     /// portrait/rotated sources render upright. Export waits on a continuation.
-    nonisolated private static func stitch(clips: [URL], renderSize: CGSize, output: URL) async throws {
+    /// `captions` (optional) adds an intro title card + a small Rendprop mark
+    /// via AVVideoCompositionCoreAnimationTool — additive, the transform
+    /// pipeline is untouched.
+    nonisolated private static func stitch(clips: [URL], renderSize: CGSize,
+                                           captions: ReelCaptions?, output: URL) async throws {
         let composition = AVMutableComposition()
         guard let videoTrack = composition.addMutableTrack(
             withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
@@ -1941,6 +2222,34 @@ struct ReelStudioView: View {
         videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
         videoComposition.instructions = [instruction]
 
+        // Captions (optional): intro title card over the first clip + a small
+        // persistent Rendprop mark, composited at EXPORT time via
+        // AVVideoCompositionCoreAnimationTool. The tool wants a video layer +
+        // a parent layer (video below, overlay above), every frame equal to the
+        // render rect. It only applies on EXPORT (never AVPlayer playback) —
+        // and this path only exports. The CALayers are deliberately built here
+        // in the nonisolated stitch, right before the export, never attached to
+        // any live view/layer tree — the standard pattern for titled exports.
+        if let captions {
+            let renderRect = CGRect(origin: .zero, size: renderSize)
+            let videoLayer = CALayer()
+            videoLayer.frame = renderRect
+            let overlayLayer = CALayer()
+            overlayLayer.frame = renderRect
+            overlayLayer.masksToBounds = true
+            addCaptionLayers(captions, renderSize: renderSize, to: overlayLayer)
+            let parentLayer = CALayer()
+            parentLayer.frame = renderRect
+            // Core Animation's export space is bottom-left; flipping the parent
+            // makes the whole tree read top-left (UIKit-style) so the text
+            // renders upright and our y-from-top layout math is literal.
+            parentLayer.isGeometryFlipped = true
+            parentLayer.addSublayer(videoLayer)
+            parentLayer.addSublayer(overlayLayer)
+            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+                postProcessingAsVideoLayer: videoLayer, in: parentLayer)
+        }
+
         guard let export = AVAssetExportSession(asset: composition,
                                                 presetName: AVAssetExportPresetHighestQuality) else {
             throw NSError(domain: "ReelStudio", code: 32,
@@ -1958,6 +2267,107 @@ struct ReelStudioView: View {
             throw export.error ?? NSError(domain: "ReelStudio", code: 33,
                                           userInfo: [NSLocalizedDescriptionKey: "Couldn't export the stitched reel."])
         }
+    }
+
+    /// Caption text with fallbacks so an empty/unfilled listing can never render
+    /// a blank title card: no address → a generic hook; degenerate "0 bd · 0 ba"
+    /// facts → the tagline instead → or no second line at all.
+    nonisolated private static func reelCaptions(for listing: Listing) -> ReelCaptions {
+        let address = listing.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = address.isEmpty ? "Come take the tour" : address
+        let hasFacts = listing.beds > 0 || listing.baths > 0 || listing.sqft > 0
+        let facts = hasFacts ? listing.metaLine : ""
+        let tagline = (listing.tagline ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return ReelCaptions(title: title,
+                            subtitle: facts.isEmpty ? tagline : facts,
+                            watermark: "Made with Rendprop")
+    }
+
+    /// Build the caption CATextLayers on `overlay`: (a) an intro title card —
+    /// address (bold) over the facts/tagline line, centered, shown ~2 s then
+    /// faded out (opacity CABasicAnimation, beginTime AVCoreAnimationBeginTimeAtZero
+    /// + 1.6, duration 0.4, fillMode .forwards, not removed on completion) —
+    /// and (b) a small bottom-right "Made with Rendprop" mark at 55% opacity for
+    /// the full duration. Coordinates are TOP-LEFT (the parent layer is
+    /// geometry-flipped); sizes scale with min(renderSize) so 9:16 and 16:9
+    /// exports match. White text with a soft black shadow, safe-area margins.
+    nonisolated private static func addCaptionLayers(_ captions: ReelCaptions,
+                                                     renderSize: CGSize,
+                                                     to overlay: CALayer) {
+        let w = renderSize.width, h = renderSize.height
+        let unit = min(w, h)                 // 1080 in both 9:16 and 16:9
+        let margin = unit * 0.07             // safe-area-ish inset
+        let textWidth = w - margin * 2
+
+        // One sized, measured text layer. UIFont is toll-free bridged to CTFont
+        // (valid for CATextLayer.font); fontSize still governs the drawn size.
+        func makeText(_ text: String, size: CGFloat, weight: UIFont.Weight,
+                      alignment: CATextLayerAlignmentMode) -> (CATextLayer, CGFloat) {
+            let font = UIFont.systemFont(ofSize: size, weight: weight)
+            let measured = (text as NSString).boundingRect(
+                with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
+                options: [.usesLineFragmentOrigin, .usesFontLeading],
+                attributes: [.font: font], context: nil)
+            let layer = CATextLayer()
+            layer.string = text
+            layer.font = font
+            layer.fontSize = size
+            layer.foregroundColor = UIColor.white.cgColor
+            layer.alignmentMode = alignment
+            layer.isWrapped = true
+            layer.truncationMode = .end
+            layer.contentsScale = 2
+            layer.shadowColor = UIColor.black.cgColor
+            layer.shadowOpacity = 0.6
+            layer.shadowRadius = max(2, size * 0.08)
+            layer.shadowOffset = CGSize(width: 0, height: max(1, size * 0.03))
+            return (layer, ceil(measured.height) + size * 0.25)
+        }
+
+        // --- Intro title card (over the first clip only; every clip is 5 s) ---
+        let intro = CALayer()
+        intro.frame = CGRect(origin: .zero, size: renderSize)
+
+        let gap = unit * 0.010
+        let (titleLayer, titleH) = makeText(captions.title, size: unit * 0.058,
+                                            weight: .bold, alignment: .center)
+        var blockH = titleH
+        var subLayer: CATextLayer?
+        var subH: CGFloat = 0
+        if !captions.subtitle.isEmpty {
+            let (sl, sh) = makeText(captions.subtitle, size: unit * 0.036,
+                                    weight: .semibold, alignment: .center)
+            subLayer = sl
+            subH = sh
+            blockH += gap + sh
+        }
+        let blockTop = h * 0.42 - blockH / 2       // a touch above center
+        titleLayer.frame = CGRect(x: margin, y: blockTop, width: textWidth, height: titleH)
+        intro.addSublayer(titleLayer)
+        if let subLayer {
+            subLayer.frame = CGRect(x: margin, y: blockTop + titleH + gap,
+                                    width: textWidth, height: subH)
+            intro.addSublayer(subLayer)
+        }
+
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1.0
+        fade.toValue = 0.0
+        fade.beginTime = AVCoreAnimationBeginTimeAtZero + 1.6   // NEVER 0 (0 = "now")
+        fade.duration = 0.4
+        fade.fillMode = .forwards
+        fade.isRemovedOnCompletion = false
+        intro.add(fade, forKey: "introFade")
+        overlay.addSublayer(intro)
+
+        // --- Watermark: bottom-right, whole reel, 55% opacity ---
+        // ~10 pt equivalent: 10 / 390 (pt screen width) × 1080 ≈ 28 px.
+        let (wm, wmH) = makeText(captions.watermark, size: unit * 0.026,
+                                 weight: .semibold, alignment: .right)
+        wm.opacity = 0.55
+        wm.shadowOpacity = 0.5
+        wm.frame = CGRect(x: margin, y: h - margin - wmH, width: textWidth, height: wmH)
+        overlay.addSublayer(wm)
     }
 
     /// Raw buffer space → `renderSize`, aspect-FILL. Applies the source's

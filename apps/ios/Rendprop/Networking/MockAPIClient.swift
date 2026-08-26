@@ -92,6 +92,32 @@ actor MockAPIClient: APIClient {
         return imageBase64
     }
 
+    func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
+        // Offline dev: two believable canned suggestions so the SuggestSheet
+        // flow (rows → tap → aiEdit) is fully exercisable without a backend.
+        try? await Task.sleep(nanoseconds: 900_000_000)
+        return [
+            AIEditSuggestion(edit: "twilight",
+                             reason: "Warm dusk light would make this shot feel premium.",
+                             confidence: 0.9),
+            AIEditSuggestion(edit: "declutter",
+                             reason: "A few loose items pull focus from the space itself.",
+                             confidence: 0.65),
+        ]
+    }
+
+    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
+        // Offline dev: echo the idea back, embellished, so the replace-the-field
+        // UX runs end-to-end.
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !rough.isEmpty else {
+            return "Brighten the room with soft natural light, keeping every surface true to the photo."
+        }
+        return rough + " — with balanced natural light, true-to-life colors, and crisp detail. "
+            + "Keep the layout and architecture exactly as photographed."
+    }
+
     // MARK: - AI video (offline stubs — the real flows run only on LiveAPIClient)
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {

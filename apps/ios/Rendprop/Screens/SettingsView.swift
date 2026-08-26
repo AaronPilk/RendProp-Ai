@@ -4,7 +4,6 @@ import PhotosUI
 
 struct SettingsView: View {
     @AppStorage("wifiOnlyUploads") private var wifiOnlyUploads = true
-    @AppStorage("uploadMode") private var uploadMode = Config.UploadMode.simulate.rawValue
     @AppStorage("maxQualityCapture") private var maxQualityCapture = false
     @AppStorage("hasOnboarded") private var hasOnboarded = true
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
@@ -13,9 +12,19 @@ struct SettingsView: View {
     @EnvironmentObject var uploads: UploadManager
     @EnvironmentObject var model: AppModel
 
+    // Real signed-in state for the Account row (never the dev-stub placeholder).
+    @ObservedObject private var auth = AuthStore.shared
+
     // Live-backend usage/cost (contract: GET /me). Loaded only when useLiveBackend.
     @State private var usage: UsageSummary?
     @State private var usageFailed = false
+
+    // Account deletion flow (App Store Guideline 5.1.1(v) — in-app deletion).
+    @State private var showDeleteConfirm = false
+    @State private var isDeletingAccount = false
+    @State private var deleteErrorMessage: String?
+    @State private var showDeleteError = false
+    @State private var showAccountDeleted = false
 
     var body: some View {
         Form {
@@ -92,9 +101,9 @@ struct SettingsView: View {
             }
 
             Section("Notifications") {
-                LabeledContent("Render ready", value: "Push · Phase 2")
-                LabeledContent("New lead", value: "Push + SMS · Phase 2")
-                // TODO Phase 2: APNs — Config.enablePush (master spec Part 18)
+                LabeledContent("Render ready", value: "Coming soon")
+                LabeledContent("New lead", value: "Coming soon")
+                // TODO Phase 2 (internal): APNs — Config.enablePush (master spec Part 18)
             }
 
             Section("How to shoot a great walkthrough") {
@@ -107,15 +116,22 @@ struct SettingsView: View {
             .font(.rpBody)
 
             Section("Account") {
-                LabeledContent("Signed in as", value: "Dev Agent")
+                LabeledContent("Account", value: accountStatusLabel)
                 Button {
                     hasOnboarded = false   // flips the root back to the intro
                 } label: {
                     Label("Watch the intro again", systemImage: "play.rectangle")
                 }
-                Button("Delete account", role: .destructive) {
-                    // TODO Phase 2: real account deletion + GDPR erasure across
-                    // Stream/R2/DB (master spec Part 15) — App Store requirement.
+                if isDeletingAccount {
+                    HStack {
+                        Text("Deleting account…").foregroundStyle(Theme.inkDim)
+                        Spacer()
+                        ProgressView()
+                    }
+                } else {
+                    Button("Delete account", role: .destructive) {
+                        showDeleteConfirm = true
+                    }
                 }
             }
 
@@ -133,12 +149,7 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Max quality capture (4K · 60fps)", isOn: $maxQualityCapture)
-                Picker("Upload mode", selection: $uploadMode) {
-                    ForEach(Config.UploadMode.allCases) { mode in
-                        Text(mode.label).tag(mode.rawValue)
-                    }
-                }
-                LabeledContent("Version", value: "0.1.0 (1)")
+                LabeledContent("Version", value: Self.appVersionLabel)
             } header: {
                 Text("Advanced")
             } footer: {
@@ -148,6 +159,23 @@ struct SettingsView: View {
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadUsage() }
+        .alert("Delete account?", isPresented: $showDeleteConfirm) {
+            Button("Delete", role: .destructive) { Task { await deleteAccount() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes your account, published tours, and data.")
+        }
+        .alert("Couldn't delete account", isPresented: $showDeleteError) {
+            Button("Retry") { Task { await deleteAccount() } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(deleteErrorMessage ?? "Check your connection and try again.")
+        }
+        .alert("Account deleted", isPresented: $showAccountDeleted) {
+            Button("OK") { hasOnboarded = false }   // back to the intro, fresh start
+        } message: {
+            Text("Your account and data have been removed.")
+        }
     }
 
     // MARK: - Usage (live backend only)
@@ -189,6 +217,110 @@ struct SettingsView: View {
         } catch {
             usageFailed = true
         }
+    }
+
+    // MARK: - Account (App Store Guideline 5.1.1(v): in-app account deletion)
+
+    /// What the Account row shows — the real state, never a dev placeholder.
+    private var accountStatusLabel: String {
+        guard Config.enableAuth, auth.isSignedIn else { return "Guest" }
+        let name = auth.userName.trimmingCharacters(in: .whitespaces)
+        return (name.isEmpty || name == "Dev Agent") ? "Signed in with Apple" : name
+    }
+
+    /// App version straight from the bundle so this row can never go stale.
+    private static var appVersionLabel: String {
+        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
+        return "\(v) (\(b))"
+    }
+
+    private struct AccountDeleteError: LocalizedError {
+        let status: Int
+        var errorDescription: String? { "The server responded with status \(status)." }
+    }
+
+    /// Server-side erasure per the backend contract: `DELETE {base}/me` with the
+    /// bearer JWT + apikey → 200 {"ok":true}. Built inline (URLSession) on
+    /// purpose so the APIClient protocol stays untouched.
+    private func requestServerAccountDeletion() async throws {
+        guard let url = Config.apiBaseURL?.appendingPathComponent("me") else {
+            throw URLError(.badURL)
+        }
+        // Freshness-guaranteed accessor — refreshes the JWT first if it's stale.
+        guard let token = await AuthStore.validAccessToken() else {
+            throw URLError(.userAuthenticationRequired)
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "DELETE"
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        let (_, resp) = try await URLSession.shared.data(for: req)
+        let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
+        guard (200..<300).contains(status) else { throw AccountDeleteError(status: status) }
+    }
+
+    @MainActor
+    private func deleteAccount() async {
+        guard !isDeletingAccount else { return }
+        isDeletingAccount = true
+        defer { isDeletingAccount = false }
+
+        // 1. Server-side erasure first (account, published tours, uploads).
+        //    If it fails, STOP — local data stays intact and the alert offers
+        //    Retry, so nothing is half-deleted.
+        if Config.useLiveBackend, Config.enableAuth, auth.isSignedIn {
+            do {
+                try await requestServerAccountDeletion()
+            } catch {
+                deleteErrorMessage = "Your account was NOT deleted. \(error.localizedDescription)"
+                showDeleteError = true
+                return
+            }
+        }
+
+        // 2. Local erasure: session, listings + videos + tours, profile cards.
+        //    (Guest / signed-out: this local wipe is the whole deletion.)
+        if uploads.state != nil { uploads.cancel() }
+        AuthStore.shared.signOut()
+        wipeLocalData()
+        Haptics.success()
+        showAccountDeleted = true   // OK → hasOnboarded = false
+    }
+
+    /// Remove everything the app stored on this device. Demo samples are
+    /// reseeded afterwards so the app still works as a fresh install.
+    @MainActor
+    private func wipeLocalData() {
+        // In-memory state — every didSet re-persists, so the snapshot on disk
+        // ends up empty too (PersistentStore never saves samples).
+        model.listings.removeAll()
+        model.assets.removeAll()
+        model.tours.removeAll()
+        model.renders.removeAll()
+        model.reseedSamples()
+
+        // Recorded/imported videos + the exported portfolio page.
+        let fm = FileManager.default
+        try? fm.removeItem(at: FileStore.recordingsDir)
+        try? fm.removeItem(at: FileStore.importsDir)
+        try? fm.removeItem(at: FileStore.documents.appendingPathComponent("rendprop-portfolio.html"))
+
+        // Profile cards + headshots for EVERY business type (keys are
+        // namespaced per industry; real estate uses the legacy bare keys).
+        let d = UserDefaults.standard
+        let fields = ["name", "brokerage", "phone", "email", "website", "instagram", "linkedin", "tiktok"]
+        for type in SpaceType.allCases {
+            for field in fields {
+                let key = type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)"
+                d.removeObject(forKey: key)
+            }
+            let headshot = type == .realEstate ? "agent-headshot.jpg" : "agent-headshot-\(type.rawValue).jpg"
+            try? fm.removeItem(at: FileStore.documents.appendingPathComponent(headshot))
+        }
+        d.removeObject(forKey: "auth.userName")
+        d.removeObject(forKey: "auth.orgName")
     }
 }
 

@@ -4,8 +4,21 @@
 //
 //   POST /ai-photo  { image_b64, mime?, edit, style? }  ->  { image_b64, mime, edit, style? }
 //
-//   edit  = twilight | sky | lawn | declutter | stage
+//   edit  = twilight | sky | lawn | declutter | stage | custom
 //   style = modern | rustic | minimalist | scandinavian   (stage only; default modern)
+//
+// Two cheap text/vision helper modes (no image generated, nothing billed extra):
+//
+//   edit:"suggest"         { image_b64, mime? }  ->  { suggestions: [{ edit, reason, confidence }] }
+//       Looks at the photo and recommends up to 3 edits (from the 5 canned ones)
+//       that would genuinely improve it — e.g. twilight only for exteriors.
+//
+//   edit:"improve_prompt"  { prompt }            ->  { prompt }
+//       Rewrites the user's rough custom-edit idea (≤300 chars) into a precise,
+//       photorealistic edit instruction (≤400 chars). The improved prompt is
+//       meant to be sent back as edit:"custom", where the architecture-lock
+//       guardrails are appended server-side as usual — so the rewrite itself
+//       stays purely about the visual change.
 //
 // Needs the GEMINI_API_KEY function secret. Returns the edited image inline
 // (base64) so the app can show a before/after and let the agent save/share.
@@ -15,6 +28,9 @@ import { HttpError, assert, json, readJson, respondError } from "../_shared/http
 import { getUser } from "../_shared/supabase.ts";
 
 const MODEL = Deno.env.get("GEMINI_IMAGE_MODEL") ?? "gemini-2.5-flash-image";
+// Text+vision model for the suggest / improve_prompt helper modes (NOT the
+// image model — these are plain generateContent calls returning JSON).
+const TEXT_MODEL = Deno.env.get("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
 
 const LOCK =
@@ -87,6 +103,8 @@ interface Body {
 }
 
 const MAX_CUSTOM_PROMPT = 600;
+const MAX_IMPROVE_INPUT = 300;  // rough idea in
+const MAX_IMPROVE_OUTPUT = 400; // polished instruction out
 
 /** Wrap a user's free-text instruction with the guardrails every edit gets. */
 function customPrompt(userText: string): string {
@@ -104,9 +122,23 @@ Deno.serve(async (req) => {
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set");
 
     const body = await readJson<Body>(req);
-    assert(body.image_b64, 400, "image_b64 is required");
     const edit = body.edit ?? "twilight";
     const mime = body.mime ?? "image/jpeg";
+
+    // Helper modes: text/vision analysis only — no image generation.
+    if (edit === "suggest") {
+      assert(body.image_b64, 400, "image_b64 is required");
+      return json({ suggestions: await suggestEdits(body.image_b64, mime) });
+    }
+    if (edit === "improve_prompt") {
+      const rough = (body.prompt ?? "").trim();
+      assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
+      assert(rough.length <= MAX_IMPROVE_INPUT, 400,
+             `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
+      return json({ prompt: await improvePrompt(rough) });
+    }
+
+    assert(body.image_b64, 400, "image_b64 is required");
 
     let prompt: string;
     let style: string | undefined;
@@ -123,7 +155,8 @@ Deno.serve(async (req) => {
       prompt = customPrompt(userText);
     } else {
       prompt = PROMPTS[edit];
-      assert(prompt, 400, `edit must be twilight|sky|lawn|declutter|stage|custom (got ${edit})`);
+      assert(prompt, 400,
+             `edit must be twilight|sky|lawn|declutter|stage|custom|suggest|improve_prompt (got ${edit})`);
     }
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
@@ -166,3 +199,142 @@ Deno.serve(async (req) => {
     return respondError(err);
   }
 });
+
+// ── helper modes: suggest / improve_prompt (text+vision, JSON out) ────────────
+
+interface Suggestion {
+  edit: string;
+  reason: string;
+  confidence: number;
+}
+
+const SUGGESTABLE_EDITS = ["twilight", "sky", "lawn", "declutter", "stage"];
+
+const SUGGEST_INSTRUCTION =
+  "You are reviewing ONE real-estate listing photo for an agent. These are the available " +
+  "one-tap AI edits:\n" +
+  "- twilight: turn a daytime EXTERIOR into a dusk shot with glowing windows (exteriors only)\n" +
+  "- sky: replace a dull/grey/overcast sky with a clear blue one (only when sky is visible " +
+  "and actually dull)\n" +
+  "- lawn: green up patchy/brown grass (only when a lawn is visible and looks unhealthy)\n" +
+  "- declutter: remove mess and personal items from floors and surfaces (only when visible " +
+  "clutter hurts the shot)\n" +
+  "- stage: virtually furnish an empty or sparsely furnished room (empty/sparse interiors only)\n\n" +
+  "Recommend ONLY edits that would genuinely improve THIS specific photo — an interior must " +
+  "never get twilight/sky/lawn, a furnished room must never get stage, a clean room must " +
+  "never get declutter. Zero suggestions is a valid answer.\n\n" +
+  'Reply with STRICT JSON only, shaped exactly like {"suggestions":[{"edit":"sky",' +
+  '"reason":"...","confidence":0.9}]} — at most 3 entries, best first. "reason" is a plain-' +
+  "language sentence of at most 80 characters written for the agent (e.g. \"Grey sky makes " +
+  "the house look gloomy\"). \"confidence\" is 0 to 1.";
+
+/** edit:"suggest" — analyze the photo and pick up to 3 genuinely useful edits. */
+async function suggestEdits(imageB64: string, mime: string): Promise<Suggestion[]> {
+  const raw = await geminiText(
+    [
+      { text: SUGGEST_INSTRUCTION },
+      { inline_data: { mime_type: mime, data: imageB64 } },
+    ],
+    true,
+  );
+
+  const parsed = parseJsonLoose(raw);
+  const list = Array.isArray((parsed as Record<string, unknown>)?.suggestions)
+    ? (parsed as { suggestions: unknown[] }).suggestions
+    : Array.isArray(parsed)
+    ? (parsed as unknown[])
+    : [];
+
+  const out: Suggestion[] = [];
+  const seen = new Set<string>();
+  for (const item of list) {
+    if (out.length >= 3) break;
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const edit = String(o.edit ?? "").toLowerCase().trim();
+    if (!SUGGESTABLE_EDITS.includes(edit) || seen.has(edit)) continue;
+    const reason = String(o.reason ?? "").trim().slice(0, 80);
+    let confidence = Number(o.confidence);
+    if (!Number.isFinite(confidence)) confidence = 0.5;
+    confidence = Math.min(1, Math.max(0, Math.round(confidence * 100) / 100));
+    out.push({ edit, reason, confidence });
+    seen.add(edit);
+  }
+  return out;
+}
+
+const IMPROVE_INSTRUCTION =
+  "You polish rough photo-edit requests from real-estate agents into precise instructions " +
+  "for an AI photo editor working on a real listing photo.\n\n" +
+  "Rewrite the user's idea as ONE clear, imperative edit instruction: concrete about what " +
+  "changes and what stays, photorealistic, plausible for a real property, no camera jargon, " +
+  "no markdown, no quotes, a single paragraph of at most 400 characters. Keep the user's " +
+  "intent exactly — never invent extra changes they did not ask for. Do NOT add boilerplate " +
+  "about preserving architecture; the system appends that separately.\n\n" +
+  'Reply with STRICT JSON only: {"prompt":"<rewritten instruction>"}';
+
+/** edit:"improve_prompt" — rewrite a rough custom-edit idea into a precise one. */
+async function improvePrompt(rough: string): Promise<string> {
+  const raw = await geminiText(
+    [{ text: IMPROVE_INSTRUCTION + "\n\nUser's idea: " + rough }],
+    true,
+  );
+
+  const parsed = parseJsonLoose(raw);
+  let improved = "";
+  if (parsed && typeof parsed === "object" && typeof (parsed as Record<string, unknown>).prompt === "string") {
+    improved = ((parsed as Record<string, unknown>).prompt as string).trim();
+  } else if (typeof raw === "string") {
+    // Model ignored the JSON contract — fall back to its plain text.
+    improved = raw.replace(/^```(?:json)?|```$/g, "").replace(/^"|"$/g, "").trim();
+  }
+  if (!improved) throw new HttpError(502, "Gemini returned no improved prompt");
+  return improved.replace(/\s+/g, " ").slice(0, MAX_IMPROVE_OUTPUT);
+}
+
+/** One text/vision generateContent call on the cheap flash model → first text part. */
+async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${TEXT_MODEL}:generateContent`;
+  const payload = {
+    contents: [{ role: "user", parts }],
+    generationConfig: {
+      temperature: 0.4,
+      ...(wantJson ? { responseMimeType: "application/json" } : {}),
+    },
+  };
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY! },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json().catch(() => ({} as Record<string, unknown>));
+  if (!res.ok) {
+    throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+  }
+  // deno-lint-ignore no-explicit-any
+  for (const cand of ((data as any).candidates ?? [])) {
+    for (const part of ((cand.content?.parts) ?? [])) {
+      if (typeof part.text === "string" && part.text.trim()) return part.text as string;
+    }
+  }
+  throw new HttpError(502, `Gemini returned no text. ${JSON.stringify(data).slice(0, 200)}`);
+}
+
+/** Defensive JSON parse: strip code fences, else grab the first {...} block. */
+function parseJsonLoose(raw: string): unknown {
+  const cleaned = raw.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "");
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start >= 0 && end > start) {
+      try {
+        return JSON.parse(cleaned.slice(start, end + 1));
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+}

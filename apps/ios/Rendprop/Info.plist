@@ -36,11 +36,6 @@
 	<string>Save rendered flythroughs and teasers to your photo library.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Import an existing walkthrough or drone video from your photo library.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>fetch</string>
-		<string>processing</string>
-	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

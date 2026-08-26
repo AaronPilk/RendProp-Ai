@@ -2,8 +2,10 @@
 //
 //   GET /f/:slug     the scroll-scrub tour player (renders GET /tours/:slug)
 //   GET /a/:handle   an org's portfolio grid  (renders GET /portfolio/:handle)
+//   GET /terms       Terms of Service   (static; linked from the iOS app)
+//   GET /privacy     Privacy Policy     (static; linked from the iOS app)
 //
-// Both are server-rendered to a self-contained HTML page and cached at the edge
+// The dynamic pages are server-rendered to a self-contained HTML page and cached at the edge
 // (Cache API) with a short TTL. Video is served zero-egress: the all-intra R2
 // mp4 (`scrub_url`, byte-range) is the primary scroll-scrub source, with
 // Cloudflare Stream HLS (`hls_url`) as fallback only. The browser talks to
@@ -14,6 +16,7 @@
 
 import type { Env, Portfolio, Tour } from "./types";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
+import { privacyPage, termsPage } from "./legal";
 import { renderTourPage } from "./player";
 import { renderPortfolioPage } from "./portfolio";
 
@@ -166,6 +169,14 @@ export default {
 
     const aMatch = path.match(/^\/a\/([^/]+)$/);
     if (aMatch) return handlePortfolio(decodeURIComponent(aMatch[1]), req, url, env, ctx);
+
+    // Legal pages — static HTML, cacheable for an hour.
+    if (path === "/terms" || path === "/privacy") {
+      const resp = htmlResponse(path === "/terms" ? termsPage() : privacyPage(), 200, {
+        "Cache-Control": "public, max-age=3600",
+      });
+      return req.method === "HEAD" ? new Response(null, resp) : resp;
+    }
 
     if (path === "/healthz") return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
 

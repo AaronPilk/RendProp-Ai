@@ -35,7 +35,7 @@ struct ReviewSubmitView: View {
                 PrimaryButton(title: "Create my tour · \(totalPrice.formatted)", systemImage: "sparkles") {
                     submit()
                 }
-                Text("Test mode — no real charge yet.")
+                Text("Included with your plan during early access.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }
@@ -204,10 +204,11 @@ struct ReviewSubmitView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         // Honest copy: today's AI declutter runs on listing PHOTOS
                         // (ai-photo). Full-video declutter isn't wired into the tour
-                        // flow yet (Bria caps video input at <5 s).
+                        // flow yet (Bria caps video input at <5 s) — no future
+                        // promises in user-facing copy (App Store 2.3.1).
                         Text("AI declutter (photos) · +\(Enhancements.declutterPrice.formatted)")
                             .font(.rpHeadline)
-                        Text("Removes clutter from your listing photos with AI. Full-video declutter is coming — clips under 5s already supported.")
+                        Text("Removes clutter and personal items from your listing photos with AI.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
                     }

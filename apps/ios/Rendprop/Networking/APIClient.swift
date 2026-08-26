@@ -62,6 +62,16 @@ struct UsageSummary: Codable, Hashable {
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
 }
 
+/// One AI-recommended edit for a photo (`POST /ai-photo`, edit: "suggest").
+/// `edit` is one of the preset keys (twilight | sky | lawn | declutter |
+/// stage); `reason` is a one-line why; `confidence` is 0–1 when the server
+/// sends it, nil otherwise.
+struct AIEditSuggestion: Codable, Sendable {
+    let edit: String
+    let reason: String
+    let confidence: Double?
+}
+
 /// The app talks only to this protocol. MockAPIClient makes the whole app run
 /// offline; LiveAPIClient points at the Supabase Edge Functions API
 /// (docs/UPLOAD-AND-PUBLISH-CONTRACT.md §2).
@@ -133,6 +143,18 @@ protocol APIClient: Sendable {
     /// Sends the photo as base64, returns the edited image as base64 (PNG).
     func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
                      style: String?, prompt: String?) async throws -> String
+
+    /// POST /ai-photo with `edit: "suggest"` — the AI looks at the photo and
+    /// returns up to 3 recommended preset edits (twilight | sky | lawn |
+    /// declutter | stage), each with a one-line reason and an optional 0–1
+    /// confidence. An empty array means the photo already looks good.
+    func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion]
+
+    /// POST /ai-photo with `edit: "improve_prompt"` — rewrites a rough
+    /// custom-edit idea (≤ 300 chars sent) into a sharper, more specific prompt
+    /// (≤ 400 back). The target photo rides along because the function requires
+    /// `image_b64` — and it lets the AI tailor the prompt to the actual shot.
+    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String
 
     // MARK: AI video (ai-video edge function — async fal submit + poll)
 
