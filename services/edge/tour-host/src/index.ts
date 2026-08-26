@@ -4,9 +4,11 @@
 //   GET /a/:handle   an org's portfolio grid  (renders GET /portfolio/:handle)
 //
 // Both are server-rendered to a self-contained HTML page and cached at the edge
-// (Cache API) with a short TTL. Video is served zero-egress from Cloudflare
-// Stream (HLS) or R2 (mp4); the browser talks to Supabase directly for the lead
-// form (POST /leads) and the view beacon (POST /beacon/:slug).
+// (Cache API) with a short TTL. Video is served zero-egress: the all-intra R2
+// mp4 (`scrub_url`, byte-range) is the primary scroll-scrub source, with
+// Cloudflare Stream HLS (`hls_url`) as fallback only. The browser talks to
+// Supabase directly for the lead form (POST /leads) and the view beacon
+// (POST /beacon/:slug) — both deployed with --no-verify-jwt.
 //
 // Routes are bound in wrangler.toml: rendprop.app/f/* and rendprop.app/a/*.
 
@@ -125,8 +127,8 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env,
   const hit = await cache.match(key);
   if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
 
-  // The portfolio endpoint may not exist yet — treat any non-2xx / network
-  // error / malformed body as "no portfolio here" (graceful 404).
+  // GET /portfolio/:handle is live (services/supabase/functions/portfolio) but
+  // stay graceful: any non-2xx / network error / malformed body → branded 404.
   let data: Portfolio | null = null;
   try {
     const upstream = await fetchSupabase(`/portfolio/${encodeURIComponent(handle)}`, env);

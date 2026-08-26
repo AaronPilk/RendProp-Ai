@@ -376,7 +376,10 @@ struct RenderStatusView: View {
         } catch {
             // Publish failed — the LOCAL tour still plays in-app (local-first).
             // Let the user view it now; the share link just isn't live yet.
+            // Clear any skip/enhance note so the two captions can't contradict
+            // ("you skipped" + "couldn't publish" stacked reads wrong).
             isPublishing = false
+            enhanceNote = nil
             publishFailed = true
             markReady()
         }
@@ -389,7 +392,10 @@ struct RenderStatusView: View {
         guard !isReady else { return }
         if AuthStore.shared.isSignedIn {
             if let output = renderOutput, let asset = model.assets[listing.id] {
-                Task { await runPublishPipeline(asset: asset, output: output) }
+                // Store in pollTask so onDisappear can cancel it like every other
+                // pipeline task in this view.
+                pollTask?.cancel()
+                pollTask = Task { await runPublishPipeline(asset: asset, output: output) }
             } else {
                 markReady()   // nothing left to publish; still viewable locally
             }

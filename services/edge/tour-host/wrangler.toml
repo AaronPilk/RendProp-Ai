@@ -20,9 +20,12 @@ SUPABASE_FUNCTIONS_URL = "https://YOUR_PROJECT_REF.supabase.co/functions/v1"
 # Supabase anon (publishable) key. This is PUBLIC by design — RLS enforces
 # access and it already ships in every Supabase client. It's the apikey/Bearer
 # on the server->tours read and on the browser's lead/beacon calls.
-# Prefer setting it as a secret instead of committing a real key:
-#   wrangler secret put SUPABASE_ANON_KEY
-SUPABASE_ANON_KEY = "YOUR_SUPABASE_ANON_KEY"
+#
+# Set it as a SECRET (do NOT uncomment a plaintext var here):
+#   npx wrangler secret put SUPABASE_ANON_KEY
+# A [vars] entry with the same name SHADOWS the secret on every deploy —
+# leaving a placeholder here would silently break all upstream calls with 401s.
+# SUPABASE_ANON_KEY = "(set via: wrangler secret put SUPABASE_ANON_KEY)"
 
 # Optional: edge cache TTL (seconds) for rendered tour/portfolio HTML.
 # 0 disables the edge cache. Default is 60 when unset.

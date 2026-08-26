@@ -146,6 +146,49 @@ struct Listing: Identifiable, Codable, Hashable {
     }
 }
 
+// MARK: - Tolerant decoding (persistence forward/backward compatibility)
+// PersistentStore decodes snapshots written by OLDER and NEWER app builds.
+// Synthesized Codable requires every non-optional key (even ones with default
+// values) and throws on unknown enum raw values — a single miss would discard
+// the user's entire saved state on update. This init decodes each field with
+// decodeIfPresent + a safe default so any snapshot vintage loads. It lives in
+// an extension so the memberwise initializer stays synthesized (the app builds
+// Listings memberwise everywhere). Encoding stays synthesized → identical JSON.
+extension Listing {
+    enum CodingKeys: String, CodingKey {
+        case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
+             createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
+             tagline, details, serverID, shareSlug, shareURL
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id               = try c.decodeIfPresent(UUID.self,   forKey: .id) ?? UUID()
+        address          = try c.decodeIfPresent(String.self, forKey: .address) ?? ""
+        beds             = try c.decodeIfPresent(Int.self,    forKey: .beds) ?? 0
+        baths            = try c.decodeIfPresent(Double.self, forKey: .baths) ?? 0
+        sqft             = try c.decodeIfPresent(Int.self,    forKey: .sqft) ?? 0
+        price            = try c.decodeIfPresent(Money.self,  forKey: .price) ?? Money(cents: 0)
+        // Unknown status raw values (from a newer build) degrade to .draft
+        // instead of throwing the whole snapshot away.
+        let statusRaw    = try c.decodeIfPresent(String.self, forKey: .status)
+        status           = statusRaw.flatMap(Status.init(rawValue:)) ?? .draft
+        isSample         = try c.decodeIfPresent(Bool.self,   forKey: .isSample) ?? false
+        spaceTypeRaw     = try c.decodeIfPresent(String.self, forKey: .spaceTypeRaw)
+        createdAt        = try c.decodeIfPresent(Date.self,   forKey: .createdAt) ?? Date()
+        soldAt           = try c.decodeIfPresent(Date.self,   forKey: .soldAt)
+        zillowURL        = try c.decodeIfPresent(String.self, forKey: .zillowURL)
+        mainPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .mainPhotoRelPath)
+        latitude         = try c.decodeIfPresent(Double.self, forKey: .latitude)
+        longitude        = try c.decodeIfPresent(Double.self, forKey: .longitude)
+        tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)
+        details          = try c.decodeIfPresent([String: String].self, forKey: .details)
+        serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
+        shareSlug        = try c.decodeIfPresent(String.self, forKey: .shareSlug)
+        shareURL         = try c.decodeIfPresent(String.self, forKey: .shareURL)
+    }
+}
+
 // MARK: - Business type
 // Rendprop isn't real-estate-only: a venue, restaurant, bar, gym, or store can
 // make a scroll-through tour too. The selected type adapts the app's wording,

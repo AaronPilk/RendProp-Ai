@@ -155,8 +155,14 @@ final class EnhancementEngine: ObservableObject {
                 let minScore = min(verdict.structure, verdict.completeness, verdict.artifacts)
 
                 if verdict.pass && minScore >= passScore {
+                    // Never force-unwrap a provider-returned URL — a malformed
+                    // result string must fail the attempt, not crash the app.
+                    guard let afterURL = URL(string: candidateURL) else {
+                        prompt = basePrompt(from: plan)
+                        continue
+                    }
                     result = Result(before: frame,
-                                    afterURL: URL(string: candidateURL)!,
+                                    afterURL: afterURL,
                                     structure: verdict.structure,
                                     completeness: verdict.completeness,
                                     artifacts: verdict.artifacts,

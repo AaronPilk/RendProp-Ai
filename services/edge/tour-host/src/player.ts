@@ -3,11 +3,21 @@
 //
 // The scroll-scrub engine (rAF lerp, buffer gate, chapter rail, room label,
 // jank watchdog + autoplay fallback) is ported from the iOS webview player at
-// apps/ios/Rendprop/Resources/player/index.html. The only material change is the
-// video source: instead of a bundled all-intra demo.mp4, the source is the
-// tour's `video_url` — a Cloudflare Stream HLS manifest (.m3u8) or an R2 mp4.
-// HLS is played natively on Safari/iOS and via hls.js (lazy-loaded from cdnjs)
-// everywhere else. Both are zero-egress origins.
+// apps/ios/Rendprop/Resources/player/index.html.
+//
+// VIDEO SOURCE CONTRACT (must match services/supabase/functions/tours/index.ts):
+// `scrub_url` — the all-intra R2 mp4 over HTTP byte-range — is the PRIMARY
+// source: every frame is a keyframe, so currentTime seeks are frame-accurate
+// and the scroll-scrub stays buttery. `hls_url` (Cloudflare Stream) is a
+// FALLBACK ONLY — Stream re-encodes away the all-intra GOP and snaps seeks to
+// keyframes, which kills the scrub feel. So: hls.js (lazy, cdnjs) or native
+// Safari HLS is attached only when there is no scrub_url, or if the mp4 errors
+// out before playback starts. Both origins are zero-egress.
+//
+// CHAPTER TIMEBASE: chapter t_ms is already rescaled to the RENDERED timeline
+// by the app before publish (RendpropApp.swift divides by speed_factor). The
+// player must therefore use t_ms/1000 against duration_s directly and must NOT
+// divide by speed_factor again.
 
 import type { Cta, SecondaryLink, Tour } from "./types";
 import {
@@ -443,7 +453,7 @@ const ENGINE_JS = `
     sizeTrack(); reportBuffer();
   });
   video.addEventListener('canplaythrough', function(){ setTimeout(begin, 1200); });
-  if (CFG.isHls){ video.addEventListener('loadeddata', function(){ setTimeout(begin, 700); }); }
+  video.addEventListener('loadeddata', function(){ if (usingHls) setTimeout(begin, 700); });
   var pollBuf = setInterval(function(){ reportBuffer(); if (started) clearInterval(pollBuf); }, 250);
   setTimeout(function(){ if (!started && buffered() > 3) begin(); }, 6000);
   setTimeout(function(){ if (!started) begin(); }, 12000);
@@ -547,7 +557,10 @@ const ENGINE_JS = `
     chip.addEventListener('keydown', function(ev){ if (ev.key === 'Enter' || ev.key === ' '){ ev.preventDefault(); disc.classList.toggle('on'); } });
   }
 
-  /* ---- Video source: HLS (native Safari OR hls.js) / R2 mp4 ---- */
+  /* ---- Video source: all-intra scrub mp4 (PRIMARY, frame-accurate byte-range
+     scrubbing) with HLS strictly as fallback (no scrub source, or the mp4
+     errors before playback starts — HLS seeks snap to keyframes). ---- */
+  var usingHls = false, triedHlsFallback = false;
   function directSrc(url){ try { video.src = url; video.load(); } catch (e) {} }
   function loadHls(url){
     function attach(){
@@ -578,14 +591,23 @@ const ENGINE_JS = `
     s.onerror = function(){ directSrc(url); };
     document.head.appendChild(s);
   }
+  function startHls(url){
+    usingHls = true;
+    var canNative = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
+    if (canNative){ directSrc(url); } else { loadHls(url); }
+  }
+  video.addEventListener('error', function(){
+    // The scrub mp4 failed before we started (missing R2 object, codec, CDN
+    // hiccup) — degrade to HLS once rather than showing a dead loader.
+    if (started || fellBack || usingHls || triedHlsFallback) return;
+    if (CFG.hlsUrl){ triedHlsFallback = true; startHls(CFG.hlsUrl); }
+  });
   function setupVideo(){
-    var url = CFG.videoUrl;
-    if (!url){ if (pctEl) pctEl.textContent = '--'; return; }
+    if (!CFG.scrubUrl && !CFG.hlsUrl){ if (pctEl) pctEl.textContent = '--'; return; }
     video.muted = true; video.playsInline = true;
     video.setAttribute('playsinline', ''); video.setAttribute('webkit-playsinline', '');
-    var canNative = video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL');
-    if (CFG.isHls && !canNative){ loadHls(url); }
-    else { directSrc(url); }
+    if (CFG.scrubUrl){ directSrc(CFG.scrubUrl); }
+    else { startHls(CFG.hlsUrl); }
   }
   setupVideo();
 })();
@@ -629,12 +651,22 @@ export function renderTourPage(tour: Tour, functionsBase: string, anonKey: strin
   const ogImage = poster ? `<meta property="og:image" content="${escapeAttr(poster)}">\n<meta name="twitter:image" content="${escapeAttr(poster)}">` : "";
   const shareUrl = tour.share_url || "";
 
+  // Contract: scrub_url (all-intra R2 mp4) is the PRIMARY scrub source and
+  // hls_url is fallback-only. Older payloads may only carry video_url
+  // (= scrub_url ?? hls_url), so classify it by extension as a back-compat path.
+  const scrubUrl =
+    tour.scrub_url ??
+    (tour.video_url && !isHlsUrl(tour.video_url) ? tour.video_url : null);
+  const hlsUrl =
+    tour.hls_url ??
+    (tour.video_url && isHlsUrl(tour.video_url) ? tour.video_url : null);
+
   const cfg = {
     slug: tour.slug,
     functionsBase,
     anonKey: anonKey || "",
-    videoUrl: tour.video_url || "",
-    isHls: isHlsUrl(tour.video_url),
+    scrubUrl: scrubUrl || "",
+    hlsUrl: hlsUrl || "",
     durationS: tour.duration_s || 0,
     pxPerSec: 240,
     bufferGate: 0.96,

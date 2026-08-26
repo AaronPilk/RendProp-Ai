@@ -14,7 +14,8 @@ import Vision
 ///   • RETIME    — handheld walks glide at 2×; drone clips a gentle 1.25×.
 ///                 Very short clips are sped less so they don't feel frantic.
 ///   • 60 FPS    — output frame cadence for a fluid scroll-scrub.
-///   • SCRUB     — ≤720p H.264, keyframe every ~0.1s → the player seeks instantly.
+///   • SCRUB     — ≤720p H.264, ALL-INTRA (every frame a keyframe) → the player
+///                 seeks any position instantly.
 ///   • COLOR     — output tagged Rec.709 SDR so HDR/Dolby-Vision phone footage
 ///                 tone-maps instead of looking washed out or crushed.
 ///
@@ -45,6 +46,19 @@ enum RenderEngine {
 
     private static let queue = DispatchQueue(label: "com.rendprop.render", qos: .userInitiated)
 
+    /// Thread-safe cancellation flag bridged into the AVFoundation callback
+    /// queues. `Task.isCancelled` is always FALSE inside plain dispatch-queue
+    /// callbacks (there is no task context there), so checking it in the
+    /// reader/writer loops never fired — cancelling the outer task used to
+    /// leave the encoder running to completion. `withTaskCancellationHandler`
+    /// sets this flag instead, and the loops poll it every iteration.
+    private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var flag = false
+        func cancel() { lock.lock(); flag = true; lock.unlock() }
+        var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return flag }
+    }
+
     // Tuning
     private static let outputFPS: Int32 = 60
     private static let encodeLongEdge: CGFloat = 1280
@@ -58,6 +72,20 @@ enum RenderEngine {
 
     static func render(asset: CaptureAsset,
                        progress: @escaping @Sendable (Double, String) -> Void) async throws -> Output {
+        // Bridge task cancellation into the dispatch-queue render loops (see
+        // CancelFlag) so leaving the screen actually stops the encode instead
+        // of burning CPU/battery to completion in the background.
+        let cancelFlag = CancelFlag()
+        return try await withTaskCancellationHandler {
+            try await renderBody(asset: asset, cancelFlag: cancelFlag, progress: progress)
+        } onCancel: {
+            cancelFlag.cancel()
+        }
+    }
+
+    private static func renderBody(asset: CaptureAsset,
+                                   cancelFlag: CancelFlag,
+                                   progress: @escaping @Sendable (Double, String) -> Void) async throws -> Output {
         progress(0.02, "Preparing your video…")
 
         let source = AVURLAsset(url: asset.localURL)
@@ -89,7 +117,7 @@ enum RenderEngine {
             if let result = try await analyzeJitter(source: source, srcTrack: srcTrack,
                                                     duration: duration, outDuration: outDuration,
                                                     speed: speed, frameCount: frameCount,
-                                                    geo: analyze,
+                                                    geo: analyze, cancelFlag: cancelFlag,
                                                     progress: { p in progress(0.05 + 0.38 * p, "Smoothing the motion…") }) {
                 // Corrections were measured in analyze space; scale to encode space.
                 let s = encode.renderSize.width / analyze.renderSize.width
@@ -106,12 +134,19 @@ enum RenderEngine {
             .appendingPathComponent("tour-\(asset.id.uuidString.prefix(8)).mp4")
         try? FileManager.default.removeItem(at: outURL)
 
-        try await encodePass(source: source, srcTrack: srcTrack,
-                             duration: duration, outDuration: outDuration,
-                             speed: speed, frameCount: frameCount,
-                             geo: encode, corrections: corrections, cropZoom: cropZoom,
-                             outURL: outURL,
-                             progress: { p in progress(0.45 + 0.53 * p, "Rendering your tour…") })
+        do {
+            try await encodePass(source: source, srcTrack: srcTrack,
+                                 duration: duration, outDuration: outDuration,
+                                 speed: speed, frameCount: frameCount,
+                                 geo: encode, corrections: corrections, cropZoom: cropZoom,
+                                 outURL: outURL, cancelFlag: cancelFlag,
+                                 progress: { p in progress(0.45 + 0.53 * p, "Rendering your tour…") })
+        } catch {
+            // Never leave a partial mp4 in Documents on failure/cancel — it
+            // would linger (and get backed up) forever.
+            try? FileManager.default.removeItem(at: outURL)
+            throw error
+        }
 
         progress(1.0, "Done")
         return Output(url: outURL, durationS: outDuration.seconds, speedFactor: speed, stabilized: stabilized)
@@ -159,6 +194,7 @@ enum RenderEngine {
     private static func analyzeJitter(source: AVAsset, srcTrack: AVAssetTrack,
                                       duration: CMTime, outDuration: CMTime,
                                       speed: Double, frameCount: Int, geo: Geometry,
+                                      cancelFlag: CancelFlag,
                                       progress: @escaping @Sendable (Double) -> Void) async throws -> AnalyzeResult? {
         let (composition, compTrack) = try retimeComposition(source: source, srcTrack: srcTrack,
                                                              duration: duration, outDuration: outDuration)
@@ -195,7 +231,7 @@ enum RenderEngine {
             var seen = 0
 
             while let sample = output.copyNextSampleBuffer() {
-                if Task.isCancelled { reader.cancelReading(); throw RenderError.cancelled }
+                if cancelFlag.isCancelled { reader.cancelReading(); throw RenderError.cancelled }
                 try autoreleasepoolThrowing {
                     guard let buffer = CMSampleBufferGetImageBuffer(sample) else { return }
                     if let prev = previous {
@@ -246,7 +282,7 @@ enum RenderEngine {
                                    duration: CMTime, outDuration: CMTime,
                                    speed: Double, frameCount: Int, geo: Geometry,
                                    corrections: [CGPoint], cropZoom: CGFloat,
-                                   outURL: URL,
+                                   outURL: URL, cancelFlag: CancelFlag,
                                    progress: @escaping @Sendable (Double) -> Void) async throws {
         let (composition, compTrack) = try retimeComposition(source: source, srcTrack: srcTrack,
                                                              duration: duration, outDuration: outDuration)
@@ -320,36 +356,48 @@ enum RenderEngine {
 
         let totalSeconds = max(0.01, outDuration.seconds)
 
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            writerInput.requestMediaDataWhenReady(on: queue) {
-                while writerInput.isReadyForMoreMediaData {
-                    if Task.isCancelled {
-                        reader.cancelReading(); writerInput.markAsFinished()
-                        cont.resume(throwing: RenderError.cancelled); return
-                    }
-                    var didResume = false
-                    autoreleasepool {
-                        if let sample = readerOutput.copyNextSampleBuffer() {
-                            let pts = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-                            progress(min(1.0, pts / totalSeconds))
-                            if !writerInput.append(sample) {
-                                reader.cancelReading(); writerInput.markAsFinished()
-                                cont.resume(throwing: writer.error ?? RenderError.cannotBuild)
+        do {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                writerInput.requestMediaDataWhenReady(on: queue) {
+                    while writerInput.isReadyForMoreMediaData {
+                        if cancelFlag.isCancelled {
+                            reader.cancelReading(); writerInput.markAsFinished()
+                            cont.resume(throwing: RenderError.cancelled); return
+                        }
+                        var didResume = false
+                        autoreleasepool {
+                            if let sample = readerOutput.copyNextSampleBuffer() {
+                                let pts = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+                                progress(min(1.0, pts / totalSeconds))
+                                if !writerInput.append(sample) {
+                                    reader.cancelReading(); writerInput.markAsFinished()
+                                    cont.resume(throwing: writer.error ?? RenderError.cannotBuild)
+                                    didResume = true
+                                }
+                            } else {
+                                writerInput.markAsFinished()
+                                if reader.status == .failed {
+                                    cont.resume(throwing: reader.error ?? RenderError.cannotBuild)
+                                } else if reader.status == .cancelled || cancelFlag.isCancelled {
+                                    // A cancelled reader hits EOF early — finishing
+                                    // the writer here would ship a TRUNCATED tour.
+                                    cont.resume(throwing: RenderError.cancelled)
+                                } else {
+                                    cont.resume(returning: ())
+                                }
                                 didResume = true
                             }
-                        } else {
-                            writerInput.markAsFinished()
-                            if reader.status == .failed {
-                                cont.resume(throwing: reader.error ?? RenderError.cannotBuild)
-                            } else {
-                                cont.resume(returning: ())
-                            }
-                            didResume = true
                         }
+                        if didResume { return }
                     }
-                    if didResume { return }
                 }
             }
+        } catch {
+            // Tear down cleanly so the partial file can be deleted (the caller
+            // removes outURL) and AVFoundation doesn't dealloc a live writer.
+            if reader.status == .reading { reader.cancelReading() }
+            if writer.status == .writing { writer.cancelWriting() }
+            throw error
         }
 
         await writer.finishWriting()

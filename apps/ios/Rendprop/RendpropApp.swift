@@ -197,7 +197,9 @@ enum PersistentStore {
         FileStore.documents.appendingPathComponent("rendprop-state.json")
     }
 
-    private struct PersistedAsset: Codable {
+    // fileprivate (not private) so the tolerant-decoding extensions at the
+    // bottom of this file can name these nested types.
+    fileprivate struct PersistedAsset: Codable {
         var id: UUID
         var relPath: String
         var motionRelPath: String?
@@ -210,13 +212,13 @@ enum PersistentStore {
         var roomTags: [RoomTag]
     }
 
-    private struct PersistedTour: Codable {
+    fileprivate struct PersistedTour: Codable {
         var relPath: String
         var durationS: Double
         var speedFactor: Double
     }
 
-    private struct PersistedState: Codable {
+    fileprivate struct PersistedState: Codable {
         var listings: [Listing] = []
         var assets: [UUID: PersistedAsset] = [:]
         var tours: [UUID: PersistedTour] = [:]
@@ -287,8 +289,64 @@ enum PersistentStore {
     }
 }
 
+// MARK: - Tolerant decoding for persisted snapshots
+// The snapshot decode used to be all-or-nothing: ONE missing key or one bad
+// entry anywhere (a field added by a newer/older build, an unknown enum raw
+// value) threw, load() returned empty, and every listing "vanished" on update.
+// These inits decode field-by-field with safe defaults, and the top-level state
+// salvages each collection independently — a poisoned renders map can no longer
+// take the listings down with it. Extensions keep the memberwise inits that
+// save() uses; encoding stays synthesized, so the JSON shape is unchanged.
+extension PersistentStore.PersistedAsset {
+    enum CodingKeys: String, CodingKey {
+        case id, relPath, motionRelPath, durationS, fps, width, height, bytes, isDrone, roomTags
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id            = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        relPath       = try c.decode(String.self, forKey: .relPath)   // useless without a path
+        motionRelPath = try c.decodeIfPresent(String.self, forKey: .motionRelPath)
+        durationS     = try c.decodeIfPresent(Double.self, forKey: .durationS) ?? 0
+        fps           = try c.decodeIfPresent(Double.self, forKey: .fps) ?? 30
+        width         = try c.decodeIfPresent(Int.self, forKey: .width) ?? 0
+        height        = try c.decodeIfPresent(Int.self, forKey: .height) ?? 0
+        bytes         = try c.decodeIfPresent(Int64.self, forKey: .bytes) ?? 0
+        isDrone       = try c.decodeIfPresent(Bool.self, forKey: .isDrone) ?? false
+        // Losing chapters beats losing the video: salvage what decodes.
+        roomTags      = ((try? c.decodeIfPresent([RoomTag].self, forKey: .roomTags)) ?? nil) ?? []
+    }
+}
+
+extension PersistentStore.PersistedTour {
+    enum CodingKeys: String, CodingKey { case relPath, durationS, speedFactor }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        relPath     = try c.decode(String.self, forKey: .relPath)     // useless without a path
+        durationS   = try c.decodeIfPresent(Double.self, forKey: .durationS) ?? 0
+        speedFactor = try c.decodeIfPresent(Double.self, forKey: .speedFactor) ?? 1
+    }
+}
+
+extension PersistentStore.PersistedState {
+    enum CodingKeys: String, CodingKey { case listings, assets, tours, renders }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        // Each collection is salvaged independently (`try?`): if one is
+        // malformed, only it degrades to empty — the rest still load.
+        listings = ((try? c.decodeIfPresent([Listing].self, forKey: .listings)) ?? nil) ?? []
+        assets   = ((try? c.decodeIfPresent([UUID: PersistentStore.PersistedAsset].self,
+                                            forKey: .assets)) ?? nil) ?? [:]
+        tours    = ((try? c.decodeIfPresent([UUID: PersistentStore.PersistedTour].self,
+                                            forKey: .tours)) ?? nil) ?? [:]
+        renders  = ((try? c.decodeIfPresent([UUID: Render].self, forKey: .renders)) ?? nil) ?? [:]
+    }
+}
+
 // MARK: - Entry
-@main
+
 /// App appearance — System follows iOS; Light/Dark force a scheme.
 /// Stored raw in @AppStorage("appearance"); every Theme token is adaptive, so
 /// switching re-themes the whole app instantly.
@@ -318,6 +376,7 @@ enum Appearance: String, CaseIterable, Identifiable {
     }
 }
 
+@main
 struct RendpropApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = AppModel()

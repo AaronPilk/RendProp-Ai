@@ -122,6 +122,52 @@ struct Render: Identifiable, Codable, Hashable {
     }
 }
 
+// MARK: - Tolerant decoding (persistence forward/backward compatibility)
+// Renders are persisted inside PersistentStore's snapshot and also decoded from
+// server JSON (LiveAPIClient's RenderDTO.enhancements). Synthesized Codable
+// would require every non-optional key and throw on unknown enum raw values —
+// one miss and the user's whole saved state is discarded on update. These
+// inits decode with decodeIfPresent + safe defaults. They live in extensions
+// so the memberwise initializers stay synthesized; encoding stays synthesized
+// → identical JSON shape.
+extension Enhancements {
+    enum CodingKeys: String, CodingKey { case declutter, style }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        declutter = try c.decodeIfPresent(Bool.self, forKey: .declutter) ?? false
+        // Unknown style raw values (newer build / server) degrade to .asIs.
+        let styleRaw = try c.decodeIfPresent(String.self, forKey: .style)
+        style = styleRaw.flatMap(DesignStyle.init(rawValue:)) ?? .asIs
+    }
+}
+
+extension Render {
+    enum CodingKeys: String, CodingKey {
+        case id, listingID, tier, durationS, enhancements, status, progress,
+             shareSlug, shareURL, scrubURL, videoURL, posterURL
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id           = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        // A render missing its listing link decodes to an orphan id and is
+        // filtered out on load — losing one render beats losing everything.
+        listingID    = try c.decodeIfPresent(UUID.self, forKey: .listingID) ?? UUID()
+        let tierRaw  = try c.decodeIfPresent(String.self, forKey: .tier)
+        tier         = tierRaw.flatMap(Tier.init(rawValue:)) ?? .smooth
+        durationS    = try c.decodeIfPresent(Double.self, forKey: .durationS) ?? 0
+        enhancements = try c.decodeIfPresent(Enhancements.self, forKey: .enhancements) ?? Enhancements()
+        status       = try c.decodeIfPresent(String.self, forKey: .status) ?? "queued"
+        progress     = try c.decodeIfPresent(Double.self, forKey: .progress) ?? 0
+        shareSlug    = try c.decodeIfPresent(String.self, forKey: .shareSlug)
+        shareURL     = try c.decodeIfPresent(String.self, forKey: .shareURL)
+        scrubURL     = try c.decodeIfPresent(String.self, forKey: .scrubURL)
+        videoURL     = try c.decodeIfPresent(String.self, forKey: .videoURL)
+        posterURL    = try c.decodeIfPresent(String.self, forKey: .posterURL)
+    }
+}
+
 /// Duration-band pricing (master spec Part 20.4). A flat price loses money on
 /// long, popular flythroughs — price by output length band.
 enum PricingBand {

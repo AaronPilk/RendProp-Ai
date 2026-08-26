@@ -301,7 +301,9 @@
     const b = document.createElement('button');
     b.innerHTML = `<span class="lbl">${c.label}</span><span class="dot"></span>`;
     b.addEventListener('click', () => {
-      const p = duration ? c.t / duration : 0;
+      // Clamp: an injected chapter can sit past the video's end (tag near the
+      // end of a walk that was trimmed on export).
+      const p = duration ? clamp(c.t / duration, 0, 1) : 0;
       scrollTo({ top: p * (track.offsetHeight - innerHeight), behavior: 'smooth' });
     });
     railEl.appendChild(b);
@@ -314,6 +316,7 @@
 
   function updateOverlays(p) {
     progEl.style.transform = `scaleX(${p})`;
+    if (!CHAPTERS.length) return; // injected chapters may be empty — never kill the rAF loop
 
     // Room label: opacity = 1 - |p - anchor| / window ; transforms only
     const t = p * duration;
@@ -331,17 +334,24 @@
   }
 
   function tick(now) {
-    // Jank watchdog → fallback ladder
-    if (now - lastTick > 90) { if (++longFrames > 24) return fallbackLoop(); }
+    // Jank watchdog → fallback ladder. Only SUSTAINED jank trips it: gaps over
+    // ~1s are suspensions (app switch, webview paused offscreen in the outer
+    // scroll), not jank, and smooth frames pay the counter back down — so an
+    // embedded 460pt player can't drift into autoplay over a long session.
+    const gap = now - lastTick;
     lastTick = now;
+    if (gap > 90) { if (gap < 1000 && ++longFrames > 24) return fallbackLoop(); }
+    else if (longFrames > 0) longFrames--;
 
-    const total = track.offsetHeight - innerHeight;
+    const total = Math.max(1, track.offsetHeight - innerHeight); // duration=0 → no NaN/-∞ scroll math
     const p = clamp(-track.getBoundingClientRect().top / total, 0, 1);
     const target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
     curT += (target - curT) * LERP;
 
     // ~1 frame @60fps — finer updates now that every frame is a keyframe (all-intra).
-    if (Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016) {
+    // readyState 0 = no metadata yet → seeking is meaningless (and throws on old WebKit).
+    if (video.readyState > 0 &&
+        Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016) {
       try { video.currentTime = curT; lastSet = curT; } catch (_) {}
     }
     updateOverlays(p);
@@ -374,20 +384,21 @@
   video.addEventListener('loadedmetadata', () => { duration = video.duration; sizeTrack(); reportBuffer(); });
   video.addEventListener('canplaythrough', () => setTimeout(begin, 1200)); // fallback gate
   setTimeout(() => { if (!started && buffered() > 5) begin(); }, 6000);    // never strand the viewer
+  setTimeout(() => { if (!started) begin(); }, 12000);  // absolute last resort (missing/failed video) — parity with the hosted player
 
   /* ================= Fallback: autoplay loop (Low Power Mode / webview jank) ================= */
   let fellBack = false;
   function fallbackLoop() {
     if (fellBack) return; fellBack = true;
+    loader.classList.add('done'); // defensive: guaranteed even if a future path reaches here pre-begin()
     video.loop = true;
     video.play().catch(() => {});
-    let raf;
     const loopTick = () => {
       const p = video.duration ? video.currentTime / video.duration : 0;
       updateOverlays(p);
-      raf = requestAnimationFrame(loopTick);
+      requestAnimationFrame(loopTick);
     };
-    raf = requestAnimationFrame(loopTick);
+    requestAnimationFrame(loopTick);
   }
 
   /* ================= Scrub hint ================= */

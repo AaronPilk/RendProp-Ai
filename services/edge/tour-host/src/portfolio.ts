@@ -1,10 +1,12 @@
 // portfolio.ts — renders GET /a/:handle: an org's public "whole-app" page with
 // an agent header and a grid of tour cards linking to /f/:slug.
 //
-// NOTE: the Supabase `GET /portfolio/:handle` function is NOT built yet (see the
-// functions README TODOs + this package's README). The Worker handles a missing
-// endpoint / unknown handle gracefully; this renderer just needs whatever JSON
-// eventually lands, so it normalizes the tour array from a few likely keys.
+// Contract (services/supabase/functions/portfolio/index.ts):
+//   { org: {name, handle, space_type}, agent_card, tours: [{ slug, share_url,
+//     space_type, address, tagline, price, poster }] }
+// The renderer stays defensive (normalizes the array from a few likely keys,
+// tolerates missing fields) and always links cards to the local /f/:slug path
+// rather than the absolute share_url, so it works on workers.dev too.
 
 import type { Portfolio, PortfolioTour } from "./types";
 import {

@@ -154,8 +154,14 @@ final class UploadManager: NSObject, ObservableObject {
         // Resume anything persisted from a previous launch.
         if let saved = UploadStore.load() {
             state = saved
-            if saved.status == .uploading || saved.status == .queued {
+            if saved.status == .uploading {
                 resume()
+            } else if saved.status == .queued {
+                // .queued means the upload was awaiting the cellular-data
+                // confirmation when the app died. Re-raise the prompt instead of
+                // silently starting a multi-GB upload on cellular — the UI calls
+                // confirmCellularAndStart() (or cancel()) exactly as before.
+                pendingCellularConfirmation = true
             }
         }
         _ = backgroundSession // create eagerly so background events attach
@@ -429,7 +435,11 @@ final class UploadManager: NSObject, ObservableObject {
     }
 
     private func handleSingleCompletion(task: URLSessionTask, error: Error?) {
-        guard let s = state, let assetID = s.assetID else { return }
+        guard let s = state, let assetID = s.assetID,
+              // A stale task from a PREVIOUS upload session (background tasks
+              // outlive `state` swaps) must never drive the current upload's
+              // completion — its task description names a different asset id.
+              task.taskDescription == "single:\(assetID)" else { return }
         if let error {
             _ = error
             guard s.status == .uploading else { return }   // paused/cancelled → leave resumable
@@ -564,7 +574,11 @@ final class UploadManager: NSObject, ObservableObject {
     }
 
     private func handlePartCompletion(task: URLSessionTask, error: Error?) {
-        guard let assetID = state?.assetID, let n = partNumber(from: task) else { return }
+        guard let assetID = state?.assetID, let n = partNumber(from: task),
+              // Ignore stale part tasks from a PREVIOUS upload session — marking
+              // the current upload's part "done" with a foreign ETag would
+              // corrupt the manifest and fail (or worse, mis-assemble) the file.
+              task.taskDescription == "part:\(assetID):\(n)" else { return }
         DirectUploader.removeSlice(for: assetID, part: n)   // temp slice no longer needed
         inFlightBytes[n] = nil
         guard let s = state else { return }                 // cancelled
@@ -649,7 +663,16 @@ final class UploadManager: NSObject, ObservableObject {
             return (p.number, e)
         }
         guard manifest.count == s.parts.count, !manifest.isEmpty else {
-            mutate { $0.status = .failed }   // an ETag went missing — resumable
+            // An ETag went missing. Send the affected parts back to .pending so
+            // the resume path RE-UPLOADS them — leaving them .done-without-etag
+            // would loop resume → finishMultipart → failed forever.
+            mutate { st in
+                st.status = .failed          // resumable
+                for i in st.parts.indices
+                where st.parts[i].status == .done && st.parts[i].etag == nil {
+                    st.parts[i].status = .pending
+                }
+            }
             return
         }
         let meta = buildMetadata(from: s)
@@ -865,7 +888,11 @@ extension UploadManager.State {
         filePath    = try c.decode(String.self, forKey: .filePath)
         bytesTotal  = try c.decodeIfPresent(Int64.self, forKey: .bytesTotal) ?? 0
         bytesSent   = try c.decodeIfPresent(Int64.self, forKey: .bytesSent) ?? 0
-        status      = try c.decodeIfPresent(UploadManager.Status.self, forKey: .status) ?? .queued
+        // Decode status via its raw string so an UNKNOWN value (written by a
+        // newer build) degrades to .queued — which re-raises the start prompt —
+        // instead of throwing away resumable per-part progress.
+        let statusRaw = try c.decodeIfPresent(String.self, forKey: .status)
+        status      = statusRaw.flatMap(UploadManager.Status.init(rawValue:)) ?? .queued
         mode        = try c.decodeIfPresent(String.self, forKey: .mode) ?? "simulate"
         assetID     = try c.decodeIfPresent(String.self, forKey: .assetID)
         storageKey  = try c.decodeIfPresent(String.self, forKey: .storageKey)
@@ -881,6 +908,25 @@ extension UploadManager.State {
     }
 }
 
+// Per-part tolerant decode: number/offset/length are REQUIRED (a part without
+// its byte range can't be re-sliced and must fail the load → fresh upload), but
+// status/etag/retryCount tolerate missing keys and unknown raw values so a
+// version change can't discard hours of already-uploaded parts.
+extension UploadManager.PartState {
+    enum CodingKeys: String, CodingKey { case number, offset, length, status, etag, retryCount }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        number     = try c.decode(Int.self, forKey: .number)
+        offset     = try c.decode(Int64.self, forKey: .offset)
+        length     = try c.decode(Int64.self, forKey: .length)
+        let statusRaw = try c.decodeIfPresent(String.self, forKey: .status)
+        status     = statusRaw.flatMap(UploadManager.PartStatus.init(rawValue:)) ?? .pending
+        etag       = try c.decodeIfPresent(String.self, forKey: .etag)
+        retryCount = try c.decodeIfPresent(Int.self, forKey: .retryCount) ?? 0
+    }
+}
+
 // MARK: - Background URLSession delegate
 extension UploadManager: URLSessionDelegate, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask,
@@ -890,11 +936,15 @@ extension UploadManager: URLSessionDelegate, URLSessionTaskDelegate {
         let desc = task.taskDescription ?? ""
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            // Only the CURRENT upload session's tasks may drive progress —
+            // stale background tasks from a replaced session are ignored.
+            guard let assetID = self.state?.assetID else { return }
             if desc.hasPrefix("part:"), let n = self.partNumber(from: task) {
+                guard desc == "part:\(assetID):\(n)" else { return }
                 self.inFlightBytes[n] = totalBytesSent
                 self.updateProgress()
             } else if desc.hasPrefix("single:") {
-                guard var s = self.state else { return }
+                guard desc == "single:\(assetID)", var s = self.state else { return }
                 s.bytesSent = min(s.bytesTotal, totalBytesSent)
                 self.state = s
             }
