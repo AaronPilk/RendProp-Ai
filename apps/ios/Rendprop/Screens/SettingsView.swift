@@ -140,8 +140,8 @@ struct SettingsView: View {
             }
 
             Section("Legal") {
-                Link("Terms of Service", destination: URL(string: "https://rendprop.app/terms")!)
-                Link("Privacy Policy", destination: URL(string: "https://rendprop.app/privacy")!)
+                Link("Terms of Service", destination: URL(string: "https://rendprop.com/terms")!)
+                Link("Privacy Policy", destination: URL(string: "https://rendprop.com/privacy")!)
                 Text("Only record spaces you have the right to record and publish.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
@@ -952,7 +952,7 @@ enum PortfolioExporter {
             // Prefer the REAL published slug; fall back to the local preview link
             // only when the tour hasn't been published to the cloud yet.
             let tour = l.serverShareURL?.absoluteString
-                ?? "https://rendprop.app/f/\(l.id.uuidString.prefix(8).lowercased())"
+                ?? "https://rendprop.com/f/\(l.id.uuidString.prefix(8).lowercased())"
             let price = l.price.cents > 0 ? " · " + esc(l.price.formatted) : ""
             return """
             <a class="card" href="\(tour)" target="_blank" rel="noopener">\(img)<div class="meta"><div class="addr">\(esc(l.address))</div><div class="sub">\(esc(l.subtitleLine))\(price)</div></div></a>

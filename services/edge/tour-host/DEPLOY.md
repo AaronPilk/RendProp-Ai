@@ -39,7 +39,7 @@ Optional: `TOUR_CACHE_TTL` (seconds of edge cache for rendered HTML; default 60,
 
 ## 2. First deploy → test on workers.dev
 
-The custom routes in `wrangler.toml` need the `rendprop.app` zone active on your
+The custom routes in `wrangler.toml` need the `rendprop.com` zone active on your
 account. To test **before** DNS is ready, deploy without routes:
 
 ```bash
@@ -67,15 +67,15 @@ video frame-accurately (mp4 scrub source — no keyframe snapping), chapter dots
 jump on tap, the lead form submits (row appears in `leads`), and a `metering`
 row for today shows the view.
 
-## 3. Production routes on rendprop.app
+## 3. Production routes on rendprop.com
 
-Once `rendprop.app` is an active zone on this Cloudflare account (nameservers on
+Once `rendprop.com` is an active zone on this Cloudflare account (nameservers on
 Cloudflare), keep/restore the routes block in `wrangler.toml`:
 
 ```toml
 routes = [
-  { pattern = "rendprop.app/f/*", zone_name = "rendprop.app" },
-  { pattern = "rendprop.app/a/*", zone_name = "rendprop.app" },
+  { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
 ]
 ```
 

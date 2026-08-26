@@ -14,7 +14,7 @@ import { getUser, userClient } from "../_shared/supabase.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 
 const TIERS = ["smooth", "premium4k", "cinematic"];
-const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.app").replace(/\/+$/, "");
+const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 const shareUrl = (slug: string) => `${TOUR_BASE}/f/${slug}`;
 
 /** A render is "virtually staged" if any enhancement altered furniture/decor. */

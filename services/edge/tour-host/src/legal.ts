@@ -4,7 +4,7 @@
 //   GET /privacy  Privacy Policy
 //
 // These back the links in the iOS app (Settings → Terms of Service / Privacy
-// Policy → https://rendprop.app/terms | /privacy) and the App Store listing.
+// Policy → https://rendprop.com/terms | /privacy) and the App Store listing.
 // Self-contained HTML, inline CSS, mobile-first, Rendprop purple accent
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
@@ -89,14 +89,14 @@ function legalShell(opts: {
 </head>
 <body>
   <div class="wrap">
-    <div class="mark"><a href="https://rendprop.app">RENDPROP</a></div>
+    <div class="mark"><a href="https://rendprop.com">RENDPROP</a></div>
     <h1>${opts.heading}</h1>
     <div class="updated">Effective ${EFFECTIVE_DATE}</div>
     <p class="lede">${opts.lede}</p>
     ${opts.body}
     <footer>
       <a href="${opts.otherHref}">${opts.otherLabel}</a>
-      <a href="https://rendprop.app">rendprop.app</a>
+      <a href="https://rendprop.com">rendprop.com</a>
       <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>
     </footer>
   </div>

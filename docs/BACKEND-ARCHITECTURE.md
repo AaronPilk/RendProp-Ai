@@ -31,7 +31,7 @@ apps/ios/Rendprop/Networking/  LiveAPIClient wired to the above (Config.apiBaseU
 2. **Create listing** — `POST /listings` (space_type, address, details jsonb, tagline, coords).
 3. **Upload** — `POST /uploads` returns an **R2 presigned PUT** + a `capture_assets` row; iOS `DirectUploader` PUTs the video straight to R2 (background URLSession). No bytes touch Supabase.
 4. **Render** — `POST /renders` creates a `render_jobs` row (tier + enhancements). A worker (Modal/Cloudflare Container/self-host) runs the pipeline: stabilize → 60fps → (AI enhance if purchased) → encode. **On-device render still works** as the free/instant path; the server path is for 4K/AI/Stream hosting. Output uploaded to R2; registered to **Cloudflare Stream** for delivery.
-5. **Publish** — job → `ready` creates a `tours` row with a public `slug`. Public URL = `https://rendprop.app/f/{slug}` served by the **tour-host Worker** (pulls tour JSON from `GET /tours/{slug}`, renders `player/index.html` with the Stream/R2 video + chapters + agent card + per-industry CTA).
+5. **Publish** — job → `ready` creates a `tours` row with a public `slug`. Public URL = `https://rendprop.com/f/{slug}` served by the **tour-host Worker** (pulls tour JSON from `GET /tours/{slug}`, renders `player/index.html` with the Stream/R2 video + chapters + agent card + per-industry CTA).
 6. **View** — viewer scrolls the tour (Stream HLS). A beacon posts view/scroll-depth/streamed-minutes to `metering`.
 7. **Lead** — end-card form → `POST /leads` (public) → `leads` row → optional push to GoHighLevel CRM (user has GHL connected) + notify the agent (email/push).
 8. **Cost** — every AI/GPU/stream unit writes a `cost_ledger` row; `render_jobs.cost_cents` is the rollup; `MAX_GEN_COST_PER_JOB_CENTS` aborts runaways.
@@ -105,7 +105,7 @@ GHL_API_KEY, GHL_LOCATION_ID   # optional: push leads to GoHighLevel
 4. **Cloudflare:** create the 3 R2 buckets; create R2 API token (access key/secret); enable **Stream** and mint a Stream token.
 5. Set all secrets (§5) in Supabase Edge Function secrets + the render worker env.
 6. `supabase functions deploy` for each function in `services/supabase/functions/`.
-7. Deploy the **tour-host** Worker/Pages (`services/edge/tour-host/`); map `rendprop.app/f/*` and `/a/*` to it.
+7. Deploy the **tour-host** Worker/Pages (`services/edge/tour-host/`); map `rendprop.com/f/*` and `/a/*` to it.
 8. In iOS `Config.swift`, set `apiBaseURL` to the Supabase functions URL; set `uploadMode = .direct`; flip `enableAuth = true`. Wire `LiveAPIClient` (see the iOS task).
 9. Add AI provider keys, run one real `/ai-enhance` on a test image, confirm a `cost_ledger` row + the `MAX_GEN_COST_PER_JOB_CENTS` guard. **Now you have real cost numbers.**
 10. Point the render worker (Modal or Cloudflare Container) at the queue; process one job end-to-end → published tour on Stream → open `/f/{slug}`.

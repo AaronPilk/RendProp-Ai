@@ -144,7 +144,7 @@ ${accentOverride}
     </header>
     ${socialRow}
     ${grid}
-    <div class="foot">Made with <a href="https://rendprop.app" target="_blank" rel="noopener">Rendprop</a></div>
+    <div class="foot">Made with <a href="https://rendprop.com" target="_blank" rel="noopener">Rendprop</a></div>
   </div>
 </body>
 </html>`;

@@ -12,7 +12,7 @@ import { adminClient } from "../_shared/supabase.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 import { buildCta } from "./cta.ts";
 
-const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.app").replace(/\/+$/, "");
+const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
 const STAGED_DISCLOSURE =
   "Some imagery in this tour has been virtually staged or digitally decluttered. " +

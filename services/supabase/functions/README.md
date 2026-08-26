@@ -75,10 +75,10 @@ supabase secrets set \
   R2_BUCKET_UPLOADS=rendprop-uploads \
   R2_BUCKET_RENDERS=rendprop-renders \
   R2_BUCKET_PUBLIC=rendprop-public \
-  R2_PUBLIC_BASE_URL=https://cdn.rendprop.app \
+  R2_PUBLIC_BASE_URL=https://cdn.rendprop.com \
   CLOUDFLARE_STREAM_CUSTOMER_CODE=xxxxxxxx \
   CLOUDFLARE_STREAM_TOKEN=xxxxxxxx \
-  TOUR_PUBLIC_BASE_URL=https://rendprop.app \
+  TOUR_PUBLIC_BASE_URL=https://rendprop.com \
   MAX_GEN_COST_PER_JOB_CENTS=2500 \
   GEMINI_API_KEY=xxxxxxxx \
   FAL_KEY=xxxxxxxx \
@@ -98,7 +98,7 @@ supabase secrets set \
 | `R2_BUCKET_UPLOADS` / `_RENDERS` / `_PUBLIC` | uploads, renders, tours | default to `rendprop-*` |
 | `R2_PUBLIC_BASE_URL` | renders, tours | public domain for the renders/public bucket; if unset, R2 video/poster URLs are `null` (rely on Stream) |
 | `CLOUDFLARE_STREAM_CUSTOMER_CODE` | renders, tours | the `customer-<code>` subdomain for HLS manifests |
-| `TOUR_PUBLIC_BASE_URL` | renders, tours | base for `…/f/<slug>` (default `https://rendprop.app`) |
+| `TOUR_PUBLIC_BASE_URL` | renders, tours | base for `…/f/<slug>` (default `https://rendprop.com`) |
 | `MAX_GEN_COST_PER_JOB_CENTS` | ledger, ai-enhance | hard per-job cap (cents), default 2500 |
 | `GEMINI_API_KEY`, `FAL_KEY`, `ANTHROPIC_API_KEY`, `KIE_API_KEY` | pipeline (via ai-enhance) | provider keys — never shipped to the app |
 | `GHL_API_KEY`, `GHL_LOCATION_ID` | leads | optional; when both set, leads upsert to GoHighLevel |

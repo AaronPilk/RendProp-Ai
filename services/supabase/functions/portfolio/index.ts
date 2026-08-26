@@ -11,7 +11,7 @@ import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts"
 import { adminClient } from "../_shared/supabase.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 
-const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.app").replace(/\/+$/, "");
+const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
 function formatUSD(cents: number | null | undefined): string | null {
   if (cents == null) return null;

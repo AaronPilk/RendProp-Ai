@@ -75,7 +75,7 @@ actor MockAPIClient: APIClient {
         // Never reached in the live path (publishTour is gated on useLiveBackend,
         // which uses LiveAPIClient).
         let slug = String(UUID().uuidString.prefix(8)).lowercased()
-        return PublishedTour(slug: slug, shareURL: "https://rendprop.app/f/\(slug)",
+        return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
                              durationS: durationS, staged: staged)
     }
 

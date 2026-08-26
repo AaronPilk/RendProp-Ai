@@ -240,7 +240,7 @@ export function notFoundPage(): string {
     title: "Tour not found — Rendprop",
     heading: "This tour isn't available",
     body: "The link may have expired, been unpublished, or mistyped.",
-    cta: { label: "Go to Rendprop", href: "https://rendprop.app" },
+    cta: { label: "Go to Rendprop", href: "https://rendprop.com" },
   });
 }
 
@@ -258,6 +258,6 @@ export function portfolioUnavailablePage(handle: string): string {
     title: "Portfolio not found — Rendprop",
     heading: "No portfolio here yet",
     body: `We couldn't find a public portfolio for <b>${escapeHtml("@" + handle)}</b>.`,
-    cta: { label: "Go to Rendprop", href: "https://rendprop.app" },
+    cta: { label: "Go to Rendprop", href: "https://rendprop.com" },
   });
 }

@@ -722,7 +722,7 @@ ${accentOverride}
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
 
-    <a class="chrome" id="wm" href="https://rendprop.app" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>
+    <a class="chrome" id="wm" href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>
 
     ${stagedHtml}
   </div>

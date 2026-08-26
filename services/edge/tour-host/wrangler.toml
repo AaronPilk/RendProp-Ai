@@ -5,20 +5,23 @@ workers_dev = true
 
 # ---------------------------------------------------------------------------
 # Routes — bind the public paths on the apex domain to this Worker.
-# Requires rendprop.app to be an active zone on this Cloudflare account. The
+# Requires rendprop.com to be an active zone on this Cloudflare account. The
 # tour-host owns /f/*, /a/*, and the legal pages (/terms, /privacy — linked
 # from the iOS app's Settings); the marketing site keeps everything else.
 # ---------------------------------------------------------------------------
-routes = [
-  { pattern = "rendprop.app/f/*", zone_name = "rendprop.app" },
-  { pattern = "rendprop.app/a/*", zone_name = "rendprop.app" },
-  { pattern = "rendprop.app/terms*", zone_name = "rendprop.app" },
-  { pattern = "rendprop.app/privacy*", zone_name = "rendprop.app" },
-]
+# DISABLED until the rendprop.com zone is added to this Cloudflare account —
+# an inactive zone makes `wrangler deploy` fail. Testing on *.workers.dev first;
+# uncomment + redeploy once the domain is on Cloudflare.
+# routes = [
+#   { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
+#   { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
+#   { pattern = "rendprop.com/terms*", zone_name = "rendprop.com" },
+#   { pattern = "rendprop.com/privacy*", zone_name = "rendprop.com" },
+# ]
 
 [vars]
 # Base URL of the Supabase Edge Functions (no trailing slash needed).
-SUPABASE_FUNCTIONS_URL = "https://YOUR_PROJECT_REF.supabase.co/functions/v1"
+SUPABASE_FUNCTIONS_URL = "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1"
 
 # Supabase anon (publishable) key. This is PUBLIC by design — RLS enforces
 # access and it already ships in every Supabase client. It's the apikey/Bearer

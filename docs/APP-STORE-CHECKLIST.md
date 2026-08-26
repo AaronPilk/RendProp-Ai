@@ -20,7 +20,7 @@ code as of 2026-08-26. Items marked **BLOCKER** must be true before you press Su
 
 ## 1. BLOCKERS — resolve before submitting
 
-- [ ] **BLOCKER — Privacy Policy URL must be live**: `https://rendprop.app/privacy` (and `/terms`). These are served by the tour-host Cloudflare worker; that deploy must happen **before** submission. Apple validates the privacy URL and reviewers click it. Settings → Legal links to both.
+- [ ] **BLOCKER — Privacy Policy URL must be live**: `https://rendprop.com/privacy` (and `/terms`). These are served by the tour-host Cloudflare worker; that deploy must happen **before** submission. Apple validates the privacy URL and reviewers click it. Settings → Legal links to both.
 - [ ] **BLOCKER — `DELETE /me` must be deployed** on the Supabase edge API. The app's Delete-account button calls it when signed in; if the route 404s, deletion fails with a retry alert and a reviewer testing 5.1.1 will reject. (Signed-out/guest deletion works regardless — it's a local wipe.)
 - [ ] **BLOCKER — Apple sign-in must actually work live**: Supabase Auth needs the Apple provider enabled + function secrets set (see `services/supabase/DEPLOYMENT.md`). The reviewer will tap "Publish" and hit the sign-in gate. If the exchange fails, that's a 2.1 "app is broken" rejection.
 - [ ] **BLOCKER — publish flow end-to-end**: publish a real tour from a device on the live backend and open the share link on a second device before submitting. The reviewer will do exactly this.
@@ -69,8 +69,8 @@ Notes: motion/gyro data is processed on-device for stabilization and not collect
 
 - [ ] Description: lead with the outcome (phone walkthrough → cinematic tour link), mention AI photo enhancement and the multi-industry modes. Do **not** use "beta", "test", or promise unshipped features (2.3.1)
 - [ ] Keywords: real estate tour, virtual tour, listing video, property video, virtual staging, walkthrough, open house
-- [ ] Support URL: `https://rendprop.app` · Marketing URL (optional): same
-- [ ] Privacy Policy URL: `https://rendprop.app/privacy` (**must be live — see §1**)
+- [ ] Support URL: `https://rendprop.com` · Marketing URL (optional): same
+- [ ] Privacy Policy URL: `https://rendprop.com/privacy` (**must be live — see §1**)
 - [ ] Copyright: 2026 Skyway Media
 
 ## 7. App Review Information (copy-paste template)

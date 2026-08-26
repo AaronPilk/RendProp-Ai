@@ -117,7 +117,7 @@ struct FlythroughDetailView: View {
     /// never fabricate a slug when a real one exists).
     private var shareURL: URL {
         currentListing.serverShareURL
-            ?? URL(string: "https://rendprop.app/f/\(listing.id.uuidString.prefix(8).lowercased())")!
+            ?? URL(string: "https://rendprop.com/f/\(listing.id.uuidString.prefix(8).lowercased())")!
     }
 
     var body: some View {

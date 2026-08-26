@@ -106,7 +106,7 @@ works with no network, as today). Going online is a **Publish** step:
    photos) via the multipart engine → server `asset_id`(s).
 4. POST room chapters (from the walkthrough's local room tags).
 5. Create/track the render (or publish an app-rendered tour) → server **slug**.
-6. Persist the slug on the listing; share `https://rendprop.app/f/<slug>`.
+6. Persist the slug on the listing; share `https://rendprop.com/f/<slug>`.
 
 Never fabricate a slug from a local UUID. The share link must be the server slug.
 

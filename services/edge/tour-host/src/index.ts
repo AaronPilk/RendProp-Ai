@@ -12,7 +12,7 @@
 // Supabase directly for the lead form (POST /leads) and the view beacon
 // (POST /beacon/:slug) — both deployed with --no-verify-jwt.
 //
-// Routes are bound in wrangler.toml: rendprop.app/f/* and rendprop.app/a/*.
+// Routes are bound in wrangler.toml: rendprop.com/f/* and rendprop.com/a/*.
 
 import type { Env, Portfolio, Tour } from "./types";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
@@ -183,7 +183,7 @@ export default {
     // The routes only send /f/* and /a/*, but be friendly if the Worker is hit
     // directly (e.g. `wrangler dev`): bare / and /f, /a → marketing site.
     if (path === "/" || path === "/f" || path === "/a") {
-      return Response.redirect("https://rendprop.app", 302);
+      return Response.redirect("https://rendprop.com", 302);
     }
 
     return htmlResponse(notFoundPage(), 404);

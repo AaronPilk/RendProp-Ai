@@ -69,13 +69,13 @@ npm run deploy        # = wrangler deploy
 
 ```toml
 routes = [
-  { pattern = "rendprop.app/f/*", zone_name = "rendprop.app" },
-  { pattern = "rendprop.app/a/*", zone_name = "rendprop.app" },
+  { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
 ]
 ```
 
 Requirements:
-- `rendprop.app` must be an **active zone** on the same Cloudflare account (nameservers on Cloudflare).
+- `rendprop.com` must be an **active zone** on the same Cloudflare account (nameservers on Cloudflare).
 - The tour-host owns **only** `/f/*` and `/a/*`; the marketing site keeps everything else. If the apex is served by Pages/another Worker, these routes take precedence for their prefixes.
 - First deploy without custom routes? It's also on `https://rendprop-tour-host.<subdomain>.workers.dev` (`workers_dev = true`).
 

@@ -43,7 +43,7 @@ struct Listing: Identifiable, Codable, Hashable {
     var serverID: UUID? = nil
     /// The published tour's server slug (never fabricated from the local UUID).
     var shareSlug: String? = nil
-    /// The full public share URL returned by the server (e.g. rendprop.app/f/<slug>).
+    /// The full public share URL returned by the server (e.g. rendprop.com/f/<slug>).
     var shareURL: String? = nil
 
     func detail(_ key: String) -> String { details?[key] ?? "" }
@@ -56,7 +56,7 @@ struct Listing: Identifiable, Codable, Hashable {
         if let s = shareURL?.trimmingCharacters(in: .whitespaces), !s.isEmpty,
            let u = URL(string: s) { return u }
         if let slug = shareSlug?.trimmingCharacters(in: .whitespaces), !slug.isEmpty {
-            return URL(string: "https://rendprop.app/f/\(slug)")
+            return URL(string: "https://rendprop.com/f/\(slug)")
         }
         return nil
     }
