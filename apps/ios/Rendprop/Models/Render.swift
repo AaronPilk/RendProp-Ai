@@ -48,13 +48,11 @@ struct Enhancements: Codable, Hashable {
 
     var isActive: Bool { declutter || style != .asIs }
 
-    static let declutterPrice = Money.dollars(19)
-    static let restagePrice = Money.dollars(49)
-
-    var addOnTotal: Money {
-        Money(cents: (declutter ? Self.declutterPrice.cents : 0)
-                   + (style != .asIs ? Self.restagePrice.cents : 0))
-    }
+    // Audit P0-5: the declutter/restage USD add-on prices and their total were
+    // REMOVED. StoreKit is disabled during early access, so compiled
+    // digital-goods pricing (even unrendered) contradicts the free model under
+    // Guideline 3.1. Enhancements are included with early access; when paid
+    // plans launch, prices come from StoreKit products.
 }
 
 struct Render: Identifiable, Codable, Hashable {
@@ -168,28 +166,25 @@ extension Render {
     }
 }
 
-/// Duration-band pricing (master spec Part 20.4). A flat price loses money on
-/// long, popular flythroughs — price by output length band.
+/// Output duration bands. These label how long a finished tour runs; every tier
+/// is included with early access.
+///
+/// The per-tier USD price table that used to live here was REMOVED (audit
+/// P0-5): with StoreKit disabled, shipping digital-goods prices — even ones no
+/// screen renders — puts compiled price data in the binary that contradicts the
+/// free early-access model under App Review Guideline 3.1. When paid plans
+/// launch, pricing comes from StoreKit products, not hardcoded literals.
 enum PricingBand {
     struct Band {
         let name: String
-        let prices: [Render.Tier: Money]
     }
 
     static func band(forDuration s: Double) -> Band {
         switch s {
-        case ..<95:
-            return Band(name: "Up to 90 seconds",
-                        prices: [.smooth: .dollars(29), .premium4k: .dollars(49), .cinematic: .dollars(99)])
-        case ..<185:
-            return Band(name: "90 seconds – 3 minutes",
-                        prices: [.smooth: .dollars(49), .premium4k: .dollars(79), .cinematic: .dollars(149)])
-        case ..<365:
-            return Band(name: "3 – 6 minutes",
-                        prices: [.smooth: .dollars(79), .premium4k: .dollars(119), .cinematic: .dollars(199)])
-        default:
-            return Band(name: "6 – 10 minutes",
-                        prices: [.smooth: .dollars(119), .premium4k: .dollars(169), .cinematic: .dollars(279)])
+        case ..<95:  return Band(name: "Up to 90 seconds")
+        case ..<185: return Band(name: "90 seconds – 3 minutes")
+        case ..<365: return Band(name: "3 – 6 minutes")
+        default:     return Band(name: "6 – 10 minutes")
         }
     }
 }
