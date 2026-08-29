@@ -228,6 +228,31 @@ export interface R2Object {
   key: string;
 }
 
+/** Server-observed truth about an uploaded object (audit P0-2: completion must
+ * verify the object actually exists and match its real size/type, not trust
+ * client-claimed metadata). */
+export interface HeadResult {
+  exists: boolean;
+  bytes: number | null;
+  contentType: string | null;
+  etag: string | null;
+}
+
+/** HEAD one object — signed server-side. 404 → { exists: false }. */
+export async function headObject(bucket: string, key: string): Promise<HeadResult> {
+  const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;
+  const resp = await client().fetch(url, { method: "HEAD" });
+  if (resp.status === 404) return { exists: false, bytes: null, contentType: null, etag: null };
+  if (!resp.ok) throw new HttpError(502, `R2 HEAD ${bucket}/${key} failed (${resp.status})`);
+  const len = resp.headers.get("content-length");
+  return {
+    exists: true,
+    bytes: len != null ? Number(len) : null,
+    contentType: resp.headers.get("content-type"),
+    etag: resp.headers.get("etag"),
+  };
+}
+
 /** Delete one object. Returns true if gone (204 or already absent). */
 export async function deleteObject(bucket: string, key: string): Promise<boolean> {
   const url = `${endpoint()}/${bucket}/${encodeKey(key)}`;

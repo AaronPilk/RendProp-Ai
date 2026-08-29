@@ -291,13 +291,19 @@ final class AuthStore: ObservableObject {
         guard Config.enableAuth else { return }          // dev stub: no-op
         let raw = Self.randomNonceString()
         let hashed = Self.sha256(raw)
-        let idToken = try await requestAppleIDToken(hashedNonce: hashed)
-        try await exchangeAppleIdentityToken(idToken: idToken, nonce: raw)
+        let apple = try await requestAppleIDToken(hashedNonce: hashed)
+        try await exchangeAppleIdentityToken(idToken: apple.idToken, nonce: raw)
+        // TN3194: hand the single-use authorizationCode to the backend right
+        // away (codes expire in ~5 min) so DELETE /me can revoke the Apple
+        // grant later. Best-effort — sign-in never fails because of it.
+        if let code = apple.authCode {
+            Task.detached { await AuthStore.submitAppleAuthorizationCode(code) }
+        }
     }
 
     /// Present the system Apple ID sheet and return the identity token (UTF-8).
     @MainActor
-    private func requestAppleIDToken(hashedNonce: String) async throws -> String {
+    private func requestAppleIDToken(hashedNonce: String) async throws -> AppleSignInCoordinator.AppleAuth {
         try await withCheckedThrowingContinuation { continuation in
             let request = ASAuthorizationAppleIDProvider().createRequest()
             request.requestedScopes = [.fullName, .email]
@@ -342,6 +348,23 @@ final class AuthStore: ObservableObject {
     /// Lowercase-hex SHA256 of `input` — the value sent as the request `nonce`.
     static func sha256(_ input: String) -> String {
         SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// TN3194: POST the Apple authorizationCode to the backend, which exchanges
+    /// it for a refresh token stored for later revocation (account deletion).
+    /// Fire-and-forget: any failure is silent — the sweeper reports unrevoked
+    /// grants server-side, and sign-in must never block on this.
+    static func submitAppleAuthorizationCode(_ code: String) async {
+        guard Config.useLiveBackend,
+              let url = Config.apiBaseURL?.appendingPathComponent("me/apple-code"),
+              let token = await AuthStore.validAccessToken() else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["authorization_code": code])
+        _ = try? await URLSession.shared.data(for: req)
     }
 
     /// Exchange an Apple identity token for a Supabase session, then persist it.
@@ -405,14 +428,19 @@ private final class AppleSignInCoordinator: NSObject,
     ASAuthorizationControllerDelegate,
     ASAuthorizationControllerPresentationContextProviding {
 
-    private let completion: (Result<String, Error>) -> Void
+    /// identityToken (JWT for the Supabase exchange) + the single-use
+    /// authorizationCode (TN3194: the backend swaps it for a refresh token so
+    /// account deletion can revoke the Apple grant).
+    typealias AppleAuth = (idToken: String, authCode: String?)
+
+    private let completion: (Result<AppleAuth, Error>) -> Void
     private var didComplete = false
 
-    init(completion: @escaping (Result<String, Error>) -> Void) {
+    init(completion: @escaping (Result<AppleAuth, Error>) -> Void) {
         self.completion = completion
     }
 
-    private func finish(_ result: Result<String, Error>) {
+    private func finish(_ result: Result<AppleAuth, Error>) {
         guard !didComplete else { return }
         didComplete = true
         completion(result)
@@ -426,7 +454,8 @@ private final class AppleSignInCoordinator: NSObject,
             finish(.failure(APIError.notConfigured))
             return
         }
-        finish(.success(token))
+        let code = credential.authorizationCode.flatMap { String(data: $0, encoding: .utf8) }
+        finish(.success((idToken: token, authCode: code)))
     }
 
     func authorizationController(controller: ASAuthorizationController,

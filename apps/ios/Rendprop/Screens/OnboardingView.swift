@@ -81,7 +81,7 @@ struct OnboardingView: View {
                         withAnimation { choosingType = true }
                     }
                 }
-                Text("Your first video tour is free.")
+                Text("Included with early access.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }

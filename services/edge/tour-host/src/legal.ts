@@ -153,9 +153,12 @@ charged anything, and continued use of paid features will require an active plan
 
 <h2><span class="num">7.</span>Ending things</h2>
 <p>You can delete your account any time in the app: <b>Settings → Delete account</b>. That
-removes your account, your organizations that only you belong to, and their listings, tours,
-media records, and leads. We can suspend or close accounts that violate these Terms or create
-risk for the service or other users; where reasonable, we'll tell you why.</p>
+immediately removes your account and unpublishes your shared tour links, deletes your
+organizations that only you belong to along with their listings, tours, media records, and
+leads, and queues permanent removal of the underlying media from our storage, video delivery,
+and CRM systems. Queued cleanup is retried automatically until it completes — normally within
+hours. We can suspend or close accounts that violate these Terms or create risk for the
+service or other users; where reasonable, we'll tell you why.</p>
 
 <h2><span class="num">8.</span>Service provided "as is"</h2>
 <p>We work hard to keep Rendprop fast and reliable, but we provide it <b>"as is" and "as

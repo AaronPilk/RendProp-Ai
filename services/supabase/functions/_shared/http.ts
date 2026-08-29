@@ -107,9 +107,13 @@ export function rateLimit(key: string, limit = 30, windowMs = 60_000): boolean {
   return true;
 }
 
-/** Best-effort client IP from proxy headers. */
+/** Client IP for rate limiting. cf-connecting-ip is set by Cloudflare itself
+ * and can't be spoofed by the caller; x-forwarded-for is attacker-suppliable,
+ * so it is only the fallback (audit: XFF-first let callers rotate limit keys). */
 export function clientIp(req: Request): string {
+  const cf = req.headers.get("cf-connecting-ip");
+  if (cf) return cf.trim();
   const xff = req.headers.get("x-forwarded-for");
   if (xff) return xff.split(",")[0].trim();
-  return req.headers.get("cf-connecting-ip") ?? "unknown";
+  return "unknown";
 }

@@ -1,5 +1,11 @@
 import Foundation
 
+/// Round a coordinate to 3 decimal places (~110 m). Only a coarse fix ever
+/// leaves the device or lands in the listing model — the privacy manifest
+/// declares CoarseLocation, not precise (2026-08 audit P0-6). The street
+/// address stays exact; it's the product.
+func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
+
 /// Live client against the Supabase Edge Functions API
 /// (docs/BACKEND-ARCHITECTURE.md §2). Base = `https://<ref>.supabase.co/functions/v1`.
 ///
@@ -407,8 +413,8 @@ final class LiveAPIClient: APIClient {
         if l.sqft > 0 { b["sqft"] = l.sqft }
         if let t = l.tagline, !t.trimmingCharacters(in: .whitespaces).isEmpty { b["tagline"] = t }
         if let d = l.details, !d.isEmpty { b["details"] = d }
-        if let lat = l.latitude { b["lat"] = lat }
-        if let lng = l.longitude { b["lng"] = lng }
+        if let lat = l.latitude { b["lat"] = coarseCoordinate(lat) }
+        if let lng = l.longitude { b["lng"] = coarseCoordinate(lng) }
         if includeStatus { b["status"] = l.status.rawValue }
         if let sold = l.soldAt { b["sold_at"] = Self.isoString(from: sold) }
         return b

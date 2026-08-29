@@ -1,3 +1,5 @@
+> **Superseded 2026-08-28:** see docs/AUDIT-RESPONSE-2026-08-28.md for the current release-blocker status.
+
 # Rendprop — Release-Gate Security & Functionality Audit
 
 *Run 2026-08-26. Combines the external Codex audit, three independent Claude

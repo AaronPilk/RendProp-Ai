@@ -2,8 +2,9 @@ import SwiftUI
 import UIKit
 import AVFoundation
 
-/// Review the capture, edit room tags, pick a tier — price shown by duration
-/// band (master spec Part 20: never flat-price a render).
+/// Review the capture, edit room tags, pick a quality tier. Early access:
+/// every tier is included with the plan — no prices anywhere on this screen
+/// while StoreKit is off (App Store 3.1, 2026-08 audit P0-5).
 struct ReviewSubmitView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject var uploads: UploadManager
@@ -20,8 +21,6 @@ struct ReviewSubmitView: View {
     @State private var render: Render?
 
     private var band: PricingBand.Band { PricingBand.band(forDuration: asset.durationS) }
-    private var price: Money { band.prices[tier] ?? .dollars(0) }
-    private var totalPrice: Money { Money(cents: price.cents + enhancements.addOnTotal.cents) }
 
     var body: some View {
         ScrollView {
@@ -167,9 +166,9 @@ struct ReviewSubmitView: View {
                                 .multilineTextAlignment(.leading)
                         }
                         Spacer()
-                        Text((band.prices[t] ?? .dollars(0)).formatted)
+                        Image(systemName: tier == t ? "checkmark.circle.fill" : "circle")
                             .font(.rpHeadline)
-                            .foregroundStyle(tier == t ? Theme.accent : Theme.ink)
+                            .foregroundStyle(tier == t ? Theme.accent : Theme.inkDim)
                     }
                     .padding(12)
                     .background(

@@ -1,3 +1,5 @@
+> **Superseded 2026-08-28:** see docs/AUDIT-RESPONSE-2026-08-28.md for the current release-blocker status.
+
 # RENDPROP FULL-STACK AUDIT — 2026-08-26
 *Four parallel deep audits (market, tour-host/site, Supabase backend, iOS) + live-stack verification. Every P0/P1 found was FIXED THE SAME DAY; fixes marked ✅ are deployed or committed.*
 

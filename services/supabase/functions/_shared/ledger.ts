@@ -2,9 +2,13 @@
 //
 // Every billable provider/GPU/stream unit becomes one cost_ledger row.
 // render_jobs.cost_cents is the integer rollup (== round(sum of ledger)).
-// logCost() enforces MAX_GEN_COST_PER_JOB_CENTS *before* recording, so a
-// runaway job throws (402) instead of racking up spend. Per AI-COST-MODEL,
-// the caller is expected to meter a unit before making the provider call.
+//
+// Audit P0-3: the old read/sum/insert/update sequence raced under concurrency,
+// so parallel provider calls could sail past the cap together. logCost() now
+// delegates to the log_job_cost() Postgres RPC (migration 0006), which takes a
+// row lock on the job, checks the cap, inserts the line, and updates the
+// rollup in ONE transaction. Nothing is written when the cap would be blown —
+// the RPC raises and we surface HttpError(402).
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { HttpError, round4 } from "./http.ts";
@@ -36,52 +40,32 @@ export interface LogCostResult {
 /**
  * Record one billable unit against a render job and return the new rollup.
  * Throws HttpError(402) if it would push the job over the per-job cap — in
- * which case NOTHING is written, so the caller can abort cleanly.
+ * which case NOTHING was written (the RPC is transactional).
  */
 export async function logCost(admin: SupabaseClient, args: LogCostArgs): Promise<LogCostResult> {
   const units = args.units ?? 1;
   const total_cents = round4(units * args.unit_cost_cents);
 
-  // Precise running total from the ledger (rows per job are few).
-  const { data: rows, error: sumErr } = await admin
-    .from("cost_ledger")
-    .select("total_cents")
-    .eq("job_id", args.job_id);
-  if (sumErr) throw new HttpError(500, `Ledger read failed: ${sumErr.message}`);
-
-  const spent = (rows ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0);
-  const projected = round4(spent + total_cents);
-
-  if (projected > MAX_GEN_COST_PER_JOB_CENTS) {
-    throw new HttpError(
-      402,
-      `Cost cap exceeded: job ${args.job_id} would reach ${projected}¢ ` +
-        `(> MAX_GEN_COST_PER_JOB_CENTS=${MAX_GEN_COST_PER_JOB_CENTS}¢). Aborting before spend.`,
-    );
+  const { data, error } = await admin.rpc("log_job_cost", {
+    p_job: args.job_id,
+    p_org: args.org_id ?? null,
+    p_feature: args.feature,
+    p_provider: args.provider,
+    p_model: args.model ?? null,
+    p_units: units,
+    p_unit_cost: args.unit_cost_cents,
+    p_meta: args.meta ?? {},
+    p_cap_cents: MAX_GEN_COST_PER_JOB_CENTS,
+  });
+  if (error) {
+    const msg = error.message ?? "ledger write failed";
+    if (msg.includes("RP402")) throw new HttpError(402, msg.replace(/^.*RP402:\s*/, "Cost cap exceeded: "));
+    if (msg.includes("RP404")) throw new HttpError(404, "Render job not found");
+    throw new HttpError(500, `Ledger write failed: ${msg}`);
   }
 
-  const { error: insErr } = await admin.from("cost_ledger").insert({
-    job_id: args.job_id,
-    org_id: args.org_id ?? null,
-    feature: args.feature,
-    provider: args.provider,
-    model: args.model ?? null,
-    units,
-    unit_cost_cents: args.unit_cost_cents,
-    total_cents,
-    meta: args.meta ?? {},
-  });
-  if (insErr) throw new HttpError(500, `Ledger insert failed: ${insErr.message}`);
-
-  // Keep the job's integer rollup == round(precise sum).
-  const job_cost_cents = Math.round(projected);
-  const { error: upErr } = await admin
-    .from("render_jobs")
-    .update({ cost_cents: job_cost_cents })
-    .eq("id", args.job_id);
-  if (upErr) throw new HttpError(500, `Job cost update failed: ${upErr.message}`);
-
-  return { total_cents, job_cost_cents };
+  const newTotal = Number(data ?? 0);
+  return { total_cents, job_cost_cents: Math.round(newTotal) };
 }
 
 /**

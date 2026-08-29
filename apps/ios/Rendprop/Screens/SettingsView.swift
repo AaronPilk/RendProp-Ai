@@ -25,6 +25,7 @@ struct SettingsView: View {
     @State private var deleteErrorMessage: String?
     @State private var showDeleteError = false
     @State private var showAccountDeleted = false
+    @State private var deletionPendingCleanup = false
 
     var body: some View {
         Form {
@@ -178,7 +179,9 @@ struct SettingsView: View {
         .alert("Account deleted", isPresented: $showAccountDeleted) {
             Button("OK") { hasOnboarded = false }   // back to the intro, fresh start
         } message: {
-            Text("Your account and data have been removed.")
+            Text(deletionPendingCleanup
+                 ? "Your account is deleted and your tour links are down. Remaining media cleanup finishes automatically in the background."
+                 : "Your account and data have been removed.")
         }
     }
 
@@ -244,10 +247,22 @@ struct SettingsView: View {
         var errorDescription: String? { "The server responded with status \(status)." }
     }
 
+    /// Decoded shape of DELETE /me — the app must not treat a bare 2xx as
+    /// success (audit P0-4): `ok` is authoritative, and `cleanup_complete`
+    /// reports whether media/CRM cleanup finished inline or is queued.
+    private struct ServerDeleteResponse: Decodable {
+        let ok: Bool
+        let cleanupComplete: Bool?
+        enum CodingKeys: String, CodingKey {
+            case ok
+            case cleanupComplete = "cleanup_complete"
+        }
+    }
+
     /// Server-side erasure per the backend contract: `DELETE {base}/me` with the
-    /// bearer JWT + apikey → 200 {"ok":true}. Built inline (URLSession) on
-    /// purpose so the APIClient protocol stays untouched.
-    private func requestServerAccountDeletion() async throws {
+    /// bearer JWT + apikey. Returns whether external cleanup fully completed
+    /// inline (false = queued, retried server-side until done).
+    private func requestServerAccountDeletion() async throws -> Bool {
         guard let url = Config.apiBaseURL?.appendingPathComponent("me") else {
             throw URLError(.badURL)
         }
@@ -260,9 +275,14 @@ struct SettingsView: View {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        let (_, resp) = try await URLSession.shared.data(for: req)
+        let (data, resp) = try await URLSession.shared.data(for: req)
         let status = (resp as? HTTPURLResponse)?.statusCode ?? -1
         guard (200..<300).contains(status) else { throw AccountDeleteError(status: status) }
+        guard let decoded = try? JSONDecoder().decode(ServerDeleteResponse.self, from: data),
+              decoded.ok else {
+            throw AccountDeleteError(status: status)
+        }
+        return decoded.cleanupComplete ?? true
     }
 
     @MainActor
@@ -276,7 +296,7 @@ struct SettingsView: View {
         //    Retry, so nothing is half-deleted.
         if Config.useLiveBackend, Config.enableAuth, auth.isSignedIn {
             do {
-                try await requestServerAccountDeletion()
+                deletionPendingCleanup = !(try await requestServerAccountDeletion())
             } catch {
                 deleteErrorMessage = "Your account was NOT deleted. \(error.localizedDescription)"
                 showDeleteError = true

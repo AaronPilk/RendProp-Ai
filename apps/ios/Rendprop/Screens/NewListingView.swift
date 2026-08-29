@@ -314,7 +314,10 @@ struct NewListingView: View {
         locating = true
         locator.request { loc in
             guard let loc else { locating = false; return }
-            pendingCoord = loc.coordinate
+            // Keep only a ~110 m coarse fix (3 decimals) — the precise fix is
+            // used transiently below to resolve the street address, never stored.
+            pendingCoord = CLLocationCoordinate2D(latitude: coarseCoordinate(loc.coordinate.latitude),
+                                                  longitude: coarseCoordinate(loc.coordinate.longitude))
             CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
                 if let p = placemarks?.first {
                     address = Self.formatAddress(p)

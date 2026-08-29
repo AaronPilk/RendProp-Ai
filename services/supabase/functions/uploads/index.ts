@@ -2,9 +2,22 @@
 //
 // Bytes never pass through Supabase; the app streams straight to R2.
 //
-// Large video (a 9-min 4K walkthrough is 2–8 GB) uses RESUMABLE MULTIPART — a
-// single PUT can't resume a dropped connection and R2 caps single PUTs at 5 GB.
-// Photos (a listing can carry 70+) use a batched single-PUT path.
+// Audit P0-2 hardening (this version):
+//   • Ticket limits are charged PER FILE (batch of 200 = 200 units), plus a
+//     separate per-org daily BYTE budget — so neither call count nor batch
+//     size can mint unbounded storage.
+//   • Part numbers are bounded to 1…parts_total; completion requires the exact
+//     unique part set.
+//   • Completion no longer trusts the client: the object is HEAD-verified
+//     (exists, size matches the size declared at ticket time, content-type in
+//     the allowlist) before the row is marked uploaded, and the row records
+//     the SERVER-observed bytes. A mismatched object is deleted.
+//   • Photo PUT URLs sign the Content-Type, binding the upload to the
+//     validated type (video PUTs stay unbound for iOS background-session
+//     compatibility — the HEAD check is the enforcement there).
+//   • Membership is verified with the user client (RLS), then rows are written
+//     with the service client — direct Data-API writes on capture_assets are
+//     revoked in migration 0007, so this function is the only write path.
 //
 //   POST /uploads
 //     { listing_id, filename, bytes, sha256?, kind, content_type?, multipart? }
@@ -12,33 +25,30 @@
 //     otherwise                      -> { asset_id, mode:"single", put_url, storage_key }
 //
 //   POST /uploads/batch
-//     { listing_id, kind:"photo", files:[{filename,bytes?,sha256?,content_type?}] }
+//     { listing_id, kind:"photo", files:[{filename,bytes,sha256?,content_type?}] }
 //     -> { assets:[{ index, asset_id, put_url, storage_key }] }
 //
-//   POST /uploads/:asset_id/part-urls
-//     { numbers:[1,2,…] }            -> { urls:[{ number, url }] }   (presigned, 1h)
-//
-//   POST /uploads/:asset_id/complete
-//     multipart: { parts:[{number,etag}], duration_s?, fps?, width?, height?, codec?, is_drone?, has_gyro?, sha256?, bytes? }
-//     single:    { duration_s?, … , sha256?, bytes? }
-//     -> asset
-//
-//   POST /uploads/:asset_id/abort   { } -> { ok:true }   (abort an in-flight multipart)
+//   POST /uploads/:asset_id/part-urls   { numbers:[1,2,…] } -> { urls:[{ number, url }] }
+//   POST /uploads/:asset_id/complete    multipart: { parts:[{number,etag}], … } | single: { … } -> asset
+//   POST /uploads/:asset_id/abort       { } -> { ok:true }
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { getUser, userClient } from "../_shared/supabase.ts";
+import { adminClient, getUser, userClient } from "../_shared/supabase.ts";
 import {
   abortMultipartUpload,
   choosePartSize,
   completeMultipartUpload,
   createMultipartUpload,
+  deleteObject,
   extFromFilename,
+  headObject,
   presignPut,
   presignUploadPart,
   R2_BUCKET_RENDERS,
   R2_BUCKET_UPLOADS,
+  R2_MAX_PARTS,
 } from "../_shared/r2.ts";
 
 /** Map a capture_assets.bucket tag → the actual R2 bucket name. */
@@ -51,18 +61,39 @@ const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // 64 MB
 const MAX_PART_URLS_PER_CALL = 256;
 const MAX_PHOTOS_PER_BATCH = 200;
 
-// #16 restrict uploads: hard size ceilings + a content-type allowlist so a
-// caller can't presign an arbitrary-type or absurdly large object.
+// Hard size ceilings + a content-type allowlist so a caller can't presign an
+// arbitrary-type or absurdly large object.
 const MAX_VIDEO_BYTES = 12 * 1024 * 1024 * 1024; // 12 GB (a 4K / 9-min walkthrough is ~8 GB)
-const MAX_PHOTO_BYTES = 50 * 1024 * 1024;        // 50 MB
+const MAX_PHOTO_BYTES = 50 * 1024 * 1024; // 50 MB
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/x-m4v"];
 const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"];
 
-// Audit P1-1 (denial-of-wallet): a per-org daily ceiling on upload *tickets*
-// (each ticket presigns R2 PUTs). Generous for real use — a heavy team doing
-// 20 listings/day with 70 photos each stays under it — but stops an abusive
-// account from minting unbounded presigned URLs against our storage bill.
+// Per-org daily budgets. Tickets are charged per FILE; bytes per MiB declared.
+// A heavy team (20 listings/day × 70 photos + a few walkthroughs) stays well
+// under both; an abusive account hits a wall.
 const MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY = 2000;
+const MAX_UPLOAD_MB_PER_ORG_PER_DAY = 204_800; // 200 GB/day
+
+const MB = 1024 * 1024;
+
+/** Charge the org's daily ticket + byte budgets atomically-ish (two counters). */
+async function chargeUploadBudget(orgId: string, fileCount: number, totalBytes: number) {
+  const tickets = await durableRateLimit(
+    `uploads:${orgId}`,
+    MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY,
+    86400,
+    fileCount,
+  );
+  if (!tickets) throw new HttpError(429, "Daily upload limit reached for this workspace");
+  const mb = Math.max(1, Math.ceil(totalBytes / MB));
+  const bytesOk = await durableRateLimit(
+    `uploadmb:${orgId}`,
+    MAX_UPLOAD_MB_PER_ORG_PER_DAY,
+    86400,
+    mb,
+  );
+  if (!bytesOk) throw new HttpError(429, "Daily upload data budget reached for this workspace");
+}
 
 /** Bound + validate one file's claimed size/type for its kind. */
 function validateFileMeta(kind: "video" | "photo", bytes: number | null | undefined, contentType: string, label = "") {
@@ -72,6 +103,30 @@ function validateFileMeta(kind: "video" | "photo", bytes: number | null | undefi
   const allowed = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
   assert(allowed.includes(contentType), 400,
     `content_type "${contentType}" is not an allowed ${kind} type${label}`);
+}
+
+/** Sanitize optional completion metadata (client-claimed, bounded). */
+function metadataPatch(body: CompleteBody): Record<string, unknown> {
+  const patch: Record<string, unknown> = {};
+  if (body.duration_s !== undefined) {
+    const d = Number(body.duration_s);
+    if (Number.isFinite(d) && d > 0 && d <= 7200) patch.duration_s = d;
+  }
+  if (body.fps !== undefined) {
+    const f = Number(body.fps);
+    if (Number.isFinite(f) && f > 0 && f <= 240) patch.fps = f;
+  }
+  for (const k of ["width", "height"] as const) {
+    if (body[k] !== undefined) {
+      const v = Number(body[k]);
+      if (Number.isInteger(v) && v > 0 && v <= 16384) patch[k] = v;
+    }
+  }
+  if (typeof body.codec === "string" && body.codec.length <= 32) patch.codec = body.codec;
+  if (typeof body.is_drone === "boolean") patch.is_drone = body.is_drone;
+  if (typeof body.has_gyro === "boolean") patch.has_gyro = body.has_gyro;
+  if (typeof body.sha256 === "string" && /^[a-f0-9]{64}$/i.test(body.sha256)) patch.sha256 = body.sha256.toLowerCase();
+  return patch;
 }
 
 interface CreateBody {
@@ -110,16 +165,13 @@ interface CompleteBody {
   bytes?: number;
 }
 
-const METADATA_KEYS = [
-  "duration_s", "fps", "width", "height", "codec", "is_drone", "has_gyro", "sha256", "bytes",
-] as const;
-
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
-    await getUser(req); // auth required; row access enforced by RLS on the user client
-    const db = userClient(req);
+    await getUser(req); // auth required; membership enforced via RLS reads below
+    const db = userClient(req); // READS (RLS-scoped) — proves membership
+    const admin = adminClient(); // WRITES (0007 revokes the direct path)
     const seg = pathSegments(req, "uploads");
 
     // ---- POST /uploads/batch (photos) ----
@@ -133,37 +185,43 @@ Deno.serve(async (req) => {
 
       const listing = await requireListing(db, body.listing_id);
 
-      // Per-org daily ticket ceiling (counts each file in the batch).
-      if (!(await durableRateLimit(`uploads:${listing.org_id}`, MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY, 86400))) {
-        throw new HttpError(429, "Daily upload limit reached for this workspace");
-      }
-
-      // Validate every file's claimed size + type BEFORE creating any rows
-      // (audit P1-1 — the batch path previously skipped these checks).
+      // Validate every file BEFORE charging or creating anything.
+      let totalBytes = 0;
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         const ct = f.content_type ?? (kind === "photo" ? "image/jpeg" : "video/mp4");
         validateFileMeta(kind, f.bytes, ct, ` (files[${i}])`);
+        totalBytes += f.bytes ?? 0;
       }
+
+      // Per-file + per-byte budget (audit P0-2: was one unit per batch).
+      await chargeUploadBudget(listing.org_id, files.length, totalBytes);
 
       const assets = [];
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
         const assetId = crypto.randomUUID();
         const ext = extFromFilename(f.filename, kind);
+        const contentType = f.content_type ?? (kind === "photo" ? "image/jpeg" : "video/mp4");
         const storageKey = `uploads/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
-        const { error } = await db.from("capture_assets").insert({
+        const { error } = await admin.from("capture_assets").insert({
           id: assetId,
           listing_id: listing.id,
           kind,
           storage_key: storageKey,
           sha256: f.sha256 ?? null,
           bytes: f.bytes ?? null,
-          content_type: f.content_type ?? null,
+          content_type: contentType,
           uploaded: false,
         });
         if (error) throw new HttpError(400, `Asset create failed (#${i}): ${error.message}`);
-        const putUrl = await presignPut({ bucket: R2_BUCKET_UPLOADS, key: storageKey, expiresIn: 3600 });
+        // Photos: bind the PUT to the validated content-type (the app mirrors it).
+        const putUrl = await presignPut({
+          bucket: R2_BUCKET_UPLOADS,
+          key: storageKey,
+          expiresIn: 3600,
+          contentType: kind === "photo" ? contentType : undefined,
+        });
         assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey });
       }
       return json({ assets }, 201);
@@ -173,12 +231,15 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 2 && seg[1] === "part-urls") {
       const assetId = seg[0];
       const body = await readJson<PartUrlsBody>(req);
-      const numbers = (body.numbers ?? []).filter((n) => Number.isInteger(n) && n >= 1);
-      assert(numbers.length > 0, 400, "numbers[] is required");
-      assert(numbers.length <= MAX_PART_URLS_PER_CALL, 400, `at most ${MAX_PART_URLS_PER_CALL} part numbers per call`);
-
       const asset = await requireAsset(db, assetId);
       assert(asset.upload_id, 409, "Asset is not a multipart upload");
+
+      const partsTotal = Number(asset.parts_total ?? R2_MAX_PARTS);
+      const numbers = (body.numbers ?? []).filter((n) =>
+        Number.isInteger(n) && n >= 1 && n <= partsTotal
+      );
+      assert(numbers.length > 0, 400, `numbers[] is required (1…${partsTotal})`);
+      assert(numbers.length <= MAX_PART_URLS_PER_CALL, 400, `at most ${MAX_PART_URLS_PER_CALL} part numbers per call`);
 
       const bucket = r2BucketFor(asset.bucket);
       const urls = [];
@@ -200,24 +261,67 @@ Deno.serve(async (req) => {
       const assetId = seg[0];
       const body = await readJson<CompleteBody>(req);
       const asset = await requireAsset(db, assetId);
+      const bucket = r2BucketFor(asset.bucket);
+      const key = asset.storage_key as string;
+      const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
+      const claimedBytes = asset.bytes != null ? Number(asset.bytes) : null;
 
-      // Multipart finalize (if this asset was started as multipart).
+      // Multipart finalize: the EXACT unique part set 1…parts_total is required.
       if (asset.upload_id) {
-        const parts = (body.parts ?? []).filter((p) => p && Number.isInteger(p.number) && p.etag);
-        assert(parts.length > 0, 400, "parts[] with {number, etag} is required to complete a multipart upload");
+        const partsTotal = Number(asset.parts_total ?? 0);
+        assert(partsTotal >= 1, 409, "Asset has no recorded part count");
+        const parts = (body.parts ?? []).filter((p) =>
+          p && Number.isInteger(p.number) && p.number >= 1 && p.number <= partsTotal &&
+          typeof p.etag === "string" && p.etag.length > 0 && p.etag.length <= 256
+        );
+        const nums = [...new Set(parts.map((p) => p.number))].sort((a, b) => a - b);
+        assert(
+          parts.length === partsTotal && nums.length === partsTotal &&
+            nums[0] === 1 && nums[nums.length - 1] === partsTotal,
+          400,
+          `parts[] must contain each part 1…${partsTotal} exactly once`,
+        );
         await completeMultipartUpload({
-          bucket: r2BucketFor(asset.bucket),
-          key: asset.storage_key as string,
+          bucket,
+          key,
           uploadId: asset.upload_id as string,
           parts: parts.map((p) => ({ partNumber: p.number, etag: p.etag })),
         });
       }
 
-      const patch: Record<string, unknown> = { uploaded: true, upload_id: null };
-      for (const k of METADATA_KEYS) {
-        if (body[k] !== undefined) patch[k] = body[k];
+      // Server-side verification: the object must exist and match what the
+      // ticket declared. Client claims stop here (audit P0-2).
+      const head = await headObject(bucket, key);
+      if (!head.exists) {
+        throw new HttpError(409, "No uploaded object found for this asset — upload the file, then complete");
       }
-      const { data, error } = await db
+      const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
+      const sizeOk = head.bytes != null && head.bytes > 0 && head.bytes <= maxBytes &&
+        (claimedBytes == null || head.bytes === claimedBytes);
+      const allowed = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+      const observedType = (head.contentType ?? "").split(";")[0].trim().toLowerCase();
+      const typeOk = allowed.includes(observedType);
+      if (!sizeOk || !typeOk) {
+        // The object doesn't match its ticket — remove it so a lying client
+        // can't park arbitrary content behind a validated row.
+        await deleteObject(bucket, key).catch(() => {});
+        await admin.from("capture_assets").update({ uploaded: false, upload_id: null }).eq("id", assetId);
+        throw new HttpError(
+          400,
+          !sizeOk
+            ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
+            : `Uploaded object content-type "${observedType}" is not an allowed ${kind} type`,
+        );
+      }
+
+      const patch: Record<string, unknown> = {
+        ...metadataPatch(body),
+        uploaded: true,
+        upload_id: null,
+        bytes: head.bytes, // server-observed truth
+        content_type: observedType,
+      };
+      const { data, error } = await admin
         .from("capture_assets")
         .update(patch)
         .eq("id", assetId)
@@ -239,7 +343,7 @@ Deno.serve(async (req) => {
           uploadId: asset.upload_id as string,
         });
       }
-      await db.from("capture_assets").update({ upload_id: null, uploaded: false }).eq("id", assetId);
+      await admin.from("capture_assets").update({ upload_id: null, uploaded: false }).eq("id", assetId);
       return json({ ok: true });
     }
 
@@ -248,8 +352,6 @@ Deno.serve(async (req) => {
       const body = await readJson<CreateBody>(req);
       assert(body.listing_id, 400, "listing_id is required");
       const role: "capture" | "render" = body.role === "render" ? "render" : "capture";
-      // The app's on-device rendered tour is an mp4 destined for the PUBLIC renders
-      // bucket; raw capture (video/photo) goes to the private uploads bucket.
       const kind: "video" | "photo" =
         role === "render" ? "video" : (body.kind === "photo" ? "photo" : "video");
       const bucketTag = role === "render" ? "renders" : "uploads";
@@ -263,18 +365,10 @@ Deno.serve(async (req) => {
       const contentType = body.content_type ??
         (role === "render" ? "video/mp4" : (kind === "photo" ? "image/jpeg" : "video/quicktime"));
 
-      // Per-org daily ticket ceiling (audit P1-1).
-      if (!(await durableRateLimit(`uploads:${listing.org_id}`, MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY, 86400))) {
-        throw new HttpError(429, "Daily upload limit reached for this workspace");
-      }
-
-      // #16 restrict uploads: bound the size and require a known media type.
-      // bytes is now REQUIRED (audit P1-1 — previously skipped when omitted,
-      // making the ceiling advisory; the app always sends it).
+      // Bound the size and require a known media type BEFORE charging.
       validateFileMeta(kind, body.bytes, contentType);
+      await chargeUploadBudget(listing.org_id, 1, body.bytes ?? 0);
 
-      // Decide single vs multipart. Photos are always single; video goes multipart
-      // when explicitly requested or when it's large enough that resumability matters.
       const useMultipart =
         kind === "video" && (body.multipart === true || (body.bytes ?? 0) > MULTIPART_THRESHOLD);
 
@@ -284,7 +378,7 @@ Deno.serve(async (req) => {
         const partCount = Math.ceil(body.bytes! / partSize);
         const uploadId = await createMultipartUpload({ bucket: r2Bucket, key: storageKey, contentType });
 
-        const { data: asset, error } = await db
+        const { data: asset, error } = await admin
           .from("capture_assets")
           .insert({
             id: assetId,
@@ -303,7 +397,6 @@ Deno.serve(async (req) => {
           .select()
           .single();
         if (error) {
-          // Roll back the R2 session so we don't leak an orphaned multipart upload.
           await abortMultipartUpload({ bucket: r2Bucket, key: storageKey, uploadId }).catch(() => {});
           throw new HttpError(400, `Asset create failed: ${error.message}`);
         }
@@ -318,7 +411,7 @@ Deno.serve(async (req) => {
       }
 
       // Single PUT (photos + small video/render).
-      const { data: asset, error } = await db
+      const { data: asset, error } = await admin
         .from("capture_assets")
         .insert({
           id: assetId,
@@ -335,7 +428,12 @@ Deno.serve(async (req) => {
         .single();
       if (error) throw new HttpError(400, `Asset create failed: ${error.message}`);
 
-      const putUrl = await presignPut({ bucket: r2Bucket, key: storageKey, expiresIn: 3600 });
+      const putUrl = await presignPut({
+        bucket: r2Bucket,
+        key: storageKey,
+        expiresIn: 3600,
+        contentType: kind === "photo" ? contentType : undefined,
+      });
       return json({ asset_id: asset.id, mode: "single", put_url: putUrl, storage_key: storageKey }, 201);
     }
 
@@ -346,6 +444,8 @@ Deno.serve(async (req) => {
 });
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+// Reads run on the USER client: RLS returns rows only for orgs the caller is a
+// member of, so a passing read IS the membership check.
 
 // deno-lint-ignore no-explicit-any
 async function requireListing(db: any, listingId: string) {
@@ -363,7 +463,7 @@ async function requireListing(db: any, listingId: string) {
 async function requireAsset(db: any, assetId: string) {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket")
+    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes")
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);

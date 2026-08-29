@@ -32,7 +32,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { getUser, orgForUser, userClient } from "../_shared/supabase.ts";
+import { adminClient, getUser, orgForUser, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 
@@ -41,11 +41,16 @@ import { publicR2Url } from "../_shared/r2.ts";
 // and soft-dedupe retried submits via the Idempotency-Key header.
 const GEN_MAX_PER_WINDOW = 12;
 const GEN_WINDOW_SECONDS = 300; // 12 video jobs / 5 min / org
-const GEN_MAX_PER_MONTH = 400;  // rolling 30 days / org — well above any real
-const MONTH_SECONDS = 30 * 86400; // plan's usage, a hard wall for runaway abuse
+const MONTH_SECONDS = 30 * 86400;
+
+// Plan-scaled monthly ceilings (audit P0-3: the flat 400/month ignored plan
+// entitlement). Rolling 30 days per org; survives cleanup via bump_rate v2.
+const GEN_MONTHLY_BY_PLAN: Record<string, number> = { free: 60, pro: 200, team: 400 };
 
 async function guardGenerate(userId: string, req: Request): Promise<void> {
   const orgId = await orgForUser(userId);
+  const { data: org } = await adminClient().from("orgs").select("plan").eq("id", orgId).maybeSingle();
+  const monthlyCap = GEN_MONTHLY_BY_PLAN[String(org?.plan ?? "free")] ?? GEN_MONTHLY_BY_PLAN.free;
   // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
   // duplicate submit inside 2 minutes is rejected instead of double-billed.
   const idem = req.headers.get("idempotency-key")?.trim();
@@ -57,8 +62,8 @@ async function guardGenerate(userId: string, req: Request): Promise<void> {
   if (!(await durableRateLimit(`aivideo:${orgId}`, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.");
   }
-  if (!(await durableRateLimit(`aivideomo:${orgId}`, GEN_MAX_PER_MONTH, MONTH_SECONDS))) {
-    throw new HttpError(429, "This workspace has reached its monthly AI video limit — contact support to raise it.");
+  if (!(await durableRateLimit(`aivideomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
+    throw new HttpError(429, "This workspace has reached its monthly AI video limit for its plan — contact support to raise it.");
   }
 }
 

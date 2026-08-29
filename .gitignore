@@ -21,3 +21,4 @@ venv/
 # Supabase / edge local
 services/edge/tour-host/node_modules/
 .wrangler/
+graphify-out/
