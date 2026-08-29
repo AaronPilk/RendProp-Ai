@@ -80,10 +80,31 @@ async function requireWriteRole(admin: any, userId: string, orgId: string) {
   }
 }
 
+/**
+ * Same gate for the ASSET-scoped routes (part-urls / complete / abort). RLS
+ * proves the caller is in the asset's org, but not that their role may write —
+ * without this a marketing member could mint part URLs for, complete, or abort
+ * another member's in-flight multipart upload (audit: gate was only on the
+ * ticket-creating routes).
+ */
+// deno-lint-ignore no-explicit-any
+async function requireAssetWriteRole(db: any, admin: any, userId: string, asset: Record<string, unknown>) {
+  const { data, error } = await db
+    .from("listings").select("org_id").eq("id", asset.listing_id as string).maybeSingle();
+  if (error) throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+  if (!data) throw new HttpError(404, "Listing not found");
+  await requireWriteRole(admin, userId, data.org_id as string);
+}
+
 // Video at/above this size (or an explicit multipart flag) uses multipart.
 const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // 64 MB
 const MAX_PART_URLS_PER_CALL = 256;
 const MAX_PHOTOS_PER_BATCH = 200;
+
+// Staging PUT URLs are short-lived: a still-valid URL can re-PUT to the staging
+// key after /complete, creating an unserved orphan that still costs storage.
+// 15 min covers a real upload; the _staging/ lifecycle rule reaps the rest.
+const STAGING_PUT_TTL_SECONDS = 900;
 
 // Hard size ceilings + a content-type allowlist so a caller can't presign an
 // arbitrary-type or absurdly large object.
@@ -246,7 +267,7 @@ Deno.serve(async (req) => {
         const putUrl = await presignPut({
           bucket: R2_BUCKET_UPLOADS,
           key: stagingKey(storageKey),
-          expiresIn: 3600,
+          expiresIn: STAGING_PUT_TTL_SECONDS,
           contentType: kind === "photo" ? contentType : undefined,
         });
         assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey });
@@ -259,6 +280,7 @@ Deno.serve(async (req) => {
       const assetId = seg[0];
       const body = await readJson<PartUrlsBody>(req);
       const asset = await requireAsset(db, assetId);
+      await requireAssetWriteRole(db, admin, user.id, asset);
       assert(asset.upload_id, 409, "Asset is not a multipart upload");
 
       const partsTotal = Number(asset.parts_total ?? R2_MAX_PARTS);
@@ -288,6 +310,7 @@ Deno.serve(async (req) => {
       const assetId = seg[0];
       const body = await readJson<CompleteBody>(req);
       const asset = await requireAsset(db, assetId);
+      await requireAssetWriteRole(db, admin, user.id, asset);
       const bucket = r2BucketFor(asset.bucket);
       const key = asset.storage_key as string;
       const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
@@ -352,7 +375,10 @@ Deno.serve(async (req) => {
       // PUT URL can now only overwrite an orphan that is never served — the
       // TOCTOU the audit flagged is closed. Multipart is already at the final key.
       if (!isMultipart) {
-        await copyObject(bucket, verifyKey, key);
+        // Conditional on the ETag we just HEAD-verified: if anything re-PUT the
+        // staging key between HEAD and here, R2 returns 412 and we refuse
+        // (audit: the HEAD→copy gap was itself a race window).
+        await copyObject(bucket, verifyKey, key, head.etag);
         await deleteObject(bucket, verifyKey).catch(() => {});
       }
 
@@ -378,6 +404,7 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 2 && seg[1] === "abort") {
       const assetId = seg[0];
       const asset = await requireAsset(db, assetId);
+      await requireAssetWriteRole(db, admin, user.id, asset);
       if (asset.upload_id) {
         await abortMultipartUpload({
           bucket: r2BucketFor(asset.bucket),
@@ -479,7 +506,7 @@ Deno.serve(async (req) => {
       const putUrl = await presignPut({
         bucket: r2Bucket,
         key: stagingKey(storageKey),
-        expiresIn: 3600,
+        expiresIn: STAGING_PUT_TTL_SECONDS,
         contentType: kind === "photo" ? contentType : undefined,
       });
       return json({ asset_id: asset.id, mode: "single", put_url: putUrl, storage_key: storageKey }, 201);

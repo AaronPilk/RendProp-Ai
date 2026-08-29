@@ -270,12 +270,24 @@ export async function deleteObject(bucket: string, key: string): Promise<boolean
  * can't be overwritten after verification (closes the audit's TOCTOU). ≤5 GB
  * per single copy (S3 limit); all single-PUT objects here are ≤64 MB.
  */
-export async function copyObject(bucket: string, srcKey: string, destKey: string): Promise<void> {
+export async function copyObject(
+  bucket: string,
+  srcKey: string,
+  destKey: string,
+  /** ETag observed by the caller's HEAD. When given, the copy is conditional:
+   * R2 fails with 412 if the source changed since that HEAD, which closes the
+   * HEAD→copy race (an attacker re-PUTting the staging key mid-flight). */
+  ifMatchEtag?: string | null,
+): Promise<void> {
   const url = `${endpoint()}/${bucket}/${encodeKey(destKey)}`;
-  const res = await client().fetch(url, {
-    method: "PUT",
-    headers: { "x-amz-copy-source": `/${bucket}/${encodeKey(srcKey)}` },
-  });
+  const headers: Record<string, string> = {
+    "x-amz-copy-source": `/${bucket}/${encodeKey(srcKey)}`,
+  };
+  if (ifMatchEtag) headers["x-amz-copy-source-if-match"] = ifMatchEtag;
+  const res = await client().fetch(url, { method: "PUT", headers });
+  if (res.status === 412) {
+    throw new HttpError(409, "The staged upload changed during verification — re-upload and try again");
+  }
   const text = await res.text();
   if (!res.ok) throw new HttpError(502, `R2 CopyObject failed (${res.status}): ${text.slice(0, 300)}`);
   // S3/R2 can return 200 with an <Error> body when the copy actually failed.

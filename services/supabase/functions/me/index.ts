@@ -438,8 +438,13 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
   }
   payload.ghl_emails = [...new Set(payload.ghl_emails)];
 
-  const { data: profile } = await admin
+  // Profile read failure is NOT ignorable: silently losing the Apple refresh
+  // token means the grant is never revoked and nothing records that (audit).
+  const { data: profile, error: profErr } = await admin
     .from("profiles").select("apple_refresh_token, email").eq("id", userId).maybeSingle();
+  if (profErr) {
+    throw new HttpError(500, `Deletion aborted — profile lookup failed: ${profErr.message}`);
+  }
   payload.apple_refresh_token = (profile?.apple_refresh_token as string | null) ?? null;
 
   // ── Phase 2: tombstone FIRST. If this fails, nothing has been destroyed.
@@ -505,6 +510,11 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
   warnings.push(...notes);
 
   const cleanupComplete = payloadEmpty(remaining) && warnings.length === 0;
+  // NOTE: any DB-row deletion that failed above is captured in `warnings` and
+  // persisted on the tombstone, which keeps the request in a non-completed
+  // state. External targets retry automatically; failed ROW deletes are
+  // recorded for operator follow-up rather than silently forgotten (they do
+  // not auto-retry — see the runbook).
   await step("update deletion request", () =>
     admin.from("deletion_requests").update({
       status: cleanupComplete ? "completed" : "pending",
@@ -547,10 +557,16 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
 
 async function sweepDeletions(): Promise<Response> {
   const admin = adminClient();
+  // Pick up `pending` AND stranded `processing` rows. A tombstone is inserted
+  // as `processing` before any destruction; if the request then times out or
+  // the status update itself fails, the row would sit in `processing` forever
+  // and never be retried (audit: the sweeper only read `pending`). Anything
+  // still `processing` after 15 minutes is by definition stranded.
+  const stranded = new Date(Date.now() - 15 * 60 * 1000).toISOString();
   const { data: rows, error } = await admin
     .from("deletion_requests")
-    .select("id, payload, attempts")
-    .eq("status", "pending")
+    .select("id, payload, attempts, status")
+    .or(`status.eq.pending,and(status.eq.processing,requested_at.lt.${stranded})`)
     .order("requested_at", { ascending: true })
     .limit(5);
   if (error) throw new HttpError(500, `Sweep query failed: ${error.message}`);

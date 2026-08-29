@@ -546,11 +546,22 @@ struct SignInView: View {
                 return
             }
             let nonce = rawNonce
+            // TN3194: the single-use authorizationCode must reach the backend
+            // so DELETE /me can revoke the Apple grant. This sheet is the app's
+            // ONLY sign-in surface, so capturing it here is what makes account
+            // deletion actually sever Apple (audit P0-4 — it was being dropped).
+            let authCode = credential.authorizationCode
+                .flatMap { String(data: $0, encoding: .utf8) }
             isExchanging = true
             errorMessage = nil
             Task {
                 do {
                     try await AuthStore.shared.exchangeAppleIdentityToken(idToken: idToken, nonce: nonce)
+                    // Best-effort, after the session exists (the POST needs the
+                    // fresh JWT). Never blocks or fails sign-in.
+                    if let authCode {
+                        await AuthStore.submitAppleAuthorizationCode(authCode)
+                    }
                     await MainActor.run {
                         isExchanging = false
                         onSignedIn()
