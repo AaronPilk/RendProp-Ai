@@ -2,22 +2,24 @@
 //
 // Bytes never pass through Supabase; the app streams straight to R2.
 //
-// Audit P0-2 hardening (this version):
-//   • Ticket limits are charged PER FILE (batch of 200 = 200 units), plus a
-//     separate per-org daily BYTE budget — so neither call count nor batch
-//     size can mint unbounded storage.
-//   • Part numbers are bounded to 1…parts_total; completion requires the exact
-//     unique part set.
-//   • Completion no longer trusts the client: the object is HEAD-verified
-//     (exists, size matches the size declared at ticket time, content-type in
-//     the allowlist) before the row is marked uploaded, and the row records
-//     the SERVER-observed bytes. A mismatched object is deleted.
-//   • Photo PUT URLs sign the Content-Type, binding the upload to the
-//     validated type (video PUTs stay unbound for iOS background-session
-//     compatibility — the HEAD check is the enforcement there).
+// Audit P0-2 hardening (round 2 — the presigned-URL TOCTOU is now closed):
+//   • aws4fetch's signQuery signs ONLY `host`, so a presigned PUT can bind
+//     neither content-type nor content-length. Enforcement is therefore
+//     server-side: single PUTs land on a STAGING key, /complete HEAD-verifies
+//     it (exists, size == declared, content-type in the allowlist), then
+//     server-side-COPIES it to the final key and deletes staging. The final key
+//     never gets a PUT URL, so the still-valid staging URL can only overwrite an
+//     orphan that is never served — no post-verification swap.
+//   • Only owner/admin/agent may upload (marketing is read-only, audit P0-7).
+//   • Ticket limits are charged PER FILE, plus a per-org daily BYTE budget.
+//   • Multipart: part numbers bounded to 1…parts_total, completion requires the
+//     exact unique part set; the object assembles at the final key under an
+//     uploadId with no outstanding single-PUT URL, so it is verified in place.
 //   • Membership is verified with the user client (RLS), then rows are written
 //     with the service client — direct Data-API writes on capture_assets are
 //     revoked in migration 0007, so this function is the only write path.
+//   • Residual (manual gate): an R2 lifecycle rule on the `_staging/` prefix to
+//     reap abandoned staged objects.
 //
 //   POST /uploads
 //     { listing_id, filename, bytes, sha256?, kind, content_type?, multipart? }
@@ -40,6 +42,7 @@ import {
   abortMultipartUpload,
   choosePartSize,
   completeMultipartUpload,
+  copyObject,
   createMultipartUpload,
   deleteObject,
   extFromFilename,
@@ -54,6 +57,27 @@ import {
 /** Map a capture_assets.bucket tag → the actual R2 bucket name. */
 function r2BucketFor(bucket: unknown): string {
   return bucket === "renders" ? R2_BUCKET_RENDERS : R2_BUCKET_UPLOADS;
+}
+
+// Single-PUT uploads land on a STAGING key first; /complete verifies the staged
+// object and server-side-copies it to the final key, which never receives a
+// presigned PUT URL. This is the real close of the audit's TOCTOU: aws4fetch's
+// signQuery only signs `host`, so content-type/content-length can't be bound
+// into a presigned URL — the object must be verified server-side AND made
+// unreachable to the still-valid PUT URL afterward. Abandoned staging objects
+// are reaped by an R2 lifecycle rule on the `_staging/` prefix (manual gate).
+const stagingKey = (finalKey: string) => `_staging/${finalKey}`;
+
+/** Marketing is read-only (audit P0-7): only owner/admin/agent may upload. */
+// deno-lint-ignore no-explicit-any
+async function requireWriteRole(admin: any, userId: string, orgId: string) {
+  const { data, error } = await admin
+    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+  if (error) throw new HttpError(500, `Role lookup failed: ${error.message}`);
+  const role = data?.role;
+  if (!role || role === "marketing") {
+    throw new HttpError(403, "Your role does not permit uploading media");
+  }
 }
 
 // Video at/above this size (or an explicit multipart flag) uses multipart.
@@ -169,7 +193,7 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
   try {
-    await getUser(req); // auth required; membership enforced via RLS reads below
+    const user = await getUser(req); // auth required; membership enforced via RLS reads below
     const db = userClient(req); // READS (RLS-scoped) — proves membership
     const admin = adminClient(); // WRITES (0007 revokes the direct path)
     const seg = pathSegments(req, "uploads");
@@ -184,6 +208,7 @@ Deno.serve(async (req) => {
       const kind: "video" | "photo" = body.kind === "video" ? "video" : "photo";
 
       const listing = await requireListing(db, body.listing_id);
+      await requireWriteRole(admin, user.id, listing.org_id);
 
       // Validate every file BEFORE charging or creating anything.
       let totalBytes = 0;
@@ -215,10 +240,12 @@ Deno.serve(async (req) => {
           uploaded: false,
         });
         if (error) throw new HttpError(400, `Asset create failed (#${i}): ${error.message}`);
-        // Photos: bind the PUT to the validated content-type (the app mirrors it).
+        // PUT targets the STAGING key; /complete verifies then copies to the
+        // final key. (contentType is passed for the app's own header, but note
+        // it is NOT enforced by the signature — /complete's HEAD check is.)
         const putUrl = await presignPut({
           bucket: R2_BUCKET_UPLOADS,
-          key: storageKey,
+          key: stagingKey(storageKey),
           expiresIn: 3600,
           contentType: kind === "photo" ? contentType : undefined,
         });
@@ -265,9 +292,15 @@ Deno.serve(async (req) => {
       const key = asset.storage_key as string;
       const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
       const claimedBytes = asset.bytes != null ? Number(asset.bytes) : null;
+      const isMultipart = !!asset.upload_id;
 
-      // Multipart finalize: the EXACT unique part set 1…parts_total is required.
-      if (asset.upload_id) {
+      // Multipart assembles at the FINAL key under an uploadId that is now being
+      // completed — there is no outstanding single-PUT URL to that key, so it is
+      // verified in place. Single PUTs land on the STAGING key and are verified
+      // there, then copied to the final key (which never had a PUT URL).
+      const verifyKey = isMultipart ? key : stagingKey(key);
+
+      if (isMultipart) {
         const partsTotal = Number(asset.parts_total ?? 0);
         assert(partsTotal >= 1, 409, "Asset has no recorded part count");
         const parts = (body.parts ?? []).filter((p) =>
@@ -291,7 +324,7 @@ Deno.serve(async (req) => {
 
       // Server-side verification: the object must exist and match what the
       // ticket declared. Client claims stop here (audit P0-2).
-      const head = await headObject(bucket, key);
+      const head = await headObject(bucket, verifyKey);
       if (!head.exists) {
         throw new HttpError(409, "No uploaded object found for this asset — upload the file, then complete");
       }
@@ -302,9 +335,9 @@ Deno.serve(async (req) => {
       const observedType = (head.contentType ?? "").split(";")[0].trim().toLowerCase();
       const typeOk = allowed.includes(observedType);
       if (!sizeOk || !typeOk) {
-        // The object doesn't match its ticket — remove it so a lying client
-        // can't park arbitrary content behind a validated row.
-        await deleteObject(bucket, key).catch(() => {});
+        // The staged/assembled object doesn't match its ticket — remove it so a
+        // lying client can't park arbitrary content behind a validated row.
+        await deleteObject(bucket, verifyKey).catch(() => {});
         await admin.from("capture_assets").update({ uploaded: false, upload_id: null }).eq("id", assetId);
         throw new HttpError(
           400,
@@ -312,6 +345,15 @@ Deno.serve(async (req) => {
             ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
             : `Uploaded object content-type "${observedType}" is not an allowed ${kind} type`,
         );
+      }
+
+      // Single PUT: promote the verified staging object to the final key (which
+      // has no presigned PUT URL) and delete staging. The still-valid staging
+      // PUT URL can now only overwrite an orphan that is never served — the
+      // TOCTOU the audit flagged is closed. Multipart is already at the final key.
+      if (!isMultipart) {
+        await copyObject(bucket, verifyKey, key);
+        await deleteObject(bucket, verifyKey).catch(() => {});
       }
 
       const patch: Record<string, unknown> = {
@@ -342,6 +384,9 @@ Deno.serve(async (req) => {
           key: asset.storage_key as string,
           uploadId: asset.upload_id as string,
         });
+      } else {
+        // Single PUT: drop any staged bytes so an aborted upload leaves nothing.
+        await deleteObject(r2BucketFor(asset.bucket), stagingKey(asset.storage_key as string)).catch(() => {});
       }
       await admin.from("capture_assets").update({ upload_id: null, uploaded: false }).eq("id", assetId);
       return json({ ok: true });
@@ -358,6 +403,7 @@ Deno.serve(async (req) => {
       const r2Bucket = r2BucketFor(bucketTag);
 
       const listing = await requireListing(db, body.listing_id);
+      await requireWriteRole(admin, user.id, listing.org_id);
 
       const assetId = crypto.randomUUID();
       const ext = role === "render" ? "mp4" : extFromFilename(body.filename, kind);
@@ -428,9 +474,11 @@ Deno.serve(async (req) => {
         .single();
       if (error) throw new HttpError(400, `Asset create failed: ${error.message}`);
 
+      // PUT targets the STAGING key; /complete verifies then copies to the
+      // final key (which never gets a PUT URL — closes the TOCTOU).
       const putUrl = await presignPut({
         bucket: r2Bucket,
-        key: storageKey,
+        key: stagingKey(storageKey),
         expiresIn: 3600,
         contentType: kind === "photo" ? contentType : undefined,
       });

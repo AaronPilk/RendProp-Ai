@@ -263,6 +263,26 @@ export async function deleteObject(bucket: string, key: string): Promise<boolean
 }
 
 /**
+ * Server-side copy within a bucket (SigV4 HEADER-signed, so x-amz-copy-source
+ * IS covered by the signature — unlike presigned query URLs, which aws4fetch
+ * only signs `host` for). Used by the upload flow to promote a verified staging
+ * object to its final key: the final key never gets a presigned PUT URL, so it
+ * can't be overwritten after verification (closes the audit's TOCTOU). ≤5 GB
+ * per single copy (S3 limit); all single-PUT objects here are ≤64 MB.
+ */
+export async function copyObject(bucket: string, srcKey: string, destKey: string): Promise<void> {
+  const url = `${endpoint()}/${bucket}/${encodeKey(destKey)}`;
+  const res = await client().fetch(url, {
+    method: "PUT",
+    headers: { "x-amz-copy-source": `/${bucket}/${encodeKey(srcKey)}` },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new HttpError(502, `R2 CopyObject failed (${res.status}): ${text.slice(0, 300)}`);
+  // S3/R2 can return 200 with an <Error> body when the copy actually failed.
+  if (/<Error>/.test(text)) throw new HttpError(502, `R2 CopyObject error: ${text.slice(0, 300)}`);
+}
+
+/**
  * Best-effort bulk delete with bounded concurrency and a hard cap (edge
  * functions shouldn't fan out unbounded work). Never throws — failures come
  * back as messages so the caller can surface them as warnings.

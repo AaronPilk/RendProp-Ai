@@ -11,7 +11,26 @@ until those gates are walked.**
 
 ## What shipped (deployed live via Supabase MCP + migrations)
 
-### P0-2 — Upload controls (uploads v13 + migration 0006)
+> **Round 2 (uploads v14, same day).** A follow-up Codex audit correctly found
+> that round 1's `/complete` HEAD-verify was a TOCTOU: the presigned PUT URL
+> stays valid ~1h, so a verified object could be overwritten afterward, and the
+> byte budget escaped with it. I tested whether signing content-length would fix
+> it — **it can't**: aws4fetch's `signQuery` puts only `host` in
+> `X-Amz-SignedHeaders`, so presigned URLs bind neither content-length nor
+> content-type (meaning round 1's "photo PUTs sign the Content-Type" claim was
+> also wrong). Round 2 fixes it structurally: single PUTs upload to a
+> `_staging/` key, `/complete` verifies THERE, then server-side-copies to the
+> final key (header-signed `x-amz-copy-source`) and deletes staging. The final
+> key never receives a PUT URL, so the still-valid staging URL can only
+> overwrite an orphan that is never served. Multipart assembles at the final key
+> under a completing uploadId with no outstanding single-PUT URL, so it is
+> verified in place. Also added: `requireWriteRole()` on all three ticket paths
+> (marketing is now blocked from uploading, including via `role:"render"`), and
+> staging cleanup on abort. New manual gate: an R2 lifecycle rule on the
+> `_staging/` prefix. The Gemini runbook key name below was also wrong and is
+> corrected (`GEMINI_API_KEY`).
+
+### P0-2 — Upload controls (uploads v14 + migration 0006)
 - Ticket limits charged **per file** (batch of 200 = 200 units) via `bump_rate(p_cost)`.
 - New per-org **daily byte budget** (200 GB/day) charged per MiB declared.
 - Part numbers bounded to `1…parts_total`; completion requires the **exact unique
@@ -126,7 +145,8 @@ and never paste a key into chat — set them in the Supabase dashboard
 1. **fal** — fal.ai dashboard → Keys → revoke old, create new → update the
    `FAL_KEY` function secret + `services/pipeline/.env`.
 2. **Gemini** — aistudio.google.com/apikey → delete old, create new → update
-   `GEMINI_KEY` secret + pipeline .env.
+   the `GEMINI_API_KEY` function secret (this is the exact name ai-photo/
+   index.ts reads — NOT `GEMINI_KEY`) + the pipeline .env.
 3. **Anthropic** — console.anthropic.com → API Keys → disable old, create new →
    update `ANTHROPIC_API_KEY` (pipeline .env; nothing in the app uses it).
 4. **KIE** — kie.ai dashboard → regenerate → pipeline .env.
@@ -154,6 +174,8 @@ and never paste a key into chat — set them in the Supabase dashboard
 - Add an **abort-incomplete-multipart lifecycle rule** (7 days) on the
   rendprop-uploads and rendprop-renders R2 buckets (Cloudflare dashboard →
   bucket → Settings → Object lifecycle).
+- Add a **delete rule on the `_staging/` prefix** (1 day) on both buckets, so
+  abandoned staged uploads don't accumulate (round-2 upload flow).
 - Turnstile: set `TURNSTILE_SECRET_KEY` + add the widget site key to the tour
   lead form to close the fail-open window.
 - Per-tenant CRM routing (today all leads land in one GHL location) — product
