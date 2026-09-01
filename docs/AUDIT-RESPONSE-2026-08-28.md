@@ -166,7 +166,19 @@ and never paste a key into chat — set them in the Supabase dashboard
 
 - Run the rotation runbook above (P0-1).
 - App Store Connect privacy labels to match the manifest; review notes
-  explaining the free-early-access model.
+  explaining the 7-day free trial and that all plan purchasing happens outside
+  the app (no digital prices or purchase copy ship in the binary — the CI gate
+  in `.github/workflows/ci.yml` fails the build if any reappear).
+- Add a **30-day expiry rule on the `rendprop-uploads` bucket** (Cloudflare
+  dashboard → bucket → Settings → Object lifecycle). This is the storage-cost
+  control for pricing: raw walkthrough captures (~0.4–1 GB each at 4K60) land
+  in the PRIVATE uploads bucket and are never read again once a render is
+  published — published tours are served from `rendprop-renders`. Without the
+  rule, storage grows without bound: a Team org at 80 renders/month accrues
+  ~48 GB/month, which is ~$0.72/month in month 1 but ~$8.60/month by month 12
+  and keeps climbing against an $82 COGS ceiling. With the rule it stays flat
+  at roughly one month of captures. 30 days leaves room to re-render or debug
+  a bad capture before the source disappears.
 - Set the four `APPLE_*` function secrets to activate Apple token revocation.
 - Set `CLOUDFLARE_STREAM_API_TOKEN` to activate Stream deletion.
 - Schedule `POST /me/sweep-deletions` (service key) — e.g. Supabase cron or an
