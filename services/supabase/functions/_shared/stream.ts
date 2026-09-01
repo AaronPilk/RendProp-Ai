@@ -6,7 +6,12 @@
 // the caller records the UIDs in the deletion tombstone for the sweeper.
 
 const ACCOUNT_ID = Deno.env.get("CLOUDFLARE_ACCOUNT_ID");
+// Accept every name in use: set-secrets.sh writes CLOUDFLARE_STREAM_TOKEN,
+// while earlier docs used CLOUDFLARE_STREAM_API_TOKEN. Reading only one meant
+// following the repo's own script left Stream deletion silently unconfigured,
+// so account-deletion queued Stream UIDs forever (audit round 4).
 const STREAM_TOKEN = Deno.env.get("CLOUDFLARE_STREAM_API_TOKEN") ??
+  Deno.env.get("CLOUDFLARE_STREAM_TOKEN") ??
   Deno.env.get("CLOUDFLARE_API_TOKEN");
 
 export function streamConfigured(): boolean {

@@ -81,7 +81,10 @@ Deno.serve(async (req) => {
         p_job: jobId,
         p_duration: (body.duration_s as number) ?? null,
         p_speed: (body.speed_factor as number) ?? 2.0,
-        p_staged: typeof body.staged === "boolean" ? body.staged : null,
+        // `staged` is deliberately NOT forwarded: virtual-staging disclosure is
+        // derived server-side from the job's enhancements (migration 0008). A
+        // client could otherwise publish AI-staged media as un-staged, which
+        // breaks MLS/advertising disclosure rules.
         p_chapters: chapterRows(body.chapters),
       });
       if (error) throwRpc(error.message);
@@ -111,7 +114,10 @@ Deno.serve(async (req) => {
         p_job: job.id,
         p_duration: (body.duration_s as number) ?? null,
         p_speed: (body.speed_factor as number) ?? 2.0,
-        p_staged: typeof body.staged === "boolean" ? body.staged : null,
+        // `staged` is deliberately NOT forwarded: virtual-staging disclosure is
+        // derived server-side from the job's enhancements (migration 0008). A
+        // client could otherwise publish AI-staged media as un-staged, which
+        // breaks MLS/advertising disclosure rules.
         p_chapters: chapterRows(body.chapters),
       });
       if (pErr) throwRpc(pErr.message);
