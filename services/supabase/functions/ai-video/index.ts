@@ -34,6 +34,7 @@ import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { entitlementFor, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
@@ -43,16 +44,35 @@ const GEN_MAX_PER_WINDOW = 12;
 const GEN_WINDOW_SECONDS = 300; // 12 video jobs / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
 
-// Plan-scaled monthly ceilings, proportional to the published render tiers
-// (2/5/15). AI video clips — aerials, reels, declutter, drone upscales — are
-// separate from tour renders and cost real GPU time, so they get their own
-// bounded allowance rather than the old flat 400. Free early access = Solo.
-const GEN_MONTHLY_BY_PLAN: Record<string, number> = {
-  free: 10,
-  solo: 10,
-  pro: 30,
-  team: 90,
-};
+// These are NOT one pool. Measured costs differ by an order of magnitude, so
+// each kind gets its own meter (allowances from plan_entitlements, 0010):
+//   reel  — Seedance 1.0 Pro Fast 5s ......... $0.24
+//   aerial— Veo 3.1 Fast 8s 1080p no audio ... $0.80   (3x a reel)
+//   drone — Topaz 90s @1080p60 ............... $3.60   (15x a reel)
+//           Topaz 90s @4K30 / @4K60 .......... $7.20 / $14.40
+// Topaz is an ADD-ON, not bundled: a single 4K60 tap costs more than a third of
+// a Starter subscription. declutter (Bria) rides the reel meter.
+type GenKind = "reel" | "aerial" | "drone" | "declutter";
+
+function capFor(kind: GenKind, ent: { reels_per_month: number; aerials_per_month: number; topaz_per_month: number }): number {
+  switch (kind) {
+    case "aerial": return ent.aerials_per_month;
+    case "drone": return ent.topaz_per_month;
+    default: return ent.reels_per_month; // reel + declutter share the clip pool
+  }
+}
+
+function meterKeyFor(kind: GenKind): string {
+  return kind === "aerial" ? "aerialmo" : kind === "drone" ? "dronemo" : "reelmo";
+}
+
+function labelFor(kind: GenKind): string {
+  return kind === "aerial"
+    ? "AI aerial"
+    : kind === "drone"
+    ? "drone-glide render"
+    : "AI video clip";
+}
 
 // Bound inline base64 so a caller can't push unbounded memory pressure through
 // readJson (audit round 4). ~12 MB of base64 ≈ 9 MB binary.
@@ -70,7 +90,7 @@ const MAX_IMAGE_B64_CHARS = 12_000_000;
  * otherwise picks the caller's highest-privilege membership, so a user in two
  * workspaces could have quota charged to the wrong one.
  */
-async function guardGenerate(userId: string, req: Request): Promise<void> {
+async function guardGenerate(userId: string, req: Request, kind: GenKind): Promise<void> {
   const orgId = await orgForUser(userId, preferredOrg(req));
   const admin = adminClient();
 
@@ -81,8 +101,14 @@ async function guardGenerate(userId: string, req: Request): Promise<void> {
     throw new HttpError(403, "Your role does not permit AI video generation");
   }
 
-  const { data: org } = await admin.from("orgs").select("plan").eq("id", orgId).maybeSingle();
-  const monthlyCap = GEN_MONTHLY_BY_PLAN[String(org?.plan ?? "free")] ?? GEN_MONTHLY_BY_PLAN.free;
+  const ent = await entitlementFor(orgId);
+  const monthlyCap = capFor(kind, ent);
+
+  // A zero allowance is a PLAN BOUNDARY, not a rate limit — return 402 so the
+  // app shows an upgrade prompt instead of "try again later". This is what
+  // keeps Topaz (up to $14.40 a tap) off the cheap plans.
+  if (monthlyCap <= 0) throw quotaError(labelFor(kind), 0, 0, ent.plan);
+
   // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
   // duplicate submit inside 2 minutes is rejected instead of double-billed.
   const idem = req.headers.get("idempotency-key")?.trim();
@@ -94,8 +120,8 @@ async function guardGenerate(userId: string, req: Request): Promise<void> {
   if (!(await durableRateLimit(`aivideo:${orgId}`, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.");
   }
-  if (!(await durableRateLimit(`aivideomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
-    throw new HttpError(429, "This workspace has reached its monthly AI video limit for its plan — contact support to raise it.");
+  if (!(await durableRateLimit(`${meterKeyFor(kind)}:${orgId}`, monthlyCap, MONTH_SECONDS))) {
+    throw quotaError(labelFor(kind), monthlyCap, monthlyCap, ent.plan);
   }
 }
 
@@ -177,7 +203,7 @@ Deno.serve(async (req) => {
       fps = Math.min(120, Math.max(24, fps));
 
       const asset = await resolvePublicAsset(db, body.asset_id);
-      await guardGenerate(user.id, req); // validated — charge, then submit
+      await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_DRONE, {
         video_url: asset.url,
         model: "Proteus", // natural detail; interpolation gives the glide
@@ -203,7 +229,7 @@ Deno.serve(async (req) => {
         );
       }
 
-      await guardGenerate(user.id, req); // validated — charge, then submit
+      await guardGenerate(user.id, req, "declutter"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_DECLUTTER, {
         video_url: asset.url,
         prompt: cleanPrompt(body.prompt) ?? DEFAULT_DECLUTTER_PROMPT,
@@ -242,7 +268,7 @@ Deno.serve(async (req) => {
           "smooth stabilized gimbal motion, gentle parallax over rooftops and trees, " +
           "photorealistic, rich natural detail. No people, no text, no watermarks, no logos.");
 
-      await guardGenerate(user.id, req); // validated — charge, then submit
+      await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_AERIAL, {
         prompt,
         duration,
@@ -283,7 +309,7 @@ Deno.serve(async (req) => {
         imageUrl = `data:${mime};base64,${body.image_b64}`;
       }
 
-      await guardGenerate(user.id, req); // validated — charge, then submit
+      await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_REEL, {
         prompt: cleanPrompt(body.prompt) ?? DEFAULT_REEL_PROMPT,
         image_url: imageUrl,

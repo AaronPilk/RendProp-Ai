@@ -27,22 +27,15 @@ import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { entitlementFor, quotaError } from "../_shared/entitlements.ts";
 
-// Denial-of-wallet guard: image edits bill Gemini per call.
+// Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
 
-// Plan-scaled monthly ceilings. These MIRROR the published numbers on
-// rendprop.com/pricing (Solo 150 / Pro 500 / Team 2000 AI photo edits) — a flat
-// 3000 both ignored plan entitlement and over-delivered against a $49 plan.
-// Free early access gets the Solo allowance.
-const EDIT_MONTHLY_BY_PLAN: Record<string, number> = {
-  free: 150,
-  solo: 150,
-  pro: 500,
-  team: 2000,
-};
+// Monthly allowances come from plan_entitlements (migration 0010) so the
+// enforced number and the published number are the same number.
 
 /**
  * Charge the paid-generation quotas. MUST be called only AFTER the request body
@@ -62,8 +55,8 @@ async function guardEdit(userId: string, req: Request): Promise<void> {
     throw new HttpError(403, "Your role does not permit AI photo edits");
   }
 
-  const { data: org } = await admin.from("orgs").select("plan").eq("id", orgId).maybeSingle();
-  const monthlyCap = EDIT_MONTHLY_BY_PLAN[String(org?.plan ?? "free")] ?? EDIT_MONTHLY_BY_PLAN.free;
+  const ent = await entitlementFor(orgId);
+  const monthlyCap = ent.photo_edits_per_month;
 
   const idem = req.headers.get("idempotency-key")?.trim();
   if (idem && idem.length <= 128) {
@@ -75,7 +68,7 @@ async function guardEdit(userId: string, req: Request): Promise<void> {
     throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.");
   }
   if (!(await durableRateLimit(`aiphotomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
-    throw new HttpError(429, "This workspace has reached its monthly AI edit limit for its plan — contact support to raise it.");
+    throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
 }
 
