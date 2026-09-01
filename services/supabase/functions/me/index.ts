@@ -204,6 +204,80 @@ interface DeletionPayload {
   stream_uids: string[];
   ghl_emails: string[];
   apple_refresh_token: string | null;
+  /** Row deletions that FAILED and must be retried. Previously these were
+   * warnings only, so a failed row delete (or share-link revocation) was never
+   * retried while the response still said ok:true — data retained, nobody
+   * chasing it (audit round 4). */
+  db?: {
+    org_ids?: string[];
+    listing_ids?: string[];
+    render_ids?: string[];
+    job_ids?: string[];
+    asset_ids?: string[];
+  };
+}
+
+const dbEmpty = (d: DeletionPayload["db"]) =>
+  !d || (!d.org_ids?.length && !d.listing_ids?.length && !d.render_ids?.length &&
+         !d.job_ids?.length && !d.asset_ids?.length);
+
+/**
+ * Re-run the row deletions + share revocation for a tombstone. Idempotent:
+ * every statement is a delete-by-id or an update to a terminal state, so
+ * re-running after a partial success is safe.
+ */
+// deno-lint-ignore no-explicit-any
+async function retryDbCleanup(admin: any, db: NonNullable<DeletionPayload["db"]>): Promise<string[]> {
+  const notes: string[] = [];
+  const run = async (label: string, fn: () => PromiseLike<{ error: { message: string } | null }>) => {
+    try {
+      const { error } = await fn();
+      if (error) notes.push(`${label}: ${error.message}`);
+    } catch (e) {
+      notes.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  };
+  const listingIds = db.listing_ids ?? [];
+  const renderIds = db.render_ids ?? [];
+  const jobIds = db.job_ids ?? [];
+  const assetIds = db.asset_ids ?? [];
+
+  for (const ids of chunk(listingIds)) {
+    await run("revoke share links", () =>
+      admin.from("renders").update({ published_at: null }).in("listing_id", ids));
+  }
+  for (const orgId of db.org_ids ?? []) {
+    await run("metering (org)", () => admin.from("metering").delete().eq("org_id", orgId));
+    await run("leads (org)", () => admin.from("leads").delete().eq("org_id", orgId));
+    await run("cost_ledger (org)", () => admin.from("cost_ledger").delete().eq("org_id", orgId));
+  }
+  for (const ids of chunk(renderIds)) {
+    await run("metering (renders)", () => admin.from("metering").delete().in("render_id", ids));
+    await run("leads (renders)", () => admin.from("leads").delete().in("render_id", ids));
+  }
+  for (const ids of chunk(listingIds)) {
+    await run("leads (listings)", () => admin.from("leads").delete().in("listing_id", ids));
+  }
+  for (const ids of chunk(jobIds)) {
+    await run("cost_ledger (jobs)", () => admin.from("cost_ledger").delete().in("job_id", ids));
+  }
+  for (const ids of chunk(listingIds)) {
+    await run("renders", () => admin.from("renders").delete().in("listing_id", ids));
+    await run("render_jobs", () => admin.from("render_jobs").delete().in("listing_id", ids));
+  }
+  for (const ids of chunk(assetIds)) {
+    await run("capture_chapters", () => admin.from("capture_chapters").delete().in("asset_id", ids));
+  }
+  for (const ids of chunk(listingIds)) {
+    await run("capture_assets", () => admin.from("capture_assets").delete().in("listing_id", ids));
+    await run("photos", () => admin.from("photos").delete().in("listing_id", ids));
+  }
+  for (const orgId of db.org_ids ?? []) {
+    await run("listings", () => admin.from("listings").delete().eq("org_id", orgId));
+    await run("memberships", () => admin.from("memberships").delete().eq("org_id", orgId));
+    await run("org", () => admin.from("orgs").delete().eq("id", orgId));
+  }
+  return notes;
 }
 
 function chunk<T>(items: T[], size = ID_CHUNK): T[][] {
@@ -265,6 +339,15 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
     ghl_emails: [],
     apple_refresh_token: payload.apple_refresh_token ?? null,
   };
+
+  // Row deletions / share revocation that failed on an earlier pass.
+  if (!dbEmpty(payload.db)) {
+    const dbNotes = await retryDbCleanup(adminClient(), payload.db!);
+    if (dbNotes.length) {
+      notes.push(...dbNotes.map((n) => `db retry: ${n}`));
+      remaining.db = payload.db; // still failing — keep it queued
+    }
+  }
 
   // R2 (bounded per pass; leftovers stay queued).
   if (payload.r2.length) {
@@ -346,7 +429,7 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
 
 function payloadEmpty(p: DeletionPayload): boolean {
   return p.r2.length === 0 && p.stream_uids.length === 0 &&
-    p.ghl_emails.length === 0 && !p.apple_refresh_token;
+    p.ghl_emails.length === 0 && !p.apple_refresh_token && dbEmpty(p.db);
 }
 
 async function handleDelete(userId: string, userEmail: string | null): Promise<Response> {
@@ -509,12 +592,21 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
   const { remaining, notes } = await processPayload(payload);
   warnings.push(...notes);
 
+  // Any row-deletion or share-revocation failure above becomes a RETRYABLE
+  // payload, not just a warning — the sweeper re-runs it until it drains
+  // (audit round 4: these were silently non-retryable while the response
+  // still reported ok:true).
+  if (warnings.length > 0) {
+    remaining.db = {
+      org_ids: soloOrgs,
+      listing_ids: allListingIds,
+      render_ids: allRenderIds,
+      job_ids: allJobIds,
+      asset_ids: allAssetIds,
+    };
+  }
+
   const cleanupComplete = payloadEmpty(remaining) && warnings.length === 0;
-  // NOTE: any DB-row deletion that failed above is captured in `warnings` and
-  // persisted on the tombstone, which keeps the request in a non-completed
-  // state. External targets retry automatically; failed ROW deletes are
-  // recorded for operator follow-up rather than silently forgotten (they do
-  // not auto-retry — see the runbook).
   await step("update deletion request", () =>
     admin.from("deletion_requests").update({
       status: cleanupComplete ? "completed" : "pending",
@@ -579,6 +671,7 @@ async function sweepDeletions(): Promise<Response> {
       stream_uids: Array.isArray(raw.stream_uids) ? raw.stream_uids as string[] : [],
       ghl_emails: Array.isArray(raw.ghl_emails) ? raw.ghl_emails as string[] : [],
       apple_refresh_token: (raw.apple_refresh_token as string | null) ?? null,
+      db: (raw.db as DeletionPayload["db"]) ?? undefined,
     };
     const { remaining, notes } = await processPayload(payload);
     const done = payloadEmpty(remaining);

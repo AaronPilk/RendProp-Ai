@@ -25,16 +25,63 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
-import { getUser, orgForUser } from "../_shared/supabase.ts";
+import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 
-// Denial-of-wallet guard: image edits bill Gemini per call. Cap per org per
-// window. (Interim control until per-org monthly spend caps land — see
-// docs/RELEASE-GATE-AUDIT.md.)
+// Denial-of-wallet guard: image edits bill Gemini per call.
 const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
-const EDIT_MAX_PER_MONTH = 3000; // rolling 30 days / org — hard abuse wall
 const MONTH_SECONDS = 30 * 86400;
+
+// Plan-scaled monthly ceilings. These MIRROR the published numbers on
+// rendprop.com/pricing (Solo 150 / Pro 500 / Team 2000 AI photo edits) — a flat
+// 3000 both ignored plan entitlement and over-delivered against a $49 plan.
+// Free early access gets the Solo allowance.
+const EDIT_MONTHLY_BY_PLAN: Record<string, number> = {
+  free: 150,
+  solo: 150,
+  pro: 500,
+  team: 2000,
+};
+
+/**
+ * Charge the paid-generation quotas. MUST be called only AFTER the request body
+ * and its parameters are known-good: charging first meant a caller could burn
+ * an org's burst + monthly quota with `{}` bodies that never reached Gemini
+ * (audit round 4). Also enforces the role gate — marketing is read-only and
+ * must not be able to spend the workspace's AI budget.
+ */
+async function guardEdit(userId: string, req: Request): Promise<void> {
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  const admin = adminClient();
+
+  const { data: mem, error: mErr } = await admin
+    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
+  if (!mem?.role || mem.role === "marketing") {
+    throw new HttpError(403, "Your role does not permit AI photo edits");
+  }
+
+  const { data: org } = await admin.from("orgs").select("plan").eq("id", orgId).maybeSingle();
+  const monthlyCap = EDIT_MONTHLY_BY_PLAN[String(org?.plan ?? "free")] ?? EDIT_MONTHLY_BY_PLAN.free;
+
+  const idem = req.headers.get("idempotency-key")?.trim();
+  if (idem && idem.length <= 128) {
+    if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
+      throw new HttpError(409, "Duplicate submission — this edit was already started.");
+    }
+  }
+  if (!(await durableRateLimit(`aiphoto:${orgId}`, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
+    throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.");
+  }
+  if (!(await durableRateLimit(`aiphotomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
+    throw new HttpError(429, "This workspace has reached its monthly AI edit limit for its plan — contact support to raise it.");
+  }
+}
+
+// Bound the inline base64 image so a caller can't push unbounded memory
+// pressure through readJson (audit round 4). ~12 MB of base64 ≈ 9 MB binary.
+const MAX_IMAGE_B64_CHARS = 12_000_000;
 
 const MODEL = Deno.env.get("GEMINI_IMAGE_MODEL") ?? "gemini-2.5-flash-image";
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
@@ -130,29 +177,22 @@ Deno.serve(async (req) => {
     if (req.method !== "POST") throw new HttpError(405, "POST only");
     if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set");
 
-    // Per-org rate limits — the paid Gemini image/text call is next (audit
-    // P1-3: burst window + rolling-month ceiling + idempotency soft-dedupe).
-    const orgId = await orgForUser(user.id);
-    const idem = req.headers.get("idempotency-key")?.trim();
-    if (idem && idem.length <= 128) {
-      if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
-        throw new HttpError(409, "Duplicate submission — this edit was already started.");
-      }
-    }
-    if (!(await durableRateLimit(`aiphoto:${orgId}`, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
-      throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.");
-    }
-    if (!(await durableRateLimit(`aiphotomo:${orgId}`, EDIT_MAX_PER_MONTH, MONTH_SECONDS))) {
-      throw new HttpError(429, "This workspace has reached its monthly AI edit limit — contact support to raise it.");
-    }
-
+    // VALIDATE FIRST, CHARGE SECOND (audit round 4). Every quota consumption
+    // below happens only once we know the request would actually reach Gemini.
     const body = await readJson<Body>(req);
     const edit = body.edit ?? "twilight";
     const mime = body.mime ?? "image/jpeg";
 
+    if (body.image_b64 !== undefined) {
+      assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
+      assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
+             "image is too large — resize it before sending");
+    }
+
     // Helper modes: text/vision analysis only — no image generation.
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
+      await guardEdit(user.id, req);
       return json({ suggestions: await suggestEdits(body.image_b64, mime) });
     }
     if (edit === "improve_prompt") {
@@ -160,6 +200,7 @@ Deno.serve(async (req) => {
       assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
+      await guardEdit(user.id, req);
       return json({ prompt: await improvePrompt(rough) });
     }
 
@@ -183,6 +224,10 @@ Deno.serve(async (req) => {
       assert(prompt, 400,
              `edit must be twilight|sky|lawn|declutter|stage|custom|suggest|improve_prompt (got ${edit})`);
     }
+
+    // Everything validated — NOW charge the quota, immediately before the
+    // billable Gemini call.
+    await guardEdit(user.id, req);
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
     const payload = {

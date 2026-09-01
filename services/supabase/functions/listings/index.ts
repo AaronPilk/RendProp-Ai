@@ -7,7 +7,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
 // server-controlled and never taken from the body.
@@ -50,6 +50,7 @@ Deno.serve(async (req) => {
     // ---- POST /listings ----
     if (req.method === "POST" && !id) {
       const body = await readJson<Record<string, unknown>>(req);
+      await assertNotDeleting(user.id); // no new listings once deletion starts
       const org_id = await orgForUser(user.id, preferredOrg(req));
       const row = { ...pick(body), org_id, agent_id: user.id };
       const { data, error } = await db.from("listings").insert(row).select().single();

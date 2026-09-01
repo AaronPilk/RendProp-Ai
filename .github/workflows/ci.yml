@@ -1,0 +1,151 @@
+name: CI
+
+# Every gate that caught a real bug during the 2026-08 audit rounds, wired so it
+# runs on every push instead of only when someone remembers. Nothing here needs
+# production credentials — it is all static/offline verification.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  worker-edge:
+    name: Cloudflare Worker (tour-host)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: services/edge/tour-host
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: services/edge/tour-host/package-lock.json
+
+      # Reproducibility: this is exactly the failure P0-8 was about — a missing
+      # lockfile meant a clean install didn't resolve.
+      - name: npm ci (clean, lockfile-driven)
+        run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Bundle (deploy --dry-run, no credentials needed)
+        run: npx wrangler deploy --dry-run --outdir /tmp/wrangler-dry
+
+      # Production dependencies must be clean. Dev-tool advisories (miniflare,
+      # sharp, ws) don't ship in the Worker bundle, so they don't fail the build.
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+
+  edge-functions:
+    name: Supabase edge functions (deno check)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      # Every function must typecheck. `me` once failed here on a WebCrypto
+      # signature — exactly the class of bug this catches before deploy.
+      - name: Typecheck every function
+        working-directory: services/supabase/functions
+        run: |
+          echo '{"nodeModulesDir":"auto"}' > deno.json
+          fail=0
+          for d in */; do
+            f="${d}index.ts"
+            [ -f "$f" ] || continue
+            [ "${d%/}" = "_shared" ] && continue
+            if deno check "$f" >/tmp/out 2>&1; then
+              echo "OK   ${d%/}"
+            else
+              echo "FAIL ${d%/}"; sed -n '1,25p' /tmp/out; fail=1
+            fi
+          done
+          exit $fail
+
+  python-worker:
+    name: Render worker (python)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Byte-compile worker + pipeline
+        run: |
+          python -m compileall -q services/worker services/pipeline
+
+      # requirements.txt is pinned (audit round 4); a stray `>=` reintroduces
+      # non-reproducible images.
+      - name: Requirements must be exactly pinned
+        run: |
+          if grep -nE '^[a-zA-Z0-9_.-]+\s*>=' services/worker/requirements.txt; then
+            echo "::error::services/worker/requirements.txt has an unpinned (>=) dependency"
+            exit 1
+          fi
+          echo "all worker requirements are pinned"
+
+  ios-static:
+    name: iOS static gates
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # App Review Guideline 3.1: with StoreKit disabled, no digital-goods price
+      # may exist in the app — including data the UI never renders (P0-5 shipped
+      # a compiled $29–$279 table after the visible prices were removed).
+      - name: No compiled digital-goods pricing
+        run: |
+          if grep -rnE '\.dollars\([0-9]{1,3}\)' apps/ios/Rendprop --include='*.swift'; then
+            echo "::error::small-dollar literal in app source — digital-goods pricing must not ship while StoreKit is off"
+            exit 1
+          fi
+          if grep -rniE 'first (ai )?(tour )?(render|video tour) (is )?free' apps/ios/Rendprop --include='*.swift'; then
+            echo "::error::purchase-implying 'first ... free' copy found"
+            exit 1
+          fi
+          echo "no digital pricing or purchase implications in app source"
+
+      - name: Privacy manifest parses and declares what we collect
+        run: |
+          python3 - <<'PY'
+          import plistlib, sys
+          d = plistlib.load(open('apps/ios/Rendprop/PrivacyInfo.xcprivacy','rb'))
+          types = {t['NSPrivacyCollectedDataType'] for t in d.get('NSPrivacyCollectedDataTypes', [])}
+          required = {
+              'NSPrivacyCollectedDataTypePhoneNumber',
+              'NSPrivacyCollectedDataTypePhysicalAddress',
+              'NSPrivacyCollectedDataTypeCoarseLocation',
+          }
+          missing = required - types
+          if missing:
+              print('::error::privacy manifest missing:', ', '.join(sorted(missing))); sys.exit(1)
+          if 'NSPrivacyCollectedDataTypePreciseLocation' in types:
+              print('::error::manifest declares PreciseLocation; coordinates are coarsened server-side'); sys.exit(1)
+          if not d.get('NSPrivacyAccessedAPITypes'):
+              print('::error::NSPrivacyAccessedAPITypes is missing'); sys.exit(1)
+          print('privacy manifest OK:', len(types), 'collected types')
+          PY
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

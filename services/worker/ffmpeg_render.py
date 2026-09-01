@@ -35,6 +35,7 @@ import json
 import os
 import subprocess
 import threading
+import time
 from collections import deque
 from pathlib import Path
 from typing import Callable
@@ -51,19 +52,39 @@ ProgressCB = Callable[[float], None]
 
 # ── probing ───────────────────────────────────────────────────────────────────
 
+# ── resource limits (audit round 4) ──────────────────────────────────────────
+# ffmpeg/ffprobe consume ATTACKER-CONTROLLED media: uploads are capped at 12 GB,
+# and a crafted file can pin CPU or fill disk indefinitely. Every invocation now
+# has a wall-clock timeout and is killed on breach, and sources longer than
+# MAX_SOURCE_SECONDS are rejected before any transcode starts.
+PROBE_TIMEOUT_S = int(os.environ.get("FFPROBE_TIMEOUT_S", "60"))
+RENDER_TIMEOUT_S = int(os.environ.get("FFMPEG_TIMEOUT_S", str(90 * 60)))  # 90 min
+POSTER_TIMEOUT_S = int(os.environ.get("FFMPEG_POSTER_TIMEOUT_S", "120"))
+MAX_SOURCE_SECONDS = float(os.environ.get("MAX_SOURCE_SECONDS", "3600"))  # 1 h
+
+
 def probe_duration(path: str) -> float:
-    """Seconds of media, via ffprobe. Raises RenderError on failure."""
-    out = subprocess.run(
-        [SETTINGS.ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
-         "-of", "default=nokey=1:noprint_wrappers=1", str(path)],
-        capture_output=True, text=True,
-    )
+    """Seconds of media, via ffprobe. Raises RenderError on failure/timeout."""
+    try:
+        out = subprocess.run(
+            [SETTINGS.ffprobe_bin, "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nokey=1:noprint_wrappers=1", str(path)],
+            capture_output=True, text=True, timeout=PROBE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        raise RenderError(f"ffprobe timed out after {PROBE_TIMEOUT_S}s on {path}")
     if out.returncode != 0:
         raise RenderError(f"ffprobe failed for {path}: {out.stderr.strip()[:400]}")
     try:
-        return float(out.stdout.strip())
+        seconds = float(out.stdout.strip())
     except ValueError:
         raise RenderError(f"ffprobe returned no duration for {path}")
+    if seconds > MAX_SOURCE_SECONDS:
+        raise RenderError(
+            f"source is {seconds:.0f}s, longer than the {MAX_SOURCE_SECONDS:.0f}s limit — "
+            "trim it before rendering"
+        )
+    return seconds
 
 
 # ── speed rule (identical to RenderEngine) ────────────────────────────────────
@@ -127,11 +148,27 @@ def _encode_cmd(input_path: str, output_path: str, speed: float) -> list[str]:
 # ── run with progress ─────────────────────────────────────────────────────────
 
 def _run_with_progress(cmd: list[str], expected_out_s: float, progress: ProgressCB | None) -> None:
-    """Run ffmpeg, translating `-progress` output into a 0..1 callback."""
+    """Run ffmpeg, translating `-progress` output into a 0..1 callback.
+
+    Hard wall-clock ceiling: the encode reads attacker-controlled media, so a
+    crafted input must not be able to pin a worker forever (audit round 4). On
+    breach the process is killed (then killed harder) and the job fails.
+    """
+    started = time.monotonic()
     proc = subprocess.Popen(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1
     )
     err_tail: deque[str] = deque(maxlen=40)
+
+    def _kill_if_overrun() -> bool:
+        if time.monotonic() - started <= RENDER_TIMEOUT_S:
+            return False
+        proc.kill()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            pass
+        return True
 
     def _drain_err() -> None:
         assert proc.stderr is not None
@@ -144,6 +181,10 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
     denom = max(0.05, expected_out_s) * 1_000_000.0  # microseconds
     assert proc.stdout is not None
     for line in proc.stdout:
+        if _kill_if_overrun():
+            raise RenderError(
+                f"ffmpeg exceeded the {RENDER_TIMEOUT_S}s render limit and was terminated"
+            )
         line = line.strip()
         if not progress:
             continue
@@ -158,7 +199,16 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
         elif line == "progress=end":
             progress(1.0)
 
-    proc.wait()
+    # Bound the final wait too — stdout can close while the process lingers.
+    remaining = max(1.0, RENDER_TIMEOUT_S - (time.monotonic() - started))
+    try:
+        proc.wait(timeout=remaining)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=10)
+        raise RenderError(
+            f"ffmpeg exceeded the {RENDER_TIMEOUT_S}s render limit and was terminated"
+        )
     t.join(timeout=2)
     if proc.returncode != 0:
         raise RenderError("ffmpeg encode failed:\n" + "\n".join(err_tail))
@@ -173,7 +223,10 @@ def _extract_poster(video_path: str, poster_path: str, out_duration_s: float) ->
         "-ss", f"{t:.3f}", "-i", str(video_path),
         "-frames:v", "1", "-q:v", "3", "-f", "image2", str(poster_path),
     ]
-    res = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        res = subprocess.run(cmd, capture_output=True, text=True, timeout=POSTER_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        raise RenderError(f"poster extraction timed out after {POSTER_TIMEOUT_S}s")
     if res.returncode != 0 or not os.path.exists(poster_path):
         raise RenderError(f"poster extraction failed: {res.stderr.strip()[:400]}")
 

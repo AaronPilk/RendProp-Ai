@@ -287,16 +287,31 @@ def process_one() -> bool:
 
 
 def process_specific(job_id: str) -> None:
-    """Process a specific job by id (webhook trigger). Claims it if still queued."""
+    """Process a specific job by id (webhook trigger).
+
+    The claim is a COMPARE-AND-SET, matching claim_next_job(). The previous
+    read-then-write let two simultaneous webhook invocations both observe
+    `queued` and both proceed to render, upload, publish and charge the same job
+    (audit round 4). The status filter is part of the UPDATE, so exactly one
+    caller can win; a zero-row result means someone else already owns it.
+    """
     rows = db.select("render_jobs", {"id": f"eq.{job_id}", "select": "*"})
     if not rows:
         sys.exit(f"job {job_id} not found")
     job = rows[0]
-    if job.get("status") in SETTINGS.claim_statuses:
-        db.patch("render_jobs", {"id": f"eq.{job_id}"},
-                 {"status": "processing", "started_at": db.now_iso(),
-                  "current_step": "claimed", "progress": 0.02})
-    process_job(job)
+
+    statuses = ",".join(SETTINGS.claim_statuses)
+    claimed = db.patch(
+        "render_jobs",
+        {"id": f"eq.{job_id}", "status": f"in.({statuses})"},
+        {"status": "processing", "started_at": db.now_iso(),
+         "current_step": "claimed", "progress": 0.02, "error": None},
+        prefer="return=representation",
+    )
+    if not claimed:
+        print(f"job {job_id} is already claimed or finished (status={job.get('status')}) — nothing to do")
+        return
+    process_job(claimed[0])
 
 
 def run_loop() -> None:

@@ -32,7 +32,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, userClient } from "../_shared/supabase.ts";
+import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 
@@ -43,13 +43,45 @@ const GEN_MAX_PER_WINDOW = 12;
 const GEN_WINDOW_SECONDS = 300; // 12 video jobs / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
 
-// Plan-scaled monthly ceilings (audit P0-3: the flat 400/month ignored plan
-// entitlement). Rolling 30 days per org; survives cleanup via bump_rate v2.
-const GEN_MONTHLY_BY_PLAN: Record<string, number> = { free: 60, pro: 200, team: 400 };
+// Plan-scaled monthly ceilings, proportional to the published render tiers
+// (2/5/15). AI video clips — aerials, reels, declutter, drone upscales — are
+// separate from tour renders and cost real GPU time, so they get their own
+// bounded allowance rather than the old flat 400. Free early access = Solo.
+const GEN_MONTHLY_BY_PLAN: Record<string, number> = {
+  free: 10,
+  solo: 10,
+  pro: 30,
+  team: 90,
+};
 
+// Bound inline base64 so a caller can't push unbounded memory pressure through
+// readJson (audit round 4). ~12 MB of base64 ≈ 9 MB binary.
+const MAX_IMAGE_B64_CHARS = 12_000_000;
+
+/**
+ * Charge the paid-generation quotas + enforce the role gate.
+ *
+ * MUST be called only AFTER the request body and its referenced asset are
+ * known-good. Charging up front meant `POST /ai-video/drone {}` burned an org's
+ * burst and monthly quota before failing on the missing asset_id, with no
+ * provider call ever made (audit round 4).
+ *
+ * The org is resolved with the X-Org-Id header when present: orgForUser()
+ * otherwise picks the caller's highest-privilege membership, so a user in two
+ * workspaces could have quota charged to the wrong one.
+ */
 async function guardGenerate(userId: string, req: Request): Promise<void> {
-  const orgId = await orgForUser(userId);
-  const { data: org } = await adminClient().from("orgs").select("plan").eq("id", orgId).maybeSingle();
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  const admin = adminClient();
+
+  const { data: mem, error: mErr } = await admin
+    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
+  if (!mem?.role || mem.role === "marketing") {
+    throw new HttpError(403, "Your role does not permit AI video generation");
+  }
+
+  const { data: org } = await admin.from("orgs").select("plan").eq("id", orgId).maybeSingle();
   const monthlyCap = GEN_MONTHLY_BY_PLAN[String(org?.plan ?? "free")] ?? GEN_MONTHLY_BY_PLAN.free;
   // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
   // duplicate submit inside 2 minutes is rejected instead of double-billed.
@@ -130,10 +162,9 @@ Deno.serve(async (req) => {
     const db = userClient(req); // RLS: the caller only sees their own org's assets
     const seg = pathSegments(req, "ai-video");
 
-    // Per-org rate limit on the paid generate routes (NOT status polling).
-    const isGenerate = req.method === "POST" &&
-      seg.length === 1 && ["drone", "declutter", "aerial", "reel-clip"].includes(seg[0]);
-    if (isGenerate) await guardGenerate(user.id, req);
+    // NOTE: quota is NOT charged here any more. Each generate route validates
+    // its body (and resolves its asset) FIRST, then calls guardGenerate()
+    // immediately before the billable fal submit — see audit round 4.
 
     // ---- POST /ai-video/drone ----
     if (req.method === "POST" && seg.length === 1 && seg[0] === "drone") {
@@ -146,6 +177,7 @@ Deno.serve(async (req) => {
       fps = Math.min(120, Math.max(24, fps));
 
       const asset = await resolvePublicAsset(db, body.asset_id);
+      await guardGenerate(user.id, req); // validated — charge, then submit
       const sub = await falSubmit(MODEL_DRONE, {
         video_url: asset.url,
         model: "Proteus", // natural detail; interpolation gives the glide
@@ -171,6 +203,7 @@ Deno.serve(async (req) => {
         );
       }
 
+      await guardGenerate(user.id, req); // validated — charge, then submit
       const sub = await falSubmit(MODEL_DECLUTTER, {
         video_url: asset.url,
         prompt: cleanPrompt(body.prompt) ?? DEFAULT_DECLUTTER_PROMPT,
@@ -209,6 +242,7 @@ Deno.serve(async (req) => {
           "smooth stabilized gimbal motion, gentle parallax over rooftops and trees, " +
           "photorealistic, rich natural detail. No people, no text, no watermarks, no logos.");
 
+      await guardGenerate(user.id, req); // validated — charge, then submit
       const sub = await falSubmit(MODEL_AERIAL, {
         prompt,
         duration,
@@ -242,10 +276,14 @@ Deno.serve(async (req) => {
         imageUrl = asset.url;
       } else {
         assert(body.image_b64, 400, "asset_id or image_b64 is required");
+        assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
+        assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
+               "image is too large — resize it before sending");
         const mime = body.mime ?? "image/jpeg";
         imageUrl = `data:${mime};base64,${body.image_b64}`;
       }
 
+      await guardGenerate(user.id, req); // validated — charge, then submit
       const sub = await falSubmit(MODEL_REEL, {
         prompt: cleanPrompt(body.prompt) ?? DEFAULT_REEL_PROMPT,
         image_url: imageUrl,

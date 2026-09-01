@@ -110,3 +110,25 @@ export async function orgForUser(userId: string, preferredOrgId?: string): Promi
 export function preferredOrg(req: Request): string | undefined {
   return req.headers.get("x-org-id") ?? undefined;
 }
+
+/**
+ * Refuse writes once account deletion has started for this user.
+ *
+ * DELETE /me enumerates everything, THEN destroys it. A request that slipped in
+ * between could create a listing or upload whose R2 object was never in the
+ * tombstone — surviving the deletion as an orphan (audit round 4). Every
+ * write-creating route calls this first.
+ */
+export async function assertNotDeleting(userId: string): Promise<void> {
+  const { data, error } = await adminClient()
+    .from("deletion_requests")
+    .select("id")
+    .eq("user_id", userId)
+    .in("status", ["pending", "processing"])
+    .limit(1)
+    .maybeSingle();
+  // Fail CLOSED on lookup failure: a write during deletion is worse than a
+  // rejected write.
+  if (error) throw new HttpError(503, "Account state is being updated — try again shortly");
+  if (data) throw new HttpError(409, "This account is being deleted; new content can't be created");
+}

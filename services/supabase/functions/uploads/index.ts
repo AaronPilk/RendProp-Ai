@@ -37,7 +37,7 @@
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { adminClient, getUser, userClient } from "../_shared/supabase.ts";
+import { adminClient, assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
 import {
   abortMultipartUpload,
   choosePartSize,
@@ -230,6 +230,7 @@ Deno.serve(async (req) => {
 
       const listing = await requireListing(db, body.listing_id);
       await requireWriteRole(admin, user.id, listing.org_id);
+      await assertNotDeleting(user.id); // no new media once deletion starts
 
       // Validate every file BEFORE charging or creating anything.
       let totalBytes = 0;
@@ -314,8 +315,22 @@ Deno.serve(async (req) => {
       const bucket = r2BucketFor(asset.bucket);
       const key = asset.storage_key as string;
       const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
-      const claimedBytes = asset.bytes != null ? Number(asset.bytes) : null;
       const isMultipart = !!asset.upload_id;
+
+      // ONE-SHOT. Completion used to be replayable: after a successful
+      // complete, the staging PUT URL is still valid, so re-uploading and
+      // calling complete again promoted a NEW object over the final key,
+      // defeating the whole point of copy-to-final (audit round 4).
+      assert(asset.uploaded !== true, 409, "This upload is already complete");
+
+      // A ticket with no declared size can't be size-verified — the equality
+      // check would be skipped and any size would pass. Refuse it.
+      const claimedBytes = asset.bytes != null ? Number(asset.bytes) : null;
+      assert(
+        claimedBytes != null && Number.isFinite(claimedBytes) && claimedBytes > 0,
+        409,
+        "This asset has no declared byte count — create a new upload ticket",
+      );
 
       // Multipart assembles at the FINAL key under an uploadId that is now being
       // completed — there is no outstanding single-PUT URL to that key, so it is
@@ -351,12 +366,23 @@ Deno.serve(async (req) => {
       if (!head.exists) {
         throw new HttpError(409, "No uploaded object found for this asset — upload the file, then complete");
       }
+      // A single upload with no ETag can't be promoted safely: copyObject would
+      // fall back to an UNCONDITIONAL copy and the HEAD→copy race reopens.
+      if (!isMultipart && !head.etag) {
+        throw new HttpError(502, "Storage did not return an ETag for the staged object — retry the upload");
+      }
+
       const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
       const sizeOk = head.bytes != null && head.bytes > 0 && head.bytes <= maxBytes &&
-        (claimedBytes == null || head.bytes === claimedBytes);
+        head.bytes === claimedBytes;
       const allowed = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+      // Take only the media type before any parameter, then require an EXACT
+      // allowlist match AND agreement with the type declared at ticket time —
+      // "video/mp4;evil" must not launder into "video/mp4".
       const observedType = (head.contentType ?? "").split(";")[0].trim().toLowerCase();
-      const typeOk = allowed.includes(observedType);
+      const declaredType = String(asset.content_type ?? "").split(";")[0].trim().toLowerCase();
+      const typeOk = allowed.includes(observedType) &&
+        (declaredType === "" || observedType === declaredType);
       if (!sizeOk || !typeOk) {
         // The staged/assembled object doesn't match its ticket — remove it so a
         // lying client can't park arbitrary content behind a validated row.
@@ -389,14 +415,18 @@ Deno.serve(async (req) => {
         bytes: head.bytes, // server-observed truth
         content_type: observedType,
       };
+      // Conditional on still-not-uploaded: two concurrent completes can't both
+      // claim the transition (they'd have copied identical verified bytes, but
+      // exactly one may own the row's state change).
       const { data, error } = await admin
         .from("capture_assets")
         .update(patch)
         .eq("id", assetId)
+        .eq("uploaded", false)
         .select()
         .maybeSingle();
       if (error) throw new HttpError(400, `Complete failed: ${error.message}`);
-      if (!data) throw new HttpError(404, "Asset not found");
+      if (!data) throw new HttpError(409, "This upload was already completed by another request");
       return json(data);
     }
 
@@ -405,6 +435,11 @@ Deno.serve(async (req) => {
       const assetId = seg[0];
       const asset = await requireAsset(db, assetId);
       await requireAssetWriteRole(db, admin, user.id, asset);
+      // Aborting a COMPLETED asset used to flip uploaded=false while leaving the
+      // final object live in R2 — the row said "not uploaded" while the media
+      // was still publicly reachable (audit round 4). Deleting is a separate,
+      // deliberate operation.
+      assert(asset.uploaded !== true, 409, "This upload is already complete and cannot be aborted");
       if (asset.upload_id) {
         await abortMultipartUpload({
           bucket: r2BucketFor(asset.bucket),
@@ -431,6 +466,7 @@ Deno.serve(async (req) => {
 
       const listing = await requireListing(db, body.listing_id);
       await requireWriteRole(admin, user.id, listing.org_id);
+      await assertNotDeleting(user.id); // no new media once deletion starts
 
       const assetId = crypto.randomUUID();
       const ext = role === "render" ? "mp4" : extFromFilename(body.filename, kind);
@@ -538,7 +574,7 @@ async function requireListing(db: any, listingId: string) {
 async function requireAsset(db: any, assetId: string) {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes")
+    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type")
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);

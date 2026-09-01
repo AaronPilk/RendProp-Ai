@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import time
+
 import requests
 
 from settings import SETTINGS
@@ -213,12 +215,25 @@ def record_cost(*, feature: str, provider: str, model: str | None, units: float,
         "unit_cost_cents": round(float(unit_cost_cents), 6),
         "total_cents": round(float(total_cents), 4), "meta": meta or {},
     }
-    try:
-        insert("cost_ledger", row, prefer="return=minimal")
-        if job_id:
-            rollup_job(job_id)
-    except DBError as e:
-        print(f"    ⚠ cost_ledger write failed (continuing): {e}")
+    # FAIL CLOSED (audit round 4). Provider spend that isn't recorded can't be
+    # capped or billed, so an unavailable ledger used to mean unlimited
+    # untracked spend. Retry briefly, then raise — the caller fails the job
+    # rather than continuing to burn money off-ledger.
+    last: Exception | None = None
+    for attempt in range(3):
+        try:
+            insert("cost_ledger", row, prefer="return=minimal")
+            if job_id:
+                rollup_job(job_id)
+            return
+        except DBError as e:
+            last = e
+            print(f"    ⚠ cost_ledger write failed (attempt {attempt + 1}/3): {e}")
+            time.sleep(1.5 * (attempt + 1))
+    raise DBError(
+        f"cost ledger unavailable after 3 attempts — refusing to continue "
+        f"unmetered provider spend for job {job_id}: {last}"
+    )
 
 
 def job_total_cents(job_id: str) -> float:
