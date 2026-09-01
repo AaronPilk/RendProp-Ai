@@ -2996,11 +2996,27 @@ enum FloorPlanRenderer {
     }
 
     static func draw(room: CapturedRoom, in ctx: inout GraphicsContext, size: CGSize) {
-        let walls = room.walls.map(seg)
-        guard !walls.isEmpty else { return }
-        let doors = room.doors.map(seg)
-        let windows = room.windows.map(seg)
-        let openings = room.openings.map(seg)
+        let rawWalls = room.walls.map(seg)
+        guard !rawWalls.isEmpty else { return }
+
+        // STRAIGHTEN FIRST. RoomPlan hands back ARKit world space, so a plan drawn
+        // as-captured sits at whatever compass heading the phone happened to have —
+        // it renders as a skewed diamond. Rotating by the dominant wall angle both
+        // makes the plan read orthogonal like a real floor plan AND makes the
+        // bounding box we measure the room's true width × depth instead of an
+        // inflated diagonal. Do this before anything else touches coordinates.
+        let theta = dominantWallAngle(rawWalls)
+        let cs = cos(-theta), sn = sin(-theta)
+        func rot(_ p: SIMD2<Float>) -> SIMD2<Float> {
+            SIMD2<Float>(p.x * cs - p.y * sn, p.x * sn + p.y * cs)
+        }
+        func rotSeg(_ s: Seg) -> Seg { Seg(a: rot(s.a), b: rot(s.b)) }
+
+        let walls = rawWalls.map(rotSeg)
+        let doors = room.doors.map(seg).map(rotSeg)
+        let windows = room.windows.map(seg).map(rotSeg)
+        let openings = room.openings.map(seg).map(rotSeg)
+        let objs = room.objects.map { (o: $0, pts: corners($0).map(rot)) }
 
         // Bounds over wall endpoints + object footprints.
         var minX = Float.greatestFiniteMagnitude, minY = Float.greatestFiniteMagnitude
@@ -3010,15 +3026,33 @@ enum FloorPlanRenderer {
             minY = min(minY, p.y); maxY = max(maxY, p.y)
         }
         for w in walls { expand(w.a); expand(w.b) }
-        for o in room.objects { for c in corners(o) { expand(c) } }
+        for o in objs { for c in o.pts { expand(c) } }
 
-        let pad: CGFloat = 24
+        // Room extent measured from the WALLS only — furniture can overhang a wall
+        // in a noisy scan, and a sofa sticking through drywall must not inflate the
+        // dimension we print on a listing.
+        var wMinX = Float.greatestFiniteMagnitude, wMinY = Float.greatestFiniteMagnitude
+        var wMaxX = -Float.greatestFiniteMagnitude, wMaxY = -Float.greatestFiniteMagnitude
+        var wallPts: [SIMD2<Float>] = []
+        for w in walls {
+            for p in [w.a, w.b] {
+                wallPts.append(p)
+                wMinX = min(wMinX, p.x); wMaxX = max(wMaxX, p.x)
+                wMinY = min(wMinY, p.y); wMaxY = max(wMaxY, p.y)
+            }
+        }
+
+        // Asymmetric padding: the left and bottom gutters hold dimension lines.
+        let padTop: CGFloat = 30, padRight: CGFloat = 22
+        let padLeft: CGFloat = 44, padBottom: CGFloat = 42
         let spanX = max(CGFloat(maxX - minX), 0.001)
         let spanY = max(CGFloat(maxY - minY), 0.001)
-        let scale = min((size.width - pad*2) / spanX, (size.height - pad*2) / spanY)
+        let availW = max(size.width - padLeft - padRight, 1)
+        let availH = max(size.height - padTop - padBottom, 1)
+        let scale = min(availW / spanX, availH / spanY)
         let drawW = spanX * scale, drawH = spanY * scale
-        let ox = (size.width - drawW) / 2
-        let oy = (size.height - drawH) / 2
+        let ox = padLeft + (availW - drawW) / 2
+        let oy = padTop + (availH - drawH) / 2
         func P(_ p: SIMD2<Float>) -> CGPoint {
             CGPoint(x: ox + CGFloat(p.x - minX) * scale,
                     y: oy + CGFloat(maxY - p.y) * scale)   // flip vertical → reads upright
@@ -3031,9 +3065,10 @@ enum FloorPlanRenderer {
         // detections, draw the box for everything confident, and only LABEL
         // recognizable items (not the generic Storage catch-all) that are big
         // enough on screen to fit readable text.
-        for o in room.objects {
+        for entry in objs {
+            let o = entry.o
             if o.confidence == .low { continue }
-            let pts = corners(o).map(P)
+            let pts = entry.pts.map(P)
             guard pts.count == 4 else { continue }
             var path = Path()
             path.move(to: pts[0]); path.addLine(to: pts[1])
@@ -3080,6 +3115,131 @@ enum FloorPlanRenderer {
         // Doors: a leaf + a quarter-circle swing arc (classic floor-plan symbol).
         for s in doors {
             drawDoor(a: P(s.a), b: P(s.b), in: &ctx)
+        }
+
+        // ---- Dimensions -------------------------------------------------
+        // Width along the bottom, depth up the left side, both in feet and
+        // inches, plus an approximate floor area. This is what makes a scan
+        // read as a floor plan an agent can actually put on a listing.
+        guard wMaxX > wMinX, wMaxY > wMinY else { return }
+        let topLeft = P(SIMD2<Float>(wMinX, wMaxY))
+        let botRight = P(SIMD2<Float>(wMaxX, wMinY))
+
+        if botRight.x - topLeft.x > 40 {
+            let y = botRight.y + 24
+            dimensionLine(from: CGPoint(x: topLeft.x, y: y),
+                          to: CGPoint(x: botRight.x, y: y),
+                          text: feetInches(wMaxX - wMinX),
+                          vertical: false, in: &ctx)
+        }
+        if botRight.y - topLeft.y > 40 {
+            let x = topLeft.x - 26
+            dimensionLine(from: CGPoint(x: x, y: topLeft.y),
+                          to: CGPoint(x: x, y: botRight.y),
+                          text: feetInches(wMaxY - wMinY),
+                          vertical: true, in: &ctx)
+        }
+
+        // Area is an estimate, and it says so. A phone scan is not a measured
+        // survey, and square footage is a number agents get sued over — the
+        // convex hull of the wall endpoints is far closer than the bounding box
+        // on an angled or L-shaped room, but it is still an approximation.
+        let areaSqFt = footprintArea(wallPts) * 10.763_91
+        if areaSqFt >= 1 {
+            ctx.draw(Text("≈ \(Int(areaSqFt.rounded())) sq ft")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(Theme.inkDim),
+                     at: CGPoint(x: padLeft - 8, y: 16), anchor: .leading)
+        }
+    }
+
+    /// Length-weighted dominant wall direction, folded into 0–90° because a room's
+    /// walls form a right-angled grid: mapping each angle to 4× puts that 90°
+    /// period onto a full circle so the directions can be averaged as vectors
+    /// (a plain mean would be wrong across the 0°/90° wrap).
+    private static func dominantWallAngle(_ walls: [Seg]) -> Float {
+        var sx: Float = 0, sy: Float = 0
+        for w in walls {
+            let d = w.b - w.a
+            let len = simd_length(d)
+            guard len > 1e-4 else { continue }
+            let a = atan2(d.y, d.x)
+            sx += len * cos(4 * a)
+            sy += len * sin(4 * a)
+        }
+        guard sx != 0 || sy != 0 else { return 0 }
+        return atan2(sy, sx) / 4
+    }
+
+    /// Metres → `14'6"`, rounded to the nearest inch (12" rolls up to the next foot).
+    private static func feetInches(_ metres: Float) -> String {
+        let totalInches = Int((Double(metres) * 39.370_078_7).rounded())
+        let ft = totalInches / 12, inch = totalInches % 12
+        return inch == 0 ? "\(ft)'" : "\(ft)'\(inch)\""
+    }
+
+    /// Convex hull (Andrew's monotone chain) of the wall endpoints → shoelace area,
+    /// in square metres.
+    private static func footprintArea(_ pts: [SIMD2<Float>]) -> Float {
+        guard pts.count >= 3 else { return 0 }
+        let sorted = pts.sorted { $0.x == $1.x ? $0.y < $1.y : $0.x < $1.x }
+        func cross(_ o: SIMD2<Float>, _ a: SIMD2<Float>, _ b: SIMD2<Float>) -> Float {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        }
+        var hull: [SIMD2<Float>] = []
+        for p in sorted {
+            while hull.count >= 2, cross(hull[hull.count - 2], hull[hull.count - 1], p) <= 0 {
+                hull.removeLast()
+            }
+            hull.append(p)
+        }
+        let upperFloor = hull.count + 1
+        for p in sorted.reversed() {
+            while hull.count >= upperFloor, cross(hull[hull.count - 2], hull[hull.count - 1], p) <= 0 {
+                hull.removeLast()
+            }
+            hull.append(p)
+        }
+        hull.removeLast()   // last point repeats the first
+        guard hull.count >= 3 else { return 0 }
+        var acc: Float = 0
+        for i in 0..<hull.count {
+            let p = hull[i], q = hull[(i + 1) % hull.count]
+            acc += p.x * q.y - q.x * p.y
+        }
+        return abs(acc) / 2
+    }
+
+    /// An architectural dimension line: a hairline run, a tick at each end, and the
+    /// measurement set off the line so it never sits on top of it.
+    private static func dimensionLine(from a: CGPoint, to b: CGPoint, text: String,
+                                      vertical: Bool, in ctx: inout GraphicsContext) {
+        let stroke = Theme.inkDim.opacity(0.75)
+        var run = Path(); run.move(to: a); run.addLine(to: b)
+        ctx.stroke(run, with: .color(stroke), lineWidth: 1)
+
+        let t: CGFloat = 4
+        var ticks = Path()
+        for p in [a, b] {
+            if vertical {
+                ticks.move(to: CGPoint(x: p.x - t, y: p.y)); ticks.addLine(to: CGPoint(x: p.x + t, y: p.y))
+            } else {
+                ticks.move(to: CGPoint(x: p.x, y: p.y - t)); ticks.addLine(to: CGPoint(x: p.x, y: p.y + t))
+            }
+        }
+        ctx.stroke(ticks, with: .color(stroke), lineWidth: 1)
+
+        let label = Text(text).font(.system(size: 11, weight: .semibold)).foregroundColor(Theme.ink)
+        let mid = CGPoint(x: (a.x + b.x) / 2, y: (a.y + b.y) / 2)
+        if vertical {
+            // Run the text up the line, the way a plan reads.
+            ctx.drawLayer { layer in
+                layer.translateBy(x: mid.x - 11, y: mid.y)
+                layer.rotate(by: .degrees(-90))
+                layer.draw(label, at: .zero)
+            }
+        } else {
+            ctx.draw(label, at: CGPoint(x: mid.x, y: mid.y - 11))
         }
     }
 
