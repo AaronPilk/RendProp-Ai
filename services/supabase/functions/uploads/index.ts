@@ -54,10 +54,24 @@
 //     (NoSuchUpload on retry) is verified at the final key and completed.
 //   • Errors carry `{ error, code }` (see _shared/http.ts).
 //
-//   POST /uploads
+// Fix wave p12-E (2026-09-04, audit F-E-06):
+//   • POST /uploads now HONOURS `Idempotency-Key`. The app has sent a stable
+//     key per logical ticket since fix wave 1 and this route ignored it, so
+//     every retry (lost response, expired staging URL, relaunch) minted
+//     another capture_assets row + R2 key + multipart session and charged the
+//     org's daily ticket AND byte budgets again — five PUT failures on one
+//     walkthrough cost five orphan rows and 5x its bytes. A retry with the
+//     same key and the same (bytes, kind, bucket) now REPLAYS the ticket:
+//     200 + the same `asset_id`/`storage_key` (`replayed: true`), with a fresh
+//     15-min staging PUT URL for singles and the still-open `upload_id` for
+//     multipart. Replay covers uploads still IN FLIGHT only (migration 0014's
+//     partial unique index) — a completed asset is /complete's own replay case.
+//
+//   POST /uploads                                     (+ Idempotency-Key header)
 //     { listing_id, filename, bytes, sha256?, kind:"video"|"photo", content_type?, multipart?, role:"capture"|"render"|"original" }
 //     video>64MB (or multipart:true) -> { asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count, content_type }
 //     otherwise                      -> { asset_id, mode:"single", put_url, storage_key, content_type }
+//     idempotent replay              -> 200, the same body + `replayed: true`
 //
 //   POST /uploads/batch
 //     { listing_id, kind:"photo", files:[{filename,bytes,sha256?,content_type?}] }
@@ -617,6 +631,21 @@ Deno.serve(async (req) => {
 
       // Bound the size and require a known media type BEFORE charging.
       validateFileMeta(kind, body.bytes, contentType, "", { poster: isPoster, original: isOriginal });
+
+      // ---- Idempotent ticket replay (audit F-E-06) ----
+      // The app sends a STABLE Idempotency-Key per logical ticket, so a
+      // re-ticket after a lost response, an expired staging PUT URL or a
+      // relaunch must NOT mint a second capture_assets row + R2 key +
+      // multipart session and charge the org's daily ticket/byte budget
+      // again. Replay is scoped to uploads still IN FLIGHT; once /complete
+      // has run, that route's own replay path (F-E-05) owns the case.
+      const idem = idempotencyKey(req);
+      const want = { bytes: body.bytes ?? null, kind, bucketTag, contentType };
+      if (idem) {
+        const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
+        if (replay) return json(replay, 200);
+      }
+
       await chargeUploadBudget(listing.org_id, 1, body.bytes ?? 0);
 
       const assetId = crypto.randomUUID();
@@ -656,11 +685,19 @@ Deno.serve(async (req) => {
             part_size: partSize,
             parts_total: partCount,
             uploaded: false,
+            idem_key: idem,
           })
           .select()
           .single();
         if (error) {
+          // Lost a race to a concurrent ticket with the SAME key (unique index
+          // uq_capture_assets_idem): that request owns the session — replay it
+          // and tear down the multipart we just opened, or it leaks in R2.
           await abortMultipartUpload({ bucket: r2Bucket, key: storageKey, uploadId }).catch(() => {});
+          if (idem) {
+            const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
+            if (replay) return json(replay, 200);
+          }
           throw new HttpError(400, `Asset create failed: ${error.message}`);
         }
         return json({
@@ -688,10 +725,18 @@ Deno.serve(async (req) => {
           content_type: contentType,
           content_type_declared: declaredByClient,
           uploaded: false,
+          idem_key: idem,
         })
         .select()
         .single();
-      if (error) throw new HttpError(400, `Asset create failed: ${error.message}`);
+      if (error) {
+        // Concurrent ticket with the same key won the unique index — replay it.
+        if (idem) {
+          const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
+          if (replay) return json(replay, 200);
+        }
+        throw new HttpError(400, `Asset create failed: ${error.message}`);
+      }
 
       // PUT targets the STAGING key; /complete verifies then copies to the
       // final key (which never gets a PUT URL — closes the TOCTOU).
@@ -715,6 +760,127 @@ Deno.serve(async (req) => {
     return respondError(err);
   }
 });
+
+// ── Ticket idempotency (audit F-E-06) ────────────────────────────────────────
+// POST /uploads used to ignore Idempotency-Key entirely, so every retry of one
+// logical ticket created another capture_assets row, another R2 key, another
+// multipart session, and charged the org's daily ticket + byte budgets again.
+// These four helpers give the route the same replay lookup create_render_job
+// has had since migration 0006 (see migration 0014 for the column + index).
+
+/** The caller's Idempotency-Key, or null when absent/out of the 8…128 bound. */
+function idempotencyKey(req: Request): string | null {
+  const raw = req.headers.get("idempotency-key")?.trim();
+  if (!raw || raw.length < 8 || raw.length > 128) return null;
+  return raw;
+}
+
+/**
+ * The still-IN-FLIGHT ticket for this (listing, key), if any. Completed assets
+ * are deliberately excluded: the key is derived client-side from the file path
+ * and size, so re-uploading a re-rendered tour to the same path must not be
+ * wedged forever by a row that already finished (and /complete has its own
+ * idempotent replay for the completed case — F-E-05).
+ */
+// deno-lint-ignore no-explicit-any
+async function findInFlightTicket(admin: any, listingId: string, idem: string) {
+  const { data, error } = await admin
+    .from("capture_assets")
+    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type")
+    .eq("listing_id", listingId)
+    .eq("idem_key", idem)
+    .eq("uploaded", false)
+    .maybeSingle();
+  // A lookup failure must not block the upload — fall through to a fresh
+  // ticket (the pre-0014 behaviour), never fail the request.
+  if (error) return null;
+  return (data as Record<string, unknown> | null) ?? null;
+}
+
+/**
+ * True when the replayed request really is the SAME upload: same declared
+ * size, same media kind, same destination bucket, same content type.
+ *
+ * The content-type check matters: the replay hands back the PRIOR row's
+ * storage key (whose extension was chosen from the prior type) and /complete
+ * compares the observed type against the row's declared one — replaying across
+ * a type change would fail verification, delete the object, and send the client
+ * straight back here for the same replay. A multipart row whose session was
+ * aborted (`upload_id` cleared by /abort) is likewise not replayable: there is
+ * nothing left in R2 to continue.
+ */
+function ticketMatches(
+  prior: Record<string, unknown>,
+  want: { bytes: number | null; kind: "video" | "photo"; bucketTag: string; contentType: string },
+): boolean {
+  if (prior.parts_total != null && prior.upload_id == null) return false; // aborted multipart
+  const priorBytes = prior.bytes != null ? Number(prior.bytes) : null;
+  if (priorBytes == null || want.bytes == null || priorBytes !== Number(want.bytes)) return false;
+  if ((prior.kind ?? "video") !== want.kind) return false;
+  if ((prior.bucket ?? "uploads") !== want.bucketTag) return false;
+  if (mediaType(prior.content_type) !== want.contentType) return false;
+  return true;
+}
+
+/** Hand back the SAME ticket, with a freshly presigned staging URL for singles. */
+async function reissueTicket(prior: Record<string, unknown>, r2Bucket: string) {
+  const storageKey = prior.storage_key as string;
+  const contentType = (prior.content_type as string | null) ?? undefined;
+  if (prior.upload_id) {
+    // Multipart: the R2 session is still open — part URLs come from
+    // /part-urls, which the client re-requests per batch anyway.
+    return {
+      asset_id: prior.id,
+      mode: "multipart",
+      upload_id: prior.upload_id,
+      storage_key: storageKey,
+      part_size: prior.part_size,
+      part_count: prior.parts_total,
+      content_type: contentType ?? null,
+      replayed: true,
+    };
+  }
+  const putUrl = await presignPut({
+    bucket: r2Bucket,
+    key: stagingKey(storageKey),
+    expiresIn: STAGING_PUT_TTL_SECONDS,
+    contentType,
+  });
+  return {
+    asset_id: prior.id,
+    mode: "single",
+    put_url: putUrl,
+    storage_key: storageKey,
+    content_type: contentType ?? null,
+    replayed: true,
+  };
+}
+
+/**
+ * The whole replay decision in one place, so no caller can hand back a ticket
+ * without checking that it is the same upload.
+ *
+ * Returns the response body for a genuine replay, or null when the caller
+ * should mint a fresh ticket. A row holding the key for a DIFFERENT file has
+ * its key released first (leniently — 409ing here would put the client in a
+ * retry loop it cannot escape); if that release fails, the subsequent insert
+ * collides on the unique index and lands back here, where `ticketMatches`
+ * still refuses to replay the wrong asset.
+ */
+async function replayTicket(
+  // deno-lint-ignore no-explicit-any
+  admin: any,
+  listingId: string,
+  idem: string,
+  want: { bytes: number | null; kind: "video" | "photo"; bucketTag: string; contentType: string },
+  r2Bucket: string,
+): Promise<Record<string, unknown> | null> {
+  const prior = await findInFlightTicket(admin, listingId, idem);
+  if (!prior) return null;
+  if (ticketMatches(prior, want)) return await reissueTicket(prior, r2Bucket);
+  await admin.from("capture_assets").update({ idem_key: null }).eq("id", prior.id as string);
+  return null;
+}
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 // Reads run on the USER client: RLS returns rows only for orgs the caller is a

@@ -26,8 +26,10 @@ TOML
 
 cd "$STAGE"
 
-# Owner routes (require a valid JWT — default).
-for f in listings uploads renders me ai-enhance ai-photo ai-video; do
+# Owner routes (require a valid JWT — default). `admin` is JWT-verified like the
+# rest: its extra owner/admin role is enforced INSIDE the function against
+# profiles.is_admin (migration 0017), never by the deploy flag.
+for f in listings uploads renders me ai-enhance ai-photo ai-video ai-voice admin; do
   echo "→ deploy $f"
   supabase functions deploy "$f" --project-ref "$REF"
 done
@@ -39,5 +41,5 @@ for f in tours leads beacon portfolio; do
 done
 
 cd "$HERE"
-echo "✓ All 11 functions deployed from the repo (uniform _shared/). Set secrets with ./set-secrets.sh if you haven't."
+echo "✓ All 13 functions deployed from the repo (uniform _shared/). Set secrets with ./set-secrets.sh if you haven't."
 echo "  Reminder: migrations are applied separately — see DEPLOYMENT.md §0 (0011 must be live BEFORE renders/uploads/leads/me)."

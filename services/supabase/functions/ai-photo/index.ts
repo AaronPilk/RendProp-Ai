@@ -72,6 +72,7 @@ import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
+import { APP_AI_UNIT_CENTS, recordAppAiCost } from "../_shared/ledger.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -102,7 +103,7 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(userId: string, req: Request): Promise<void> {
+async function guardEdit(userId: string, req: Request): Promise<string> {
   const orgId = await requireEditorRole(userId, req, "AI photo edits");
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
@@ -121,6 +122,9 @@ async function guardEdit(userId: string, req: Request): Promise<void> {
   if (!(await durableRateLimit(`aiphotomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
     throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
+  // Return the org the quota was charged to, so the handler can attribute the
+  // cost_ledger row (F-E-15) — and, once F-E-16 lands, refund the same key.
+  return orgId;
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
@@ -457,8 +461,8 @@ Deno.serve(async (req) => {
     prompt = `${prompt} ${guardrailsFor(edit)}`;
 
     // Everything validated — NOW charge the quota, immediately before the
-    // billable Gemini call.
-    await guardEdit(user.id, req);
+    // billable Gemini call. Keep the org it charged for the cost_ledger row.
+    const orgId = await guardEdit(user.id, req);
 
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
     const payload = {
@@ -503,6 +507,22 @@ Deno.serve(async (req) => {
     if (!outB64) {
       throw new HttpError(502, `Gemini returned no image. ${texts.join(" | ").slice(0, 300)}`, "upstream");
     }
+
+    // COST LEDGER (F-E-15): the Gemini image edit succeeded and is billed, so
+    // record ONE org-scoped cost_ledger row with job_id = NULL. This is what the
+    // owner spend console and the per-org monthly COGS view read for app AI.
+    // Best effort — a failed insert must never fail an edit the caller has paid
+    // for (see recordAppAiCost). Only reached on success, so a 502 above (which
+    // F-E-16 refunds) writes no row: no double-count.
+    await recordAppAiCost(adminClient(), {
+      orgId,
+      provider: "gemini",
+      feature: "photo_edit",
+      model: MODEL,
+      units: 1,
+      unitCents: APP_AI_UNIT_CENTS.gemini_image,
+      meta: { edit, space_type: space, ...(style ? { style } : {}) },
+    });
 
     // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
     // exact sentence the public tour will print. Best effort — never fatal (the

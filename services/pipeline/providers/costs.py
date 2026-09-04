@@ -69,6 +69,37 @@ ANTHROPIC_RATES_CENTS_PER_1K: dict[str, dict[str, float]] = {
 # Safe default if an unrecognized model id is passed (treat as Haiku-class).
 _DEFAULT_ANTHROPIC_RATE = ANTHROPIC_RATES_CENTS_PER_1K["claude-haiku-4-5"]
 
+# Model FAMILY prefixes, longest-first. Exact-id lookup used to be the only path,
+# so a dated or aliased id (`claude-sonnet-5-20260514`, `claude-sonnet-5-latest`)
+# silently billed at HAIKU rates — understating real Sonnet spend by 2x and
+# quietly loosening the cap (audit F-G-19).
+_ANTHROPIC_FAMILIES = ("claude-sonnet", "claude-opus", "claude-haiku")
+_FAMILY_RATE = {
+    "claude-sonnet": ANTHROPIC_RATES_CENTS_PER_1K["claude-sonnet-5"],
+    "claude-haiku": ANTHROPIC_RATES_CENTS_PER_1K["claude-haiku-4-5"],
+    # Opus is never used for QC (router policy) but must not bill as Haiku if it
+    # ever appears: $15 in / $75 out per 1M.
+    "claude-opus": {"input": 1.50, "cache_read": 0.15, "cache_write_5m": 1.875,
+                    "output": 7.50},
+}
+_WARNED_MODELS: set[str] = set()
+
+
+def anthropic_rates(model: str) -> dict:
+    """Rates for a model id: exact match, else family prefix, else Haiku + warn."""
+    exact = ANTHROPIC_RATES_CENTS_PER_1K.get(model)
+    if exact:
+        return exact
+    m = (model or "").strip().lower()
+    for family in _ANTHROPIC_FAMILIES:
+        if m.startswith(family):
+            return _FAMILY_RATE[family]
+    if model and model not in _WARNED_MODELS:
+        _WARNED_MODELS.add(model)
+        print(f"⚠ unknown Anthropic model id {model!r} — billing it at Haiku rates. "
+              f"Add it to providers/costs.ANTHROPIC_RATES_CENTS_PER_1K.")
+    return _DEFAULT_ANTHROPIC_RATE
+
 
 # ── Estimators (used by the router's budget gate + the CLI estimate cmd) ──────
 
@@ -104,10 +135,17 @@ def drone_render_cost_cents(out_seconds: float, tier: str = "4k30") -> float:
 
 
 def qc_estimate_cents(model: str) -> float:
-    """Conservative flat estimate for the pre-call budget check."""
-    if "sonnet" in model:
+    """Conservative flat estimate for the pre-call budget check.
+
+    Errs HIGH for anything unrecognised: an estimate that is too low lets a call
+    through that the cap should have stopped.
+    """
+    m = (model or "").strip().lower()
+    if "haiku" in m:
+        return UNIT_COSTS_CENTS["qc_haiku_call"]
+    if "sonnet" in m or "opus" in m:
         return UNIT_COSTS_CENTS["qc_sonnet_call"]
-    return UNIT_COSTS_CENTS["qc_haiku_call"]
+    return UNIT_COSTS_CENTS["qc_sonnet_call"]
 
 
 def qc_actual_cents(model: str, usage: dict) -> float:
@@ -116,7 +154,7 @@ def qc_actual_cents(model: str, usage: dict) -> float:
     usage keys (any missing → 0): input_tokens, output_tokens,
     cache_read_input_tokens, cache_creation_input_tokens.
     """
-    r = ANTHROPIC_RATES_CENTS_PER_1K.get(model, _DEFAULT_ANTHROPIC_RATE)
+    r = anthropic_rates(model)
     inp = usage.get("input_tokens", 0) or 0
     out = usage.get("output_tokens", 0) or 0
     cread = usage.get("cache_read_input_tokens", 0) or 0

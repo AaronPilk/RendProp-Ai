@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "September 3, 2026";
+const EFFECTIVE_DATE = "September 4, 2026";
 const CONTACT_EMAIL = "aaron@pilk.ai";
 
 const LEGAL_CSS = `
@@ -208,9 +208,12 @@ export function privacyPage(): string {
 <p>Rendprop collects the minimum it needs to run:</p>
 <ul>
   <li><b>Account details</b> — your email and name, provided by Apple when you sign in
-  (Sign in with Apple lets you hide your real email; that works fine with Rendprop).</li>
+  (Sign in with Apple lets you hide your real email; that works fine with Rendprop). Signing
+  in, and deleting your account, exchange tokens with Apple.</li>
   <li><b>Your content</b> — the listings you create and the video, photos, tours, and related
-  details you upload or generate in the app.</li>
+  details you upload or generate in the app. When you run an AI feature — including the cloud
+  tour render — frames of your video and the photos you submit are sent to the AI providers in
+  the table below to produce your result.</li>
   <li><b>Listing location</b> — the address or business name you enter, and an approximate
   (rounded) map coordinate we derive from it. These are part of the listing and are
   <b>published on your public tour page</b> so viewers can find the space; the app may also use
@@ -241,16 +244,19 @@ train AI models without your written consent.</b></p>
 <p>Rendprop runs on a small set of infrastructure and AI providers. They process data solely to
 provide their function to us:</p>
 <table>
-  <tr><th>Provider</th><th>What it does</th></tr>
-  <tr><td>Supabase</td><td>Authentication and database (accounts, listings, leads, tour engagement counts)</td></tr>
-  <tr><td>Cloudflare</td><td>Media storage and delivery of tour pages and video; Turnstile bot protection on lead forms</td></tr>
-  <tr><td>GoHighLevel (LeadConnector)</td><td>CRM — receives the name, phone, and email a viewer submits through a tour's lead form so the lead can be followed up</td></tr>
-  <tr><td>Google&nbsp;Gemini</td><td>AI photo enhancement (only the photos you submit for editing)</td></tr>
-  <tr><td>fal.ai</td><td>AI video generation (only the media you submit for video features, including the exterior photo used for an aerial intro)</td></tr>
-  <tr><td>Anthropic</td><td>Automated quality checks on AI output and prompt assistance</td></tr>
+  <tr><th>Provider</th><th>What it does</th><th>What it receives</th></tr>
+  <tr><td>Supabase</td><td>Authentication, database, and the app's API</td><td>Your account, listings, leads, and tour engagement counts</td></tr>
+  <tr><td>Cloudflare</td><td>Media storage (R2), video delivery (Stream), hosting of your tour pages, and Turnstile bot protection on lead forms</td><td>Your uploaded and generated media; requests to your tour pages, including viewers' IP addresses</td></tr>
+  <tr><td>Apple</td><td>Sign in with Apple</td><td>Sign-in and account-deletion tokens; Apple gives us the email (or private relay address) and name you choose to share</td></tr>
+  <tr><td>GoHighLevel (LeadConnector)</td><td>CRM — so a lead can be followed up, and so lead contacts can be deleted with your account</td><td>The name, phone, and email a viewer submits through a tour's lead form, plus tags identifying the tour</td></tr>
+  <tr><td>Google&nbsp;Gemini</td><td>AI image editing — the photo studio, and per-frame edits inside the cloud tour render — plus text prompt assistance</td><td>The photos you submit for editing, and frames of the walkthrough video you send for a tour render</td></tr>
+  <tr><td>fal.ai</td><td>AI image and video generation — declutter and virtual restaging, aerial intros, reel clips, and drone-glide (Topaz) upscaling</td><td>The photos and video you submit to those features, including the exterior photo used for an aerial intro</td></tr>
+  <tr><td>Anthropic</td><td>Automated quality checks on AI output (comparing the original against the enhanced version) and prompt assistance</td><td>Frames of your source media and of the AI-enhanced result</td></tr>
 </table>
-<p>AI providers receive only the specific media you actively submit to an AI feature, and only
-to produce your result. The CRM provider receives only lead-form submissions.</p>
+<p>AI providers receive media only when you run a feature that needs them, and only to produce
+your result. The CRM provider receives only lead-form submissions. We do not send any provider
+your viewers' lead details other than the CRM, and we do not send any provider data for
+advertising.</p>
 
 <h2><span class="num">4.</span>How long we keep it</h2>
 <p>Your content stays until you delete it — delete a listing, tour, or asset in the app and the

@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 from config import ARCHITECTURE_LOCK, SETTINGS
-from cost_ledger import CostLedger
+from cost_ledger import CostLedger, LedgerError
 from providers import anthropic_qc, costs, fal_client as fal, gemini
 from providers.anthropic_qc import QCResult
 from providers.base import ProviderError, ProviderResult
@@ -43,6 +43,15 @@ DECLUTTER_PROMPTEDIT = (
 
 class BudgetExceeded(Exception):
     """MAX_GEN_COST_PER_JOB_CENTS would be exceeded — raised before the call."""
+
+
+class LedgerUnavailable(BudgetExceeded):
+    """The cost ledger could not record earlier spend, so we stop spending.
+
+    Deliberately a BudgetExceeded: `enhance.enhance_frame` already treats that as
+    "abort this segment, ship the ORIGINAL" — exactly the right behaviour. Money
+    we cannot account for is money we do not spend (audit F-G-07).
+    """
 
 
 @dataclass
@@ -86,17 +95,37 @@ class JobContext:
 
 # ── Metering wrapper ──────────────────────────────────────────────────────────
 
+def _guard_ledger(ctx: JobContext, feature: str) -> None:
+    """Refuse to spend while the ledger is known-unrecordable (audit F-G-07)."""
+    if getattr(ctx.ledger, "degraded", False):
+        raise LedgerUnavailable(
+            f"cost ledger is degraded ({ctx.ledger.spooled_rows} row(s) spooled) — "
+            f"refusing to run a paid '{feature}' call we could not record. "
+            f"Segment ships as original."
+        )
+
+
 def _meter(ctx: JobContext, feature: str, estimate_cents: float,
            produce: Callable[[], ProviderResult]) -> ProviderResult:
-    """precheck (cap) → call provider → write ledger → add to budget → return."""
+    """ledger guard → precheck (cap) → provider → ledger → budget → return.
+
+    If the ledger fails AFTER a successful provider call, we keep the result (it
+    has been paid for and the row is durably spooled) and let the latched
+    `degraded` flag stop the NEXT call. Throwing the media away would waste the
+    money twice.
+    """
+    _guard_ledger(ctx, feature)
     ctx.budget.precheck(feature, estimate_cents)          # may raise BudgetExceeded
     result = produce()                                    # the actual provider call
-    ctx.ledger.record(
-        feature=result.feature or feature, provider=result.provider, model=result.model,
-        units=result.units, unit_cost_cents=result.unit_cost_cents,
-        total_cents=result.total_cents, job_id=ctx.job_id, org_id=ctx.org_id, meta=result.meta,
-    )
-    ctx.budget.add(result.total_cents)
+    try:
+        ctx.ledger.record(
+            feature=result.feature or feature, provider=result.provider, model=result.model,
+            units=result.units, unit_cost_cents=result.unit_cost_cents,
+            total_cents=result.total_cents, job_id=ctx.job_id, org_id=ctx.org_id, meta=result.meta,
+        )
+    except LedgerError as e:
+        print(f"    ⚠ {e}")
+    ctx.budget.add(result.total_cents)   # count it either way — it was spent
     return result
 
 
@@ -224,13 +253,16 @@ def drone_render(ctx: JobContext, video: bytes, *, out_seconds: float, tier: str
 
 def _record_qc(ctx: JobContext, r: QCResult, image_count: int) -> None:
     unit = round(r.cost_cents / image_count, 6) if image_count else r.cost_cents
-    ctx.ledger.record(
-        feature="qc", provider="anthropic", model=r.model, units=image_count,
-        unit_cost_cents=unit, total_cents=r.cost_cents, job_id=ctx.job_id, org_id=ctx.org_id,
-        meta={"structure": r.structure, "completeness": r.completeness, "artifacts": r.artifacts,
-              "confidence": r.confidence, "verdict": r.verdict, "escalated": r.escalated},
-    )
-    ctx.budget.add(r.cost_cents)
+    try:
+        ctx.ledger.record(
+            feature="qc", provider="anthropic", model=r.model, units=image_count,
+            unit_cost_cents=unit, total_cents=r.cost_cents, job_id=ctx.job_id, org_id=ctx.org_id,
+            meta={"structure": r.structure, "completeness": r.completeness, "artifacts": r.artifacts,
+                  "confidence": r.confidence, "verdict": r.verdict, "escalated": r.escalated},
+        )
+    except LedgerError as e:
+        print(f"    ⚠ {e}")
+    ctx.budget.add(r.cost_cents)      # the judge call happened; it counts
 
 
 def qc(ctx: JobContext, source_frames: list[bytes], enhanced_frames: list[bytes],
@@ -242,7 +274,8 @@ def qc(ctx: JobContext, source_frames: list[bytes], enhanced_frames: list[bytes]
     """
     image_count = len(source_frames) + len(enhanced_frames)
 
-    # Tier 1 — Haiku (cheap, cached rubric).
+    # Tier 1 — Haiku (the cheap judge; the rubric is too short to prompt-cache).
+    _guard_ledger(ctx, "qc")
     ctx.budget.precheck("qc", costs.qc_estimate_cents(SETTINGS.anthropic_model_qc))
     result = anthropic_qc.judge(source_frames, enhanced_frames, plan,
                                 model=SETTINGS.anthropic_model_qc)
@@ -251,6 +284,7 @@ def qc(ctx: JobContext, source_frames: list[bytes], enhanced_frames: list[bytes]
     # Tier 2 — escalate to Sonnet ONLY when Haiku's confidence is low.
     if result.confidence < SETTINGS.qc_confidence_escalate:
         try:
+            _guard_ledger(ctx, "qc-escalate")
             ctx.budget.precheck("qc", costs.qc_estimate_cents(SETTINGS.anthropic_model_escalate))
             escalated = anthropic_qc.judge(source_frames, enhanced_frames, plan,
                                            model=SETTINGS.anthropic_model_escalate)

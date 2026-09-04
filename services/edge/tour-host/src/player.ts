@@ -21,6 +21,10 @@
 // page shows an explicit "This tour's video isn't available right now" state —
 // never a black stage with a bobbing scroll hint — and reports NO view.
 //
+// METERING: a view is counted on the first frame the browser can actually
+// render (readyState >= 2), and `streamed_minutes` is derived from
+// video.buffered, so nothing is credited for bytes that were never delivered.
+//
 // CHAPTER TIMEBASE: chapter t_ms is already rescaled to the RENDERED timeline
 // by the app before publish (RendpropApp.swift divides by speed_factor). The
 // player must therefore use t_ms/1000 against duration_s directly and must NOT
@@ -310,15 +314,23 @@ function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
   return "Some imagery in this tour has been virtually staged or digitally decluttered.";
 }
 
-/** Before / after pair, side by side (NorthstarMLS). Video kinds get a
- *  <video> on the "after" side so an aerial/reel still pairs with its still. */
+/**
+ * The unaltered original, INCLUDED in the disclosure (CA AB 723 requires access
+ * to the original, and NorthstarMLS requires an unaltered "Before" image for
+ * every altered room — a link alone satisfies neither as cleanly as showing
+ * it). Paired side by side with the altered version when we have one; shown on
+ * its own when we only have the original. Video kinds get a <video> on the
+ * "after" side so an aerial/reel still pairs with its source still.
+ */
 function beforeAfter(it: AlteredItem): string {
-  if (!it.original || !it.altered) return "";
+  if (!it.original) return "";
+  const before = `<figure><img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async"><figcaption>Before — unaltered original</figcaption></figure>`;
+  if (!it.altered) return `<div class="disc-ba one">${before}</div>`;
   const after = VIDEO_KINDS.has(it.kind)
     ? `<video src="${escapeAttr(it.altered)}" controls playsinline preload="none"></video>`
     : `<img src="${escapeAttr(it.altered)}" alt="After — ${escapeAttr(it.label)}" loading="lazy" decoding="async">`;
   return `<div class="disc-ba">
-        <figure><img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async"><figcaption>Before — unaltered original</figcaption></figure>
+        ${before}
         <figure>${after}<figcaption>After — ${escapeHtml(it.phrase)}</figcaption></figure>
       </div>`;
 }
@@ -342,7 +354,8 @@ function renderDisclosureSection(tour: Tour): string {
           ? `<p class="disc-txt disc-drone">${escapeHtml(DRONE_DISCLOSURE)}</p>`
           : "";
       const body = it.disclosure ? `<p class="disc-txt">${escapeHtml(it.disclosure)}</p>` : "";
-      // CA AB 723 requires ACCESS to the unaltered original, not just a notice.
+      // beforeAfter() above already SHOWS the original inline; this is the
+      // full-size link to it (CA AB 723 "access to the original").
       const orig = it.original
         ? `<a class="disc-orig" href="${escapeAttr(it.original)}" target="_blank" rel="noopener">View original</a>`
         : `<span class="disc-noorig">Original not published</span>`;
@@ -846,7 +859,7 @@ const PLAYER_CSS = `${TOKENS_CSS}
 
   /* The #unavail retry button is a .cta — these three rules stay in the core
      sheet; everything else about the end card lives in FORM_CSS. */
-  .cta { width: 100%; padding: 15px; border: 0; border-radius: 12px; cursor: pointer; background: var(--accent); color: #14100a; font-size: 15.5px; font-weight: 650; font-family: inherit; margin-top: 4px; }
+  .cta { width: 100%; padding: 15px; border: 0; border-radius: 12px; cursor: pointer; background: var(--accent); color: #fff; font-size: 15.5px; font-weight: 650; font-family: inherit; margin-top: 4px; }
   .cta:active { transform: scale(.985); }
   .cta:disabled { opacity: .6; cursor: default; }
 
@@ -1066,13 +1079,32 @@ const ENGINE_CORE_JS = `
   addEventListener('scroll', dismissHint, { passive: true, once: true });
   addEventListener('touchstart', dismissHint, { passive: true, once: true });
 
-  /* ---- Metering beacon (batched; view + streamed-minutes once the video has
-     actually delivered frames, then watch_ms deltas) ---- */
+  /* ---- Metering beacon (batched; the view is counted only once the video has
+     actually delivered frames, then watch_ms and streamed-minutes deltas) ---- */
   var maxDepth = 0, engagedMs = 0, lastMeter = 0, sentWatchMs = 0, viewSent = false;
   function meter(p, now){
     if (p > maxDepth) maxDepth = p;
     if (lastMeter) engagedMs += Math.min(now - lastMeter, 100);
     lastMeter = now;
+  }
+
+  /* Streamed minutes are what the browser ACTUALLY buffered, not the clip's
+     length: a viewer who closes the tab at 12s used to be credited with the
+     whole tour (audit F-H-18). MSE evicts buffered ranges, so keep a
+     high-water mark and only ever report growth. */
+  var streamedHigh = 0, sentStreamed = 0;
+  function bufferedTotal(){
+    var t = 0;
+    try { for (var i = 0; i < video.buffered.length; i++) t += video.buffered.end(i) - video.buffered.start(i); }
+    catch (e) { return streamedHigh; }
+    return t;
+  }
+  function streamedDeltaMin(){
+    var b = bufferedTotal();
+    if (b > streamedHigh) streamedHigh = b;
+    var d = Math.max(0, streamedHigh - sentStreamed);
+    sentStreamed = streamedHigh;
+    return Math.round((d / 60) * 1000) / 1000;
   }
   function beaconUrl(){
     var u = CFG.functionsBase + '/beacon/' + encodeURIComponent(CFG.slug);
@@ -1095,7 +1127,7 @@ const ENGINE_CORE_JS = `
     if (!CFG.functionsBase || !CFG.slug) return;
     var delta = Math.max(0, Math.round(engagedMs - sentWatchMs));
     sentWatchMs = engagedMs;
-    var body = { watch_ms: delta, scroll_depth: Math.round(maxDepth * 1000) / 1000, streamed_minutes: 0 };
+    var body = { watch_ms: delta, scroll_depth: Math.round(maxDepth * 1000) / 1000, streamed_minutes: streamedDeltaMin() };
     // A4: the unbranded page still counts a view (the agent's analytics need
     // it) but is tagged so branded and MLS traffic can be reported apart.
     if (CFG.unbranded) body.unbranded = true;
@@ -1104,8 +1136,9 @@ const ENGINE_CORE_JS = `
   }
   function reportViewAndDelivery(){
     if (viewSent || unavailable) return; viewSent = true;
-    var mins = Number(CFG.durationS) ? Math.round((CFG.durationS / 60) * 1000) / 1000 : 0;
-    postBeacon({ view_start: true, streamed_minutes: mins });
+    // streamed_minutes is computed from video.buffered inside postBeacon — a
+    // view that has only loaded 8s reports 0.13, not the whole clip.
+    postBeacon({ view_start: true });
   }
   setInterval(function(){ if (document.visibilityState === 'visible' && viewSent) postBeacon(null); }, 20000);
   addEventListener('pagehide', function(){ if (viewSent) postBeacon(null); });
@@ -1326,6 +1359,98 @@ const PROMO: { mortgage: PromoItem; agency: PromoItem; partner: PromoItem } = {
     url: "https://tractrealestate.com/",
   },
 };
+
+// ---------------------------------------------------------------------------
+// Owner controls (audit F-H-17 / F-H-19)
+//
+// Two things on a customer's listing page are OURS, not theirs: the lender CTA
+// inside the financing block and the partner cards in the footer. A listing
+// page is the agent's or owner's advertising, so both are now switchable, and
+// each default is set by how much exposure it creates for the CUSTOMER:
+//
+//   • The lender CTA names a specific mortgage company on a listing agent's own
+//     page. In the US that is RESPA §8 territory FOR THE AGENT, and most
+//     brokerages already have an affiliated lender — so it is OFF unless the
+//     owner switches it on or supplies their own lender. The neutral monthly
+//     payment estimate (what /features actually promises buyers) always stays.
+//   • The footer partner cards are ordinary vendor cross-promotion: still on by
+//     default, but now LABELLED as ours and switchable off.
+//
+// Search indexing is the same kind of decision: a tour page carries the owner's
+// name, phone and email and the listing's address, so it is `noindex, nofollow`
+// until the owner opts in.
+//
+// Both prefs are read from the two bags that actually reach this Worker, most
+// specific first: the listing's freeform `details` (writable today via
+// PATCH /listings/:id) and the org's brand kit (spread into `agent_card`).
+// HANDOFF.md records the brand-kit allow-list change the org-level switch needs.
+// ---------------------------------------------------------------------------
+
+/** The two pref bags, most specific first. */
+function prefBags(tour: Tour): Array<Record<string, unknown>> {
+  return [
+    (tour.listing?.details || {}) as Record<string, unknown>,
+    (tour.agent_card || {}) as Record<string, unknown>,
+  ];
+}
+
+/** A tri-state flag: true / false / undefined ("the owner never said"). */
+function prefFlag(tour: Tour, ...keys: string[]): boolean | undefined {
+  for (const bag of prefBags(tour)) {
+    for (const k of keys) {
+      const v = bag[k];
+      if (v === undefined || v === null || v === "") continue;
+      if (typeof v === "boolean") return v;
+      const t = String(v).trim().toLowerCase();
+      if (t === "true" || t === "1" || t === "yes" || t === "on") return true;
+      if (t === "false" || t === "0" || t === "no" || t === "off") return false;
+    }
+  }
+  return undefined;
+}
+
+function prefStr(tour: Tour, ...keys: string[]): string {
+  for (const bag of prefBags(tour)) {
+    const v = first(...keys.map((k) => bag[k]));
+    if (v) return v;
+  }
+  return "";
+}
+
+interface PromoPrefs {
+  /** Show a lender CTA under the payment estimate at all. */
+  financing: boolean;
+  /** Show the house partner cards in the footer. */
+  partners: boolean;
+  lenderName: string;
+  lenderUrl: string;
+  /** True when the lender is the OWNER's, not ours (changes the disclosure). */
+  ownLender: boolean;
+}
+
+function promoPrefs(tour: Tour): PromoPrefs {
+  const lenderName = prefStr(tour, "lender_name", "lenderName");
+  const lenderUrl = safeUrl(prefStr(tour, "lender_url", "lenderUrl"));
+  const ownLender = !!(lenderName && lenderUrl);
+  return {
+    // Opting in is explicit; supplying your OWN lender is opting in.
+    financing: prefFlag(tour, "show_financing", "showFinancing") ?? ownLender,
+    partners: prefFlag(tour, "show_partners", "showPartners") ?? true,
+    lenderName: ownLender ? lenderName : PROMO.mortgage.name,
+    lenderUrl: ownLender ? lenderUrl : PROMO.mortgage.url,
+    ownLender,
+  };
+}
+
+/**
+ * Search-indexing policy for `/f/<slug>`. Default NO: the page carries the
+ * owner's name, phone and email plus the listing address, and putting that in
+ * a permanent public index is the owner's call, not ours. `?embed=1` and `/u/`
+ * are always noindex (a duplicate and an MLS-unbranded page respectively).
+ */
+export function allowsIndexing(tour: Tour): boolean {
+  return prefFlag(tour, "allow_indexing", "allowIndexing", "search_indexing") === true;
+}
 
 // --- details readers (defensive: the bag is freeform jsonb) ---
 function det(tour: Tour, ...keys: string[]): unknown {
@@ -1724,16 +1849,24 @@ function renderListingSections(tour: Tour, unbranded = false): string {
       `${nb ? `<div class="lp-prose"><p>${escapeHtml(nb)}</p></div>` : ""}${c}`));
   }
 
-  // Financing — powered by Wholesale Mortgage Lending. Real estate only, and
-  // pointless once the home has sold. NEVER on `/u/`: it is advertising with an
-  // external link, which the unbranded rules ban outright.
+  // Financing. Real estate only, and pointless once the home has sold. NEVER on
+  // `/u/`: it is advertising with an external link, which the unbranded rules
+  // ban outright. The monthly estimate is neutral and always renders; the
+  // LENDER CTA is opt-in (F-H-17) — see promoPrefs().
   const est = isRE && !sold && !unbranded ? monthlyEstimate(l.price_cents) : null;
   if (est) {
+    const pp = promoPrefs(tour);
+    const lender = pp.financing
+      ? `<p class="lp-tag">${escapeHtml(pp.ownLender ? `Financing with ${pp.lenderName}.` : `${PROMO.mortgage.name} — ${PROMO.mortgage.tagline}`)}</p>
+      <a class="lp-btn" href="${escapeAttr(pp.lenderUrl)}" target="_blank" rel="noopener nofollow">Get pre-approved</a>
+      <p class="lp-fine">${escapeHtml(pp.ownLender
+        ? "Lender chosen by the listing owner."
+        : "Lender promotion from Rendprop, the software behind this page — not a recommendation by the agent or their brokerage.")}</p>`
+      : "";
     out.push(`<section class="lp-sec" id="financing"><div class="lp-wrap lp-fin">
       <div class="lp-eyebrow">Financing</div>
       <h2 class="lp-h">Estimated from ${escapeHtml(usd(est))}/mo</h2>
-      <p class="lp-tag">Powered by ${escapeHtml(PROMO.mortgage.name)} — ${escapeHtml(PROMO.mortgage.tagline)}</p>
-      <a class="lp-btn" href="${escapeAttr(PROMO.mortgage.url)}" target="_blank" rel="noopener nofollow">Get pre-approved</a>
+      ${lender}
       <p class="lp-fine">Illustrative only — 30-yr fixed at 6.5% with 20% down; taxes and insurance excluded. Not a commitment to lend.</p>
     </div></section>`);
   }
@@ -1745,14 +1878,24 @@ function renderListingSections(tour: Tour, unbranded = false): string {
   return `<div id="listing-page">${out.join("")}</div>`;
 }
 
-/** Footer + house partner strip (Pilk.ai · Wholesale Mortgage · Tract). */
-function renderFooter(): string {
+/**
+ * Footer: the "Made with Rendprop" attribution (always) plus the house partner
+ * strip (Pilk.ai · Wholesale Mortgage · Tract). The strip is Rendprop's own
+ * advertising on someone else's listing page, so it is labelled as ours and the
+ * owner can switch it off — `details.show_partners` / `brand_kit.show_partners`
+ * (audit F-H-17).
+ */
+function renderFooter(prefs: PromoPrefs): string {
   const cards = [PROMO.agency, PROMO.mortgage, PROMO.partner]
     .map((x) => `<a class="lp-partner" href="${escapeAttr(x.url)}" target="_blank" rel="noopener nofollow"><span class="nm">${escapeHtml(x.name)}</span><span class="tg">${escapeHtml(x.tagline)}</span></a>`)
     .join("");
-  return `<footer class="lp-foot"><div class="lp-wrap">
-    <div class="lp-eyebrow">More from us</div>
+  const strip = prefs.partners
+    ? `<div class="lp-eyebrow">Promoted by Rendprop</div>
     <div class="lp-partners">${cards}</div>
+    <p class="lp-fine">Paid placements from Rendprop, the software behind this page. They are not endorsements by the owner of this listing.</p>`
+    : "";
+  return `<footer class="lp-foot"><div class="lp-wrap">
+    ${strip}
     <div class="lp-madeby"><a href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
     <div class="lp-legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></div>
   </div></footer>`;
@@ -1872,6 +2015,7 @@ const EDITORIAL_CSS = `
   .disc-txt { color:var(--ink-dim); font-size:14px; line-height:1.6; margin-top:9px; max-width:46em; }
   .disc-drone { color:var(--ink); }
   .disc-ba { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:14px; }
+  .disc-ba.one { grid-template-columns:minmax(0,320px); }
   .disc-ba figure { border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08); background:#000; }
   .disc-ba img, .disc-ba video { display:block; width:100%; height:auto; aspect-ratio:4/3; object-fit:cover; }
   .disc-ba figcaption { padding:8px 10px; font-size:11.5px; color:var(--ink-dim); background:var(--card); }
@@ -1879,8 +2023,6 @@ const EDITORIAL_CSS = `
   .disc-orig:hover { text-decoration:underline; }
   .disc-noorig { display:inline-block; margin-top:12px; font-size:12.5px; color:var(--faint); }
 
-  /* White CTA text on purple (also the #unavail retry button). */
-  .cta { color:#fff !important; }
   /* Footer + partner strip */
   footer.lp-foot { padding:clamp(48px,7vw,80px) 0 calc(40px + env(safe-area-inset-bottom));
     border-top:1px solid rgba(255,255,255,.07); background:var(--bg); }
@@ -1980,6 +2122,10 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // canonical are rendprop.com URLs, and share metadata is a social-sharing
   // (i.e. branded) affordance — the MLS page is noindex and shares nothing.
   const shareUrl = unbranded ? "" : safeUrl(tour.share_url || "") || canonicalFor(tour.slug, opts.origin);
+  // F-H-19: a customer's tour is not offered to search engines unless its owner
+  // asked for it. og:* still ships — sharing a link in a message is not the
+  // same decision as being listed in a search index forever.
+  const indexable = !embed && !unbranded && allowsIndexing(tour);
   const ogPoster = unbranded ? "" : absolutize(poster, shareUrl);
   const ogImage = ogPoster ? `<meta property="og:image" content="${escapeAttr(ogPoster)}">\n<meta name="twitter:image" content="${escapeAttr(ogPoster)}">` : "";
 
@@ -2027,9 +2173,10 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ${disclosurePanel}
   </div>
 </section>`;
-  // Footer = "Made with Rendprop" + the house partner strip + Terms/Privacy.
-  // All of it is branding or an external link, so `/u/` gets no footer.
-  const footerHtml = embed || unbranded ? "" : renderFooter();
+  // Footer = "Made with Rendprop" + the (opt-out) house partner strip +
+  // Terms/Privacy. All of it is branding or an external link, so `/u/` gets no
+  // footer at all.
+  const footerHtml = embed || unbranded ? "" : renderFooter(promoPrefs(tour));
 
   const isRE = isRealEstate(tour);
   const unavailHtml = `<div id="unavail" role="status">
@@ -2047,7 +2194,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 <meta name="theme-color" content="#0b0d10">
 <title>${escapeHtml(header.pageTitle)}</title>
 <meta name="description" content="${escapeAttr(header.ogDesc)}">
-${embed || unbranded ? `<meta name="robots" content="noindex">` : ""}
+${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
 ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(shareUrl)}">` : ""}
 <meta property="og:title" content="${escapeAttr(header.ogTitle)}">
 <meta property="og:description" content="${escapeAttr(header.ogDesc)}">

@@ -333,6 +333,12 @@ final class CameraManager: NSObject, ObservableObject {
 
     func startRecording() {
         guard state == .ready else { return }
+        // A session interrupted by a call / Control Center / another foreground
+        // app is still `.ready` here. Asking the movie output to record on it
+        // fails in the delegate with no file, which used to flip the whole
+        // screen to `.failed` — a dead end with only "Close". The interruption
+        // banner already explains the wait; just don't start (audit F-D-20).
+        guard session.isRunning else { return }
         let free = FileStore.freeSpaceBytes()
         let needed = requiredFreeBytes
         guard free > needed else {

@@ -13,8 +13,14 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 ///   • `apikey: <supabase anon key>`      (public, RLS enforces access)
 ///   • `Authorization: Bearer <jwt>`      (owner routes; refreshed via AuthStore
 ///                                         right before sending — never stale)
-///   • `Idempotency-Key`                  (on writes — STABLE for retryable
-///                                         operations so a retry replays)
+///   • `Idempotency-Key`                  (on EVERY write — never a fresh UUID:
+///                                         the caller's stable key when it has
+///                                         one, otherwise sha256(method + path
+///                                         + body digest), so a retry after a
+///                                         lost response replays instead of
+///                                         double-creating or double-billing.
+///                                         See `Idempotency` for the one
+///                                         deliberate exception.)
 ///
 /// Non-2xx responses are decoded from the server's `{error, code}` envelope
 /// into `APIError.server` so the UI shows the message the backend wrote for
@@ -55,14 +61,35 @@ final class LiveAPIClient: APIClient {
         return comps.url ?? u
     }
 
-    /// Assemble a request. `idempotencyKey` should be STABLE for a logical
-    /// operation (publish, ticket, one AI tap) so a retry after a lost response
-    /// replays server-side instead of double-creating/double-billing. When nil,
-    /// a fresh UUID is minted for non-GET requests (previous behaviour — fine
-    /// for endpoints with no replay semantics). The bearer token attached here
-    /// may be stale; `execute()` re-attaches a freshly-refreshed one.
+    /// How one write's `Idempotency-Key` is chosen.
+    ///
+    /// The header exists so a retry after a LOST RESPONSE replays server-side
+    /// instead of creating a second render job / spending a second provider
+    /// call. A fresh UUID per attempt (the pre-audit behaviour) makes that
+    /// impossible by construction — see F-E-06.
+    private enum Idempotency {
+        /// The caller's own key for one logical operation ("publish:<listing>:<asset>",
+        /// one user tap). Always wins: the caller knows what "the same request"
+        /// means better than the wire payload does.
+        case key(String)
+        /// DEFAULT for writes: derived from route + payload digest, so it is
+        /// identical for every retry of the same request and different for any
+        /// other request.
+        case derived
+        /// A fresh UUID per attempt. Reserved for the `/ai-*` submit routes,
+        /// where the server DEDUPES a repeated key with a 409 rather than
+        /// replaying the original result: a derived key there would not recover
+        /// a lost response (there is nothing to replay) and WOULD block a
+        /// deliberate re-roll of the same photo with the same settings. Those
+        /// call sites pass an explicit per-tap key instead, which is what
+        /// actually stops a double-tap from billing twice.
+        case perAttempt
+    }
+
+    /// Assemble a request. The bearer token attached here may be stale;
+    /// `execute()` re-attaches a freshly-refreshed one.
     private func makeRequest(url: URL, method: String = "GET", json: [String: Any]? = nil,
-                             idempotencyKey: String? = nil) -> URLRequest {
+                             idempotency: Idempotency = .derived) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -70,13 +97,28 @@ final class LiveAPIClient: APIClient {
         if let token = AuthStore.currentAccessToken {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        if method != "GET" {
-            let key = idempotencyKey.map(Self.boundedIdempotencyKey) ?? UUID().uuidString
-            req.setValue(key, forHTTPHeaderField: "Idempotency-Key")
-        }
+        // Serialize once: the body we send and the body we digest must match.
+        var bodyData: Data? = nil
         if let json {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            req.httpBody = try? JSONSerialization.data(withJSONObject: json)
+            bodyData = try? JSONSerialization.data(withJSONObject: json, options: [.sortedKeys])
+            req.httpBody = bodyData
+        }
+        if method != "GET" {
+            let key: String
+            switch idempotency {
+            case .key(let raw):
+                key = Self.boundedIdempotencyKey(raw)
+            case .derived where json != nil && bodyData == nil:
+                // A body we could not serialize would leave two DIFFERENT
+                // requests to this route sharing one key. Never conflate them.
+                key = UUID().uuidString
+            case .derived:
+                key = Self.derivedIdempotencyKey(method: method, url: url, body: bodyData)
+            case .perAttempt:
+                key = UUID().uuidString
+            }
+            req.setValue(key, forHTTPHeaderField: "Idempotency-Key")
         }
         return req
     }
@@ -88,6 +130,41 @@ final class LiveAPIClient: APIClient {
         if trimmed.count >= 8 && trimmed.count <= 128 { return trimmed }
         if trimmed.count > 128 { return "k:" + DirectUploader.sha256Hex(trimmed) }
         return "k:" + String(DirectUploader.sha256Hex(trimmed).prefix(32))
+    }
+
+    /// `"k:" + sha256(METHOD \n path \n sha256(canonical body))` — 66 chars, so
+    /// always inside the server's 8…128 bound.
+    ///
+    /// Deterministic by construction: the body is serialized ONCE with
+    /// `.sortedKeys` (so dictionary ordering can't change the digest between
+    /// two attempts) and only its digest goes into the key, so a multi-MB
+    /// base64 payload never lands in a header. Same route + same payload ⇒ same
+    /// key ⇒ a retry replays. Any different field ⇒ a different key ⇒ two
+    /// genuinely different requests are never conflated.
+    private static func derivedIdempotencyKey(method: String, url: URL, body: Data?) -> String {
+        let path = URLComponents(url: url, resolvingAgainstBaseURL: false)?.path ?? url.path
+        var material = method.uppercased() + "\n" + path
+        if let body { material += "\n" + DirectUploader.sha256Hex(body) }
+        return "k:" + DirectUploader.sha256Hex(material)
+    }
+
+    /// Caller key when there is one, otherwise derive it from the payload.
+    /// For routes the server REPLAYS (uploads ticket, render create/publish).
+    private static func idempotency(_ callerKey: String?) -> Idempotency {
+        guard let k = callerKey?.trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty else {
+            return .derived
+        }
+        return .key(k)
+    }
+
+    /// Caller key when there is one, otherwise a fresh UUID. For the `/ai-*`
+    /// submit routes only — see `Idempotency.perAttempt` for why a derived key
+    /// is the wrong default there.
+    private static func aiIdempotency(_ callerKey: String?) -> Idempotency {
+        guard let k = callerKey?.trimmingCharacters(in: .whitespacesAndNewlines), !k.isEmpty else {
+            return .perAttempt
+        }
+        return .key(k)
     }
 
     /// Send, verify 2xx, decode the error envelope otherwise. Refreshes the JWT
@@ -223,7 +300,7 @@ final class LiveAPIClient: APIClient {
         // observed == declared and DELETES the object on mismatch (P0 fix).
         if let contentType, !contentType.isEmpty { body["content_type"] = contentType }
         let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body,
-                                                 idempotencyKey: idempotencyKey))
+                                                 idempotency: Self.idempotency(idempotencyKey)))
         let dto: UploadTicketDTO = try decode(data)
         let mode = UploadTicket.Mode(rawValue: dto.mode ?? "single") ?? .single
         return UploadTicket(assetID: dto.assetId, mode: mode,
@@ -263,7 +340,7 @@ final class LiveAPIClient: APIClient {
         // Stable per asset: a retried complete carries the same key.
         _ = try await execute(makeRequest(url: url(["uploads", assetID, "complete"]),
                                           method: "POST", json: body,
-                                          idempotencyKey: "complete:\(assetID)"))
+                                          idempotency: .key("complete:\(assetID)")))
     }
 
     func abortUpload(assetID: String) async throws {
@@ -314,7 +391,7 @@ final class LiveAPIClient: APIClient {
                              "style": enhancements.style.rawValue],
         ]
         let data = try await execute(makeRequest(url: url(["renders"]), method: "POST", json: body,
-                                                 idempotencyKey: "render:\(listingID.uuidString):\(assetID.uuidString):\(tier.rawValue)"))
+                                                 idempotency: .key("render:\(listingID.uuidString):\(assetID.uuidString):\(tier.rawValue)")))
         let dto: RenderDTO = try decode(data)
         return mapRender(dto, fallbackListingID: listingID, fallbackTier: tier,
                          fallbackDuration: durationS, fallbackEnhancements: enhancements)
@@ -323,6 +400,15 @@ final class LiveAPIClient: APIClient {
     func renderStatus(id: UUID) async throws -> Render {
         let data = try await execute(makeRequest(url: url(["renders", id.uuidString])))
         let dto: RenderDTO = try decode(data)
+        // `GET /renders/:id` does not return `listing_id` (renders/index.ts) and
+        // this overload has no caller-supplied fallback, so `mapRender` used to
+        // invent one with `UUID()` — a Render pointing at a listing that does
+        // not exist, which any consumer would then fail to match (audit F-E-22).
+        // A response we cannot attach to a listing is a decode failure, not a
+        // Render.
+        guard dto.listingId.flatMap(UUID.init(uuidString:)) != nil else {
+            throw APIError.decoding
+        }
         return mapRender(dto, fallbackListingID: nil, fallbackTier: .smooth,
                          fallbackDuration: 0, fallbackEnhancements: Enhancements(), fallbackID: id)
     }
@@ -353,7 +439,7 @@ final class LiveAPIClient: APIClient {
         // SAME job + slug instead of publishing a second public tour.
         let key = "publish:\(listingID.uuidString.lowercased()):\(assetID)"
         let data = try await execute(makeRequest(url: url(["renders", "publish-app"]),
-                                                 method: "POST", json: body, idempotencyKey: key))
+                                                 method: "POST", json: body, idempotency: .key(key)))
         let dto: PublishAppDTO = try decode(data)
         guard let slug = dto.slug, let share = dto.shareUrl else {
             throw APIError.decoding   // server didn't return a slug/share_url
@@ -403,7 +489,7 @@ final class LiveAPIClient: APIClient {
             body["original_asset_id"] = original
         }
         let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
-                                                 idempotencyKey: request.idempotencyKey),
+                                                 idempotency: Self.aiIdempotency(request.idempotencyKey)),
                                      session: aiSession)
         let r: AIPhotoEditDTO = try decode(data)
         guard let out = r.imageB64, !out.isEmpty else { throw APIError.decoding }
@@ -449,9 +535,10 @@ final class LiveAPIClient: APIClient {
         if let originalAssetID, !originalAssetID.isEmpty { body["original_asset_id"] = originalAssetID }
         if let alteredAssetID, !alteredAssetID.isEmpty { body["altered_asset_id"] = alteredAssetID }
         guard !body.isEmpty else { return }   // the server requires at least one field
-        // No stable idempotency key: attaching the original and attaching the
-        // altered result are two DIFFERENT patches to the same row, and a shared
-        // key would let the second replay the first.
+        // The derived key digests the BODY, so attaching the original and
+        // attaching the altered result — two different patches to the same row
+        // — get different keys and the second can never replay the first, while
+        // a retry of either still replays itself.
         _ = try await execute(makeRequest(url: url(["me", "compliance", provenanceID]),
                                           method: "PATCH", json: body))
     }
@@ -487,7 +574,8 @@ final class LiveAPIClient: APIClient {
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
         let body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": "suggest",
                                    "space_type": SpaceType.current.rawValue]
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body),
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+                                                 idempotency: .perAttempt),
                                      session: aiSession)
         // Tolerant decode: every field optional, malformed entries dropped, and
         // only the five runnable preset edits pass through (so every row the UI
@@ -510,11 +598,16 @@ final class LiveAPIClient: APIClient {
 
     func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
         let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        let body: [String: Any] = ["image_b64": imageBase64, "mime": mime,
-                                   "edit": "improve_prompt",
+        // `improve_prompt` is TEXT-ONLY server-side (ai-photo/index.ts asserts
+        // only `prompt`; `improvePrompt(rough, profile)` never reads an image),
+        // so the photo is deliberately NOT sent — uploading several MB over
+        // cellular for a call that ignores them was audit F-E-16. The parameter
+        // stays in the signature so callers don't have to change.
+        let body: [String: Any] = ["edit": "improve_prompt",
                                    "prompt": String(rough.prefix(300)),   // contract: rough idea ≤ 300
                                    "space_type": SpaceType.current.rawValue]
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body),
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+                                                 idempotency: .perAttempt),
                                      session: aiSession)
         struct Resp: Decodable { let prompt: String? }
         let r: Resp = try decode(data)
@@ -591,7 +684,7 @@ final class LiveAPIClient: APIClient {
                                fallbackKind: String, idempotencyKey: String?) async throws -> AIVideoJob {
         let data = try await execute(makeRequest(url: url(["ai-video", path]),
                                                  method: "POST", json: body,
-                                                 idempotencyKey: idempotencyKey),
+                                                 idempotency: Self.aiIdempotency(idempotencyKey)),
                                      session: aiSession)
         let dto: AIVideoJobDTO = try decode(data)
         guard let requestId = dto.requestId, !requestId.isEmpty,
@@ -639,6 +732,81 @@ final class LiveAPIClient: APIClient {
         }
     }
 
+    // MARK: - AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
+
+    func aiVoices() async throws -> [AIVoice] {
+        let data = try await execute(makeRequest(url: url(["ai-voice", "voices"])), session: aiSession)
+        // `{ voices: [...] }`; tolerate a bare array from any future shape.
+        let raw: [AIVoice]
+        if let wrapped: AIVoicesDTO = try? decode(data), let list = wrapped.voices {
+            raw = list
+        } else if let bare: [AIVoice] = try? decode(data) {
+            raw = bare
+        } else {
+            throw APIError.decoding
+        }
+        // A voice with no id can't be spoken with, so it can't be offered.
+        return raw.filter { !$0.voiceID.isEmpty }
+    }
+
+    func aiVoiceTTS(text: String, voiceID: String, listingServerID: UUID?,
+                    label: String, idempotencyKey: String) async throws -> AIVoiceResult {
+        let script = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var body: [String: Any] = ["text": script, "voice_id": voiceID]
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedLabel.isEmpty { body["label"] = String(trimmedLabel.prefix(80)) }
+
+        // The 1,000-char cap and the fair-housing gate are BOTH enforced
+        // server-side and are not re-implemented here: a client-side copy would
+        // drift from the server's rules and, being client-side, would be
+        // bypassable anyway. The server's refusal message is what the UI shows.
+        let data = try await execute(makeRequest(url: url(["ai-voice", "tts"]), method: "POST",
+                                                 json: body,
+                                                 idempotency: Self.aiIdempotency(idempotencyKey)),
+                                     session: aiSession)
+        let dto: AIVoiceTTSDTO = try decode(data)
+
+        guard let urlString = dto.audioUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !urlString.isEmpty, let audioURL = URL(string: urlString) else {
+            throw APIError.decoding   // no audio to play — not a usable result
+        }
+
+        // Words are dropped INDIVIDUALLY when malformed: a bad entry must not
+        // cost the caption track, and a missing/invalid timing must never be
+        // defaulted to 0 (that is a caption that drifts, which the contract
+        // forbids). No words at all is a normal, supported state.
+        let words: [CaptionWord] = (dto.words ?? []).compactMap { w in
+            guard let t = w.text, !t.isEmpty,
+                  let start = w.start, let end = w.end,
+                  start.isFinite, end.isFinite, end >= start else { return nil }
+            return CaptionWord(text: t, start: start, end: end)
+        }
+
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        // A NaN / negative / missing duration becomes 0, which pairs with
+        // durationSource "unknown" — never a number a layout could trust.
+        var duration = 0.0
+        if let d = dto.durationS, d.isFinite, d > 0 { duration = d }
+
+        return AIVoiceResult(
+            audioURL: audioURL,
+            durationS: duration,
+            words: words,
+            voiceName: clean(dto.voiceName) ?? "AI voice",
+            characters: dto.characters?.value ?? script.count,
+            mime: clean(dto.mime) ?? "audio/mpeg",
+            // An older server that sends no duration_source is treated as
+            // "unknown" rather than silently trusted.
+            durationSource: clean(dto.durationSource) ?? "unknown",
+            disclosure: clean(dto.disclosure),
+            provenanceID: dto.provenance?.id,
+            provenanceRecorded: dto.provenance?.recorded ?? false)
+    }
+
     // MARK: - Account / usage / leads
 
     func updateBrand(_ fields: [String: String]) async throws {
@@ -679,6 +847,16 @@ final class LiveAPIClient: APIClient {
                 used: used,
                 leads: usage?.leads?.value ?? 0)
         }
+        // Admin flag: whatever the SERVER says, never a local rule. Today's /me
+        // sends neither field, so both stay nil and the owner console probes
+        // GET /admin/spend once instead (a 403 hides the row).
+        let serverRole = (dto.role ?? dto.user?.role)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        var adminFlag: Bool? = dto.isAdmin ?? dto.user?.isAdmin
+        if adminFlag == nil, let serverRole, !serverRole.isEmpty {
+            adminFlag = (serverRole == "owner" || serverRole == "admin")
+        }
         let summary = UsageSummary(
             aiSpendCents: usage?.costCents.map { Int($0.rounded()) },
             renderCount: usage?.renders?.value,
@@ -687,7 +865,9 @@ final class LiveAPIClient: APIClient {
             entitlements: entitlements,
             userName: dto.user?.name,
             orgName: dto.org?.name,
-            brandName: dto.org?.brandKit?.name)
+            brandName: dto.org?.brandKit?.name,
+            isAdmin: adminFlag,
+            role: serverRole)
         // Let the Account row show the server-side name (never an email).
         await AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
         return summary
@@ -707,6 +887,40 @@ final class LiveAPIClient: APIClient {
             throw APIError.decoding
         }
         return dtos.map(mapLead).sorted { $0.createdAt > $1.createdAt }
+    }
+
+    // MARK: - Admin console (docs/ADMIN-CONSOLE-CONTRACT.md — owner/admin only)
+    //
+    // Four read-only GETs under `/functions/v1/admin`. The admin role is
+    // SERVER-enforced (`public.profiles.is_admin` for `auth.uid()`, read with
+    // the service-role client): a valid non-admin JWT gets 403 on every route,
+    // so nothing here is a permission check — it is a convenience surface whose
+    // visibility follows the server's answer.
+    //
+    // Nothing is written and no idempotency key is needed (GET). The shared
+    // `execute` already refreshes the JWT and maps `{error, code}` into
+    // `APIError.server`, so `.isForbidden` / `.isUnauthorized` classify the
+    // 403 ("not an admin") and 401 ("signed out") the console must tell apart.
+
+    func adminSpend(window: AdminSpendWindow) async throws -> AdminSpendReport {
+        let query = [URLQueryItem(name: "window", value: window.rawValue)]
+        let data = try await execute(makeRequest(url: url(["admin", "spend"], query: query)))
+        return try decode(data)
+    }
+
+    func adminProviders() async throws -> AdminProvidersReport {
+        let data = try await execute(makeRequest(url: url(["admin", "providers"])))
+        return try decode(data)
+    }
+
+    func adminUsage() async throws -> AdminUsageReport {
+        let data = try await execute(makeRequest(url: url(["admin", "usage"])))
+        return try decode(data)
+    }
+
+    func adminHealth() async throws -> AdminHealthReport {
+        let data = try await execute(makeRequest(url: url(["admin", "health"])))
+        return try decode(data)
     }
 
     // MARK: - Write bodies (explicit snake_case)
@@ -871,6 +1085,10 @@ final class LiveAPIClient: APIClient {
     private func mapRender(_ dto: RenderDTO, fallbackListingID: UUID?, fallbackTier: Render.Tier,
                            fallbackDuration: Double, fallbackEnhancements: Enhancements,
                            fallbackID: UUID? = nil) -> Render {
+        // `fallbackListingID` is the caller's own listing id (it knows which
+        // listing it asked about). The final `UUID()` is unreachable for every
+        // shipping caller — `createRender` always passes one and `renderStatus`
+        // rejects a listing-less response before getting here (F-E-22).
         var r = Render(
             listingID: dto.listingId.flatMap(UUID.init(uuidString:)) ?? fallbackListingID ?? UUID(),
             tier: dto.tier.flatMap(Render.Tier.init(rawValue:)) ?? fallbackTier,
@@ -1031,6 +1249,32 @@ final class LiveAPIClient: APIClient {
         let createdAt: String?
     }
 
+    /// Body of GET /ai-voice/voices.
+    private struct AIVoicesDTO: Decodable {
+        let voices: [AIVoice]?
+    }
+
+    /// Body of POST /ai-voice/tts. Every field optional → tolerant decode; the
+    /// ones that must be there are re-checked in `aiVoiceTTS`.
+    private struct AIVoiceTTSDTO: Decodable {
+        /// One caption word on the wire. Optional so one malformed entry costs
+        /// only itself, never the whole response.
+        struct Word: Decodable {
+            let text: String?
+            let start: Double?
+            let end: Double?
+        }
+        let audioUrl: String?        // audio_url — short-lived signed R2 GET
+        let mime: String?
+        let durationS: Double?       // duration_s
+        let durationSource: String?  // duration_source
+        let words: [Word]?
+        let voiceName: String?       // voice_name
+        let characters: LenientInt?
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+    }
+
     /// Body of GET /ai-video/status — one of processing/completed/failed.
     private struct AIVideoStatusDTO: Decodable {
         let status: String?
@@ -1044,6 +1288,12 @@ final class LiveAPIClient: APIClient {
             let id: String?
             let email: String?
             let name: String?
+            /// Not sent by today's /me (the admin role lives in
+            /// `public.profiles.is_admin` and is read only by the admin
+            /// function). Decoded tolerantly so the owner console skips its
+            /// probe the moment the server starts sending it.
+            let isAdmin: Bool?
+            let role: String?
         }
         struct BrandKit: Decodable {
             let name: String?      // other brand fields are ignored (tolerant)
@@ -1085,6 +1335,9 @@ final class LiveAPIClient: APIClient {
         let trialEndsAt: String?
         let entitlement: Entitlement?
         let usage: Usage?
+        /// Top-level `is_admin` / `role`, if a future /me carries them.
+        let isAdmin: Bool?
+        let role: String?
     }
 
     private struct LeadsDTO: Decodable {

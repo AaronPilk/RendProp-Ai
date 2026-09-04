@@ -89,3 +89,115 @@ export const ESTIMATED_UNIT_COST_CENTS: Record<string, number> = {
   restage: 3.9, // Nano Banana direct (~$0.039/img)
   hero: 24, // Seedance 1.0 Pro Fast 5s clip (~$0.24)
 };
+
+// ── App-AI cost rows (in-app generations with NO render job) ─────────────────
+//
+// The worker pipeline records cost through logCost() → log_job_cost() above,
+// which REQUIRES a render_job to lock and roll up onto. The in-app AI routes
+// (/ai-photo, /ai-video) have no render job: they call Gemini / fal directly and
+// hand the result back inline. Their spend still has to reach cost_ledger, or the
+// owner spend console under-reports AND the per-org monthly COGS ceiling never
+// sees app AI at all — the feature meters are the only thing bounding it today
+// (audit F-E-15, docs/handoff/E-network.md §2).
+//
+// So recordAppAiCost() writes ONE org-scoped cost_ledger row with job_id = NULL,
+// straight to the table with the SERVICE-ROLE client — migration 0007 revoked
+// INSERT on cost_ledger from every tenant role, so only the service role can
+// write it, exactly like the Python pipeline's REST insert. The admin console's
+// coverage probe keys "app AI is represented" on precisely this shape (an
+// org-scoped row with job_id IS NULL), so one successful write heals it.
+//
+// Authoritative unit costs, mirrored from services/pipeline/providers/costs.py
+// and the admin provider inventory (functions/admin/index.ts). Update in lockstep
+// with those two — a price only moves in one place if all three move together.
+export const APP_AI_UNIT_CENTS = {
+  /** Gemini 2.5 Flash Image ("Nano Banana") photo edit — per image. */
+  gemini_image: 3.9,
+  /** Seedance 1.0 Pro Fast image-to-video (reel + grounded aerial) — per output second. */
+  seedance_per_s: 4.8,
+  /** Veo 3.1 Fast ungrounded establishing aerial — flat per clip (repo has no per-second Veo price). */
+  veo_aerial_clip: 80.0,
+  /** Topaz Video AI drone-glide render — per output second, by tier. */
+  topaz_1080p60_per_s: 4.0,
+  topaz_4k30_per_s: 8.0,
+  topaz_4k60_per_s: 16.0,
+} as const;
+
+export interface AppAiCostArgs {
+  /** The org the spend is billed to. Required: an org_id-less row is invisible to
+   *  the per-org COGS ceiling and to GET /admin/usage, so we refuse to write one. */
+  orgId: string;
+  /** cost_ledger.provider — gemini | fal (matches the admin provider inventory). */
+  provider: string;
+  /** cost_ledger.feature — photo_edit | reel | aerial | drone_render (app-AI vocab). */
+  feature: string;
+  model?: string | null;
+  /** Images = 1; video = seconds of OUTPUT. Default 1. */
+  units?: number;
+  /** Cost per unit in cents (fractional ok, e.g. 3.9). */
+  unitCents: number;
+  /** Small, no PII / no secrets — provider request ids, tier, seconds, etc. */
+  meta?: Record<string, unknown>;
+}
+
+export interface AppAiCostResult {
+  recorded: boolean;
+  /** The line-item cents (round(units × unitCents)) whether or not it persisted. */
+  total_cents: number;
+  /** Why nothing was written (only when recorded === false). */
+  reason?: string;
+}
+
+/**
+ * Record ONE cost_ledger row for a successful in-app AI generation that has no
+ * render job. Modelled on recordProvenance(): BEST EFFORT and NEVER THROWS.
+ *
+ * By the time this is called the provider has already run and already billed —
+ * dropping the user's finished image/clip because a ledger insert hit a Supabase
+ * blip is the wrong trade, so a failure is logged and swallowed. (The Python
+ * pipeline ledger deliberately does the opposite and fails CLOSED, because a
+ * render job has a durable spool + reconciliation spine; app AI has neither, and
+ * the console's coverage panel already measures the residual gap this leaves.)
+ *
+ * Call it ONLY on the confirmed-success path — after the image came back, or
+ * after fal ACCEPTED the submit — so a failed/refunded generation writes no row.
+ * Idempotency is the caller's Idempotency-Key 409 duplicate block: a retried
+ * request is rejected before it ever reaches the provider, so one generation
+ * writes exactly one row.
+ */
+export async function recordAppAiCost(
+  admin: SupabaseClient,
+  args: AppAiCostArgs,
+): Promise<AppAiCostResult> {
+  const units = args.units ?? 1;
+  const total_cents = round4(units * args.unitCents);
+  try {
+    if (!args.orgId) {
+      console.error("recordAppAiCost: missing orgId — skipping ledger write", {
+        feature: args.feature,
+        provider: args.provider,
+      });
+      return { recorded: false, total_cents, reason: "missing orgId" };
+    }
+    const { error } = await admin.from("cost_ledger").insert({
+      job_id: null, // app AI has no render job — the shape the coverage probe keys on
+      org_id: args.orgId,
+      feature: args.feature,
+      provider: args.provider,
+      model: args.model ?? null,
+      units,
+      unit_cost_cents: args.unitCents,
+      total_cents,
+      meta: args.meta ?? {},
+    });
+    if (error) {
+      console.error("recordAppAiCost: cost_ledger insert failed:", error.message);
+      return { recorded: false, total_cents, reason: error.message };
+    }
+    return { recorded: true, total_cents };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    console.error("recordAppAiCost threw:", reason);
+    return { recorded: false, total_cents, reason };
+  }
+}

@@ -25,48 +25,12 @@
 //
 // Run: npm test
 
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
-import ts from "typescript";
+import { buildSrc } from "./build-src.mjs";
 
-const HERE = dirname(fileURLToPath(import.meta.url));
-const ROOT = resolve(HERE, "..");
-const SRC = join(ROOT, "src");
-const OUT = join(ROOT, "node_modules", ".cache", "unbranded-check");
-
-// ---------------------------------------------------------------------------
-// 1. Build: transpile src/*.ts into ESM we can import. Relative specifiers get
-//    a .js suffix (Node does not resolve extensionless imports).
-// ---------------------------------------------------------------------------
-function buildRenderer() {
-  rmSync(OUT, { recursive: true, force: true });
-  mkdirSync(OUT, { recursive: true });
-  for (const file of readdirSync(SRC).filter((f) => f.endsWith(".ts"))) {
-    const source = readFileSync(join(SRC, file), "utf8");
-    const { outputText, diagnostics } = ts.transpileModule(source, {
-      fileName: file,
-      reportDiagnostics: true,
-      compilerOptions: {
-        target: ts.ScriptTarget.ES2022,
-        module: ts.ModuleKind.ESNext,
-        isolatedModules: true,
-      },
-    });
-    if (diagnostics && diagnostics.length) {
-      for (const d of diagnostics) {
-        console.error(`transpile ${file}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`);
-      }
-      throw new Error(`could not transpile src/${file}`);
-    }
-    const js = outputText.replace(
-      /(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,
-      (m, pre, spec, post) => (/\.(js|mjs|json)$/.test(spec) ? m : `${pre}${spec}.js${post}`),
-    );
-    writeFileSync(join(OUT, file.replace(/\.ts$/, ".js")), js);
-  }
-  return import(pathToFileURL(join(OUT, "player.js")).href);
-}
+// 1. Build: transpile src/*.ts into ESM we can import (shared with
+//    check-routes.mjs) and load the REAL renderer — never a copy of it.
+const load = buildSrc("unbranded-check");
+const buildRenderer = () => load("player");
 
 // ---------------------------------------------------------------------------
 // 2. Sentinels — every branded value the payload can carry, made unique so a
@@ -304,6 +268,15 @@ function mustContain(html, label, what, needle) {
   else ok(`${label}: ${what}`);
 }
 
+/** The markup of one <section id="…">, so a promo assertion about the
+ *  financing block is not confused by the footer partner strip. */
+function sectionOf(html, id) {
+  const at = html.indexOf(`id="${id}"`);
+  if (at < 0) return "";
+  const end = html.indexOf("</section>", at);
+  return html.slice(at, end < 0 ? html.length : end);
+}
+
 function auditUnbranded(html, label, tour, player) {
   // (a) no sentinel value survives
   for (const [id, value] of SENTINEL_VALUES) mustNotContain(html, label, id, value);
@@ -378,8 +351,88 @@ async function main() {
     ["drone sentence", player.DRONE_DISCLOSURE],
   ]) mustContain(reBr, "real_estate /f/", what, needle);
 
+  // ---- F-H-19: indexing is OPT-IN on a customer's tour --------------------
+  // The branded page carries the owner's name, phone, email and the listing
+  // address. It must be noindex until the owner asks for it, and the opt-in
+  // must actually work.
+  mustContain(reBr, "real_estate /f/", "noindex by default", '<meta name="robots" content="noindex, nofollow">');
+  const optIn = realEstateTour();
+  optIn.agent_card = { ...AGENT_CARD, allow_indexing: true };
+  const optInBr = player.renderTourPage(optIn, FN, "anon", "site-key", { origin: "https://rendprop.com" });
   checks++;
-  if (reBr.includes('<meta name="robots" content="noindex">')) fail("[real_estate /f/] branded page must stay indexable");
+  if (optInBr.includes('name="robots"')) fail("[opt-in /f/] an owner who opted in must get NO robots meta");
+  else ok("opt-in /f/: indexable when the owner opts in");
+  // …and the opt-in must never make the MLS page indexable.
+  const optInUn = player.renderTourPage(optIn, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  mustContain(optInUn, "opt-in /u/", "still noindex", '<meta name="robots" content="noindex">');
+  // A listing-level opt-in works too (details is what the app writes today).
+  const optIn2 = realEstateTour();
+  optIn2.listing.details.allow_indexing = true;
+  checks++;
+  if (player.renderTourPage(optIn2, FN, "anon", "site-key", {}).includes('name="robots"')) {
+    fail("[opt-in details /f/] details.allow_indexing must opt the page in");
+  } else ok("opt-in /f/: details.allow_indexing honoured");
+
+  // ---- F-H-17: the house promotions are the owner's call ------------------
+  // Default: NO lender CTA on someone else's listing page (RESPA exposure is
+  // theirs, not ours), but the neutral payment estimate still renders.
+  mustContain(reBr, "real_estate /f/", "payment estimate", 'id="financing"');
+  const finDefault = sectionOf(reBr, "financing");
+  checks++;
+  if (!finDefault.includes("Estimated from")) fail("[real_estate /f/] the neutral payment estimate must still render");
+  for (const [what, needle] of [
+    ["lender CTA", "Get pre-approved"],
+    ["lender link", "wsmlending.com"],
+  ]) mustNotContain(finDefault, "real_estate /f/ financing (promo default)", what, needle);
+  // Opting in brings it back, labelled.
+  const fin = realEstateTour();
+  fin.listing.details.show_financing = true;
+  const finBr = sectionOf(player.renderTourPage(fin, FN, "anon", "site-key", {}), "financing");
+  mustContain(finBr, "financing opt-in /f/", "lender CTA", "Get pre-approved");
+  mustContain(finBr, "financing opt-in /f/", "promo disclosure", "Lender promotion from Rendprop");
+  // An owner-supplied lender opts in on its own and is labelled as theirs.
+  const own = realEstateTour();
+  own.listing.details.lender_name = "Sentinel Qx7 Mortgage";
+  own.listing.details.lender_url = "https://sentinel-lender-qx7.example.com/";
+  const ownFin = sectionOf(player.renderTourPage(own, FN, "anon", "site-key", {}), "financing");
+  mustContain(ownFin, "own-lender /f/", "owner's lender", "https://sentinel-lender-qx7.example.com/");
+  mustContain(ownFin, "own-lender /f/", "owner's lender label", "Lender chosen by the listing owner");
+  mustNotContain(ownFin, "own-lender /f/ financing", "our lender", "wsmlending.com");
+  // …and an owner-supplied lender must not leak onto the MLS page.
+  const ownUn = player.renderTourPage(own, FN, "anon", "site-key", { unbranded: true });
+  mustNotContain(ownUn, "own-lender /u/", "owner's lender", "sentinel-lender-qx7");
+  // Partner strip: on by default but LABELLED, and switchable off.
+  mustContain(reBr, "real_estate /f/", "partner strip label", "Promoted by Rendprop");
+  mustContain(reBr, "real_estate /f/", "partner strip disclosure", "not endorsements by the owner");
+  const noPartners = realEstateTour();
+  noPartners.listing.details.show_partners = false;
+  const npBr = player.renderTourPage(noPartners, FN, "anon", "site-key", {});
+  for (const [what, needle] of [
+    ["partner card", "tractrealestate.com"],
+    ["partner strip label", "Promoted by Rendprop"],
+  ]) mustNotContain(npBr, "partners off /f/", what, needle);
+  // The Rendprop attribution is not a promotion and always stays.
+  mustContain(npBr, "partners off /f/", "made-with attribution", "Made with <b>Rendprop</b>");
+
+  // ---- CA AB 723: the unaltered original is INCLUDED, not just linked -----
+  // ALTERED_MEDIA[2] ("Kitchen") has an altered_url but no original: no pair.
+  // Every item that HAS an original must render that original as an <img>.
+  for (const [label, html] of [["real_estate /f/", reBr], ["real_estate /u/", reUn]]) {
+    mustContain(html, label, "original included inline", 'src="https://cdn.example.com/original-living.jpg"');
+    mustContain(html, label, "aerial source still included", 'src="https://cdn.example.com/original-exterior.jpg"');
+  }
+  // An original with no published altered version still gets shown on its own.
+  const origOnly = realEstateTour();
+  origOnly.altered_media = [{
+    label: "Great room",
+    kind: "virtual_stage",
+    disclosure: "Furniture was added digitally.",
+    original_url: "https://cdn.example.com/only-original.jpg",
+    altered_url: null,
+  }];
+  const origOnlyUn = player.renderTourPage(origOnly, FN, "anon", "site-key", { unbranded: true });
+  mustContain(origOnlyUn, "original-only /u/", "original still rendered", 'src="https://cdn.example.com/only-original.jpg"');
+  mustContain(origOnlyUn, "original-only /u/", "single-column pair", 'class="disc-ba one"');
 
   // ---- venue (per-industry block: booking, menu, phone, directions) -------
   const ve = venueTour();
@@ -425,7 +478,7 @@ async function main() {
   for (const token of FORBIDDEN_TOKENS) mustNotContain(emUn, "embed /u/", `token ${token}`, token);
 
   // ---- the PUBLIC demo (/u/estate-demo) — the page people actually open ---
-  const demoMod = await import(pathToFileURL(join(OUT, "demo.js")).href);
+  const demoMod = await load("demo");
   const demoTour = demoMod.buildDemoTour();
   const demoUn = player.renderTourPage(demoTour, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
   for (const token of FORBIDDEN_TOKENS) mustNotContain(demoUn, "demo /u/", `token ${token}`, token);
@@ -617,7 +670,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`✔ unbranded check passed — ${checks} assertions over 8 renders (real_estate, venue, legacy, embed, demo, tours-shape, cdn-host, notice page) + 12 gate self-tests.`);
+  console.log(`✔ unbranded check passed — ${checks} assertions over 15 renders (real_estate, venue, legacy, embed, demo, tours-shape, cdn-host, notice page, index opt-in x3, promo opt-in x3, original-only) + 12 gate self-tests.`);
 }
 
 main().catch((err) => {

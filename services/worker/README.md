@@ -79,7 +79,7 @@ Why each piece (all from `RenderEngine.swift`):
 | Piece | Purpose |
 |---|---|
 | `setpts=PTS/2.0` (drone `1.25`, short clips ≤`1.5`) | RETIME — the glide. Same speed rule: `min(base,1.5)` under 12s. |
-| `fps=60`, `-r 60` | fluid scroll-scrub cadence |
+| `fps=60` | fluid scroll-scrub cadence (scale runs FIRST, so frames `fps` will drop aren't scaled for nothing) |
 | `scale=…:force_original_aspect_ratio=decrease:force_divisible_by=2` | ≤1280 long edge, aspect-kept, never upscaled, even dims. Single-quotes protect the commas in `min()`. |
 | `-g 1 -bf 0` + `x264 keyint=1` | **ALL-INTRA** — every frame a keyframe → any scrub position decodes instantly. The whole point. |
 | `-b:v 14M` | high bitrate keeps all-intra crisp (mirrors `AVVideoAverageBitRateKey`) |
@@ -100,13 +100,37 @@ and HLG (`arib-std-b67`) sources — the iPhone default — get a real tone-map
 untagged sources are passed through untouched (the chain degrades SDR and
 errors on untagged input). Output is tagged bt709 either way. Needs an ffmpeg
 built with `zscale`/`tonemap` (the Docker image qualifies); on a build without
-them the worker warns and re-tags only. `TONEMAP_HDR=0` disables it.
+them the worker warns and re-tags only. `TONEMAP_HDR=0` disables it;
+`TONEMAP_CURVE` (default `mobius`) and `TONEMAP_NPL` (default 100) tune it.
+
+Measured with `tests/test_hdr_tonemap.py` (ffmpeg 6.1.1, SMPTE bars, signalstats
+averaged over every output frame, 0–255) — an SDR reference reads
+YAVG 103.7 / YMAX 254 / SATAVG 39.4:
+
+| source | chain | YAVG | YMAX | SATAVG |
+|---|---|---|---|---|
+| bt709 SDR | none (correct) | 103.7 | 254 | 39.4 |
+| untagged SDR | none (correct) | 103.7 | 254 | 39.4 |
+| PQ BT.2020 | `TONEMAP_HDR=0` — re-tag only | 79.7 | 134 | **9.6** |
+| PQ BT.2020 | `hable` | 73.4 | 162 | 24.6 |
+| PQ BT.2020 | **`mobius` (default)** | 99.9 | 207 | **36.1** |
+| HLG BT.2020 | **`mobius` (default)** | 98.8 | 207 | 37.6 |
+
+The `TONEMAP_HDR=0` row is the washed-out, mislabelled output the audit found;
+`mobius` was chosen over `hable` because `hable` crushes in-gamut content (a room
+interior is mostly in gamut) and, on a genuinely bright PQ source, clipped YMAX to
+255 where `mobius` held 240.
 The AI pipeline extracts its keyframes with the same conditional chain, so
 Gemini/Claude never judge a washed-out HLG frame.
 
-**Timeouts:** `FFMPEG_TIMEOUT_S` (default 90 min) is enforced by a
-`threading.Timer` that kills ffmpeg when it fires — whether or not ffmpeg is
-still printing progress. ffprobe and poster extraction have their own bounds.
+**Timeouts:** two independent ceilings. `FFMPEG_TIMEOUT_S` (default 90 min) is
+the TOTAL wall clock, enforced by a `threading.Timer` that kills the process group
+when it fires. `FFMPEG_STALL_TIMEOUT_S` (default 5 min) is the NO-PROGRESS
+ceiling — the one that actually catches a wedged demuxer, since a silently hung
+ffmpeg would otherwise sit inside the total budget for 90 minutes. Stall
+monitoring stops at `progress=end` so a long `+faststart` moov relocation is never
+mistaken for a hang. ffprobe and poster extraction have their own bounds, and a
+shutdown signal aborts the encode and re-queues the job.
 
 **Stabilization:** RenderEngine's Vision path-smoothing is on-device only. Server
 -side we skip it (drone clips never needed it). GPU stabilization (`vidstab`
@@ -125,12 +149,14 @@ two-pass or Gyroflow-grade) is the v3 slot — see TODOs.
 4. Store `stream_uid` on `renders`. HLS is usable immediately; by
    default we don't block on transcode (`STREAM_REQUIRE_READY=0`).
 
-`direct_upload()` (multipart) exists for environments where the copy source
-isn't reachable by Cloudflare but is **not wired** as an automatic fallback
-yet — a copy failure simply publishes without Stream. If only the readiness
-poll (`STREAM_REQUIRE_READY=1`) times out, the UID is kept (Stream keeps
-transcoding). **No Stream token? We skip Stream entirely** and the player
-serves the R2 mp4 via `renders.video_key`.
+`direct_upload()` (multipart) **is** the automatic fallback: if Cloudflare can't
+reach the presigned R2 url, the worker pushes the bytes itself; if that fails too,
+the tour publishes with the R2 mp4. If only the readiness poll
+(`STREAM_REQUIRE_READY=1`) times out, the UID is kept (Stream keeps transcoding).
+A Stream asset registered by a job that then FAILS is deleted during rollback, so
+it can't transcode and bill forever unreferenced. **No Stream token? We skip
+Stream entirely** and the player serves the R2 mp4 via `renders.video_key`.
+The `stream_store` cost line is only written when a UID actually exists.
 
 ---
 
@@ -214,6 +240,36 @@ see TODOs.
 
 ---
 
+## Tests
+
+Stdlib-only scripts (the repo has no Python test runner installed):
+
+```bash
+cd services/worker
+python3 tests/test_job_lease.py     # claim / lease / heartbeat / reclaim / reaper,
+                                    # the pre-migration degradation path, and the
+                                    # F-G-13 guards. Uses a fake PostgREST.
+python3 tests/test_hdr_tonemap.py   # synthesises SDR / untagged / PQ / HLG clips,
+                                    # runs the REAL encode command, measures the
+                                    # result. Skips if ffmpeg lacks libzimg.
+```
+
+## Cost-ledger policy
+
+Two ledgers with deliberately opposite failure modes:
+
+* **Worker infra ESTIMATES** (`render` compute, `stream_store`) are best-effort.
+  Bounded retries, then the row is written to a durable spool and the render
+  publishes. An estimate must never destroy a finished tour.
+* **Real provider spend** (`services/pipeline/cost_ledger.py`) fails closed. It
+  retries, spools the row, and then LATCHES: the router refuses every further paid
+  call for that job. Money we cannot record is money we do not spend. The base
+  tour still ships; the remaining segments ship as originals.
+
+The spool (`COST_LEDGER_SPOOL`) defaults to the system temp dir, which is tmpfs on
+Cloud Run and Modal. Point it at a persistent volume — the worker prints which of
+the two it has at startup.
+
 ## TODOs / next
 
 - **Trigger, not poll:** Supabase DB webhook or `pg_notify` on `render_jobs`
@@ -227,9 +283,12 @@ see TODOs.
 - **Hero clip has no first-class home:** it's uploaded to R2 and logged, but the
   schema has no column for it. Add `renders.hero_key` (or a `media` table) so the
   tour host can play it.
-- **Heartbeat / lease:** a job whose worker dies stays `processing` forever
-  (no reaper yet). Add `lease_expires_at` + a heartbeat and let the claim query
-  reclaim expired leases.
+- **Heartbeat / lease:** *implemented* in the worker (claim stamps
+  `lease_expires_at`/`worker_id`/`attempts`, a heartbeat thread renews it, the
+  claim query reclaims expired leases, and a reaper fails attempts-exhausted
+  orphans as `poison`). It needs **migration 0015** — see `HANDOFF.md`. Until that
+  lands the worker detects the missing columns, warns at startup, and behaves as
+  before.
 - **4K tier:** `render_jobs.tier` (`premium4k`/`cinematic`) is read but the encode
   is fixed at ≤1280. Branch the long-edge/bitrate on tier when 4K ships.
 - **Stream webhook:** subscribe to Stream's `video.ready` webhook instead of

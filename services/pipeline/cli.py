@@ -78,7 +78,9 @@ def cmd_estimate(args: argparse.Namespace) -> None:
         pct = 100 * br["total_cents"] / addon
         print(f"  vs add-on price {_money(addon)} → COGS is {pct:.1f}% of revenue.")
     print("\n  Note: QC lines use the flat pre-call estimate; a real `run` bills QC")
-    print("  from actual Claude token usage (prompt-cached rubric = cheaper still).\n")
+    print("  from actual Claude token usage, which is usually LOWER than this.")
+    print("  (The rubric is NOT prompt-cached: ~540 tokens vs Haiku's ~4096-token")
+    print("   minimum cacheable prefix, so a cache marker would be inert.)\n")
 
 
 # ── run (one real call) ───────────────────────────────────────────────────────

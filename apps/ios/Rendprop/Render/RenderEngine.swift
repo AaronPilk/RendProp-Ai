@@ -16,9 +16,11 @@ import Vision
 ///   • 60 FPS    — output frame cadence for a fluid scroll-scrub.
 ///   • SCRUB     — ≤720p H.264, ALL-INTRA (every frame a keyframe) → the player
 ///                 seeks any position instantly.
-///   • COLOR     — both compositions and the writer are tagged Rec.709 SDR so
-///                 HDR/Dolby-Vision phone footage tone-maps instead of looking
-///                 washed out or crushed.
+///   • COLOR     — both compositions RENDER into Rec.709 SDR and the writer tags
+///                 the result the same way, so an HDR (HLG / Dolby Vision)
+///                 source is converted by AVFoundation instead of being written
+///                 out with HDR code values under an SDR tag. See `tag709` for
+///                 what that does — and does not — guarantee.
 ///
 /// HONEST FALLBACK: stabilization is best-effort. If registration is low-
 /// confidence (fast pans, low light, featureless walls) — or pass 1 fails for
@@ -60,7 +62,15 @@ enum RenderEngine {
         }
     }
 
-    private static let queue = DispatchQueue(label: "com.rendprop.render", qos: .userInitiated)
+    /// One SERIAL queue per render, not one shared by all of them.
+    /// `requestMediaDataWhenReady(on:)` requires a serial queue, and pass 1 runs
+    /// its whole read loop synchronously on it — so a single shared queue meant
+    /// a second listing's render (Home tab + Listings tab can both start one)
+    /// sat frozen at 2 % until the first finished. Per-render queues keep the
+    /// two independent (audit F-B-12).
+    private static func makeRenderQueue() -> DispatchQueue {
+        DispatchQueue(label: "com.rendprop.render.\(UUID().uuidString.prefix(8))", qos: .userInitiated)
+    }
 
     /// Thread-safe cancellation flag bridged into the AVFoundation callback
     /// queues. `Task.isCancelled` is always FALSE inside plain dispatch-queue
@@ -133,6 +143,7 @@ enum RenderEngine {
                                    progress: @escaping @Sendable (Double, String) -> Void) async throws -> Output {
         progress(0.02, "Preparing your video…")
         sweepStaleTempFiles(in: FileStore.recordingsDir)
+        let queue = makeRenderQueue()
 
         let source = AVURLAsset(url: asset.localURL)
         guard let srcTrack = try await source.loadTracks(withMediaType: .video).first else {
@@ -174,7 +185,7 @@ enum RenderEngine {
                 result = try await analyzeJitter(source: source, srcTrack: srcTrack,
                                                  duration: duration, outDuration: outDuration,
                                                  speed: speed, frameCount: frameCount,
-                                                 geo: analyze, cancelFlag: cancelFlag,
+                                                 geo: analyze, queue: queue, cancelFlag: cancelFlag,
                                                  progress: { p in analyzeProgress.send(p) })
             } catch RenderError.cancelled {
                 throw RenderError.cancelled
@@ -214,7 +225,7 @@ enum RenderEngine {
                                  duration: duration, outDuration: outDuration,
                                  speed: speed, frameCount: frameCount,
                                  geo: encode, corrections: corrections, cropZoom: cropZoom,
-                                 outURL: tempURL, cancelFlag: cancelFlag,
+                                 outURL: tempURL, queue: queue, cancelFlag: cancelFlag,
                                  progress: { p in encodeProgress.send(p) })
         } catch {
             // Never leave a partial mp4 in Documents on failure/cancel — it
@@ -297,10 +308,22 @@ enum RenderEngine {
         return (composition, compTrack)
     }
 
-    /// Tag the composition output as Rec.709 SDR. HDR / Dolby Vision sources
-    /// are then tone-mapped by the compositor (not just relabelled by the
-    /// writer's color properties) — audit F-D-11. Applied to BOTH passes so
-    /// the analysis sees the same picture that gets encoded.
+    /// Ask the COMPOSITOR to render into Rec.709 SDR — not just relabel the
+    /// output the way `AVVideoColorPropertiesKey` on the writer alone does.
+    /// AVFoundation converts each composited frame into these primaries and
+    /// transfer function, so an HLG / PQ source is brought down to SDR here
+    /// instead of being written out with HDR code values under an SDR tag
+    /// (audit F-D-11). Applied to BOTH passes so the analysis sees the same
+    /// picture that gets encoded.
+    ///
+    /// LIMITATION — read before claiming anything about HDR: these three
+    /// properties are the only dependency-free HDR→SDR route on iOS 16, and
+    /// Apple does not document the curve the conversion applies. This is a
+    /// colour-space conversion we ask the system to perform, NOT a tone-mapping
+    /// operator we control, and the highlight roll-off on real HDR capture has
+    /// never been measured on a device. No UI copy promises HDR handling, and
+    /// none should until someone has looked at a Dolby Vision walkthrough on
+    /// hardware.
     private static func tag709(_ vc: AVMutableVideoComposition) {
         vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
         vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
@@ -314,7 +337,7 @@ enum RenderEngine {
     private static func analyzeJitter(source: AVAsset, srcTrack: AVAssetTrack,
                                       duration: CMTime, outDuration: CMTime,
                                       speed: Double, frameCount: Int, geo: Geometry,
-                                      cancelFlag: CancelFlag,
+                                      queue: DispatchQueue, cancelFlag: CancelFlag,
                                       progress: @escaping @Sendable (Double) -> Void) async throws -> AnalyzeResult? {
         let (composition, compTrack) = try retimeComposition(source: source, srcTrack: srcTrack,
                                                              duration: duration, outDuration: outDuration)
@@ -344,7 +367,7 @@ enum RenderEngine {
         let maxShiftX = geo.renderSize.width * maxPlausibleShiftFraction
         let maxShiftY = geo.renderSize.height * maxPlausibleShiftFraction
 
-        return try await runOnQueue { () throws -> AnalyzeResult? in
+        return try await runOnQueue(queue) { () throws -> AnalyzeResult? in
             var raw = [CGPoint]()                 // cumulative CONTENT path (top-left coords)
             raw.reserveCapacity(frameCount)
             var pos = CGPoint.zero
@@ -417,7 +440,7 @@ enum RenderEngine {
                                    duration: CMTime, outDuration: CMTime,
                                    speed: Double, frameCount: Int, geo: Geometry,
                                    corrections: [CGPoint], cropZoom: CGFloat,
-                                   outURL: URL, cancelFlag: CancelFlag,
+                                   outURL: URL, queue: DispatchQueue, cancelFlag: CancelFlag,
                                    progress: @escaping @Sendable (Double) -> Void) async throws {
         let (composition, compTrack) = try retimeComposition(source: source, srcTrack: srcTrack,
                                                              duration: duration, outDuration: outDuration)
@@ -428,26 +451,40 @@ enum RenderEngine {
         vc.frameDuration = fd
         tag709(vc)
 
-        // One instruction per output frame so each gets its own stabilization transform.
-        // (Metadata only — cheap. Same top-left coord space as the content path.)
+        // Stabilized: one instruction per output frame, so each frame gets its
+        // own correction. (Metadata only — same top-left coord space as the
+        // content path.) NOT stabilized (drone clips, or pass 1 came back
+        // low-confidence): every frame would carry the identical identity
+        // transform, so emit ONE instruction for the whole range instead of
+        // tens of thousands of objects for a long clip.
         let W = geo.renderSize.width, H = geo.renderSize.height
+        let isStabilizing = cropZoom > 1.0001
         var instructions = [AVMutableVideoCompositionInstruction]()
-        instructions.reserveCapacity(frameCount)
-        for i in 0..<frameCount {
-            let start = CMTimeMultiply(fd, multiplier: Int32(i))
-            var thisDuration = fd
-            if i == frameCount - 1 {
-                let remaining = CMTimeSubtract(outDuration, start)
-                if remaining.seconds > 0 { thisDuration = remaining }
+        if isStabilizing {
+            instructions.reserveCapacity(frameCount)
+            for i in 0..<frameCount {
+                let start = CMTimeMultiply(fd, multiplier: Int32(i))
+                var thisDuration = fd
+                if i == frameCount - 1 {
+                    let remaining = CMTimeSubtract(outDuration, start)
+                    if remaining.seconds > 0 { thisDuration = remaining }
+                }
+                let instr = AVMutableVideoCompositionInstruction()
+                instr.timeRange = CMTimeRange(start: start, duration: thisDuration)
+                let li = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
+                let c = corrections.indices.contains(i) ? corrections[i] : .zero
+                let stab = stabilizeTransform(correction: c, zoom: cropZoom, width: W, height: H)
+                li.setTransform(geo.normalize.concatenating(stab), at: start)
+                instr.layerInstructions = [li]
+                instructions.append(instr)
             }
+        } else {
             let instr = AVMutableVideoCompositionInstruction()
-            instr.timeRange = CMTimeRange(start: start, duration: thisDuration)
+            instr.timeRange = CMTimeRange(start: .zero, duration: outDuration)
             let li = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
-            let c = corrections.indices.contains(i) ? corrections[i] : .zero
-            let stab = stabilizeTransform(correction: c, zoom: cropZoom, width: W, height: H)
-            li.setTransform(geo.normalize.concatenating(stab), at: start)
+            li.setTransform(geo.normalize, at: .zero)   // == normalize ∘ identity stab
             instr.layerInstructions = [li]
-            instructions.append(instr)
+            instructions = [instr]
         }
         vc.instructions = instructions
 
@@ -607,7 +644,7 @@ enum RenderEngine {
 
     // MARK: - Queue / autorelease plumbing
 
-    private static func runOnQueue<T>(_ body: @escaping () throws -> T) async throws -> T {
+    private static func runOnQueue<T>(_ queue: DispatchQueue, _ body: @escaping () throws -> T) async throws -> T {
         try await withCheckedThrowingContinuation { (cont: CheckedContinuation<T, Error>) in
             queue.async {
                 do { cont.resume(returning: try body()) }

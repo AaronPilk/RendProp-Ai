@@ -55,6 +55,52 @@ class RenderError(RuntimeError):
     """ffmpeg/ffprobe failed, or the input is unusable."""
 
 
+class RenderAborted(RenderError):
+    """The encode was cancelled by a shutdown signal — NOT a job failure.
+
+    The caller re-queues the job instead of marking it failed (audit F-G-05: a
+    SIGTERM used to mean "finish the current job", which can be 90 minutes, so
+    the orchestrator SIGKILLed the worker and orphaned the job at `processing`).
+    """
+
+
+# Every live ffmpeg child, so a signal handler can stop them all promptly.
+_LIVE_PROCS: set = set()
+_LIVE_LOCK = threading.Lock()
+_ABORTED = threading.Event()
+
+
+def request_abort() -> None:
+    """Kill any running ffmpeg and make the current/next render abort.
+
+    Safe to call from a signal handler: only kill(2) and set(), no allocation of
+    locks that the interrupted thread might already hold beyond a short one.
+    """
+    _ABORTED.set()
+    with _LIVE_LOCK:
+        procs = list(_LIVE_PROCS)
+    for proc in procs:
+        _kill_group(proc)
+
+
+def clear_abort() -> None:
+    _ABORTED.clear()
+
+
+def aborting() -> bool:
+    return _ABORTED.is_set()
+
+
+def _kill_group(proc) -> None:
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
 ProgressCB = Callable[[float], None]
 
 
@@ -66,7 +112,14 @@ ProgressCB = Callable[[float], None]
 PROBE_TIMEOUT_S = int(os.environ.get("FFPROBE_TIMEOUT_S", "60"))
 RENDER_TIMEOUT_S = int(os.environ.get("FFMPEG_TIMEOUT_S", str(90 * 60)))  # 90 min
 POSTER_TIMEOUT_S = int(os.environ.get("FFMPEG_POSTER_TIMEOUT_S", "120"))
-MAX_SOURCE_SECONDS = float(os.environ.get("MAX_SOURCE_SECONDS", "3600"))  # 1 h
+# NO-PROGRESS ceiling: how long ffmpeg may emit nothing at all while it should
+# still be encoding, before we treat it as wedged. 0 disables (not recommended).
+STALL_TIMEOUT_S = int(os.environ.get("FFMPEG_STALL_TIMEOUT_S", "300"))
+# Must match what the rest of the stack ACCEPTS, or a customer burns their monthly
+# entitlement on a 90-minute upload that the worker then refuses (audit F-G-18):
+# services/supabase/functions/uploads/index.ts:158 and 0006_p0_rpcs.sql:208 both
+# allow 7200 s. Lower it here only if create_render_job rejects long sources too.
+MAX_SOURCE_SECONDS = float(os.environ.get("MAX_SOURCE_SECONDS", "7200"))  # 2 h
 
 
 # ── probing ───────────────────────────────────────────────────────────────────
@@ -82,6 +135,16 @@ _ZSCALE_PRIMARIES = {"bt2020": "2020", "bt709": "709"}
 _ZSCALE_MATRIX = {"bt2020nc": "2020_ncl", "bt2020c": "2020_cl", "bt709": "709"}
 
 HDR_TRANSFERS = frozenset({"smpte2084", "arib-std-b67"})
+
+# ffmpeg `tonemap` curves we allow. Default `mobius`, chosen from measurement
+# rather than folklore (tests/test_hdr_tonemap.py, run against this ffmpeg):
+#   reference bt709 SDR             YAVG 103.7  YMAX 254  SATAVG 39.4
+#   PQ source, re-tag only (old)    YAVG  79.7  YMAX 134  SATAVG  9.6  ← washed out
+#   PQ source, hable  (wave 1)      YAVG  73.4  YMAX 162  SATAVG 24.6
+#   PQ source, mobius (now)         YAVG  99.9  YMAX 207  SATAVG 36.1
+# `clip` scores marginally better on in-gamut content but hard-clips genuine
+# highlights (every sunlit window blows out), so it is available, not default.
+TONEMAP_CURVES = frozenset({"none", "clip", "linear", "gamma", "reinhard", "hable", "mobius"})
 
 
 @dataclass(frozen=True)
@@ -196,13 +259,16 @@ def hdr_tonemap_chain(info: SourceInfo | None) -> list[str]:
     tin = _ZSCALE_TRANSFER.get(info.color_transfer, "arib-std-b67")
     pin = _ZSCALE_PRIMARIES.get(info.color_primaries, "2020")
     min_ = _ZSCALE_MATRIX.get(info.color_space, "2020_ncl")
+    curve = SETTINGS.tonemap_curve if SETTINGS.tonemap_curve in TONEMAP_CURVES else "mobius"
     return [
         # Declare the input explicitly so partially-tagged phone clips (e.g. HLG
         # transfer with unspecified primaries) don't make zimg guess.
-        f"zscale=tin={tin}:pin={pin}:min={min_}:t=linear:npl=100",
+        f"zscale=tin={tin}:pin={pin}:min={min_}:t=linear:npl={SETTINGS.tonemap_npl:g}",
         "format=gbrpf32le",
         "zscale=p=bt709",
-        "tonemap=tonemap=hable:desat=0",
+        # desat=0 keeps colour instead of washing bright areas toward white; the
+        # curve choice is the part that matters (see TONEMAP_CURVES).
+        f"tonemap=tonemap={curve}:desat=0",
         "zscale=t=bt709:m=bt709:r=tv",
     ]
 
@@ -266,14 +332,29 @@ def _encode_cmd(input_path: str, output_path: str, speed: float, info: SourceInf
 def _run_with_progress(cmd: list[str], expected_out_s: float, progress: ProgressCB | None) -> None:
     """Run ffmpeg, translating `-progress` output into a 0..1 callback.
 
-    Hard wall-clock ceiling: the encode reads attacker-controlled media, so a
-    crafted input must not be able to pin a worker forever (audit round 4). The
-    ceiling is enforced by a `threading.Timer` that kills the process when it
-    fires — REGARDLESS of whether ffmpeg is still emitting progress lines.
-    (Audit F-G-04: the previous check only ran per stdout line, so an ffmpeg
-    that blocked silently was never killed.)
+    TWO independent ceilings, because they catch different failures:
+
+      • TOTAL wall clock (`FFMPEG_TIMEOUT_S`, 90 min) — a legitimately enormous
+        but slow encode. Enforced by a `threading.Timer` that kills the process
+        group whether or not ffmpeg is still emitting progress.
+      • NO-PROGRESS / STALL (`FFMPEG_STALL_TIMEOUT_S`, 5 min) — the failure the
+        total ceiling does NOT catch in useful time. A crafted file that wedges
+        the demuxer, a blocked read, a deadlocked filter: ffmpeg emits one
+        progress line and then nothing, `for line in proc.stdout` blocks, and the
+        worker sits there. With only a total ceiling, one bad upload pins a
+        worker (and, before the lease, its job) for a full 90 minutes.
+        (Audit F-G-04: wave 1 added the total watchdog; this adds the stall one.)
+
+    Stall detection stops once ffmpeg prints `progress=end`: the +faststart moov
+    relocation that follows can legitimately take minutes of silence on a
+    multi-GB all-intra file, and killing THAT would destroy a finished encode.
+
+    A shutdown signal (`request_abort()`) kills the child and raises
+    `RenderAborted` so the caller re-queues the job rather than failing it.
     """
     started = time.monotonic()
+    if aborting():
+        raise RenderAborted("shutdown requested before the encode started")
     try:
         # Own process group so the kill reaches every process holding our pipes
         # (otherwise a lingering child could keep the stdout read blocked).
@@ -283,22 +364,46 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
         )
     except OSError as e:
         raise RenderError(f"ffmpeg could not start ({cmd[0]}): {e}")
+
+    with _LIVE_LOCK:
+        _LIVE_PROCS.add(proc)
+
     err_tail: deque[str] = deque(maxlen=40)
     timed_out = threading.Event()
+    stalled = threading.Event()
+    finishing = threading.Event()          # set at `progress=end`
+    last_beat = [time.monotonic()]         # list = cheap mutable cell
 
     def _watchdog() -> None:
         timed_out.set()
-        try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        except (OSError, ProcessLookupError):
-            try:
-                proc.kill()
-            except OSError:
-                pass
+        _kill_group(proc)
 
     timer = threading.Timer(RENDER_TIMEOUT_S, _watchdog)
     timer.daemon = True
     timer.start()
+
+    done = threading.Event()               # set in `finally`; wakes the monitor at once
+    tick = min(5.0, max(0.5, STALL_TIMEOUT_S / 10.0))
+
+    def _stall_monitor() -> None:
+        """Kill ffmpeg if it goes silent while it should still be encoding.
+
+        Waits on an Event rather than sleeping, so shutdown doesn't pay a full
+        tick of latency — a SIGTERM grace period can be as short as 10s.
+        """
+        while not done.is_set() and proc.poll() is None:
+            if timed_out.is_set() or stalled.is_set():
+                return
+            if finishing.is_set() or STALL_TIMEOUT_S <= 0:
+                return                     # muxing/faststart: silence is expected
+            if time.monotonic() - last_beat[0] >= STALL_TIMEOUT_S:
+                stalled.set()
+                _kill_group(proc)
+                return
+            done.wait(tick)
+
+    stall_thread = threading.Thread(target=_stall_monitor, daemon=True)
+    stall_thread.start()
 
     def _drain_err() -> None:
         assert proc.stderr is not None
@@ -312,9 +417,15 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
     try:
         assert proc.stdout is not None
         for line in proc.stdout:
-            if timed_out.is_set():
+            if timed_out.is_set() or stalled.is_set() or aborting():
                 break
+            last_beat[0] = time.monotonic()   # ANY output counts as liveness
             line = line.strip()
+            if line == "progress=end":
+                finishing.set()
+                if progress:
+                    progress(1.0)
+                continue
             if not progress:
                 continue
             if line.startswith("out_time_us=") or line.startswith("out_time_ms="):
@@ -325,8 +436,9 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
                     progress(max(0.0, min(0.999, us / denom)))
                 except ValueError:
                     pass
-            elif line == "progress=end":
-                progress(1.0)
+
+        if aborting() and not (timed_out.is_set() or stalled.is_set()):
+            _kill_group(proc)
 
         # Bound the final wait too — stdout can close while the process lingers.
         remaining = max(1.0, RENDER_TIMEOUT_S - (time.monotonic() - started))
@@ -340,12 +452,24 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
                 pass
     finally:
         timer.cancel()
+        done.set()
+        with _LIVE_LOCK:
+            _LIVE_PROCS.discard(proc)
         t.join(timeout=2)
+        stall_thread.join(timeout=2)
 
+    if stalled.is_set():
+        raise RenderError(
+            f"ffmpeg produced no progress for {STALL_TIMEOUT_S}s and was terminated "
+            f"(stalled after {time.monotonic() - started:.0f}s of a "
+            f"{RENDER_TIMEOUT_S}s budget) — the source is probably unreadable"
+        )
     if timed_out.is_set():
         raise RenderError(
             f"ffmpeg exceeded the {RENDER_TIMEOUT_S}s render limit and was terminated"
         )
+    if aborting():
+        raise RenderAborted("encode cancelled by shutdown signal")
     if proc.returncode != 0:
         raise RenderError("ffmpeg encode failed:\n" + "\n".join(err_tail))
 

@@ -22,6 +22,8 @@ supabase secrets set --project-ref "$REF" \
   GEMINI_IMAGE_MODEL="gemini-2.5-flash-image" \
   GEMINI_TEXT_MODEL="gemini-2.5-flash" \
   FAL_KEY="PASTE_FAL_KEY" \
+  ELEVENLABS_API_KEY="PASTE_ELEVENLABS_KEY" \
+  ELEVENLABS_MODEL_ID="OPTIONAL_BLANK" \
   ANTHROPIC_API_KEY="PASTE_ANTHROPIC_KEY" \
   ANTHROPIC_MODEL_QC="claude-haiku-4-5" \
   ANTHROPIC_MODEL_ESCALATE="claude-sonnet-5" \
@@ -37,6 +39,14 @@ supabase secrets set --project-ref "$REF" \
   QC_MAX_RETRIES="2" \
   MAX_GEN_COST_PER_JOB_CENTS="2500" \
   TOUR_PUBLIC_BASE_URL="https://rendprop.com"
+# ELEVENLABS_API_KEY powers the reel voiceover (ai-voice). Without it BOTH
+# /ai-voice routes return 503 `upstream` naming this secret — the app shows that
+# message rather than an empty voice list. Get it from the ElevenLabs dashboard
+# under Profile -> API Keys. ELEVENLABS_MODEL_ID is OPTIONAL and should normally
+# stay blank: unset means the function sends no model_id and ElevenLabs uses its
+# own current default, which cannot be retired out from under us the way a
+# hardcoded model id can (that is exactly how GEMINI_TEXT_MODEL broke).
+#
 # TOUR_PUBLIC_BASE_URL must match the tour host's routed domain (wrangler.toml routes
 # rendprop.com/f/* and /a/*; every code default is rendprop.com). It used to say
 # rendprop.app here, which would have minted share links on an unrouted host.

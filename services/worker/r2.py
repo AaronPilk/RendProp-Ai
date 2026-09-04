@@ -76,6 +76,19 @@ def upload_file(local_path: str, bucket: str, key: str, content_type: str | None
     return key
 
 
+def delete_object(bucket: str, key: str) -> bool:
+    """Best-effort delete — used to clean up objects a failed job orphaned.
+
+    Never raises: cleanup must not turn one failure into two (audit F-G-21).
+    """
+    try:
+        _client().delete_object(Bucket=bucket, Key=key)
+        return True
+    except (BotoCoreError, ClientError, R2Error) as e:
+        print(f"    ⚠ could not delete orphaned s3://{bucket}/{key}: {e}")
+        return False
+
+
 def presigned_get_url(bucket: str, key: str, expires_s: int | None = None) -> str:
     """Time-limited GET url — used as Cloudflare Stream's copy-from-URL source."""
     expires_s = expires_s or SETTINGS.r2_presign_expiry_s

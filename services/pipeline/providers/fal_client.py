@@ -92,8 +92,12 @@ def upload_to_cdn(data: bytes, *, content_type: str, file_name: str = "upload.bi
 def _run(model_id: str, arguments: dict, *, timeout_s: int | None = None) -> dict:
     """Submit to the fal queue, poll status, return the completed result JSON."""
     timeout_s = timeout_s or SETTINGS.fal_timeout_s
+    # retries=2 covers 429/503 only for a POST (see providers/base retry policy):
+    # those mean the queue REJECTED the submit, so no generation exists to be
+    # billed. An ambiguous 5xx is not retried — it might have created a job.
     submit = request_json(
-        f"{QUEUE_BASE}/{model_id}", method="POST", payload=arguments, headers=_headers()
+        f"{QUEUE_BASE}/{model_id}", method="POST", payload=arguments,
+        headers=_headers(), retries=2,
     )
     status_url = submit.get("status_url")
     response_url = submit.get("response_url")
@@ -105,10 +109,10 @@ def _run(model_id: str, arguments: dict, *, timeout_s: int | None = None) -> dic
 
     started = time.time()
     while time.time() - started < timeout_s:
-        st = request_json(status_url, method="GET", headers=_headers())
+        st = request_json(status_url, method="GET", headers=_headers(), retries=2)
         status = st.get("status")
         if status == "COMPLETED":
-            return request_json(response_url, method="GET", headers=_headers())
+            return request_json(response_url, method="GET", headers=_headers(), retries=3)
         if status in ("FAILED", "ERROR"):
             raise ProviderError(f"fal job failed ({model_id}): {st}")
         time.sleep(SETTINGS.fal_poll_interval_s)
@@ -175,6 +179,28 @@ def restage_fallback_result(image: bytes, style_prompt: str) -> ProviderResult:
     )
 
 
+def _hosted_image_url(image: bytes, *, file_name: str) -> str:
+    """A real URL for an image a VIDEO model will fetch server-side.
+
+    Seedance is a proxied ByteDance video runner and, like the Topaz endpoint
+    documented above, downloads `image_url` itself — a `data:` URI is rejected
+    with "URL scheme 'data' is not allowed". The hero clip was passing a data URI
+    (audit F-G-15), so every hero call would fail AFTER the budget precheck but
+    before any charge: the feature silently never shipped.
+
+    Uploading first is cheap (fal CDN storage, not a generation) and correct
+    either way. If the upload itself fails we fall back to the data URI rather
+    than losing the feature outright on image endpoints that do accept one.
+    """
+    mime = sniff_mime(image)
+    try:
+        return upload_to_cdn(image, content_type=mime, file_name=file_name)
+    except ProviderError as e:
+        print(f"    ⚠ fal CDN upload failed ({e}); falling back to a data: URI — "
+              f"a video model will likely reject it")
+        return data_uri(image, mime)
+
+
 def hero_clip(first_frame: bytes, prompt: str, seconds: int = 5) -> bytes:
     """Animate the FINISHED (decluttered/staged) still into a 2–12s hero clip.
 
@@ -184,7 +210,7 @@ def hero_clip(first_frame: bytes, prompt: str, seconds: int = 5) -> bytes:
     dur = max(2, min(12, int(round(seconds))))
     result = _run(SETTINGS.fal_hero_model, {
         "prompt": prompt,
-        "image_url": data_uri(first_frame, sniff_mime(first_frame)),
+        "image_url": _hosted_image_url(first_frame, file_name="hero_frame.jpg"),
         "resolution": "1080p",
         "duration": str(dur),
     })

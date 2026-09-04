@@ -30,7 +30,7 @@ import type { Env, Portfolio, Tour } from "./types";
 import { buildDemoTour, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
-import { renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
+import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
 
 const DEFAULT_TTL = 60; // seconds — published HTML can change on republish
@@ -99,6 +99,11 @@ function htmlResponse(
       "Content-Type": "text/html; charset=utf-8",
       "X-Content-Type-Options": "nosniff",
       "Referrer-Policy": "strict-origin-when-cross-origin",
+      // Static assets pin HSTS via public/_headers, but a tour link is very
+      // often the FIRST rendprop.com URL a viewer ever opens (audit F-H-21) —
+      // without this, that first visit pins nothing. Same max-age as _headers;
+      // no `preload` (that is a one-way commitment for the whole apex).
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
       "Content-Security-Policy": csp.join("; "),
       ...extraHeaders,
     },
@@ -214,10 +219,15 @@ async function handleTour(
         return htmlResponse(unbrandedFallback("blocked"), 503, { ...base, "Cache-Control": "no-store" }, { unbranded });
       }
     }
+    // F-H-19: the page already carries a robots meta tag; send the header too,
+    // so a crawler that never parses the body (and anything reading the cached
+    // response) gets the same answer. `/u/` has its own noindex in `base`.
+    const robots: Record<string, string> =
+      unbranded || allowsIndexing(tour) ? {} : { "X-Robots-Tag": "noindex, nofollow" };
     const resp = htmlResponse(
       html,
       200,
-      { ...base, "Cache-Control": `public, max-age=${t}, s-maxage=${t}` },
+      { ...base, ...robots, "Cache-Control": `public, max-age=${t}, s-maxage=${t}` },
       { unbranded },
     );
     if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));

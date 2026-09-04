@@ -22,14 +22,35 @@ sandbox. Use a proper render host / container image with the deps installed.
 ## 2) FFmpeg fallback — `ffmpeg-fallback/gen.py`  (zero-browser path)
 Pillow renders the background + glass caption frames; FFmpeg composites them over the
 clip with timed fades + a progress bar. No headless Chrome — runs anywhere with
-Python (Pillow, cairosvg) + FFmpeg. Lower motion fidelity than HyperFrames, but
+Python (Pillow) + FFmpeg. Lower motion fidelity than HyperFrames, but
 dependency-light. This is what rendered the shipped sample.
 
-    python3 ffmpeg-fallback/gen.py && ffmpeg ...   # see gen.py header
+```bash
+python3 ffmpeg-fallback/gen.py --write-example listing.json   # template to edit
+python3 ffmpeg-fallback/gen.py --listing listing.json \
+        --clip walkthrough.mp4 --out ./out                    # -> PNGs + render.sh
+bash ./out/render.sh walkthrough.mp4 reel.mp4                 # -> reel.mp4
+```
+
+`gen.py` **writes the ffmpeg composite command** into `out/render.sh` — there is no
+hidden command to reconstruct. Everything is data-driven from the listing JSON
+(address, stats, features, price, CTA, seconds per caption); nothing is hard-coded
+to one machine. The brand mark is resolved relative to the repo
+(`services/edge/tour-host/public/assets/rendprop-mark.svg`) and rasterised with
+cairosvg if installed, else with ffmpeg's librsvg; if neither is available the reel
+renders without it. Fonts degrade Poppins → DejaVu/Liberation → Pillow's default.
+
+Verified end to end here: 6 caption cards over a 26 s clip → a 24 s, 720-frame
+1080×1920 mp4.
 
 ## Sample
 `rendprop-marketing.mp4` (demo estate "1180 Crestline Ridge"). The footage is the app's
 bundled demo reel; real listings use the agent's own walkthrough.
+
+## Known gap
+`composition/index.html` still carries the demo listing's copy inline and loads
+`clip.mp4` relatively — fine for a HyperFrames render you drive by hand, but it needs
+the same JSON-in treatment as `gen.py` before it can be a product path.
 
 ## Productization sketch
 iOS "Marketing Video" screen → pick listing + clip + template → POST to a render

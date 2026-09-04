@@ -28,6 +28,14 @@ struct SettingsView: View {
     @State private var usageError: String?
     @State private var isLoadingUsage = false
 
+    // Owner console visibility. Decided by the SERVER — never a hardcoded email
+    // and never a local flag. `/me` may one day carry `is_admin`; today it does
+    // not, so we probe `GET /admin/spend` ONCE and hide the row on a 403.
+    // Getting this wrong only shows or hides a row: every /admin route
+    // re-checks `profiles.is_admin` server-side on every request.
+    @State private var showAdminConsole = false
+    @State private var adminProbeDone = false
+
     // Sign in / sign out
     @State private var showSignIn = false
     @State private var showSignOutConfirm = false
@@ -162,18 +170,6 @@ struct SettingsView: View {
                 Text(brandKitFooter)
             }
 
-            Section {
-                NavigationLink {
-                    AIPhotoStudioView()
-                } label: {
-                    Label("AI Photo Studio", systemImage: "wand.and.stars")
-                }
-            } header: {
-                Text("AI tools")
-            } footer: {
-                Text("Twilight, sky replacement, lawn repair, decluttering, virtual staging, and custom AI edits on any listing photo.")
-            }
-
             // Notifications section is hidden until push (APNs) is wired — a
             // reviewer must never see "Coming soon" placeholder rows (App Store
             // 2.1). Re-enable this block behind Config.enablePush when APNs ships.
@@ -226,6 +222,20 @@ struct SettingsView: View {
 
             if Config.useLiveBackend {
                 usageSection
+            }
+
+            if Config.useLiveBackend && showAdminConsole {
+                Section {
+                    NavigationLink {
+                        AdminConsoleView()
+                    } label: {
+                        Label("Spend & providers", systemImage: "chart.bar.doc.horizontal")
+                    }
+                } header: {
+                    Text("Owner console")
+                } footer: {
+                    Text("Read-only. This row is here because the server says this account is an admin — it enforces that on every request, so nothing on this phone can unlock it.")
+                }
             }
 
             Section {
@@ -293,10 +303,13 @@ struct SettingsView: View {
         .refreshable { await loadUsage() }
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn {
+                adminProbeDone = false
                 Task { await loadUsage() }
             } else {
                 usage = nil
                 usageError = nil
+                showAdminConsole = false
+                adminProbeDone = false
             }
         }
         .sheet(isPresented: $showSignIn) {
@@ -309,6 +322,8 @@ struct SettingsView: View {
                 auth.signOut()
                 usage = nil
                 usageError = nil
+                showAdminConsole = false
+                adminProbeDone = false
                 Haptics.selection()
             }
             Button("Cancel", role: .cancel) {}
@@ -496,6 +511,39 @@ struct SettingsView: View {
             if error is CancellationError { return }
             usageError = UserFacingError.message(error, fallback: "Couldn't load usage. Pull down to refresh.")
         }
+        await resolveAdminAccess()
+    }
+
+    /// Decide whether the owner-console row is drawn — from the SERVER only.
+    ///
+    /// Order: the `/me` flag if this build's server sends one, otherwise a
+    /// single probe of `GET /admin/spend`. A 403 (or anything else) means "no
+    /// row". The probe runs at most once per sign-in; `.onChange(of:
+    /// auth.isSignedIn)` resets it. This is presentation, not permission —
+    /// every admin route re-checks `profiles.is_admin` on every call.
+    @MainActor
+    private func resolveAdminAccess() async {
+        guard Config.useLiveBackend, auth.isSignedIn, let usage else {
+            showAdminConsole = false
+            adminProbeDone = false
+            return
+        }
+        if let flag = usage.isAdmin {
+            showAdminConsole = flag
+            adminProbeDone = true
+            return
+        }
+        guard !adminProbeDone else { return }
+        adminProbeDone = true
+        do {
+            _ = try await model.api.adminSpend(window: .today)
+            showAdminConsole = true
+        } catch {
+            // 403 = not an admin, 401 = signed out, anything else = can't tell.
+            // In every case the honest answer is to draw no row.
+            if error is CancellationError { adminProbeDone = false }
+            showAdminConsole = false
+        }
     }
 
     // MARK: - Account (App Store Guideline 5.1.1(v): in-app account deletion)
@@ -620,9 +668,36 @@ struct SettingsView: View {
     /// Remove everything the app stored on this device. Demo samples are
     /// reseeded afterwards so the app still works as a fresh install.
     ///
-    /// Documents is wiped WHOLESALE (then Recordings/Imports are recreated) so
-    /// no later-added folder (reels, FloorPlans, Aerials, Photos, enhanced-*.mp4,
-    /// preview-*.html, the state snapshot) can be missed again (audit F-C-11).
+    /// Every container directory the app can write to is wiped WHOLESALE, so no
+    /// later-added folder can be missed again (audit F-C-11). App Store 5.1.1(v)
+    /// makes this a compliance surface, not a tidiness one: after "Delete
+    /// account" the alert says the user's data is gone, so none of their media
+    /// may survive anywhere on the device.
+    ///
+    /// ── WRITE-LOCATION CHECKLIST (keep in sync; add a line when you add a writer) ──
+    /// Documents/                (wiped wholesale, step 1)
+    ///   Recordings/             capture + on-device renders + enhanced-*.mp4   FileStore.recordingsDir
+    ///   Imports/                imported source clips                          FileStore.importsDir
+    ///   Aerials/                AI aerial intros <id>-<stamp>.mp4              FileStore.aerialsDir
+    ///   Photos/<listingID>/     AI photo studio originals + edits              FlythroughDetailView
+    ///   FloorPlans/             <id>.usdz, <id>.json, <id>-upload.*            FlythroughDetailView
+    ///   reels/                  <id>-<stamp>.mp4                               FlythroughDetailView
+    ///   Previews/               generated preview-*.html                       PlayerWebView
+    ///   agent-headshot*.jpg     brand photo per business type                  AgentCard
+    ///   rendprop-state.json     the model snapshot (+ .corrupt-* quarantines)  PersistentStore
+    /// Library/Caches/           (wiped wholesale, step 2)
+    ///   player-demo/            personalized demo page + demo.mp4 copy         PlayerWebView
+    ///   posters/                poster-<listingID>.jpg — frames of the user's
+    ///                           own video                                      PosterMaker
+    /// Library/Application Support/ (wiped wholesale, step 3)
+    ///   upload-state.json       resumable-upload record                        UploadStore
+    ///   rp-upload-slices/       multipart SLICES OF THE USER'S VIDEO           DirectUploader
+    /// tmp/                      export/share scratch                           (wiped, step 2)
+    /// WKWebsiteDataStore        cookies/localStorage from hosted tour pages     (step 4)
+    /// UserDefaults              agent cards, brand bookkeeping, aerial job records,
+    ///                           AI-processing consent (step 5)
+    /// Keychain                  auth tokens — cleared by AuthStore.signOut() before this runs
+    /// ──────────────────────────────────────────────────────────────────────────────
     @MainActor
     private func wipeLocalData() {
         // Stop any render/publish first — a job finishing after the wipe would
@@ -640,32 +715,45 @@ struct SettingsView: View {
 
         let fm = FileManager.default
 
-        // 1. Documents — everything, hidden files included.
-        if let items = try? fm.contentsOfDirectory(at: FileStore.documents,
-                                                   includingPropertiesForKeys: nil,
-                                                   options: []) {
+        // Empty a directory without deleting the directory itself (iOS owns
+        // Caches/Application Support and recreates them lazily, but removing
+        // the root outright can leave the container in an odd state).
+        func emptyDirectory(_ dir: URL?) {
+            guard let dir else { return }
+            guard let items = try? fm.contentsOfDirectory(at: dir,
+                                                          includingPropertiesForKeys: nil,
+                                                          options: []) else { return }
             for url in items { try? fm.removeItem(at: url) }
         }
+
+        // 1. Documents — everything, hidden files included.
+        emptyDirectory(FileStore.documents)
         // Recreate the working folders the capture/import paths expect.
         _ = FileStore.recordingsDir
         _ = FileStore.importsDir
 
-        // 2. Caches (personalized player-demo HTML + demo video copy) and tmp.
-        if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
-            try? fm.removeItem(at: caches.appendingPathComponent("player-demo"))
-        }
-        if let tmpItems = try? fm.contentsOfDirectory(at: fm.temporaryDirectory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: []) {
-            for url in tmpItems { try? fm.removeItem(at: url) }
-        }
+        // 2. Caches (personalized player-demo HTML + demo video copy, and
+        //    posters/poster-<id>.jpg — real frames of the user's own video) and
+        //    tmp (export/share scratch). Wholesale, for the same reason as
+        //    Documents: a per-folder allow-list is what missed reels and floor
+        //    plans the first time (audit F-C-11).
+        emptyDirectory(fm.urls(for: .cachesDirectory, in: .userDomainMask).first)
+        emptyDirectory(fm.temporaryDirectory)
 
-        // 3. WebKit site data from hosted pages loaded in PlayerWebView
+        // 3. Application Support — the resumable-upload record AND
+        //    `rp-upload-slices/`, which holds multipart SLICES OF THE USER'S
+        //    VIDEO (hundreds of MB). `uploads.cancel()` only clears these when
+        //    an upload was in flight, so an interrupted publish from an earlier
+        //    launch used to leave the user's footage on the phone after the app
+        //    said their data had been removed.
+        emptyDirectory(fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+
+        // 4. WebKit site data from hosted pages loaded in PlayerWebView
         //    (lead-form cookies, localStorage beacons).
         WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
                                                 modifiedSince: .distantPast) {}
 
-        // 4. Profile cards for EVERY business type (keys are namespaced per
+        // 5. Profile cards for EVERY business type (keys are namespaced per
         //    industry; real estate uses the legacy bare keys) + brand bookkeeping.
         let d = UserDefaults.standard
         for type in SpaceType.allCases {
@@ -677,13 +765,18 @@ struct SettingsView: View {
         d.removeObject(forKey: AgentCard.lastPushedKey)
         d.removeObject(forKey: "auth.userName")
         d.removeObject(forKey: "auth.orgName")
+        // Third-party AI processing consent is PERSONAL (App Review 5.1.2(i)):
+        // it was granted by the person whose data we just removed, so it must
+        // not carry over to whoever uses this phone next. The next AI tool asks
+        // again from scratch.
+        aiConsent.revoke()
         // In-flight / cached aerial job records (per listing) go with the data.
         for key in d.dictionaryRepresentation().keys
         where key.hasPrefix("aerial.pending.") || key.hasPrefix("aerial.meta.") {
             d.removeObject(forKey: key)
         }
 
-        // 5. Fresh samples for the current business type.
+        // 6. Fresh samples for the current business type.
         model.reseedSamples()
     }
 }
@@ -1011,322 +1104,14 @@ struct LeadRow: View {
     }
 }
 
-// MARK: - AI Photo Studio
-// Twilight / sky-replace / lawn-repair on a listing photo via the `ai-photo`
-// edge function (Gemini). Inlined here (in a compiled file) so it can't be
-// dropped from the build target — same rule as AgentCard below.
-
-struct AIPhotoStudioView: View {
-    @EnvironmentObject var model: AppModel
-    @ObservedObject private var auth = AuthStore.shared
-    @Environment(\.dismiss) private var dismiss
-
-    private enum Edit: String, CaseIterable, Identifiable {
-        case twilight, sky, lawn, declutter, stage, custom
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .twilight:  return "Twilight"
-            case .sky:       return "Blue sky"
-            case .lawn:      return "Green lawn"
-            case .declutter: return "Declutter"
-            case .stage:     return "Staging"
-            case .custom:    return "Custom"
-            }
-        }
-    }
-
-    /// Furnishing look for `edit = .stage` — mirrors the ai-photo contract.
-    private enum StageStyle: String, CaseIterable, Identifiable {
-        case modern, rustic, minimalist, scandinavian
-        var id: String { rawValue }
-        var label: String { rawValue.capitalized }
-    }
-
-    @State private var pickerItem: PhotosPickerItem?
-    @State private var original: UIImage?
-    @State private var edited: UIImage?
-    @State private var edit: Edit = .twilight
-    @State private var stageStyle: StageStyle = .modern
-    @State private var customPrompt = ""
-    @State private var isWorking = false
-    @State private var errorMsg: String?
-    @State private var errorIsQuota = false
-    @State private var showSignIn = false
-    /// The exact disclosure sentence the server recorded for the last edit
-    /// (W2-C4). This studio has no listing attached, so the edit is NOT in the
-    /// org's compliance log — the result card says so rather than implying it is.
-    @State private var lastDisclosure: String?
-
-    private var customPromptTrimmed: String {
-        customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var needsSignIn: Bool { Config.useLiveBackend && Config.enableAuth && !auth.isSignedIn }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: Theme.spacing) {
-                if let edited {
-                    resultCard(edited)
-                } else if let original {
-                    Image(uiImage: original)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    editChips
-                    if edit == .stage {
-                        Picker("Style", selection: $stageStyle) {
-                            ForEach(StageStyle.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        Text("Empty or dated rooms get furnished in the style you pick.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if edit == .custom {
-                        TextField("Describe the change — e.g. 'make it look freshly painted white with warm evening light'",
-                                  text: $customPrompt, axis: .vertical)
-                            .lineLimit(3...6)
-                            .textFieldStyle(.roundedBorder)
-                        Text("\(customPrompt.count)/600")
-                            .font(.rpCaption)
-                            .foregroundStyle(customPrompt.count >= 600 ? Theme.warn : Theme.inkDim)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    Button(action: enhanceTapped) {
-                        HStack {
-                            if isWorking { ProgressView().tint(.white) }
-                            Text(isWorking ? "Enhancing…" : (needsSignIn ? "Sign in to enhance" : "Enhance photo"))
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(Theme.accent).foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .disabled(isWorking || (edit == .custom && customPromptTrimmed.isEmpty))
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        Text("Choose a different photo").font(.rpBody).foregroundStyle(Theme.accent)
-                    }
-                } else {
-                    emptyState
-                }
-
-                if let errorMsg {
-                    VStack(spacing: 8) {
-                        Text(errorMsg).font(.rpCaption).foregroundStyle(Theme.warn)
-                            .multilineTextAlignment(.center)
-                        if errorIsQuota, let url = UserFacingError.pricingURL {
-                            Link("Upgrade plan", destination: url)
-                                .font(.rpCaption.weight(.semibold))
-                                .foregroundStyle(Theme.accent)
-                        }
-                    }
-                }
-            }
-            .padding()
-            // The AI result is the payoff — crossfade to the before/after card
-            // instead of snapping when the enhanced image lands.
-            .animation(.easeInOut(duration: 0.3), value: edited != nil)
-        }
-        .background(Theme.bg)
-        .navigationTitle("AI Photo Studio")
-        .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: pickerItem) { _ in loadPicked() }
-        .onChange(of: customPrompt) { newValue in
-            if newValue.count > 600 { customPrompt = String(newValue.prefix(600)) }
-        }
-        .sheet(isPresented: $showSignIn) {
-            SignInView {
-                enhance()
-            }
-        }
-        // Guideline 5.1.2(i): the chosen photo goes to Google's Gemini image
-        // model through our edge function. Explicit opt-in before the screen is
-        // usable, asked once per device; declining pops back to Settings.
-        .aiConsentGate()
-        .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
-        }
-    }
-
-    /// One tappable chip per edit — six options don't fit a segmented control.
-    private var editChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Edit.allCases) { e in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) { edit = e }
-                        Haptics.selection()
-                    } label: {
-                        Text(e.label)
-                            .font(.rpCaption.weight(.semibold))
-                            .padding(.horizontal, 13).padding(.vertical, 8)
-                            .background(edit == e ? Theme.accent : Theme.accentSoft, in: Capsule())
-                            .foregroundStyle(edit == e ? Color.white : Theme.accent)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 48, weight: .light)).foregroundStyle(Theme.accent)
-            Text("Turn a listing photo into a twilight, blue-sky, or green-lawn shot — or declutter it, stage it virtually, and describe any edit in your own words.")
-                .font(.rpBody).foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center).padding(.horizontal)
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label("Choose a photo", systemImage: "photo.on.rectangle")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Theme.accent).foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-        }
-        .padding(.top, 40)
-    }
-
-    private func resultCard(_ img: UIImage) -> some View {
-        VStack(spacing: 12) {
-            Text("Before → After").font(.rpKicker).foregroundStyle(Theme.inkDim)
-            if let original {
-                HStack(spacing: 8) {
-                    Image(uiImage: original).resizable().scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    Image(uiImage: img).resizable().scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-            }
-            Image(uiImage: img).resizable().scaledToFit()
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            Button {
-                UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
-                Haptics.success()
-            } label: {
-                Label("Save to Photos", systemImage: "square.and.arrow.down")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Theme.accent).foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            ShareLink(item: Image(uiImage: img),
-                      preview: SharePreview("Enhanced photo", image: Image(uiImage: img))) {
-                Label("Share", systemImage: "square.and.arrow.up")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            // W2-C4: the sentence a listing's tour would print for this edit,
-            // verbatim — plus the honest caveat that a loose photo edited here
-            // is not attached to a listing and so is not in the audit log.
-            if let lastDisclosure, !lastDisclosure.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(lastDisclosure, systemImage: "exclamationmark.shield.fill")
-                        .font(.rpCaption.weight(.semibold))
-                        .foregroundStyle(Theme.warn)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Disclose this wherever you publish the photo. Edits made from a listing's photo studio are disclosed on its tour and logged for your broker automatically — this one isn't attached to a listing.")
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            Button("Try another look") { edited = nil; lastDisclosure = nil }
-                .font(.rpBody).foregroundStyle(Theme.accent).padding(.top, 2)
-        }
-    }
-
-    private func loadPicked() {
-        guard let item = pickerItem else { return }
-        Task {
-            if let data = try? await item.loadTransferable(type: Data.self),
-               let ui = UIImage(data: data) {
-                await MainActor.run {
-                    original = ui
-                    edited = nil
-                    lastDisclosure = nil
-                    errorMsg = nil
-                    errorIsQuota = false
-                }
-            }
-        }
-    }
-
-    /// AI edits are metered per account — a signed-out user gets the sign-in
-    /// sheet first (the edit runs right after), not a 401 error string.
-    private func enhanceTapped() {
-        if needsSignIn {
-            showSignIn = true
-            return
-        }
-        enhance()
-    }
-
-    private func enhance() {
-        guard let original else { return }
-        isWorking = true; errorMsg = nil; errorIsQuota = false
-        let selectedEdit = edit
-        let selectedStyle = stageStyle
-        let prompt = String(customPromptTrimmed.prefix(600))
-        Task {
-            do {
-                let scaled = Self.downscaled(original, maxDimension: 2048)
-                guard let jpeg = scaled.jpegData(compressionQuality: 0.9) else {
-                    throw NSError(domain: "AIPhoto", code: 1,
-                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
-                }
-                var request = AIPhotoEditRequest(imageBase64: jpeg.base64EncodedString(),
-                                                 mime: "image/jpeg",
-                                                 edit: selectedEdit.rawValue)
-                request.style = selectedEdit == .stage ? selectedStyle.rawValue : nil
-                request.prompt = selectedEdit == .custom ? prompt : nil
-                // No listing here — this studio edits a loose photo, so the
-                // server cannot enter it in the compliance log (see the note on
-                // the result card). Edits made from a listing's Photo Studio are.
-                let result = try await model.api.aiPhotoEdit(request)
-                guard let outData = Data(base64Encoded: result.imageBase64),
-                      let outImg = UIImage(data: outData) else {
-                    throw NSError(domain: "AIPhoto", code: 2,
-                                  userInfo: [NSLocalizedDescriptionKey: "The AI didn't return an image. Try again."])
-                }
-                let sentence = result.disclosure
-                await MainActor.run {
-                    edited = outImg
-                    lastDisclosure = sentence
-                    isWorking = false
-                    Haptics.success()
-                }
-            } catch {
-                await MainActor.run {
-                    errorMsg = UserFacingError.message(error)
-                    errorIsQuota = UserFacingError.isQuota(error)
-                    isWorking = false
-                    if UserFacingError.isUnauthorized(error) { showSignIn = true }
-                }
-            }
-        }
-    }
-
-    /// Downscale so the base64 upload stays small (and cheaper) without visible loss.
-    private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let w = image.size.width, h = image.size.height
-        let longest = max(w, h)
-        guard longest > maxDimension, longest > 0 else { return image }
-        let scale = maxDimension / longest
-        let size = CGSize(width: w * scale, height: h * scale)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-    }
-}
+// MARK: - AI Photo Studio (REMOVED — project-first)
+// There is no standalone AI photo studio any more. It edited a loose photo with
+// NO home attached, so every result was an orphan: the app could not say which
+// property it belonged to, and the edit never reached the listing's compliance
+// log. The real studio is per-home — `PhotoStudioView(listing:)` in
+// FlythroughDetailView.swift — reached from a home's toolbox or from Home,
+// which asks "Which home?" first (see the project-first block in
+// RendpropApp.swift). Do not re-add a listing-less studio.
 
 // MARK: - Agent Card
 // The card buyers see at the end of every flythrough. Lives here (in an
@@ -2145,5 +1930,995 @@ struct BusinessTypeView: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Owner console (admin-only: spend · providers · usage · health)
+//
+// Reachable from Settings ONLY when the SERVER says this account is an admin.
+// The role lives in `public.profiles.is_admin` and every `/admin/*` route
+// re-checks it with the service-role client, so this screen is a convenience,
+// never a permission: a hostile client that forces the row to appear still gets
+// a 403 on every request (docs/ADMIN-CONSOLE-CONTRACT.md).
+//
+// Lives in this in-target file (new-file rule — docs/handoff/A-detail.md §5).
+// See the pointer stub at Screens/AdminConsoleView.swift.
+//
+// Two rules this screen exists to honour:
+//   1. The cost ledger does NOT see in-app AI spend today, so `total_cents` is
+//      a floor, not an invoice. `coverage` says so and is rendered next to the
+//      number, every time. A figure the owner trusts and shouldn't is worse
+//      than no figure at all.
+//   2. A credential VALUE — or prefix, or suffix, or length — is never sent by
+//      the server and is never rendered here. Only env var NAMES and booleans.
+
+struct AdminConsoleView: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+
+    @State private var window: AdminSpendWindow = .today
+
+    @State private var spend: AdminSpendReport?
+    @State private var providers: AdminProvidersReport?
+    @State private var orgUsage: AdminUsageReport?
+    @State private var health: AdminHealthReport?
+
+    @State private var spendError: String?
+    @State private var sideErrors: [String] = []
+    /// Non-nil = the server answered 403. Carries the server's own sentence.
+    @State private var forbiddenMessage: String?
+    @State private var needsSignIn = false
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+    @State private var showSignIn = false
+
+    private static let genericFailure = "Couldn't load the console. Pull down to try again."
+
+    var body: some View {
+        List {
+            content
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Owner console")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load(includeCompanions: true) }
+        .refreshable { await load(includeCompanions: true) }
+        .onChange(of: window) { _ in
+            Task { await load(includeCompanions: false) }
+        }
+        .onChange(of: auth.isSignedIn) { _ in
+            Task { await load(includeCompanions: true) }
+        }
+        .sheet(isPresented: $showSignIn) {
+            SignInView(onSignedIn: { Task { await load(includeCompanions: true) } },
+                       title: "Sign in to open the owner console",
+                       subtitle: "The console reads your workspace's spend from the server, so it needs your account.",
+                       dismissNote: "Not now closes this — nothing is changed either way.")
+        }
+    }
+
+    // MARK: Top-level state routing
+
+    @ViewBuilder
+    private var content: some View {
+        if needsSignIn {
+            signedOutSection
+        } else if let forbiddenMessage {
+            notAdminSection(forbiddenMessage)
+        } else {
+            windowSection
+            mainContent
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if let spend {
+            staleBanner
+            spendSections(spend)
+            companionSections
+        } else if let spendError {
+            errorSection(spendError)
+        } else if isLoading || !hasLoaded {
+            loadingSection
+        } else {
+            emptySection
+        }
+    }
+
+    @ViewBuilder
+    private var companionSections: some View {
+        providersSection
+        usageLimitsSection
+        healthSection
+        sideErrorSection
+    }
+
+    // MARK: Window picker
+
+    private var windowSection: some View {
+        Section {
+            Picker("Window", selection: $window) {
+                ForEach(AdminSpendWindow.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+        } footer: {
+            Text("Spend below covers \(window.phrase). Providers, usage and health are current.")
+        }
+    }
+
+    // MARK: Spend
+
+    @ViewBuilder
+    private func spendSections(_ report: AdminSpendReport) -> some View {
+        Section {
+            totalRow(report)
+            coverageRow(report.coverage)
+        } header: {
+            Text("Spend")
+        } footer: {
+            Text(Self.spendFooter(report))
+        }
+
+        bucketSection("By provider", buckets: report.providerBuckets)
+        bucketSection("By feature", buckets: report.featureBuckets)
+        orgSpendSection(report.orgBuckets)
+    }
+
+    private func totalRow(_ report: AdminSpendReport) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(AdminMoney.amount(report.totalCents))
+                .font(.rpLargeTitle)
+                .foregroundStyle(Theme.ink)
+            Text(Self.totalCaption(report, window: window))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The honesty block. Rendered next to the total on EVERY load — the
+    /// contract requires it whenever `complete` is false, and a missing
+    /// `coverage` object is treated as "we don't know", never as completeness.
+    private func coverageRow(_ coverage: AdminSpendCoverage?) -> some View {
+        let complete: Bool = coverage?.isComplete ?? false
+        let gaps: [AdminCoverageSource] = coverage?.unrepresented ?? []
+        return VStack(alignment: .leading, spacing: 8) {
+            Label(Self.coverageTitle(coverage), systemImage: Self.coverageIcon(complete))
+                .font(.rpHeadline)
+                .foregroundStyle(complete ? Theme.good : Theme.warn)
+            Text(Self.coverageBody(coverage))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(gaps.enumerated()), id: \.offset) { pair in
+                coverageGapRow(pair.element)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func coverageGapRow(_ source: AdminCoverageSource) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(source.displayName, systemImage: "minus.circle")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.warn)
+            if let detail = Self.trimmed(source.detail) {
+                Text(detail)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func bucketSection(_ title: String, buckets: [AdminSpendBucket]) -> some View {
+        Section {
+            if buckets.isEmpty {
+                noteRow("Nothing recorded in this window.")
+            } else {
+                ForEach(Array(buckets.enumerated()), id: \.offset) { pair in
+                    bucketRow(pair.element)
+                }
+            }
+        } header: {
+            Text(title)
+        }
+    }
+
+    private func bucketRow(_ bucket: AdminSpendBucket) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(bucket.displayName)
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.ink)
+                Text(Self.bucketCaption(rows: bucket.rows, share: bucket.share))
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 8)
+            Text(AdminMoney.amount(bucket.totalCents))
+                .font(.rpBody)
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    @ViewBuilder
+    private func orgSpendSection(_ orgs: [AdminSpendOrg]) -> some View {
+        Section {
+            if orgs.isEmpty {
+                noteRow("No workspace spend in this window.")
+            } else {
+                ForEach(Array(orgs.enumerated()), id: \.offset) { pair in
+                    orgSpendRow(pair.element)
+                }
+            }
+        } header: {
+            Text("By workspace")
+        } footer: {
+            Text("Workspaces are identified by name only. A row can read \"(unattributed)\" when its workspace was deleted after the spend was recorded.")
+        }
+    }
+
+    private func orgSpendRow(_ org: AdminSpendOrg) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(org.displayName)
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.ink)
+                Text(Self.orgSpendCaption(org))
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 8)
+            Text(AdminMoney.amount(org.totalCents))
+                .font(.rpBody)
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    // MARK: Providers
+
+    @ViewBuilder
+    private var providersSection: some View {
+        Section {
+            if let providers {
+                providerRows(providers.providerList)
+            } else {
+                noteRow("Couldn't load the provider list.")
+            }
+        } header: {
+            Text("Providers")
+        } footer: {
+            Text("Rendprop never receives a credential value, prefix or length — only the environment variable name and whether it is set.")
+        }
+    }
+
+    @ViewBuilder
+    private func providerRows(_ list: [AdminProvider]) -> some View {
+        if list.isEmpty {
+            noteRow("No providers reported.")
+        } else {
+            ForEach(Array(list.enumerated()), id: \.offset) { pair in
+                providerRow(pair.element)
+            }
+        }
+    }
+
+    private func providerRow(_ provider: AdminProvider) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(provider.displayName)
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                configuredChip(provider.isConfigured)
+            }
+            Text(Self.providerCaption(provider))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(provider.modelList.enumerated()), id: \.offset) { pair in
+                providerModelRow(pair.element)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func providerModelRow(_ entry: AdminProviderModel) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(entry.displayName)
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                Text(AdminMoney.unitPrice(entry.unitCostCents, unit: entry.unit))
+                    .font(.rpCaption)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.accent)
+            }
+            if let sku = Self.skuLine(entry) {
+                Text(sku)
+                    .font(.rpMono)
+                    .foregroundStyle(Theme.inkDim)
+                    .lineLimit(1)
+            }
+            if let trigger = Self.trimmed(entry.trigger) {
+                Text(trigger)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func configuredChip(_ configured: Bool?) -> some View {
+        let tint: Color = Self.configuredTint(configured)
+        return Text(Self.configuredLabel(configured))
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: Usage & limits
+
+    @ViewBuilder
+    private var usageLimitsSection: some View {
+        Section {
+            if let orgUsage {
+                usageSummaryRow(orgUsage)
+            } else {
+                noteRow("Couldn't load usage and limits.")
+            }
+        } header: {
+            Text("Usage & limits")
+        } footer: {
+            Text("Workspace totals only — no member name, email or phone number reaches this screen.")
+        }
+        if let orgUsage {
+            orgSections(orgUsage.orgList)
+        }
+    }
+
+    private func usageSummaryRow(_ report: AdminUsageReport) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Self.usageHeadline(report))
+                .font(.rpHeadline)
+                .foregroundStyle(report.blockedOrgs.isEmpty ? Theme.ink : Theme.warn)
+            Text(Self.usageCaption(report))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func orgSections(_ orgs: [AdminOrgUsage]) -> some View {
+        if orgs.isEmpty {
+            Section {
+                noteRow("No workspaces reported.")
+            }
+        } else {
+            ForEach(Array(orgs.enumerated()), id: \.offset) { pair in
+                orgSection(pair.element)
+            }
+        }
+    }
+
+    private func orgSection(_ org: AdminOrgUsage) -> some View {
+        Section {
+            orgHeaderRow(org)
+            ForEach(org.counters) { counter in
+                counterRow(counter)
+            }
+            blockedRows(org)
+        } header: {
+            Text(org.displayName)
+        }
+    }
+
+    private func orgHeaderRow(_ org: AdminOrgUsage) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(AdminText.plan(org.plan))
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                Text(AdminMoney.amount(org.spendCentsMonth))
+                    .font(.rpBody)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+            }
+            Text(Self.orgUsageCaption(org))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func counterRow(_ counter: AdminUsageCounter) -> some View {
+        let tint: Color = Self.counterTint(counter)
+        return LabeledContent(counter.label) {
+            Text(Self.counterValue(counter))
+                .font(.rpBody)
+                .monospacedDigit()
+                .foregroundStyle(tint)
+        }
+    }
+
+    @ViewBuilder
+    private func blockedRows(_ org: AdminOrgUsage) -> some View {
+        if org.isBlocked {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Blocked right now", systemImage: "exclamationmark.octagon.fill")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.bad)
+                ForEach(Array(org.reasons.enumerated()), id: \.offset) { pair in
+                    Text(AdminText.blockedReason(pair.element))
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    // MARK: Health
+
+    @ViewBuilder
+    private var healthSection: some View {
+        Section {
+            if let health {
+                healthRows(health.providerList)
+            } else {
+                noteRow("Couldn't load provider health.")
+            }
+        } header: {
+            Text("Health")
+        } footer: {
+            Text(Self.healthFooter(health))
+        }
+        if let health, let failures = health.jobFailures {
+            failuresSection(failures)
+        }
+    }
+
+    @ViewBuilder
+    private func healthRows(_ list: [AdminHealthProvider]) -> some View {
+        if list.isEmpty {
+            noteRow("No providers reported.")
+        } else {
+            ForEach(Array(list.enumerated()), id: \.offset) { pair in
+                healthRow(pair.element)
+            }
+        }
+    }
+
+    private func healthRow(_ provider: AdminHealthProvider) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(provider.displayName)
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                healthChip(provider.status)
+            }
+            Text(Self.credentialLine(configured: provider.configured, env: provider.credentialEnv))
+                .font(.rpCaption)
+                .foregroundStyle(provider.configured == true ? Theme.inkDim : Theme.bad)
+            Text(Self.lastSuccessLine(provider))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func healthChip(_ status: String?) -> some View {
+        let tint: Color = Self.healthTint(status)
+        return Text(Self.healthLabel(status))
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+
+    private func failuresSection(_ failures: AdminJobFailures) -> some View {
+        Section {
+            LabeledContent("Failed jobs", value: Self.count(failures.failedJobs))
+            LabeledContent("Stuck jobs", value: Self.count(failures.orphanedJobs))
+            Text(Self.lastFailureLine(failures))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(failures.stepList.enumerated()), id: \.offset) { pair in
+                LabeledContent(pair.element.displayName, value: Self.count(pair.element.count))
+            }
+        } header: {
+            Text("Render job failures")
+        } footer: {
+            Text("Failures are per job, not per provider. The server sends only the pipeline step and the exception type — never the upstream message, which can carry a signed URL or key material.")
+        }
+    }
+
+    // MARK: Empty / error / gate states
+
+    private var signedOutSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Sign in to open the owner console", systemImage: "person.crop.circle.badge.checkmark")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("Your session ended. The console reads spend from the server, so it needs your account.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                Button {
+                    showSignIn = true
+                } label: {
+                    Label("Sign in with Apple", systemImage: "apple.logo")
+                        .font(.rpBody.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func notAdminSection(_ message: String) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Not available on this account", systemImage: "lock")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text(message)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The server decides who sees this console, and it said no. Nothing on this phone can change that.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func errorSection(_ message: String) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn't load the console", systemImage: "exclamationmark.triangle")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.warn)
+                Text(message)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try again") {
+                    Task { await load(includeCompanions: true) }
+                }
+                .disabled(isLoading)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var loadingSection: some View {
+        Section {
+            HStack {
+                Text("Loading spend…").foregroundStyle(Theme.inkDim)
+                Spacer()
+                ProgressView()
+            }
+        }
+    }
+
+    private var emptySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Nothing to show yet", systemImage: "tray")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("The server returned no spend for \(window.phrase). Pull down to refresh.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    /// Data on screen but the last refresh failed — keep the numbers, say so.
+    @ViewBuilder
+    private var staleBanner: some View {
+        if let spendError {
+            Section {
+                Label(spendError, systemImage: "exclamationmark.triangle")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sideErrorSection: some View {
+        if !sideErrors.isEmpty {
+            Section {
+                ForEach(Array(sideErrors.enumerated()), id: \.offset) { pair in
+                    Text(pair.element)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("Partly loaded")
+            }
+        }
+    }
+
+    private func noteRow(_ text: String) -> some View {
+        Text(text)
+            .font(.rpCaption)
+            .foregroundStyle(Theme.inkDim)
+    }
+
+    // MARK: Loading
+
+    /// `includeCompanions` false = only the spend window changed, so only the
+    /// one route that depends on it is re-fetched.
+    @MainActor
+    private func load(includeCompanions: Bool) async {
+        if Config.enableAuth && !auth.isSignedIn {
+            needsSignIn = true
+            hasLoaded = true
+            // Drop the previous account's figures on the way out. Without this
+            // a sign-out followed by a sign-in whose fetch FAILS would leave
+            // the last admin's spend on screen behind an error banner.
+            clearData()
+            return
+        }
+        needsSignIn = false
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            spend = try await model.api.adminSpend(window: window)
+            spendError = nil
+            forbiddenMessage = nil
+        } catch {
+            if error is CancellationError { return }
+            applySpendFailure(error)
+            hasLoaded = true
+            return
+        }
+        hasLoaded = true
+        guard includeCompanions else { return }
+        await loadCompanions()
+    }
+
+    /// 403 and 401 are DIFFERENT answers and get different screens: "not an
+    /// admin" is a permanent no for this account, "signed out" is a session
+    /// that can be renewed.
+    @MainActor
+    private func applySpendFailure(_ error: Error) {
+        guard let api = error as? APIError else {
+            spendError = UserFacingError.message(error, fallback: Self.genericFailure)
+            return
+        }
+        if api.isForbidden {
+            forbiddenMessage = Self.trimmed(api.errorDescription)
+                ?? "Admin access is required for this console."
+            clearData()
+            return
+        }
+        if api.isUnauthorized {
+            needsSignIn = true
+            clearData()
+            return
+        }
+        if api.isNotFound {
+            spendError = "This server build doesn't have the owner console yet — GET /admin/spend answered 404."
+            return
+        }
+        spendError = UserFacingError.message(error, fallback: Self.genericFailure)
+    }
+
+    @MainActor
+    private func clearData() {
+        spend = nil
+        providers = nil
+        orgUsage = nil
+        health = nil
+        spendError = nil
+        sideErrors = []
+    }
+
+    /// Best-effort: one failing companion route never blanks the spend numbers.
+    @MainActor
+    private func loadCompanions() async {
+        var problems: [String] = []
+        do {
+            providers = try await model.api.adminProviders()
+        } catch {
+            if !(error is CancellationError) { problems.append(Self.companionFailure("Providers", error)) }
+        }
+        do {
+            orgUsage = try await model.api.adminUsage()
+        } catch {
+            if !(error is CancellationError) { problems.append(Self.companionFailure("Usage & limits", error)) }
+        }
+        do {
+            health = try await model.api.adminHealth()
+        } catch {
+            if !(error is CancellationError) { problems.append(Self.companionFailure("Health", error)) }
+        }
+        sideErrors = problems
+    }
+
+    // MARK: Copy helpers (plain String — kept out of the view bodies so the
+    // SwiftUI type-checker never has to solve a big expression)
+
+    private static func trimmed(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private static func count(_ value: Int?) -> String { "\(value ?? 0)" }
+
+    private static func companionFailure(_ what: String, _ error: Error) -> String {
+        what + ": " + UserFacingError.message(error, fallback: "couldn't load.")
+    }
+
+    private static func totalCaption(_ report: AdminSpendReport, window: AdminSpendWindow) -> String {
+        var parts: [String] = ["Ledger total for " + window.phrase]
+        if let rows = report.ledgerRows {
+            parts.append("\(rows) ledger \(rows == 1 ? "row" : "rows")")
+        }
+        if report.isTruncated {
+            parts.append("lower bound — the window held more rows than the server reads at once")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func spendFooter(_ report: AdminSpendReport) -> String {
+        guard let generated = report.generatedDate else {
+            return "Read-only. Pull down to refresh."
+        }
+        return "Read-only. Updated " + Formatters.relative(generated) + ". Pull down to refresh."
+    }
+
+    private static func coverageIcon(_ complete: Bool) -> String {
+        complete ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private static func coverageTitle(_ coverage: AdminSpendCoverage?) -> String {
+        guard let coverage else { return "The server didn't say what this total covers" }
+        return coverage.isComplete ? "This total covers every metered source" : "This total is incomplete"
+    }
+
+    private static func coverageBody(_ coverage: AdminSpendCoverage?) -> String {
+        guard let coverage else {
+            return "No coverage information came back with these figures, so treat the number as a floor rather than a bill."
+        }
+        if let headline = trimmed(coverage.headline) { return headline }
+        if coverage.isComplete {
+            return "Every billable source the app knows about writes to the cost ledger."
+        }
+        return "Some billable work never reaches the cost ledger, so real spend is HIGHER than the number above."
+    }
+
+    private static func bucketCaption(rows: Int?, share: Double?) -> String {
+        var parts: [String] = []
+        if let rows { parts.append("\(rows) ledger \(rows == 1 ? "row" : "rows")") }
+        if let percent = AdminMoney.percent(share) { parts.append(percent + " of the total") }
+        return parts.isEmpty ? "No detail reported" : parts.joined(separator: " · ")
+    }
+
+    private static func orgSpendCaption(_ org: AdminSpendOrg) -> String {
+        var parts: [String] = []
+        if let plan = trimmed(org.plan) { parts.append(AdminText.plan(plan) + " plan") }
+        if let rows = org.rows { parts.append("\(rows) ledger \(rows == 1 ? "row" : "rows")") }
+        if let percent = AdminMoney.percent(org.share) { parts.append(percent + " of the total") }
+        return parts.isEmpty ? "No detail reported" : parts.joined(separator: " · ")
+    }
+
+    private static func skuLine(_ entry: AdminProviderModel) -> String? {
+        guard let sku = trimmed(entry.sku), sku != entry.displayName else { return nil }
+        return sku
+    }
+
+    private static func providerCaption(_ provider: AdminProvider) -> String {
+        var parts: [String] = []
+        if let kind = AdminText.kind(provider.kind) { parts.append(kind) }
+        let envs = provider.envList
+        if !envs.isEmpty {
+            parts.append("Env " + envs.joined(separator: ", "))
+        }
+        if let ledger = trimmed(provider.ledgerProvider) {
+            parts.append("Ledger rows as \"" + ledger + "\"")
+        } else {
+            parts.append("Writes no ledger rows")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func configuredLabel(_ configured: Bool?) -> String {
+        guard let configured else { return "Unknown" }
+        return configured ? "Configured ✓" : "Not configured ✗"
+    }
+
+    private static func configuredTint(_ configured: Bool?) -> Color {
+        guard let configured else { return Theme.inkDim }
+        return configured ? Theme.good : Theme.bad
+    }
+
+    private static func usageHeadline(_ report: AdminUsageReport) -> String {
+        let blocked = report.blockedOrgs.count
+        if blocked == 0 { return "Nothing is at a cap" }
+        return blocked == 1 ? "1 workspace is blocked" : "\(blocked) workspaces are blocked"
+    }
+
+    private static func usageCaption(_ report: AdminUsageReport) -> String {
+        var parts: [String] = []
+        if let month = trimmed(report.month) { parts.append("Month " + month) }
+        if let orgs = report.orgCount { parts.append("\(orgs) \(orgs == 1 ? "workspace" : "workspaces")") }
+        if report.isTruncated { parts.append("top workspaces only — more exist than the server returns") }
+        return parts.isEmpty ? "Counters reset each month." : parts.joined(separator: " · ")
+    }
+
+    private static func orgUsageCaption(_ org: AdminOrgUsage) -> String {
+        var parts: [String] = ["This month"]
+        if let stored = trimmed(org.planRaw), stored.lowercased() != (org.plan ?? "").lowercased() {
+            parts.append("stored plan " + AdminText.plan(stored))
+        }
+        if let ceiling = org.cogsCeilingCents {
+            parts.append("ceiling " + AdminMoney.amount(ceiling))
+        }
+        if let share = AdminMoney.percent(org.spendShareOfCeiling) {
+            parts.append(share + " of ceiling")
+        }
+        if let inFlight = org.jobsInFlight, inFlight > 0 { parts.append("\(inFlight) in flight") }
+        if let orphaned = org.jobsOrphaned, orphaned > 0 { parts.append("\(orphaned) stuck") }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func counterValue(_ counter: AdminUsageCounter) -> String {
+        counter.isIncluded ? "\(counter.used) of \(counter.cap)" : "Not included"
+    }
+
+    private static func counterTint(_ counter: AdminUsageCounter) -> Color {
+        if counter.isAtCap { return Theme.bad }
+        return counter.isIncluded ? Theme.ink : Theme.inkDim
+    }
+
+    private static func healthLabel(_ status: String?) -> String {
+        switch (status ?? "").lowercased() {
+        case "ok":           return "Working"
+        case "idle":         return "No activity"
+        case "unmetered":    return "Not metered"
+        case "unconfigured": return "Key missing"
+        case "":             return "Unknown"
+        default:             return AdminText.pretty(status ?? "unknown")
+        }
+    }
+
+    private static func healthTint(_ status: String?) -> Color {
+        switch (status ?? "").lowercased() {
+        case "ok":           return Theme.good
+        case "idle":         return Theme.inkDim
+        case "unmetered":    return Theme.warn
+        case "unconfigured": return Theme.bad
+        default:             return Theme.inkDim
+        }
+    }
+
+    private static func credentialLine(configured: Bool?, env: String?) -> String {
+        let name = trimmed(env) ?? "credential"
+        guard let configured else { return name + " — the server didn't say whether it is set" }
+        return configured ? name + " is set" : name + " is NOT set — this feature is off"
+    }
+
+    private static func lastSuccessLine(_ provider: AdminHealthProvider) -> String {
+        guard let date = provider.lastSuccessDate else {
+            if trimmed(provider.ledgerProvider) == nil {
+                return "No success can be shown — this provider never writes ledger rows."
+            }
+            return "No success recorded in the window."
+        }
+        var line = "Last success " + Formatters.relative(date)
+        if let detail = trimmed(provider.lastSuccessDetail) { line += " — " + detail }
+        return line
+    }
+
+    private static func healthFooter(_ health: AdminHealthReport?) -> String {
+        let base = "This screen calls no provider API — success is inferred from ledger rows already written."
+        guard let health, let note = trimmed(health.note) else { return base }
+        return note
+    }
+
+    private static func lastFailureLine(_ failures: AdminJobFailures) -> String {
+        guard let date = failures.lastFailureDate else {
+            return "No render job failure recorded in the window."
+        }
+        var line = "Last failure " + Formatters.relative(date)
+        if let step = trimmed(failures.lastFailureStep) { line += " at the " + step + " step" }
+        if let type = trimmed(failures.lastFailureType) { line += " (" + type + ")" }
+        return line
+    }
+}
+
+// MARK: - Admin money formatting
+// Currency comes from a NumberFormatter, never string interpolation, and the
+// locale is pinned to en_US for the same reason `Money.formatted` pins it: the
+// app and the hosted page must print the same string everywhere.
+
+enum AdminMoney {
+    /// The fraction-digit range is expressed TWICE on purpose — as the
+    /// min/max properties and as an explicit `¤`-pattern. Foundation honours
+    /// the properties for `.currency` on Darwin but ignores them on
+    /// swift-corelibs-foundation, where a 3.9¢ unit price silently rounded to
+    /// "$0.04" and threw away the digit that made it worth showing. The
+    /// pattern pins the output on either implementation; the properties keep
+    /// it sane if a future Foundation ignores the pattern instead.
+    private static func currencyFormatter(minDigits: Int, maxDigits: Int) -> NumberFormatter {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = "USD"
+        f.locale = Locale(identifier: "en_US")
+        f.minimumFractionDigits = minDigits
+        f.maximumFractionDigits = maxDigits
+        let required = String(repeating: "0", count: max(0, minDigits))
+        let optional = String(repeating: "#", count: max(0, maxDigits - minDigits))
+        let fraction = (required + optional).isEmpty ? "" : "." + required + optional
+        f.positiveFormat = "¤#,##0" + fraction
+        f.negativeFormat = "-¤#,##0" + fraction
+        return f
+    }
+
+    /// A spend total, from (possibly fractional) cents. "—" when unknown —
+    /// never a fabricated $0.00.
+    static func amount(_ cents: Double?) -> String {
+        guard let cents, cents.isFinite else { return "—" }
+        let dollars = NSNumber(value: cents / 100.0)
+        return currencyFormatter(minDigits: 2, maxDigits: 2).string(from: dollars) ?? "—"
+    }
+
+    /// A unit price, which is routinely sub-cent (one Gemini image edit is
+    /// 3.9¢ → "$0.039 / image"), so it keeps up to 4 decimal places.
+    static func unitPrice(_ cents: Double?, unit: String?) -> String {
+        guard let cents, cents.isFinite else { return "No published price" }
+        let dollars = NSNumber(value: cents / 100.0)
+        guard let amount = currencyFormatter(minDigits: 2, maxDigits: 4).string(from: dollars) else {
+            return "No published price"
+        }
+        let trimmedUnit = (unit ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedUnit.isEmpty ? amount : amount + " / " + trimmedUnit
+    }
+
+    /// A 0–1 share as a percentage. nil when there is nothing worth showing.
+    /// A sub-1% share keeps one decimal so it never reads as a flat "0%".
+    static func percent(_ share: Double?) -> String? {
+        guard let share, share.isFinite, share > 0 else { return nil }
+        let f = NumberFormatter()
+        f.numberStyle = .percent
+        f.locale = Locale(identifier: "en_US")
+        let maxDigits = share < 0.01 ? 1 : 0
+        f.minimumFractionDigits = 0
+        f.maximumFractionDigits = maxDigits
+        f.positiveFormat = maxDigits > 0 ? "#,##0.#%" : "#,##0%"
+        return f.string(from: NSNumber(value: share))
     }
 }

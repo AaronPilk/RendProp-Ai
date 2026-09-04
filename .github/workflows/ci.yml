@@ -202,17 +202,42 @@ jobs:
           python3 - <<'PY'
           import plistlib, sys
           d = plistlib.load(open('apps/ios/Rendprop/PrivacyInfo.xcprivacy','rb'))
-          types = {t['NSPrivacyCollectedDataType'] for t in d.get('NSPrivacyCollectedDataTypes', [])}
+          entries = d.get('NSPrivacyCollectedDataTypes', [])
+          types = {t['NSPrivacyCollectedDataType'] for t in entries}
           required = {
               'NSPrivacyCollectedDataTypePhoneNumber',
               'NSPrivacyCollectedDataTypePhysicalAddress',
-              'NSPrivacyCollectedDataTypeCoarseLocation',
+              # The account identifier every listing, tour and lead is linked to
+              # (Supabase auth user id / JWT). Apple's "User ID" type — the App
+              # Store Connect labels are derived from this manifest, so omitting
+              # it makes the labels disagree with the app (audit F-C-20).
+              'NSPrivacyCollectedDataTypeUserID',
+              # Listing coordinates are rounded to 3 decimals. Apple defines
+              # Precise Location as "the same or greater resolution as a latitude
+              # and longitude with three or more decimal places", so 3 decimals
+              # IS precise and must be declared as such — declaring Coarse here
+              # would under-report. Matching ASC answer: Location -> Precise.
+              'NSPrivacyCollectedDataTypePreciseLocation',
           }
           missing = required - types
           if missing:
               print('::error::privacy manifest missing:', ', '.join(sorted(missing))); sys.exit(1)
-          if 'NSPrivacyCollectedDataTypePreciseLocation' in types:
-              print('::error::manifest declares PreciseLocation; coordinates are coarsened server-side'); sys.exit(1)
+          if 'NSPrivacyCollectedDataTypeCoarseLocation' in types:
+              print('::error::manifest declares CoarseLocation; 3-decimal coordinates are Precise by Apple\'s definition'); sys.exit(1)
+          # Nothing may be declared as used for tracking: NSPrivacyTracking is
+          # false and there are no tracking domains, so a `true` here would be
+          # an internal contradiction App Review rejects on.
+          if d.get('NSPrivacyTracking') is not False:
+              print('::error::NSPrivacyTracking must be false'); sys.exit(1)
+          tracked = [t['NSPrivacyCollectedDataType'] for t in entries
+                     if t.get('NSPrivacyCollectedDataTypeTracking')]
+          if tracked:
+              print('::error::declared as tracking while NSPrivacyTracking is false:', ', '.join(tracked)); sys.exit(1)
+          # Every declared type needs at least one purpose, or the manifest is
+          # incomplete and ASC cannot derive a label from it.
+          for t in entries:
+              if not t.get('NSPrivacyCollectedDataTypePurposes'):
+                  print('::error::no purpose declared for', t['NSPrivacyCollectedDataType']); sys.exit(1)
           if not d.get('NSPrivacyAccessedAPITypes'):
               print('::error::NSPrivacyAccessedAPITypes is missing'); sys.exit(1)
           print('privacy manifest OK:', len(types), 'collected types')

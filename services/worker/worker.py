@@ -29,9 +29,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import signal
 import sys
+import threading
 import time
 import traceback
 from uuid import uuid4
@@ -40,6 +42,7 @@ import db
 import ffmpeg_render
 import infra_costs
 import r2
+import settings
 import stream
 from enhance_bridge import EnhanceResult, run_enhancement, wants_enhancement
 from settings import SETTINGS
@@ -49,9 +52,19 @@ _STOP = False
 
 
 def _handle_signal(signum, _frame):
+    """SIGTERM/SIGINT: stop the encode NOW and hand the job back to the queue.
+
+    The old policy was "finish the current job", which can be 90 minutes — far
+    past any orchestrator's 10–30s grace period, so the process was SIGKILLed
+    mid-render and the job was orphaned at `processing` forever (audit F-G-05).
+    Aborting and re-queueing loses at most one encode's work and keeps the queue
+    healthy; the job is picked up by the next worker with its `attempts` intact.
+    """
     global _STOP
     _STOP = True
-    print(f"\n↩ signal {signum} received — finishing current job then exiting…")
+    print(f"\n↩ signal {signum} received — aborting the current encode and "
+          f"re-queueing the job…")
+    ffmpeg_render.request_abort()
 
 
 # ── progress throttling ───────────────────────────────────────────────────────
@@ -70,52 +83,166 @@ def _make_progress(job_id: str, step: str, lo: float, hi: float):
     return cb
 
 
+# ── lease heartbeat ───────────────────────────────────────────────────────────
+
+class _Heartbeat:
+    """Refresh the job's lease while we hold it (audit F-G-05).
+
+    If a refresh reports that we no longer own the job — another worker reclaimed
+    an expired lease, or the reaper failed it — `lost` is set and `process_job`
+    stops: publishing then would create a SECOND renders row and bill the job
+    twice. A no-op when the lease columns aren't deployed yet.
+    """
+
+    def __init__(self, job_id: str) -> None:
+        self.job_id = job_id
+        self.lost = threading.Event()
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True,
+                                        name=f"heartbeat-{job_id[:8]}")
+
+    def _run(self) -> None:
+        while not self._stop.wait(db.HEARTBEAT_SECONDS):
+            if not db.heartbeat(self.job_id):
+                self.lost.set()
+                print(f"    ⚠ lost the lease on job {self.job_id} — another worker owns "
+                      f"it now; abandoning to avoid a double publish")
+                ffmpeg_render.request_abort()
+                return
+
+    def __enter__(self) -> "_Heartbeat":
+        if db.lease_supported():
+            self._thread.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=2)
+
+    def check(self) -> None:
+        if self.lost.is_set():
+            raise LeaseLost(f"lease on job {self.job_id} was taken over by another worker")
+
+
+class LeaseLost(RuntimeError):
+    """We no longer own this job — stop without failing it."""
+
+
 # ── enhancement persistence ───────────────────────────────────────────────────
 
-def _persist_enhancements(result: EnhanceResult, listing_id: str, render_id: str) -> str | None:
-    """Upload enhanced stills (+hero) to R2 and record `photos` rows. Best-effort.
+_AUTO_SEGMENT = re.compile(r"^segment-\d+(-\d+)?$")
 
-    Returns the hero clip's R2 key if uploaded, else None. Never raises — a failed
-    add-on upload must not sink the published tour.
+
+def _caption_for(room: str) -> str | None:
+    """`segment-7` is a slicing artefact, not a room name — don't show it.
+
+    With chapters the label IS the room the agent tagged. Without them the
+    pipeline names slices `segment-N` (audit F-G-16), and captioning a gallery
+    photo "segment-7" looks broken to a buyer.
+    """
+    name = (room or "").strip()
+    return None if (not name or _AUTO_SEGMENT.match(name)) else name
+
+
+def _upload_enhancements(result: EnhanceResult, listing_id: str, render_id: str,
+                         artifacts: "_Artifacts") -> tuple[list[dict], str | None]:
+    """Upload enhanced stills (+hero) to R2. Returns (photo_rows, hero_key).
+
+    Uploads only — the `photos` rows are written LATER, after the tour is
+    actually published. Writing them here meant a failure at step 7/8 left DB
+    rows pointing at objects the rollback had just deleted (audit F-G-21).
+    Never raises: a failed add-on upload must not sink the published tour.
     """
     bucket = SETTINGS.r2_bucket_renders
+    rows: list[dict] = []
     for i, still in enumerate(result.stills):
         try:
             enh_key = f"renders/{listing_id}/{render_id}-staged-{i}.jpg"
             r2.upload_file(still.enhanced_path, bucket, enh_key, "image/jpeg")
+            artifacts.r2(bucket, enh_key)
             orig_key = None
             if still.source_path and os.path.exists(still.source_path):
                 orig_key = f"renders/{listing_id}/{render_id}-staged-{i}-orig.jpg"
                 r2.upload_file(still.source_path, bucket, orig_key, "image/jpeg")
-            db.insert_photo({
+                artifacts.r2(bucket, orig_key)
+            rows.append({
                 "listing_id": listing_id,
                 "original_key": orig_key,
                 "enhanced_key": enh_key,
                 "is_staged": True,          # → mandatory "Virtually staged" disclosure
-                "caption": still.room,
+                "caption": _caption_for(still.room),
                 "sort": i,
             })
         except Exception as e:  # noqa: BLE001
-            print(f"    ⚠ enhanced still {i} persist failed (continuing): {e}")
+            print(f"    ⚠ enhanced still {i} upload failed (continuing): {e}")
 
     hero_key = None
     if result.hero_path:
         try:
             hero_key = f"renders/{listing_id}/{render_id}-hero.mp4"
             r2.upload_file(result.hero_path, bucket, hero_key, "video/mp4")
+            artifacts.r2(bucket, hero_key)
             print(f"    ✓ hero clip → r2://{bucket}/{hero_key}")
-            # TODO: no first-class column for the hero clip yet. Surface it via a
-            # `media` table or a renders.hero_key column so the tour host can play
-            # it. For now it lives in R2 and is logged here.
         except Exception as e:  # noqa: BLE001
             print(f"    ⚠ hero upload failed (continuing): {e}")
-    return hero_key
+            hero_key = None
+    return rows, hero_key
+
+
+def _record_enhancement_photos(rows: list[dict]) -> None:
+    """Insert the `photos` rows for a tour that is now actually published."""
+    for row in rows:
+        db.insert_photo(row)
+    if rows:
+        print(f"    ✓ {len(rows)} enhanced still(s) recorded on the listing")
+
+
+# ── uploaded-artifact ledger (audit F-G-21) ───────────────────────────────────
+
+class _Artifacts:
+    """Everything this job has already put somewhere that costs money.
+
+    The mp4, poster, stills and the Stream copy are all created BEFORE the
+    `renders` row exists. A failure at step 7/8 (or a hard kill) used to leave
+    every one of them unreferenced: R2 objects nobody deletes and a Stream asset
+    that keeps transcoding and billing with nothing pointing at it. On failure we
+    now walk this list back — best-effort, never raising, so cleanup can't mask
+    the original error.
+    """
+
+    def __init__(self) -> None:
+        self.r2_keys: list[tuple[str, str]] = []     # (bucket, key)
+        self.stream_uid: str | None = None
+        self.published = False                        # renders row exists → keep everything
+
+    def r2(self, bucket: str, key: str) -> None:
+        self.r2_keys.append((bucket, key))
+
+    def rollback(self, reason: str) -> None:
+        if self.published:
+            return
+        if not (self.r2_keys or self.stream_uid):
+            return
+        print(f"    · cleaning up {len(self.r2_keys)} orphaned object(s)"
+              f"{' + 1 Stream asset' if self.stream_uid else ''} after {reason}")
+        for bucket, key in reversed(self.r2_keys):
+            r2.delete_object(bucket, key)
+        if self.stream_uid and SETTINGS.has_stream:
+            stream.delete(self.stream_uid)
 
 
 # ── Cloudflare Stream registration ────────────────────────────────────────────
 
-def _register_stream(video_key: str, listing_id: str, render_id: str) -> str | None:
-    """Register the R2 mp4 to Stream via copy-from-URL. Returns UID or None."""
+def _register_stream(video_key: str, listing_id: str, render_id: str,
+                     local_mp4: str | None = None) -> str | None:
+    """Register the R2 mp4 to Stream. copy-from-URL first, direct upload second.
+
+    `direct_upload` used to be dead code that the README described as the
+    fallback (audit F-G-17). It is now actually wired: when Cloudflare cannot
+    reach the presigned R2 url, we push the bytes ourselves. Stream stays
+    optional — if both routes fail, the tour publishes with the R2 mp4.
+    """
     if not SETTINGS.has_stream:
         print("    · Stream token absent — skipping; player will use the R2 mp4 url.")
         return None
@@ -125,20 +252,29 @@ def _register_stream(video_key: str, listing_id: str, render_id: str) -> str | N
         uid = stream.copy_from_url(src, name=f"{listing_id}/{render_id}",
                                    meta={"listing_id": listing_id, "render_id": render_id})
         print(f"    ✓ Stream registered uid={uid}")
-        if SETTINGS.stream_require_ready:
-            details = stream.poll_ready(uid)
-            pb = stream.playback_urls(details)
+    except Exception as e:  # noqa: BLE001 — Stream is optional
+        print(f"    ⚠ Stream copy-from-URL failed: {e}")
+        if local_mp4 and os.path.exists(local_mp4):
+            try:
+                uid = stream.direct_upload(local_mp4, name=f"{render_id}.mp4")
+                print(f"    ✓ Stream direct upload succeeded uid={uid}")
+            except Exception as e2:  # noqa: BLE001
+                print(f"    ⚠ Stream direct upload also failed (continuing with R2 mp4): {e2}")
+                return None
+        else:
+            return None
+
+    if uid and SETTINGS.stream_require_ready:
+        try:
+            pb = stream.playback_urls(stream.poll_ready(uid))
             print(f"    ✓ Stream ready hls={pb.get('hls')}")
-        return uid
-    except Exception as e:  # noqa: BLE001 — Stream is optional; fall back to R2 mp4
-        if uid:
+        except Exception as e:  # noqa: BLE001
             # Registration succeeded; only the readiness poll gave up. The UID
             # is real and Stream keeps transcoding — keep it rather than
             # orphaning a billed asset (the player uses the R2 mp4 first anyway).
-            print(f"    ⚠ Stream readiness poll failed (keeping uid={uid}; player falls back to R2 mp4): {e}")
-            return uid
-        print(f"    ⚠ Stream registration failed (continuing with R2 mp4): {e}")
-        return None
+            print(f"    ⚠ Stream readiness poll failed (keeping uid={uid}; "
+                  f"player falls back to R2 mp4): {e}")
+    return uid
 
 
 # ── asset eligibility ─────────────────────────────────────────────────────────
@@ -156,6 +292,38 @@ def _skip_reason(asset: dict) -> str | None:
     return None
 
 
+# ── resource guards ───────────────────────────────────────────────────────────
+
+MIN_FREE_DISK_FACTOR = max(1.2, float(os.environ.get("MIN_FREE_DISK_FACTOR", "2.5") or 2.5))
+
+
+def _check_free_space(workdir: str, source_bytes) -> None:
+    """Refuse the job when the source + its all-intra output won't fit.
+
+    Uploads are capped at 12 GB and the all-intra output is itself multi-GB. On a
+    host whose /tmp is in memory (Cloud Run) that is an OOM kill, which — before
+    the lease — orphaned the job at `processing` forever (audit F-G-18/F-G-05).
+    A clear, retryable failure beats a silent kill.
+    """
+    try:
+        need = float(source_bytes or 0) * MIN_FREE_DISK_FACTOR
+    except (TypeError, ValueError):
+        return
+    if need <= 0:
+        return                     # asset row has no size — nothing to check against
+    try:
+        free = shutil.disk_usage(workdir).free
+    except OSError:
+        return
+    if free < need:
+        raise RuntimeError(
+            f"not enough scratch space in {workdir}: {free / 1e9:.1f} GB free, need "
+            f"~{need / 1e9:.1f} GB ({MIN_FREE_DISK_FACTOR:g}x the {float(source_bytes) / 1e9:.1f} GB "
+            f"source for the download plus the all-intra output). Give the worker a "
+            f"disk-backed volume or a larger instance."
+        )
+
+
 # ── the job ───────────────────────────────────────────────────────────────────
 
 def process_job(job: dict) -> None:
@@ -165,11 +333,24 @@ def process_job(job: dict) -> None:
     enhancements = job.get("enhancements") or {}
     workdir = os.path.join(SETTINGS.workdir, job_id)
     os.makedirs(workdir, exist_ok=True)
-    step = "load"
 
     print(f"\n=== job {job_id} (listing={listing_id} asset={asset_id} "
           f"tier={job.get('tier')} enhancements={enhancements}) ===")
 
+    # The abort latch is process-wide and is set by BOTH a shutdown signal and a
+    # lost lease. Clear it before a new job or the previous job's abort would
+    # instantly kill this one — but never clear it while we are shutting down.
+    if not _STOP:
+        ffmpeg_render.clear_abort()
+
+    with _Heartbeat(job_id) as hb:
+        _process_job_inner(job, job_id, listing_id, asset_id, enhancements, workdir, hb)
+
+
+def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancements: dict,
+                       workdir: str, hb: "_Heartbeat") -> None:
+    step = "load"
+    artifacts = _Artifacts()
     try:
         # 1. Resolve listing (→ org_id) + capture asset.
         db.set_progress(job_id, 0.05, "loading")
@@ -202,12 +383,14 @@ def process_job(job: dict) -> None:
         # 2. Download the raw capture from R2 uploads.
         step = "download"
         db.set_progress(job_id, 0.10, "downloading")
+        _check_free_space(workdir, asset.get("bytes"))
         local_in = os.path.join(workdir, "capture" + os.path.splitext(storage_key)[1])
         r2.download_file(SETTINGS.r2_bucket_uploads, storage_key, local_in)
         print(f"    ✓ downloaded r2://{SETTINGS.r2_bucket_uploads}/{storage_key}")
 
         # 3. ffmpeg render (mirror RenderEngine).
         step = "encode"
+        hb.check()
         out_mp4, poster, duration_s, speed_factor = ffmpeg_render.render(
             local_in, is_drone, workdir=workdir,
             progress=_make_progress(job_id, "encoding", 0.15, 0.55),
@@ -223,6 +406,7 @@ def process_job(job: dict) -> None:
         #    wants_enhancement() normalises the style first: the app sends
         #    style:"as_is" on every plain job, which is NOT a restage request.
         step = "enhance"
+        hb.check()          # never start PAID work on a job we no longer own
         enh = EnhanceResult(ran=False, reason="no enhancements requested")
         if wants_enhancement(enhancements):
             db.set_progress(job_id, 0.58, "enhancing")
@@ -241,19 +425,25 @@ def process_job(job: dict) -> None:
         video_key = f"renders/{listing_id}/{render_id}.mp4"
         poster_key = f"renders/{listing_id}/{render_id}-poster.jpg"
         r2.upload_file(out_mp4, SETTINGS.r2_bucket_renders, video_key, "video/mp4")
+        artifacts.r2(SETTINGS.r2_bucket_renders, video_key)
         r2.upload_file(poster, SETTINGS.r2_bucket_renders, poster_key, "image/jpeg")
+        artifacts.r2(SETTINGS.r2_bucket_renders, poster_key)
         print(f"    ✓ uploaded tour + poster → r2://{SETTINGS.r2_bucket_renders}/{video_key}")
 
+        photo_rows: list[dict] = []
+        hero_key = None
         if enh.ran:
-            _persist_enhancements(enh, listing_id, render_id)
+            photo_rows, hero_key = _upload_enhancements(enh, listing_id, render_id, artifacts)
 
         # 6. Register to Cloudflare Stream (optional).
         step = "stream"
         db.set_progress(job_id, 0.90, "registering stream")
-        stream_uid = _register_stream(video_key, listing_id, render_id)
+        stream_uid = _register_stream(video_key, listing_id, render_id, local_mp4=out_mp4)
+        artifacts.stream_uid = stream_uid
 
         # 7. Insert the renders row (the published tour).
         step = "publish"
+        hb.check()          # never publish twice
         db.set_progress(job_id, 0.94, "publishing")
         render_row = db.insert_render({
             "id": render_id,
@@ -267,22 +457,59 @@ def process_job(job: dict) -> None:
             "poster_key": poster_key,
             "staged": bool(enh.staged),
             "published_at": db.now_iso(),
-        })
+        }, extra={"hero_key": hero_key} if hero_key else None)
+        artifacts.published = True     # everything above is now referenced
+        _record_enhancement_photos(photo_rows)
         slug = render_row.get("slug")
         print(f"    ✓ published render {render_id} slug={slug} staged={enh.staged}")
 
+        # Record what the AI pipeline actually DID, so ops (and the status
+        # screen) can tell a skipped add-on from one that ran — and so
+        # `renders.staged` can be driven by OUTCOME instead of the request
+        # toggles (audit F-G-01 #2 / F-G-09). Needs migration 0016; without it
+        # this logs one warning per job and changes nothing else.
+        db.set_enhancement_result(job_id, {
+            "ran": bool(enh.ran),
+            "staged": bool(enh.staged),
+            "reason": enh.reason,
+            "spent_cents": round(float(enh.spent_cents or 0), 4),
+            "stills": len(enh.stills),
+            "hero_key": hero_key,
+            "segments": [
+                {"name": seg.get("name"), "status": seg.get("status"),
+                 "reason": seg.get("reason")}
+                for seg in (enh.manifest.get("segments") or [])
+            ],
+            "ts": db.now_iso(),
+        })
+
         # 8. Stream storage cost + final rollup.
-        sl = infra_costs.stream_store_line(duration_s, stream_uid=stream_uid)
-        db.record_cost(feature=sl.feature, provider=sl.provider, model=sl.model,
-                       units=sl.units, unit_cost_cents=sl.unit_cost_cents,
-                       total_cents=sl.total_cents, job_id=job_id, org_id=org_id, meta=sl.meta)
-        db.rollup_job(job_id)
+        #    Only when Stream actually holds the asset: with no token (or a failed
+        #    copy) `stream_uid` is None and there is nothing stored, so booking a
+        #    storage line inflated COGS for every job (audit F-G-17).
+        if stream_uid:
+            sl = infra_costs.stream_store_line(duration_s, stream_uid=stream_uid)
+            db.record_cost(feature=sl.feature, provider=sl.provider, model=sl.model,
+                           units=sl.units, unit_cost_cents=sl.unit_cost_cents,
+                           total_cents=sl.total_cents, job_id=job_id, org_id=org_id, meta=sl.meta)
+        db.rollup_job_best_effort(job_id)
+        db.flush_cost_spool()          # opportunistic: retire any spooled rows
 
         # 9. Flip the listing to ready + finish the job.
         db.set_listing_status(listing_id, "ready")
         db.finish_job(job_id)
         print(f"=== job {job_id} READY → /f/{slug} ===")
 
+    except LeaseLost as e:
+        # Another worker owns the job now. Touch NOTHING — not even to fail it.
+        print(f"    ↩ job {job_id} abandoned at step '{step}': {e}")
+        # Do NOT roll back: the worker that owns the job now may be using or
+        # about to reference these very objects.
+    except ffmpeg_render.RenderAborted as e:
+        # Shutdown, not failure: hand the job back so the next worker retries it.
+        print(f"    ↩ job {job_id} aborted at step '{step}': {e} — re-queueing")
+        db.release_job(job_id, f"worker shutdown during {step}")
+        artifacts.rollback("shutdown")
     except Exception as e:  # noqa: BLE001 — any failure marks the job failed
         print(f"    ✗ job {job_id} failed at step '{step}': {e}")
         traceback.print_exc()
@@ -292,11 +519,40 @@ def process_job(job: dict) -> None:
             "type": e.__class__.__name__,
             "ts": db.now_iso(),
         })
+        artifacts.rollback("failure")
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
 
 
 # ── loop / entrypoints ────────────────────────────────────────────────────────
+
+def _sweep_stale_workdirs() -> None:
+    """Delete per-job scratch dirs left behind by a SIGKILL (audit F-G-21).
+
+    `process_job` removes its own workdir in a `finally`, but a hard kill skips
+    that — and a 12 GB capture plus a multi-GB all-intra output per orphan fills
+    the disk (or, on an in-memory /tmp, the RAM) until the container is replaced.
+    Anything older than the encode ceiling cannot belong to a live job.
+    """
+    root = SETTINGS.workdir
+    cutoff = time.time() - max(3600, ffmpeg_render.RENDER_TIMEOUT_S)
+    freed = 0
+    try:
+        entries = os.listdir(root)
+    except OSError:
+        return
+    for name in entries:
+        path = os.path.join(root, name)
+        try:
+            if not os.path.isdir(path) or os.path.getmtime(path) > cutoff:
+                continue
+            shutil.rmtree(path, ignore_errors=True)
+            freed += 1
+        except OSError:
+            continue
+    if freed:
+        print(f"· swept {freed} stale workdir(s) from {root}")
+
 
 def _preflight() -> None:
     problems = []
@@ -307,9 +563,25 @@ def _preflight() -> None:
     if problems:
         sys.exit("FATAL: missing required config: " + "; ".join(problems)
                  + "\nSee services/worker/.env.example.")
+
+    # FAIL LOUD on a mistyped AI-spend guard (audit F-G-11). These live in the
+    # same .env and are read by services/pipeline; a cap that silently reverts to
+    # its default is the failure mode that lets an unattended bill run away, so
+    # the worker refuses to start rather than run with a guard the operator
+    # believes is set.
+    try:
+        in_force = settings.validate_shared_guards()
+    except settings.ConfigError as e:
+        sys.exit(f"FATAL: bad AI-spend guard: {e}\nSee services/worker/.env.example.")
+
     print(f"→ worker up. schema={SETTINGS.db_schema} "
           f"stream={'on' if SETTINGS.has_stream else 'off (R2 mp4 only)'} "
           f"pipeline={SETTINGS.pipeline_dir}")
+    print("  guards: " + (", ".join(in_force) if in_force else "all at defaults"))
+    # Say out loud whether unrecorded spend would actually survive a restart —
+    # nobody should discover that during an incident (audit F-G-07).
+    print(f"  cost spool: {db.describe_cost_spool()}")
+    db.flush_cost_spool()
 
 
 def process_one() -> bool:
@@ -359,9 +631,23 @@ def process_specific(job_id: str) -> None:
     process_job(claimed[0])
 
 
+REAP_INTERVAL_S = max(30.0, float(os.environ.get("REAP_INTERVAL_S", "120") or 120))
+
+
 def run_loop() -> None:
     idle_logged = False
+    next_reap = 0.0
     while not _STOP:
+        # Reaper: fail jobs whose lease expired and whose attempts are spent, so
+        # orphans stop counting against the org's 3-in-flight cap (audit F-G-05).
+        # Reclaimable ones are picked up by claim_next_job itself.
+        now = time.monotonic()
+        if now >= next_reap:
+            next_reap = now + REAP_INTERVAL_S
+            try:
+                db.reap_stale_jobs()
+            except Exception as e:  # noqa: BLE001 — never let the reaper stop the loop
+                print(f"⚠ reaper error (continuing): {e}")
         try:
             worked = process_one()
         except Exception as e:  # noqa: BLE001 — the loop must survive a bad job
@@ -389,6 +675,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_signal)
     signal.signal(signal.SIGTERM, _handle_signal)
     os.makedirs(SETTINGS.workdir, exist_ok=True)
+    _sweep_stale_workdirs()
     _preflight()
 
     if args.job_id:

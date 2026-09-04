@@ -105,6 +105,23 @@ def get(uid: str) -> dict:
     return _unwrap(r)
 
 
+def delete(uid: str) -> bool:
+    """Best-effort DELETE /stream/{uid} — stop billing an orphaned copy.
+
+    A Stream asset registered by a job that then failed keeps transcoding and is
+    billed forever with nothing referencing it (audit F-G-17/F-G-21). Never
+    raises: cleanup must not mask the original failure.
+    """
+    try:
+        r = _request("DELETE", f"{_base()}/{uid}", headers=_headers(), timeout=30)
+        if r.ok:
+            return True
+        print(f"    ⚠ could not delete orphaned Stream asset {uid}: HTTP {r.status_code}")
+    except StreamError as e:
+        print(f"    ⚠ could not delete orphaned Stream asset {uid}: {e}")
+    return False
+
+
 def playback_urls(details: dict) -> dict:
     """Pull the HLS/DASH manifest urls + thumbnail out of a Stream video object."""
     pb = details.get("playback", {}) or {}

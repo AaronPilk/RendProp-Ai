@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import Combine
 import AuthenticationServices
 
 /// Render progress. The work itself lives in `AppModel.renderCoordinator`
@@ -27,6 +28,7 @@ struct RenderStatusView: View {
 
 private struct RenderStatusContent: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var uploads: UploadManager
     @ObservedObject var coordinator: RenderCoordinator
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dismiss) private var dismiss
@@ -38,6 +40,10 @@ private struct RenderStatusContent: View {
     @State private var didPromptSignIn = false
     @State private var declinedSignIn = false
     @State private var showCancelConfirm = false
+    /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
+    /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
+    /// `onAppear` — a `@State` default can't read a type member here.)
+    @State private var isThrottled = false
 
     /// Live copy so the real server share URL (set by publishTour) is picked up.
     private var currentListing: Listing {
@@ -72,6 +78,24 @@ private struct RenderStatusContent: View {
 
     private var isWorking: Bool { mode == .working }
     private var publishFailed: Bool { job?.stage == .publishFailed }
+
+    private static var thermallyThrottled: Bool {
+        let state = ProcessInfo.processInfo.thermalState
+        return state == .serious || state == .critical
+    }
+
+    /// This listing's publish upload is parked waiting for Wi-Fi — the user's
+    /// "ask before uploading on cellular" setting, or a very large file. The
+    /// tour is finished and on the phone; only the share link is waiting
+    /// (audit F-B-08). It finishes by itself on Wi-Fi.
+    private var cellularParked: Bool {
+        guard uploads.pendingCellularConfirmation,
+              let upload = uploads.state,
+              upload.status == .queued, upload.role == "render",
+              let serverID = currentListing.serverID else { return false }
+        return upload.listingID == serverID
+    }
+
     private var fraction: Double {
         if let job { return job.fraction }
         return tour != nil ? 1 : 0
@@ -93,8 +117,19 @@ private struct RenderStatusContent: View {
         .navigationTitle(isWorking ? "Creating Tour" : "Your Tour")
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(isWorking)
-        .onAppear(perform: syncSignInPrompt)
+        .onAppear {
+            syncSignInPrompt()
+            isThrottled = Self.thermallyThrottled
+        }
         .onChange(of: job?.stage) { _ in syncSignInPrompt() }
+        // `.receive(on:)` is not optional here: the thermal notification is
+        // posted on an arbitrary queue, and touching @State off the main thread
+        // is a SwiftUI violation.
+        .onReceive(NotificationCenter.default
+                    .publisher(for: ProcessInfo.thermalStateDidChangeNotification)
+                    .receive(on: DispatchQueue.main)) { _ in
+            isThrottled = Self.thermallyThrottled
+        }
         .sheet(isPresented: $showSignIn, onDismiss: onSignInSheetDismissed) {
             SignInView()
         }
@@ -202,6 +237,12 @@ private struct RenderStatusContent: View {
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
+                if isThrottled {
+                    Text("Your phone is hot, so this is running slower than usual. It will finish — leave it plugged in or let it cool if you can.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                }
             case .publishLater:
                 Text("Saved on your phone. Sign in and tap Publish on the \(noun) whenever you're ready — no re-render needed.")
                     .font(.rpCaption)
@@ -213,7 +254,15 @@ private struct RenderStatusContent: View {
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
             case .ready:
-                if publishFailed, let message = job?.error {
+                if cellularParked {
+                    Text("Your tour is saved on this phone. The share link finishes uploading on its own as soon as you're on Wi-Fi.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.center)
+                } else if publishFailed, shareURL == nil, let message = job?.error {
+                    // `shareURL == nil` matters: a publish that later finished
+                    // out of band (resumed upload, Wi-Fi) must not keep showing
+                    // the old failure next to a working Share button.
                     Text("Saved on your phone — we couldn't publish the share link. \(message)")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.warn)
@@ -349,6 +398,13 @@ private struct RenderStatusContent: View {
                         didPromptSignIn = true
                         showSignIn = true
                     }
+                } else if cellularParked {
+                    // The parked upload finishes the publish by itself through
+                    // UploadManager.didCompleteNotification, so this only has to
+                    // release it — never start a second one.
+                    SecondaryButton(title: "Upload now on cellular", systemImage: "antenna.radiowaves.left.and.right") {
+                        uploads.confirmCellularAndStart()   // SecondaryButton taps the haptic itself
+                    }
                 } else if publishFailed {
                     if job?.errorStatus == 401 {
                         SecondaryButton(title: "Sign in to publish", systemImage: "link") {
@@ -419,9 +475,10 @@ private struct RenderStatusContent: View {
         }
     }
 
+    /// No haptic here: both callers are `PrimaryButton`, which taps one itself —
+    /// firing a second made "Try again" buzz twice (audit F-D-25's rule).
     private func tryAgain() {
         guard let asset = model.assets[listing.id] else { return }
-        Haptics.selection()
         coordinator.start(listing: currentListing, asset: asset)
     }
 

@@ -54,7 +54,7 @@ struct HomeListingsView: View {
                     } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "plus")
-                            Text(SpaceType.current.newItemTitle).fontWeight(.semibold)
+                            Text("Add a \(noun)").fontWeight(.semibold)
                         }
                         .font(.body)
                         .frame(maxWidth: .infinity)
@@ -66,7 +66,7 @@ struct HomeListingsView: View {
                     }
                     .buttonStyle(ScalePressStyle())
                     .padding(.horizontal)
-                    .accessibilityLabel(Text("Start a new listing"))
+                    .accessibilityLabel(Text("Add a \(noun)"))
                 }
                 .padding(.bottom, 6)
             }
@@ -206,6 +206,10 @@ struct HomeListingsView: View {
                 emptyStep("3", "Share")
             }
             .padding(.top, 4)
+            Text("Add a \(noun) first. Every photo and video is saved to it.")
+                .font(.rpCaption)
+                .foregroundStyle(Color.white.opacity(0.9))
+                .multilineTextAlignment(.center)
             Text("The \(noun)s below are samples — scroll one to see the result.")
                 .font(.rpCaption)
                 .foregroundStyle(Color.white.opacity(0.8))

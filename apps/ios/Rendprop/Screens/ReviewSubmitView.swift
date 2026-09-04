@@ -86,7 +86,7 @@ struct ReviewSubmitView: View {
             Text("This replaces the current tour with a new render using these settings. A published link keeps working until the new tour is published.")
         }
         .task(id: auth.isSignedIn) { await loadEntitlements() }
-        .task { await detectSourceIfNeeded() }
+        .onAppear(perform: detectSourceIfNeeded)
         .aiConsentGate()
     }
 
@@ -105,15 +105,14 @@ struct ReviewSubmitView: View {
                     Text("\(Formatters.duration(asset.durationS)) · \(asset.resolutionLabel) · \(Int(asset.fps.rounded())) fps")
                         .font(.rpHeadline)
                         .foregroundStyle(Theme.ink)
-                    HStack(spacing: 8) {
-                        Text(Formatters.bytes(asset.bytes))
-                        if asset.hasGyro {
-                            Label("Gyro sidecar", systemImage: "gyroscope")
-                                .foregroundStyle(Theme.good)
-                        }
-                    }
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.inkDim)
+                    // Size only. The "Gyro sidecar" chip that used to sit here
+                    // advertised a capability nothing delivers: the motion
+                    // sidecar is recorded but never read by the render engine
+                    // and never uploaded (audit F-D-10). Put it back when
+                    // something actually consumes it.
+                    Text(Formatters.bytes(asset.bytes))
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
                 }
                 Spacer()
             }
@@ -333,28 +332,19 @@ struct ReviewSubmitView: View {
         if aiTiersLocked && tier != .smooth { tier = .smooth }
     }
 
-    /// Prefill Handheld/Drone from the file: DJI/Autel/Skydio/Parrot in the
-    /// container metadata (make/model/software) or a DJI-style filename.
-    private func detectSourceIfNeeded() async {
+    /// Prefill Handheld/Drone. The heuristic (DJI/Autel/Skydio/Parrot… in the
+    /// container metadata or the file name) already ran in `MediaImporter` when
+    /// the file was imported, so read its answer instead of loading the whole
+    /// metadata of a multi-GB file a second time on this screen. Recorded takes
+    /// come in as `isDrone: false`, which is simply correct.
+    private func detectSourceIfNeeded() {
         guard !didDetectSource else { return }
         didDetectSource = true
-        if asset.isDrone { sourceKind = .drone; return }
-        if await Self.looksLikeDrone(asset.localURL) { sourceKind = .drone }
-    }
-
-    static func looksLikeDrone(_ url: URL) async -> Bool {
-        let makers = ["DJI", "AUTEL", "SKYDIO", "PARROT", "HASSELBLAD"]
-        let name = url.lastPathComponent.uppercased()
-        if makers.contains(where: { name.hasPrefix($0) }) { return true }
-        let av = AVURLAsset(url: url)
-        var strings: [String] = []
-        if let items = try? await av.load(.metadata) {
-            for item in items {
-                if let s = try? await item.load(.stringValue), !s.isEmpty { strings.append(s) }
-            }
+        // Cheap belt-and-braces for assets stored before the importer looked at
+        // the name (persisted from an earlier build).
+        if asset.isDrone || MediaImporter.filenameLooksLikeDrone(asset.localURL) {
+            sourceKind = .drone
         }
-        let joined = strings.joined(separator: " ").uppercased()
-        return makers.contains { joined.contains($0) }
     }
 
     // MARK: - Submit

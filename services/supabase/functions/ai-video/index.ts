@@ -74,6 +74,7 @@ import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
+import { APP_AI_UNIT_CENTS, recordAppAiCost } from "../_shared/ledger.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
 // queue, so cap submissions per burst window AND per rolling month per org,
@@ -180,6 +181,14 @@ const DRONE_TIERS: Record<string, { longEdge: number; fps: number }> = {
   "1080p60": { longEdge: 1920, fps: 60 },
   "4k30": { longEdge: 3840, fps: 30 },
   "4k60": { longEdge: 3840, fps: 60 },
+};
+
+// Topaz drone-glide cost per OUTPUT second, by tier (F-E-15). Authoritative
+// numbers live in _shared/ledger.ts APP_AI_UNIT_CENTS (mirrors costs.py + admin).
+const DRONE_TIER_CENTS: Record<string, number> = {
+  "1080p60": APP_AI_UNIT_CENTS.topaz_1080p60_per_s,
+  "4k30": APP_AI_UNIT_CENTS.topaz_4k30_per_s,
+  "4k60": APP_AI_UNIT_CENTS.topaz_4k60_per_s,
 };
 
 // Bria hard limit: "duration must be less than 5s" (input schema). We disable
@@ -432,7 +441,7 @@ Deno.serve(async (req) => {
       fps = Math.min(120, Math.max(24, fps));
       const interpolate = asset.fps == null || asset.fps < fps - 0.5;
 
-      await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
+      const orgId = await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
       const input: Record<string, unknown> = {
         video_url: asset.url,
         model: "Proteus", // natural detail; interpolation gives the glide
@@ -441,6 +450,31 @@ Deno.serve(async (req) => {
       };
       if (interpolate) input.target_fps = fps;
       const sub = await falSubmit(MODEL_DRONE, input);
+
+      // COST LEDGER (F-E-15): Topaz bills per OUTPUT second, and the output runs
+      // the same wall-clock as the source, so units = the source duration. One
+      // org-scoped row, job_id = NULL, best effort. Written only after fal ACCEPTED
+      // the submit — the spend is committed at that point (E-network.md §1), and a
+      // retried Idempotency-Key was already 409'd above, so one render → one row.
+      // The drone route does not require duration_s; without it Topaz cannot be
+      // priced per-second, so we log a warning and record no row rather than a
+      // misleading $0 one (a residual gap — see HANDOFF).
+      if (asset.duration_s && asset.duration_s > 0) {
+        await recordAppAiCost(adminClient(), {
+          orgId,
+          provider: "fal",
+          feature: "drone_render",
+          model: MODEL_DRONE,
+          units: asset.duration_s,
+          unitCents: DRONE_TIER_CENTS[tier],
+          meta: { tier, request_id: sub.request_id, upscale_factor: upscale, target_fps: fps, interpolated: interpolate },
+        });
+      } else {
+        console.warn(
+          `ai-video drone: asset ${body.asset_id} has no probed duration; ` +
+            `Topaz ${tier} spend not recorded to cost_ledger (F-E-15 residual gap)`,
+        );
+      }
       return json({
         ...sub,
         kind: "drone",
@@ -490,6 +524,11 @@ Deno.serve(async (req) => {
         preserve_audio: true,
         output_container_and_codec: "mp4_h264",
       });
+      // COST LEDGER (F-E-15): Bria video erase has NO committed unit price in the
+      // repo (functions/admin/index.ts lists it as unit_cost_cents: null) and it
+      // rides the reel allowance, so no cost_ledger row is written here on
+      // purpose. Give it a real per-clip price in APP_AI_UNIT_CENTS + the admin
+      // inventory first, then log it like the others (see HANDOFF).
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? asset.listing_id,
         kind: "declutter",
@@ -554,7 +593,7 @@ Deno.serve(async (req) => {
       const grounded = imageUrl !== null;
       const prompt = buildAerialPrompt({ grounded, space, motion, time, region, style });
 
-      await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
+      const orgId = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
       let sub: { request_id: string; status_url: string; response_url: string };
       let modelId: string;
       if (grounded) {
@@ -577,6 +616,21 @@ Deno.serve(async (req) => {
           generate_audio: false, // silent b-roll; the app scores it (and it's ~33% cheaper)
         });
       }
+
+      // COST LEDGER (F-E-15): a GROUNDED aerial is Seedance i2v (billed per output
+      // second); an UNGROUNDED one is Veo 3.1 Fast (a flat per-clip price — the
+      // repo has no per-second Veo rate). One org-scoped row, job_id = NULL, best
+      // effort, only after fal ACCEPTED the submit (spend committed; see §1).
+      await recordAppAiCost(adminClient(), {
+        orgId,
+        provider: "fal",
+        feature: "aerial",
+        model: modelId,
+        units: grounded ? seconds : 1,
+        unitCents: grounded ? APP_AI_UNIT_CENTS.seedance_per_s : APP_AI_UNIT_CENTS.veo_aerial_clip,
+        meta: { grounded, seconds, aspect, request_id: sub.request_id },
+      });
+
       // COMPLIANCE: an aerial is synthetic camera movement — HousingWire's
       // disclosure test names exactly this case, and WI Act 69 covers generated
       // video from 1 Jan 2027. Recorded at submit; the app attaches the finished
@@ -647,13 +701,26 @@ Deno.serve(async (req) => {
         ? guardedUserPrompt(userMotion, space, "Animate")
         : reelPrompt(space);
 
-      await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
+      const orgId = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_I2V, {
         prompt: reelText,
         image_url: imageUrl,
         resolution: "1080p",
         duration: String(secs), // Seedance takes duration as a string
       });
+
+      // COST LEDGER (F-E-15): Seedance i2v bills per output second. One org-scoped
+      // row, job_id = NULL, best effort, only after fal ACCEPTED the submit.
+      await recordAppAiCost(adminClient(), {
+        orgId,
+        provider: "fal",
+        feature: "reel",
+        model: MODEL_I2V,
+        units: secs,
+        unitCents: APP_AI_UNIT_CENTS.seedance_per_s,
+        meta: { seconds: secs, space_type: space, request_id: sub.request_id },
+      });
+
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? reelListingId,
         kind: "reel",

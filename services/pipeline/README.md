@@ -30,7 +30,7 @@ is metered **before** it runs against `MAX_GEN_COST_PER_JOB_CENTS` and logged to
 | `providers/costs.py` | **THE single unit-cost table.** Edit here when prices drop. |
 | `providers/gemini.py` | Nano Banana (Gemini 2.5 Flash Image) restage — `restage(image, style_prompt) -> bytes` |
 | `providers/fal_client.py` | Flux Fill declutter, Seedance hero clip, Flux Kontext restage fallback |
-| `providers/anthropic_qc.py` | QC drift judge + room understanding (Haiku→Sonnet), prompt-cached rubric |
+| `providers/anthropic_qc.py` | QC drift judge + room understanding (Haiku→Sonnet); the rubric is NOT prompt-cached (too short to reach Haiku's cache minimum — audit F-G-19) |
 | `providers/base.py` | stdlib HTTP, base64 data-URI, download helpers, typed errors |
 | `router.py` | consistency-first, cost-aware routing; **enforces the cap before every call** |
 | `cost_ledger.py` | writes `cost_ledger` rows to Supabase REST + rolls up `render_jobs.cost_cents` |
@@ -107,7 +107,7 @@ Output: enhanced frames + `out/manifest.json` (per-segment status, QC scores,
 
 **Cost governors:** deterministic-first (no AI on the base render) · masked
 inpaint for declutter · Haiku-first QC with Sonnet escalation only on low
-confidence · prompt-cached QC rubric · capped QC output tokens · `QC_MAX_RETRIES`
+confidence · capped QC output tokens · `QC_MAX_RETRIES`
 then fall back to original · **`MAX_GEN_COST_PER_JOB_CENTS` checked before every
 provider call** (estimate + running total; abort if over — nothing charged).
 
@@ -136,12 +136,29 @@ provider call** (estimate + running total; abort if over — nothing charged).
 
 ---
 
-## Render state machine (broader pipeline)
+## Roadmap: the broader render pipeline — **NOT IMPLEMENTED**
 
-Async job orchestrated as a state machine, fanned out to GPU workers (Modal
-primary, RunPod batch, fal.ai offload). Every step is idempotent, checkpointed,
-and writes to the cost ledger. Full spec: Master Build Prompt Parts 6, 28, 35,
-Appendix A/F.
+> **Read this as a design doc, not as a description of the code** (audit F-G-23).
+> None of the state machine, engines, or encode recipes below exist in this repo.
+> What DOES exist today is:
+>
+> * `services/worker/ffmpeg_render.py` — one ffmpeg pass: retime → scale ≤1280 →
+>   60 fps → conditional HDR tone-map → all-intra H.264 → poster. **Stabilisation
+>   is skipped** (no Gyroflow, no vidstab); there is no interpolation step (the
+>   60 fps cadence is `fps=60` frame duplication, not RIFE/FILM); no grading pass;
+>   no upscaler (Topaz is reachable through `providers/fal_client.drone_render`
+>   but nothing calls it); no HLS packaging (Cloudflare Stream does that).
+> * `services/pipeline/enhance.py` — keyframe-per-room declutter/restage with a
+>   Claude QC gate, plus one optional Seedance hero clip. The **walkthrough video
+>   itself is never enhanced**; the outputs are stills.
+> * Declutter uses masked inpaint ONLY when a mask is supplied. The worker never
+>   supplies one (`enhance_video` → `enhance_frame(mask=None)`), so in the server
+>   path it is the statistical Gemini prompt-edit, gated by QC — *not* the
+>   "architecture preserved by construction" story below.
+>
+> Everything from here to Anti-patterns is the target architecture (Master Build
+> Prompt Parts 6, 28, 35, Appendix A/F). Treat each row as unbuilt until a file
+> in this repo implements it.
 
 ```
 created → uploaded → validating → queued → ingesting → stabilizing →
@@ -151,46 +168,35 @@ stitching → encoding → packaging → publishing → ready
 Terminal: failed(step, reason) | needs_reshoot(quality) | canceled | expired | archived
 ```
 
-A failed `upscaling` retries upscaling — never the whole chain. Dead-letter after
-N attempts. Per-job cost ceiling pauses + alerts if exceeded.
+Intended properties: a failed `upscaling` retries upscaling — never the whole
+chain; dead-letter after N attempts; a per-job cost ceiling pauses and alerts.
+(The per-job ceiling IS built: `MAX_GEN_COST_PER_JOB_CENTS`, enforced in
+`router._meter` before every paid call.)
 
-## Steps (engine per step)
+### Target steps (engine per step) — planned
 
-| Step | Engine | Notes |
+| Step | Engine | Status |
 |---|---|---|
-| validate/QC | ffprobe + heuristics | blur/shake/exposure score; below threshold → needs_reshoot (cheap; refund render credit) |
-| ingest | ffmpeg | normalize color, fix rotation, split audio |
-| stabilize | **Gyroflow** (gyro sidecar) / vidstab fallback | the #1 handheld→drone lever; drone clips skip |
-| interpolate | RIFE/FILM → 60fps | Topaz for problem footage |
-| grade | ffmpeg eq + hqdn3d + LUT | brand LUT per org |
-| **declutter (add-on)** | SAM-2 masks + video inpainting (ProPainter-class) | removes boxes/clutter; architecture untouched; temporal-consistent; QC per segment |
-| **restage (add-on)** | structure-locked vid2vid restyle (depth/edge-conditioned; Seedance/Higgsfield i2v per room segment) | Modern/Rustic/Minimalist/Scandinavian; geometry never changes; drift QC → drop segment to original |
-| upscale (tier) | Topaz self-hosted | 4K near-$0 marginal |
-| segment | chapter timestamps | room rail |
-| hero gen (tier) | Seedance/Veo/Kling i2v | 8–15s, seeded from REAL frame, $5 ceiling, drop if drift |
-| stitch | ffmpeg | labels are player overlays, never baked |
-| encode | x264 / svt-av1 | scrub proxy + playback renditions |
-| package | HLS + sprite/VTT + poster + OG | |
-| publish | Cloudflare Stream + R2 | flip listing to ready, fire render.ready |
+| validate/QC | ffprobe + heuristics | **not built** (the worker only probes duration + colour) |
+| ingest | ffmpeg | partly: rotation and colour are handled inside the single encode |
+| stabilize | Gyroflow / vidstab fallback | **not built** — server-side stabilisation is deliberately skipped |
+| interpolate | RIFE/FILM → 60fps | **not built** — output is `fps=60` duplication |
+| grade | ffmpeg eq + hqdn3d + LUT | **not built** |
+| declutter (add-on) | SAM-2 masks + video inpainting | **partial**: single-frame Flux Fill with a supplied mask, else a Gemini prompt-edit. No video inpainting, and the worker supplies no masks. |
+| restage (add-on) | structure-locked vid2vid | **partial**: single-frame Gemini restage + Claude drift QC. Not vid2vid. |
+| upscale (tier) | Topaz | adapter exists (`fal_client.drone_render`), never invoked |
+| segment | chapter timestamps | **built** (`enhance.segment_video`), but worker jobs never receive chapters — see audit F-G-10 |
+| hero gen (tier) | Seedance i2v | **built** (one clip, seeded from the corrected frame) |
+| stitch / encode / package | ffmpeg, HLS | encode is built (single all-intra mp4); no stitching, no HLS packaging here |
+| publish | Cloudflare Stream + R2 | **built** |
 
-## Encode recipes (Appendix A)
+### Encode recipes (Appendix A) — reference only, not what runs
 
-```bash
-# Scrub proxy — instant seek, mobile/webview-safe (540–720p, all-intra-ish)
-ffmpeg -i graded.mp4 -vf scale=-2:720 -c:v libx264 -profile:v high -pix_fmt yuv420p \
-  -g 3 -keyint_min 3 -sc_threshold 0 -crf 28 -an -movflags +faststart proxy_720.mp4
-
-# Playback 1080p (H.264 fallback; AV1 via svt-av1 preferred where supported)
-ffmpeg -i stitched.mp4 -vf scale=-2:1080 -c:v libx264 -profile:v high -pix_fmt yuv420p \
-  -g 12 -keyint_min 12 -sc_threshold 0 -crf 21 -movflags +faststart playback_1080.mp4
-
-# Stabilize without gyro (2-pass vidstab)
-ffmpeg -i in.mp4 -vf vidstabdetect=shakiness=8:accuracy=15 -f null -
-ffmpeg -i in.mp4 -vf vidstabtransform=smoothing=30:input=transforms.trf,unsharp=5:5:0.8 out.mp4
-
-# Grade/denoise starting point
--vf hqdn3d,eq=brightness=0.02:contrast=1.06:saturation=1.08:gamma=0.98
-```
+The commands previously listed here (scrub proxy at `-g 3`, 1080p playback at
+`-g 12`, two-pass vidstab, an `eq`/`hqdn3d` grade) are **not** the shipped recipe.
+The one that runs is in `services/worker/ffmpeg_render._encode_cmd`: all-intra
+(`-g 1 -bf 0`, x264 `keyint=1`), ≤1280 long edge, 60 fps, `-b:v 14M`, `-an`,
+`+faststart` — chosen so every scrub position decodes instantly.
 
 ## Anti-patterns (Part 38)
 

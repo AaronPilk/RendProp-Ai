@@ -179,7 +179,18 @@ final class AuthStore: ObservableObject {
     /// May be STALE right at launch — `validAccessToken()` is the async accessor
     /// that guarantees freshness. Backed by the Keychain.
     static var currentAccessToken: String? {
-        _ = AuthStore.shared   // first touch arms the auto-refresh loop
+        // First touch arms the auto-refresh loop. This accessor is called from
+        // URLSession / cooperative-pool contexts (LiveAPIClient.makeRequest),
+        // so the singleton is constructed ON MAIN — `init` sets @Published
+        // state and registers a main-queue observer, neither of which belongs
+        // on a background thread (audit F-E-24). The token read below is a
+        // static Keychain lookup and does not need the instance, so nothing
+        // waits for that hop.
+        if Thread.isMainThread {
+            _ = AuthStore.shared
+        } else {
+            DispatchQueue.main.async { _ = AuthStore.shared }
+        }
         return storedAccessToken()
     }
 

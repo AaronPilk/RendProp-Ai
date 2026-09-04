@@ -209,3 +209,392 @@ export function assertFairHousing(raw: string | null | undefined, what = "This e
     { term: hit.label },
   );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// C. MARKETING COPY / SCRIPT CHECK  (added for ai-voice, wave 12)
+// ═════════════════════════════════════════════════════════════════════════════
+//
+// WHY A SECOND CHECK. Everything above was built for IMAGE PROMPTS — an
+// instruction to a diffusion model. Its contextual tier is deliberately gated
+// behind an ADD VERB ("add a family in the living room") because in a photo
+// edit, *removing* a family photo is legitimate and *adding* one is not.
+//
+// A VOICEOVER SCRIPT is not an instruction to a model. It is the advertisement
+// itself — the words a buyer hears. 42 U.S.C. §3604(c) makes it unlawful to
+// publish "any notice, statement, or advertisement … that indicates any
+// preference, limitation, or discrimination" based on race, color, religion,
+// sex, familial status, national origin or disability. HUD's guidance on AI in
+// housing advertising says the medium does not matter: a spoken script is a
+// statement exactly as a written listing description is. So "great for
+// families" — which carries no ADD verb and would sail through the image
+// denylist — is precisely the thing the statute names.
+//
+// HOW THE TWO COMPOSE. `assertMarketingCopy()` runs BOTH: the script rules
+// below AND the original `assertFairHousing()` denylist. Nothing above is
+// relaxed, re-scoped or made conditional — this tier is purely additive, and a
+// script must clear both to be spoken.
+//
+// WHAT IT REFUSES (each rule names the phrase it matched, so the copy tells the
+// agent which words to change and why):
+//
+//   • FAMILIAL STATUS — audience framing ("great for families", "perfect
+//     starter home for a young couple", "ideal for young professionals"),
+//     child exclusion ("no kids", "adults only", "childless"), and
+//     "a great place to raise a family".
+//   • RELIGION — saint-named landmarks reached by a proximity claim ("walk to
+//     St. Mary's"), and religious institutions (parish, diocese, congregation,
+//     masjid, mandir, gurdwara, madrasa, Bible study). Bare "church", "temple",
+//     "mosque", "synagogue" etc. are already refused by tier A.
+//   • RACE / ETHNICITY / NATIONAL ORIGIN — a race, color or ancestry word used
+//     to qualify a group of PEOPLE ("black community", "Asian neighborhood",
+//     "Spanish-speaking area"). Tier A already refuses "race", "ethnic",
+//     "demographics", "immigrants" outright.
+//   • DISABILITY — EXCLUSION only ("no wheelchairs", "not suitable for the
+//     elderly", "able-bodied", "must be able to climb stairs"). Describing an
+//     accessibility FEATURE is lawful, encouraged, and deliberately untouched:
+//     "wheelchair accessible", "step-free entry", "roll-in shower", "elevator
+//     to every floor" all pass.
+//   • SEX — "bachelor pad", "female tenants only", "no single men".
+//   • STEERING PROXIES that HUD and NAR treat as coded references to the people
+//     in an area rather than the property: "safe neighborhood", "safe for
+//     kids", "low crime", "crime-free", "exclusive community", "the right part
+//     of town", "prestigious area", "blue-ribbon schools", "school catchment",
+//     "no Section 8".
+//
+// DELIBERATE NON-MATCHES — the gate is worthless if agents route around it, so
+// ordinary property copy must survive. All of these pass:
+//     "single-family home"        — the property classification, not a
+//                                   preference (no bare `family + home` rule)
+//     "spacious family room"      — a room name
+//     "great for entertaining"    — an activity, not an occupant
+//     "wheelchair accessible"     — an accessibility feature (see above)
+//     "black granite countertops" — a color; the race words only fire in front
+//                                   of a PEOPLE noun
+//     "white oak floors"          — same
+//     "exclusive listing",
+//     "exclusive amenities"       — terms of art; only "exclusive community /
+//                                   neighborhood / enclave / clientele" steer
+//     "walk to St. Charles Avenue"— a street, excluded by the street-suffix
+//                                   lookahead ("walk to St. Mary's" is not)
+//     "a couple of blocks away"   — the idiom, excluded from the audience rule
+//     "safe and sound", "safety features", "home safe"
+//                                 — only "safe <place noun>" / "safe for kids"
+//                                   / "safe to raise" steer
+//
+// KNOWN LIMITS, stated rather than papered over: this is a phrase denylist, not
+// a classifier. It cannot catch novel paraphrase ("you'll know your kind of
+// people live here"), and it is English-only. It is a floor, not a ceiling.
+//
+// ONE INHERITED FALSE POSITIVE, kept deliberately. `assertMarketingCopy()` also
+// runs tier B, whose CONTEXTUAL people rule fires on an ADD verb. A few script
+// sentences use one of those verbs innocently — "the family gathering space
+// SEATS twelve" trips `seat` + `family` and is refused with tier B's wording.
+// That rule is not relaxed for scripts: a rare rewrite of one sentence is a far
+// smaller cost than a hole in a fair-housing gate, and the refusal still names
+// the term. Rephrase as "the gathering space seats twelve".
+
+/** The protected class (or steering doctrine) a script rule protects. */
+export type ScriptCategory =
+  | "familial_status"
+  | "religion"
+  | "race"
+  | "disability"
+  | "sex"
+  | "steering";
+
+interface ScriptRule {
+  category: ScriptCategory;
+  re: RegExp;
+}
+
+/** Why each category is refused, and what to say instead. Written for the
+ *  agent who typed the script: it has to be fixable in one rewrite. */
+const CATEGORY_COPY: Record<ScriptCategory, { why: string; fix: string }> = {
+  familial_status: {
+    why:
+      "describes who should live in the home rather than the home itself. " +
+      "Familial status is a protected class, so a listing may not signal that " +
+      "families with children — or buyers without them — are preferred or unwelcome",
+    fix:
+      "Describe the space and let the buyer decide it fits: \"three bedrooms and a " +
+      "fenced yard\" instead of \"great for families\", \"a flexible bonus room\" " +
+      "instead of \"perfect for a young couple\".",
+  },
+  religion: {
+    why:
+      "points the listener at a religious institution or congregation, which " +
+      "signals a preferred religion for the neighborhood",
+    fix:
+      "Name secular landmarks and distances instead — \"a ten-minute walk to the " +
+      "riverfront park\", \"two blocks from the Main Street shops\".",
+  },
+  race: {
+    why:
+      "describes the residents by race, color, ethnicity or national origin, " +
+      "which is the clearest form of unlawful steering",
+    fix:
+      "Say nothing about who lives nearby. Describe the property, the finishes " +
+      "and the walkable amenities.",
+  },
+  disability: {
+    why:
+      "excludes or discourages people with disabilities. (Describing an " +
+      "accessibility FEATURE is lawful and welcome — it is the exclusion that is not)",
+    fix:
+      "Delete the exclusion. If you meant to describe the layout honestly, say what " +
+      "IS there: \"a step-free entry and a first-floor bedroom\", or \"the only " +
+      "bedrooms are up a flight of stairs\".",
+  },
+  sex: {
+    why: "states a preferred sex or gender for the occupant",
+    fix:
+      "Describe the room or the property instead — \"a private ground-floor suite\" " +
+      "rather than a preferred occupant.",
+  },
+  steering: {
+    why:
+      "makes a claim about the neighborhood's people, safety or schools rather " +
+      "than about the property. HUD and NAR treat safety, school-quality and " +
+      "\"exclusive\" language as proxies for the protected characteristics of who " +
+      "lives there, and the claim is one you would also have to defend as fact",
+    fix:
+      "Cut the neighborhood judgement and keep the verifiable facts: distances, " +
+      "street names, parks, transit, and what the property itself offers. Point " +
+      "buyers to public school and crime data so they can draw their own conclusions.",
+  },
+};
+
+/**
+ * Script-only rules. Each is anchored with \b, case-insensitive, and written to
+ * match the way an agent actually talks. Order is refusal priority: the most
+ * specific and most clearly unlawful first.
+ */
+const SCRIPT_RULES: ScriptRule[] = [
+  // ── Familial status ────────────────────────────────────────────────────────
+  // "great for families", "perfect for young professionals", "made for retirees"
+  {
+    category: "familial_status",
+    re:
+      /\b(great|perfect|ideal|good|excellent|wonderful|best|nice|lovely|suited|suitable|made|built|designed|meant|tailored|geared|just\s+right)\s+(for|to)\s+(a\s+|an\s+|the\s+|your\s+)?(young|growing|new|large|small|busy|modern|professional)?\s*(famil(y|ies)|kids?|children|couples?|newlyweds?|singles?|bachelors?|bachelorettes?|professionals?|retirees?|seniors?|students?|empty[\s-]?nesters?|first[\s-]time\s+buyers?)\b/i,
+  },
+  // "…starter home for a young couple", "…backyard for a growing family".
+  // The quality word may be far from the audience, so this rule stands alone on
+  // "for <a> <audience>". Excluded: "for a couple of blocks", "for a family
+  // gathering/dinner/photo/movie night" — activities, not occupants.
+  {
+    category: "familial_status",
+    re:
+      /\bfor\s+(a\s+|an\s+|the\s+|your\s+)?(young|growing|new|large|small|busy)?\s*(famil(y|ies)|couples?|newlyweds?|bachelors?|retirees?|empty[\s-]?nesters?)\b(?!\s+of\b)(?!\s+(gathering|gatherings|dinner|dinners|meal|meals|room|rooms|photos?|night|nights|movie|game|reunion|holidays?|entertaining))/i,
+  },
+  // "a growing family will love the yard"
+  { category: "familial_status", re: /\b(young|growing|new|large)\s+famil(y|ies)\b/i },
+  // "family-oriented community" ("family-friendly" is already tier A)
+  { category: "familial_status", re: /\bfamily[\s-](oriented|focused|centered|centred)\b/i },
+  { category: "familial_status", re: /\bfamily\s+(community|compound|enclave)\b/i },
+  // Child exclusion
+  {
+    category: "familial_status",
+    re: /\bno\s+(kids?|children|toddlers?|babies|infants?|teens?|teenagers?)\b/i,
+  },
+  { category: "familial_status", re: /\b(adults?|grown[\s-]?ups?)\s+only\b/i },
+  { category: "familial_status", re: /\bchildless\b/i },
+  {
+    category: "familial_status",
+    re: /\bnot\s+(suitable|ideal|great|appropriate|meant|designed|good)\s+for\s+(a\s+|the\s+)?(kids?|children|famil(y|ies)|toddlers?|babies)\b/i,
+  },
+  {
+    category: "familial_status",
+    re: /\b(mature|established|professional)\s+(buyers?|residents?|couples?|occupants?|tenants?)\s+only\b/i,
+  },
+  // "a great place to raise a family", "room to start a family"
+  {
+    category: "familial_status",
+    re: /\b(raise|raising|rais'?n|start|starting|grow|growing|expand|expanding)\s+(a\s+|your\s+|their\s+|the\s+)?famil(y|ies)\b/i,
+  },
+  { category: "familial_status", re: /\bplace\s+to\s+raise\b/i },
+
+  // ── Religion ───────────────────────────────────────────────────────────────
+  // "walk to St. Mary's" / "steps from Saint Anne's". Proximity + a saint name.
+  // A street NAMED for a saint is excluded by the street-suffix lookahead, so
+  // "walk to St. Charles Avenue" is fine and "walk to St. Mary's" is not.
+  {
+    category: "religion",
+    re:
+      /\b(walk|walking|walkable|steps|stroll|strolling|minutes?|blocks?|close|near|nearby|next\s+door|around\s+the\s+corner|short\s+drive)\b[^.!?]{0,30}?\b(st\.?|saint)\s+[A-Za-z]+(?:'s|s')?\b(?!\s*(st\b|street|ave\b|avenue|rd\b|road|blvd|boulevard|dr\b|drive|ln\b|lane|way\b|ct\b|court|pl\b|place|cir\b|circle|terrace|pkwy|parkway|highway|hwy|park\b|square|sq\b))/i,
+  },
+  {
+    category: "religion",
+    re:
+      /\b(parish(es)?|dioceses?|congregations?|ministr(y|ies)|gurdwaras?|mandirs?|masjids?|madrasas?|bible\s+study|prayer\s+(group|meeting|service)s?|sunday\s+school)\b/i,
+  },
+
+  // ── Race / ethnicity / national origin ─────────────────────────────────────
+  // A race, color or ancestry word IN FRONT OF A PEOPLE NOUN. "black granite"
+  // and "white oak" are colors and pass; "black community" does not.
+  {
+    category: "race",
+    re:
+      /\b(white|black|caucasian|anglo|hispanic|latino|latina|latinx|asian|oriental|arab|arabic|african[\s-]american|afro[\s-]caribbean|native|indigenous|european|foreign)\s+(famil(y|ies)|communit(y|ies)|neighbou?rhoods?|buyers?|residents?|owners?|tenants?|households?|professionals?|clientele|folks|people|persons?|crowd|enclave|population|block|street|area)\b/i,
+  },
+  { category: "race", re: /\bethnic\s+(enclave|pocket|corridor)\b/i },
+  {
+    category: "race",
+    re: /\b(english|spanish|chinese|mandarin|cantonese|russian|korean|vietnamese|portuguese|french)[\s-]speaking\b/i,
+  },
+  { category: "race", re: /\bno\s+(foreigners?|outsiders?)\b/i },
+
+  // ── Disability — EXCLUSION only (features are welcome; see header) ──────────
+  {
+    category: "disability",
+    re: /\bno\s+(wheelchairs?|service\s+(animals?|dogs?)|disabled|handicapped?|walkers?\s+or\s+wheelchairs?)\b/i,
+  },
+  {
+    category: "disability",
+    re:
+      /\bnot\s+(suitable|appropriate|ideal|designed|meant|good|great)\s+for\s+(the\s+)?(disabled|handicapped?|elderly|seniors?|wheelchairs?|blind|deaf|limited\s+mobility)\b/i,
+  },
+  { category: "disability", re: /\bable[\s-]bodied\b/i },
+  { category: "disability", re: /\bmust\s+be\s+able\s+to\s+(walk|climb|stand|drive|see|hear|manage)\b/i },
+  { category: "disability", re: /\bno\s+(mental|physical)\s+(illness|disabilit(y|ies)|impairments?)\b/i },
+
+  // ── Sex / gender ───────────────────────────────────────────────────────────
+  { category: "sex", re: /\bbachelor(ette)?\s+(pad|apartment|flat|unit)\b/i },
+  {
+    category: "sex",
+    re: /\b(males?|females?|men|women|ladies|gentlemen|guys)\s+(only|preferred|tenants?|roommates?|occupants?|buyers?)\b/i,
+  },
+  { category: "sex", re: /\bno\s+(single\s+)?(men|women|males?|females?)\b/i },
+
+  // ── Steering proxies (safety, schools, exclusivity) ────────────────────────
+  // Tier A already refuses "safe area/part/side/block/street/community"; these
+  // add the rest of the family, including "neighborhood" phrasings and the
+  // "safe for kids" / "safe to raise" constructions.
+  {
+    category: "steering",
+    re: /\b(safe|safest|safer)\s+(neighbou?rhoods?|places?|spots?|pockets?|side\s+of\s+town|part\s+of\s+town|schools?)\b/i,
+  },
+  { category: "steering", re: /\bsafe\s+(for|to\s+raise)\b/i },
+  { category: "steering", re: /\b(feel|feels|you'?ll\s+feel)\s+safe\b/i },
+  { category: "steering", re: /\b(low|no|zero|little|minimal)\s+crime\b/i },
+  { category: "steering", re: /\bcrime[\s-]?(free|rate|rates|ridden|statistics)\b/i },
+  { category: "steering", re: /\bcrime\s+is\s+(low|down|almost\s+nonexistent)\b/i },
+  {
+    category: "steering",
+    re:
+      /\bexclusive\s+(communit(y|ies)|neighbou?rhoods?|areas?|enclaves?|addresses|address|clientele|buyers?|residents?|pockets?|streets?|part\s+of\s+town|side\s+of\s+town|club)\b/i,
+  },
+  { category: "steering", re: /\b(private|exclusive|gated)\s+enclave\b/i },
+  {
+    category: "steering",
+    re:
+      /\b(desirable|prestigious|sought[\s-]after|elite|upscale|better|right|wrong|nicer|quieter)\s+(part\s+of\s+town|side\s+of\s+town|element|crowd|people|clientele|set)\b/i,
+  },
+  {
+    category: "steering",
+    re: /\b(blue[\s-]ribbon|award[\s-]winning|highly[\s-]rated|top[\s-]rated|nationally[\s-]ranked|A[\s-]rated|five[\s-]star)\s+(schools?|school\s+districts?|elementary|middle\s+school|high\s+school)\b/i,
+  },
+  { category: "steering", re: /\bschool\s+(zones?|catchments?|boundar(y|ies)|attendance\s+areas?)\b/i },
+  { category: "steering", re: /\bno\s+(section\s*8|housing\s+vouchers?|vouchers?)\b/i },
+
+  // ── General audience exclusion / preference ────────────────────────────────
+  // 42 U.S.C. §3604(c) forbids STATING A PREFERENCE for — or against — an
+  // audience, not only an audience with children. The rules above catch
+  // "great for <audience>" (a quality word in front) and "no kids" (a CHILD
+  // noun behind "no"). An ad that simply says "professionals only", "no
+  // families" or "families need not apply" carries neither marker, and was
+  // slipping through. These four rules close that hole for ADULT audience
+  // nouns as well.
+  //
+  // They sit LAST on purpose. `checkMarketingCopy` returns the FIRST rule that
+  // matches, so anything a narrower rule above already names — "no single men"
+  // (sex), "professional buyers only", "young families" (familial_status) —
+  // keeps that rule's more specific refusal copy. These fire only on what
+  // nothing else caught, which makes them purely additive.
+  //
+  // Exclusion: "no <audience>". `pets` appears ONLY as "pets or kids" — a bare
+  // "no pets" is a lawful occupancy policy and must keep passing.
+  {
+    category: "familial_status",
+    re:
+      /\bno\s+(famil(y|ies)|couples?|singles?|students?|seniors?|retirees?|professionals?|roommates?|pets?\s+or\s+kids)\b/i,
+  },
+  // Preference: "<audience> only | preferred | welcome only" — the mirror
+  // image of the exclusion. The `\s+` after the noun is what keeps
+  // "professional-grade appliances" out: that is a hyphenated product
+  // adjective, not an audience.
+  {
+    category: "familial_status",
+    re:
+      /\b(professionals?|singles?|couples?|students?|seniors?|retirees?|famil(y|ies)|newlyweds?|bachelors?|empty[\s-]?nesters?)\s+(only|preferred|welcome\s+only)\b/i,
+  },
+  // "families need not apply" / "students need not apply" — the classic
+  // exclusionary wording, unlawful whoever it names.
+  { category: "familial_status", re: /\bneed\s+not\s+apply\b/i },
+  // Audience framing, exactly like the "young famil(y|ies)" rule above.
+  { category: "familial_status", re: /\byoung\s+professionals?\b/i },
+];
+
+export interface ScriptHit {
+  /** The literal words the rule matched, quoted back to the agent. */
+  phrase: string;
+  category: ScriptCategory;
+  why: string;
+  fix: string;
+}
+
+/**
+ * Inspect a marketing SCRIPT (voiceover narration, caption copy, listing blurb)
+ * against the script rules only. Returns the first offending phrase, or null.
+ * Pure — callers decide whether to throw.
+ *
+ * This is the additive tier. It does NOT replace `checkFairHousing()`; callers
+ * that want the full gate should use `assertMarketingCopy()`, which runs both.
+ */
+export function checkMarketingCopy(raw: string | null | undefined): ScriptHit | null {
+  const text = String(raw ?? "");
+  if (!text.trim()) return null;
+  for (const rule of SCRIPT_RULES) {
+    const m = rule.re.exec(text);
+    if (m) {
+      const copy = CATEGORY_COPY[rule.category];
+      return {
+        phrase: m[0].replace(/\s+/g, " ").trim().slice(0, 80),
+        category: rule.category,
+        why: copy.why,
+        fix: copy.fix,
+      };
+    }
+  }
+  return null;
+}
+
+/** The statute + guidance every script refusal cites, so the copy teaches the
+ *  rule instead of just blocking. */
+const SCRIPT_LAW =
+  "Fair-housing law (42 U.S.C. §3604(c)) and HUD's guidance on AI in housing " +
+  "advertising apply to a spoken script exactly as they do to a written listing " +
+  "description: the ad may describe the PROPERTY, never a preferred or " +
+  "discouraged occupant.";
+
+/**
+ * The FULL gate for marketing copy: the script rules AND the original
+ * image-prompt denylist. Throws 400 `unsupported_edit` naming the offending
+ * phrase and why, so the agent can fix it in one rewrite.
+ *
+ * Server-side only, and unbypassable from the client: there is no flag, header
+ * or body field that skips it — see services/supabase/functions/ai-voice.
+ */
+export function assertMarketingCopy(raw: string | null | undefined, what = "This script"): void {
+  const hit = checkMarketingCopy(raw);
+  if (hit) {
+    throw new HttpError(
+      400,
+      `${what} can't be voiced: the phrase "${hit.phrase}" ${hit.why}. ${SCRIPT_LAW} ${hit.fix}`,
+      "unsupported_edit",
+      { term: hit.phrase, category: hit.category },
+    );
+  }
+  // Never weaken tier A/B: a script must clear the original denylist too
+  // (neighborhood, school district, race, religion, places of worship …).
+  assertFairHousing(raw, what);
+}

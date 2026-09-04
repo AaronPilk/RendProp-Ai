@@ -295,10 +295,26 @@ struct NewListingView: View {
     private func receive(_ asset: CaptureAsset) {
         guard form.isValid else { return }
         let listing: Listing
-        if let existing = createdListing, model.listings.contains(where: { $0.id == existing.id }) {
+        // Re-point an existing listing at a new video ONLY while it is still an
+        // unfinished draft from this screen. Once it has a rendered tour, doing
+        // that would delete the raw video of a finished (possibly published)
+        // listing and leave its tour + room tags describing a file that no
+        // longer exists — so a new video after a finished render starts its own
+        // listing instead.
+        if let existing = createdListing,
+           model.listings.contains(where: { $0.id == existing.id }),
+           model.tours[existing.id] == nil {
             // Came back from Review and picked a different video: keep the
             // listing, refresh its fields, drop the previous file.
-            model.modify(existing.id, sync: false) { form.apply(to: &$0) }
+            model.modify(existing.id, sync: false) {
+                form.apply(to: &$0)
+                // A location fix taken AFTER the listing was created used to be
+                // dropped here (audit F-B-06).
+                if let coordinate = pendingCoord {
+                    $0.latitude = coordinate.latitude
+                    $0.longitude = coordinate.longitude
+                }
+            }
             if let old = model.assets[existing.id], old.localURL != asset.localURL {
                 FileStore.removeVideoAndPreview(old.localURL)
                 if let sidecar = old.motionSidecarURL { try? FileManager.default.removeItem(at: sidecar) }
@@ -448,7 +464,10 @@ struct VideoSourcePicker: View {
     private func importFile(_ url: URL) {
         Task {
             do {
-                let asset = try await MediaImporter.makeAsset(from: url, isDrone: false)
+                // `nil` = let the importer's metadata/filename heuristic decide;
+                // Review & Submit shows the result as an explicit, correctable
+                // Handheld/Drone control (decision A8, audit F-B-15 / F-D-07).
+                let asset = try await MediaImporter.makeAsset(from: url, isDrone: nil)
                 await MainActor.run {
                     importProgress = nil
                     if Self.isUsable(asset) {
