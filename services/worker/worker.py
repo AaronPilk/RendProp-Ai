@@ -41,7 +41,7 @@ import ffmpeg_render
 import infra_costs
 import r2
 import stream
-from enhance_bridge import EnhanceResult, run_enhancement
+from enhance_bridge import EnhanceResult, run_enhancement, wants_enhancement
 from settings import SETTINGS
 from slugs import new_slug
 
@@ -119,6 +119,7 @@ def _register_stream(video_key: str, listing_id: str, render_id: str) -> str | N
     if not SETTINGS.has_stream:
         print("    · Stream token absent — skipping; player will use the R2 mp4 url.")
         return None
+    uid: str | None = None
     try:
         src = r2.presigned_get_url(SETTINGS.r2_bucket_renders, video_key)
         uid = stream.copy_from_url(src, name=f"{listing_id}/{render_id}",
@@ -130,8 +131,29 @@ def _register_stream(video_key: str, listing_id: str, render_id: str) -> str | N
             print(f"    ✓ Stream ready hls={pb.get('hls')}")
         return uid
     except Exception as e:  # noqa: BLE001 — Stream is optional; fall back to R2 mp4
+        if uid:
+            # Registration succeeded; only the readiness poll gave up. The UID
+            # is real and Stream keeps transcoding — keep it rather than
+            # orphaning a billed asset (the player uses the R2 mp4 first anyway).
+            print(f"    ⚠ Stream readiness poll failed (keeping uid={uid}; player falls back to R2 mp4): {e}")
+            return uid
         print(f"    ⚠ Stream registration failed (continuing with R2 mp4): {e}")
         return None
+
+
+# ── asset eligibility ─────────────────────────────────────────────────────────
+
+def _skip_reason(asset: dict) -> str | None:
+    """Why this asset is not the worker's to render (None = go ahead)."""
+    bucket = (asset.get("bucket") or "uploads")
+    if bucket != "uploads":
+        return (f"asset {asset.get('id')} lives in the '{bucket}' bucket (app-published tour), "
+                "not in the uploads bucket — nothing for the worker to render")
+    if asset.get("uploaded") is False:
+        return f"asset {asset.get('id')} has not finished uploading"
+    if asset.get("kind") not in (None, "video"):
+        return f"asset {asset.get('id')} is a {asset.get('kind')}, not a video"
+    return None
 
 
 # ── the job ───────────────────────────────────────────────────────────────────
@@ -161,6 +183,17 @@ def process_job(job: dict) -> None:
         asset = db.fetch_asset(asset_id)
         if not asset:
             raise RuntimeError(f"capture_asset {asset_id} not found")
+        # Only raw captures in the private uploads bucket are this worker's job.
+        # App-published assets live in the public `renders` bucket (the app
+        # rendered them on-device and /renders/publish-app already published
+        # them); claiming one would 404 on download and then mark a WORKING tour
+        # "failed" (audit F-G-13). The claim query excludes them; this is the
+        # belt-and-braces for the --job-id path and older PostgREST versions.
+        skip = _skip_reason(asset)
+        if skip:
+            print(f"    · skipping job {job_id}: {skip}")
+            db.release_job(job_id, skip)
+            return
         storage_key = asset.get("storage_key")
         if not storage_key:
             raise RuntimeError(f"capture_asset {asset_id} has no storage_key")
@@ -187,9 +220,11 @@ def process_job(job: dict) -> None:
                        total_cents=rl.total_cents, job_id=job_id, org_id=org_id, meta=rl.meta)
 
         # 4. AI enhancement (optional add-ons; never fails the base tour).
+        #    wants_enhancement() normalises the style first: the app sends
+        #    style:"as_is" on every plain job, which is NOT a restage request.
         step = "enhance"
         enh = EnhanceResult(ran=False, reason="no enhancements requested")
-        if enhancements.get("declutter") or enhancements.get("style") or enhancements.get("hero"):
+        if wants_enhancement(enhancements):
             db.set_progress(job_id, 0.58, "enhancing")
             chapters = db.fetch_chapters(asset_id)
             enh = run_enhancement(
@@ -299,6 +334,16 @@ def process_specific(job_id: str) -> None:
     if not rows:
         sys.exit(f"job {job_id} not found")
     job = rows[0]
+
+    # Don't even claim a job whose asset isn't ours to render (app-published
+    # `renders`-bucket asset, unfinished upload) — claiming would flip an app
+    # job's status underneath /renders/publish-app.
+    if job.get("capture_asset_id"):
+        asset = db.fetch_asset(job["capture_asset_id"])
+        skip = _skip_reason(asset) if asset else None
+        if skip:
+            print(f"job {job_id}: {skip} — nothing to do")
+            return
 
     statuses = ",".join(SETTINGS.claim_statuses)
     claimed = db.patch(

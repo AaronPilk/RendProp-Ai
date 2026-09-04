@@ -55,7 +55,9 @@ export interface PresignArgs {
   key: string;
   /** URL lifetime in seconds (default 15 min). */
   expiresIn?: number;
-  /** If set, binds the upload to this exact Content-Type. */
+  /** Advisory only. aws4fetch's signQuery signs just `host`, so this does NOT
+   *  bind the upload to a Content-Type — the uploads function verifies the
+   *  observed type server-side at /complete instead (audit F-supabase-31). */
   contentType?: string;
 }
 
@@ -183,6 +185,13 @@ export async function completeMultipartUpload(
     headers: { "content-type": "application/xml" },
   });
   const text = await res.text();
+  // The session is gone: R2 already assembled it on an earlier attempt (or it
+  // was aborted). Surfaced distinctly so /complete can HEAD the final object
+  // and treat an already-assembled upload as done instead of 502-ing forever
+  // (audit F-supabase-18).
+  if (/NoSuchUpload/.test(text)) {
+    throw new HttpError(409, "The multipart session no longer exists", "conflict", { r2_code: "NoSuchUpload" });
+  }
   if (!res.ok) {
     throw new HttpError(502, `R2 CompleteMultipartUpload failed (${res.status}): ${text.slice(0, 300)}`);
   }
@@ -190,6 +199,11 @@ export async function completeMultipartUpload(
   if (/<Error>/.test(text)) {
     throw new HttpError(502, `R2 CompleteMultipartUpload error: ${text.slice(0, 300)}`);
   }
+}
+
+/** True when an error is the "multipart session no longer exists" signal above. */
+export function isNoSuchUpload(err: unknown): boolean {
+  return err instanceof HttpError && err.details?.r2_code === "NoSuchUpload";
 }
 
 /** Abort a multipart upload (cleanup); 404 is treated as already-gone. */

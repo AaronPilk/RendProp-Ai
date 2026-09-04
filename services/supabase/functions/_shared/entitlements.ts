@@ -4,6 +4,7 @@
 // so the numbers the code enforces and the numbers rendprop.com/pricing
 // advertises can't drift apart. That drift is exactly what the round-4 audit
 // caught: the site sold 2/5/15 renders while the backend allowed 20/100/400.
+// tests/invariants.sql asserts the table equals the pricing page.
 //
 // The allowances are sized from MEASURED unit costs (see
 // services/pipeline/providers/costs.py and docs/AI-COST-MODEL.md):
@@ -31,6 +32,10 @@ export interface Entitlement {
   seats: number;
   cogs_ceiling_cents: number;
   price_cents: number;
+  /** true when the lookup failed and these are the fail-closed fallback numbers.
+   *  Guards turn this into a 503 (F-E-02 / F-supabase-34): a missing table must
+   *  masquerade neither as a plan boundary nor as a Team-sized budget. */
+  degraded?: boolean;
 }
 
 /** Conservative fallback if the table is unreachable: the trial allowance.
@@ -59,7 +64,7 @@ export async function entitlementFor(orgId: string): Promise<Entitlement> {
     .rpc("effective_plan", { p_org: orgId });
   if (pErr) {
     console.error("effective_plan lookup failed, falling back to trial:", pErr.message);
-    return TRIAL_FALLBACK;
+    return { ...TRIAL_FALLBACK, degraded: true };
   }
   const plan = String(planRow ?? "trial");
 
@@ -67,22 +72,44 @@ export async function entitlementFor(orgId: string): Promise<Entitlement> {
     .from("plan_entitlements").select("*").eq("plan", plan).maybeSingle();
   if (error || !data) {
     console.error(`entitlement lookup failed for plan "${plan}", falling back to trial`);
-    return { ...TRIAL_FALLBACK, plan };
+    return { ...TRIAL_FALLBACK, plan, degraded: true };
   }
   return data as Entitlement;
 }
 
-/** Human-readable 429 body so the app can prompt an upgrade, not just fail. */
+/**
+ * Entitlement for a charge decision. A degraded lookup is a 503 ("try again"),
+ * never a 402 that would tell a paying Team org to upgrade.
+ */
+export async function entitlementForCharge(orgId: string): Promise<Entitlement> {
+  const ent = await entitlementFor(orgId);
+  if (ent.degraded) {
+    throw new HttpError(503, "Plan lookup is temporarily unavailable — try again in a moment.", "upstream");
+  }
+  return ent;
+}
+
+/**
+ * Human-readable quota error the app can act on:
+ *   cap == 0 → 402 `plan_required` (a plan boundary: prompt an upgrade)
+ *   cap  > 0 → 429 `quota_exceeded` (this cycle's allowance is used up)
+ * Both carry {feature, used, cap, plan} so the UI can say "8 of 8 used".
+ */
 export function quotaError(feature: string, used: number, cap: number, plan: string): HttpError {
+  const details = { feature, used, cap, plan };
   if (cap <= 0) {
     return new HttpError(
       402,
       `${feature} isn't included on the ${plan} plan — upgrade to unlock it.`,
+      "plan_required",
+      details,
     );
   }
   return new HttpError(
     429,
     `Monthly ${feature} limit reached for the ${plan} plan (${used} of ${cap}). ` +
       `Upgrade for more, or wait for your next cycle.`,
+    "quota_exceeded",
+    details,
   );
 }

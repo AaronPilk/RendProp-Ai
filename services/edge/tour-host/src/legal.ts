@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "August 26, 2026";
+const EFFECTIVE_DATE = "September 3, 2026";
 const CONTACT_EMAIL = "aaron@pilk.ai";
 
 const LEGAL_CSS = `
@@ -146,10 +146,17 @@ and virtually staged or AI-generated media should always be disclosed as such to
 You are responsible for meeting any disclosure rules that apply to you (for example MLS or
 local advertising rules) when you publish or share AI-enhanced media.</p>
 
-<h2><span class="num">6.</span>Payment</h2>
-<p>Rendprop is currently in early access. Some or all features are free during this period.
-When paid plans launch, pricing and billing terms will be shown in the app before you are
-charged anything, and continued use of paid features will require an active plan.</p>
+<h2><span class="num">6.</span>Plans and payment</h2>
+<p>Rendprop is offered on subscription plans with monthly allowances for the AI features
+(tour renders, photo edits, video clips, and aerial shots). The plans, prices, and allowances are
+published at <a href="https://rendprop.com/pricing">rendprop.com/pricing</a>, and that page is the
+source of truth for what your plan includes.</p>
+<p><b>There are no in-app purchases.</b> Plans are set up, changed, and cancelled through
+rendprop.com (during early access, by arrangement with the Rendprop team), never inside the iOS
+app. The app only shows you what your current plan includes and tells you when you have reached
+an allowance. Nothing is charged until you have agreed to a plan, and a cancelled plan stays
+active until the end of the period you have paid for; your published tours stay live through
+that period.</p>
 
 <h2><span class="num">7.</span>Ending things</h2>
 <p>You can delete your account any time in the app: <b>Settings → Delete account</b>. That
@@ -204,9 +211,19 @@ export function privacyPage(): string {
   (Sign in with Apple lets you hide your real email; that works fine with Rendprop).</li>
   <li><b>Your content</b> — the listings you create and the video, photos, tours, and related
   details you upload or generate in the app.</li>
-  <li><b>Leads and tour activity</b> — when someone submits the contact form on one of your
-  tour pages, their details go to you; we also count basic, aggregate tour views so you can
-  see how a tour performs.</li>
+  <li><b>Listing location</b> — the address or business name you enter, and an approximate
+  (rounded) map coordinate we derive from it. These are part of the listing and are
+  <b>published on your public tour page</b> so viewers can find the space; the app may also use
+  your device's approximate location, only when you ask it to fill in an address.</li>
+  <li><b>Leads</b> — when someone submits the contact form on one of your tour pages, we store
+  the details they enter (name, phone, email, and any message or preferred date) so you can see
+  them in your Leads inbox in the app. Those same details are also passed to our CRM provider
+  (GoHighLevel / LeadConnector) so the lead can be followed up. Lead forms carry a short notice
+  linking to this policy.</li>
+  <li><b>Tour viewers</b> — for each visit to a tour page we record engagement telemetry (that the
+  tour started, how long it was watched, how far the viewer scrolled) tied to the tour, not to a
+  named person. The viewer's IP address is used briefly as a rate-limit key to prevent abuse of
+  the lead form and view counter. Bot protection may be provided by Cloudflare Turnstile.</li>
   <li><b>Operational logs</b> — short-lived technical logs (like errors and request metadata)
   used to keep the service running and secure.</li>
 </ul>
@@ -215,8 +232,9 @@ and we never sell your personal information.</p>
 
 <h2><span class="num">2.</span>How we use it</h2>
 <p>Only to operate Rendprop: signing you in, storing and processing your media, generating the
-AI enhancements you request, hosting your public tour pages, delivering your leads to you, and
-keeping the service secure. <b>Your content is never used for our marketing and never used to
+AI enhancements you request, hosting your public tour pages, capturing your leads into your
+Leads inbox (and our CRM provider) so you can follow up, measuring tour engagement, and keeping
+the service secure. <b>Your content is never used for our marketing and never used to
 train AI models without your written consent.</b></p>
 
 <h2><span class="num">3.</span>Who processes data for us</h2>
@@ -224,14 +242,15 @@ train AI models without your written consent.</b></p>
 provide their function to us:</p>
 <table>
   <tr><th>Provider</th><th>What it does</th></tr>
-  <tr><td>Supabase</td><td>Authentication and database (accounts, listings, leads)</td></tr>
-  <tr><td>Cloudflare</td><td>Media storage and delivery of tour pages and video</td></tr>
+  <tr><td>Supabase</td><td>Authentication and database (accounts, listings, leads, tour engagement counts)</td></tr>
+  <tr><td>Cloudflare</td><td>Media storage and delivery of tour pages and video; Turnstile bot protection on lead forms</td></tr>
+  <tr><td>GoHighLevel (LeadConnector)</td><td>CRM — receives the name, phone, and email a viewer submits through a tour's lead form so the lead can be followed up</td></tr>
   <tr><td>Google&nbsp;Gemini</td><td>AI photo enhancement (only the photos you submit for editing)</td></tr>
-  <tr><td>fal.ai</td><td>AI video generation (only the media you submit for video features)</td></tr>
-  <tr><td>Anthropic</td><td>Automated quality checks on AI output</td></tr>
+  <tr><td>fal.ai</td><td>AI video generation (only the media you submit for video features, including the exterior photo used for an aerial intro)</td></tr>
+  <tr><td>Anthropic</td><td>Automated quality checks on AI output and prompt assistance</td></tr>
 </table>
 <p>AI providers receive only the specific media you actively submit to an AI feature, and only
-to produce your result.</p>
+to produce your result. The CRM provider receives only lead-form submissions.</p>
 
 <h2><span class="num">4.</span>How long we keep it</h2>
 <p>Your content stays until you delete it — delete a listing, tour, or asset in the app and the
@@ -262,9 +281,11 @@ the change takes effect. The date at the top always shows the current version.</
     description: "What Rendprop collects, who processes it, how long it's kept, and your rights.",
     heading: "Privacy Policy",
     lede:
-      "The plain-language version: we collect your account details (via Apple) and the content " +
-      "you upload, we use them only to run the service, there's no ad tracking and no analytics " +
-      "SDKs, and deleting your account removes your data.",
+      "The plain-language version: we collect your account details (via Apple), the content and " +
+      "listing details you upload (your listing's address or business name is published on its " +
+      "tour page), the leads viewers send you (stored for you and passed to our CRM provider), and " +
+      "basic engagement counts on your tour pages. We use them only to run the service, there's no " +
+      "ad tracking and no analytics SDKs in the app, and deleting your account removes your data.",
     body,
     otherLabel: "Terms of Service",
     otherHref: "/terms",

@@ -22,8 +22,8 @@ struct CameraPreview: UIViewRepresentable {
 
 // MARK: - Level bubble (gravity-driven)
 struct LevelBubble: View {
-    let roll: Double     // radians
-    let pitch: Double
+    let roll: Double     // radians; + = top of the phone tilted to the right
+    let pitch: Double    // radians; − = leaning back (screen toward the sky)
 
     private var isLevel: Bool { abs(roll) < 0.06 && abs(pitch) < 0.18 }
 
@@ -40,12 +40,20 @@ struct LevelBubble: View {
             Circle()
                 .strokeBorder(Color.white.opacity(0.2), lineWidth: 1)
                 .frame(width: 18, height: 18)
+            // BUBBLE metaphor on both axes: the dot floats toward the HIGH side,
+            // like the bubble in a spirit level. MotionRecorder's roll is positive
+            // when the top tilts right (the right edge drops — the LEFT side is
+            // high), so x is negated. Its pitch is negative when leaning back (the
+            // top stays the high side), which already puts the dot up — no flip.
+            // Previously x followed a "rolling ball" convention while y followed
+            // the bubble, so the two axes contradicted each other (audit F-D-15).
             Circle()
                 .fill(isLevel ? Theme.good : Theme.warn)
                 .frame(width: 12, height: 12)
-                .offset(x: CGFloat(max(-1, min(1, roll / 0.5))) * 24,
+                .offset(x: -CGFloat(max(-1, min(1, roll / 0.5))) * 24,
                         y: CGFloat(max(-1, min(1, pitch / 0.5))) * 24)
                 .animation(.linear(duration: 0.08), value: roll)
+                .animation(.linear(duration: 0.08), value: pitch)
         }
         .accessibilityLabel(Text(isLevel ? "Level" : "Tilt the phone to level"))
     }

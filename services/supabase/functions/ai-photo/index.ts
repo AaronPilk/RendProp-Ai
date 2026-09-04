@@ -1,86 +1,206 @@
-// ai-photo — single-image real-estate AI edits (twilight | sky | lawn |
-// declutter | stage) via Gemini image edit ("Nano Banana"). Owner-authenticated.
+// ai-photo — single-image AI edits (twilight | sky | lawn | declutter | stage |
+// custom) via Gemini image edit ("Nano Banana"). Owner-authenticated.
 // Mirrors services/pipeline providers/gemini.py + router.PHOTO_EDIT_PROMPTS.
 //
-//   POST /ai-photo  { image_b64, mime?, edit, style? }  ->  { image_b64, mime, edit, style? }
+//   POST /ai-photo  { image_b64, mime?, edit, style?, prompt?, space_type? }
+//              ->  { image_b64, mime, edit, style?, space_type }
 //
-//   edit  = twilight | sky | lawn | declutter | stage | custom
-//   style = modern | rustic | minimalist | scandinavian   (stage only; default modern)
+//   edit       = twilight | sky | lawn | declutter | stage | custom
+//   style      = modern | rustic | minimalist | scandinavian   (stage only; default modern)
+//   space_type = real_estate | venue | restaurant | retail | fitness | other (default real_estate)
+//                Selects the industry prompt set: a restaurant is dressed for
+//                service, a gym gets equipment, a store gets merchandised — not
+//                a sofa and coffee table (audit F-A-07 / F-supabase-10).
 //
-// Two cheap text/vision helper modes (no image generated, nothing billed extra):
+// Two cheap text/vision helper modes. They are NOT charged against the monthly
+// photo-edit allowance (they generate no image); they have their own burst
+// limiter (aiphotohelp:<org>, 120 / 5 min) and the same role gate:
 //
-//   edit:"suggest"         { image_b64, mime? }  ->  { suggestions: [{ edit, reason, confidence }] }
+//   edit:"suggest"         { image_b64, mime?, space_type? }  ->  { suggestions: [{ edit, reason, confidence }] }
 //       Looks at the photo and recommends up to 3 edits (from the 5 canned ones)
 //       that would genuinely improve it — e.g. twilight only for exteriors.
 //
-//   edit:"improve_prompt"  { prompt }            ->  { prompt }
+//   edit:"improve_prompt"  { prompt, space_type? }            ->  { prompt }
 //       Rewrites the user's rough custom-edit idea (≤300 chars) into a precise,
 //       photorealistic edit instruction (≤400 chars). The improved prompt is
 //       meant to be sent back as edit:"custom", where the architecture-lock
-//       guardrails are appended server-side as usual — so the rewrite itself
-//       stays purely about the visual change.
+//       guardrails are appended server-side as usual. (The image is not needed
+//       for this mode and is ignored if sent.)
 //
 // Needs the GEMINI_API_KEY function secret. Returns the edited image inline
-// (base64) so the app can show a before/after and let the agent save/share.
+// (base64, with Gemini's ACTUAL mime type) so the app can show a before/after.
+// Errors carry { error, code } — 402 plan_required / 429 quota_exceeded carry
+// {feature, used, cap, plan} so the app can prompt an upgrade.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { entitlementFor, quotaError } from "../_shared/entitlements.ts";
+import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
 const EDIT_WINDOW_SECONDS = 300; // 40 photo edits / 5 min / org
 const MONTH_SECONDS = 30 * 86400;
+// Helper modes are ~0.1¢ of text tokens: burst-limited only.
+const HELP_MAX_PER_WINDOW = 120;
+const HELP_WINDOW_SECONDS = 300; // 120 suggest/improve calls / 5 min / org
 
 // Monthly allowances come from plan_entitlements (migration 0010) so the
 // enforced number and the published number are the same number.
+
+/** Role gate shared by both guards: marketing is read-only. */
+async function requireEditorRole(userId: string, req: Request, what: string): Promise<string> {
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  const { data: mem, error: mErr } = await adminClient()
+    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
+  if (!mem?.role || mem.role === "marketing") {
+    throw new HttpError(403, `Your role does not permit ${what}`);
+  }
+  return orgId;
+}
 
 /**
  * Charge the paid-generation quotas. MUST be called only AFTER the request body
  * and its parameters are known-good: charging first meant a caller could burn
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
- * (audit round 4). Also enforces the role gate — marketing is read-only and
- * must not be able to spend the workspace's AI budget.
+ * (audit round 4).
  */
 async function guardEdit(userId: string, req: Request): Promise<void> {
-  const orgId = await orgForUser(userId, preferredOrg(req));
-  const admin = adminClient();
-
-  const { data: mem, error: mErr } = await admin
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
-  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
-  if (!mem?.role || mem.role === "marketing") {
-    throw new HttpError(403, "Your role does not permit AI photo edits");
-  }
-
-  const ent = await entitlementFor(orgId);
+  const orgId = await requireEditorRole(userId, req, "AI photo edits");
+  // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
+  const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.photo_edits_per_month;
+  if (monthlyCap <= 0) throw quotaError("AI photo edit", 0, 0, ent.plan);
 
   const idem = req.headers.get("idempotency-key")?.trim();
   if (idem && idem.length <= 128) {
     if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
-      throw new HttpError(409, "Duplicate submission — this edit was already started.");
+      throw new HttpError(409, "Duplicate submission — this edit was already started.", "conflict");
     }
   }
   if (!(await durableRateLimit(`aiphoto:${orgId}`, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
-    throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.");
+    throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
   }
   if (!(await durableRateLimit(`aiphotomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
     throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
 }
 
+/** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
+async function guardHelper(userId: string, req: Request): Promise<void> {
+  const orgId = await requireEditorRole(userId, req, "AI photo suggestions");
+  if (!(await durableRateLimit(`aiphotohelp:${orgId}`, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS))) {
+    throw new HttpError(429, "Too many suggestion requests for now — try again in a few minutes.", "rate_limited");
+  }
+}
+
 // Bound the inline base64 image so a caller can't push unbounded memory
 // pressure through readJson (audit round 4). ~12 MB of base64 ≈ 9 MB binary.
 const MAX_IMAGE_B64_CHARS = 12_000_000;
+const ALLOWED_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
 const MODEL = Deno.env.get("GEMINI_IMAGE_MODEL") ?? "gemini-2.5-flash-image";
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
 // image model — these are plain generateContent calls returning JSON).
 const TEXT_MODEL = Deno.env.get("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash";
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
+
+// ── Industry profiles (mirrors SpaceType in Models/Listing.swift) ─────────────
+// real_estate is UNCHANGED from the proven prompt set; the others swap the
+// nouns and the "what to add / what to remove" so the model dresses the right
+// kind of space.
+
+const SPACE_TYPES = ["real_estate", "venue", "restaurant", "retail", "fitness", "other"] as const;
+type SpaceType = typeof SPACE_TYPES[number];
+
+function spaceTypeOf(raw: unknown): SpaceType {
+  const s = String(raw ?? "").trim().toLowerCase().replace(/-/g, "_");
+  return (SPACE_TYPES as readonly string[]).includes(s) ? (s as SpaceType) : "real_estate";
+}
+
+interface Profile {
+  /** "real-estate photo", "restaurant photo", … */
+  photo: string;
+  /** exterior subject for twilight/sky/lawn */
+  exterior: string;
+  /** what "lawn" means (grass vs planters) */
+  greenery: string;
+  /** the clutter list for declutter */
+  clutter: string;
+  /** what stays identical in declutter */
+  keep: string;
+  /** what staging ADDS (style aesthetics come from STAGE_STYLES) */
+  stageSet: string;
+  /** one-line version of stageSet for the suggest instruction */
+  stageShort: string;
+  /** who the agent is, for the helper instructions */
+  audience: string;
+}
+
+const PROFILES: Record<SpaceType, Profile> = {
+  real_estate: {
+    photo: "real-estate photo",
+    exterior: "house",
+    greenery: "the lawn: lush, healthy, vibrant green grass; remove brown/dead patches, dirt, and weeds",
+    clutter: "shoes, bags, boxes, cords, laundry, dishes, papers, toys, toiletries, fridge magnets, and stray items on floors, counters, and surfaces",
+    keep: "the room, furniture, decor, and architecture",
+    stageSet: "furnish the room with",
+    stageShort: "virtually furnish an empty or sparsely furnished room",
+    audience: "a real-estate agent",
+  },
+  venue: {
+    photo: "event-venue photo",
+    exterior: "venue building",
+    greenery: "the grounds and landscaping: lush green lawns, healthy hedges and planters; remove brown patches, dirt, and weeds",
+    clutter: "stacked chairs, cables, equipment cases, cleaning supplies, trash, stray signage and personal items on floors and surfaces",
+    keep: "the space, its fixtures, lighting rig, and architecture",
+    stageSet: "dress the space for an event: round tables with linens and chairs, elegant place settings, floral centerpieces and tasteful uplighting, leaving a clear dance floor where the room allows, all in",
+    stageShort: "dress an empty hall for an event (tables, linens, centerpieces, uplighting)",
+    audience: "an event-venue manager",
+  },
+  restaurant: {
+    photo: "restaurant photo",
+    exterior: "restaurant building",
+    greenery: "the outdoor greenery: healthy planters, patio plants and any lawn or hedges; remove dead foliage, dirt, and weeds",
+    clutter: "stray napkins, condiment bottles, bus tubs, receipts, cords, trash, and personal items on tables, counters, and floors",
+    keep: "the tables, chairs, bar, decor, and architecture",
+    stageSet: "dress the dining room for service: tables set with linens, place settings, glassware and small centerpieces, warm ambient candle light, bar seating where present, all in",
+    stageShort: "set an empty dining room for service (linens, place settings, glassware)",
+    audience: "a restaurant owner",
+  },
+  retail: {
+    photo: "retail-store photo",
+    exterior: "storefront",
+    greenery: "the outdoor greenery: healthy planters, street trees and any lawn or hedges by the storefront; remove dead foliage, dirt, and weeds",
+    clutter: "boxes, stock carts, packaging, cords, handwritten signs, trash, and personal items on floors, counters, and shelves",
+    keep: "the fixtures, displays, products, and architecture",
+    stageSet: "merchandise the store: fill the existing fixtures, shelves and racks with neatly arranged, brand-free generic products and tasteful displays, keeping walkways clear, all in",
+    stageShort: "merchandise empty fixtures and shelves with generic products",
+    audience: "a retail store owner",
+  },
+  fitness: {
+    photo: "fitness-studio photo",
+    exterior: "gym building",
+    greenery: "the outdoor greenery: healthy planters and any lawn or hedges by the entrance; remove dead foliage, dirt, and weeds",
+    clutter: "stray towels, water bottles, bags, loose weight plates, cords, trash, and personal items on the floor and benches",
+    keep: "the equipment, mats, mirrors, flooring, and architecture",
+    stageSet: "equip the studio with modern fitness equipment appropriate to the space (racks, benches, mats, cardio machines) neatly arranged with clear walkways, all in",
+    stageShort: "equip an empty studio with fitness equipment",
+    audience: "a gym or studio owner",
+  },
+  other: {
+    photo: "commercial-space photo",
+    exterior: "building",
+    greenery: "the outdoor greenery: healthy planters and any lawn or hedges; remove dead foliage, dirt, and weeds",
+    clutter: "boxes, cords, trash, papers, and personal items on floors, counters, and surfaces",
+    keep: "the space, furniture, fixtures, and architecture",
+    stageSet: "furnish the space with",
+    stageShort: "virtually furnish an empty or sparse space",
+    audience: "a business owner",
+  },
+};
 
 const LOCK =
   "Do not change the building's architecture, structure, dimensions, walls, or " +
@@ -94,7 +214,9 @@ const STAGE_LOCK =
   "remodel, repaint, resurface, or alter the structure or lighting direction in any way. " +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
 
-const PROMPTS: Record<string, string> = {
+// The proven real-estate prompt set — VERBATIM from the shipped version (the
+// industry templates below are for the other space types only).
+const RE_PROMPTS: Record<string, string> = {
   twilight:
     "Convert this daytime exterior real-estate photo into a stunning twilight/dusk shot: " +
     "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle " +
@@ -116,8 +238,8 @@ const PROMPTS: Record<string, string> = {
     "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
 };
 
-// Per-style furnishing direction for edit:"stage".
-const STAGE_STYLES: Record<string, string> = {
+// Real-estate staging furniture sets (verbatim from the shipped version).
+const RE_STAGE_STYLES: Record<string, string> = {
   modern:
     "modern contemporary furniture: clean-lined sofa and chairs, a low-profile coffee table, " +
     "a large area rug, tasteful wall art, and designer accent lighting in a neutral palette " +
@@ -133,11 +255,57 @@ const STAGE_STYLES: Record<string, string> = {
     "functional pieces, hygge textiles like wool throws and sheepskin, and airy styling",
 };
 
-function stagePrompt(styleDesc: string): string {
+function reStagePrompt(styleDesc: string): string {
   return (
     "Virtually stage this real-estate photo: furnish the room with " + styleDesc + ". " +
     "Use realistic scale and placement appropriate to the room type, resting naturally on the " +
     "existing floor. If the room already has furniture, replace it cleanly with the new set. " +
+    STAGE_LOCK
+  );
+}
+
+function prompts(p: Profile): Record<string, string> {
+  return {
+    twilight:
+      `Convert this daytime exterior ${p.photo} into a stunning twilight/dusk shot: ` +
+      "deep blue-to-warm-orange gradient sky, warm glowing interior window lights, subtle " +
+      `landscape/path lighting, professional dusk photography. Keep the ${p.exterior}, ` +
+      "landscaping, driveway, signage, and composition exactly the same — only change the sky and lighting. " + LOCK,
+    sky:
+      `Replace the dull, grey, or overcast sky in this ${p.photo} with a bright, clear ` +
+      `blue sky with soft natural clouds. Keep the ${p.exterior}, trees, and ground exactly the same and ` +
+      "match the lighting, shadows, and reflections naturally. " + LOCK,
+    lawn:
+      `Repair and green ${p.greenery} in this ${p.photo}. Keep the ${p.exterior}, hardscape, driveway, plants, ` +
+      "and everything else identical. " + LOCK,
+    declutter:
+      `Remove all clutter, mess, and personal items from this ${p.photo}: ${p.clutter}. ` +
+      `Keep ${p.keep} IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. ` +
+      "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
+  };
+}
+
+// Per-style furnishing direction for edit:"stage" (aesthetics; the profile says WHAT to add).
+const STAGE_STYLES: Record<string, string> = {
+  modern:
+    "a modern contemporary style: clean-lined pieces, low-profile tables, tasteful wall art, " +
+    "designer accent lighting, and a neutral palette with warm accents",
+  rustic:
+    "a rustic farmhouse style: warm natural woods, linen upholstery, woven and vintage accents, " +
+    "layered cozy textiles, and earthy tones",
+  minimalist:
+    "a minimalist style: a few essential low-profile pieces, uncluttered surfaces, a restrained " +
+    "monochrome palette, and plenty of intentional negative space",
+  scandinavian:
+    "a Scandinavian style: light woods, soft whites with muted pastel accents, simple functional " +
+    "pieces, hygge textiles like wool throws and sheepskin, and airy styling",
+};
+
+function stagePrompt(p: Profile, styleDesc: string): string {
+  return (
+    `Virtually stage this ${p.photo}: ${p.stageSet} ${styleDesc}. ` +
+    "Use realistic scale and placement appropriate to the space, resting naturally on the " +
+    "existing floor. If the space already has furnishings, replace them cleanly with the new set. " +
     STAGE_LOCK
   );
 }
@@ -149,6 +317,7 @@ interface Body {
   style?: string;
   /** Free-text instruction for edit:"custom" (Mirino-style prompting). */
   prompt?: string;
+  space_type?: string;
 }
 
 const MAX_CUSTOM_PROMPT = 600;
@@ -156,45 +325,51 @@ const MAX_IMPROVE_INPUT = 300;  // rough idea in
 const MAX_IMPROVE_OUTPUT = 400; // polished instruction out
 
 /** Wrap a user's free-text instruction with the guardrails every edit gets. */
-function customPrompt(userText: string): string {
+function customPrompt(p: Profile, userText: string): string {
+  const truth = p === PROFILES.real_estate
+    ? "this is a real property listing"
+    : "this is a real place being marketed";
   return (
-    "Edit this real-estate photo as follows: " + userText.trim() + ". " +
-    "Stay photorealistic and true to the space — this is a real property listing. " + LOCK
+    `Edit this ${p.photo} as follows: ` + userText.trim() + ". " +
+    `Stay photorealistic and true to the space — ${truth}. ` + LOCK
   );
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
   try {
-    const user = await getUser(req); // owner auth; RLS not needed (no DB touch)
+    const user = await getUser(req); // owner auth; RLS not needed (no DB touch beyond quota)
     if (req.method !== "POST") throw new HttpError(405, "POST only");
-    if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set");
+    if (!GEMINI_KEY) throw new HttpError(500, "GEMINI_API_KEY function secret is not set", "internal");
 
     // VALIDATE FIRST, CHARGE SECOND (audit round 4). Every quota consumption
     // below happens only once we know the request would actually reach Gemini.
     const body = await readJson<Body>(req);
-    const edit = body.edit ?? "twilight";
-    const mime = body.mime ?? "image/jpeg";
+    const edit = String(body.edit ?? "twilight").trim().toLowerCase();
+    const mime = String(body.mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
+    const space = spaceTypeOf(body.space_type);
+    const profile = PROFILES[space];
 
     if (body.image_b64 !== undefined) {
       assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
       assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
-             "image is too large — resize it before sending");
+             "image is too large — resize it before sending", "payload_too_large");
+      assert(ALLOWED_MIMES.includes(mime), 400, `mime must be one of ${ALLOWED_MIMES.join(", ")}`);
     }
 
-    // Helper modes: text/vision analysis only — no image generation.
+    // Helper modes: text/vision analysis only — no image generation, no monthly charge.
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
-      await guardEdit(user.id, req);
-      return json({ suggestions: await suggestEdits(body.image_b64, mime) });
+      await guardHelper(user.id, req);
+      return json({ suggestions: await suggestEdits(body.image_b64, mime, profile), space_type: space });
     }
     if (edit === "improve_prompt") {
       const rough = (body.prompt ?? "").trim();
       assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
-      await guardEdit(user.id, req);
-      return json({ prompt: await improvePrompt(rough) });
+      await guardHelper(user.id, req);
+      return json({ prompt: await improvePrompt(rough, profile), space_type: space });
     }
 
     assert(body.image_b64, 400, "image_b64 is required");
@@ -203,17 +378,17 @@ Deno.serve(async (req) => {
     let style: string | undefined;
     if (edit === "stage") {
       style = (body.style ?? "modern").toLowerCase();
-      const styleDesc = STAGE_STYLES[style];
+      const styleDesc = (space === "real_estate" ? RE_STAGE_STYLES : STAGE_STYLES)[style];
       assert(styleDesc, 400, `style must be ${Object.keys(STAGE_STYLES).join("|")} (got ${style})`);
-      prompt = stagePrompt(styleDesc);
+      prompt = space === "real_estate" ? reStagePrompt(styleDesc) : stagePrompt(profile, styleDesc);
     } else if (edit === "custom") {
       const userText = (body.prompt ?? "").trim();
       assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
              `prompt too long (max ${MAX_CUSTOM_PROMPT} chars)`);
-      prompt = customPrompt(userText);
+      prompt = customPrompt(profile, userText);
     } else {
-      prompt = PROMPTS[edit];
+      prompt = (space === "real_estate" ? RE_PROMPTS : prompts(profile))[edit];
       assert(prompt, 400,
              `edit must be twilight|sky|lawn|declutter|stage|custom|suggest|improve_prompt (got ${edit})`);
     }
@@ -239,25 +414,39 @@ Deno.serve(async (req) => {
       headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify(payload),
     });
-    const data = await res.json();
+    const data = await res.json().catch(() => ({} as Record<string, unknown>));
     if (!res.ok) {
-      throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+      throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream");
     }
 
     let outB64: string | null = null;
+    let outMime: string | null = null;
     const texts: string[] = [];
     for (const cand of (data.candidates ?? [])) {
       for (const part of ((cand.content?.parts) ?? [])) {
         const blob = part.inlineData ?? part.inline_data;
-        if (blob?.data) { outB64 = blob.data as string; break; }
+        if (blob?.data) {
+          outB64 = blob.data as string;
+          // Gemini's real output type (it is PNG for the image model today, but
+          // hardcoding it mislabelled the bytes whenever that changed).
+          const m = String(blob.mimeType ?? blob.mime_type ?? "").split(";")[0].trim().toLowerCase();
+          outMime = m.startsWith("image/") ? m : null;
+          break;
+        }
         if (part.text) texts.push(part.text as string);
       }
       if (outB64) break;
     }
     if (!outB64) {
-      throw new HttpError(502, `Gemini returned no image. ${texts.join(" | ").slice(0, 300)}`);
+      throw new HttpError(502, `Gemini returned no image. ${texts.join(" | ").slice(0, 300)}`, "upstream");
     }
-    return json({ image_b64: outB64, mime: "image/png", edit, ...(style ? { style } : {}) });
+    return json({
+      image_b64: outB64,
+      mime: outMime ?? "image/png",
+      edit,
+      space_type: space,
+      ...(style ? { style } : {}),
+    });
   } catch (err) {
     return respondError(err);
   }
@@ -273,29 +462,32 @@ interface Suggestion {
 
 const SUGGESTABLE_EDITS = ["twilight", "sky", "lawn", "declutter", "stage"];
 
-const SUGGEST_INSTRUCTION =
-  "You are reviewing ONE real-estate listing photo for an agent. These are the available " +
-  "one-tap AI edits:\n" +
-  "- twilight: turn a daytime EXTERIOR into a dusk shot with glowing windows (exteriors only)\n" +
-  "- sky: replace a dull/grey/overcast sky with a clear blue one (only when sky is visible " +
-  "and actually dull)\n" +
-  "- lawn: green up patchy/brown grass (only when a lawn is visible and looks unhealthy)\n" +
-  "- declutter: remove mess and personal items from floors and surfaces (only when visible " +
-  "clutter hurts the shot)\n" +
-  "- stage: virtually furnish an empty or sparsely furnished room (empty/sparse interiors only)\n\n" +
-  "Recommend ONLY edits that would genuinely improve THIS specific photo — an interior must " +
-  "never get twilight/sky/lawn, a furnished room must never get stage, a clean room must " +
-  "never get declutter. Zero suggestions is a valid answer.\n\n" +
-  'Reply with STRICT JSON only, shaped exactly like {"suggestions":[{"edit":"sky",' +
-  '"reason":"...","confidence":0.9}]} — at most 3 entries, best first. "reason" is a plain-' +
-  "language sentence of at most 80 characters written for the agent (e.g. \"Grey sky makes " +
-  "the house look gloomy\"). \"confidence\" is 0 to 1.";
+function suggestInstruction(p: Profile): string {
+  return (
+    `You are reviewing ONE ${p.photo} for ${p.audience}. These are the available ` +
+    "one-tap AI edits:\n" +
+    "- twilight: turn a daytime EXTERIOR into a dusk shot with glowing windows (exteriors only)\n" +
+    "- sky: replace a dull/grey/overcast sky with a clear blue one (only when sky is visible " +
+    "and actually dull)\n" +
+    `- lawn: green up unhealthy outdoor greenery (only when ${p.greenery.split(":")[0]} is visible and looks unhealthy)\n` +
+    `- declutter: remove mess and personal items (${p.clutter.split(",").slice(0, 3).join(",")}, …) from floors and surfaces (only when visible ` +
+    "clutter hurts the shot)\n" +
+    `- stage: ${p.stageShort} (empty/sparse interiors only)\n\n` +
+    "Recommend ONLY edits that would genuinely improve THIS specific photo — an interior must " +
+    "never get twilight/sky/lawn, an already furnished/dressed space must never get stage, a clean space must " +
+    "never get declutter. Zero suggestions is a valid answer.\n\n" +
+    'Reply with STRICT JSON only, shaped exactly like {"suggestions":[{"edit":"sky",' +
+    '"reason":"...","confidence":0.9}]} — at most 3 entries, best first. "reason" is a plain-' +
+    "language sentence of at most 80 characters written for the owner (e.g. \"Grey sky makes " +
+    "the building look gloomy\"). \"confidence\" is 0 to 1."
+  );
+}
 
 /** edit:"suggest" — analyze the photo and pick up to 3 genuinely useful edits. */
-async function suggestEdits(imageB64: string, mime: string): Promise<Suggestion[]> {
+async function suggestEdits(imageB64: string, mime: string, profile: Profile): Promise<Suggestion[]> {
   const raw = await geminiText(
     [
-      { text: SUGGEST_INSTRUCTION },
+      { text: suggestInstruction(profile) },
       { inline_data: { mime_type: mime, data: imageB64 } },
     ],
     true,
@@ -326,20 +518,23 @@ async function suggestEdits(imageB64: string, mime: string): Promise<Suggestion[
   return out;
 }
 
-const IMPROVE_INSTRUCTION =
-  "You polish rough photo-edit requests from real-estate agents into precise instructions " +
-  "for an AI photo editor working on a real listing photo.\n\n" +
-  "Rewrite the user's idea as ONE clear, imperative edit instruction: concrete about what " +
-  "changes and what stays, photorealistic, plausible for a real property, no camera jargon, " +
-  "no markdown, no quotes, a single paragraph of at most 400 characters. Keep the user's " +
-  "intent exactly — never invent extra changes they did not ask for. Do NOT add boilerplate " +
-  "about preserving architecture; the system appends that separately.\n\n" +
-  'Reply with STRICT JSON only: {"prompt":"<rewritten instruction>"}';
+function improveInstruction(p: Profile): string {
+  return (
+    `You polish rough photo-edit requests from ${p.audience} into precise instructions ` +
+    `for an AI photo editor working on a real ${p.photo}.\n\n` +
+    "Rewrite the user's idea as ONE clear, imperative edit instruction: concrete about what " +
+    "changes and what stays, photorealistic, plausible for a real place, no camera jargon, " +
+    "no markdown, no quotes, a single paragraph of at most 400 characters. Keep the user's " +
+    "intent exactly — never invent extra changes they did not ask for. Do NOT add boilerplate " +
+    "about preserving architecture; the system appends that separately.\n\n" +
+    'Reply with STRICT JSON only: {"prompt":"<rewritten instruction>"}'
+  );
+}
 
 /** edit:"improve_prompt" — rewrite a rough custom-edit idea into a precise one. */
-async function improvePrompt(rough: string): Promise<string> {
+async function improvePrompt(rough: string, profile: Profile): Promise<string> {
   const raw = await geminiText(
-    [{ text: IMPROVE_INSTRUCTION + "\n\nUser's idea: " + rough }],
+    [{ text: improveInstruction(profile) + "\n\nUser's idea: " + rough }],
     true,
   );
 
@@ -351,7 +546,7 @@ async function improvePrompt(rough: string): Promise<string> {
     // Model ignored the JSON contract — fall back to its plain text.
     improved = raw.replace(/^```(?:json)?|```$/g, "").replace(/^"|"$/g, "").trim();
   }
-  if (!improved) throw new HttpError(502, "Gemini returned no improved prompt");
+  if (!improved) throw new HttpError(502, "Gemini returned no improved prompt", "upstream");
   return improved.replace(/\s+/g, " ").slice(0, MAX_IMPROVE_OUTPUT);
 }
 
@@ -372,7 +567,7 @@ async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> 
   });
   const data = await res.json().catch(() => ({} as Record<string, unknown>));
   if (!res.ok) {
-    throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`);
+    throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream");
   }
   // deno-lint-ignore no-explicit-any
   for (const cand of ((data as any).candidates ?? [])) {
@@ -380,7 +575,7 @@ async function geminiText(parts: unknown[], wantJson: boolean): Promise<string> 
       if (typeof part.text === "string" && part.text.trim()) return part.text as string;
     }
   }
-  throw new HttpError(502, `Gemini returned no text. ${JSON.stringify(data).slice(0, 200)}`);
+  throw new HttpError(502, `Gemini returned no text. ${JSON.stringify(data).slice(0, 200)}`, "upstream");
 }
 
 /** Defensive JSON parse: strip code fences, else grab the first {...} block. */

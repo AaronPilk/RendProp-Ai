@@ -9,7 +9,6 @@ enum Config {
     /// Source of truth for both the API (`/functions/v1`) and Auth (`/auth/v1`).
     /// Reads Info.plist key `RENDPROP_SUPABASE_URL` (inject via a build setting /
     /// xcconfig) if present, otherwise the constant below.
-    /// TODO: replace <project-ref> with the real Supabase project ref (runbook §6.1).
     static let supabaseURL: URL? = {
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_URL") as? String,
            !s.isEmpty, let u = URL(string: s) { return u }
@@ -25,7 +24,6 @@ enum Config {
     /// request. Public by design; RLS enforces access. This is NOT the
     /// service-role key (that stays server-side only — architecture §4).
     /// Reads Info.plist `RENDPROP_SUPABASE_ANON_KEY` if present, else the constant.
-    /// TODO: paste the project's anon key (runbook §6.1).
     static let supabaseAnonKey: String = {
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_ANON_KEY") as? String,
            !s.isEmpty { return s }
@@ -33,12 +31,12 @@ enum Config {
         return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InltZ3FwYm5qcHp0d2pzeXZjZWxkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcyMzk5OTAsImV4cCI6MjEwMjgxNTk5MH0.oUknRmqxoRGWPaYJCaOudGaXwe5w4tfKqqZ9cAPbfW0"
     }()
 
-    /// Master switch. false = MockAPIClient (fully offline dev).
-    /// true = LiveAPIClient against Supabase (LIVE). The backend (edge functions +
-    /// schema) is deployed on project ymgqpbnjpztwjsyvceld. Going live still needs
-    /// the operator to set function secrets (R2 + provider keys), enable a public
-    /// URL on the rendprop-renders bucket, and turn on Apple auth — see
-    /// services/supabase/DEPLOYMENT.md. Until then, owner calls will error (expected).
+    /// Master switch. false = MockAPIClient (fully offline dev — believable
+    /// sample data, simulated uploads, AI features report "needs the live
+    /// backend"). true = LiveAPIClient against the deployed Supabase project
+    /// (edge functions + schema on ymgqpbnjpztwjsyvceld). Owner routes need a
+    /// Supabase JWT from Sign in with Apple (`enableAuth`); the app gates only
+    /// PUBLISH-time actions on it — capture and on-device render stay offline.
     static let useLiveBackend = true
 
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
@@ -49,27 +47,21 @@ enum Config {
         return MockAPIClient()
     }
 
-    enum UploadMode: String, CaseIterable, Identifiable {
-        case simulate   // no network: chunk-reads the file from disk, realistic progress
-        case direct     // presigned PUT/multipart (R2/S3-style) via background URLSession
-        case tus        // TODO: TUSKit path — enable when a tus server exists (master spec 4.4)
-
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .simulate: return "Simulate (offline dev)"
-            case .direct:   return "Direct (presigned URL)"
-            case .tus:      return "tus (resumable server)"
-            }
-        }
-    }
-
-    static var uploadMode: UploadMode {
-        UploadMode(rawValue: UserDefaults.standard.string(forKey: "uploadMode") ?? "") ?? .simulate
-    }
+    // NOTE: the old `UploadMode` / `uploadMode` (simulate | direct | tus) was dead
+    // config — nothing read it. UploadManager keys off `useLiveBackend` alone:
+    // live → the server-chosen single/multipart path, offline → simulate.
 
     /// Warn before uploading files larger than this over cellular.
     static let cellularWarnBytes: Int64 = 500_000_000
+
+    /// Request timeout for the AI routes (`/ai-photo`, `/ai-video/*`). A Gemini
+    /// photo edit routinely takes 20–60 s and the edge function itself allows
+    /// ~150 s, so the default 60 s URLSession timeout cut real edits off.
+    static let aiRequestTimeout: TimeInterval = 120
+
+    /// Where a 402 (plan boundary) "Upgrade plan" CTA sends the user. Prices are
+    /// shown ONLY on the web — never compiled into the app (App Store 3.1).
+    static let pricingURL: URL? = URL(string: "https://rendprop.com/pricing")
 
     // Phase 2 flags — keep false until wired (master spec Parts 4.5, 9, 18)
     // enableAuth now means: Sign in with Apple → Supabase Auth (apple provider) →

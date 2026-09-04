@@ -73,6 +73,77 @@ jobs:
           done
           exit $fail
 
+  db-migrations:
+    name: Supabase migrations (fresh replay + invariants)
+    runs-on: ubuntu-latest
+    # A plain Postgres 16 stands in for the Supabase database: tests/ci-bootstrap.sql
+    # recreates the slice the migrations depend on (API roles, auth schema,
+    # auth.uid(), Supabase's default privileges). No credentials, no Docker-in-Docker.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: rendprop
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      PGHOST: localhost
+      PGPORT: "5432"
+      PGUSER: postgres
+      PGPASSWORD: postgres
+      PGDATABASE: rendprop
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: psql client
+        run: |
+          if ! command -v psql >/dev/null; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+          fi
+          psql --version
+
+      - name: Bootstrap the Supabase baseline (roles, auth schema, default privileges)
+        run: psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
+
+      # Every migration, in the order production received them (LC_ALL=C so the
+      # 0005b / 0008b interleaves sort where they belong), each in ONE transaction
+      # so a failing file leaves no half-applied state behind.
+      - name: Apply every migration on a fresh database
+        run: |
+          for f in $(ls services/supabase/migrations/*.sql | LC_ALL=C sort); do
+            echo "== $f"
+            psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
+          done
+
+      # The adversarial battery: privileged surface, grants, plan coherence
+      # (enforced == published), lifecycle schema, and a mutating fixture that
+      # exercises signup → publish → quota → chapters → leads → delete.
+      - name: Invariants
+        run: psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql
+
+      # Production already has every migration applied. Anything that may be
+      # re-applied there — the re-committed 0005b/0008b and everything from 0009
+      # onward (new migrations join automatically) — must be a safe no-op on a
+      # database that already has it. 0001–0008 are frozen history and are not
+      # replayed (0001's CREATE POLICY and 0006's ADD CONSTRAINT are one-shot).
+      - name: Replay the re-appliable migrations on the migrated database
+        run: |
+          for f in services/supabase/migrations/0005b_*.sql services/supabase/migrations/0008b_*.sql \
+                   $(ls services/supabase/migrations/*.sql | LC_ALL=C sort | awk '$0 >= "services/supabase/migrations/0009"'); do
+            echo "== replay $f"
+            psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
+          done
+
+      - name: Invariants after the replay (same answers, one overload per RPC)
+        run: psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql
+
   python-worker:
     name: Render worker (python)
     runs-on: ubuntu-latest

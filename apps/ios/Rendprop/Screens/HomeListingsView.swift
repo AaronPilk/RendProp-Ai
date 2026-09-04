@@ -1,14 +1,17 @@
 import SwiftUI
+import UIKit
 
 struct HomeListingsView: View {
     @EnvironmentObject var model: AppModel
     // LOAD-BEARING: observing this key is what makes `filtered`/`soldCount`
     // recompute when the business type changes (they read SpaceType.current,
     // which isn't itself observable). Do not remove — filtering would silently
-    // stop updating on type switch.
+    // stop updating on type switch. (Samples themselves are re-derived by
+    // RootTabView on the same change.)
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var isLoading = true
     @State private var search = ""
+    @State private var pendingDelete: Listing?
 
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
@@ -18,45 +21,27 @@ struct HomeListingsView: View {
         return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
 
+    /// True once the user has a listing of their own for this industry.
+    private var hasRealListing: Bool {
+        model.listings.contains { !$0.isSample && $0.belongsToCurrentType }
+    }
+
     /// Archived count for THIS industry only — real-estate sold houses don't
     /// show up in the Food or Gym archive.
     private var soldCount: Int {
         model.listings.filter { $0.belongsToCurrentType && $0.isSold }.count
     }
 
+    private var noun: String { SpaceType.current.spaceNoun }
+
     var body: some View {
         NavigationStack {
             Group {
                 if isLoading && model.listings.isEmpty {
                     loadingState
-                } else if model.listings.isEmpty {
-                    emptyState
                 } else {
-                    ScrollView {
-                        LazyVStack(spacing: 18) {
-                            if soldCount > 0 {
-                                NavigationLink { SoldListingsView() } label: { soldFolderRow }
-                                    .buttonStyle(ScalePressStyle())
-                            }
-                            ForEach(filtered) { listing in
-                                NavigationLink {
-                                    FlythroughDetailView(listing: listing)
-                                } label: {
-                                    ListingCard(listing: listing)
-                                }
-                                .buttonStyle(ScalePressStyle())
-                            }
-                        }
-                        .padding(.horizontal)
-                        .padding(.top, 6)
-                        .padding(.bottom, 90)   // room for the New Listing button
-                    }
-                    .searchable(text: $search, prompt: "Search \(SpaceType.current.spaceNoun)s")
-                    .refreshable { await model.load() }
+                    listBody
                 }
-            }
-            .onChange(of: spaceTypeRaw) { _ in
-                model.reseedSamples()   // venue owners see venues, not houses
             }
             .navigationTitle(SpaceType.current.collectionTitle)
             .background(Theme.bg)
@@ -64,26 +49,24 @@ struct HomeListingsView: View {
             .safeAreaInset(edge: .bottom) {
                 VStack(spacing: 10) {
                     UploadMiniBar()
-                    if !model.listings.isEmpty {
-                        NavigationLink {
-                            NewListingView()
-                        } label: {
-                            HStack(spacing: 8) {
-                                Image(systemName: "plus")
-                                Text(SpaceType.current.newItemTitle).fontWeight(.semibold)
-                            }
-                            .font(.body)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 16)
-                            .background(Theme.accent)
-                            .foregroundStyle(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                            .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
+                    NavigationLink {
+                        NewListingView()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "plus")
+                            Text(SpaceType.current.newItemTitle).fontWeight(.semibold)
                         }
-                        .buttonStyle(ScalePressStyle())
-                        .padding(.horizontal)
-                        .accessibilityLabel(Text("Start a new listing"))
+                        .font(.body)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 16)
+                        .background(Theme.accent)
+                        .foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
                     }
+                    .buttonStyle(ScalePressStyle())
+                    .padding(.horizontal)
+                    .accessibilityLabel(Text("Start a new listing"))
                 }
                 .padding(.bottom, 6)
             }
@@ -91,7 +74,95 @@ struct HomeListingsView: View {
                 await model.load()
                 isLoading = false
             }
+            .confirmationDialog(deleteTitle,
+                                isPresented: Binding(get: { pendingDelete != nil },
+                                                     set: { if !$0 { pendingDelete = nil } }),
+                                titleVisibility: .visible,
+                                presenting: pendingDelete) { l in
+                Button("Delete \(noun)", role: .destructive) {
+                    let id = l.id
+                    Task { await model.remove(id) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: { l in
+                Text(l.serverShareURL != nil
+                     ? "Its video, tour and photos are removed from this phone and the share link stops working."
+                     : "Its video, tour and photos are removed from this phone.")
+            }
         }
+    }
+
+    private var deleteTitle: String {
+        "Delete \(pendingDelete?.address ?? "this \(noun)")?"
+    }
+
+    /// The collection. A List (not a LazyVStack) so rows get real swipe actions;
+    /// the system disclosure chevron is hidden behind an invisible link so the
+    /// card keeps its own design.
+    private var listBody: some View {
+        List {
+            if !hasRealListing && search.isEmpty {
+                firstTourCard
+                    .listRowInsets(rowInsets)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            if soldCount > 0 && search.isEmpty {
+                ZStack {
+                    NavigationLink { SoldListingsView() } label: { EmptyView() }
+                        .opacity(0)
+                    soldFolderRow
+                }
+                .listRowInsets(rowInsets)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            }
+            ForEach(filtered) { listing in
+                ZStack {
+                    NavigationLink { FlythroughDetailView(listing: listing) } label: { EmptyView() }
+                        .opacity(0)
+                    ListingCard(listing: listing)
+                }
+                .listRowInsets(rowInsets)
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+                .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                    if !listing.isSample {
+                        Button(role: .destructive) { pendingDelete = listing } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                }
+                .contextMenu {
+                    if !listing.isSample {
+                        Button(role: .destructive) { pendingDelete = listing } label: {
+                            Label("Delete \(noun)", systemImage: "trash")
+                        }
+                    } else {
+                        Text("Sample \(noun) — read-only")
+                    }
+                }
+            }
+            if filtered.isEmpty && !search.isEmpty {
+                emptySearchRow
+                    .listRowInsets(rowInsets)
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
+            }
+            // Room for the New Listing button.
+            Color.clear
+                .frame(height: 70)
+                .listRowInsets(EdgeInsets())
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+        }
+        .listStyle(.plain)
+        .searchable(text: $search, prompt: "Search \(noun)s")
+        .refreshable { await model.syncDirtyListings() }
+    }
+
+    private var rowInsets: EdgeInsets {
+        EdgeInsets(top: 9, leading: 16, bottom: 9, trailing: 16)
     }
 
     private var loadingState: some View {
@@ -108,59 +179,43 @@ struct HomeListingsView: View {
         }
     }
 
-    private var emptyState: some View {
-        ScrollView {
-            VStack(spacing: 16) {
-                // Invitation card — same gradient language as Home's showroom.
-                VStack(spacing: 12) {
-                    Image(systemName: SpaceType.current.systemImage)
-                        .font(.system(size: 38, weight: .semibold))
-                        .symbolRenderingMode(.hierarchical)
-                        .foregroundStyle(Color.white)
-                        .frame(width: 76, height: 76)
-                        .background(Color.white.opacity(0.16),
-                                    in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-                    Text("Your first tour is\n10 minutes away")
-                        .font(.system(size: 26, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.white)
-                        .multilineTextAlignment(.center)
-                    Text(SpaceType.current.emptyStateLine)
-                        .font(.rpBody)
-                        .foregroundStyle(Color.white.opacity(0.88))
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 32).padding(.horizontal, 20)
-                .background(RPGradient.drone)
-                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
-                .shadow(color: Theme.accent.opacity(0.3), radius: 16, x: 0, y: 8)
-
-                HStack(spacing: 8) {
-                    emptyStep("1", "Film")
-                    stepArrow
-                    emptyStep("2", "Enhance")
-                    stepArrow
-                    emptyStep("3", "Share")
-                }
-
-                NavigationLink {
-                    NewListingView()
-                } label: {
-                    Label("Start filming", systemImage: "video.fill")
-                        .fontWeight(.semibold)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 16)
-                        .background(Theme.accent)
-                        .foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(ScalePressStyle())
-
-                Text("No drone. No editor. Just walk.")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+    /// First-run invitation, shown above the demo samples until the user has a
+    /// listing of their own — same gradient language as Home's showroom.
+    private var firstTourCard: some View {
+        VStack(spacing: 12) {
+            Image(systemName: SpaceType.current.systemImage)
+                .font(.system(size: 34, weight: .semibold))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white)
+                .frame(width: 68, height: 68)
+                .background(Color.white.opacity(0.16),
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Your first tour is\n10 minutes away")
+                .font(.system(size: 24, weight: .bold, design: .rounded))
+                .foregroundStyle(Color.white)
+                .multilineTextAlignment(.center)
+            Text(SpaceType.current.emptyStateLine)
+                .font(.rpBody)
+                .foregroundStyle(Color.white.opacity(0.88))
+                .multilineTextAlignment(.center)
+            HStack(spacing: 8) {
+                emptyStep("1", "Film")
+                stepArrow
+                emptyStep("2", "Enhance")
+                stepArrow
+                emptyStep("3", "Share")
             }
-            .padding(20)
+            .padding(.top, 4)
+            Text("The \(noun)s below are samples — scroll one to see the result.")
+                .font(.rpCaption)
+                .foregroundStyle(Color.white.opacity(0.8))
+                .multilineTextAlignment(.center)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24).padding(.horizontal, 20)
+        .background(RPGradient.drone)
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .shadow(color: Theme.accent.opacity(0.3), radius: 16, x: 0, y: 8)
     }
 
     private func emptyStep(_ n: String, _ label: String) -> some View {
@@ -168,20 +223,35 @@ struct HomeListingsView: View {
             Text(n)
                 .font(.rpCaption.weight(.bold))
                 .frame(width: 26, height: 26)
-                .background(Theme.accentSoft, in: Circle())
-                .foregroundStyle(Theme.accent)
-            Text(label).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .background(Color.white.opacity(0.2), in: Circle())
+                .foregroundStyle(Color.white)
+            Text(label).font(.rpCaption).foregroundStyle(Color.white.opacity(0.9))
         }
         .frame(maxWidth: .infinity)
-        .padding(.vertical, 12)
-        .background(Theme.card, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.border))
+        .padding(.vertical, 10)
+        .background(Color.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var stepArrow: some View {
         Image(systemName: "chevron.right")
             .font(.caption2.weight(.bold))
-            .foregroundStyle(Theme.inkDim)
+            .foregroundStyle(Color.white.opacity(0.7))
+    }
+
+    private var emptySearchRow: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .font(.title2)
+                .foregroundStyle(Theme.inkDim)
+            Text("No \(noun)s match \"\(search)\"")
+                .font(.rpBody)
+                .foregroundStyle(Theme.ink)
+            Text("Try another word from the name or address.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 28)
     }
 
     private var soldFolderRow: some View {
@@ -191,7 +261,7 @@ struct HomeListingsView: View {
                 .foregroundStyle(Theme.accent)
             VStack(alignment: .leading, spacing: 2) {
                 Text(SpaceType.current.archiveNoun).font(.rpHeadline).foregroundStyle(Theme.ink)
-                Text("\(soldCount) \(SpaceType.current.spaceNoun)\(soldCount == 1 ? "" : "s")")
+                Text("\(soldCount) \(noun)\(soldCount == 1 ? "" : "s")")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
             }
             Spacer()
@@ -208,11 +278,14 @@ struct HomeListingsView: View {
 
 struct SoldListingsView: View {
     @EnvironmentObject var model: AppModel
+    @State private var pendingDelete: Listing?
 
     private var sold: [Listing] {
         model.listings.filter { $0.belongsToCurrentType && $0.isSold }
             .sorted { ($0.soldAt ?? .distantPast) > ($1.soldAt ?? .distantPast) }
     }
+
+    private var noun: String { SpaceType.current.spaceNoun }
 
     var body: some View {
         Group {
@@ -223,24 +296,54 @@ struct SoldListingsView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 18) {
-                        ForEach(sold) { listing in
-                            NavigationLink {
-                                FlythroughDetailView(listing: listing)
-                            } label: {
-                                ListingCard(listing: listing)
+                List {
+                    ForEach(sold) { listing in
+                        ZStack {
+                            NavigationLink { FlythroughDetailView(listing: listing) } label: { EmptyView() }
+                                .opacity(0)
+                            ListingCard(listing: listing)
+                        }
+                        .listRowInsets(EdgeInsets(top: 9, leading: 16, bottom: 9, trailing: 16))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            if !listing.isSample {
+                                Button(role: .destructive) { pendingDelete = listing } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
                             }
-                            .buttonStyle(ScalePressStyle())
+                        }
+                        .contextMenu {
+                            if !listing.isSample {
+                                Button(role: .destructive) { pendingDelete = listing } label: {
+                                    Label("Delete \(noun)", systemImage: "trash")
+                                }
+                            }
                         }
                     }
-                    .padding()
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .navigationTitle(SpaceType.current.archiveNoun)
         .navigationBarTitleDisplayMode(.inline)
         .background(Theme.bg)
+        .confirmationDialog("Delete \(pendingDelete?.address ?? "this \(noun)")?",
+                            isPresented: Binding(get: { pendingDelete != nil },
+                                                 set: { if !$0 { pendingDelete = nil } }),
+                            titleVisibility: .visible,
+                            presenting: pendingDelete) { l in
+            Button("Delete \(noun)", role: .destructive) {
+                let id = l.id
+                Task { await model.remove(id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { l in
+            Text(l.serverShareURL != nil
+                 ? "Its video, tour and photos are removed from this phone and the share link stops working."
+                 : "Its video, tour and photos are removed from this phone.")
+        }
     }
 }
 
@@ -248,10 +351,23 @@ struct SoldListingsView: View {
 
 struct ListingCard: View {
     let listing: Listing
+    /// Downsampled hero, decoded once off the main thread (never a full-res
+    /// `UIImage(contentsOfFile:)` inside `body`).
+    @State private var hero: UIImage?
+
+    private var heroImage: UIImage? {
+        if let hero { return hero }
+        if let url = listing.mainPhotoURL { return ImageThumbnails.cached(url) }
+        return nil
+    }
+
+    private var statusText: String {
+        listing.needsAttention ? "needs attention" : listing.status.label
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            hero
+            heroView
             info
         }
         .background(Theme.card)
@@ -262,13 +378,19 @@ struct ListingCard: View {
         )
         .shadow(color: Color.black.opacity(0.07), radius: 16, x: 0, y: 6)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel(Text("\(listing.address), \(listing.subtitleLine), \(listing.status.label)"))
+        .accessibilityLabel(Text("\(listing.address), \(listing.subtitleLine), \(statusText)"))
+        .task(id: listing.mainPhotoRelPath) {
+            guard let url = listing.mainPhotoURL else { hero = nil; return }
+            if let cached = ImageThumbnails.cached(url) { hero = cached; return }
+            let decoded = await ImageThumbnails.load(url)
+            if !Task.isCancelled { hero = decoded }
+        }
     }
 
     // Hero area — shows the main listing photo once one is set, else a branded placeholder.
-    private var hero: some View {
+    private var heroView: some View {
         ZStack {
-            if let url = listing.mainPhotoURL, let ui = UIImage(contentsOfFile: url.path) {
+            if let ui = heroImage {
                 Image(uiImage: ui)
                     .resizable()
                     .scaledToFill()
@@ -283,9 +405,9 @@ struct ListingCard: View {
                              Theme.accentSoft],
                     startPoint: .topLeading, endPoint: .bottomTrailing
                 )
-                Image(systemName: SpaceType.current == .realEstate
+                Image(systemName: listing.spaceType == .realEstate
                                   ? "house.and.flag.fill"
-                                  : SpaceType.current.systemImage)
+                                  : listing.spaceType.systemImage)
                     .font(.system(size: 56, weight: .ultraLight))
                     .foregroundStyle(Theme.accent.opacity(0.30))
                     .offset(y: 6)
@@ -307,17 +429,25 @@ struct ListingCard: View {
         .frame(height: 150)
         .clipped()
         .overlay(alignment: .topTrailing) {
-            // Material halo keeps the status color readable over any photo.
-            StatusChip(status: listing.status)
-                .padding(3)
-                .background(.ultraThinMaterial, in: Capsule())
-                .padding(8)
+            // Material halo keeps the chips readable over any photo.
+            VStack(alignment: .trailing, spacing: 6) {
+                StatusChip(status: listing.status)
+                    .padding(3)
+                    .background(.ultraThinMaterial, in: Capsule())
+                if listing.needsAttention {
+                    AttentionChip()
+                        .padding(3)
+                        .background(.ultraThinMaterial, in: Capsule())
+                }
+            }
+            .padding(8)
         }
         .overlay(alignment: .bottomLeading) {
             if listing.status == .ready {
                 // Material (not hardcoded white) so the badge frosts correctly
                 // over any photo in both modes — same halo as the status chip.
-                Label("Tour ready to share", systemImage: "sparkles")
+                Label(listing.serverShareURL != nil ? "Tour ready to share" : "Tour ready",
+                      systemImage: "sparkles")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
                     .padding(.horizontal, 10)
@@ -351,6 +481,14 @@ struct ListingCard: View {
                         .font(.headline)
                         .foregroundStyle(Theme.accent)
                 }
+            }
+
+            if let error = listing.lastError, listing.needsAttention {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(Theme.warn)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             // Per-industry info chips: a venue shows "Seats 220 · From $3,500",

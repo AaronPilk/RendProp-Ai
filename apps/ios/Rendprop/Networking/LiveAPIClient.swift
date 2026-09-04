@@ -11,8 +11,15 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 ///
 /// Every request carries:
 ///   • `apikey: <supabase anon key>`      (public, RLS enforces access)
-///   • `Authorization: Bearer <jwt>`      (owner routes; from AuthStore)
-///   • `Idempotency-Key`                  (on all writes — safe retries)
+///   • `Authorization: Bearer <jwt>`      (owner routes; refreshed via AuthStore
+///                                         right before sending — never stale)
+///   • `Idempotency-Key`                  (on writes — STABLE for retryable
+///                                         operations so a retry replays)
+///
+/// Non-2xx responses are decoded from the server's `{error, code}` envelope
+/// into `APIError.server` so the UI shows the message the backend wrote for
+/// the user. A 401 is refreshed-and-retried exactly once; a second 401 signs
+/// the user out so the publish gate re-prompts.
 ///
 /// Wire JSON is snake_case. We decode into private DTOs (snake_case → camelCase
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
@@ -21,11 +28,18 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 final class LiveAPIClient: APIClient {
     private let base: URL
     private let session: URLSession
+    /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
+    /// photo edit or a fal submit routinely outlives the default 60 s.
+    private let aiSession: URLSession
 
     init?(baseURL: URL? = Config.apiBaseURL) {
         guard let baseURL else { return nil }
         self.base = baseURL
         self.session = URLSession(configuration: .default)
+        let aiConfig = URLSessionConfiguration.default
+        aiConfig.timeoutIntervalForRequest = Config.aiRequestTimeout
+        aiConfig.timeoutIntervalForResource = max(Config.aiRequestTimeout, 600)
+        self.aiSession = URLSession(configuration: aiConfig)
     }
 
     // MARK: - Request plumbing
@@ -41,7 +55,14 @@ final class LiveAPIClient: APIClient {
         return comps.url ?? u
     }
 
-    private func makeRequest(url: URL, method: String = "GET", json: [String: Any]? = nil) -> URLRequest {
+    /// Assemble a request. `idempotencyKey` should be STABLE for a logical
+    /// operation (publish, ticket, one AI tap) so a retry after a lost response
+    /// replays server-side instead of double-creating/double-billing. When nil,
+    /// a fresh UUID is minted for non-GET requests (previous behaviour — fine
+    /// for endpoints with no replay semantics). The bearer token attached here
+    /// may be stale; `execute()` re-attaches a freshly-refreshed one.
+    private func makeRequest(url: URL, method: String = "GET", json: [String: Any]? = nil,
+                             idempotencyKey: String? = nil) -> URLRequest {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
@@ -50,7 +71,8 @@ final class LiveAPIClient: APIClient {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
         if method != "GET" {
-            req.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
+            let key = idempotencyKey.map(Self.boundedIdempotencyKey) ?? UUID().uuidString
+            req.setValue(key, forHTTPHeaderField: "Idempotency-Key")
         }
         if let json {
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -59,19 +81,86 @@ final class LiveAPIClient: APIClient {
         return req
     }
 
-    private func execute(_ req: URLRequest) async throws -> Data {
-        let (data, resp) = try await session.data(for: req)
-        guard let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw APIError.badResponse((resp as? HTTPURLResponse)?.statusCode ?? -1)
+    /// The server accepts keys of 8…128 chars; longer ones are hashed so the
+    /// key stays stable AND valid.
+    private static func boundedIdempotencyKey(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count >= 8 && trimmed.count <= 128 { return trimmed }
+        if trimmed.count > 128 { return "k:" + DirectUploader.sha256Hex(trimmed) }
+        return "k:" + String(DirectUploader.sha256Hex(trimmed).prefix(32))
+    }
+
+    /// Send, verify 2xx, decode the error envelope otherwise. Refreshes the JWT
+    /// first (never sends a token we know is expired), and on a 401 forces ONE
+    /// refresh + retry; a 401 after that means the session is dead → sign out.
+    private func execute(_ req: URLRequest, session: URLSession? = nil) async throws -> Data {
+        let client = session ?? self.session
+        var request = req
+        if Config.enableAuth, let token = await AuthStore.validAccessToken() {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
-        return data
+
+        let (data, resp) = try await client.data(for: request)
+        guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        if (200..<300).contains(http.statusCode) { return data }
+
+        if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+            let refreshed = await AuthStore.shared.forceRefresh()
+            if refreshed, let fresh = AuthStore.storedAccessToken() {
+                request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                let (data2, resp2) = try await client.data(for: request)
+                guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+                if (200..<300).contains(http2.statusCode) { return data2 }
+                if http2.statusCode == 401 {
+                    // Refreshed token still rejected — the session is dead.
+                    await AuthStore.shared.signOut()
+                }
+                throw Self.serverError(status: http2.statusCode, data: data2)
+            }
+            // Refresh failed: `performRefresh` already signed out on a definitive
+            // 4xx; a network failure keeps the session for a later retry.
+        }
+        throw Self.serverError(status: http.statusCode, data: data)
+    }
+
+    /// Decode `{ error, code }` (contract §B4) into `APIError.server`. Tolerant:
+    /// a non-JSON body (gateway HTML) or a missing `error` falls back to a
+    /// friendly per-status message. `RPnnn:` RPC prefixes are stripped.
+    private struct ErrorEnvelope: Decodable {
+        let error: String?
+        let code: String?
+        let message: String?
+    }
+
+    static func serverError(status: Int, data: Data) -> APIError {
+        var message: String? = nil
+        var code: String? = nil
+        if let env = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) {
+            message = env.error ?? env.message
+            code = env.code
+        }
+        let cleaned = message.map { raw -> String in
+            var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if let range = s.range(of: #"^RP\d{3}:\s*"#, options: .regularExpression) {
+                s = String(s[range.upperBound...])
+            }
+            return s
+        }
+        let finalMessage = (cleaned?.isEmpty == false) ? cleaned : nil
+        return .server(status: status, code: code, message: finalMessage ?? APIError.defaultMessage(for: status))
     }
 
     // Decoder built per call (JSONDecoder isn't Sendable — no shared static).
+    // Decode failures surface as `APIError.decoding` (a readable message) rather
+    // than the raw DecodingError text.
     private func decode<T: Decodable>(_ data: Data) throws -> T {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
-        return try d.decode(T.self, from: data)
+        do {
+            return try d.decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding
+        }
     }
 
     /// ISO8601 → Date, tolerant of fractional seconds (Supabase timestamps).
@@ -102,26 +191,39 @@ final class LiveAPIClient: APIClient {
 
     func createListing(_ listing: Listing) async throws -> Listing {
         let data = try await execute(makeRequest(url: url(["listings"]), method: "POST",
-                                                 json: listingBody(listing, includeStatus: false)))
+                                                 json: listingBody(listing, forPatch: false)))
         return mapListing(try decode(data))
     }
 
     func updateListing(_ listing: Listing) async throws -> Listing {
-        let data = try await execute(makeRequest(url: url(["listings", listing.id.uuidString]),
+        // PATCH the SERVER row (serverID), never the local UUID — the local id
+        // is unknown to the backend once the listing has been created there.
+        let target = listing.serverID ?? listing.id
+        let data = try await execute(makeRequest(url: url(["listings", target.uuidString]),
                                                  method: "PATCH",
-                                                 json: listingBody(listing, includeStatus: true)))
+                                                 json: listingBody(listing, forPatch: true)))
         return mapListing(try decode(data))
+    }
+
+    func deleteListing(serverID: UUID) async throws {
+        _ = try await execute(makeRequest(url: url(["listings", serverID.uuidString]),
+                                          method: "DELETE"))
     }
 
     // MARK: - Uploads (contract §2)
 
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String,
-                       role: String) async throws -> UploadTicket {
+                       role: String, contentType: String?,
+                       idempotencyKey: String?) async throws -> UploadTicket {
         var body: [String: Any] = ["filename": filename, "bytes": bytes, "kind": kind, "role": role]
         if let listingID { body["listing_id"] = listingID.uuidString }
-        if let sha256 { body["sha256"] = sha256 }
-        let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body))
+        if let sha256, !sha256.isEmpty { body["sha256"] = sha256 }
+        // Declare the exact type the PUT will carry — `/complete` HEAD-verifies
+        // observed == declared and DELETES the object on mismatch (P0 fix).
+        if let contentType, !contentType.isEmpty { body["content_type"] = contentType }
+        let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body,
+                                                 idempotencyKey: idempotencyKey))
         let dto: UploadTicketDTO = try decode(data)
         let mode = UploadTicket.Mode(rawValue: dto.mode ?? "single") ?? .single
         return UploadTicket(assetID: dto.assetId, mode: mode,
@@ -158,8 +260,10 @@ final class LiveAPIClient: APIClient {
         if let v = metadata.hasGyro   { body["has_gyro"] = v }
         if let v = metadata.bytes     { body["bytes"] = v }
         if let v = metadata.sha256    { body["sha256"] = v }
+        // Stable per asset: a retried complete carries the same key.
         _ = try await execute(makeRequest(url: url(["uploads", assetID, "complete"]),
-                                          method: "POST", json: body))
+                                          method: "POST", json: body,
+                                          idempotencyKey: "complete:\(assetID)"))
     }
 
     func abortUpload(assetID: String) async throws {
@@ -198,11 +302,9 @@ final class LiveAPIClient: APIClient {
 
     func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
                       enhancements: Enhancements) async throws -> Render {
-        // NOTE: `assetID` must be the server capture_assets id returned by
-        // /uploads. Today the call site passes the local CaptureAsset.id (the
-        // upload runs async in the background), so wiring the real live path
-        // requires threading the server asset_id back from createUpload → here.
-        // See ReviewSubmitView.start() (TODO).
+        // Worker path (not the live app flow). `assetID` must be the SERVER
+        // capture_assets id returned by /uploads — the local CaptureAsset id is
+        // rejected by the server (RP409 asset not uploaded).
         let body: [String: Any] = [
             "listing_id": listingID.uuidString,
             "asset_id": assetID.uuidString,
@@ -211,7 +313,8 @@ final class LiveAPIClient: APIClient {
             "enhancements": ["declutter": enhancements.declutter,
                              "style": enhancements.style.rawValue],
         ]
-        let data = try await execute(makeRequest(url: url(["renders"]), method: "POST", json: body))
+        let data = try await execute(makeRequest(url: url(["renders"]), method: "POST", json: body,
+                                                 idempotencyKey: "render:\(listingID.uuidString):\(assetID.uuidString):\(tier.rawValue)"))
         let dto: RenderDTO = try decode(data)
         return mapRender(dto, fallbackListingID: listingID, fallbackTier: tier,
                          fallbackDuration: durationS, fallbackEnhancements: enhancements)
@@ -225,35 +328,55 @@ final class LiveAPIClient: APIClient {
     }
 
     func publishApp(listingID: UUID, assetID: String, durationS: Double,
-                    speedFactor: Double, staged: Bool, tier: Render.Tier,
-                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour {
+                    speedFactor: Double, tier: RenderTier,
+                    enhancements: Enhancements, chapters: [ChapterInput],
+                    posterAssetID: String?) async throws -> PublishedTour {
         var body: [String: Any] = [
             "listing_id": listingID.uuidString,
             "asset_id": assetID,
             "duration_s": durationS,
             "speed_factor": speedFactor,
-            "staged": staged,
+            // Derived server-side from `enhancements`; sent for older servers.
+            "staged": enhancements.isActive,
             "tier": tier.rawValue,
             "enhancements": ["declutter": enhancements.declutter,
                              "style": enhancements.style.rawValue],
         ]
-        if !chapters.isEmpty { body["chapters"] = chapters }
+        if !chapters.isEmpty {
+            body["chapters"] = chapters
+                .sorted { $0.sort < $1.sort }
+                .prefix(60)
+                .map { $0.wireDictionary }
+        }
+        if let posterAssetID, !posterAssetID.isEmpty { body["poster_asset_id"] = posterAssetID }
+        // Stable per (listing, asset): a retry after a lost response replays the
+        // SAME job + slug instead of publishing a second public tour.
+        let key = "publish:\(listingID.uuidString.lowercased()):\(assetID)"
         let data = try await execute(makeRequest(url: url(["renders", "publish-app"]),
-                                                 method: "POST", json: body))
+                                                 method: "POST", json: body, idempotencyKey: key))
         let dto: PublishAppDTO = try decode(data)
         guard let slug = dto.slug, let share = dto.shareUrl else {
-            throw APIError.badResponse(-1)   // server didn't return a slug/share_url
+            throw APIError.decoding   // server didn't return a slug/share_url
         }
         return PublishedTour(slug: slug, shareURL: share,
-                             videoURL: nil, posterURL: nil,
+                             videoURL: dto.videoUrl, posterURL: dto.posterUrl ?? dto.poster,
                              durationS: dto.durationS, staged: dto.staged,
                              renderID: dto.id.flatMap(UUID.init(uuidString:)))
     }
 
-    // MARK: - Account / usage
+    func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws {
+        let body: [String: Any] = [
+            "chapters": chapters.sorted { $0.sort < $1.sort }.prefix(60).map { $0.wireDictionary },
+        ]
+        _ = try await execute(makeRequest(url: url(["renders", renderID.uuidString, "chapters"]),
+                                          method: "PATCH", json: body))
+    }
+
+    // MARK: - AI photo
 
     func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
-                     style: String?, prompt: String?) async throws -> String {
+                     style: String?, prompt: String?,
+                     idempotencyKey: String?) async throws -> String {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": edit]
         if let style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
             body["style"] = style                       // stage only
@@ -262,15 +385,23 @@ final class LiveAPIClient: APIClient {
             let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }   // custom only, server cap 600
         }
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body))
-        struct Resp: Decodable { let imageB64: String }
+        // Industry-aware prompts server-side (a restaurant is not staged like a
+        // living room) — contract §B4.
+        body["space_type"] = SpaceType.current.rawValue
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+                                                 idempotencyKey: idempotencyKey),
+                                     session: aiSession)
+        struct Resp: Decodable { let imageB64: String? }
         let r: Resp = try decode(data)
-        return r.imageB64
+        guard let out = r.imageB64, !out.isEmpty else { throw APIError.decoding }
+        return out
     }
 
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
-        let body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": "suggest"]
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body))
+        let body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": "suggest",
+                                   "space_type": SpaceType.current.rawValue]
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body),
+                                     session: aiSession)
         // Tolerant decode: every field optional, malformed entries dropped, and
         // only the five runnable preset edits pass through (so every row the UI
         // shows maps to a real aiPhotoEdit mode). Cap at 3 per the contract.
@@ -294,59 +425,85 @@ final class LiveAPIClient: APIClient {
         let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let body: [String: Any] = ["image_b64": imageBase64, "mime": mime,
                                    "edit": "improve_prompt",
-                                   "prompt": String(rough.prefix(300))]   // contract: rough idea ≤ 300
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body))
+                                   "prompt": String(rough.prefix(300)),   // contract: rough idea ≤ 300
+                                   "space_type": SpaceType.current.rawValue]
+        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body),
+                                     session: aiSession)
         struct Resp: Decodable { let prompt: String? }
         let r: Resp = try decode(data)
         guard let improved = r.prompt?.trimmingCharacters(in: .whitespacesAndNewlines),
               !improved.isEmpty else {
-            throw APIError.badResponse(-1)   // server didn't return an improved prompt
+            throw APIError.decoding   // server didn't return an improved prompt
         }
         return improved
     }
 
     // MARK: - AI video (ai-video edge function — async fal submit + poll)
 
-    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
+                      idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["asset_id": assetID, "tier": tier]
         if let targetFps { body["target_fps"] = targetFps }
-        return try await submitAIVideo(path: "drone", body: body, fallbackKind: "drone")
+        return try await submitAIVideo(path: "drone", body: body, fallbackKind: "drone",
+                                       idempotencyKey: idempotencyKey)
     }
 
-    func aiVideoAerial(style: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
-        var body: [String: Any] = ["seconds": seconds, "aspect": aspect]
-        // No address on the wire (2026-08-26): Veo's safety filter can reject
-        // prompts that name real residential addresses — jobs failed in seconds.
-        if let style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
+    func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob {
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "time_of_day": request.timeOfDay,
+            "motion": request.motion,
+            "seconds": request.seconds,
+            "aspect": request.aspect,
+        ]
+        // Grounded: the exterior photo rides along (base64, no data: prefix) and
+        // the server runs image-to-video on it. Never the street address — only
+        // the coarse region ("Charlotte, NC") for scenery context.
+        if let image = request.imageJPEGBase64, !image.isEmpty {
+            body["image_b64"] = image
+            body["mime"] = request.mime ?? "image/jpeg"
+        }
+        if let region = request.region?.trimmingCharacters(in: .whitespacesAndNewlines), !region.isEmpty {
+            body["region"] = String(region.prefix(120))
+        }
+        if let style = request.style?.trimmingCharacters(in: .whitespacesAndNewlines), !style.isEmpty {
             body["style"] = String(style.prefix(200))
         }
-        if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
-            body["prompt"] = prompt
-        }
-        return try await submitAIVideo(path: "aerial", body: body, fallbackKind: "aerial")
+        var job = try await submitAIVideo(path: "aerial", body: body, fallbackKind: "aerial",
+                                          idempotencyKey: idempotencyKey)
+        // Older servers don't echo the flags — derive from what we sent so the
+        // UI's disclosure is always correct.
+        if job.grounded == nil { job.grounded = request.isGrounded }
+        if job.synthetic == nil { job.synthetic = true }
+        return job
     }
 
-    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
         if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
             body["prompt"] = prompt
         }
-        return try await submitAIVideo(path: "reel-clip", body: body, fallbackKind: "reel")
+        return try await submitAIVideo(path: "reel-clip", body: body, fallbackKind: "reel",
+                                       idempotencyKey: idempotencyKey)
     }
 
     /// Shared submit → decode for the three generate routes (202 responses).
     private func submitAIVideo(path: String, body: [String: Any],
-                               fallbackKind: String) async throws -> AIVideoJob {
+                               fallbackKind: String, idempotencyKey: String?) async throws -> AIVideoJob {
         let data = try await execute(makeRequest(url: url(["ai-video", path]),
-                                                 method: "POST", json: body))
+                                                 method: "POST", json: body,
+                                                 idempotencyKey: idempotencyKey),
+                                     session: aiSession)
         let dto: AIVideoJobDTO = try decode(data)
         guard let requestId = dto.requestId, !requestId.isEmpty,
               let statusUrl = dto.statusUrl, !statusUrl.isEmpty,
               let responseUrl = dto.responseUrl, !responseUrl.isEmpty else {
-            throw APIError.badResponse(-1)   // server didn't return the fal job ids
+            throw APIError.decoding   // server didn't return the fal job ids
         }
         return AIVideoJob(requestId: requestId, statusUrl: statusUrl,
-                          responseUrl: responseUrl, kind: dto.kind ?? fallbackKind)
+                          responseUrl: responseUrl, kind: dto.kind ?? fallbackKind,
+                          grounded: dto.grounded, synthetic: dto.synthetic)
     }
 
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
@@ -365,12 +522,12 @@ final class LiveAPIClient: APIClient {
         // surfaces as a normal APIError to the caller's retry/fallback path).
         let target = comps?.url ?? plain
 
-        let data = try await execute(makeRequest(url: target))
+        let data = try await execute(makeRequest(url: target), session: aiSession)
         let dto: AIVideoStatusDTO = try decode(data)
         switch dto.status {
         case "completed":
             guard let s = dto.videoUrl, let videoURL = URL(string: s) else {
-                throw APIError.badResponse(-1)   // completed but no video url
+                throw APIError.decoding   // completed but no video url
             }
             return .completed(videoURL: videoURL)
         case "failed":
@@ -380,6 +537,8 @@ final class LiveAPIClient: APIClient {
             return .processing(queuePosition: dto.queuePosition)
         }
     }
+
+    // MARK: - Account / usage / leads
 
     func updateBrand(_ fields: [String: String]) async throws {
         // PATCH /me/brand — the org brand kit is what the PUBLIC tour/portfolio
@@ -391,57 +550,174 @@ final class LiveAPIClient: APIClient {
     func me() async throws -> UsageSummary {
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
-        // /me returns `plan` as a string and `usage.{cost_cents,leads,renders,listings}`
-        // (see services/supabase/functions/me/index.ts). cost_cents can be fractional
-        // (round4), so decode it as Double and round to whole cents for Money.
-        return UsageSummary(aiSpendCents: dto.usage?.costCents.map { Int($0.rounded()) },
-                            renderCount: dto.usage?.renders,
-                            leadCount: dto.usage?.leads,
-                            planName: dto.plan)
+        // /me returns `plan` (effective), `plan_raw`, `trial_ends_at`,
+        // `entitlement {…_per_month}` and `usage.{cost_cents, leads, renders,
+        // listings, by_feature{…}}` — see services/supabase/functions/me/index.ts.
+        // cost_cents can be fractional (round4) → round to whole cents for Money.
+        let usage = dto.usage
+        var entitlements: Entitlements? = nil
+        if let ent = dto.entitlement {
+            var used: [String: Int] = [:]
+            if let bf = usage?.byFeature {
+                if let v = bf.renders?.value    { used["renders"] = v }
+                if let v = bf.photoEdits?.value { used["photo_edits"] = v }
+                if let v = bf.reels?.value      { used["reels"] = v }
+                if let v = bf.aerials?.value    { used["aerials"] = v }
+                if let v = bf.drone?.value      { used["drone"] = v }
+            }
+            if used["renders"] == nil, let r = usage?.renders?.value { used["renders"] = r }
+            entitlements = Entitlements(
+                plan: dto.plan ?? dto.org?.plan ?? "free",
+                planRaw: dto.planRaw,
+                trialEndsAt: Self.parseDate(dto.trialEndsAt),
+                rendersPerMonth: ent.rendersPerMonth?.value ?? 0,
+                photoEditsPerMonth: ent.photoEditsPerMonth?.value ?? 0,
+                reelsPerMonth: ent.reelsPerMonth?.value ?? 0,
+                aerialsPerMonth: ent.aerialsPerMonth?.value ?? 0,
+                topazPerMonth: ent.topazPerMonth?.value ?? 0,
+                used: used,
+                leads: usage?.leads?.value ?? 0)
+        }
+        let summary = UsageSummary(
+            aiSpendCents: usage?.costCents.map { Int($0.rounded()) },
+            renderCount: usage?.renders?.value,
+            leadCount: usage?.leads?.value,
+            planName: dto.plan ?? dto.org?.plan,
+            entitlements: entitlements,
+            userName: dto.user?.name,
+            orgName: dto.org?.name,
+            brandName: dto.org?.brandKit?.name)
+        // Let the Account row show the server-side name (never an email).
+        await AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
+        return summary
     }
 
-    // MARK: - Write bodies (explicit snake_case; omit nil/empty so PATCH is partial)
+    func leads(listingServerID: UUID?) async throws -> [Lead] {
+        var query: [URLQueryItem] = []
+        if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }
+        let data = try await execute(makeRequest(url: url(["leads"], query: query)))
+        // `{ leads: [...] }` per contract; tolerate a bare array too.
+        let dtos: [LeadDTO]
+        if let wrapped: LeadsDTO = try? decode(data), let list = wrapped.leads {
+            dtos = list
+        } else if let bare: [LeadDTO] = try? decode(data) {
+            dtos = bare
+        } else {
+            throw APIError.decoding
+        }
+        return dtos.map(mapLead).sorted { $0.createdAt > $1.createdAt }
+    }
 
-    private func listingBody(_ l: Listing, includeStatus: Bool) -> [String: Any] {
+    // MARK: - Write bodies (explicit snake_case)
+
+    /// Listing → wire body. POST omits empty/zero fields (a fresh row); PATCH
+    /// sends the FULL local truth, using JSON null to clear a server value the
+    /// user removed (un-sell, drop the Zillow link, unknown beds) — a partial
+    /// PATCH that omits them would leave stale values on the hosted page.
+    private func listingBody(_ l: Listing, forPatch: Bool) -> [String: Any] {
         var b: [String: Any] = [
             "space_type": l.spaceType.rawValue,
             "address": l.address,
         ]
-        if l.price.cents > 0 { b["price_cents"] = l.price.cents }
-        if l.beds > 0 { b["beds"] = l.beds }
-        if l.baths > 0 { b["baths"] = l.baths }
-        if l.sqft > 0 { b["sqft"] = l.sqft }
-        if let t = l.tagline, !t.trimmingCharacters(in: .whitespaces).isEmpty { b["tagline"] = t }
-        if let d = l.details, !d.isEmpty { b["details"] = d }
-        if let lat = l.latitude { b["lat"] = coarseCoordinate(lat) }
-        if let lng = l.longitude { b["lng"] = coarseCoordinate(lng) }
-        if includeStatus { b["status"] = l.status.rawValue }
-        if let sold = l.soldAt { b["sold_at"] = Self.isoString(from: sold) }
+        func put(_ key: String, _ value: Any, when present: Bool) {
+            if present { b[key] = value } else if forPatch { b[key] = NSNull() }
+        }
+        put("price_cents", l.price.cents, when: l.price.cents > 0)
+        put("beds", l.beds, when: l.beds > 0)
+        put("baths", l.baths, when: l.baths > 0)
+        put("sqft", l.sqft, when: l.sqft > 0)
+        let tagline = l.tagline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        put("tagline", tagline, when: !tagline.isEmpty)
+        if let d = l.details, !d.isEmpty {
+            b["details"] = d
+        } else if forPatch {
+            b["details"] = [String: String]()   // column is NOT NULL default '{}'
+        }
+        if let lat = l.latitude, let lng = l.longitude, lat.isFinite, lng.isFinite {
+            b["lat"] = coarseCoordinate(lat)
+            b["lng"] = coarseCoordinate(lng)
+        } else if forPatch {
+            b["lat"] = NSNull()
+            b["lng"] = NSNull()
+        }
+        let zillow = l.zillowURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        put("zillow_url", zillow, when: !zillow.isEmpty)
+        if forPatch {
+            // The DB check set is draft|capturing|processing|ready|expired|archived —
+            // the app's transient `uploading` maps to `processing`; never sent raw.
+            b["status"] = Self.wireStatus(l.status)
+            b["sold_at"] = l.soldAt.map { Self.isoString(from: $0) } ?? NSNull()
+        } else if let sold = l.soldAt {
+            b["sold_at"] = Self.isoString(from: sold)
+        }
         return b
+    }
+
+    /// Local → server status vocabulary (F-supabase-13).
+    private static func wireStatus(_ s: Listing.Status) -> String {
+        switch s {
+        case .uploading:  return "processing"
+        case .draft:      return "draft"
+        case .processing: return "processing"
+        case .ready:      return "ready"
+        case .expired:    return "expired"
+        }
+    }
+
+    /// Server → local status. `archived` (sold/archived folder) is a READY tour
+    /// whose `sold_at` carries the archive state; `capturing` is a draft.
+    private static func localStatus(_ raw: String?) -> Listing.Status {
+        switch raw ?? "" {
+        case "archived":  return .ready
+        case "capturing": return .draft
+        default:          return Listing.Status(rawValue: raw ?? "") ?? .draft
+        }
     }
 
     // MARK: - DTO → model mapping
 
     private func mapListing(_ dto: ListingDTO) -> Listing {
-        Listing(
-            id: dto.id.flatMap(UUID.init(uuidString:)) ?? UUID(),
+        let serverID = dto.id.flatMap(UUID.init(uuidString:))
+        var l = Listing(
+            id: serverID ?? UUID(),
             address: dto.address ?? "",
             beds: dto.beds ?? 0,
             baths: dto.baths ?? 0,
             sqft: dto.sqft ?? 0,
             price: Money(cents: dto.priceCents ?? 0),
-            status: Listing.Status(rawValue: dto.status ?? "") ?? .draft,
+            status: Self.localStatus(dto.status),
             isSample: false,
             spaceTypeRaw: dto.spaceType,
             createdAt: Self.parseDate(dto.createdAt) ?? Date(),
             soldAt: Self.parseDate(dto.soldAt),
-            zillowURL: nil,
-            mainPhotoRelPath: nil,          // main_photo_key is a remote R2 key, not a local path (TODO)
+            zillowURL: dto.zillowUrl.flatMap { $0.isEmpty ? nil : $0 },
+            mainPhotoRelPath: nil,          // main_photo_key is a remote R2 key, not a local path
             latitude: dto.lat,
             longitude: dto.lng,
             tagline: dto.tagline,
             details: dto.details?.value
         )
+        l.serverID = serverID
+        return l
+    }
+
+    private func mapLead(_ dto: LeadDTO) -> Lead {
+        let name = dto.name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        return Lead(
+            id: dto.id.flatMap(UUID.init(uuidString:)) ?? UUID(),
+            listingID: dto.listingId.flatMap(UUID.init(uuidString:)),
+            name: name.isEmpty ? "Someone" : name,
+            phone: clean(dto.phone),
+            email: clean(dto.email),
+            message: clean(dto.message),
+            extra: dto.extra?.value,
+            createdAt: Self.parseDate(dto.createdAt) ?? Date(),
+            source: clean(dto.source),
+            listingAddress: clean(dto.listingAddress))
     }
 
     /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
@@ -474,6 +750,20 @@ final class LiveAPIClient: APIClient {
                 // null / arrays / objects: skipped — tolerate, never throw.
             }
             value = out
+        }
+    }
+
+    /// Tolerant integer: accepts JSON ints, doubles (rounded), numeric strings
+    /// and null — a count that arrives as `3.0` must not fail the whole /me.
+    struct LenientInt: Decodable {
+        let value: Int?
+        init(from decoder: Decoder) throws {
+            let c = try decoder.singleValueContainer()
+            if c.decodeNil() { value = nil; return }
+            if let i = try? c.decode(Int.self) { value = i; return }
+            if let d = try? c.decode(Double.self), d.isFinite { value = Int(d.rounded()); return }
+            if let s = try? c.decode(String.self) { value = Int(s.trimmingCharacters(in: .whitespaces)); return }
+            value = nil
         }
     }
 
@@ -516,6 +806,8 @@ final class LiveAPIClient: APIClient {
         let lng: Double?
         let status: String?
         let soldAt: String?
+        let zillowUrl: String?
+        let mainPhotoKey: String?
         let createdAt: String?
     }
 
@@ -553,8 +845,9 @@ final class LiveAPIClient: APIClient {
         let status: String?
         let progress: Double?
         let enhancements: Enhancements?
-        let costCents: Int?
+        let costCents: Double?
         let currentStep: String?
+        let error: String?
         let tour: TourDTO?
 
         /// Nested `tour` on GET /renders/:id (contract §2.6) — the worker-path
@@ -577,17 +870,22 @@ final class LiveAPIClient: APIClient {
         let staged: Bool?
         let videoKey: String?      // video_key (R2 object key, not a URL)
         let posterKey: String?     // poster_key
+        let videoUrl: String?      // video_url (public URL, when the server sends one)
+        let posterUrl: String?     // poster_url
+        let poster: String?        // alt key some routes use
     }
 
     /// 202 body of POST /ai-video/{drone,aerial,reel-clip} — fal's queue ids
-    /// verbatim plus the route's `kind`. Extra fields (model_id, tier, synthetic,
-    /// …) are ignored. All optional → tolerant decode; required ones re-checked
-    /// in `submitAIVideo`.
+    /// verbatim plus the route's `kind` and the aerial's `grounded`/`synthetic`
+    /// flags. Extra fields (model_id, tier, …) are ignored. All optional →
+    /// tolerant decode; required ones re-checked in `submitAIVideo`.
     private struct AIVideoJobDTO: Decodable {
         let requestId: String?     // request_id
         let statusUrl: String?     // status_url
         let responseUrl: String?   // response_url
         let kind: String?
+        let grounded: Bool?
+        let synthetic: Bool?
     }
 
     /// Body of GET /ai-video/status — one of processing/completed/failed.
@@ -599,16 +897,67 @@ final class LiveAPIClient: APIClient {
     }
 
     private struct MeDTO: Decodable {
-        // /me returns `plan` as a scalar string and a `usage` rollup — see
-        // services/supabase/functions/me/index.ts.
+        struct User: Decodable {
+            let id: String?
+            let email: String?
+            let name: String?
+        }
+        struct BrandKit: Decodable {
+            let name: String?      // other brand fields are ignored (tolerant)
+        }
+        struct Org: Decodable {
+            let id: String?
+            let name: String?
+            let handle: String?
+            let plan: String?
+            let brandKit: BrandKit?
+        }
+        struct Entitlement: Decodable {
+            let rendersPerMonth: LenientInt?
+            let photoEditsPerMonth: LenientInt?
+            let reelsPerMonth: LenientInt?
+            let aerialsPerMonth: LenientInt?
+            let topazPerMonth: LenientInt?
+            let seats: LenientInt?
+        }
         struct Usage: Decodable {
+            struct ByFeature: Decodable {
+                let renders: LenientInt?
+                let photoEdits: LenientInt?
+                let reels: LenientInt?
+                let aerials: LenientInt?
+                let drone: LenientInt?
+            }
             let month: String?
             let costCents: Double?   // cost_cents (round4 → may be fractional)
-            let leads: Int?
-            let renders: Int?
-            let listings: Int?
+            let leads: LenientInt?
+            let renders: LenientInt?
+            let listings: LenientInt?
+            let byFeature: ByFeature?
         }
+        let user: User?
+        let org: Org?
         let plan: String?
+        let planRaw: String?
+        let trialEndsAt: String?
+        let entitlement: Entitlement?
         let usage: Usage?
+    }
+
+    private struct LeadsDTO: Decodable {
+        let leads: [LeadDTO]?
+    }
+
+    private struct LeadDTO: Decodable {
+        let id: String?
+        let listingId: String?
+        let name: String?
+        let phone: String?
+        let email: String?
+        let message: String?
+        let extra: TolerantStringMap?
+        let createdAt: String?
+        let source: String?
+        let listingAddress: String?
     }
 }

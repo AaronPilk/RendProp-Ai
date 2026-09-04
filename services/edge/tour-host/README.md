@@ -65,19 +65,31 @@ npm run deploy        # = wrangler deploy
 
 ### Route setup
 
-`wrangler.toml` binds two routes on the apex zone:
+`wrangler.toml` binds the Worker to the whole apex zone:
 
 ```toml
 routes = [
-  { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
-  { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
 ]
 ```
 
 Requirements:
 - `rendprop.com` must be an **active zone** on the same Cloudflare account (nameservers on Cloudflare).
-- The tour-host owns **only** `/f/*` and `/a/*`; the marketing site keeps everything else. If the apex is served by Pages/another Worker, these routes take precedence for their prefixes.
-- First deploy without custom routes? It's also on `https://rendprop-tour-host.<subdomain>.workers.dev` (`workers_dev = true`).
+- The Worker owns the whole apex. Requests that exactly match a file under `./public` (the marketing
+  site, `/assets/*`, `robots.txt`, `sitemap.xml`, `llms.txt`) are served by Workers Static Assets
+  before the script runs; `/f/*`, `/a/*`, `/terms`, `/privacy`, `/healthz` and every unknown path
+  land in `src/index.ts`, which always answers with a branded page (404/500 included).
+- `workers_dev = false`: there is no `*.workers.dev` hostname in production (duplicate content +
+  an un-branded URL). For a pre-DNS smoke test, temporarily set it to `true` and comment the
+  `routes` block out.
+
+### Crawl policy
+
+`public/robots.txt` opens the marketing site to search engines and AI crawlers, but customer
+tour pages (`/f/*`) and portfolios (`/a/*`) are disallowed for the AI-crawler user agents (they
+carry agents' names and phone numbers); only `/f/estate-demo` stays open to them. `?embed=1`
+pages carry `<meta name="robots" content="noindex">` and every tour page has a canonical link
+to its `share_url`.
 
 ### Vars / secrets
 
