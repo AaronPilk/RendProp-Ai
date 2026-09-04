@@ -1,0 +1,20 @@
+EMPIRICAL RESULT (macOS Vision, 2026-09-03, same call shape as RenderEngine.analyzeJitter:
+handler = VNImageRequestHandler(cvPixelBuffer: PREVIOUS), request = VNTranslationalImageRegistrationRequest(targetedCVPixelBuffer: CURRENT))
+
+Synthetic frames 384x216 BGRA. Content (white squares) moved by (+10, +20) in TOP-LEFT image coordinates
+between PREVIOUS and CURRENT.
+
+  alignmentTransform: tx = -10.0   ty = +20.0
+
+So: tx = -(content Δx)   [x is negated: it is the transform aligning CURRENT back onto PREVIOUS]
+    ty = +(content Δy)   [y is NOT negated in top-left terms: Vision's lower-left origin flips the sign back]
+
+Therefore, to accumulate the CONTENT path in top-left coordinates (what the smoothing/correction math in
+RenderEngine assumes — correction = (smoothed − raw) moves content toward the smoothed path):
+
+    pos.x -= t.tx      // currently `pos.x += t.tx`  ← WRONG on x (jitter amplified horizontally)
+    pos.y += t.ty      // currently `pos.y += t.ty`  ← already correct on y
+
+Keep `correction = (smoothed − raw) * stabStrength` as-is once `pos` is the content path.
+Also apply the correction divided by the crop zoom (translate happens before the zoom-about-center),
+i.e. translate by correction/zoom so the effective on-screen shift equals the intended correction.
