@@ -69,6 +69,32 @@ export interface TourListing {
   status?: string | null;
 }
 
+/**
+ * One AI-altered / AI-generated asset, sourced from `media_provenance`
+ * (W2-B: `tours/index.ts` returns `altered_media[]`).
+ *
+ * EVERY field is optional and the whole array may be absent: older deployed
+ * versions of the tours function do not send it at all, and the page must
+ * render correctly without it. `original_url` is null when the unaltered
+ * source was never published to the public bucket.
+ */
+export interface AlteredMedium {
+  /** "Living room", "Aerial intro". */
+  label?: string | null;
+  /** photo_edit | virtual_stage | declutter | aerial | reel | other. */
+  kind?: string | null;
+  /** The sentence shown publicly (written server-side at generation time). */
+  disclosure?: string | null;
+  /** The model family in plain words ("AI image edit" / "AI video"). The tours
+   *  function sends this; the renderer falls back to deriving it from `kind`. */
+  model?: string | null;
+  created_at?: string | null;
+  /** Public URL of the UNALTERED source (CA AB 723 "access to the original"). */
+  original_url?: string | null;
+  /** Public URL of the published altered asset. */
+  altered_url?: string | null;
+}
+
 /** brand_kit (freeform jsonb) spread + name/handle. We read keys defensively. */
 export interface AgentCard {
   name?: string | null;
@@ -79,6 +105,10 @@ export interface AgentCard {
 export interface Tour {
   slug: string;
   share_url?: string;
+  /** `${TOUR_BASE}/u/<slug>` — the MLS-safe link (W2-B). The Worker derives the
+   *  same URL from the slug, so this is informational only and is never
+   *  rendered; it is dropped from the sanitized unbranded tour. */
+  unbranded_url?: string | null;
   space_type: string;
   listing: TourListing;
   /** scrub_url ?? hls_url — legacy convenience field. Prefer the two below. */
@@ -98,6 +128,10 @@ export interface Tour {
   staged: boolean;
   staged_disclosure: string | null;
   disclosure_chip: string | null;
+  /** Per-asset AI disclosure rows (W2-B). Optional — absent on older payloads. */
+  altered_media?: AlteredMedium[] | null;
+  /** Public URL of the listing's floor plan image (W2-B). Optional. */
+  floorplan_url?: string | null;
   /** ISO timestamp when the listing was marked sold (real estate) / archived
    *  (other types). Non-null → the page shows a SOLD / Archived badge and, for
    *  real estate, swaps "Book a showing" for "Ask about similar homes". */

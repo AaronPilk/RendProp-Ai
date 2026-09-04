@@ -32,6 +32,22 @@
 //   • `role:"render"` may carry `kind:"photo"`: the tour POSTER, stored in the
 //     public renders bucket at renders/<org>/<listing>/<asset>.<jpg|png|webp>
 //     and referenced by publish-app via `poster_asset_id` (server-verified).
+//
+// Compliance wave 2 (2026-09-04, W2-B4):
+//   • `role:"original"` — the UNTOUCHED source of an AI-altered photo, stored in
+//     the PUBLIC renders bucket at
+//     renders/<org>/<listing>/original-<asset>.<jpg|png|webp>. California
+//     AB 723 (1 Jan 2026) requires not just disclosure of digitally altered
+//     listing imagery but ACCESS TO THE ORIGINAL unaltered version, and
+//     NorthstarMLS (10 Jul 2026) wants an unaltered "Before" image for every
+//     altered room — neither is satisfiable from the private uploads bucket,
+//     which has no public URL. So the original is published like the poster and
+//     its `asset_id` goes to `POST /ai-photo { original_asset_id }` (or
+//     `PATCH /me/compliance/:id`), where the server derives the R2 key.
+//     Verification is the poster's path exactly — browser-servable types only
+//     (jpeg|png|webp; a HEIC "View original" link would not open) — but the
+//     full 50 MB photo ceiling, because an original is a full-resolution photo,
+//     not a 1280 px thumbnail. `role:"original"` is always `kind:"photo"`.
 //   • /complete is idempotent: a replay on an already-completed asset returns
 //     200 + the row when no NEW staged object exists (a lost response no longer
 //     strands the upload); a multipart whose R2 assembly already happened
@@ -39,7 +55,7 @@
 //   • Errors carry `{ error, code }` (see _shared/http.ts).
 //
 //   POST /uploads
-//     { listing_id, filename, bytes, sha256?, kind:"video"|"photo", content_type?, multipart?, role:"capture"|"render" }
+//     { listing_id, filename, bytes, sha256?, kind:"video"|"photo", content_type?, multipart?, role:"capture"|"render"|"original" }
 //     video>64MB (or multipart:true) -> { asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count, content_type }
 //     otherwise                      -> { asset_id, mode:"single", put_url, storage_key, content_type }
 //
@@ -173,14 +189,20 @@ function validateFileMeta(
   bytes: number | null | undefined,
   contentType: string,
   label = "",
-  opts: { poster?: boolean } = {},
+  opts: { poster?: boolean; original?: boolean } = {},
 ) {
+  // An `original` is served to a browser like a poster (so: jpeg|png|webp) but
+  // it is a full-resolution photo, so it gets the photo ceiling, not the 10 MB
+  // poster one (W2-B4).
+  const what = opts.original ? "original" : opts.poster ? "poster" : kind;
   const maxBytes = opts.poster ? MAX_POSTER_BYTES : kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
   assert(bytes != null && Number.isFinite(bytes) && bytes > 0 && bytes <= maxBytes, 400,
-    `bytes is required and must be between 1 and ${maxBytes} for a ${opts.poster ? "poster" : kind}${label}`);
-  const allowed = opts.poster ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+    `bytes is required and must be between 1 and ${maxBytes} for a ${what}${label}`);
+  const allowed = (opts.poster || opts.original)
+    ? ALLOWED_POSTER_TYPES
+    : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
   assert(allowed.includes(contentType), 400,
-    `content_type "${contentType}" is not an allowed ${opts.poster ? "poster" : kind} type${label} (allowed: ${allowed.join(", ")})`);
+    `content_type "${contentType}" is not an allowed ${what} type${label} (allowed: ${allowed.join(", ")})`);
 }
 
 /** Sanitize optional completion metadata (client-claimed, bounded). */
@@ -216,9 +238,11 @@ interface CreateBody {
   content_type?: string;
   multipart?: boolean;
   /** "render" = the app's on-device rendered mp4 (kind video) or its poster
-   *  (kind photo) → public renders bucket. default "capture" = raw
-   *  walkthrough/photo → private uploads bucket. */
-  role?: "capture" | "render";
+   *  (kind photo) → public renders bucket. "original" = the untouched source of
+   *  an AI-altered photo → public renders bucket, key `original-<asset>.<ext>`
+   *  (always kind photo; CA AB 723 access-to-the-original). default "capture" =
+   *  raw walkthrough/photo → private uploads bucket. */
+  role?: "capture" | "render" | "original";
 }
 
 interface BatchBody {
@@ -447,11 +471,20 @@ Deno.serve(async (req) => {
         throw new HttpError(502, "Storage did not return an ETag for the staged object — retry the upload");
       }
 
-      const isPoster = kind === "photo" && asset.bucket === "renders";
+      // Public photos in the renders bucket are either the tour POSTER or the
+      // unaltered ORIGINAL behind an AI edit. There is no role column, so the
+      // two are told apart by the key this function minted (`original-<uuid>`):
+      // both are browser-served (jpeg|png|webp), but an original carries the
+      // full 50 MB photo ceiling instead of the poster's 10 MB (W2-B4).
+      const isRendersPhoto = kind === "photo" && asset.bucket === "renders";
+      const isOriginal = isRendersPhoto &&
+        /(^|\/)original-[^/]*$/.test(String(asset.storage_key ?? ""));
+      const isPoster = isRendersPhoto && !isOriginal;
       const maxBytes = isPoster ? MAX_POSTER_BYTES : kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
       const sizeOk = head.bytes != null && head.bytes > 0 && head.bytes <= maxBytes &&
         head.bytes === claimedBytes;
-      const allowed = isPoster ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+      const allowed = isRendersPhoto ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+      const whatIsIt = isOriginal ? "original" : isPoster ? "poster" : kind;
       // Take only the media type before any parameter, then require an EXACT
       // allowlist match — "video/mp4;evil" must not launder into "video/mp4".
       // Agreement with the ticket's type is required only when the CLIENT
@@ -471,7 +504,7 @@ Deno.serve(async (req) => {
         const why = !sizeOk
           ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
           : !allowedOk
-          ? `Uploaded object content-type "${observedType}" is not an allowed ${isPoster ? "poster" : kind} type (allowed: ${allowed.join(", ")})`
+          ? `Uploaded object content-type "${observedType}" is not an allowed ${whatIsIt} type (allowed: ${allowed.join(", ")})`
           : `Uploaded object content-type "${observedType}" does not match the declared type "${declaredType}" — PUT with the declared Content-Type or declare the real one on the ticket`;
         throw new HttpError(400, why, "validation", { observed_type: observedType, declared_type: declaredType });
       }
@@ -553,10 +586,16 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 0) {
       const body = await readJson<CreateBody>(req);
       assert(body.listing_id, 400, "listing_id is required");
-      const role: "capture" | "render" = body.role === "render" ? "render" : "capture";
-      const kind: "video" | "photo" = body.kind === "photo" ? "photo" : "video";
+      const role: "capture" | "render" | "original" =
+        body.role === "render" ? "render" : body.role === "original" ? "original" : "capture";
+      // An `original` is by definition the untouched PHOTO behind an AI edit.
+      const kind: "video" | "photo" =
+        role === "original" ? "photo" : body.kind === "photo" ? "photo" : "video";
+      const isOriginal = role === "original";
       const isPoster = role === "render" && kind === "photo";
-      const bucketTag = role === "render" ? "renders" : "uploads";
+      // Both public roles land in the renders bucket — that bucket is the only
+      // one with a public base URL, and "access to the original" must be a link.
+      const bucketTag = role === "capture" ? "uploads" : "renders";
       const r2Bucket = r2BucketFor(bucketTag);
 
       const listing = await requireListing(db, body.listing_id);
@@ -568,7 +607,7 @@ Deno.serve(async (req) => {
       const declaredByClient = typeof body.content_type === "string" && mediaType(body.content_type) !== "";
       const contentType = declaredByClient
         ? mediaType(body.content_type)
-        : isPoster
+        : isPoster || isOriginal
         ? "image/jpeg"
         : role === "render"
         ? "video/mp4"
@@ -577,16 +616,20 @@ Deno.serve(async (req) => {
         : "video/quicktime";
 
       // Bound the size and require a known media type BEFORE charging.
-      validateFileMeta(kind, body.bytes, contentType, "", { poster: isPoster });
+      validateFileMeta(kind, body.bytes, contentType, "", { poster: isPoster, original: isOriginal });
       await chargeUploadBudget(listing.org_id, 1, body.bytes ?? 0);
 
       const assetId = crypto.randomUUID();
-      const ext = isPoster
+      const ext = isPoster || isOriginal
         ? (POSTER_EXT[contentType] ?? "jpg")
         : role === "render"
         ? "mp4"
         : extFromFilename(body.filename, kind);
-      const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
+      // The `original-` prefix is how /complete (and provenance) tell an
+      // original apart from a poster: capture_assets has no role column, so the
+      // distinction has to be SERVER-DERIVED from the key we mint here.
+      const basename = isOriginal ? `original-${assetId}` : assetId;
+      const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${basename}.${ext}`;
 
       const useMultipart =
         kind === "video" && (body.multipart === true || (body.bytes ?? 0) > MULTIPART_THRESHOLD);

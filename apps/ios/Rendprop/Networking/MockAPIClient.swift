@@ -146,13 +146,64 @@ actor MockAPIClient: APIClient {
 
     // MARK: - AI photo (offline stubs)
 
-    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
-                     style: String?, prompt: String?,
-                     idempotencyKey: String?) async throws -> String {
+    func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult {
         // Offline dev: no Gemini — echo the original back so the UI flow runs
-        // (style/prompt are ignored offline).
+        // (style/prompt are ignored offline). The disclosure sentence mirrors
+        // public.provenance_disclosure() so the compliance copy is exercised
+        // offline too; nothing is recorded, because there is no audit log here.
         try? await Task.sleep(nanoseconds: 500_000_000)
-        return imageBase64
+        return AIPhotoEditResult(imageBase64: request.imageBase64,
+                                 mime: request.mime,
+                                 disclosure: Self.offlineDisclosure(for: request.edit),
+                                 provenanceID: nil,
+                                 provenanceRecorded: false,
+                                 provenanceReason: "You're offline — this edit isn't in the compliance log.")
+    }
+
+    /// Mirror of `public.provenance_disclosure(kind, edit)` for offline dev.
+    private static func offlineDisclosure(for edit: String) -> String {
+        switch edit {
+        case "stage":
+            return "This photo was virtually staged with AI: furniture and decor were digitally added "
+                + "or restyled. The architecture, dimensions, and views are unchanged."
+        case "declutter":
+            return "This photo was digitally decluttered with AI: clutter and personal items were "
+                + "removed. The architecture, dimensions, and views are unchanged."
+        case "twilight":
+            return "This photo was digitally altered with AI: the sky and lighting were changed to "
+                + "simulate dusk. The property itself is unchanged."
+        case "sky":
+            return "This photo was digitally altered with AI: the sky was replaced. The property "
+                + "itself is unchanged."
+        case "lawn":
+            return "This photo was digitally altered with AI: the lawn and landscaping were digitally "
+                + "repaired. The property itself is unchanged."
+        default:
+            return "This photo was digitally altered with AI. The architecture, dimensions, and views "
+                + "are unchanged."
+        }
+    }
+
+    // MARK: - Compliance (offline: nothing is logged, so there is nothing to show)
+
+    func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord] {
+        // Offline dev: the audit log lives server-side. An empty list is the
+        // honest answer — never invented compliance rows.
+        try? await Task.sleep(nanoseconds: 200_000_000)
+        return []
+    }
+
+    func attachProvenanceMedia(provenanceID: String, originalAssetID: String?,
+                               alteredAssetID: String?) async throws {
+        // Offline: there is no provenance row to attach anything to.
+        _ = (provenanceID, originalAssetID, alteredAssetID)
+    }
+
+    func complianceCSV(listingServerID: UUID?) async throws -> Data {
+        // Header-only export so the share flow is exercisable offline.
+        let header = "created_at,listing_id,listing_address,kind,label,edit,style,"
+            + "model_id,disclosure,original_url,altered_url,prompt_summary,id\r\n"
+        return Data(header.utf8)
     }
 
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
@@ -193,6 +244,7 @@ actor MockAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         Self.mockAIVideoJob(kind: "reel", grounded: true)
     }
@@ -209,6 +261,10 @@ actor MockAPIClient: APIClient {
         return AIVideoJob(requestId: id,
                           statusUrl: "https://queue.fal.run/mock/requests/\(id)/status",
                           responseUrl: "https://queue.fal.run/mock/requests/\(id)",
-                          kind: kind, grounded: grounded, synthetic: true)
+                          kind: kind, grounded: grounded, synthetic: true,
+                          // The aerial sentence is a legal requirement, not a
+                          // server nicety — it must be right offline too.
+                          disclosure: kind == "aerial" ? AIVideoJob.aerialFallbackDisclosure : nil,
+                          provenanceID: nil)
     }
 }

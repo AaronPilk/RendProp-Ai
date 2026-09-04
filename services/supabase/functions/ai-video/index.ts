@@ -41,6 +41,30 @@
 //       duration enum "2".."12" (string), aspect_ratio 21:9|16:9|4:3|1:1|3:4|9:16|auto, resolution 480p|720p|1080p
 //
 // Needs the FAL_KEY function secret + the shared R2 env (R2_PUBLIC_BASE_URL).
+//
+// ── COMPLIANCE (wave 2, W2-B3) ───────────────────────────────────────────────
+//
+// FAIR HOUSING. Every prompt this function sends — the built ones AND the
+// free-text `prompt` / `style` a caller may supply — carries the fair-housing
+// lock from _shared/fairhousing.ts ("Do not add or alter people, pets,
+// religious or cultural objects, flags, or signage." + the permanence clause),
+// and every free-text field is checked against the DENYLIST documented in full
+// in _shared/fairhousing.ts. A hit is a 400 with code `unsupported_edit`.
+// Before this, `reel-clip { prompt }` and `declutter { prompt }` REPLACED the
+// guarded prompt outright, so a user string reached the model with no
+// guardrails at all — that hole is closed.
+//
+// PROVENANCE. `aerial`, `reel-clip` and `declutter` record one media_provenance
+// row (migration 0012) at SUBMIT time — the fal job is async, so the row is
+// written when we know the model, the kind and the disclosure, and the app
+// attaches the finished asset later via PATCH /me/compliance/:id. The 202 body
+// carries `disclosure` and `provenance`. `aerial` discloses with HousingWire's
+// exact wording: "Drone-style movement is simulated. No drone footage was
+// captured." — the sentence the app and both tour pages must show.
+// `drone` (Topaz upscale + frame interpolation) is deliberately NOT recorded:
+// it re-times and sharpens footage the agent actually captured, which is the
+// basic-enhancement carve-out in CA AB 723, not synthesis. Revisit if Topaz
+// ever gains a generative mode.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
@@ -48,6 +72,8 @@ import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
+import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
+import { recordProvenance } from "../_shared/provenance.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
 // queue, so cap submissions per burst window AND per rolling month per org,
@@ -222,7 +248,21 @@ function reelPrompt(space: SpaceType): string {
     "Camera: one slow, subtle, grounded push-in with gentle natural parallax — no cuts, no " +
     "transitions, and no panning that reveals unseen areas. Do not add, remove, or move any " +
     "objects; no people, no animals, no text or watermarks; no scene changes, style shifts, " +
-    "warping, or flicker."
+    "warping, or flicker. " + GUARDRAILS
+  );
+}
+
+/**
+ * Wrap a caller-supplied free-text video prompt so it can never REPLACE the
+ * guardrails (it used to: `cleanPrompt(body.prompt) ?? builtPrompt` sent the raw
+ * user string straight to the model). The denylist has already run on `userText`
+ * by the time this is called.
+ */
+function guardedUserPrompt(userText: string, space: SpaceType, verb: string): string {
+  return (
+    `${verb} this exact photographed ${SCENE_NOUN[space]} as follows: ${userText.trim()}. ` +
+    "Stay photorealistic and true to the space — it is a real place being marketed. " +
+    "Keep the architecture, fixtures, materials and camera perspective identical. " + GUARDRAILS
   );
 }
 
@@ -254,7 +294,8 @@ const TIME_TEXT: Record<AerialTime, string> = {
 const AERIAL_GUARDRAILS =
   "Smooth, stabilized gimbal drone motion with gentle parallax and coherent, stable geometry " +
   "throughout — no morphing or warping structures, no added or removed buildings, no scene cuts. " +
-  "Realistic scale and proportions. No people, no text, no watermarks, no logos.";
+  "Realistic scale and proportions. No people, no text, no watermarks, no logos. " +
+  FAIR_HOUSING_LOCK;
 
 /** Never a street address: drop anything that starts like a house number. */
 function cleanRegion(raw: unknown): string | null {
@@ -310,6 +351,9 @@ interface DeclutterBody {
   asset_id?: string;
   prompt?: string;
   space_type?: string;
+  /** Compliance (W2-B3). Defaults to the asset's own listing. */
+  listing_id?: string;
+  label?: string;
 }
 interface AerialBody {
   image_b64?: string;
@@ -330,6 +374,9 @@ interface AerialBody {
   address?: string;
   seconds?: number;
   aspect?: string;
+  /** Compliance (W2-B3). Defaults to the grounding asset's listing. */
+  listing_id?: string;
+  label?: string;
 }
 interface ReelBody {
   asset_id?: string;
@@ -338,6 +385,9 @@ interface ReelBody {
   prompt?: string;
   seconds?: number;
   space_type?: string;
+  /** Compliance (W2-B3). Defaults to the source asset's listing. */
+  listing_id?: string;
+  label?: string;
 }
 
 Deno.serve(async (req) => {
@@ -424,15 +474,38 @@ Deno.serve(async (req) => {
       }
       const space = spaceTypeOf(body.space_type ?? asset.space_type);
 
+      // A free-text erase instruction is checked, then WRAPPED — it can no
+      // longer replace the guardrails (see header).
+      const userErase = cleanPrompt(body.prompt);
+      if (userErase) assertFairHousing(userErase, "This erase instruction");
+      const erasePrompt = userErase
+        ? guardedUserPrompt(userErase, space, "Erase objects from")
+        : `${DECLUTTER_PROMPT[space]}. ${GUARDRAILS}`;
+
       await guardGenerate(user.id, req, "declutter"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_DECLUTTER, {
         video_url: asset.url,
-        prompt: cleanPrompt(body.prompt) ?? DECLUTTER_PROMPT[space],
+        prompt: erasePrompt,
         auto_trim: false, // never silently cut the video — process the full clip
         preserve_audio: true,
         output_container_and_codec: "mp4_h264",
       });
-      return json({ ...sub, kind: "declutter", model_id: MODEL_DECLUTTER, space_type: space }, 202);
+      const prov = await recordProvenance(req, {
+        listingId: body.listing_id ?? asset.listing_id,
+        kind: "declutter",
+        label: body.label ?? null,
+        modelId: MODEL_DECLUTTER,
+        edit: "declutter",
+        promptSummary: userErase ?? null,
+      });
+      return json({
+        ...sub,
+        kind: "declutter",
+        model_id: MODEL_DECLUTTER,
+        space_type: space,
+        disclosure: prov.disclosure,
+        provenance: { id: prov.id, recorded: prov.recorded, ...(prov.reason ? { reason: prov.reason } : {}) },
+      }, 202);
     }
 
     // ---- POST /ai-video/aerial ----
@@ -455,10 +528,18 @@ Deno.serve(async (req) => {
       const time = timeRaw as AerialTime;
       const region = cleanRegion(body.region);
       const style = cleanStyle(body.style) ?? cleanStyle(body.prompt);
+      // The look-and-feel hint is appended to the guarded prompt, so it is a
+      // free-text field and gets the fair-housing denylist (see header). The
+      // `region` field is already sanitized to a place name by cleanRegion(),
+      // but a region is exactly where steering language shows up, so it is
+      // checked too ("a good school district" would otherwise pass as a place).
+      if (style) assertFairHousing(style, "This look-and-feel hint");
+      if (region) assertFairHousing(region, "This setting");
 
       // Grounding image: inline base64 (preferred — the app downsizes to ≤1280 px)
       // or a renders-bucket photo asset of the org's listing.
       let imageUrl: string | null = null;
+      let assetListingId: string | null = null;
       if (typeof body.image_b64 === "string" && body.image_b64.length > 0) {
         assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413, "image is too large — resize it before sending", "payload_too_large");
         const mime = String(body.mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
@@ -468,6 +549,7 @@ Deno.serve(async (req) => {
         const asset = await resolvePublicAsset(db, body.asset_id, req);
         assert(asset.kind === "photo", 400, "aerial asset_id must be a photo (the exterior shot)");
         imageUrl = asset.url;
+        assetListingId = asset.listing_id;
       }
       const grounded = imageUrl !== null;
       const prompt = buildAerialPrompt({ grounded, space, motion, time, region, style });
@@ -495,6 +577,20 @@ Deno.serve(async (req) => {
           generate_audio: false, // silent b-roll; the app scores it (and it's ~33% cheaper)
         });
       }
+      // COMPLIANCE: an aerial is synthetic camera movement — HousingWire's
+      // disclosure test names exactly this case, and WI Act 69 covers generated
+      // video from 1 Jan 2027. Recorded at submit; the app attaches the finished
+      // clip later via PATCH /me/compliance/:id.
+      const prov = await recordProvenance(req, {
+        listingId: body.listing_id ?? assetListingId,
+        kind: "aerial",
+        label: body.label ?? "Aerial intro",
+        modelId,
+        edit: "aerial",
+        style: grounded ? "grounded" : "ungrounded",
+        promptSummary: style ?? null,
+      });
+
       return json(
         {
           ...sub,
@@ -508,6 +604,10 @@ Deno.serve(async (req) => {
           motion,
           time_of_day: time,
           region,
+          // "Drone-style movement is simulated. No drone footage was captured."
+          // — show this verbatim in the app AND in the share text (W2-C4).
+          disclosure: prov.disclosure,
+          provenance: { id: prov.id, recorded: prov.recorded, ...(prov.reason ? { reason: prov.reason } : {}) },
         },
         202,
       );
@@ -522,10 +622,12 @@ Deno.serve(async (req) => {
 
       let imageUrl: string;
       let assetSpace: string | null = null;
+      let reelListingId: string | null = null;
       if (body.asset_id) {
         const asset = await resolvePublicAsset(db, body.asset_id, req);
         imageUrl = asset.url;
         assetSpace = asset.space_type;
+        reelListingId = asset.listing_id;
       } else {
         assert(body.image_b64, 400, "asset_id or image_b64 is required");
         assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
@@ -537,14 +639,38 @@ Deno.serve(async (req) => {
       }
       const space = spaceTypeOf(body.space_type ?? assetSpace);
 
+      // Checked, then WRAPPED — a free-text reel prompt can no longer replace
+      // the anti-hallucination + fair-housing guardrails (see header).
+      const userMotion = cleanPrompt(body.prompt);
+      if (userMotion) assertFairHousing(userMotion, "This clip prompt");
+      const reelText = userMotion
+        ? guardedUserPrompt(userMotion, space, "Animate")
+        : reelPrompt(space);
+
       await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_I2V, {
-        prompt: cleanPrompt(body.prompt) ?? reelPrompt(space),
+        prompt: reelText,
         image_url: imageUrl,
         resolution: "1080p",
         duration: String(secs), // Seedance takes duration as a string
       });
-      return json({ ...sub, kind: "reel", model_id: MODEL_I2V, seconds: secs, space_type: space }, 202);
+      const prov = await recordProvenance(req, {
+        listingId: body.listing_id ?? reelListingId,
+        kind: "reel",
+        label: body.label ?? null,
+        modelId: MODEL_I2V,
+        edit: "reel",
+        promptSummary: userMotion ?? null,
+      });
+      return json({
+        ...sub,
+        kind: "reel",
+        model_id: MODEL_I2V,
+        seconds: secs,
+        space_type: space,
+        disclosure: prov.disclosure,
+        provenance: { id: prov.id, recorded: prov.recorded, ...(prov.reason ? { reason: prov.reason } : {}) },
+      }, 202);
     }
 
     // ---- GET /ai-video/status ----
@@ -699,6 +825,8 @@ async function failureError(st: Record<string, unknown>, responseUrl: string): P
 
 interface ResolvedAsset {
   id: string;
+  /** The listing the asset belongs to — the provenance row's anchor (W2-B3). */
+  listing_id: string | null;
   kind: string;
   url: string;
   duration_s: number | null;
@@ -754,6 +882,7 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
   const num = (v: unknown) => (v == null || !Number.isFinite(Number(v)) ? null : Number(v));
   return {
     id: data.id as string,
+    listing_id: (data.listing_id as string | null) ?? null,
     kind: data.kind as string,
     url,
     duration_s: num(data.duration_s),

@@ -1,6 +1,8 @@
 # Security headers for the static marketing site (Workers Static Assets).
-# The dynamic pages (/f/*, /a/*, /terms, /privacy) set their own headers in the
-# Worker (src/index.ts htmlResponse).
+# The dynamic pages (/f/*, /u/*, /a/*, /terms, /privacy) set their own headers
+# in the Worker (src/index.ts htmlResponse). /u/* deliberately gets a DIFFERENT
+# policy there: `frame-ancestors *` (MLS systems iframe the unbranded tour) plus
+# `X-Robots-Tag: noindex`.
 
 /*
   X-Content-Type-Options: nosniff

@@ -358,7 +358,11 @@ final class LiveAPIClient: APIClient {
         guard let slug = dto.slug, let share = dto.shareUrl else {
             throw APIError.decoding   // server didn't return a slug/share_url
         }
+        // The MLS-safe twin. Optional on the wire — `Listing.serverUnbrandedURL`
+        // derives it from the slug when an older server omits it.
+        let unbranded = dto.unbrandedUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
         return PublishedTour(slug: slug, shareURL: share,
+                             unbrandedURL: (unbranded?.isEmpty == false) ? unbranded : nil,
                              videoURL: dto.videoUrl, posterURL: dto.posterUrl ?? dto.poster,
                              durationS: dto.durationS, staged: dto.staged,
                              renderID: dto.id.flatMap(UUID.init(uuidString:)))
@@ -374,27 +378,110 @@ final class LiveAPIClient: APIClient {
 
     // MARK: - AI photo
 
-    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
-                     style: String?, prompt: String?,
-                     idempotencyKey: String?) async throws -> String {
-        var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "edit": edit]
-        if let style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
+    func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult {
+        var body: [String: Any] = ["image_b64": request.imageBase64,
+                                   "mime": request.mime,
+                                   "edit": request.edit]
+        if let style = request.style, !style.trimmingCharacters(in: .whitespaces).isEmpty {
             body["style"] = style                       // stage only
         }
-        if let prompt {
+        if let prompt = request.prompt {
             let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
             if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }   // custom only, server cap 600
         }
         // Industry-aware prompts server-side (a restaurant is not staged like a
         // living room) — contract §B4.
         body["space_type"] = SpaceType.current.rawValue
+        // COMPLIANCE (W2-B3/C3): without listing_id the server cannot enter the
+        // edit in the org's audit log at all; original_asset_id is what makes
+        // the public "View original" link real (California AB 723).
+        if let listing = request.listingServerID { body["listing_id"] = listing.uuidString }
+        if let label = request.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = String(label.prefix(80))
+        }
+        if let original = request.originalAssetID?.trimmingCharacters(in: .whitespaces), !original.isEmpty {
+            body["original_asset_id"] = original
+        }
         let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
-                                                 idempotencyKey: idempotencyKey),
+                                                 idempotencyKey: request.idempotencyKey),
                                      session: aiSession)
-        struct Resp: Decodable { let imageB64: String? }
-        let r: Resp = try decode(data)
+        let r: AIPhotoEditDTO = try decode(data)
         guard let out = r.imageB64, !out.isEmpty else { throw APIError.decoding }
-        return out
+        let disclosure = r.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return AIPhotoEditResult(imageBase64: out,
+                                 mime: r.mime,
+                                 disclosure: (disclosure?.isEmpty == false) ? disclosure : nil,
+                                 provenanceID: r.provenance?.id,
+                                 provenanceRecorded: r.provenance?.recorded ?? false,
+                                 provenanceReason: r.provenance?.reason)
+    }
+
+    // MARK: - Compliance (GET /me/compliance — the broker's AI audit log)
+
+    func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord] {
+        let query = [URLQueryItem(name: "listing_id", value: listingServerID.uuidString)]
+        let data = try await execute(makeRequest(url: url(["me", "compliance"], query: query)))
+        // `{ rows: [...] }` per W2-B3; tolerate a bare array too.
+        let rows: [ComplianceRowDTO]
+        if let wrapped: ComplianceDTO = try? decode(data), let list = wrapped.rows {
+            rows = list
+        } else if let bare: [ComplianceRowDTO] = try? decode(data) {
+            rows = bare
+        } else {
+            throw APIError.decoding
+        }
+        return rows.compactMap(Self.mapProvenance)
+    }
+
+    func complianceCSV(listingServerID: UUID?) async throws -> Data {
+        var query = [URLQueryItem(name: "format", value: "csv")]
+        if let listingServerID {
+            query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString))
+        }
+        // The body is text/csv, not JSON — `execute` returns the raw bytes and
+        // still decodes the `{error, code}` envelope on a non-2xx.
+        return try await execute(makeRequest(url: url(["me", "compliance"], query: query)))
+    }
+
+    func attachProvenanceMedia(provenanceID: String, originalAssetID: String?,
+                               alteredAssetID: String?) async throws {
+        var body: [String: Any] = [:]
+        if let originalAssetID, !originalAssetID.isEmpty { body["original_asset_id"] = originalAssetID }
+        if let alteredAssetID, !alteredAssetID.isEmpty { body["altered_asset_id"] = alteredAssetID }
+        guard !body.isEmpty else { return }   // the server requires at least one field
+        // No stable idempotency key: attaching the original and attaching the
+        // altered result are two DIFFERENT patches to the same row, and a shared
+        // key would let the second replay the first.
+        _ = try await execute(makeRequest(url: url(["me", "compliance", provenanceID]),
+                                          method: "PATCH", json: body))
+    }
+
+    /// One provenance row → the app model. A row with no disclosure sentence is
+    /// DROPPED: it would render a compliance line that discloses nothing.
+    private static func mapProvenance(_ r: ComplianceRowDTO) -> ProvenanceRecord? {
+        let disclosure = r.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !disclosure.isEmpty else { return nil }
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+        func cleanURL(_ s: String?) -> URL? { clean(s).flatMap { URL(string: $0) } }
+        let kind = (clean(r.kind)?.lowercased()) ?? "other"
+        // `/me/compliance` sends the vendor `model_id`; `/tours` sends the plain
+        // words. Show plain words either way — never a vendor model string.
+        let model = clean(r.model) ?? ProvenanceRecord.modelFamily(kind)
+        return ProvenanceRecord(
+            id: clean(r.id) ?? UUID().uuidString,
+            listingID: r.listingId.flatMap(UUID.init(uuidString:)),
+            kind: kind,
+            label: clean(r.label),
+            edit: clean(r.edit),
+            style: clean(r.style),
+            model: model,
+            disclosure: disclosure,
+            originalURL: cleanURL(r.originalUrl),
+            alteredURL: cleanURL(r.alteredUrl),
+            createdAt: parseDate(r.createdAt))
     }
 
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion] {
@@ -469,6 +556,12 @@ final class LiveAPIClient: APIClient {
         if let style = request.style?.trimmingCharacters(in: .whitespacesAndNewlines), !style.isEmpty {
             body["style"] = String(style.prefix(200))
         }
+        // COMPLIANCE: anchors the aerial's provenance row so the simulated
+        // camera movement is disclosed on the tour and in the audit log.
+        if let listing = request.listingServerID { body["listing_id"] = listing.uuidString }
+        if let label = request.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = String(label.prefix(80))
+        }
         var job = try await submitAIVideo(path: "aerial", body: body, fallbackKind: "aerial",
                                           idempotencyKey: idempotencyKey)
         // Older servers don't echo the flags — derive from what we sent so the
@@ -479,10 +572,15 @@ final class LiveAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
         if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
             body["prompt"] = prompt
+        }
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            body["label"] = String(label.prefix(80))
         }
         return try await submitAIVideo(path: "reel-clip", body: body, fallbackKind: "reel",
                                        idempotencyKey: idempotencyKey)
@@ -501,9 +599,12 @@ final class LiveAPIClient: APIClient {
               let responseUrl = dto.responseUrl, !responseUrl.isEmpty else {
             throw APIError.decoding   // server didn't return the fal job ids
         }
+        let disclosure = dto.disclosure?.trimmingCharacters(in: .whitespacesAndNewlines)
         return AIVideoJob(requestId: requestId, statusUrl: statusUrl,
                           responseUrl: responseUrl, kind: dto.kind ?? fallbackKind,
-                          grounded: dto.grounded, synthetic: dto.synthetic)
+                          grounded: dto.grounded, synthetic: dto.synthetic,
+                          disclosure: (disclosure?.isEmpty == false) ? disclosure : nil,
+                          provenanceID: dto.provenance?.id)
     }
 
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
@@ -873,6 +974,7 @@ final class LiveAPIClient: APIClient {
         let videoUrl: String?      // video_url (public URL, when the server sends one)
         let posterUrl: String?     // poster_url
         let poster: String?        // alt key some routes use
+        let unbrandedUrl: String?  // unbranded_url — the MLS-safe /u/<slug> twin
     }
 
     /// 202 body of POST /ai-video/{drone,aerial,reel-clip} — fal's queue ids
@@ -886,6 +988,47 @@ final class LiveAPIClient: APIClient {
         let kind: String?
         let grounded: Bool?
         let synthetic: Bool?
+        /// The exact public disclosure sentence for this generation (W2-B3).
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+    }
+
+    /// `provenance: { id, recorded, reason? }` — the same envelope every AI
+    /// route returns once the compliance wave landed.
+    private struct ProvenanceEnvelopeDTO: Decodable {
+        let id: String?
+        let recorded: Bool?
+        let reason: String?
+    }
+
+    /// Body of POST /ai-photo (a completed edit).
+    private struct AIPhotoEditDTO: Decodable {
+        let imageB64: String?
+        let mime: String?
+        let disclosure: String?
+        let provenance: ProvenanceEnvelopeDTO?
+    }
+
+    /// Body of GET /me/compliance — the org's AI audit log.
+    private struct ComplianceDTO: Decodable {
+        let rows: [ComplianceRowDTO]?
+    }
+
+    /// One provenance row. `model` is the plain-words family (/tours);
+    /// `model_id` is the vendor string (/me/compliance) and is deliberately not
+    /// surfaced — the app shows the family.
+    private struct ComplianceRowDTO: Decodable {
+        let id: String?
+        let listingId: String?
+        let kind: String?
+        let label: String?
+        let edit: String?
+        let style: String?
+        let model: String?
+        let disclosure: String?
+        let originalUrl: String?
+        let alteredUrl: String?
+        let createdAt: String?
     }
 
     /// Body of GET /ai-video/status — one of processing/completed/failed.

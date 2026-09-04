@@ -10,6 +10,13 @@
 # tour (/f/estate-demo) is Rendprop's own content and stays open everywhere.
 # (Longest-match wins per the robots standard, so the Allow line for the demo
 # beats the Disallow for /f/; it is also listed first for first-match crawlers.)
+#
+# The unbranded MLS twin (/u/<slug>) is deliberately NOT disallowed for
+# ordinary crawlers: it carries `X-Robots-Tag: noindex` and a robots meta tag,
+# and a crawler has to be allowed to fetch the page to see them. Blocking it in
+# robots.txt would leave it eligible for a URL-only listing instead. It is
+# never in the sitemap, and the branded /f/ page is the canonical one. AI
+# crawlers get the same Disallow they get for /f/.
 
 User-agent: *
 Allow: /
@@ -19,84 +26,98 @@ Disallow: /healthz
 User-agent: GPTBot
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: OAI-SearchBot
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: ChatGPT-User
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: ClaudeBot
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: Claude-User
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: Claude-SearchBot
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: anthropic-ai
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: PerplexityBot
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: Perplexity-User
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: Google-Extended
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: Applebot-Extended
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: CCBot
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: Bytespider
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 
 User-agent: meta-externalagent
 Allow: /f/estate-demo
 Disallow: /f/
+Disallow: /u/
 Disallow: /a/
 Allow: /
 

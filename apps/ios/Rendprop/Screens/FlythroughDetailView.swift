@@ -38,10 +38,20 @@ struct FlythroughDetailView: View {
     @State private var showEdit = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
-    @State private var showQR = false
+    /// Which of the two links a QR sheet is being shown for (nil = none).
+    @State private var qrTarget: QRTarget?
     @State private var showSignIn = false
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
+
+    // MARK: Compliance (W2-C2) — the org's AI provenance rows for THIS listing
+    @State private var provenance: [ProvenanceRecord] = []
+    @State private var isLoadingProvenance = false
+    @State private var provenanceError: String?
+    @State private var isExportingAudit = false
+    @State private var auditExport: AuditExport?
+    @State private var complianceNote: String?
+    @State private var isSavingOriginals = false
     /// Retained for the life of the screen — a temporary CLGeocoder is released
     /// before its callback fires (F-A-26).
     @State private var geocoder = CLGeocoder()
@@ -174,6 +184,7 @@ struct FlythroughDetailView: View {
                 } else {
                     nextStepCard
                 }
+                complianceSection
                 toolboxSection
                 if !currentListing.isSample {
                     manageSection
@@ -198,6 +209,7 @@ struct FlythroughDetailView: View {
             }
             geocodeIfNeeded()
         }
+        .task { await loadCompliance() }
         .onChange(of: spaceTypeRaw) { _ in
             // The list this screen was opened from no longer contains this
             // listing — go back rather than showing another industry's detail.
@@ -216,10 +228,12 @@ struct FlythroughDetailView: View {
             ListingEditSheet(listing: currentListing)
                 .environmentObject(model)
         }
-        .sheet(isPresented: $showQR) {
-            if let shareURL {
-                QRShareSheet(url: shareURL, title: currentListing.address)
-            }
+        .sheet(item: $qrTarget) { target in
+            QRShareSheet(url: target.url, title: currentListing.address,
+                         linkName: target.linkName, caption: target.caption)
+        }
+        .sheet(item: $auditExport) { export in
+            ShareSheet(items: [export.url])
         }
         .sheet(isPresented: $showSignIn) {
             SignInView(onSignedIn: { publishNow() })
@@ -273,40 +287,42 @@ struct FlythroughDetailView: View {
 
     /// Share actions — only once the REAL hosted link exists. Before publish
     /// there is nothing at any URL, so sharing would send a dead 404 link.
+    ///
+    /// TWO links, never one (W2-C1). The branded `/f/` page carries the agent
+    /// card, the CTA and the lead form; unbranded virtual-tour rules ban all
+    /// three, and the unbranded field is the one that syndicates to
+    /// Zillow/Realtor.com. Pasting the branded link into an MLS unbranded field
+    /// is a fineable offence (RI Statewide MLS: $50 for a first branded-photo
+    /// violation, escalating from there), so the MLS link is labelled loudly and
+    /// carries the warning underneath it.
     private func shareSection(_ url: URL) -> some View {
-        VStack(spacing: 10) {
-            ShareLink(item: url,
-                      subject: Text(currentListing.address),
-                      message: Text("Fly through \(currentListing.address) — scroll to walk the \(space.spaceNoun).")) {
-                HStack {
-                    Image(systemName: "square.and.arrow.up")
-                    Text("Share flythrough").fontWeight(.semibold)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 14)
-                .background(Theme.accent)
-                .foregroundStyle(Color.white)
-                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
+        VStack(alignment: .leading, spacing: 12) {
+            Text("SHARE").font(.rpKicker).foregroundStyle(Theme.inkDim)
 
-            HStack(spacing: 10) {
-                Button {
-                    UIPasteboard.general.url = url
-                    Haptics.success()
-                } label: {
-                    Label("Copy link", systemImage: "link")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                }
-                Button { showQR = true } label: {
-                    Label("QR code", systemImage: "qrcode")
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 12)
-                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-                }
+            linkCard(
+                url: url,
+                icon: "person.text.rectangle.fill",
+                tint: Theme.accent,
+                name: "Your link",
+                blurb: "Agent card + lead capture. Email, social, texts, QR.",
+                shareSubject: currentListing.address,
+                shareMessage: "Fly through \(currentListing.address) — scroll to walk the \(space.spaceNoun).",
+                shareTitle: "Share your link",
+                qrCaption: "Scan to open your branded tour — flyers, sign riders, open-house sheets.")
+
+            if let mls = currentListing.serverUnbrandedURL {
+                linkCard(
+                    url: mls,
+                    icon: "building.columns.fill",
+                    tint: Theme.good,
+                    name: "MLS link — unbranded",
+                    blurb: "Unbranded. Safe for the MLS virtual-tour field.",
+                    shareSubject: "Unbranded tour — \(currentListing.address)",
+                    shareMessage: "Unbranded virtual tour for \(currentListing.address).",
+                    shareTitle: "Share MLS link",
+                    qrCaption: "Unbranded: the property and nothing else — no agent card, no contact form.",
+                    warning: "Never put your branded link in an MLS unbranded field — most MLSs fine for that.")
             }
-            .font(.rpBody)
 
             if let chapterSyncNote {
                 Text(chapterSyncNote)
@@ -315,6 +331,84 @@ struct FlythroughDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    /// One labelled link: what it is, the URL itself, Copy / QR, and Share.
+    /// `warning` renders the MLS one-liner under the row.
+    private func linkCard(url: URL, icon: String, tint: Color, name: String, blurb: String,
+                          shareSubject: String, shareMessage: String, shareTitle: String,
+                          qrCaption: String, warning: String? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .frame(width: 22)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .font(.rpHeadline)
+                        .foregroundStyle(Theme.ink)
+                    Text(blurb)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
+            }
+
+            Text(url.absoluteString)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(Theme.inkDim)
+                .lineLimit(2)
+                .truncationMode(.middle)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            HStack(spacing: 10) {
+                Button {
+                    UIPasteboard.general.url = url
+                    Haptics.success()
+                } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .accessibilityLabel(Text("Copy \(name)"))
+                Button {
+                    qrTarget = QRTarget(url: url, linkName: name, caption: qrCaption)
+                } label: {
+                    Label("QR", systemImage: "qrcode")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 11)
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
+                }
+                .accessibilityLabel(Text("QR code for \(name)"))
+            }
+            .font(.rpBody)
+
+            ShareLink(item: url, subject: Text(shareSubject), message: Text(shareMessage)) {
+                Label(shareTitle, systemImage: "square.and.arrow.up")
+                    .font(.rpBody.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .background(tint)
+                    .foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+
+            if let warning {
+                Label(warning, systemImage: "exclamationmark.triangle.fill")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
     }
 
     /// The honest next step for a listing that has no share link yet — a real
@@ -512,6 +606,147 @@ struct FlythroughDetailView: View {
         }
     }
 
+    // MARK: - Compliance (W2-C2)
+
+    /// Every AI-altered or AI-generated asset on this listing, with the exact
+    /// disclosure sentence the public tour prints, a link to the unaltered
+    /// original, and the two things a broker actually asks for: the originals on
+    /// file and the audit log as a CSV.
+    ///
+    /// Hidden until there is something to disclose. A listing with no
+    /// provenance rows gets NO reassuring "nothing was altered" line — rows
+    /// only exist from the compliance wave forward, so that claim could be
+    /// false for media generated by an earlier build.
+    @ViewBuilder private var complianceSection: some View {
+        if !currentListing.isSample, currentListing.serverID != nil,
+           !provenance.isEmpty || isLoadingProvenance || provenanceError != nil {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text("COMPLIANCE").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                    Spacer(minLength: 8)
+                    if !provenance.isEmpty {
+                        Text("\(provenance.count) altered")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Theme.inkDim)
+                    }
+                }
+
+                if currentListing.isCalifornia {
+                    Label("California requires disclosure and access to originals for altered listing media (AB 723).",
+                          systemImage: "exclamationmark.shield.fill")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(Theme.warn.opacity(0.12),
+                                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                }
+
+                if isLoadingProvenance && provenance.isEmpty {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                        Text("Loading the disclosure log…")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                } else if let provenanceError, provenance.isEmpty {
+                    Text(provenanceError)
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ForEach(provenance) { row in
+                    provenanceRow(row)
+                }
+
+                if !provenance.isEmpty {
+                    Text("These sentences are published on both your links — disclosure is property information, so it stays on the unbranded page too.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Button { saveOriginalsToPhotos() } label: {
+                        Label(isSavingOriginals ? "Saving originals…" : "Download originals",
+                              systemImage: "square.and.arrow.down")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(isSavingOriginals || !provenance.contains(where: { $0.hasOriginal }))
+
+                    Button { exportAudit() } label: {
+                        Label(isExportingAudit ? "Building the audit…" : "Email my broker the audit",
+                              systemImage: "doc.text")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 12)
+                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(isExportingAudit)
+                }
+
+                if let complianceNote {
+                    Text(complianceNote)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    /// One altered asset. GREEN when the unaltered original is on file (the
+    /// disclosure AND the access half of AB 723 are both satisfied); AMBER when
+    /// it is not. `disclosure` is printed VERBATIM — it is the legally-required
+    /// sentence, not copy we are free to tighten.
+    private func provenanceRow(_ r: ProvenanceRecord) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: r.hasOriginal ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                    .font(.rpCaption.weight(.bold))
+                    .foregroundStyle(r.hasOriginal ? Theme.good : Theme.warn)
+                Text(r.displayLabel)
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                Text(r.model)
+                    .font(.caption2.weight(.semibold))
+                    .padding(.horizontal, 8).padding(.vertical, 3)
+                    .background(Theme.fillSubtle, in: Capsule())
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Text(r.disclosure)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 14) {
+                if let original = r.originalURL {
+                    Link(destination: original) {
+                        Label("View original", systemImage: "arrow.up.right.square")
+                            .font(.rpCaption.weight(.semibold))
+                            .foregroundStyle(Theme.accent)
+                    }
+                } else {
+                    Label("No original on file", systemImage: "exclamationmark.triangle")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                }
+                Spacer(minLength: 0)
+                if let created = r.createdAt {
+                    Text(created.formatted(date: .abbreviated, time: .omitted))
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
     /// Manage — edit, sold/archived, Zillow (real estate), delete. Hidden for
     /// samples entirely.
     private var manageSection: some View {
@@ -561,9 +796,22 @@ struct FlythroughDetailView: View {
     }
 
     private var deleteMessage: String {
-        currentListing.serverShareURL != nil
-            ? "Removes the video, photos and tour from this phone and takes the share link offline. This can't be undone."
+        var text = currentListing.serverShareURL != nil
+            ? "Removes the video, photos and tour from this phone and takes both share links offline. This can't be undone."
             : "Removes the video, photos and tour from this phone. This can't be undone."
+        // W2-C3: an original that backs a disclosed AI edit is evidence. Deleting
+        // the listing wipes this phone's copy of it, so say so BEFORE the tap —
+        // "Download originals" in COMPLIANCE is one scroll away.
+        let backed = provenance.filter { $0.hasOriginal }.count
+        if backed > 0 {
+            let one = backed == 1
+            let noun: String = one ? "photo" : "photos"
+            let verb: String = one ? "has" : "have"
+            let object: String = one ? "it" : "them"
+            text += " \(backed) AI-altered \(noun) on this listing \(verb) a published original behind \(object)"
+            text += " — download the originals from COMPLIANCE first if your broker needs them on file."
+        }
+        return text
     }
 
     @ViewBuilder private var zillowRows: some View {
@@ -763,6 +1011,132 @@ struct FlythroughDetailView: View {
         }
     }
 
+    /// Load this listing's provenance rows (GET /me/compliance?listing_id=).
+    /// Silent when the account has no access or the route is missing — the card
+    /// stays hidden rather than shouting at an agent who did nothing wrong.
+    private func loadCompliance() async {
+        let l = currentListing
+        guard !l.isSample, let serverID = l.serverID else { return }
+        guard !Config.enableAuth || auth.isSignedIn else { return }
+        guard !isLoadingProvenance else { return }
+        isLoadingProvenance = true
+        provenanceError = nil
+        defer { isLoadingProvenance = false }
+        do {
+            provenance = try await model.api.provenance(listingServerID: serverID)
+        } catch is CancellationError {
+            // The screen was left mid-load (a push cancels `.task`) — say nothing;
+            // coming back re-runs it.
+        } catch {
+            if (error as? URLError)?.code == .cancelled { return }
+            if let api = error as? APIError, api.isNotFound || api.isUnauthorized || api.isForbidden {
+                provenanceError = nil    // nothing to show, and nothing the agent can fix here
+            } else {
+                provenanceError = "Couldn't load the disclosure log — \(AIFailure(error).message)"
+            }
+        }
+    }
+
+    /// Save every unaltered original this listing has on file into Photos —
+    /// what a broker or a compliance officer asks for when they want the
+    /// "before" images out of the app.
+    private func saveOriginalsToPhotos() {
+        guard !isSavingOriginals else { return }
+        let urls = provenance.compactMap { $0.originalURL }
+        guard !urls.isEmpty else { return }
+        isSavingOriginals = true
+        complianceNote = nil
+        Haptics.selection()
+        Task {
+            var saved = 0
+            var failure: String?
+            for remote in urls {
+                var staged: URL?
+                do {
+                    let (tmp, response) = try await URLSession.shared.download(from: remote)
+                    if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
+                        try? FileManager.default.removeItem(at: tmp)
+                        throw AIImagePrep.error("The original couldn't be downloaded (HTTP \(http.statusCode)).")
+                    }
+                    // Photos types the asset from the extension; the downloaded
+                    // temp file has none. Keep the bytes untouched.
+                    let ext = remote.pathExtension.isEmpty ? "jpg" : remote.pathExtension
+                    let dest = FileManager.default.temporaryDirectory
+                        .appendingPathComponent("original-\(UUID().uuidString).\(ext)")
+                    try? FileManager.default.removeItem(at: dest)
+                    try FileManager.default.moveItem(at: tmp, to: dest)
+                    staged = dest
+                    try await PhotosLibrarySaver.saveImageFile(at: dest)
+                    saved += 1
+                } catch {
+                    if failure == nil { failure = AIFailure(error).message }
+                }
+                if let staged { try? FileManager.default.removeItem(at: staged) }
+            }
+            let total = urls.count
+            let done = saved
+            let why = failure
+            await MainActor.run {
+                isSavingOriginals = false
+                let plural: String = done == 1 ? "" : "s"
+                if done == total {
+                    complianceNote = "Saved \(done) original\(plural) to Photos."
+                    Haptics.success()
+                } else if done > 0 {
+                    complianceNote = "Saved \(done) of \(total) originals to Photos. \(why ?? "")"
+                } else {
+                    complianceNote = why ?? "Couldn't save the originals."
+                }
+            }
+        }
+    }
+
+    /// Fetch the broker-exportable CSV for this listing and hand it to the share
+    /// sheet, so "email my broker the audit" is one tap and a real attachment.
+    private func exportAudit() {
+        guard !isExportingAudit, let serverID = currentListing.serverID else { return }
+        isExportingAudit = true
+        complianceNote = nil
+        Haptics.selection()
+        let api = model.api               // snapshot on the main actor
+        let address = currentListing.address
+        Task {
+            do {
+                let csv = try await api.complianceCSV(listingServerID: serverID)
+                let name = Self.auditFilename(for: address)
+                let dest = FileManager.default.temporaryDirectory.appendingPathComponent(name)
+                try? FileManager.default.removeItem(at: dest)
+                try csv.write(to: dest, options: .atomic)
+                await MainActor.run {
+                    isExportingAudit = false
+                    auditExport = AuditExport(url: dest)
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isExportingAudit = false
+                    complianceNote = "Couldn't build the audit export — \(AIFailure(error).message)"
+                }
+            }
+        }
+    }
+
+    /// `rendprop-ai-disclosure-<address>-<yyyy-MM-dd>.csv`, filesystem-safe.
+    static func auditFilename(for address: String) -> String {
+        let allowed = CharacterSet.alphanumerics
+        let slug = address.unicodeScalars
+            .map { allowed.contains($0) ? Character($0) : "-" }
+            .reduce(into: "") { out, c in
+                if c == "-" && out.hasSuffix("-") { return }
+                out.append(c)
+            }
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+            .lowercased()
+        let stamp = ISO8601DateFormatter().string(from: Date()).prefix(10)
+        let base = slug.isEmpty ? "listing" : String(slug.prefix(40))
+        return "rendprop-ai-disclosure-\(base)-\(stamp).csv"
+    }
+
     private func deleteListing() {
         guard !isDeleting, !currentListing.isSample else { return }
         isDeleting = true
@@ -859,8 +1233,10 @@ struct FlythroughDetailView: View {
 
         if l.hasCoordinate, let lat = l.latitude, let lon = l.longitude, lat.isFinite, lon.isFinite {
             geocoder.reverseGeocodeLocation(CLLocation(latitude: lat, longitude: lon)) { marks, _ in
-                guard let region = Self.regionLabel(from: marks?.first) else { return }
-                DispatchQueue.main.async { model.setRegion(region, for: id) }
+                let mark = marks?.first
+                guard let region = Self.regionLabel(from: mark) else { return }
+                let state = Self.stateCode(from: mark)
+                DispatchQueue.main.async { model.setRegion(region, stateCode: state, for: id) }
             }
             return
         }
@@ -868,11 +1244,12 @@ struct FlythroughDetailView: View {
             guard let mark = marks?.first else { return }
             let coord = mark.location?.coordinate
             let region = Self.regionLabel(from: mark)
+            let state = Self.stateCode(from: mark)
             DispatchQueue.main.async {
                 if let c = coord, c.latitude.isFinite, c.longitude.isFinite {
                     model.setCoordinate(lat: c.latitude, lon: c.longitude, for: id)
                 }
-                if let region { model.setRegion(region, for: id) }
+                if let region { model.setRegion(region, stateCode: state, for: id) }
             }
         }
     }
@@ -890,6 +1267,14 @@ struct FlythroughDetailView: View {
             parts.append(country)
         }
         return parts.isEmpty ? nil : parts.joined(separator: ", ")
+    }
+
+    /// The placemark's administrative area ("CA", "NC") — what the California
+    /// AB 723 banner keys off. Never the street; a state is not a location fix.
+    static func stateCode(from mark: CLPlacemark?) -> String? {
+        guard let raw = mark?.administrativeArea?.trimmingCharacters(in: .whitespaces),
+              !raw.isEmpty else { return nil }
+        return raw
     }
 
     private func statCard(_ value: String, _ label: String, _ icon: String) -> some View {
@@ -914,6 +1299,24 @@ struct FlythroughDetailView: View {
         .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
         .accessibilityElement(children: .combine)
     }
+}
+
+/// Which of the two share links a QR sheet is being built for. Identifiable so
+/// one `.sheet(item:)` covers both without a second boolean (and so the sheet
+/// can never open on the wrong link).
+private struct QRTarget: Identifiable {
+    let id = UUID()
+    let url: URL
+    /// "Your link" / "MLS link — unbranded" — shown as the sheet's title.
+    let linkName: String
+    /// One line under the code saying where this QR belongs.
+    let caption: String
+}
+
+/// A built compliance CSV waiting for the share sheet.
+private struct AuditExport: Identifiable {
+    let id = UUID()
+    let url: URL
 }
 
 /// A single map annotation for the listing's geocoded location. The id is
@@ -1194,6 +1597,17 @@ private enum PhotosLibrarySaver {
         }
     }
 
+    /// Save an image FILE as-is — no decode, no re-encode. Used for compliance
+    /// originals (W2-C2): a re-encoded "original" is not the original, and a
+    /// broker who asks for the unaltered image is entitled to the exact bytes
+    /// the public "View original" link serves.
+    static func saveImageFile(at url: URL) async throws {
+        try await ensureAddAccess()
+        try await PHPhotoLibrary.shared().performChanges {
+            _ = PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+        }
+    }
+
     private static func ensureAddAccess() async throws {
         var status = PHPhotoLibrary.authorizationStatus(for: .addOnly)
         if status == .notDetermined {
@@ -1208,6 +1622,11 @@ private enum PhotosLibrarySaver {
 private struct QRShareSheet: View {
     let url: URL
     let title: String
+    /// Which link this code opens — "Your link" / "MLS link — unbranded".
+    /// The user must never be in doubt about which one they just printed.
+    var linkName: String = "Tour link"
+    /// One line under the code saying where this QR belongs.
+    var caption: String = "Scan to open the tour — print it on a flyer, sign-in sheet or yard sign."
     @Environment(\.dismiss) private var dismiss
     @State private var image: UIImage?
     @State private var failed = false
@@ -1241,7 +1660,7 @@ private struct QRShareSheet: View {
                         .foregroundStyle(Theme.inkDim)
                         .multilineTextAlignment(.center)
                         .textSelection(.enabled)
-                    Text("Scan to open the tour — print it on a flyer, sign-in sheet or yard sign.")
+                    Text(caption)
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .multilineTextAlignment(.center)
@@ -1258,7 +1677,7 @@ private struct QRShareSheet: View {
                         .disabled(saved || isSaving)
 
                         ShareLink(item: Image(uiImage: image),
-                                  preview: SharePreview("QR code — \(title)", image: Image(uiImage: image))) {
+                                  preview: SharePreview("\(linkName) QR — \(title)", image: Image(uiImage: image))) {
                             Label("Share QR code", systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
                                 .frame(maxWidth: .infinity).padding(.vertical, 13)
@@ -1276,7 +1695,7 @@ private struct QRShareSheet: View {
                 .padding()
             }
             .background(Theme.bg)
-            .navigationTitle("QR code")
+            .navigationTitle(linkName)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -1416,6 +1835,15 @@ struct PhotoStudioView: View {
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
     @State private var showSignIn = false                // AI edits run on the user's account
+    /// The disclosure sentence the server recorded for each AI edit made this
+    /// session, keyed by photo id — shown verbatim in the before/after view
+    /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
+    /// listing's COMPLIANCE card reads back from the server.
+    @State private var editDisclosures: [String: String] = [:]
+    /// A photo waiting on the "this original backs a published disclosure"
+    /// confirmation before it is deleted (W2-C3).
+    @State private var pendingPhotoDelete: EnhancedPhoto?
+    @State private var showPhotoDeleteConfirm = false
     @Environment(\.openURL) private var openURL
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
@@ -1432,7 +1860,7 @@ struct PhotoStudioView: View {
     private var isPresentingOverlay: Bool {
         compare != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
             || showReelStudio || showLibrary || showCamera || showSignIn
-            || showWandDialog || showStageDialog
+            || showWandDialog || showStageDialog || showPhotoDeleteConfirm
     }
 
     var body: some View {
@@ -1469,9 +1897,18 @@ struct PhotoStudioView: View {
                 }
 
                 if !photos.isEmpty {
-                    Text("Tap a photo to compare before & after · tap the wand for AI edits · long-press for more.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Tap a photo to compare before & after · tap the wand for AI edits · long-press for more.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        // W2-C4: the agent learns this BEFORE they tap, not after
+                        // a broker asks. Disclosure is automatic, not optional.
+                        Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
+                              systemImage: "checkmark.shield.fill")
+                            .font(.rpCaption.weight(.semibold))
+                            .foregroundStyle(Theme.good)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 photoGrid
@@ -1502,7 +1939,9 @@ struct PhotoStudioView: View {
             CameraPicker { img in ingest([img]) }.ignoresSafeArea()
         }
         .sheet(isPresented: $showSignIn) { SignInView.forAI("AI photo edits") }
-        .fullScreenCover(item: $compare) { p in PhotoCompareView(photo: p) }
+        .fullScreenCover(item: $compare) { p in
+            PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
+        }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto) { p in
             CustomEditSheet(photo: p, api: model.api) { prompt in
@@ -1539,7 +1978,19 @@ struct PhotoStudioView: View {
             Button("Animate (5s clip)") { animate(p) }
             Button("Cancel", role: .cancel) {}
         } message: { _ in
-            Text("Each edit saves as a new photo — the original stays.")
+            Text("Each edit saves as a new photo — the original stays, and this edit will be disclosed on your tour.")
+        }
+        // W2-C3: a photo's "before" is the file a published disclosure's
+        // "View original" points at. Never destroy it without asking.
+        .confirmationDialog("Delete this photo?", isPresented: $showPhotoDeleteConfirm,
+                            titleVisibility: .visible, presenting: pendingPhotoDelete) { p in
+            Button("Delete photo", role: .destructive) {
+                delete(p)
+                pendingPhotoDelete = nil
+            }
+            Button("Cancel", role: .cancel) { pendingPhotoDelete = nil }
+        } message: { _ in
+            Text("This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links buyers to the original — download the originals from COMPLIANCE first if your broker needs them on file.")
         }
         .confirmationDialog("Staging style", isPresented: $showStageDialog,
                             titleVisibility: .visible, presenting: stagePhoto) { p in
@@ -1550,8 +2001,8 @@ struct PhotoStudioView: View {
             Button("Cancel", role: .cancel) {}
         } message: { _ in
             Text(space == .realEstate
-                 ? "AI furnishes the room in the style you pick."
-                 : "AI furnishes the \(space.spaceNoun) in the style you pick — walls and windows stay as they are.")
+                 ? "AI furnishes the room in the style you pick. Virtual staging is disclosed on your tour."
+                 : "AI furnishes the \(space.spaceNoun) in the style you pick — walls and windows stay as they are. This is disclosed on your tour.")
         }
         .alert(aiFailure?.title ?? "That one didn't work",
                isPresented: Binding(get: { aiFailure != nil }, set: { if !$0 { aiFailure = nil } }),
@@ -1613,7 +2064,7 @@ struct PhotoStudioView: View {
         Button { setMain(p) } label: {
             Label("Use as cover photo", systemImage: "star")
         }
-        Button(role: .destructive) { delete(p) } label: {
+        Button(role: .destructive) { confirmDelete(p) } label: {
             Label("Delete", systemImage: "trash")
         }
     }
@@ -1639,6 +2090,17 @@ struct PhotoStudioView: View {
     /// custom. Saves the result as a NEW photo (keeps the original) and opens
     /// the before/after. One job at a time (re-entrancy guard, F-A-22); the
     /// JPEG work runs off the main actor.
+    ///
+    /// COMPLIANCE (W2-C3). Before the edit runs we publish the UNTOUCHED
+    /// original with `role:"original"` and send its asset id as
+    /// `original_asset_id`, so the disclosure block's "View original" link is a
+    /// real file rather than a dead promise — California AB 723 requires access
+    /// to the unaltered version, not only the sentence. Both that upload and the
+    /// server-listing creation it needs are best effort: an agent's edit never
+    /// fails because the audit log couldn't be anchored.
+    ///
+    /// A `400 unsupported_edit` from the fair-housing denylist surfaces the
+    /// server's own wording and is NEVER auto-retried — the user re-words it.
     private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
                         style: String? = nil, prompt: String? = nil) {
         guard !isProcessing else { return }
@@ -1648,15 +2110,45 @@ struct PhotoStudioView: View {
         let api = model.api          // snapshot on the main actor
         let targetDir = dir
         let source = p.enhancedURL
+        // The unaltered "before" we publish for disclosure. `originalURL` is the
+        // camera/ingest original when one exists; for an already-AI-edited photo
+        // it is that edit's own recorded source. Never a different photo's file.
+        // …but only when it really IS a separate file. When the "before" copy is
+        // missing, `originalURL` falls back to the photo itself — publishing that
+        // as "the original" would label an already-processed image unaltered, so
+        // we publish nothing and the compliance row honestly shows amber.
+        let unaltered: URL? = p.originalURL.standardizedFileURL == p.enhancedURL.standardizedFileURL
+            ? nil : p.originalURL
+        let listingLocalID = listing.id
+        let isSample = listing.isSample
+        let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
         let tapKey = UUID().uuidString   // one idempotency key per user tap
         Task {
             do {
                 guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
                     throw AIImagePrep.error("Couldn't read that photo.")
                 }
-                let outB64 = try await api.aiPhotoEdit(
-                    imageBase64: b64, mime: "image/jpeg", edit: edit,
-                    style: style, prompt: prompt, idempotencyKey: tapKey)
+                // Anchor + "before", both best effort.
+                var serverListingID: UUID? = nil
+                var originalAssetID: String? = nil
+                if !isSample {
+                    serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+                    if let sid = serverListingID, let unaltered {
+                        await MainActor.run { processingText = "Saving the original for disclosure…" }
+                        originalAssetID = await model.publishOriginalForDisclosure(
+                            listingServerID: sid, fileURL: unaltered)
+                        await MainActor.run { processingText = "Enhancing…" }
+                    }
+                }
+
+                var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
+                request.style = style
+                request.prompt = prompt
+                request.listingServerID = serverListingID
+                request.label = disclosureLabel
+                request.originalAssetID = originalAssetID
+                request.idempotencyKey = tapKey
+                let result = try await api.aiPhotoEdit(request)
                 // Save with the same enh-/orig- convention as ingested photos: a
                 // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
                 // on relaunch. Timestamp id sorts newest-first alongside ingests;
@@ -1664,7 +2156,7 @@ struct PhotoStudioView: View {
                 let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
                     + "-" + String(UUID().uuidString.prefix(4))
                 let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
-                guard await AIImagePrep.writeJPEG(base64: outB64, to: outURL, quality: 0.95) else {
+                guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
                     throw AIImagePrep.error("The AI didn't return an image. Try again.")
                 }
                 let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
@@ -1673,19 +2165,52 @@ struct PhotoStudioView: View {
                 // removes it, so fall back to self, not the source, if the copy fails.
                 let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
                     ? beforeURL : outURL
+                let disclosure = result.disclosure
                 await MainActor.run {
                     let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
                     photos.insert(newPhoto, at: 0)
+                    if let disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
                     isProcessing = false
                     Haptics.success()
-                    compare = newPhoto   // show the before/after immediately
+                    compare = newPhoto   // show the before/after (and its disclosure)
+                }
+                // Publish the "after" against the same provenance row so the
+                // tour can show the pair side by side (NorthstarMLS). Off the
+                // critical path — the edit is already on screen, and a failure
+                // costs nothing: the original alone satisfies AB 723.
+                if let provenanceID = result.provenanceID, let sid = serverListingID {
+                    await model.attachAlteredPhotoForDisclosure(
+                        provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
                 }
             } catch {
                 await MainActor.run {
                     isProcessing = false
-                    aiFailure = AIFailure(error, title: "AI enhance failed")
+                    // The fair-housing denylist speaks for itself — show its
+                    // wording, let the user re-word, never retry automatically.
+                    let title = (error as? APIError)?.code == "unsupported_edit"
+                        ? "That edit isn't allowed" : "AI enhance failed"
+                    aiFailure = AIFailure(error, title: title)
                 }
             }
+        }
+    }
+
+    /// The label the public disclosure line carries for a studio edit. Studio
+    /// photos have no room names, so the label names the CHANGE — which is what
+    /// a broker scanning the audit log needs, and it is never null (a null label
+    /// would fall back to the bare kind on the hosted page).
+    static func provenanceLabel(edit: String, style: String?, space: SpaceType) -> String {
+        let staging = space == .realEstate ? "Virtual staging" : "Furnish & style"
+        switch edit {
+        case "twilight":  return "Twilight sky"
+        case "sky":       return "Blue sky"
+        case "lawn":      return "Green lawn"
+        case "declutter": return "Declutter"
+        case "stage":
+            guard let style, !style.isEmpty else { return staging }
+            return "\(staging) — \(style.prefix(1).uppercased() + style.dropFirst())"
+        case "custom":    return "Custom edit"
+        default:          return "Photo edit"
         }
     }
 
@@ -1734,15 +2259,26 @@ struct PhotoStudioView: View {
         let targetDir = dir
         let source = p.enhancedURL
         let photoID = p.id
+        let listingLocalID = listing.id
+        let isSample = listing.isSample
         let tapKey = UUID().uuidString
         animateTask = Task {
             do {
                 guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
                     throw AIImagePrep.error("Couldn't read that photo.")
                 }
+                // Generated motion is altered media too (Wisconsin Act 69 covers
+                // generated video from 1 Jan 2027) — anchor it so it is
+                // disclosed and audited like every other AI asset.
+                var serverListingID: UUID? = nil
+                if !isSample {
+                    serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+                }
                 let job = try await api.aiVideoReelClip(
                     imageBase64: b64, mime: "image/jpeg",
-                    prompt: nil, seconds: 5, idempotencyKey: tapKey)
+                    prompt: nil, seconds: 5,
+                    listingServerID: serverListingID, label: "Animated photo",
+                    idempotencyKey: tapKey)
 
                 let deadline = Date().addingTimeInterval(10 * 60)
                 var remoteURL: URL?
@@ -1960,11 +2496,26 @@ struct PhotoStudioView: View {
         }
     }
 
+    /// Deleting a photo also deletes its "before". Once the tour is published
+    /// that before may be the original a disclosure links to (W2-C3), so ask
+    /// first; an unpublished listing deletes straight away as before.
+    private func confirmDelete(_ p: EnhancedPhoto) {
+        let published = model.listings.first(where: { $0.id == listing.id })?.serverShareURL != nil
+        let hasSeparateOriginal = p.originalURL.standardizedFileURL != p.enhancedURL.standardizedFileURL
+        guard published, hasSeparateOriginal, !listing.isSample else {
+            delete(p)
+            return
+        }
+        pendingPhotoDelete = p
+        showPhotoDeleteConfirm = true
+    }
+
     private func delete(_ p: EnhancedPhoto) {
         let wasMain = isMain(p)
         ImageThumbnails.invalidate(p.enhancedURL)
         try? FileManager.default.removeItem(at: p.enhancedURL)
         try? FileManager.default.removeItem(at: p.originalURL)
+        editDisclosures.removeValue(forKey: p.id)
         loadExisting()
         if wasMain {
             model.setMainPhoto(photos.first.map { FileStore.relativePath(for: $0.enhancedURL) }, for: listing.id)
@@ -2020,6 +2571,10 @@ enum PhotoEnhancer {
 /// thread, at screen resolution.
 struct PhotoCompareView: View {
     let photo: EnhancedPhoto
+    /// The exact disclosure sentence the server recorded for this edit, when it
+    /// came from one (W2-C4). Shown VERBATIM — it is the sentence the public
+    /// tour prints, and the agent should recognise it when a broker quotes it.
+    var disclosure: String? = nil
     @Environment(\.dismiss) private var dismiss
     @State private var showOriginal = false
     @State private var enhanced: UIImage?
@@ -2037,6 +2592,15 @@ struct PhotoCompareView: View {
                     ProgressView().tint(.white)
                 }
                 Spacer()
+                if let disclosure, !disclosure.isEmpty {
+                    Label(disclosure, systemImage: "checkmark.shield.fill")
+                        .font(.rpCaption)
+                        .foregroundStyle(Color.white.opacity(0.85))
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 20)
+                        .padding(.top, 6)
+                        .accessibilityLabel(Text("Disclosure published with this photo. \(disclosure)"))
+                }
                 Picker("", selection: $showOriginal) {
                     Text("After").tag(false)
                     Text("Before").tag(true)
@@ -2474,6 +3038,11 @@ private struct PendingAerialJob: Codable {
 private struct AerialMeta: Codable {
     var grounded: Bool?
     var aspect: String
+    /// The exact disclosure sentence the server recorded for this clip, so a
+    /// reopened sheet still prints the required wording verbatim rather than
+    /// falling back to a generic one (W2-C4). Optional → records written before
+    /// the compliance wave still decode.
+    var disclosure: String? = nil
 
     static func key(_ id: UUID) -> String { "aerial.meta.\(id.uuidString)" }
 
@@ -2565,6 +3134,11 @@ struct AerialIntroSheet: View {
     // The result
     @State private var clipURL: URL?
     @State private var grounded: Bool?
+    /// The server's own disclosure sentence for this clip. Nil until a job has
+    /// been submitted or a stored clip's meta is read back — `disclosureSentence`
+    /// falls back to HousingWire's wording so the required sentence is NEVER
+    /// missing from this screen.
+    @State private var disclosureText: String?
     @State private var resultPortrait = false
     @State private var player: AVPlayer?
     @State private var savedToPhotos = false
@@ -2679,15 +3253,31 @@ struct AerialIntroSheet: View {
         .padding(.top, 8)
     }
 
-    /// Synthetic-footage disclosure — ALWAYS visible, every state.
+    /// The REQUIRED disclosure sentence for this clip — the server's own wording
+    /// when it sent one, otherwise HousingWire's recommended simulated-movement
+    /// sentence, which is what the server writes anyway. Never empty: an aerial
+    /// is simulated camera movement, and that is exactly the case the disclosure
+    /// tests name (and Wisconsin Act 69 covers generated video from 1 Jan 2027).
+    private var disclosureSentence: String {
+        if let d = disclosureText?.trimmingCharacters(in: .whitespacesAndNewlines), !d.isEmpty { return d }
+        return AIVideoJob.aerialFallbackDisclosure
+    }
+
+    /// Synthetic-footage disclosure — ALWAYS visible, every state, verbatim.
     private var disclosure: some View {
-        Label("AI-generated — not real drone footage of this \(noun). Say so when you share it.",
-              systemImage: "sparkles")
-            .font(.rpCaption)
-            .foregroundStyle(Theme.warn)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(12)
-            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        VStack(alignment: .leading, spacing: 6) {
+            Label(disclosureSentence, systemImage: "exclamationmark.shield.fill")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Required disclosure. It is published with your tour and goes out with every share of this clip — this is not real drone footage of this \(noun).")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 
     // MARK: - Form
@@ -2962,13 +3552,26 @@ struct AerialIntroSheet: View {
                 }
                 .disabled(savedToPhotos || isSaving)
 
-                ShareLink(item: url) {
+                // The disclosure travels WITH the clip — an aerial sent by
+                // text or email without it is the violation (W2-C4).
+                ShareLink(item: url,
+                          subject: Text("Aerial intro — \(listing.address)"),
+                          message: Text(disclosureSentence)) {
                     Label("Share aerial", systemImage: "square.and.arrow.up")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 13)
                         .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                Button {
+                    UIPasteboard.general.string = disclosureSentence
+                    Haptics.success()
+                } label: {
+                    Label("Copy the disclosure", systemImage: "doc.on.doc")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+                .accessibilityHint(Text("Copies the required disclosure sentence so you can paste it into a caption."))
 
                 Button { showReelStudio = true } label: {
                     Label("Open Reel Studio with this clip", systemImage: "film.stack")
@@ -3007,6 +3610,7 @@ struct AerialIntroSheet: View {
             reverseGeocode(lat: lat, lon: lon)
         }
         let meta = AerialMeta.load(for: listing.id)
+        disclosureText = meta?.disclosure
         if let existing = live.aerialURL {
             clipURL = existing
             grounded = meta?.grounded
@@ -3025,10 +3629,12 @@ struct AerialIntroSheet: View {
     private func reverseGeocode(lat: Double, lon: Double) {
         let id = listing.id
         geocoder.reverseGeocodeLocation(CLLocation(latitude: lat, longitude: lon)) { marks, _ in
-            guard let label = FlythroughDetailView.regionLabel(from: marks?.first) else { return }
+            let mark = marks?.first
+            guard let label = FlythroughDetailView.regionLabel(from: mark) else { return }
+            let state = FlythroughDetailView.stateCode(from: mark)
             DispatchQueue.main.async {
                 if region.trimmingCharacters(in: .whitespaces).isEmpty { region = label }
-                model.setRegion(label, for: id)
+                model.setRegion(label, stateCode: state, for: id)
             }
         }
     }
@@ -3095,6 +3701,11 @@ struct AerialIntroSheet: View {
                     request.imageJPEGBase64 = b64
                     request.mime = "image/jpeg"
                 }
+                // COMPLIANCE (W2-C4): anchor the clip so its simulated camera
+                // movement is disclosed on the tour and logged for the broker.
+                // Best effort — a missing anchor never blocks the generation.
+                request.listingServerID = await model.serverListingIDForCompliance(listingID)
+                request.label = "Aerial intro"
                 try Task.checkCancellation()
                 await MainActor.run { statusText = "Submitting…" }
 
@@ -3103,8 +3714,10 @@ struct AerialIntroSheet: View {
                                                grounded: job.grounded ?? (photoURL != nil),
                                                aspect: aspectValue)
                 pending.save()
+                let sentence = job.disclosureText
                 await MainActor.run {
                     grounded = pending.grounded
+                    if let sentence, !sentence.isEmpty { disclosureText = sentence }
                     statusText = "Generating aerial…"
                 }
                 try await pollAndStore(pending, api: api)
@@ -3126,6 +3739,7 @@ struct AerialIntroSheet: View {
         phase = .generating
         statusText = "Picking up your aerial…"
         grounded = pending.grounded
+        if let sentence = pending.job.disclosureText, !sentence.isEmpty { disclosureText = sentence }
         failure = nil
         let api = model.api
         workTask = Task {
@@ -3186,7 +3800,11 @@ struct AerialIntroSheet: View {
         try? FileManager.default.removeItem(at: dest)
         try FileManager.default.moveItem(at: tmp, to: dest)
         PendingAerialJob.clear(for: pending.listingID)
-        AerialMeta(grounded: pending.grounded, aspect: pending.aspect).save(for: pending.listingID)
+        // Store the required sentence next to the clip so a later open prints
+        // the server's exact wording, not a fallback.
+        let storedDisclosure = pending.job.disclosureText
+        AerialMeta(grounded: pending.grounded, aspect: pending.aspect, disclosure: storedDisclosure)
+            .save(for: pending.listingID)
 
         await MainActor.run {
             let previous = model.listings.first(where: { $0.id == pending.listingID })?.aerialURL
@@ -3198,6 +3816,7 @@ struct AerialIntroSheet: View {
             player?.pause()
             clipURL = dest
             grounded = pending.grounded
+            if let storedDisclosure, !storedDisclosure.isEmpty { disclosureText = storedDisclosure }
             resultPortrait = pending.aspect == "9:16"
             player = AVPlayer(url: dest)
             savedToPhotos = false
@@ -3725,16 +4344,24 @@ struct ReelStudioView: View {
         Haptics.selection()
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("reel-\(UUID().uuidString)", isDirectory: true)
+        let isSample = listing.isSample
         workTask = Task {
             do {
                 try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+                // Anchor every generated clip to the listing so the motion is
+                // disclosed on the tour and lands in the broker's audit log.
+                var reelListingServerID: UUID? = nil
+                if !isSample {
+                    reelListingServerID = await model.serverListingIDForCompliance(listingID)
+                }
                 var clipURLs: [URL] = extras          // ready-made clips lead the reel
                 for (i, photo) in chosen.enumerated() {
                     try Task.checkCancellation()
                     await MainActor.run { statusText = "Clip \(i + 1) of \(chosen.count) — animating…" }
                     do {
                         let clip = try await Self.makeClip(photo: photo, prompt: prompt,
-                                                           api: api, into: tmpDir, index: i)
+                                                           api: api, listingServerID: reelListingServerID,
+                                                           into: tmpDir, index: i)
                         clipURLs.append(clip)
                     } catch is CancellationError {
                         throw CancellationError()
@@ -3786,7 +4413,8 @@ struct ReelStudioView: View {
     /// `ai-video/reel-clip` → poll every 5 s (cap 5 min) → download the mp4 into
     /// `dir`. fal result URLs expire, so the download happens immediately.
     nonisolated private static func makeClip(photo: EnhancedPhoto, prompt: String,
-                                             api: APIClient, into dir: URL, index: Int) async throws -> URL {
+                                             api: APIClient, listingServerID: UUID?,
+                                             into dir: URL, index: Int) async throws -> URL {
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
@@ -3799,6 +4427,8 @@ struct ReelStudioView: View {
             : prompt
         let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
                                                 mime: "image/jpeg", prompt: motion, seconds: 5,
+                                                listingServerID: listingServerID,
+                                                label: "Reel clip \(index + 1)",
                                                 idempotencyKey: UUID().uuidString)
 
         let deadline = Date().addingTimeInterval(5 * 60)

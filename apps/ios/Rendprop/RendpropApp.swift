@@ -94,11 +94,14 @@ final class AppModel: ObservableObject {
             listings[i].serverID = nil
             listings[i].shareSlug = nil
             listings[i].shareURL = nil
+            listings[i].unbrandedShareURL = nil
             listings[i].publishedRenderID = nil
             listings[i].needsServerSync = nil
         }
         uploadedRenderAssets.removeAll()
         pendingPublish.removeAll()
+        // Published compliance originals belong to the previous account's org.
+        publishedOriginalAssets.removeAll()
     }
 
     func load() async {
@@ -254,11 +257,18 @@ final class AppModel: ObservableObject {
         listings[i].aerialGeneratedAt = generatedAt
     }
 
-    /// City/State from the geocode (never the street). Local only.
-    func setRegion(_ label: String?, for id: UUID) {
+    /// City/State from the geocode (never the street), plus the raw
+    /// administrative area ("CA") the compliance card keys California's AB 723
+    /// banner off. Local only. `stateCode: nil` leaves any stored code alone —
+    /// callers that only know the label must not erase it.
+    func setRegion(_ label: String?, stateCode: String? = nil, for id: UUID) {
         guard let i = index(of: id) else { return }
         let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         listings[i].regionLabel = trimmed.isEmpty ? nil : trimmed
+        if let stateCode {
+            let code = stateCode.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !code.isEmpty { listings[i].stateCode = code }
+        }
     }
 
     /// Why the last render/publish failed (nil clears it). Local only.
@@ -386,6 +396,71 @@ final class AppModel: ObservableObject {
         return serverID
     }
 
+    // MARK: - Compliance plumbing (W2-C3)
+
+    /// The server's 10 MB ceiling for a `role:"render"` photo. Bigger than this
+    /// and we skip rather than burn a round trip on a guaranteed 400.
+    private static let maxPublishedPhotoBytes: Int64 = 9_500_000
+
+    /// "<relPath>|<bytes>" → server asset id for originals already published
+    /// this session. Five edits of the same photo publish ONE original, not
+    /// five. Not persisted — a fresh launch re-publishes once, which is correct
+    /// if the object was cleaned up server-side in the meantime.
+    private var publishedOriginalAssets: [String: String] = [:]
+
+    /// The SERVER listing id to anchor an AI generation's provenance row to,
+    /// creating the server listing on first use if this one has never synced.
+    /// Best effort and never throws: an AI edit must not fail because the audit
+    /// log couldn't be anchored. Nil for samples, offline dev, a signed-out
+    /// user, or a failed create — the generation then runs unlogged and the
+    /// server says so in its `provenance.reason`.
+    func serverListingIDForCompliance(_ id: UUID) async -> UUID? {
+        guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return nil }
+        if let existing = listing.serverID { return existing }
+        guard Config.useLiveBackend else { return nil }
+        guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return nil }
+        return try? await ensureServerListing(listing)
+    }
+
+    /// Publish the UNTOUCHED original of a photo we are about to hand to the AI
+    /// (`POST /uploads role:"original"`), so the tour's public "View original"
+    /// link is a real file — California AB 723 requires access to the unaltered
+    /// version, not just a disclosure sentence. Returns the server asset id to
+    /// pass as `original_asset_id`.
+    ///
+    /// Best effort: nil when there is no live backend, the file is gone, or the
+    /// upload failed. The edit still runs; it is simply logged without a
+    /// "before", which the compliance card then shows in amber.
+    func publishOriginalForDisclosure(listingServerID: UUID, fileURL: URL) async -> String? {
+        guard Config.useLiveBackend else { return nil }
+        let bytes = FileStore.fileSize(fileURL)
+        guard bytes > 0 else { return nil }
+        let memo = "\(FileStore.relativePath(for: fileURL))|\(bytes)"
+        if let known = publishedOriginalAssets[memo] { return known }
+        guard let assetID = try? await UploadManager.shared.uploadOriginal(
+            fileURL: fileURL, listingID: listingServerID) else { return nil }
+        publishedOriginalAssets[memo] = assetID
+        return assetID
+    }
+
+    /// Publish the ALTERED result of an AI photo edit and attach it to its
+    /// provenance row (`PATCH /me/compliance/:id {altered_asset_id}`), so the
+    /// tour can print the side-by-side "Before / after" pair NorthstarMLS wants
+    /// alongside the disclosure. The ORIGINAL alone already satisfies California
+    /// AB 723, so this is the nice-to-have half: best effort, never throws, and
+    /// runs after the edit is already on screen.
+    func attachAlteredPhotoForDisclosure(provenanceID: String, listingServerID: UUID,
+                                         fileURL: URL) async {
+        guard Config.useLiveBackend, !provenanceID.isEmpty else { return }
+        let bytes = FileStore.fileSize(fileURL)
+        guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { return }
+        guard let assetID = try? await UploadManager.shared.uploadAlteredPhoto(
+            fileURL: fileURL, listingID: listingServerID) else { return }
+        try? await api.attachProvenanceMedia(provenanceID: provenanceID,
+                                             originalAssetID: nil,
+                                             alteredAssetID: assetID)
+    }
+
     /// Room tags → tap-to-jump chapters, sorted by time. Room tags are timed
     /// against the ORIGINAL capture, but the published mp4 is retimed by
     /// `speedFactor` (a 2× walk halves timestamps). Rescale to the RENDERED
@@ -466,6 +541,12 @@ final class AppModel: ObservableObject {
                 var l = listings[i]
                 l.shareSlug = published.slug
                 l.shareURL = published.shareURL
+                // The MLS-safe twin. A server that predates the compliance wave
+                // sends none — keep whatever we had rather than clearing it
+                // (`serverUnbrandedURL` derives one from the slug either way).
+                if let unbranded = published.unbrandedURL, !unbranded.isEmpty {
+                    l.unbrandedShareURL = unbranded
+                }
                 if let rid = published.renderID { l.publishedRenderID = rid }
                 l.lastError = nil
                 l.status = .ready

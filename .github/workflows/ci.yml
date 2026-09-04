@@ -37,6 +37,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # The MLS compliance gate. /u/<slug> is the only URL an agent may paste
+      # into an MLS unbranded virtual-tour field; those rules ban agent/broker
+      # identification, contact forms, social profiles and external links, and
+      # branding violations are fined (RI Statewide MLS: $50 first offence,
+      # escalating). scripts/check-unbranded.mjs renders the real renderer with
+      # sentinel-loaded branded fields and fails on any leak.
+      - name: Unbranded (MLS-safe) page check
+        run: npm test
+
       - name: Bundle (deploy --dry-run, no credentials needed)
         run: npx wrangler deploy --dry-run --outdir /tmp/wrangler-dry
 

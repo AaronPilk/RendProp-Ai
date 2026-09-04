@@ -2,13 +2,14 @@
   "name": "rendprop-tour-host",
   "version": "1.0.0",
   "private": true,
-  "description": "Cloudflare Worker serving Rendprop public tour (/f/:slug) and portfolio (/a/:handle) pages.",
+  "description": "Cloudflare Worker serving Rendprop public tour (/f/:slug), MLS-unbranded tour (/u/:slug) and portfolio (/a/:handle) pages.",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
+    "test": "node scripts/check-unbranded.mjs",
     "tail": "wrangler tail"
   },
   "devDependencies": {

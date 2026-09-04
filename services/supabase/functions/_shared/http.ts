@@ -21,6 +21,11 @@ export type ErrorCode =
   | "quota_exceeded"
   | "rate_limited"
   | "payload_too_large"
+  // A prompt the FAIR-HOUSING guardrails refuse (people, pets, religious or
+  // cultural objects, neighborhood/school claims — see _shared/fairhousing.ts).
+  // 400, never auto-derived from a status: only thrown deliberately, so the app
+  // can show the refusal differently from an ordinary validation error.
+  | "unsupported_edit"
   | "upstream"
   | "internal";
 

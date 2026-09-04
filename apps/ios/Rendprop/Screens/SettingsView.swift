@@ -309,8 +309,8 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
-                 ? "Removes every listing, video, tour and card stored on this phone and signs you out. Your account and any published tours are NOT deleted — use Delete account for that."
-                 : "Removes every listing, video, tour and card stored on this phone.")
+                 ? "Removes every listing, video, tour and card stored on this phone and signs you out — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
+                 : "Removes every listing, video, tour and card stored on this phone — including this phone's copies of the untouched originals behind your AI-edited photos.")
         }
         .alert("Data cleared", isPresented: $showDataCleared) {
             Button("OK") { hasOnboarded = false }
@@ -1005,6 +1005,10 @@ struct AIPhotoStudioView: View {
     @State private var errorMsg: String?
     @State private var errorIsQuota = false
     @State private var showSignIn = false
+    /// The exact disclosure sentence the server recorded for the last edit
+    /// (W2-C4). This studio has no listing attached, so the edit is NOT in the
+    /// org's compliance log — the result card says so rather than implying it is.
+    @State private var lastDisclosure: String?
 
     private var customPromptTrimmed: String {
         customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1163,7 +1167,25 @@ struct AIPhotoStudioView: View {
                     .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                     .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
             }
-            Button("Try another look") { edited = nil }
+            // W2-C4: the sentence a listing's tour would print for this edit,
+            // verbatim — plus the honest caveat that a loose photo edited here
+            // is not attached to a listing and so is not in the audit log.
+            if let lastDisclosure, !lastDisclosure.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label(lastDisclosure, systemImage: "exclamationmark.shield.fill")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Disclose this wherever you publish the photo. Edits made from a listing's photo studio are disclosed on its tour and logged for your broker automatically — this one isn't attached to a listing.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            Button("Try another look") { edited = nil; lastDisclosure = nil }
                 .font(.rpBody).foregroundStyle(Theme.accent).padding(.top, 2)
         }
     }
@@ -1173,7 +1195,13 @@ struct AIPhotoStudioView: View {
         Task {
             if let data = try? await item.loadTransferable(type: Data.self),
                let ui = UIImage(data: data) {
-                await MainActor.run { original = ui; edited = nil; errorMsg = nil; errorIsQuota = false }
+                await MainActor.run {
+                    original = ui
+                    edited = nil
+                    lastDisclosure = nil
+                    errorMsg = nil
+                    errorIsQuota = false
+                }
             }
         }
     }
@@ -1201,15 +1229,27 @@ struct AIPhotoStudioView: View {
                     throw NSError(domain: "AIPhoto", code: 1,
                                   userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
                 }
-                let outB64 = try await model.api.aiPhotoEdit(
-                    imageBase64: jpeg.base64EncodedString(), mime: "image/jpeg", edit: selectedEdit.rawValue,
-                    style: selectedEdit == .stage ? selectedStyle.rawValue : nil,
-                    prompt: selectedEdit == .custom ? prompt : nil)
-                guard let outData = Data(base64Encoded: outB64), let outImg = UIImage(data: outData) else {
+                var request = AIPhotoEditRequest(imageBase64: jpeg.base64EncodedString(),
+                                                 mime: "image/jpeg",
+                                                 edit: selectedEdit.rawValue)
+                request.style = selectedEdit == .stage ? selectedStyle.rawValue : nil
+                request.prompt = selectedEdit == .custom ? prompt : nil
+                // No listing here — this studio edits a loose photo, so the
+                // server cannot enter it in the compliance log (see the note on
+                // the result card). Edits made from a listing's Photo Studio are.
+                let result = try await model.api.aiPhotoEdit(request)
+                guard let outData = Data(base64Encoded: result.imageBase64),
+                      let outImg = UIImage(data: outData) else {
                     throw NSError(domain: "AIPhoto", code: 2,
                                   userInfo: [NSLocalizedDescriptionKey: "The AI didn't return an image. Try again."])
                 }
-                await MainActor.run { edited = outImg; isWorking = false; Haptics.success() }
+                let sentence = result.disclosure
+                await MainActor.run {
+                    edited = outImg
+                    lastDisclosure = sentence
+                    isWorking = false
+                    Haptics.success()
+                }
             } catch {
                 await MainActor.run {
                     errorMsg = UserFacingError.message(error)

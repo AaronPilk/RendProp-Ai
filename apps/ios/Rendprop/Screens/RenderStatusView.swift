@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import AuthenticationServices
 
 /// Render progress. The work itself lives in `AppModel.renderCoordinator`
@@ -257,6 +258,38 @@ private struct RenderStatusContent: View {
         }
     }
 
+    /// The MLS-safe twin of the share link, right where an agent grabs a link
+    /// the moment a tour goes live (W2-C1). The branded page carries the agent
+    /// card, the CTA and the lead form — unbranded virtual-tour rules ban all
+    /// three, and the unbranded field is what syndicates to Zillow/Realtor.com.
+    /// Pasting the branded link there is the fineable mistake.
+    @ViewBuilder private var mlsLinkRow: some View {
+        if let mls = currentListing.serverUnbrandedURL {
+            VStack(alignment: .leading, spacing: 6) {
+                Button {
+                    UIPasteboard.general.url = mls
+                    Haptics.success()
+                } label: {
+                    HStack {
+                        Image(systemName: "building.columns.fill")
+                        Text("Copy MLS link (unbranded)").fontWeight(.semibold)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 13)
+                    .background(Theme.fillSubtle)
+                    .foregroundStyle(Theme.ink)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                Label("Never put your branded link in an MLS unbranded field — most MLSs fine for that.",
+                      systemImage: "exclamationmark.triangle.fill")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     @ViewBuilder private var actions: some View {
         VStack(spacing: 12) {
             switch mode {
@@ -301,7 +334,7 @@ private struct RenderStatusContent: View {
                               message: Text("Fly through \(listing.address) — scroll to walk the \(noun).")) {
                         HStack {
                             Image(systemName: "square.and.arrow.up")
-                            Text("Share tour").fontWeight(.semibold)
+                            Text("Share your link").fontWeight(.semibold)
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
@@ -309,6 +342,7 @@ private struct RenderStatusContent: View {
                         .foregroundStyle(Theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
+                    mlsLinkRow
                 } else if mode == .publishLater || mode == .needsSignIn {
                     SecondaryButton(title: "Sign in & publish", systemImage: "link") {
                         declinedSignIn = false

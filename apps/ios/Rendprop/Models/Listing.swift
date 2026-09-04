@@ -65,6 +65,19 @@ struct Listing: Identifiable, Codable, Hashable {
     /// Server `renders.id` of the published tour (from /renders/publish-app).
     var publishedRenderID: UUID? = nil
 
+    // MARK: - Added 2026-09-04 (compliance wave W2-C). ALL optional → older snapshots decode.
+    /// The MLS-safe UNBRANDED link (`/u/<slug>`) the server returns as
+    /// `unbranded_url` on publish. The branded `/f/` link carries the agent card,
+    /// the CTA and the lead form; unbranded virtual-tour rules ban all three, and
+    /// the unbranded field is the one that syndicates to Zillow/Realtor.com.
+    /// Optional: tours published by an earlier build have none, so
+    /// `serverUnbrandedURL` derives it instead.
+    var unbrandedShareURL: String? = nil
+    /// The geocode's administrative area ("CA", "NC") — city/state only, never
+    /// the street. Drives the California AB 723 compliance banner without
+    /// re-geocoding on every open.
+    var stateCode: String? = nil
+
     func detail(_ key: String) -> String { details?[key] ?? "" }
 
     /// The last render/publish attempt failed (or was interrupted). Cards show a
@@ -85,6 +98,47 @@ struct Listing: Identifiable, Codable, Hashable {
             return URL(string: "https://rendprop.com/f/\(slug)")
         }
         return nil
+    }
+
+    /// The MLS-SAFE unbranded link (`/u/<slug>`) for this listing's published
+    /// tour — the property and nothing else. Prefer the server's own
+    /// `unbranded_url`; otherwise derive it from the branded link (same host,
+    /// `/f/` → `/u/`) so tours published before this field existed still get
+    /// one; otherwise rebuild it from the slug. Nil until the tour is published
+    /// — never fabricated (a `/u/<uuid>` link 404s for the MLS just as a
+    /// fabricated `/f/` one does).
+    var serverUnbrandedURL: URL? {
+        if let s = unbrandedShareURL?.trimmingCharacters(in: .whitespaces), !s.isEmpty,
+           let u = URL(string: s) { return u }
+        if let branded = shareURL?.trimmingCharacters(in: .whitespaces), !branded.isEmpty,
+           branded.contains("/f/") {
+            let swapped = branded.replacingOccurrences(of: "/f/", with: "/u/")
+            if let u = URL(string: swapped) { return u }
+        }
+        if let slug = shareSlug?.trimmingCharacters(in: .whitespaces), !slug.isEmpty {
+            return URL(string: "https://rendprop.com/u/\(slug)")
+        }
+        return nil
+    }
+
+    /// True when this listing geocoded to California. California AB 723 (in
+    /// force 1 Jan 2026) requires BOTH the disclosure of digitally altered
+    /// listing imagery AND access to the unaltered originals, at up to $2,500
+    /// per violation — the compliance card says so out loud. Falls back to the
+    /// trailing token of `regionLabel` ("Sausalito, CA") for listings geocoded
+    /// before `stateCode` existed.
+    var isCalifornia: Bool {
+        func isCA(_ raw: String) -> Bool {
+            let t = raw.trimmingCharacters(in: .whitespaces)
+            return t.caseInsensitiveCompare("CA") == .orderedSame
+                || t.caseInsensitiveCompare("California") == .orderedSame
+        }
+        if let code = stateCode, !code.trimmingCharacters(in: .whitespaces).isEmpty {
+            return isCA(code)
+        }
+        guard let region = regionLabel, !region.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        guard let tail = region.split(separator: ",").last else { return false }
+        return isCA(String(tail))
     }
 
     /// The business type this listing belongs to. Legacy listings (nil) and
@@ -209,7 +263,8 @@ extension Listing {
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
              tagline, details, serverID, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
-             lastError, needsServerSync, publishedRenderID
+             lastError, needsServerSync, publishedRenderID,
+             unbrandedShareURL, stateCode
     }
 
     init(from decoder: Decoder) throws {
@@ -244,6 +299,8 @@ extension Listing {
         lastError        = try c.decodeIfPresent(String.self, forKey: .lastError)
         needsServerSync  = try c.decodeIfPresent(Bool.self,   forKey: .needsServerSync)
         publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
+        unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
+        stateCode        = try c.decodeIfPresent(String.self, forKey: .stateCode)
     }
 }
 
