@@ -19,6 +19,36 @@ from pathlib import Path
 
 # ── .env loader (stdlib only) ─────────────────────────────────────────────────
 
+def parse_env_line(line: str) -> tuple[str, str] | None:
+    """One dotenv line → (key, value), or None for blanks/comments.
+
+    Mirrors services/worker/settings.py. Handles ``export KEY=v``, quoted values,
+    and inline ``# comments`` (audit F-G-11: ``MAX_GEN_COST_PER_JOB_CENTS=2500 # cap``
+    used to be read as the string ``'2500 # cap'`` → int() failed → the default
+    silently applied, so the one knob bounding AI spend did nothing from .env).
+    """
+    s = line.strip()
+    if not s or s.startswith("#") or "=" not in s:
+        return None
+    if s.startswith("export "):
+        s = s[len("export "):].lstrip()
+    k, _, v = s.partition("=")
+    k = k.strip()
+    if not k or any(ch.isspace() for ch in k):
+        return None
+    v = v.strip()
+    if v[:1] in ('"', "'"):
+        q = v[0]
+        end = v.find(q, 1)
+        v = v[1:end] if end != -1 else v[1:]
+    else:
+        for i, ch in enumerate(v):
+            if ch == "#" and (i == 0 or v[i - 1].isspace()):
+                v = v[:i].rstrip()
+                break
+    return k, v
+
+
 def load_env(path: Path | None = None) -> None:
     """Populate os.environ from a .env file if present (does not override).
 
@@ -30,26 +60,34 @@ def load_env(path: Path | None = None) -> None:
     if not path.exists():
         return
     for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+        kv = parse_env_line(line)
+        if kv:
+            os.environ.setdefault(kv[0], kv[1])
 
 
 load_env()
 
 
 def _int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
     try:
-        return int(os.environ.get(name, default))
+        return int(raw.strip())
     except (TypeError, ValueError):
+        # Loud, not silent: a mistyped cap must never quietly become the default.
+        print(f"⚠ {name}={raw!r} is not an integer; using default {default}")
         return default
 
 
 def _float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
     try:
-        return float(os.environ.get(name, default))
+        return float(raw.strip())
     except (TypeError, ValueError):
+        print(f"⚠ {name}={raw!r} is not a number; using default {default}")
         return default
 
 
@@ -140,7 +178,35 @@ STYLES = {
 }
 
 
+# Values that mean "leave the room as it is" — never a restage. The app sends
+# "as_is" on every plain job (DesignStyle.asIs), so this must be recognised
+# everywhere a style is read (audit F-G-02: any truthy string used to trigger a
+# paid Gemini restage per room).
+NO_RESTAGE_STYLES = frozenset({"", "as_is", "as-is", "asis", "none", "null", "original", "off"})
+
+
+def normalize_style(raw: object) -> str | None:
+    """Canonical restage style or None for "no restage".
+
+    Raises ValueError for a non-empty style that is not in STYLES so callers can
+    skip (worker) or refuse (CLI) instead of embedding an arbitrary string in a
+    prompt that is then billed.
+    """
+    s = str(raw or "").strip().lower().replace(" ", "_")
+    if s in NO_RESTAGE_STYLES:
+        return None
+    if s not in STYLES:
+        raise ValueError(f"unknown restage style {raw!r}; expected one of {sorted(STYLES)} or as_is")
+    return s
+
+
 def style_prompt(style: str) -> str:
-    """Full restage instruction for a named style, with the architecture lock."""
-    desc = STYLES.get(style, style)
-    return f"Virtually restage this room in {style} style: {desc}. {ARCHITECTURE_LOCK}"
+    """Full restage instruction for a named style, with the architecture lock.
+
+    Only known styles are accepted — an unknown one used to be interpolated
+    verbatim into the prompt ("Virtually restage this room in as_is style: as_is").
+    """
+    canon = normalize_style(style)
+    if canon is None:
+        raise ValueError("style_prompt() called for a no-restage style")
+    return f"Virtually restage this room in {canon} style: {STYLES[canon]}. {ARCHITECTURE_LOCK}"

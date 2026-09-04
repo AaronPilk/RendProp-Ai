@@ -2,25 +2,57 @@ import SwiftUI
 import UIKit
 import AVFoundation
 
-/// Review the capture, edit room tags, pick a quality tier. Early access:
-/// every tier is included with the plan — no prices anywhere on this screen
-/// while StoreKit is off (App Store 3.1, 2026-08 audit P0-5).
+/// Review the capture, edit room tags, say whether it's handheld or drone
+/// footage, pick a quality tier, and hand the render to the coordinator.
+/// Early access: no prices anywhere on this screen while StoreKit is off
+/// (App Store 3.1). AI tiers are gated by the plan's allowances from `/me` —
+/// a locked tier reads "Team plan", never a dollar amount.
 struct ReviewSubmitView: View {
     @EnvironmentObject var model: AppModel
-    @EnvironmentObject var uploads: UploadManager
+    @ObservedObject private var auth = AuthStore.shared
 
     let listing: Listing
     @State var asset: CaptureAsset
 
     @State private var tier: Render.Tier = .smooth
-    @State private var enhancements = Enhancements()
-    @State private var newTagName = ""
+    @State private var sourceKind: SourceKind = .handheld
+    @State private var didDetectSource = false
     @State private var showRoomTagger = false
-    @State private var showCellularPrompt = false
     @State private var goToStatus = false
     @State private var render: Render?
+    @State private var entitlements: Entitlements?
+    @State private var entitlementsChecked = false
+    @State private var showSignIn = false
+    @State private var showRerenderConfirm = false
 
-    private var band: PricingBand.Band { PricingBand.band(forDuration: asset.durationS) }
+    /// Explicit footage type (decision A8). Prefilled by a metadata heuristic,
+    /// always correctable — it decides stabilization + the retime factor.
+    enum SourceKind: String, CaseIterable, Identifiable {
+        case handheld, drone
+        var id: String { rawValue }
+        var label: String { self == .handheld ? "Handheld walkthrough" : "Drone footage" }
+    }
+
+    private var space: SpaceType { SpaceType.current }
+    private var hasTour: Bool { model.tours[listing.id] != nil }
+    private var isRendering: Bool { model.renderCoordinator.isRunning(listing.id) }
+
+    /// The AI tiers need the plan's Topaz allowance. Unknown (signed out / not
+    /// loaded) counts as locked — Smooth is always included.
+    private var aiTiersLocked: Bool {
+        guard Config.useLiveBackend else { return false }
+        guard let entitlements else { return true }
+        return !entitlements.canUseTopaz
+    }
+
+    private var lockReason: String {
+        if Config.enableAuth && !auth.isSignedIn { return "Sign in to see which tiers your plan includes." }
+        if entitlements == nil {
+            return entitlementsChecked ? "Couldn't check your plan right now — Smooth is always included."
+                                       : "Checking your plan…"
+        }
+        return "AI tiers are a Team plan add-on."
+    }
 
     var body: some View {
         ScrollView {
@@ -28,17 +60,7 @@ struct ReviewSubmitView: View {
                 captureSummary
                 roomTags
                 tierPicker
-                enhancementsCard
-                priceSummary
-                // No dollar amounts anywhere in the UI while enableIAP is false —
-                // quoting USD prices with no purchase mechanism is an App Store
-                // 3.1.1/2.3.1 rejection risk (2026-08-26 audit P0-3).
-                PrimaryButton(title: "Create my tour", systemImage: "sparkles") {
-                    submit()
-                }
-                Text("Included with your plan during early access.")
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.inkDim)
+                submitSection
             }
             .padding()
         }
@@ -48,29 +70,32 @@ struct ReviewSubmitView: View {
         .sheet(isPresented: $showRoomTagger) {
             RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
         }
-        .confirmationDialog("Large upload on cellular",
-                            isPresented: $showCellularPrompt,
-                            titleVisibility: .visible) {
-            Button("Continue on cellular") { start(cellularApproved: true) }
-            Button("Wait for Wi-Fi") { start(cellularApproved: false) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This walkthrough is \(Formatters.bytes(asset.bytes)). Upload now on cellular, or queue it for Wi-Fi?")
+        .sheet(isPresented: $showSignIn) {
+            SignInView()
         }
         .navigationDestination(isPresented: $goToStatus) {
             if let render {
                 RenderStatusView(listing: listing, render: render)
             }
         }
+        .confirmationDialog("Render this \(space.spaceNoun) again?",
+                            isPresented: $showRerenderConfirm, titleVisibility: .visible) {
+            Button("Render again") { start() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This replaces the current tour with a new render using these settings. A published link keeps working until the new tour is published.")
+        }
+        .task(id: auth.isSignedIn) { await loadEntitlements() }
+        .task { await detectSourceIfNeeded() }
     }
 
     // MARK: - Sections
 
     private var captureSummary: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("YOUR VIDEO").font(.rpKicker).foregroundStyle(Theme.inkDim)
             HStack(spacing: 14) {
-                Image(systemName: asset.isDrone ? "airplane" : "video.fill")
+                Image(systemName: sourceKind == .drone ? "airplane" : "video.fill")
                     .font(.system(size: 22))
                     .foregroundStyle(Theme.accent)
                     .frame(width: 44, height: 44)
@@ -85,15 +110,28 @@ struct ReviewSubmitView: View {
                             Label("Gyro sidecar", systemImage: "gyroscope")
                                 .foregroundStyle(Theme.good)
                         }
-                        if asset.isDrone {
-                            Text("Drone — skips stabilization")
-                        }
                     }
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                 }
                 Spacer()
             }
+
+            Picker("Footage", selection: $sourceKind) {
+                ForEach(SourceKind.allCases) { kind in
+                    Text(kind.label).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: sourceKind) { _ in Haptics.selection() }
+            .accessibilityLabel(Text("Footage type"))
+
+            Text(sourceKind == .drone
+                 ? "Drone clips are already smooth: no stabilization, a gentle 1.25× glide."
+                 : "Handheld walks get stabilized and retimed to a 2× glide.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
@@ -101,10 +139,10 @@ struct ReviewSubmitView: View {
 
     private var roomTags: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(SpaceType.current == .realEstate ? "ROOMS" : "AREAS")
+            Text(space == .realEstate ? "ROOMS" : "AREAS")
                 .font(.rpKicker).foregroundStyle(Theme.inkDim)
             if asset.roomTags.isEmpty {
-                Text("Tag areas on the video so \(SpaceType.current.customerNoun) can tap a dot and jump straight to \(SpaceType.current.quickTags.prefix(2).map { $0.lowercased() }.joined(separator: " or ")).")
+                Text("Tag areas on the video so \(space.customerNoun) can tap a dot and jump straight to \(space.quickTags.prefix(2).map { $0.lowercased() }.joined(separator: " or ")).")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             }
@@ -129,8 +167,8 @@ struct ReviewSubmitView: View {
                 showRoomTagger = true
             } label: {
                 Label(asset.roomTags.isEmpty
-                      ? (SpaceType.current == .realEstate ? "Tag rooms on the video" : "Tag areas on the video")
-                      : (SpaceType.current == .realEstate ? "Edit room tags" : "Edit area tags"),
+                      ? (space == .realEstate ? "Tag rooms on the video" : "Tag areas on the video")
+                      : (space == .realEstate ? "Edit room tags" : "Edit area tags"),
                       systemImage: "mappin.and.ellipse")
                     .font(.rpBody.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -147,233 +185,185 @@ struct ReviewSubmitView: View {
         VStack(alignment: .leading, spacing: 10) {
             Text("PICK YOUR QUALITY").font(.rpKicker).foregroundStyle(Theme.inkDim)
             ForEach(Render.Tier.allCases) { t in
-                Button {
-                    // Match the design-style picker below: the fill/border glide
-                    // between rows instead of snapping.
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
-                    Haptics.selection()
-                } label: {
-                    HStack(spacing: 12) {
-                        Image(systemName: t.systemImage)
-                            .font(.system(size: 18))
-                            .foregroundStyle(tier == t ? Theme.accent : Theme.inkDim)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(t.displayName).font(.rpHeadline).foregroundStyle(Theme.ink)
-                            Text(t.blurb)
-                                .font(.rpCaption)
-                                .foregroundStyle(Theme.inkDim)
-                                .multilineTextAlignment(.leading)
-                        }
-                        Spacer()
-                        Image(systemName: tier == t ? "checkmark.circle.fill" : "circle")
-                            .font(.rpHeadline)
-                            .foregroundStyle(tier == t ? Theme.accent : Theme.inkDim)
-                    }
-                    .padding(12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .fill(tier == t ? Theme.accentSoft : Theme.fillSubtle)
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 12, style: .continuous)
-                            .strokeBorder(tier == t ? Theme.accent : Theme.border,
-                                          lineWidth: tier == t ? 1.5 : 1)
-                    )
-                }
-                .buttonStyle(.plain)
+                tierRow(t)
             }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .card()
-    }
-
-    private var enhancementsCard: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("EXTRAS").font(.rpKicker).foregroundStyle(Theme.inkDim)
-
-            // Declutter toggle
-            Toggle(isOn: $enhancements.declutter.animation()) {
-                HStack(spacing: 12) {
-                    Image(systemName: "sparkles.rectangle.stack")
-                        .font(.system(size: 18))
-                        .foregroundStyle(enhancements.declutter ? Theme.accent : Theme.inkDim)
-                        .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        // Honest copy: today's AI declutter runs on listing PHOTOS
-                        // (ai-photo). Full-video declutter isn't wired into the tour
-                        // flow yet (Bria caps video input at <5 s) — no future
-                        // promises in user-facing copy (App Store 2.3.1).
-                        Text("AI declutter (photos)")
-                            .font(.rpHeadline)
-                        Text("Removes clutter and personal items from your listing photos with AI.")
-                            .font(.rpCaption)
-                            .foregroundStyle(Theme.inkDim)
-                    }
-                }
-            }
-            .tint(Theme.accent)
-            .onChange(of: enhancements.declutter) { _ in Haptics.selection() }
-
-            Divider()
-
-            // Design style picker
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text("Design style")
-                        .font(.rpHeadline)
-                    Spacer()
-                    if enhancements.style != .asIs {
-                        Text("Included")
+            if aiTiersLocked {
+                HStack(spacing: 8) {
+                    Text(lockReason)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if Config.enableAuth && !auth.isSignedIn {
+                        Spacer(minLength: 4)
+                        Button("Sign in") { showSignIn = true }
                             .font(.rpCaption.weight(.semibold))
                             .foregroundStyle(Theme.accent)
                     }
                 }
-                Text("Give the rooms new furniture and decor in a style you pick. Walls and windows stay exactly the same.")
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.inkDim)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(DesignStyle.allCases) { style in
-                            Button {
-                                withAnimation(.spring(response: 0.3)) { enhancements.style = style }
-                                Haptics.selection()
-                            } label: {
-                                VStack(spacing: 6) {
-                                    Image(systemName: style.systemImage)
-                                        .font(.system(size: 20))
-                                        .foregroundStyle(enhancements.style == style ? Theme.accent : Theme.inkDim)
-                                    Text(style.displayName)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(enhancements.style == style ? Theme.ink : Theme.inkDim)
-                                }
-                                .frame(width: 92, height: 74)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(enhancements.style == style ? Theme.accentSoft : Theme.fillSubtle)
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .strokeBorder(enhancements.style == style ? Theme.accent : Theme.border,
-                                                      lineWidth: enhancements.style == style ? 1.5 : 1)
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityLabel(Text("\(style.displayName) style. \(style.blurb)"))
-                        }
-                    }
-                    .padding(.vertical, 2)
-                }
-                if let selected = DesignStyle.allCases.first(where: { $0 == enhancements.style }), selected != .asIs {
-                    Text(selected.blurb)
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
-                }
-            }
-
-            if enhancements.isActive {
-                // AI preview/enhancement runs server-side after upload (see
-                // RenderStatusView). No provider keys ship in the app binary.
-                Label(SpaceType.current == .realEstate
-                      ? "Your shared tour will show a small \"Virtually staged\" label — real-estate rules require it for edited videos."
-                      : "Your shared tour will show a small \"Virtually staged\" label so viewers know the video was edited.",
-                      systemImage: "info.circle")
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.warn)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
     }
 
-    private var priceSummary: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Length band")
+    private func tierRow(_ t: Render.Tier) -> some View {
+        let locked = t.usesServerAI && aiTiersLocked
+        let selected = tier == t
+        return Button {
+            guard !locked else { return }
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
+            Haptics.selection()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: t.systemImage)
+                    .font(.system(size: 18))
+                    .foregroundStyle(selected ? Theme.accent : Theme.inkDim)
+                    .frame(width: 28)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(t.displayName).font(.rpHeadline).foregroundStyle(Theme.ink)
+                    Text(t.blurb)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.leading)
+                }
                 Spacer()
-                Text(band.name).foregroundStyle(Theme.inkDim)
-            }
-            HStack {
-                Text("Tier · \(tier.displayName)")
-                Spacer()
-                Text("Included").foregroundStyle(Theme.inkDim)
-            }
-            if enhancements.declutter {
-                HStack {
-                    Text("AI declutter (photos)")
-                    Spacer()
-                    Text("Included").foregroundStyle(Theme.inkDim)
+                if locked {
+                    Text("Team plan")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.inkDim)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(Theme.fillSubtle, in: Capsule())
+                } else {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.rpHeadline)
+                        .foregroundStyle(selected ? Theme.accent : Theme.inkDim)
                 }
             }
-            if enhancements.style != .asIs {
-                HStack {
-                    Text("Restage · \(enhancements.style.displayName)")
-                    Spacer()
-                    Text("Included").foregroundStyle(Theme.inkDim)
+            .padding(12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selected ? Theme.accentSoft : Theme.fillSubtle)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(selected ? Theme.accent : Theme.border,
+                                  lineWidth: selected ? 1.5 : 1)
+            )
+            .opacity(locked ? 0.55 : 1)
+        }
+        .buttonStyle(.plain)
+        .disabled(locked)
+        .accessibilityLabel(Text(locked ? "\(t.displayName). Team plan." : t.displayName))
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+    }
+
+    @ViewBuilder private var submitSection: some View {
+        if isRendering {
+            VStack(spacing: 10) {
+                PrimaryButton(title: "See progress", systemImage: "gearshape.2") {
+                    render = model.renders[listing.id]
+                        ?? Render(listingID: listing.id, tier: tier, durationS: asset.durationS)
+                    goToStatus = true
                 }
+                Text("This \(space.spaceNoun) is rendering right now.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
             }
-            Divider()
-            HStack {
-                Text("Your plan").font(.rpHeadline)
-                Spacer()
-                Text("Early access").font(.rpHeadline).foregroundStyle(Theme.accent)
+        } else if hasTour {
+            VStack(spacing: 10) {
+                NavigationLink {
+                    FlythroughDetailView(listing: listing)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "play.fill")
+                        Text("View tour").fontWeight(.semibold)
+                    }
+                    .font(.body)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 16)
+                    .background(Theme.accent)
+                    .foregroundStyle(Color.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(ScalePressStyle())
+                SecondaryButton(title: "Render again with these settings", systemImage: "arrow.clockwise") {
+                    showRerenderConfirm = true
+                }
+                Text("This \(space.spaceNoun) already has a tour.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+        } else {
+            VStack(spacing: 10) {
+                PrimaryButton(title: "Create my tour", systemImage: "sparkles") { start() }
+                Text("Renders right on your phone. Publishing the share link needs a free sign-in.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
             }
         }
-        .font(.rpBody)
-        .foregroundStyle(Theme.ink)
-        .card()
+    }
+
+    // MARK: - Data
+
+    private func loadEntitlements() async {
+        guard Config.useLiveBackend else { return }
+        entitlementsChecked = false
+        guard !Config.enableAuth || auth.isSignedIn else {
+            entitlements = nil
+            entitlementsChecked = true
+            if tier != .smooth { tier = .smooth }
+            return
+        }
+        let summary = try? await model.api.me()
+        entitlements = summary?.entitlements
+        entitlementsChecked = true
+        if aiTiersLocked && tier != .smooth { tier = .smooth }
+    }
+
+    /// Prefill Handheld/Drone from the file: DJI/Autel/Skydio/Parrot in the
+    /// container metadata (make/model/software) or a DJI-style filename.
+    private func detectSourceIfNeeded() async {
+        guard !didDetectSource else { return }
+        didDetectSource = true
+        if asset.isDrone { sourceKind = .drone; return }
+        if await Self.looksLikeDrone(asset.localURL) { sourceKind = .drone }
+    }
+
+    static func looksLikeDrone(_ url: URL) async -> Bool {
+        let makers = ["DJI", "AUTEL", "SKYDIO", "PARROT", "HASSELBLAD"]
+        let name = url.lastPathComponent.uppercased()
+        if makers.contains(where: { name.hasPrefix($0) }) { return true }
+        let av = AVURLAsset(url: url)
+        var strings: [String] = []
+        if let items = try? await av.load(.metadata) {
+            for item in items {
+                if let s = try? await item.load(.stringValue), !s.isEmpty { strings.append(s) }
+            }
+        }
+        let joined = strings.joined(separator: " ").uppercased()
+        return makers.contains { joined.contains($0) }
     }
 
     // MARK: - Submit
 
-    private func submit() {
-        if uploads.shouldWarnCellular(bytes: asset.bytes) {
-            showCellularPrompt = true
-        } else {
-            start(cellularApproved: false)
-        }
-    }
+    /// Store the asset (with the explicit footage type), remember the render
+    /// settings, and hand the work to the coordinator — it owns the task, so
+    /// navigation can't cancel or restart it. Then show progress.
+    private func start() {
+        var a = asset
+        a.isDrone = (sourceKind == .drone)
+        asset = a
+        model.assets[listing.id] = a               // so the flythrough plays YOUR video
 
-    private func start(cellularApproved: Bool) {
-        model.assets[listing.id] = asset            // so the flythrough plays YOUR video
-
-        // LIVE (local-first + cloud-publish): the on-device render IS the tour.
-        // Do NOT upload the raw capture and do NOT create a server render job here
-        // (that was the Python-worker path). Rendering + publishing happen in
-        // RenderStatusView → AppModel.publishTour after the on-device render.
-        if Config.useLiveBackend {
-            self.render = Render(listingID: listing.id, tier: tier,
-                                 durationS: asset.durationS, enhancements: enhancements)
-            model.setStatus(.processing, for: listing.id)
-            goToStatus = true
-            return
-        }
-
-        // OFFLINE / worker path (unchanged): upload the raw capture + create the
-        // render job so the simulated pipeline can track it.
-        let meta = UploadMetadata(durationS: asset.durationS, fps: asset.fps,
-                                  width: asset.width, height: asset.height,
-                                  isDrone: asset.isDrone, hasGyro: asset.hasGyro,
-                                  bytes: asset.bytes)
-        uploads.begin(fileURL: asset.localURL, listingID: listing.id,
-                      metadata: meta, cellularApproved: cellularApproved)
-        model.setStatus(.uploading, for: listing.id)
-        Task {
-            // Contract requires asset_id on POST /renders. We pass the local
-            // CaptureAsset.id today; TODO thread the server asset_id returned by
-            // createUpload once upload→render sequencing is wired for live.
-            let r = try? await model.api.createRender(listingID: listing.id,
-                                                      assetID: asset.id,
-                                                      tier: tier,
-                                                      durationS: asset.durationS,
-                                                      enhancements: enhancements)
-            await MainActor.run {
-                self.render = r ?? Render(listingID: listing.id, tier: tier,
-                                          durationS: asset.durationS, enhancements: enhancements)
-                model.setStatus(.processing, for: listing.id)
-                goToStatus = true
-            }
-        }
+        let chosenTier: Render.Tier = (tier.usesServerAI && aiTiersLocked) ? .smooth : tier
+        // Decision A5: enhancements always default — nothing restages video.
+        let r = Render(listingID: listing.id, tier: chosenTier, durationS: a.durationS, enhancements: Enhancements())
+        model.renders[listing.id] = r
+        render = r
+        model.setLastError(nil, for: listing.id)
+        model.renderCoordinator.start(listing: listing, asset: a)   // sets .processing
+        goToStatus = true
     }
 }
 
@@ -544,10 +534,18 @@ struct RoomTaggerView: View {
         current = t
     }
 
+    /// Drop a marker at the playhead. A second tap at the same moment (within
+    /// half a second) renames the existing marker instead of stacking a second
+    /// dot the player could never activate.
     private func addTag(_ rawName: String) {
         let name = rawName.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return }
-        tags.append(RoomTag(name: name, tMs: Int(current * 1000)))
+        let tMs = Int((current * 1000).rounded())
+        if let i = tags.firstIndex(where: { abs($0.tMs - tMs) < 500 }) {
+            tags[i].name = name
+        } else {
+            tags.append(RoomTag(name: name, tMs: tMs))
+        }
         Haptics.success()
     }
 
@@ -565,17 +563,19 @@ struct PlayerLayerView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> PlayerContainer {
         let v = PlayerContainer()
-        v.playerLayer.player = player
-        v.playerLayer.videoGravity = .resizeAspect
+        v.playerLayer?.player = player
+        v.playerLayer?.videoGravity = .resizeAspect
         return v
     }
 
     func updateUIView(_ uiView: PlayerContainer, context: Context) {
-        uiView.playerLayer.player = player
+        uiView.playerLayer?.player = player
     }
 
     final class PlayerContainer: UIView {
         override class var layerClass: AnyClass { AVPlayerLayer.self }
-        var playerLayer: AVPlayerLayer { layer as! AVPlayerLayer }
+        /// Always an AVPlayerLayer thanks to `layerClass`; optional cast keeps
+        /// the file free of force-unwraps.
+        var playerLayer: AVPlayerLayer? { layer as? AVPlayerLayer }
     }
 }

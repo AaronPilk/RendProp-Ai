@@ -10,9 +10,12 @@
 
 import type { Portfolio, PortfolioTour } from "./types";
 import {
+  absolutize,
   escapeAttr,
   escapeHtml,
   extractAgent,
+  looksLikeEmail,
+  safeUrl,
   spaceLabel,
   TOKENS_CSS,
 } from "./html";
@@ -41,20 +44,27 @@ function cardTitle(t: PortfolioTour): string {
   );
 }
 
+function pos(n: number | null | undefined): n is number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0;
+}
+
 function cardMeta(t: PortfolioTour): string {
-  if (t.price) return t.price;
+  // 0 = unknown (the app never invents beds/baths) → skip, like the tour page.
+  if (t.price && !/^\$?0(\.0+)?$/.test(t.price.trim()) && (t.price_cents == null || pos(t.price_cents))) return t.price;
   const bits: string[] = [];
-  if (t.beds != null) bits.push(`${t.beds} bd`);
-  if (t.baths != null) bits.push(`${String(t.baths)} ba`);
-  if (t.sqft != null) bits.push(`${fmtInt(t.sqft)} sqft`);
+  if (pos(t.beds)) bits.push(`${t.beds} bd`);
+  if (pos(t.baths)) bits.push(`${String(t.baths)} ba`);
+  if (pos(t.sqft)) bits.push(`${fmtInt(t.sqft)} sqft`);
   if (bits.length) return bits.join(" · ");
+  if (t.tagline && t.tagline !== cardTitle(t)) return t.tagline;
   return spaceLabel(t.space_type);
 }
 
 function renderCard(t: PortfolioTour): string {
   const href = `/f/${encodeURIComponent(t.slug)}`;
-  const thumb = t.poster
-    ? `<img src="${escapeAttr(t.poster)}" alt="" loading="lazy" decoding="async">`
+  const poster = safeUrl(t.poster);
+  const thumb = poster
+    ? `<img src="${escapeAttr(poster)}" alt="" loading="lazy" decoding="async">`
     : `<span class="ph" aria-hidden="true">&#9654;</span>`;
   const badge = t.staged ? `<span class="badge">&#10022; Staged</span>` : "";
   return `<a class="card" href="${escapeAttr(href)}">
@@ -96,8 +106,20 @@ export function renderPortfolioPage(data: Portfolio): string {
   const agent = extractAgent(data.agent_card || {});
   const tours = normalizeTours(data);
 
-  const avatar = agent.photo
-    ? `<div class="avatar"><img src="${escapeAttr(agent.photo)}" alt="${escapeAttr(agent.name || "Agent")}" loading="lazy" decoding="async"></div>`
+  // extractAgent already scheme-checks the photo (safeUrl) and refuses an
+  // email-looking name. og:image must be absolute for scrapers, so resolve a
+  // root-relative photo against the first tour's share URL (else rendprop.com).
+  const shareBase = tours.map((t) => t.share_url || "").find((u) => !!u) || "";
+  const photo = agent.photo;
+  const ogPhoto = absolutize(photo, shareBase);
+
+  // The org name is never an email (decision A14); the org.name fallback is
+  // only used when it is a real business name.
+  const orgName = data.org?.name && !looksLikeEmail(data.org.name) ? String(data.org.name).trim() : "";
+  const name = agent.name || agent.company || orgName || "Portfolio";
+
+  const avatar = photo
+    ? `<div class="avatar"><img src="${escapeAttr(photo)}" alt="${escapeAttr(name)}" loading="lazy" decoding="async"></div>`
     : `<div class="avatar">${escapeHtml(agent.initials)}</div>`;
 
   const socials = agent.socials
@@ -106,10 +128,10 @@ export function renderPortfolioPage(data: Portfolio): string {
   const emailLink = agent.email ? `<a href="mailto:${escapeAttr(agent.email)}">Email</a>` : "";
   const socialRow = socials || emailLink ? `<div class="psocial">${socials}${emailLink}</div>` : "";
 
-  const name = agent.name || "Portfolio";
+  const company = agent.company && agent.company !== name ? agent.company : "";
   const accentOverride = agent.accent ? `<style>:root{--accent:${agent.accent};}</style>` : "";
-  const title = `${name}${agent.company ? " · " + agent.company : ""} — Rendprop`;
-  const desc = `${name}${agent.company ? " at " + agent.company : ""} — ${tours.length} tour${tours.length === 1 ? "" : "s"} on Rendprop.`;
+  const title = `${name}${company ? " · " + company : ""} — Rendprop`;
+  const desc = `${name}${company ? " at " + company : ""} — ${tours.length} tour${tours.length === 1 ? "" : "s"} on Rendprop.`;
 
   const grid = tours.length
     ? `<div class="grid">${tours.map(renderCard).join("")}</div>`
@@ -127,7 +149,7 @@ export function renderPortfolioPage(data: Portfolio): string {
 <meta property="og:description" content="${escapeAttr(desc)}">
 <meta property="og:type" content="profile">
 <meta name="twitter:card" content="summary">
-${agent.photo ? `<meta property="og:image" content="${escapeAttr(agent.photo)}">` : ""}
+${ogPhoto ? `<meta property="og:image" content="${escapeAttr(ogPhoto)}">` : ""}
 ${accentOverride}
 <style>${PORTFOLIO_CSS}</style>
 </head>
@@ -138,7 +160,8 @@ ${accentOverride}
       ${avatar}
       <div>
         <div class="pname">${escapeHtml(name)}</div>
-        ${agent.company ? `<div class="pcompany">${escapeHtml(agent.company)}</div>` : ""}
+        ${agent.title ? `<div class="pcompany">${escapeHtml(agent.title)}</div>` : ""}
+        ${company ? `<div class="pcompany">${escapeHtml(company)}</div>` : ""}
         ${agent.handle ? `<div class="phandle">@${escapeHtml(agent.handle)}</div>` : ""}
       </div>
     </header>

@@ -64,6 +64,22 @@ export function safeUrl(v: unknown, extraSchemes: string[] = []): string {
   return allowed.includes(scheme) ? s : "";
 }
 
+/** Same shape the leads function accepts as an email. Used to keep a sign-in
+ *  address from ever being printed as a person's or business's NAME (audit
+ *  F-H-05: `orgs.name` used to be seeded with the account email). */
+export function looksLikeEmail(v: unknown): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(v ?? "").trim());
+}
+
+/** Resolve a root-relative URL against the share URL's origin (social scrapers
+ *  need absolute og:image URLs). Absolute URLs pass through untouched. */
+export function absolutize(url: string, shareUrl: string | null | undefined): string {
+  if (!url || !url.startsWith("/")) return url;
+  let origin = "https://rendprop.com";
+  try { if (shareUrl) origin = new URL(shareUrl).origin; } catch { /* keep default */ }
+  return origin + url;
+}
+
 /** "party_size" -> "Party Size". */
 export function humanize(key: string): string {
   return String(key || "")
@@ -107,9 +123,12 @@ export function spaceLabel(spaceType: string | null | undefined): string {
 
 export interface AgentModel {
   name: string;
+  /** Job title / role line (brand_kit.title) — shown under the name when set. */
+  title: string;
   company: string;
   phone: string;
   email: string;
+  /** Already scheme-checked (safeUrl) — "" when absent or unsafe. */
   photo: string;
   handle: string;
   accent: string | null;
@@ -175,20 +194,34 @@ export function collectSocials(agent: AgentCard): SecondaryLink[] {
   return out;
 }
 
+/** A publishable display string: trimmed, and never an email address. */
+function displayName(...vals: unknown[]): string {
+  const s = first(...vals);
+  return looksLikeEmail(s) ? "" : s;
+}
+
 export function extractAgent(agent: AgentCard): AgentModel {
   const a = agent || {};
-  const name = first(a.name, a.agent_name, a.full_name, a.display_name);
-  const company = first(
+  // The tours/portfolio functions already refuse to publish an email as the
+  // name (decision A14); this is defence in depth for older payloads.
+  const name = displayName(a.name, a.agent_name, a.full_name, a.display_name);
+  const title = displayName(a.title, a.role, a.job_title);
+  const company = displayName(
     a.company, a.brokerage, a.subtitle, a.team,
     a.org_name, a.business_name, a.org, a.tagline,
   );
   const phone = first(a.phone, a.phone_number, a.tel, a.mobile);
   const email = first(a.email);
-  const photo = first(a.photo, a.photo_url, a.avatar, a.avatar_url, a.image, a.image_url, a.headshot);
+  // headshot_url / logo_url are the keys PATCH /me/brand allow-lists; the rest
+  // are legacy spellings kept for older brand kits.
+  const photo = safeUrl(first(
+    a.headshot_url, a.logo_url, a.avatar_url, a.photo_url, a.image_url,
+    a.photo, a.avatar, a.image, a.headshot,
+  ));
   const handle = first(a.handle);
   const accent = safeColor(first(a.accent, a.accent_color, a.color, a.brand_color));
   return {
-    name, company, phone, email, photo, handle, accent,
+    name, title, company, phone, email, photo, handle, accent,
     initials: initialsFrom(name || company),
     socials: collectSocials(a),
   };
@@ -252,7 +285,17 @@ ${headMeta(opts.title)}
 </html>`;
 }
 
-export function notFoundPage(): string {
+/** Branded 404. `kind` picks the copy: a missing/unpublished tour vs any
+ *  other unknown path (audit F-H-21: "/anything" used to say "tour not found"). */
+export function notFoundPage(kind: "tour" | "page" = "tour"): string {
+  if (kind === "page") {
+    return centeredPage({
+      title: "Page not found — Rendprop",
+      heading: "There's nothing at this address",
+      body: "The link may be mistyped. Tours live at rendprop.com/f/… and the rest of the site is at rendprop.com.",
+      cta: { label: "Go to Rendprop", href: "https://rendprop.com" },
+    });
+  }
   return centeredPage({
     title: "Tour not found — Rendprop",
     heading: "This tour isn't available",
@@ -261,10 +304,12 @@ export function notFoundPage(): string {
   });
 }
 
-export function errorPage(): string {
+/** Branded 5xx. Used for upstream (502) and for any exception the Worker
+ *  itself throws (500) — a viewer must never see Cloudflare's raw error page. */
+export function errorPage(kind: "tour" | "page" = "tour"): string {
   return centeredPage({
     title: "Temporarily unavailable — Rendprop",
-    heading: "We couldn't load this tour",
+    heading: kind === "tour" ? "We couldn't load this tour" : "Something went wrong",
     body: "Something went wrong on our side. Please try again in a moment.",
     cta: { label: "Retry", href: "" },
   });

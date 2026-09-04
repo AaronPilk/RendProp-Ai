@@ -46,16 +46,27 @@ export interface Cta {
 }
 
 export interface TourListing {
+  /** Real estate: the street address. Every other space type: the BUSINESS
+   *  NAME (the app stores the name in this column for non-RE listings). */
   address: string | null;
   tagline: string | null;
+  /** Freeform bag. Non-RE listings carry the camelCase keys from the iOS
+   *  `SpaceType.detailFields` (cuisineType, membershipPrice, weeklySpecial…);
+   *  the demo/RE microsite reads snake_case editorial keys (story, gallery…). */
   details: Record<string, unknown>;
+  /** 0 means "unknown" for real estate (the app never invents beds/baths) and
+   *  is meaningless for other space types — render only when > 0. */
   beds: number | null;
   baths: number | null;
   sqft: number | null;
+  /** 0/null = no price (non-RE listings, or an RE listing without one). */
   price_cents: number | null;
   price: string | null;
   lat: number | null;
   lng: number | null;
+  /** Defensive mirrors of the top-level fields (the tours function may nest them). */
+  sold_at?: string | null;
+  status?: string | null;
 }
 
 /** brand_kit (freeform jsonb) spread + name/handle. We read keys defensively. */
@@ -87,6 +98,16 @@ export interface Tour {
   staged: boolean;
   staged_disclosure: string | null;
   disclosure_chip: string | null;
+  /** ISO timestamp when the listing was marked sold (real estate) / archived
+   *  (other types). Non-null → the page shows a SOLD / Archived badge and, for
+   *  real estate, swaps "Book a showing" for "Ask about similar homes". */
+  sold_at?: string | null;
+  /** listings.status — 'draft'|'capturing'|'processing'|'ready'|'expired'|'archived'. */
+  status?: string | null;
+  /** Convenience booleans the tours function derives from the two above. */
+  sold?: boolean;
+  archived?: boolean;
+  published_at?: string | null;
 }
 
 /** One card in the portfolio grid. The deployed portfolio function sends

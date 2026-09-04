@@ -39,15 +39,16 @@ Optional: `TOUR_CACHE_TTL` (seconds of edge cache for rendered HTML; default 60,
 
 ## 2. First deploy → test on workers.dev
 
-The custom routes in `wrangler.toml` need the `rendprop.com` zone active on your
-account. To test **before** DNS is ready, deploy without routes:
+The custom route in `wrangler.toml` needs the `rendprop.com` zone active on your
+account. To test **before** DNS is ready, deploy without the route:
 
 ```bash
 npx wrangler deploy          # if the zone isn't on this account yet, temporarily
-                             # comment out the `routes = [...]` block first
+                             # comment out the `routes = [...]` block AND set
+                             # `workers_dev = true` first (prod keeps it false)
 ```
 
-`workers_dev = true` is set, so the Worker is immediately live at:
+With `workers_dev = true` the Worker is immediately live at:
 
 ```
 https://rendprop-tour-host.<your-subdomain>.workers.dev
@@ -70,22 +71,25 @@ row for today shows the view.
 ## 3. Production routes on rendprop.com
 
 Once `rendprop.com` is an active zone on this Cloudflare account (nameservers on
-Cloudflare), keep/restore the routes block in `wrangler.toml`:
+Cloudflare), keep/restore the routes block in `wrangler.toml` (and `workers_dev = false`):
 
 ```toml
 routes = [
-  { pattern = "rendprop.com/f/*", zone_name = "rendprop.com" },
-  { pattern = "rendprop.com/a/*", zone_name = "rendprop.com" },
+  { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
 ]
 ```
 
-and redeploy:
+and redeploy **from a machine whose `node_modules` matches its platform** (the
+tree is platform-coupled — never copy a Linux `node_modules` to the Mac):
 
 ```bash
+rm -rf node_modules && npm ci
+npm run typecheck
 npx wrangler deploy
 ```
 
-The Worker owns only `/f/*` and `/a/*`; the marketing site keeps everything else.
+The Worker owns the whole apex: the static marketing site is served from `./public`
+by Workers Static Assets, everything else (`/f/*`, `/a/*`, `/terms`, `/privacy`) by the script.
 
 ## 4. Day-2
 

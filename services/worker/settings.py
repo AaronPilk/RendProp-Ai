@@ -28,16 +28,48 @@ from pathlib import Path
 
 # ── .env loader (stdlib only, mirrors the pipeline's) ─────────────────────────
 
+def parse_env_line(line: str) -> tuple[str, str] | None:
+    """One dotenv line → (key, value), or None for blanks/comments.
+
+    Handles the shapes people actually write (audit F-G-11: a trailing
+    ``# comment`` used to become part of the value, so ``MAX_GEN_COST_PER_JOB_CENTS=2500
+    # cap`` silently fell back to the default):
+      • ``export KEY=value``
+      • ``KEY="quoted value"`` / ``KEY='quoted'`` (quotes stripped, ``#`` inside kept)
+      • ``KEY=value   # inline comment`` (comment stripped — a ``#`` preceded by
+        whitespace ends an unquoted value; ``a#b`` stays intact)
+    """
+    s = line.strip()
+    if not s or s.startswith("#") or "=" not in s:
+        return None
+    if s.startswith("export "):
+        s = s[len("export "):].lstrip()
+    k, _, v = s.partition("=")
+    k = k.strip()
+    if not k or any(ch.isspace() for ch in k):
+        return None
+    v = v.strip()
+    if v[:1] in ('"', "'"):
+        q = v[0]
+        end = v.find(q, 1)
+        v = v[1:end] if end != -1 else v[1:]
+    else:
+        for i, ch in enumerate(v):
+            if ch == "#" and (i == 0 or v[i - 1].isspace()):
+                v = v[:i].rstrip()
+                break
+    return k, v
+
+
 def load_env(path: Path | None = None) -> None:
     """Populate os.environ from a .env file if present (does NOT override)."""
     path = path or (Path(__file__).parent / ".env")
     if not path.exists():
         return
     for line in path.read_text().splitlines():
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            k, _, v = line.partition("=")
-            os.environ.setdefault(k.strip(), v.strip())
+        kv = parse_env_line(line)
+        if kv:
+            os.environ.setdefault(kv[0], kv[1])
 
 
 # Load worker/.env immediately so anything imported after us (including the AI
@@ -46,16 +78,24 @@ load_env()
 
 
 def _int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
     try:
-        return int(os.environ.get(name, default))
+        return int(raw.strip())
     except (TypeError, ValueError):
+        print(f"⚠ {name}={raw!r} is not an integer; using default {default}")
         return default
 
 
 def _float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or raw.strip() == "":
+        return default
     try:
-        return float(os.environ.get(name, default))
+        return float(raw.strip())
     except (TypeError, ValueError):
+        print(f"⚠ {name}={raw!r} is not a number; using default {default}")
         return default
 
 
@@ -104,7 +144,11 @@ class Settings:
     encode_fps: int = 60
     encode_bitrate: str = "14M"
     encode_preset: str = "medium"
-    tonemap_hdr: bool = False        # HDR->SDR tonemap (needs zscale/tonemap); TODO
+    # HDR→SDR tonemap for PQ/HLG (BT.2020) sources. The chain is inserted only
+    # when ffprobe says the SOURCE is HDR (never for SDR, never for untagged
+    # clips) and only if the ffmpeg build has zscale+tonemap. TONEMAP_HDR=0 opts
+    # out entirely (output is then re-tagged bt709 and looks washed out).
+    tonemap_hdr: bool = True
 
     # ── AI pipeline reuse ──
     pipeline_dir: str = ""           # default: ../pipeline relative to this file
@@ -151,7 +195,7 @@ class Settings:
             encode_fps=_int("ENCODE_FPS", 60),
             encode_bitrate=os.environ.get("ENCODE_BITRATE", "14M"),
             encode_preset=os.environ.get("ENCODE_PRESET", "medium"),
-            tonemap_hdr=_bool("TONEMAP_HDR", False),
+            tonemap_hdr=_bool("TONEMAP_HDR", True),
             pipeline_dir=pipeline_dir,
             hero_seconds=_int("HERO_SECONDS", 5),
             render_compute_cents_per_min=_float("RENDER_COMPUTE_CENTS_PER_MIN", 0.5),

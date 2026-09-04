@@ -17,10 +17,10 @@ struct OnboardingView: View {
          "Twilight skies, decluttered rooms, virtual staging — pro listing photos from the ones you already have."),
         ("film.stack", RPGradient.reel,
          "Reels and floor plans,\ndone for you.",
-         "AI animates your photos into a social-ready reel, and your phone scans a real floor plan."),
+         "AI animates your photos into a social-ready reel. On iPhones with LiDAR, you can scan a floor plan too — or upload one."),
         ("link", RPGradient.share,
          "One link.\nReal leads.",
-         "Share your tour anywhere. Your card rides along, and every viewer can reach you in a tap."),
+         "Share your tour anywhere. Your card rides along, every viewer can reach you in a tap, and their inquiries land in Leads."),
     ]
 
     var body: some View {
@@ -103,7 +103,7 @@ struct OnboardingView: View {
                     .font(.rpLargeTitle)
                     .foregroundStyle(Theme.ink)
                     .multilineTextAlignment(.center)
-                Text("We'll tailor the app to your business. You can change this anytime in Settings.")
+                Text("We'll tailor the app to your business. You can change this anytime from the menu at the top of the Home tab, or in Settings.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)

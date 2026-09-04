@@ -1,23 +1,80 @@
-// HTTP utilities shared by every function: JSON responses, a typed error class,
-// request-body parsing, path routing (Supabase strips nothing, so we strip the
-// function name ourselves), a URL-safe slug generator, and a best-effort
-// in-memory rate limiter for the public routes.
+// HTTP utilities shared by every function: JSON responses, a typed error class
+// with a machine-readable code, request-body parsing, path routing (Supabase
+// strips nothing, so we strip the function name ourselves), a URL-safe slug
+// generator, and a best-effort in-memory rate limiter for the public routes.
 
 import { corsHeaders } from "./cors.ts";
 
-/** An error that carries an HTTP status. Throw it anywhere; respondError maps it. */
+/**
+ * Stable machine-readable error codes (wire contract B4). The iOS client keys
+ * its UI on these — `plan_required` / `quota_exceeded` → "Upgrade plan",
+ * `unauthorized` → sign-in prompt, `conflict` on /complete → treat as success,
+ * `rate_limited` → "try again in a few minutes". Keep the set small and stable.
+ */
+export type ErrorCode =
+  | "validation"
+  | "unauthorized"
+  | "forbidden"
+  | "not_found"
+  | "conflict"
+  | "plan_required"
+  | "quota_exceeded"
+  | "rate_limited"
+  | "payload_too_large"
+  | "upstream"
+  | "internal";
+
+/** Default code for a status when a throw site doesn't say otherwise. */
+export function codeForStatus(status: number): ErrorCode {
+  switch (status) {
+    case 400:
+    case 405:
+    case 422:
+      return "validation";
+    case 401:
+      return "unauthorized";
+    case 402:
+      return "plan_required";
+    case 403:
+      return "forbidden";
+    case 404:
+      return "not_found";
+    case 409:
+      return "conflict";
+    case 413:
+      return "payload_too_large";
+    case 429:
+      return "rate_limited";
+    case 502:
+    case 503:
+    case 504:
+      return "upstream";
+    default:
+      return status >= 500 ? "internal" : "validation";
+  }
+}
+
+/**
+ * An error that carries an HTTP status + a machine-readable code (+ optional
+ * structured details such as {feature, used, cap, plan} for quota errors).
+ * Throw it anywhere; respondError maps it to `{ error, code, ...details }`.
+ */
 export class HttpError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code: ErrorCode;
+  details?: Record<string, unknown>;
+  constructor(status: number, message: string, code?: ErrorCode, details?: Record<string, unknown>) {
     super(message);
     this.status = status;
+    this.code = code ?? codeForStatus(status);
+    this.details = details;
     this.name = "HttpError";
   }
 }
 
 /** Throw an HttpError unless `cond` is truthy. */
-export function assert(cond: unknown, status: number, msg: string): asserts cond {
-  if (!cond) throw new HttpError(status, msg);
+export function assert(cond: unknown, status: number, msg: string, code?: ErrorCode): asserts cond {
+  if (!cond) throw new HttpError(status, msg, code);
 }
 
 /** JSON response with CORS headers attached. */
@@ -36,14 +93,17 @@ export function json(
   });
 }
 
-/** Map any thrown value to a JSON error response. */
+/**
+ * Map any thrown value to the JSON error envelope `{ error, code, ...details }`.
+ * `error` is human copy the app may show verbatim; `code` is what it branches on.
+ */
 export function respondError(err: unknown): Response {
   if (err instanceof HttpError) {
-    return json({ error: err.message }, err.status);
+    return json({ ...(err.details ?? {}), error: err.message, code: err.code }, err.status);
   }
   console.error("Unhandled error:", err);
   const message = err instanceof Error ? err.message : "Internal Server Error";
-  return json({ error: message }, 500);
+  return json({ error: message, code: "internal" }, 500);
 }
 
 /** Parse a JSON request body, or throw a 400. */
@@ -85,6 +145,24 @@ export function nanoid(size = 12): string {
 /** Round to 4 decimal places (cost_ledger columns are numeric(_,4)). */
 export function round4(n: number): number {
   return Math.round(n * 1e4) / 1e4;
+}
+
+/**
+ * Map an `RPnnn: message` exception raised by one of the SECURITY DEFINER RPCs
+ * (create_render_job, publish_render, fail_render_job, set_render_chapters,
+ * set_lead_status, log_job_cost) to an HttpError with the right status + code.
+ * RP402 is a QUOTA when the RPC says a limit was reached, otherwise a plan
+ * boundary; RP429 from create_render_job is the in-flight/burst guard.
+ */
+export function throwRpc(message: string | undefined): never {
+  const msg = message ?? "request failed";
+  const m = /RP(\d{3}):\s*([\s\S]*)/.exec(msg);
+  if (!m) throw new HttpError(400, msg);
+  const status = Number(m[1]);
+  const text = m[2].trim() || msg;
+  let code: ErrorCode | undefined;
+  if (status === 402) code = /limit reached|ceiling reached/i.test(text) ? "quota_exceeded" : "plan_required";
+  throw new HttpError(status, text, code);
 }
 
 // ---------------------------------------------------------------------------

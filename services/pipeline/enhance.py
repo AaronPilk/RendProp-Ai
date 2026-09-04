@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -117,20 +118,92 @@ def _maybe_analyze(ctx: JobContext, frame: bytes, analyze: bool) -> dict | None:
 
 
 # ── ffmpeg helpers (video mode) ───────────────────────────────────────────────
+# Every subprocess here carries a wall-clock timeout: the input is
+# customer-uploaded media, and a stuck demuxer used to block the worker forever.
 
-def _run(cmd: list) -> None:
-    subprocess.run(cmd, check=True, capture_output=True)
+FFPROBE_TIMEOUT_S = int(os.environ.get("FFPROBE_TIMEOUT_S", "60"))
+KEYFRAME_TIMEOUT_S = int(os.environ.get("FFMPEG_KEYFRAME_TIMEOUT_S", "120"))
+FFMPEG_BIN = os.environ.get("FFMPEG_BIN", "ffmpeg")
+FFPROBE_BIN = os.environ.get("FFPROBE_BIN", "ffprobe")
+
+# Providers cap image size (Anthropic: 5 MB / ~1568 px is the useful max); a
+# 4K keyframe is wasted tokens. Long edge for extracted keyframes.
+KEYFRAME_LONG_EDGE = int(os.environ.get("KEYFRAME_LONG_EDGE", "1568"))
+
+_HDR_TRANSFERS = {"smpte2084", "arib-std-b67"}
+_ZSCALE_TRANSFER = {"smpte2084": "smpte2084", "arib-std-b67": "arib-std-b67"}
+_ZSCALE_PRIMARIES = {"bt2020": "2020", "bt709": "709"}
+_ZSCALE_MATRIX = {"bt2020nc": "2020_ncl", "bt2020c": "2020_cl", "bt709": "709"}
+
+
+def _run(cmd: list, timeout: int = KEYFRAME_TIMEOUT_S) -> None:
+    subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)
+
+
+def probe_source(video: Path) -> dict:
+    """{duration, color_transfer, color_primaries, color_space, pix_fmt} of the
+    first video stream (strings lower-cased, '' when unknown)."""
+    out = subprocess.run(
+        [FFPROBE_BIN, "-v", "error", "-select_streams", "v:0", "-show_entries",
+         "format=duration:stream=pix_fmt,color_transfer,color_primaries,color_space",
+         "-of", "json", str(video)],
+        capture_output=True, text=True, timeout=FFPROBE_TIMEOUT_S,
+    )
+    if out.returncode != 0:
+        raise RuntimeError(f"ffprobe failed for {video}: {out.stderr.strip()[:300]}")
+    data = json.loads(out.stdout or "{}")
+    stream = (data.get("streams") or [{}])[0]
+
+    def s(k: str) -> str:
+        v = stream.get(k)
+        return str(v).strip().lower() if v not in (None, "unknown") else ""
+
+    try:
+        duration = float((data.get("format") or {}).get("duration"))
+    except (TypeError, ValueError):
+        raise RuntimeError(f"ffprobe returned no duration for {video}")
+    return {"duration": duration, "pix_fmt": s("pix_fmt"), "color_transfer": s("color_transfer"),
+            "color_primaries": s("color_primaries"), "color_space": s("color_space")}
 
 
 def probe_duration(video: Path) -> float:
-    out = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
-                          "-of", "csv=p=0", str(video)], capture_output=True, text=True)
-    return float(out.stdout.strip())
+    return probe_source(video)["duration"]
 
 
-def extract_keyframe(video: Path, t: float, out: Path) -> Path:
-    _run(["ffmpeg", "-y", "-ss", f"{t:.2f}", "-i", str(video),
-          "-frames:v", "1", "-q:v", "2", str(out)])
+def _is_hdr(info: dict) -> bool:
+    if info.get("color_transfer") in _HDR_TRANSFERS:
+        return True
+    pf = info.get("pix_fmt") or ""
+    return info.get("color_primaries") == "bt2020" and any(b in pf for b in ("10", "12", "16"))
+
+
+def keyframe_vf(info: dict | None) -> str:
+    """Filter for extracted keyframes: downscale, plus an HDR→SDR tone-map when
+    (and only when) the source is PQ/HLG — a raw 10-bit HLG frame saved as JPEG
+    is the grey, washed-out image Gemini/Claude would otherwise be judging
+    (audit F-G-03). Mirrors services/worker/ffmpeg_render.hdr_tonemap_chain."""
+    chain = [f"scale=w='min({KEYFRAME_LONG_EDGE},iw)':h='min({KEYFRAME_LONG_EDGE},ih)'"
+             ":force_original_aspect_ratio=decrease:force_divisible_by=2"]
+    if info and _is_hdr(info) and os.environ.get("TONEMAP_HDR", "1").strip().lower() not in ("0", "false", "no", "off"):
+        tin = _ZSCALE_TRANSFER.get(info.get("color_transfer", ""), "arib-std-b67")
+        pin = _ZSCALE_PRIMARIES.get(info.get("color_primaries", ""), "2020")
+        min_ = _ZSCALE_MATRIX.get(info.get("color_space", ""), "2020_ncl")
+        chain += [
+            f"zscale=tin={tin}:pin={pin}:min={min_}:t=linear:npl=100",
+            "format=gbrpf32le",
+            "zscale=p=bt709",
+            "tonemap=tonemap=hable:desat=0",
+            "zscale=t=bt709:m=bt709:r=tv",
+        ]
+    chain.append("format=yuvj420p")
+    return ",".join(chain)
+
+
+def extract_keyframe(video: Path, t: float, out: Path, info: dict | None = None) -> Path:
+    _run([FFMPEG_BIN, "-y", "-hide_banner", "-nostdin", "-ss", f"{t:.2f}", "-i", str(video),
+          "-vf", keyframe_vf(info), "-frames:v", "1", "-q:v", "2", str(out)])
+    if not out.exists():
+        raise FileNotFoundError(f"no keyframe produced at {t:.2f}s ({out.name}) — past the end of the clip?")
     return out
 
 
@@ -144,16 +217,31 @@ def _safe_name(name, fallback: str) -> str:
     return slug or fallback
 
 
-def segment_video(video: Path, chapters: list | None) -> list:
-    """Room segments from chapter tags (the app records them), else 8s slices."""
-    dur = probe_duration(video)
+def segment_video(video: Path, chapters: list | None, duration: float | None = None) -> list:
+    """Room segments from chapter tags (the app records them), else 8s slices.
+
+    Chapter names are suffixed with their index when two tags share a slug
+    (two "Bedroom" tags used to overwrite each other's stills). Chapters past
+    the end of the clip are dropped rather than producing an empty segment.
+    """
+    dur = duration if duration is not None else probe_duration(video)
     if chapters:
         segs = []
-        for i, c in enumerate(chapters):
-            start = c["t"]
-            end = chapters[i + 1]["t"] if i + 1 < len(chapters) else dur
-            segs.append({"name": _safe_name(c.get("name"), f"segment-{i + 1}"), "start": start, "end": end})
-        return segs
+        seen: dict[str, int] = {}
+        valid = [c for c in chapters if isinstance(c, dict) and isinstance(c.get("t"), (int, float)) and 0 <= c["t"] < dur]
+        for i, c in enumerate(valid):
+            start = float(c["t"])
+            end = float(valid[i + 1]["t"]) if i + 1 < len(valid) else dur
+            if end <= start:
+                continue
+            name = _safe_name(c.get("name"), f"segment-{i + 1}")
+            n = seen.get(name, 0) + 1
+            seen[name] = n
+            if n > 1:
+                name = f"{name}-{n}"
+            segs.append({"name": name, "start": start, "end": end})
+        if segs:
+            return segs
     return [{"name": f"segment-{i + 1}", "start": t, "end": min(t + 8, dur)}
             for i, t in enumerate(range(0, int(dur), 8))]
 
@@ -192,25 +280,43 @@ def enhance_image(image_path: Path, declutter: bool, style: str | None, *,
     return manifest
 
 
+# Failures that are LOCAL to one segment. A refusal from Gemini, a fal timeout,
+# an Anthropic overload, a keyframe past EOF, or an unparsable judge reply on
+# room 7 of 8 must not throw away rooms 1–6 (already paid for) — audit F-G-08.
+_SEGMENT_ERRORS = (ProviderError, ValueError, OSError, subprocess.CalledProcessError,
+                   subprocess.TimeoutExpired)
+
+
 def enhance_video(video: Path, declutter: bool, style: str | None, *,
                   chapters: list | None, hero: bool, hero_seconds: int, analyze: bool,
                   workdir: Path, job_id: str | None, org_id: str | None) -> dict:
     ctx = new_context(job_id, org_id)
-    segments = segment_video(video, chapters)
+    info = probe_source(video)
+    if _is_hdr(info):
+        print(f"→ HDR source (transfer={info['color_transfer'] or '?'}) — keyframes tone-mapped to SDR")
+    segments = segment_video(video, chapters, duration=info["duration"])
     print(f"→ {len(segments)} room segments")
     results = []
     hero_frame: bytes | None = None
     for seg in segments:
         print(f"\n■ {seg['name']} ({seg['start']:.0f}s–{seg['end']:.0f}s)")
         mid = (seg["start"] + seg["end"]) / 2
-        frame = extract_keyframe(video, mid, workdir / f"{seg['name']}.jpg")
-        source = frame.read_bytes()
-        plan = _maybe_analyze(ctx, source, analyze)
-        out = enhance_frame(ctx, source, declutter, style, plan=plan)
-        (workdir / f"{seg['name']}-enhanced.jpg").write_bytes(out["data"])
+        try:
+            frame = extract_keyframe(video, mid, workdir / f"{seg['name']}.jpg", info)
+            source = frame.read_bytes()
+            plan = _maybe_analyze(ctx, source, analyze)
+            out = enhance_frame(ctx, source, declutter, style, plan=plan)
+            (workdir / f"{seg['name']}-enhanced.jpg").write_bytes(out["data"])
+        except _SEGMENT_ERRORS as e:
+            print(f"    ✗ segment failed and ships as ORIGINAL: {e.__class__.__name__}: {e}")
+            results.append({**seg, "status": "error", "reason": f"{e.__class__.__name__}: {str(e)[:300]}"})
+            # Keep the manifest current so a later crash can't lose the record.
+            _write_manifest(ctx, results, declutter, style, workdir, video=str(video))
+            continue
         if out["status"] == "enhanced" and hero_frame is None:
             hero_frame = out["data"]  # first good frame seeds the single hero clip
         results.append({**seg, **_strip(out)})
+        _write_manifest(ctx, results, declutter, style, workdir, video=str(video))
 
     manifest = _finish(ctx, results, declutter, style, workdir, video=str(video))
     if hero and hero_frame is not None:
@@ -243,10 +349,10 @@ def _strip(out: dict) -> dict:
     return keep
 
 
-def _finish(ctx: JobContext, segments: list, declutter: bool, style: str | None,
-            workdir: Path, video: str | None = None) -> dict:
-    staged = any(s["status"] == "enhanced" for s in segments)
-    manifest = {
+def _build_manifest(ctx: JobContext, segments: list, declutter: bool, style: str | None,
+                    video: str | None) -> dict:
+    staged = any(s.get("status") == "enhanced" for s in segments)
+    return {
         "video": video, "declutter": declutter, "style": style,
         "virtually_staged": staged,      # → mandatory "Virtually staged" disclosure
         "spent_cents": ctx.budget.spent_cents,
@@ -254,6 +360,23 @@ def _finish(ctx: JobContext, segments: list, declutter: bool, style: str | None,
         "ledger_rows": len(ctx.ledger.rows),
         "segments": segments,
     }
+
+
+def _write_manifest(ctx: JobContext, segments: list, declutter: bool, style: str | None,
+                    workdir: Path, video: str | None = None) -> None:
+    """Incremental manifest so paid results survive a later crash (the worker
+    harvests manifest.json even when enhance_video() raises)."""
+    try:
+        (workdir / "manifest.json").write_text(
+            json.dumps(_build_manifest(ctx, segments, declutter, style, video), indent=2))
+    except OSError as e:
+        print(f"    ⚠ could not write manifest: {e}")
+
+
+def _finish(ctx: JobContext, segments: list, declutter: bool, style: str | None,
+            workdir: Path, video: str | None = None) -> dict:
+    staged = any(s.get("status") == "enhanced" for s in segments)
+    manifest = _build_manifest(ctx, segments, declutter, style, video)
     (workdir / "manifest.json").write_text(json.dumps(manifest, indent=2))
     print(f"\n✓ Done. Spent ~${ctx.budget.spent_cents/100:.2f} "
           f"(cap ${ctx.budget.ceiling_cents/100:.2f}). Manifest: {workdir/'manifest.json'}")

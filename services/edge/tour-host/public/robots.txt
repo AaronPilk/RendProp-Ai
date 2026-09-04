@@ -1,36 +1,103 @@
 # rendprop.com — crawl policy
-# Search engines and AI assistants are welcome. Summary for LLMs: /llms.txt
+#
+# The marketing site (/, /features, /pricing, /compare, /llms.txt) is open to
+# search engines and AI assistants. Summary for LLMs: /llms.txt
+#
+# Customer tour pages (/f/<slug>) and portfolio pages (/a/<handle>) carry
+# agents' and business owners' names and phone numbers. They stay indexable by
+# ordinary search engines (an agent wants the listing found) but are NOT
+# offered to AI crawlers for training or answer generation. The public demo
+# tour (/f/estate-demo) is Rendprop's own content and stays open everywhere.
+# (Longest-match wins per the robots standard, so the Allow line for the demo
+# beats the Disallow for /f/; it is also listed first for first-match crawlers.)
 
 User-agent: *
 Allow: /
 Disallow: /healthz
 
-# AI crawlers — explicitly allowed (we want Rendprop answerable in AI search).
+# AI crawlers — the site yes, customer pages no.
 User-agent: GPTBot
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: OAI-SearchBot
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: ChatGPT-User
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: ClaudeBot
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: Claude-User
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
+Allow: /
+
+User-agent: Claude-SearchBot
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: anthropic-ai
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: PerplexityBot
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
+Allow: /
+
+User-agent: Perplexity-User
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: Google-Extended
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 User-agent: Applebot-Extended
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
+Allow: /
+
+User-agent: CCBot
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
+Allow: /
+
+User-agent: Bytespider
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
+Allow: /
+
+User-agent: meta-externalagent
+Allow: /f/estate-demo
+Disallow: /f/
+Disallow: /a/
 Allow: /
 
 Sitemap: https://rendprop.com/sitemap.xml

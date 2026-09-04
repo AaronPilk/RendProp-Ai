@@ -46,7 +46,33 @@ struct Listing: Identifiable, Codable, Hashable {
     /// The full public share URL returned by the server (e.g. rendprop.com/f/<slug>).
     var shareURL: String? = nil
 
+    // MARK: - Added 2026-09-03 (audit). ALL optional → snapshots from older builds decode.
+    /// Exterior photo (Documents-relative) used to ground the AI aerial intro so
+    /// the model sees THIS property. Defaults to the main photo when unset.
+    var exteriorPhotoRelPath: String? = nil
+    /// City/State (never the street) from the geocode placemark — sent to the
+    /// aerial generator as scenery context. Street address never leaves the phone.
+    var regionLabel: String? = nil
+    /// The latest generated aerial clip (Documents-relative) + when it was made.
+    var aerialRelPath: String? = nil
+    var aerialGeneratedAt: Date? = nil
+    /// Human-readable reason the last render/publish failed (shown on the card /
+    /// detail so the user can retry instead of a listing stuck "Working on it").
+    var lastError: String? = nil
+    /// True when a local edit (sold, Zillow, details, photo) hasn't been PATCHed to
+    /// the server yet. Only meaningful once `serverID` is set.
+    var needsServerSync: Bool? = nil
+    /// Server `renders.id` of the published tour (from /renders/publish-app).
+    var publishedRenderID: UUID? = nil
+
     func detail(_ key: String) -> String { details?[key] ?? "" }
+
+    /// The last render/publish attempt failed (or was interrupted). Cards show a
+    /// "Needs attention" chip and the detail screen offers the next action.
+    var needsAttention: Bool {
+        guard let e = lastError?.trimmingCharacters(in: .whitespacesAndNewlines) else { return false }
+        return !e.isEmpty
+    }
 
     /// The public server share link for this listing's published tour, if any.
     /// Prefer the full `shareURL`; else rebuild the canonical link from the slug.
@@ -76,7 +102,7 @@ struct Listing: Identifiable, Codable, Hashable {
     /// The primary deep-link action URL for this listing's business type
     /// (reservations, booking, online store, website), if the owner set one.
     var actionURL: URL? {
-        guard let key = SpaceType.current.actionURLKey else { return nil }
+        guard let key = spaceType.actionURLKey else { return nil }
         let raw = detail(key).trimmingCharacters(in: .whitespaces)
         guard !raw.isEmpty else { return nil }
         return URL(string: raw.lowercased().hasPrefix("http") ? raw : "https://\(raw)")
@@ -97,35 +123,58 @@ struct Listing: Identifiable, Codable, Hashable {
         return FileManager.default.fileExists(atPath: url.path) ? url : nil
     }
 
+    /// Absolute URL of the exterior photo used for the aerial intro (falls back to
+    /// the main photo), if the file still exists.
+    var exteriorPhotoURL: URL? {
+        if let p = exteriorPhotoRelPath {
+            let url = FileStore.url(fromRelativePath: p)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        return mainPhotoURL
+    }
+
+    /// Absolute URL of the generated aerial clip, if the file still exists.
+    var aerialURL: URL? {
+        guard let p = aerialRelPath else { return nil }
+        let url = FileStore.url(fromRelativePath: p)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Property facts line. Zero/unknown values are hidden (never "0 bd · 0 ba").
     var metaLine: String {
-        let bathsText = baths.truncatingRemainder(dividingBy: 1) == 0
-            ? String(Int(baths)) : String(baths)
-        var parts = ["\(beds) bd", "\(bathsText) ba"]
+        var parts: [String] = []
+        if beds > 0 { parts.append("\(beds) bd") }
+        if baths > 0 {
+            let bathsText = baths.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(baths)) : String(baths)
+            parts.append("\(bathsText) ba")
+        }
         if sqft > 0 { parts.append("\(sqft.formatted()) sqft") }
         return parts.joined(separator: " · ")
     }
 
-    /// The card/detail subtitle, adapted to the business type: property details
-    /// for real estate, the free-text tagline for everyone else.
+    /// The card/detail subtitle, adapted to THIS listing's business type:
+    /// property details for real estate, the free-text tagline for everyone else.
     var subtitleLine: String {
-        SpaceType.current.showsPropertyDetails ? metaLine : (tagline ?? "")
+        spaceType.showsPropertyDetails ? metaLine : (tagline ?? "")
     }
 
     /// Per-industry info chips for the listing card — a venue shows capacity
     /// and starting price, a restaurant its cuisine/$$$/hours, a gym its
     /// membership. Real estate keeps beds/baths/price in the classic layout.
+    /// Prices typed with separators ("3,500", "$49") still parse.
     var cardChips: [String] {
         var chips: [String] = []
         func add(_ s: String) {
             let t = s.trimmingCharacters(in: .whitespaces)
             if !t.isEmpty { chips.append(t) }
         }
-        switch SpaceType.current {
+        switch spaceType {
         case .realEstate:
             break
         case .venue:
             if !detail("capacitySeated").isEmpty { add("Seats \(detail("capacitySeated"))") }
-            if let v = Int(detail("startingPrice")) { add("From \(Money.dollars(v).formatted)") }
+            if let v = Money.parseDollars(detail("startingPrice")), v > 0 { add("From \(Money.dollars(v).formatted)") }
             add(detail("eventTypes").components(separatedBy: ",").first ?? "")
         case .restaurant:
             add(detail("cuisineType").components(separatedBy: ",").first ?? "")
@@ -136,7 +185,7 @@ struct Listing: Identifiable, Codable, Hashable {
             add(detail("hours"))
             if !detail("weeklySpecial").isEmpty { add("★ \(detail("weeklySpecial"))") }
         case .fitness:
-            if let m = Int(detail("membershipPrice")) { add("\(Money.dollars(m).formatted)/mo") }
+            if let m = Money.parseDollars(detail("membershipPrice")), m > 0 { add("\(Money.dollars(m).formatted)/mo") }
             if detail("is247") == "true" { add("Open 24/7") }
             if !detail("freeTrialOffer").isEmpty { add("Free trial") }
         case .other:
@@ -158,7 +207,9 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
-             tagline, details, serverID, shareSlug, shareURL
+             tagline, details, serverID, shareSlug, shareURL,
+             exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
+             lastError, needsServerSync, publishedRenderID
     }
 
     init(from decoder: Decoder) throws {
@@ -186,6 +237,13 @@ extension Listing {
         serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
         shareSlug        = try c.decodeIfPresent(String.self, forKey: .shareSlug)
         shareURL         = try c.decodeIfPresent(String.self, forKey: .shareURL)
+        exteriorPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .exteriorPhotoRelPath)
+        regionLabel      = try c.decodeIfPresent(String.self, forKey: .regionLabel)
+        aerialRelPath    = try c.decodeIfPresent(String.self, forKey: .aerialRelPath)
+        aerialGeneratedAt = try c.decodeIfPresent(Date.self,  forKey: .aerialGeneratedAt)
+        lastError        = try c.decodeIfPresent(String.self, forKey: .lastError)
+        needsServerSync  = try c.decodeIfPresent(Bool.self,   forKey: .needsServerSync)
+        publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
     }
 }
 
@@ -410,20 +468,56 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Stable per-type index (1-based) — part of every sample's deterministic id.
+    private var sampleTypeIndex: UInt8 {
+        switch self {
+        case .realEstate: return 1
+        case .venue:      return 2
+        case .restaurant: return 3
+        case .retail:     return 4
+        case .fitness:    return 5
+        case .other:      return 6
+        }
+    }
+
+    /// Deterministic sample id: the same sample has the SAME id on every launch
+    /// and type switch, so anything keyed by listing id can't be orphaned by a
+    /// relaunch (decision A7). Built from raw bytes — non-failable, no `!`.
+    /// Layout: 0000000n-0000-4000-8000-00000000000t (n = sample #, t = type).
+    func sampleID(_ n: UInt8) -> UUID {
+        UUID(uuid: (0, 0, 0, n,
+                    0, 0,
+                    0x40, 0,
+                    0x80, 0,
+                    0, 0, 0, 0, 0, sampleTypeIndex))
+    }
+
+    /// True for ids minted by `sampleID` (any type / index).
+    static func isSampleID(_ id: UUID) -> Bool {
+        let u = id.uuid
+        return u.0 == 0 && u.1 == 0 && u.2 == 0 && u.4 == 0 && u.5 == 0
+            && u.6 == 0x40 && u.7 == 0 && u.8 == 0x80 && u.9 == 0
+            && u.10 == 0 && u.11 == 0 && u.12 == 0 && u.13 == 0 && u.14 == 0
+    }
+
     /// Believable seeded sample(s) for this business type — so the first screen
     /// a venue owner sees is a venue, not a house. Never persisted (isSample).
+    /// Every sample is stamped with its type so per-listing copy/chips resolve
+    /// from the listing itself, and carries a stable id (see `sampleID`).
     var sampleListings: [Listing] {
         switch self {
         case .realEstate:
             return [
-                Listing(address: "1247 Hillcrest Drive (Sample)", beds: 4, baths: 3, sqft: 2850,
-                        price: .dollars(1_175_000), status: .ready, isSample: true),
-                Listing(address: "88 Marina Vista #501 (Sample)", beds: 2, baths: 2, sqft: 1240,
-                        price: .dollars(689_000), status: .processing, isSample: true),
+                Listing(id: sampleID(1), address: "1247 Hillcrest Drive (Sample)", beds: 4, baths: 3, sqft: 2850,
+                        price: .dollars(1_175_000), status: .ready, isSample: true, spaceTypeRaw: rawValue),
+                // Both samples are finished demos — a permanently "Working on it"
+                // sample looked like a stuck render.
+                Listing(id: sampleID(2), address: "88 Marina Vista #501 (Sample)", beds: 2, baths: 2, sqft: 1240,
+                        price: .dollars(689_000), status: .ready, isSample: true, spaceTypeRaw: rawValue),
             ]
         case .venue:
-            var l = Listing(address: "The Grand Atrium (Sample)", beds: 0, baths: 0, sqft: 0,
-                            price: Money(cents: 0), status: .ready, isSample: true)
+            var l = Listing(id: sampleID(1), address: "The Grand Atrium (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true, spaceTypeRaw: rawValue)
             l.tagline = "Historic ballroom · Seats 220"
             l.details = [
                 "capacitySeated": "220", "capacityStanding": "350",
@@ -434,8 +528,8 @@ enum SpaceType: String, CaseIterable, Identifiable {
             ]
             return [l]
         case .restaurant:
-            var l = Listing(address: "Bella Notte (Sample)", beds: 0, baths: 0, sqft: 0,
-                            price: Money(cents: 0), status: .ready, isSample: true)
+            var l = Listing(id: sampleID(1), address: "Bella Notte (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true, spaceTypeRaw: rawValue)
             l.tagline = "Italian · Wine Bar · $$$"
             l.details = [
                 "cuisineType": "Italian, Wine Bar", "priceRange": "$$$",
@@ -445,8 +539,8 @@ enum SpaceType: String, CaseIterable, Identifiable {
             ]
             return [l]
         case .retail:
-            var l = Listing(address: "Fresh Market (Sample)", beds: 0, baths: 0, sqft: 0,
-                            price: Money(cents: 0), status: .ready, isSample: true)
+            var l = Listing(id: sampleID(1), address: "Fresh Market (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true, spaceTypeRaw: rawValue)
             l.tagline = "Neighborhood grocery · Open daily 7am–9pm"
             l.details = [
                 "storeCategory": "Grocery", "hours": "Daily 7am–9pm",
@@ -456,8 +550,8 @@ enum SpaceType: String, CaseIterable, Identifiable {
             ]
             return [l]
         case .fitness:
-            var l = Listing(address: "Iron & Oak Strength Co. (Sample)", beds: 0, baths: 0, sqft: 0,
-                            price: Money(cents: 0), status: .ready, isSample: true)
+            var l = Listing(id: sampleID(1), address: "Iron & Oak Strength Co. (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true, spaceTypeRaw: rawValue)
             l.tagline = "Strength gym · Open 24/7 · Classes daily"
             l.details = [
                 "facilityType": "Gym", "membershipPrice": "49", "dayPassPrice": "15",
@@ -467,8 +561,8 @@ enum SpaceType: String, CaseIterable, Identifiable {
             ]
             return [l]
         case .other:
-            var l = Listing(address: "The Workshop (Sample)", beds: 0, baths: 0, sqft: 0,
-                            price: Money(cents: 0), status: .ready, isSample: true)
+            var l = Listing(id: sampleID(1), address: "The Workshop (Sample)", beds: 0, baths: 0, sqft: 0,
+                            price: Money(cents: 0), status: .ready, isSample: true, spaceTypeRaw: rawValue)
             l.tagline = "Creative studio & community space"
             l.details = ["hours": "Mon–Sat 9am–6pm"]
             return [l]
@@ -536,6 +630,10 @@ struct DetailField: Identifiable {
             return raw == "true" ? "Yes" : "No"
         case .multiSelect:
             return raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.joined(separator: " · ")
+        case .price:
+            // "49" / "$3,500" → "$49" / "$3,500"; anything non-numeric shows as typed.
+            if let d = Money.parseDollars(raw), d > 0 { return Money.dollars(d).formatted }
+            return raw
         default:
             return raw
         }

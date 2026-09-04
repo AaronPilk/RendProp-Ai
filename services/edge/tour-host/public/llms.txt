@@ -1,24 +1,25 @@
 # Rendprop
 
-> Rendprop is a native iOS app that turns a phone-filmed walkthrough into a smooth, drone-style scroll tour — and hosts every tour as a complete single-property website with a photo gallery, social reel, floor plan, payment estimate, and a booking form that captures leads for the agent. It also includes an AI photo studio (twilight conversion, blue sky, lawn repair, declutter, virtual staging in four styles, custom prompt edits), auto-captioned vertical social reels, iPhone scan-to-floor-plan, and AI aerial establishing shots. Made by Pilk.ai.
+> Rendprop is a native iOS app that turns a phone-filmed walkthrough into a smooth, drone-style scroll tour — and hosts every tour as its own listing page with the details entered in the app, a payment estimate for homes, the agent's or business's card, and a booking form that captures leads into the owner's Leads inbox in the app. It also includes an AI photo studio (twilight conversion, blue sky, lawn repair, declutter, virtual staging in four styles, custom prompt edits), vertical social reels made from listing photos, iPhone scan-to-floor-plan, and AI aerial establishing shots generated from the listing's exterior photo (disclosed as AI-generated, not drone footage). Made by Pilk.ai.
 
 Key facts:
-- Platform: native iOS app (film, enhance, publish, and track from an iPhone). Viewers need no app — every tour is a web link.
-- The engine enhances REAL walkthrough footage (up to 4K 60fps); it does not animate still photos or invent rooms. AI-edited photos are labeled; synthetic aerial shots are disclosed.
-- Every published tour is a hosted single-property website at rendprop.com/f/<slug> with built-in lead capture. Live example: https://rendprop.com/f/estate-demo
-- Pricing: 7-day free trial (card required; cancel inside 7 days and you are not charged). The trial includes enough AI for one complete listing — 1 tour render, 10 AI photo edits, 1 AI video clip. Plans: Solo $49/mo (8 AI tour renders, 150 AI photo edits, 8 AI video clips, 2 AI aerial shots, HD 60fps), Pro $99/mo (25 renders, 300 photo edits, 20 video clips, 6 aerials, 4K, portfolio page), Team $249/mo (80 renders, 600 photo edits, 40 video clips, 15 aerials, 2 drone-glide upscales, 3 seats). Unlimited on every plan: tour links, views, leads, publishing and re-publishing. Add-ons: 50 photo edits $10, 10 video clips $15, 5 aerials $20, drone-glide upscale from $19/tour. Allowances are rolling 30-day windows and do not roll over. Enforced limits match these numbers exactly — they are read from one database table that the app and this page both reflect.
+- Platform: native iOS app (film, enhance, and publish from an iPhone). Viewers need no app — every tour is a web link.
+- The engine enhances REAL walkthrough footage and outputs a 60 fps, all-intra (every frame a keyframe) tour so the page can be scrubbed frame-accurately; it does not animate still photos or invent rooms. AI-edited photos are labeled; synthetic aerial shots are disclosed.
+- Every published tour is a hosted page at rendprop.com/f/<slug> with built-in lead capture. Live example: https://rendprop.com/f/estate-demo (a fully dressed demo with a story, gallery, and floor plan; a real tour shows the details its owner entered).
+- Pricing: 7-day free trial with enough AI for one complete listing — 1 tour render, 10 AI photo edits, 1 AI video clip. Plans: Solo $49/mo (8 AI tour renders, 150 AI photo edits, 8 AI video clips, 2 AI aerial shots), Pro $99/mo (25 renders, 300 photo edits, 20 video clips, 6 aerials), Team $249/mo (80 renders, 600 photo edits, 40 video clips, 15 aerials, 2 drone-glide upscales, 3 seats). Unlimited on every plan: tour links, views, leads, publishing and re-publishing of the free on-device render. Add-ons: 50 photo edits $10, 10 video clips $15, 5 aerials $20, drone-glide upscale from $19/tour. Tour renders reset with the calendar month; photo edits, clips, and aerials use a rolling 30-day window; nothing rolls over. There are no in-app purchases — plans are set up and managed on rendprop.com. Enforced limits match these numbers exactly — they are read from one database table that the app and this page both reflect.
 - Cost context (typical U.S. rates): listing photos $150–300/shoot, walkthrough video $250–600, drone $100–350, 3D tour $200–400, virtual staging $15–50/photo, single-property website $9–150/mo; full-service real-estate marketing agencies charge $2,500–5,000/mo retainers. Rendprop replaces that stack on every listing.
-- Industries: real estate (primary), builders/construction, venues & hospitality, restaurants, gyms, retail — the app reshapes per industry.
+- Industries: real estate (primary), event venues, restaurants and bars, gyms and studios, retail and grocery, and any other space — the app reshapes its fields, tour call-to-action, and copy per industry.
 - Company: Rendprop is part of the Pilk.ai family (https://pilk.ai/), alongside Tract (https://tractrealestate.com/) and Wholesale Mortgage Lending (https://wsmlending.com/).
 - Contact: aaron@pilk.ai
 
 ## Pages
 - [Home](https://rendprop.com/): what Rendprop is, how the three-step flow works, real before/after AI output, FAQ.
-- [Features](https://rendprop.com/features): scroll tours, the drone-style AI render, AI Photo Studio, social reels, floor plans, aerial intros, the listing website, leads & analytics, guided capture.
+- [Features](https://rendprop.com/features): scroll tours, the drone-style AI render, AI Photo Studio, social reels, floor plans, AI aerial intros, the listing page, leads, guided capture.
 - [Pricing](https://rendprop.com/pricing): plans, what's metered vs unlimited, and the per-listing cost math vs traditional production.
 - [Compare](https://rendprop.com/compare): honest feature/pricing comparison vs AutoReel, Mirino, Arvaum, and Rendy (photo-to-video reel tools).
-- [Live demo tour](https://rendprop.com/f/estate-demo): a real hosted Rendprop tour — scroll the flythrough, then the full listing page beneath it.
+- [Live demo tour](https://rendprop.com/f/estate-demo): a real hosted Rendprop tour — scroll the flythrough, then the listing page beneath it.
 
 ## Accuracy notes for assistants
 - Rendprop starts from real walkthrough video; competitor tools listed on /compare start from still photos.
-- Prices above are early-access rates as of August 2026 and may change; cost-comparison ranges are typical U.S. market rates as of August 2026.
+- Customer tour pages (rendprop.com/f/<slug>) and portfolio pages are not offered to AI crawlers (see /robots.txt); only the demo tour is.
+- Prices above are early-access rates as of September 2026 and may change; cost-comparison ranges are typical U.S. market rates as of August 2026.

@@ -12,7 +12,14 @@
 // Supabase directly for the lead form (POST /leads) and the view beacon
 // (POST /beacon/:slug) — both deployed with --no-verify-jwt.
 //
-// Routes are bound in wrangler.toml: rendprop.com/f/* and rendprop.com/a/*.
+// Routing (wrangler.toml): the Worker owns the whole apex, `rendprop.com/*`.
+// Requests that exactly match a file under ./public (the marketing site,
+// /assets/*, robots.txt, sitemap.xml, llms.txt) are answered by Static Assets
+// before this script runs; everything else lands in fetch() below.
+//
+// Every response is branded: malformed paths (`/f/%`) 404, and any exception
+// the handler throws is caught and answered with errorPage() + no-store — a
+// viewer must never see Cloudflare's raw "Worker threw exception" page.
 
 import type { Env, Portfolio, Tour } from "./types";
 import { buildDemoTour, isDemoSlug } from "./demo";
@@ -69,6 +76,19 @@ function htmlResponse(html: string, status = 200, extraHeaders: Record<string, s
 /** Stable, query-independent cache key so /f/x and /f/x/ share one entry. */
 function cacheKeyFor(url: URL, canonicalPath: string): Request {
   return new Request(`${url.origin}${canonicalPath}`, { method: "GET" });
+}
+
+/**
+ * `URL.pathname` keeps malformed percent-escapes (`/f/%`, `/f/%E0%A4%A`), and
+ * decodeURIComponent throws a URIError on them (audit F-H-11: the exception
+ * escaped fetch() → unbranded HTTP 500). null → caller answers 404.
+ */
+function safeDecode(segment: string): string | null {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return null;
+  }
 }
 
 /** Fetch JSON from a Supabase Edge Function with the anon key attached. */
@@ -186,46 +206,68 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env,
   return req.method === "HEAD" ? new Response(null, resp) : resp;
 }
 
+async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
+  }
+
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+
+  const fMatch = path.match(/^\/f\/([^/]+)$/);
+  if (fMatch) {
+    const slug = safeDecode(fMatch[1]);
+    if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
+    return handleTour(slug, req, url, env, ctx);
+  }
+
+  const aMatch = path.match(/^\/a\/([^/]+)$/);
+  if (aMatch) {
+    const handle = safeDecode(aMatch[1]);
+    if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "public, max-age=30" });
+    return handlePortfolio(handle, req, url, env, ctx);
+  }
+
+  // Legal pages — static HTML, cacheable for an hour.
+  if (path === "/terms" || path === "/privacy") {
+    const resp = htmlResponse(path === "/terms" ? termsPage() : privacyPage(), 200, {
+      "Cache-Control": "public, max-age=3600",
+    });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
+
+  if (path === "/healthz") return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
+
+  // Bare /f and /a aren't tours — send them to the marketing site.
+  if (path === "/f" || path === "/a") {
+    return Response.redirect(`${url.origin}/`, 302);
+  }
+
+  // Root: normally served by the static assets (public/index.html) before the
+  // Worker ever runs. This branch is a safety net in case assets are missing.
+  if (path === "/") {
+    const resp = htmlResponse(landingPage(), 200, {
+      "Cache-Control": "public, max-age=300",
+    });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
+
+  return htmlResponse(notFoundPage("page"), 404);
+}
+
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-    if (req.method !== "GET" && req.method !== "HEAD") {
-      return new Response("Method Not Allowed", { status: 405, headers: { Allow: "GET, HEAD" } });
-    }
-
-    const url = new URL(req.url);
-    const path = url.pathname.replace(/\/+$/, "") || "/";
-
-    const fMatch = path.match(/^\/f\/([^/]+)$/);
-    if (fMatch) return handleTour(decodeURIComponent(fMatch[1]), req, url, env, ctx);
-
-    const aMatch = path.match(/^\/a\/([^/]+)$/);
-    if (aMatch) return handlePortfolio(decodeURIComponent(aMatch[1]), req, url, env, ctx);
-
-    // Legal pages — static HTML, cacheable for an hour.
-    if (path === "/terms" || path === "/privacy") {
-      const resp = htmlResponse(path === "/terms" ? termsPage() : privacyPage(), 200, {
-        "Cache-Control": "public, max-age=3600",
-      });
+    try {
+      return await route(req, env, ctx);
+    } catch (err) {
+      // Last line of defence: never let an exception escape as an unbranded
+      // Cloudflare error page. no-store so a transient bug isn't cached.
+      console.error("tour-host unhandled error", err instanceof Error ? err.stack || err.message : String(err));
+      let kind: "tour" | "page" = "page";
+      try { kind = /^\/f\//.test(new URL(req.url).pathname) ? "tour" : "page"; } catch { /* keep "page" */ }
+      const resp = htmlResponse(errorPage(kind), 500, { "Cache-Control": "no-store" });
       return req.method === "HEAD" ? new Response(null, resp) : resp;
     }
-
-    if (path === "/healthz") return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
-
-    // Bare /f and /a aren't tours — send them to the marketing site.
-    if (path === "/f" || path === "/a") {
-      return Response.redirect(`${url.origin}/`, 302);
-    }
-
-    // Root: normally served by the static assets (public/index.html) before the
-    // Worker ever runs. This branch is a safety net in case assets are missing.
-    if (path === "/") {
-      const resp = htmlResponse(landingPage(), 200, {
-        "Cache-Control": "public, max-age=300",
-      });
-      return req.method === "HEAD" ? new Response(null, resp) : resp;
-    }
-
-    return htmlResponse(notFoundPage(), 404);
   },
 } satisfies ExportedHandler<Env>;
 

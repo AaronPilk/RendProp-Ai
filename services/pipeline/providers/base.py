@@ -81,6 +81,10 @@ def request_json(
         raise ProviderError(f"HTTP {e.code} from {url}: {detail}") from e
     except urllib.error.URLError as e:
         raise ProviderError(f"Network error to {url}: {e.reason}") from e
+    except (TimeoutError, OSError) as e:
+        # A READ timeout surfaces as socket.timeout/TimeoutError (not URLError);
+        # it must still be a ProviderError so the per-segment fallback catches it.
+        raise ProviderError(f"Network error to {url}: {e.__class__.__name__}: {e}") from e
 
 
 def download_bytes(url: str, *, timeout: int = 120) -> bytes:
@@ -93,6 +97,8 @@ def download_bytes(url: str, *, timeout: int = 120) -> bytes:
         raise ProviderError(f"HTTP {e.code} downloading {url}") from e
     except urllib.error.URLError as e:
         raise ProviderError(f"Network error downloading {url}: {e.reason}") from e
+    except (TimeoutError, OSError) as e:
+        raise ProviderError(f"Network error downloading {url}: {e.__class__.__name__}: {e}") from e
 
 
 def put_bytes(url: str, data: bytes, *, content_type: str = "application/octet-stream",

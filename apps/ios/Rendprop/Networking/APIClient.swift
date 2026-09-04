@@ -1,5 +1,9 @@
 import Foundation
 
+/// Render tier alias — the shared contract (audit DECISIONS §B1) names the type
+/// `RenderTier`; the model keeps it nested as `Render.Tier`. Same type.
+typealias RenderTier = Render.Tier
+
 /// Result of `POST /uploads`. Expresses BOTH server modes (contract §2.1):
 ///  • `.single`    — one presigned PUT (`putURL`), files ≤ 64 MB / photos.
 ///  • `.multipart` — R2/S3 multipart (`uploadID` + `partSize` + `partCount`),
@@ -51,12 +55,60 @@ struct PhotoTicket: Codable, Sendable {
     var storageKey: String? = nil
 }
 
+/// The org's plan + monthly allowances, decoded from `GET /me` (`entitlement`,
+/// `plan`, `plan_raw`, `trial_ends_at`, `usage.by_feature`). The app renders
+/// these as "used of cap" rows and gates paid tiers — NEVER as prices.
+struct Entitlements: Codable, Hashable {
+    /// Effective plan (`effective_plan()` — an expired trial reads "free").
+    var plan: String
+    /// The stored plan before trial-expiry mapping (nil on older servers).
+    var planRaw: String? = nil
+    var trialEndsAt: Date? = nil
+    var rendersPerMonth: Int
+    var photoEditsPerMonth: Int
+    var reelsPerMonth: Int
+    var aerialsPerMonth: Int
+    var topazPerMonth: Int
+    /// This window's usage. Keys: renders, photo_edits, reels, aerials, drone.
+    var used: [String: Int]
+    var leads: Int
+
+    /// Monthly cap for a `used` key (renders | photo_edits | reels | aerials | drone).
+    func cap(for feature: String) -> Int {
+        switch feature {
+        case "renders":     return rendersPerMonth
+        case "photo_edits": return photoEditsPerMonth
+        case "reels":       return reelsPerMonth
+        case "aerials":     return aerialsPerMonth
+        case "drone":       return topazPerMonth
+        default:            return 0
+        }
+    }
+
+    /// Remaining allowance for a feature this window (never negative).
+    func remaining(_ feature: String) -> Int {
+        max(0, cap(for: feature) - (used[feature] ?? 0))
+    }
+
+    /// Topaz (Cinematic / 4K Premium) is an add-on — 0 means the tier is locked.
+    var canUseTopaz: Bool { topazPerMonth > 0 }
+    var canUseAerial: Bool { aerialsPerMonth > 0 }
+    var isTrial: Bool { plan == "trial" }
+}
+
 /// This-month usage/cost rollup for the signed-in org (contract: GET /me → usage).
 struct UsageSummary: Codable, Hashable {
     var aiSpendCents: Int? = nil   // usage.cost_cents (total infra+AI spend this month)
-    var renderCount: Int? = nil    // usage.renders
+    var renderCount: Int? = nil    // usage.renders (this month)
     var leadCount: Int? = nil      // usage.leads
-    var planName: String? = nil    // plan (scalar string)
+    var planName: String? = nil    // plan (effective plan string)
+    /// Plan + allowances (nil on servers that predate the entitlement payload).
+    var entitlements: Entitlements? = nil
+    /// Identity the server holds — used to seed the public card, never shown as
+    /// an email (the public agent name must never fall back to one).
+    var userName: String? = nil    // user.name
+    var orgName: String? = nil     // org.name
+    var brandName: String? = nil   // org.brand_kit.name (the hosted card headline)
 
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
@@ -72,28 +124,85 @@ struct AIEditSuggestion: Codable, Sendable {
     let confidence: Double?
 }
 
+/// Everything the Aerial intro sheet knows about THE PROPERTY, sent to
+/// `POST /ai-video/aerial` (contract §B4). With `imageJPEGBase64` the server runs
+/// image-to-video grounded on the exterior photo; without it the result is a
+/// generic invented building of the right `spaceType`. The street address is
+/// never sent — only a coarse `region` ("Charlotte, NC").
+struct AerialRequest: Sendable, Hashable {
+    var imageJPEGBase64: String? = nil    // ≤1280 px long edge, JPEG q0.85, base64 (no data: prefix)
+    var mime: String? = nil               // "image/jpeg"
+    var spaceType: String                 // SpaceType.rawValue
+    var region: String? = nil             // "Charlotte, NC" — never a street address
+    var timeOfDay: String = "golden_hour" // golden_hour | midday | twilight | overcast
+    var motion: String = "rise_reveal"    // rise_reveal | pull_back | orbit | push_in
+    var style: String? = nil              // ≤200 chars free-text look hint
+    var seconds: Int = 6                  // 4 | 6 | 8
+    var aspect: String = "16:9"           // "16:9" | "9:16"
+
+    var isGrounded: Bool { !(imageJPEGBase64 ?? "").isEmpty }
+}
+
+/// A prospect who submitted the hosted tour's lead form (`GET /leads`).
+struct Lead: Identifiable, Codable, Hashable {
+    var id: UUID
+    var listingID: UUID? = nil
+    var name: String
+    var phone: String? = nil
+    var email: String? = nil
+    var message: String? = nil
+    var extra: [String: String]? = nil
+    var createdAt: Date
+    var source: String? = nil
+    var listingAddress: String? = nil
+}
+
+/// One tap-to-jump chapter sent with a publish (`{label, t_ms, sort}` on the
+/// wire). `tMs` is on the RENDERED timeline (already divided by speedFactor).
+struct ChapterInput: Codable, Hashable, Sendable {
+    var label: String
+    var tMs: Int
+    var sort: Int
+
+    /// Snake_case wire shape for `POST /renders/publish-app` / `PATCH /renders/:id/chapters`.
+    var wireDictionary: [String: Any] { ["label": label, "t_ms": tMs, "sort": sort] }
+}
+
 /// The app talks only to this protocol. MockAPIClient makes the whole app run
 /// offline; LiveAPIClient points at the Supabase Edge Functions API
 /// (docs/UPLOAD-AND-PUBLISH-CONTRACT.md §2).
+///
+/// Idempotency: writes that can be retried carry a STABLE `Idempotency-Key`.
+/// Publish derives its own (`"publish:<listing>:<asset>"`), upload tickets use
+/// `"ticket:<sha256|path-hash>:<bytes>"`, and the AI generate calls take a
+/// caller-supplied key — one UUID per user TAP (so a retry of the same tap
+/// replays instead of billing twice, and a second tap is a new job).
 protocol APIClient: Sendable {
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
+    /// PATCH `listings/<serverID>` (falls back to the local id only when the
+    /// listing was never created server-side). Sends the full local truth:
+    /// address, price, beds/baths/sqft, tagline, details, lat/lng, zillow_url,
+    /// sold_at (JSON null to un-sell) and status (`uploading` → `processing`).
     func updateListing(_ listing: Listing) async throws -> Listing
+    /// DELETE `listings/<serverID>` — soft-deletes and unpublishes its tours.
+    func deleteListing(serverID: UUID) async throws
 
     // MARK: Uploads (contract §2)
 
-    /// POST /uploads → an `UploadTicket` (single OR multipart). `listingID`,
-    /// `sha256`, and `kind` complete the contract body; all optional-friendly so
-    /// callers that only have a file can still request a ticket. The server
+    /// POST /uploads → an `UploadTicket` (single OR multipart). The server
     /// decides the mode (video > 64 MB → multipart).
     ///
-    /// `role` routes the object: "capture" (default) → private uploads bucket;
-    /// "render" → the PUBLIC renders bucket for an app-rendered tour (contract
-    /// §2.7). A convenience overload below defaults `role` to "capture" so
-    /// existing capture call sites are unchanged.
+    /// `role` routes the object: "capture" → private uploads bucket; "render" →
+    /// the PUBLIC renders bucket for an app-rendered tour (contract §2.7).
+    /// `kind` is "video" or "photo" (a `role:"render"` photo is a tour poster).
+    /// `contentType` is what the app will PUT with — the server stores it on the
+    /// ticket and `/complete` rejects an object whose type differs (P0 audit
+    /// fix: derive it from the file extension, never hardcode).
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String,
-                       role: String) async throws -> UploadTicket
+                       role: String, contentType: String?,
+                       idempotencyKey: String?) async throws -> UploadTicket
 
     /// POST /uploads/:asset_id/part-urls → presigned URLs for the given 1-based
     /// part numbers. URLs expire in ~1 h, so request them as you go / on resume.
@@ -101,7 +210,8 @@ protocol APIClient: Sendable {
 
     /// POST /uploads/:asset_id/complete. `parts` non-nil ⇒ multipart (ETag
     /// manifest, REQUIRED); `parts` nil ⇒ single. `metadata` carries the probed
-    /// video fields.
+    /// video fields. ONE-SHOT server-side: a replay returns 409 "already
+    /// complete", which callers treat as success.
     func completeUpload(assetID: String,
                         parts: [(number: Int, etag: String)]?,
                         metadata: UploadMetadata) async throws
@@ -119,22 +229,35 @@ protocol APIClient: Sendable {
 
     // MARK: Renders / account
 
-    /// POST /renders — the contract REQUIRES `asset_id`, so it flows through here.
+    /// POST /renders — the worker-path render job (not used by the live
+    /// app-render + publish-app flow). The contract REQUIRES `asset_id`.
     func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
                       enhancements: Enhancements) async throws -> Render
     func renderStatus(id: UUID) async throws -> Render
 
     /// POST /renders/publish-app (contract §2.7) — publishes the app's ON-DEVICE
     /// render as the hosted tour (no Python worker). `assetID` MUST be the SERVER
-    /// asset_id of the role=render upload (from `requestUpload`/`/complete`).
-    /// `chapters` are room tags mapped to `[{label, t_ms, sort}]`. Returns the
-    /// real server slug + public share URL.
+    /// asset_id of the role=render upload (from `UploadManager.upload`).
+    /// `posterAssetID` is the optional `kind:"photo", role:"render"` asset from
+    /// `UploadManager.uploadPoster` (first frame JPEG) — the hosted page's
+    /// og:image / video poster. Idempotent per (listing, asset): a retry after a
+    /// lost response returns the SAME tour instead of minting a second slug.
+    /// Returns the real server slug + share URL + `renderID` (renders.id).
     func publishApp(listingID: UUID, assetID: String, durationS: Double,
-                    speedFactor: Double, staged: Bool, tier: Render.Tier,
-                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour
+                    speedFactor: Double, tier: RenderTier,
+                    enhancements: Enhancements, chapters: [ChapterInput],
+                    posterAssetID: String?) async throws -> PublishedTour
 
-    /// GET /me — usage/cost for the Settings "Usage" section.
+    /// PATCH /renders/:id/chapters — replace the published tour's tap-to-jump
+    /// chapters (room tags retimed to the rendered timeline) without re-publishing.
+    func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws
+
+    /// GET /me — plan, allowances and this month's usage for Settings + tier gating.
     func me() async throws -> UsageSummary
+
+    /// GET /leads[?listing_id=] — every lead captured on the org's hosted tours
+    /// (RLS-scoped), newest first. `listingServerID` filters to one listing.
+    func leads(listingServerID: UUID?) async throws -> [Lead]
 
     /// PATCH /me/brand — push the agent/business card into the org's brand kit
     /// so it renders on every HOSTED tour page (the public tours/portfolio
@@ -147,19 +270,23 @@ protocol APIClient: Sendable {
     /// ("modern" | "rustic" | "minimalist" | "scandinavian"); `prompt` to custom
     /// only (free text, ≤ 600 chars). Pass nil for both on the preset edits.
     /// Sends the photo as base64, returns the edited image as base64 (PNG).
+    /// `idempotencyKey`: one UUID per user tap (billed provider call).
     func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
-                     style: String?, prompt: String?) async throws -> String
+                     style: String?, prompt: String?,
+                     idempotencyKey: String?) async throws -> String
 
     /// POST /ai-photo with `edit: "suggest"` — the AI looks at the photo and
     /// returns up to 3 recommended preset edits (twilight | sky | lawn |
     /// declutter | stage), each with a one-line reason and an optional 0–1
-    /// confidence. An empty array means the photo already looks good.
+    /// confidence. An empty array means the photo already looks good. Not
+    /// charged against the monthly photo-edit allowance (separate burst limit).
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion]
 
     /// POST /ai-photo with `edit: "improve_prompt"` — rewrites a rough
     /// custom-edit idea (≤ 300 chars sent) into a sharper, more specific prompt
-    /// (≤ 400 back). The target photo rides along because the function requires
-    /// `image_b64` — and it lets the AI tailor the prompt to the actual shot.
+    /// (≤ 400 back). The function requires `image_b64` on every call, so the
+    /// photo rides along; the rewrite itself is text-only. Not charged against
+    /// the monthly allowance.
     func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String
 
     // MARK: AI video (ai-video edge function — async fal submit + poll)
@@ -167,32 +294,85 @@ protocol APIClient: Sendable {
     /// POST /ai-video/drone — Topaz motion smoothing + upscale of an UPLOADED
     /// role="render" asset (public renders bucket, or the server 400s).
     /// `tier` = "1080p60" | "4k30" | "4k60". Returns the queued job to poll.
-    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob
+    /// 402 when the plan's `topaz_per_month` is 0 (Team add-on).
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
+                      idempotencyKey: String?) async throws -> AIVideoJob
 
-    /// POST /ai-video/aerial — SYNTHETIC AI establishing shot (Veo). `style` is
-    /// an optional look-and-feel hint ("modern glass house with a pool") woven
-    /// into the server's guarded prompt; the street address is deliberately NOT
-    /// sent — Veo's safety filter rejects prompts naming real addresses, and it
-    /// adds nothing visually. `seconds` snaps to 4/6/8; `aspect` = "16:9"|"9:16".
-    /// The UI must always disclose the result as AI-generated footage.
-    func aiVideoAerial(style: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob
+    /// POST /ai-video/aerial — AI establishing shot grounded on the property's
+    /// exterior photo when `request.imageJPEGBase64` is set (Seedance image-to-
+    /// video: starts on the photo and flies out), otherwise a generic invented
+    /// building of the right space type (Veo text-to-video). The street address
+    /// is never sent. `AIVideoJob.grounded`/`.synthetic` echo the server's
+    /// flags so the UI can disclose "AI-generated — not real drone footage".
+    func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob
 
     /// POST /ai-video/reel-clip — animate a photo (base64) into a 2–12 s motion
     /// clip (Seedance image-to-video).
-    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         idempotencyKey: String?) async throws -> AIVideoJob
 
     /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
 }
 
+// MARK: - Convenience overloads (protocol requirements can't carry defaults)
 extension APIClient {
-    /// Back-compat overload — capture uploads (the common case) don't specify a
-    /// role. Forwards to the role-aware requirement with `role: "capture"`.
+    /// Capture uploads (the common case) don't specify a role or type.
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String) async throws -> UploadTicket {
         try await requestUpload(filename: filename, bytes: bytes, listingID: listingID,
-                                sha256: sha256, kind: kind, role: "capture")
+                                sha256: sha256, kind: kind, role: "capture",
+                                contentType: nil, idempotencyKey: nil)
+    }
+
+    func requestUpload(filename: String, bytes: Int64,
+                       listingID: UUID?, sha256: String?, kind: String,
+                       role: String) async throws -> UploadTicket {
+        try await requestUpload(filename: filename, bytes: bytes, listingID: listingID,
+                                sha256: sha256, kind: kind, role: role,
+                                contentType: nil, idempotencyKey: nil)
+    }
+
+    /// Aerial without a caller key (a fresh key is minted per call, so a retry
+    /// is a new job — prefer the keyed variant from the sheet's per-tap UUID).
+    func aiVideoAerial(_ request: AerialRequest) async throws -> AIVideoJob {
+        try await aiVideoAerial(request, idempotencyKey: nil)
+    }
+
+    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
+                     style: String?, prompt: String?) async throws -> String {
+        try await aiPhotoEdit(imageBase64: imageBase64, mime: mime, edit: edit,
+                              style: style, prompt: prompt, idempotencyKey: nil)
+    }
+
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
+        try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
+    }
+
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
+                                  seconds: seconds, idempotencyKey: nil)
+    }
+
+    /// Source-compat for the pre-audit publish call (`staged:` + raw chapter
+    /// dictionaries). `staged` is derived server-side from `enhancements`, so it
+    /// is dropped; dictionaries are converted to `ChapterInput`. Prefer the
+    /// poster-aware requirement.
+    @available(*, deprecated, message: "Use publishApp(listingID:assetID:durationS:speedFactor:tier:enhancements:chapters:posterAssetID:)")
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, staged: Bool, tier: Render.Tier,
+                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour {
+        _ = staged
+        let converted: [ChapterInput] = chapters.enumerated().compactMap { idx, dict in
+            guard let label = (dict["label"] as? String) ?? (dict["name"] as? String), !label.isEmpty else { return nil }
+            let t = (dict["t_ms"] as? Int) ?? (dict["tMs"] as? Int) ?? Int(((dict["t_ms"] as? Double) ?? 0).rounded())
+            let sort = (dict["sort"] as? Int) ?? idx
+            return ChapterInput(label: label, tMs: max(0, t), sort: sort)
+        }
+        return try await publishApp(listingID: listingID, assetID: assetID, durationS: durationS,
+                                    speedFactor: speedFactor, tier: tier, enhancements: enhancements,
+                                    chapters: converted, posterAssetID: nil)
     }
 }
 
@@ -204,6 +384,11 @@ struct AIVideoJob: Codable, Sendable {
     let statusUrl: String       // status_url (queue.fal.run — polled via our server)
     let responseUrl: String     // response_url
     let kind: String            // "drone" | "aerial" | "reel" | "declutter"
+    /// Aerial only: true when the server ran image-to-video on the exterior
+    /// photo (the clip depicts THIS property); false = generic invented scenery.
+    var grounded: Bool? = nil
+    /// True for AI-generated footage the UI must disclose as such.
+    var synthetic: Bool? = nil
 }
 
 /// One poll of `GET /ai-video/status`.
@@ -223,17 +408,97 @@ struct PublishedTour: Sendable, Hashable {
     var posterURL: String? = nil
     var durationS: Double? = nil
     var staged: Bool? = nil
+    /// Server `renders.id` — the id `PATCH /renders/:id/chapters` takes.
     var renderID: UUID? = nil
 }
 
-enum APIError: LocalizedError {
-    case notConfigured
+/// Errors from the API layer. `.server` carries the backend's `{error, code}`
+/// envelope verbatim so the UI can show the message the server wrote for the
+/// user ("…Upgrade for more", "try again in a few minutes", "already complete")
+/// instead of a bare status code. `errorDescription` IS that message.
+enum APIError: Error, LocalizedError {
+    case invalidURL
     case badResponse(Int)
+    case decoding
+    case notConfigured
+    /// Non-2xx with the server's envelope. `code` is one of: validation |
+    /// unauthorized | forbidden | not_found | conflict | plan_required |
+    /// quota_exceeded | rate_limited | payload_too_large | upstream | internal
+    /// (nil on older servers — the status still classifies it).
+    case server(status: Int, code: String?, message: String)
+
+    /// HTTP status when known (nil for invalidURL/decoding/notConfigured and
+    /// for a `badResponse` with no real status).
+    var status: Int? {
+        switch self {
+        case .badResponse(let c):       return c > 0 ? c : nil
+        case .server(let s, _, _):      return s
+        case .invalidURL, .decoding, .notConfigured: return nil
+        }
+    }
+
+    /// Machine-readable server code when the envelope carried one.
+    var code: String? {
+        if case .server(_, let c, _) = self { return c }
+        return nil
+    }
+
+    /// 402 — plan boundary / monthly allowance reached → show an "Upgrade plan"
+    /// CTA opening `Config.pricingURL` (no prices in-app).
+    var isQuota: Bool { status == 402 || code == "quota_exceeded" || code == "plan_required" }
+    /// 401 — session expired/revoked → re-prompt sign-in.
+    var isUnauthorized: Bool { status == 401 || code == "unauthorized" }
+    /// 409 — duplicate / already complete / account deleting.
+    var isConflict: Bool { status == 409 || code == "conflict" }
+    /// 429 — burst or daily limit → "try again in a few minutes".
+    var isRateLimited: Bool { status == 429 || code == "rate_limited" }
+    var isNotFound: Bool { status == 404 || code == "not_found" }
+    var isForbidden: Bool { status == 403 || code == "forbidden" }
+    var isPayloadTooLarge: Bool { status == 413 || code == "payload_too_large" }
+    /// 400 — the request itself was rejected; retrying identically won't help.
+    var isValidation: Bool { status == 400 || code == "validation" }
+
+    /// A `/complete` replay on an upload the server already accepted — success.
+    var isAlreadyComplete: Bool {
+        guard isConflict, case .server(_, _, let message) = self else { return false }
+        return message.localizedCaseInsensitiveContains("already complete")
+    }
 
     var errorDescription: String? {
         switch self {
-        case .notConfigured:      return "No API server configured — running in offline mode."
-        case .badResponse(let c): return "Server returned status \(c)."
+        case .invalidURL:
+            return "The server address is invalid."
+        case .notConfigured:
+            return "No API server configured — running in offline mode."
+        case .decoding:
+            return "The server sent an unexpected response. Please try again."
+        case .badResponse(let c):
+            return c > 0 ? "Server returned status \(c)." : "The server returned an unexpected response."
+        case .server(_, _, let message):
+            return message
+        }
+    }
+
+    var recoverySuggestion: String? {
+        if isQuota { return "Upgrade your plan to continue." }
+        if isRateLimited { return "Try again in a few minutes." }
+        if isUnauthorized { return "Sign in again to continue." }
+        return nil
+    }
+
+    /// Friendly fallback when the server sent no `error` string for a status.
+    static func defaultMessage(for status: Int) -> String {
+        switch status {
+        case 400: return "The server rejected the request."
+        case 401: return "Your session has expired. Please sign in again."
+        case 402: return "This feature isn't included in your current plan."
+        case 403: return "You don't have permission to do that in this workspace."
+        case 404: return "That item wasn't found on the server."
+        case 409: return "That action conflicts with the current state — please try again."
+        case 413: return "That file is too large to send."
+        case 429: return "Too many requests — try again in a few minutes."
+        case 500..<600: return "The server had a problem. Please try again shortly."
+        default: return "Server returned status \(status)."
         }
     }
 }

@@ -28,6 +28,16 @@
       <key>NSPrivacyCollectedDataTypePurposes</key>
       <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
     </dict>
+    <!-- Account identifier: the Supabase auth user id / session that every
+         listing, tour and lead is linked to (account functionality only). -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeUserID</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
     <!-- Photos/videos the user captures or imports to build a tour. -->
     <dict>
       <key>NSPrivacyCollectedDataType</key>

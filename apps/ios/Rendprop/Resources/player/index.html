@@ -50,6 +50,11 @@
   #loader .pct { font-size: 34px; font-weight: 600; font-variant-numeric: tabular-nums; }
   #loader .bar { width: 140px; height: 2px; background: rgba(255,255,255,.12); border-radius: 2px; overflow: hidden; }
   #loader .bar i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width .2s ease; }
+  /* Explicit "no video" state — never a black stage that pretends to load. */
+  #loader .msg { display: none; max-width: 300px; text-align: center; font-size: 14px; line-height: 1.45; color: var(--ink-dim); padding: 0 20px; }
+  #loader .msg b { display: block; color: var(--ink); font-size: 16px; margin-bottom: 6px; }
+  #loader.unavailable .pct, #loader.unavailable .bar { display: none; }
+  #loader.unavailable .msg { display: block; }
 
   /* ===== Progress ===== */
   #progress {
@@ -112,6 +117,7 @@
   }
   #listing .price { font-size: 16px; font-weight: 650; }
   #listing .meta { font-size: 11.5px; color: var(--ink-dim); margin-top: 2px; }
+  #listing .price:empty, #listing .meta:empty { display: none; }
 
   /* Watermark */
   #wm {
@@ -147,13 +153,19 @@
   }
   .agent { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
   .agent .avatar {
-    width: 52px; height: 52px; border-radius: 50%;
+    width: 52px; height: 52px; border-radius: 50%; flex: 0 0 52px;
     background: linear-gradient(135deg, #33404f, #1c242e);
     display: flex; align-items: center; justify-content: center;
     font-weight: 650; font-size: 18px; color: var(--accent);
   }
+  .agent .who { min-width: 0; }
   .agent .who .nm { font-weight: 650; font-size: 16px; }
   .agent .who .bk { font-size: 12.5px; color: var(--ink-dim); margin-top: 2px; }
+  .agent .who .bk:empty { display: none; }
+  /* Tap-to-call / tap-to-email — the hosted page does the same. */
+  .agent .contact { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; }
+  .agent .contact:empty { display: none; }
+  .agent .contact a { color: var(--ink); font-size: 12.5px; text-decoration: none; opacity: .9; }
   .agent .social { display: flex; gap: 14px; margin-top: 6px; }
   .agent .social:empty { display: none; }
   .agent .social a { color: var(--accent); font-size: 12.5px; font-weight: 600; text-decoration: none; }
@@ -167,12 +179,26 @@
     color: var(--ink); font-size: 15px; font-family: inherit; outline: none;
   }
   .field input:focus, .field textarea:focus { border-color: var(--accent); }
+  .field input:disabled { opacity: .55; }
   .cta {
     width: 100%; padding: 15px; border: 0; border-radius: 12px; cursor: pointer;
     background: var(--accent); color: #14100a; font-size: 15.5px; font-weight: 650;
     font-family: inherit; margin-top: 4px;
   }
   .cta:active { transform: scale(.985); }
+  .cta:disabled { opacity: .55; cursor: default; }
+  .cta:disabled:active { transform: none; }
+  /* The CTA as a deep link (reservations / booking / online store) — same look as the button. */
+  a.cta { display: block; text-align: center; text-decoration: none; }
+  /* In-app preview marker: the form is inert here (nothing is sent anywhere). */
+  #previewnote {
+    display: flex; align-items: center; gap: 8px; margin: 0 0 14px;
+    padding: 9px 12px; border-radius: 10px;
+    background: rgba(217,164,65,.12); border: 1px solid rgba(217,164,65,.35);
+    color: var(--ink); font-size: 12.5px; line-height: 1.35;
+  }
+  #previewnote[hidden] { display: none; }
+  #previewnote b { color: var(--accent); font-weight: 650; white-space: nowrap; }
   #leadok { display: none; text-align: center; padding: 26px 0 10px; }
   #leadok .check { font-size: 40px; margin-bottom: 10px; }
   #leadok p { color: var(--ink-dim); font-size: 14px; }
@@ -194,6 +220,7 @@
       <div class="mark">RENDPROP</div>
       <div class="pct">0%</div>
       <div class="bar"><i></i></div>
+      <div class="msg"></div>
     </div>
 
     <div id="progress"><i></i></div>
@@ -230,13 +257,16 @@
       <div class="avatar">SM</div>
       <div class="who">
         <div class="nm">Sarah Mitchell</div>
-        <div class="bk">Demo Realty Group · (555) 012-3456</div>
+        <div class="bk">Demo Realty Group</div>
+        <div class="contact"><a href="tel:5550123456">(555) 012-3456</a></div>
         <div class="social"><!--SOCIAL--></div>
       </div>
     </div>
+    <!--CTA-->
     <form id="leadform">
       <h2>Book a showing</h2>
       <p class="sub">See 1247 Hillcrest Drive in person — Sarah will text you times.</p>
+      <div id="previewnote" hidden><b>Preview</b><span>The form is disabled here — it works on your shared link, and leads land in the app.</span></div>
       <div class="field"><input type="text" name="name" placeholder="Your name" required autocomplete="name"></div>
       <div class="field"><input type="tel" name="phone" placeholder="Phone" required autocomplete="tel"></div>
       <div class="field"><input type="email" name="email" placeholder="Email (optional)" autocomplete="email"></div>
@@ -269,6 +299,12 @@
   // MLS compliance: set true when the render used declutter/restage enhancements
   // (server-injected per share page). Shows the "Virtually staged" disclosure chip.
   const VIRTUALLY_STAGED = false;
+  // In-app preview (PlayerWebView): the lead form is inert — nothing is sent
+  // anywhere from the app, so it says so instead of faking "Request sent".
+  const PREVIEW = false;
+  // The video file isn't available (bundled demo missing, tour file gone):
+  // show an explicit message, never a black stage with a spinning loader.
+  const VIDEO_MISSING = false;
   const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.08 : 0.14;  // a touch more responsive; all-intra video keeps it smooth
   const SLUG = 'demo';               // share_pages.slug — beacon key
 
@@ -278,6 +314,7 @@
   const loader  = document.getElementById('loader');
   const pctEl   = loader.querySelector('.pct');
   const barEl   = loader.querySelector('.bar i');
+  const msgEl   = loader.querySelector('.msg');
   const progEl  = document.querySelector('#progress i');
   const roomEl  = document.getElementById('room');
   const roomNm  = roomEl.querySelector('.name');
@@ -287,8 +324,9 @@
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
   /* ================= Track sizing (100svh-safe, toolbar-resize-safe) ================= */
-  let duration = 0;
+  let duration = 0, unavailable = false;
   function sizeTrack() {
+    if (unavailable) { track.style.height = innerHeight + 'px'; return; }
     if (!duration) return;
     // stage is sticky for the whole scrub distance + one viewport
     track.style.height = Math.round(duration * PX_PER_SEC + innerHeight) + 'px';
@@ -304,7 +342,7 @@
       // Clamp: an injected chapter can sit past the video's end (tag near the
       // end of a walk that was trimmed on export).
       const p = duration ? clamp(c.t / duration, 0, 1) : 0;
-      scrollTo({ top: p * (track.offsetHeight - innerHeight), behavior: 'smooth' });
+      scrollTo({ top: p * Math.max(0, track.offsetHeight - innerHeight), behavior: 'smooth' });
     });
     railEl.appendChild(b);
     return b;
@@ -360,11 +398,27 @@
   }
 
   function begin() {
-    if (started) return;
+    if (started || unavailable) return;
     started = true;
     loader.classList.add('done');
     lastTick = performance.now();
     requestAnimationFrame(tick);
+  }
+
+  /* ================= Unavailable video (explicit, never a black stage) ================= */
+  function showUnavailable(title, detail) {
+    if (started) return;           // playing fine — a late error is not a missing video
+    unavailable = true;
+    loader.classList.remove('done');
+    loader.classList.add('unavailable');
+    msgEl.innerHTML = '';
+    const b = document.createElement('b'); b.textContent = title;
+    msgEl.appendChild(b);
+    msgEl.appendChild(document.createTextNode(detail || ''));
+    hintEl.classList.add('gone');
+    railEl.style.display = 'none';
+    roomEl.style.opacity = 0;
+    sizeTrack();                   // one viewport: the end card sits right below
   }
 
   /* ================= Buffer gate + % loader ================= */
@@ -373,7 +427,7 @@
     catch (_) { return 0; }
   }
   function reportBuffer() {
-    if (!video.duration) return;
+    if (!video.duration || unavailable) return;
     const f = clamp(buffered() / video.duration, 0, 1);
     const pc = Math.round(f * 100);
     pctEl.textContent = pc + '%';
@@ -383,8 +437,19 @@
   video.addEventListener('progress', reportBuffer);
   video.addEventListener('loadedmetadata', () => { duration = video.duration; sizeTrack(); reportBuffer(); });
   video.addEventListener('canplaythrough', () => setTimeout(begin, 1200)); // fallback gate
-  setTimeout(() => { if (!started && buffered() > 5) begin(); }, 6000);    // never strand the viewer
-  setTimeout(() => { if (!started) begin(); }, 12000);  // absolute last resort (missing/failed video) — parity with the hosted player
+  video.addEventListener('error', () => {
+    showUnavailable(VIDEO_MISSING ? 'Sample video unavailable' : 'Video unavailable',
+                    VIDEO_MISSING ? 'The sample clip isn’t in this build. Record a walkthrough to see your own tour here.'
+                                  : 'This tour’s video couldn’t be loaded. Re-render or re-import the video and try again.');
+  });
+  setTimeout(() => { if (!started && !unavailable && buffered() > 5) begin(); }, 6000);    // never strand the viewer
+  setTimeout(() => {
+    // Absolute last resort (parity with the hosted player): if nothing has
+    // loaded by now, say so instead of dropping the viewer onto a black stage.
+    if (started || unavailable) return;
+    if (video.readyState > 0 && buffered() > 0) begin();
+    else showUnavailable('Video unavailable', 'The video hasn’t loaded. Check your connection and pull to refresh.');
+  }, 12000);
 
   /* ================= Fallback: autoplay loop (Low Power Mode / webview jank) ================= */
   let fellBack = false;
@@ -396,6 +461,7 @@
     const loopTick = () => {
       const p = video.duration ? video.currentTime / video.duration : 0;
       updateOverlays(p);
+      meter(p, performance.now());
       requestAnimationFrame(loopTick);
     };
     requestAnimationFrame(loopTick);
@@ -418,6 +484,7 @@
     lastMeter = now;
   }
   function flushBeacon() {
+    if (PREVIEW) return;           // nothing to meter in the in-app preview
     const payload = JSON.stringify({
       slug: SLUG,
       minutes_streamed: +(engagedMs / 60000).toFixed(3),
@@ -431,20 +498,36 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) flushBeacon(); });
 
   /* ================= Lead form ================= */
-  document.getElementById('leadform').addEventListener('submit', (e) => {
-    e.preventDefault();
-    const data = Object.fromEntries(new FormData(e.target).entries());
-    // In prod: POST /f/:slug/lead → agent push + SMS + CRM webhook
-    try { localStorage.setItem('rendprop_lead_' + SLUG, JSON.stringify({ ...data, scroll_depth: maxDepth })); } catch (_) {}
-    e.target.style.display = 'none';
-    document.getElementById('leadok').style.display = 'block';
-  });
+  const form = document.getElementById('leadform');   // absent when the CTA is a deep link
+  if (form) {
+    if (PREVIEW) {
+      // Visible "this is a preview" state: inputs and the button are disabled,
+      // nothing is stored or sent, and no fake "Request sent" ever appears.
+      form.querySelectorAll('input, textarea, button').forEach((el) => { el.disabled = true; });
+      const note = document.getElementById('previewnote');
+      if (note) note.hidden = false;
+    }
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      if (PREVIEW) return;
+      const data = Object.fromEntries(new FormData(e.target).entries());
+      // In prod: POST /f/:slug/lead → agent push + SMS + CRM webhook
+      try { localStorage.setItem('rendprop_lead_' + SLUG, JSON.stringify({ ...data, scroll_depth: maxDepth })); } catch (_) {}
+      e.target.style.display = 'none';
+      document.getElementById('leadok').style.display = 'block';
+    });
+  }
 
   /* ================= Kick off ================= */
   if (VIRTUALLY_STAGED) document.getElementById('staged').classList.add('on');
   video.muted = true;
   video.playsInline = true;
-  video.load();
+  if (VIDEO_MISSING) {
+    showUnavailable('Sample video unavailable',
+                    'The sample clip isn’t in this build. Record a walkthrough to see your own tour here.');
+  } else {
+    video.load();
+  }
 })();
 </script>
 </body>

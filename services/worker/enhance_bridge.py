@@ -9,11 +9,18 @@ Two glue jobs:
   1. Make the pipeline importable: it uses top-level imports (`import router`,
      `from config import ...`), so we append its dir to sys.path. Worker modules
      keep priority (they're on sys.path[0]); none share a name with the pipeline.
-  2. Route the pipeline's cost_ledger writes to the `rendprop` schema. The
-     pipeline's CostLedger targets PostgREST without a schema profile (i.e.
-     `public`); we monkeypatch its `_headers()` — the single Supabase-touching
-     method — to add `Accept-Profile`/`Content-Profile: rendprop`. Contained to
-     this process; the pipeline files are untouched on disk.
+  2. Route the pipeline's cost_ledger writes to the worker's schema
+     (`SETTINGS.db_schema`, `public` on the dedicated project). The pipeline's
+     CostLedger targets PostgREST without a schema profile; we monkeypatch its
+     `_headers()` — the single Supabase-touching method — to add
+     `Accept-Profile`/`Content-Profile`. Contained to this process; the pipeline
+     files are untouched on disk.
+
+Style normalisation (audit F-G-02): the app sends `style:"as_is"` on EVERY plain
+job. Any of as_is / as-is / asis / none / "" means "no restage" and must never
+reach the pipeline; an unknown style is skipped with a reason rather than being
+interpolated into a paid prompt. `wants_enhancement()` is the single predicate
+the worker uses to decide whether to call the pipeline at all.
 
 Design choice (product): the base scrubbable tour is the core deliverable. AI
 add-ons are exactly that — add-ons. If enhancement can't run (missing provider
@@ -29,12 +36,49 @@ actually enhanced (→ mandatory "Virtually staged" disclosure).
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from settings import SETTINGS
+
+# Mirrors services/pipeline/config.py (NO_RESTAGE_STYLES / STYLES). Kept local so
+# the worker can normalise BEFORE importing the pipeline (which may be absent).
+NO_RESTAGE_STYLES = frozenset({"", "as_is", "as-is", "asis", "none", "null", "original", "off"})
+KNOWN_STYLES = frozenset({"modern", "rustic", "minimalist", "scandinavian"})
+
+
+def normalize_style(raw: object) -> tuple[str | None, str | None]:
+    """→ (style, problem). style None = no restage. problem set = unknown style."""
+    s = str(raw or "").strip().lower().replace(" ", "_")
+    if s in NO_RESTAGE_STYLES:
+        return None, None
+    known = KNOWN_STYLES
+    try:  # prefer the pipeline's authoritative list when importable
+        pdir = SETTINGS.pipeline_dir
+        if pdir not in sys.path:
+            sys.path.append(pdir)
+        from config import STYLES as _pl_styles  # type: ignore
+        known = frozenset(_pl_styles)
+    except Exception:  # noqa: BLE001 — fall back to the local mirror
+        pass
+    if s not in known:
+        return None, f"unknown style {raw!r} (expected one of {sorted(known)} or as_is)"
+    return s, None
+
+
+def wants_enhancement(enhancements: dict | None) -> bool:
+    """True when the job asks for declutter / a restage style / a hero clip.
+
+    A no-restage style (`as_is`…) alone → False (nothing to run, nothing to
+    bill). An UNKNOWN style still returns True so run_enhancement() can record
+    the "skipped: unknown style" reason instead of silently ignoring it.
+    """
+    e = enhancements or {}
+    style, problem = normalize_style(e.get("style"))
+    return bool(e.get("declutter")) or style is not None or problem is not None or bool(e.get("hero"))
 
 
 @dataclass
@@ -94,7 +138,11 @@ def run_enhancement(
 ) -> EnhanceResult:
     """Run the pipeline over the raw walkthrough. Never raises — returns a result."""
     declutter = bool(enhancements.get("declutter"))
-    style = enhancements.get("style") or None
+    # Normalise FIRST: "as_is" (what the app sends on every plain job) is not a
+    # restage request, and an unknown style is a skip, never a paid prompt.
+    style, style_problem = normalize_style(enhancements.get("style"))
+    if style_problem:
+        return EnhanceResult(ran=False, reason=f"skipped: {style_problem}")
     hero = bool(enhancements.get("hero"))
     analyze = bool(enhancements.get("analyze"))
     route = os.environ.get("RESTAGE_ROUTE", "gemini")
@@ -133,6 +181,7 @@ def run_enhancement(
     os.makedirs(enh_dir, exist_ok=True)
     chapters = _map_chapters(db_chapters)
 
+    reason = "ok"
     try:
         manifest = pl_enhance.enhance_video(
             Path(input_video), declutter, style,
@@ -140,11 +189,21 @@ def run_enhancement(
             analyze=analyze, workdir=Path(enh_dir), job_id=job_id, org_id=org_id,
         )
     except Exception as e:  # noqa: BLE001 — provider/QC failure → ship base tour
-        return EnhanceResult(ran=False, reason=f"enhancement error: {e}")
+        # The pipeline now isolates per-segment failures, so an exception here
+        # is something outside the loop (context setup, disk, hero). Segments
+        # that already passed QC were PAID for — harvest them from the manifest
+        # the pipeline writes as it goes rather than discarding them (F-G-08).
+        manifest = _read_manifest(enh_dir)
+        if manifest is None:
+            return EnhanceResult(ran=False, reason=f"enhancement error: {e}")
+        reason = f"partial: {e}"
 
     # Collect the enhanced stills that actually passed QC (status == "enhanced").
     stills: list[EnhancedStill] = []
+    errors = 0
     for seg in manifest.get("segments", []):
+        if seg.get("status") == "error":
+            errors += 1
         if seg.get("status") != "enhanced":
             continue
         name = seg.get("name", "room")
@@ -155,6 +214,8 @@ def run_enhancement(
                 room=name, enhanced_path=enhanced,
                 source_path=source if os.path.exists(source) else "",
             ))
+    if errors and reason == "ok":
+        reason = f"ok ({errors} segment(s) failed and shipped as original)"
 
     hero_path = manifest.get("hero_clip")
     if hero_path and not os.path.exists(hero_path):
@@ -162,10 +223,21 @@ def run_enhancement(
 
     return EnhanceResult(
         ran=True,
-        staged=bool(manifest.get("virtually_staged")),
-        reason="ok",
+        staged=bool(manifest.get("virtually_staged")) and bool(stills),
+        reason=reason,
         spent_cents=float(manifest.get("spent_cents", 0) or 0),
         stills=stills,
         hero_path=hero_path,
         manifest=manifest,
     )
+
+
+def _read_manifest(enh_dir: str) -> dict | None:
+    """The pipeline's manifest.json, if it got far enough to write one."""
+    path = os.path.join(enh_dir, "manifest.json")
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else None
+    except (OSError, ValueError):
+        return None

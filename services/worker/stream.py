@@ -44,6 +44,17 @@ def _headers() -> dict:
     return {"Authorization": f"Bearer {SETTINGS.cloudflare_stream_token}"}
 
 
+def _request(method: str, url: str, **kw) -> requests.Response:
+    """One HTTP entry point: transport failures (DNS, timeout, reset) become
+    StreamError so every caller's `except StreamError` actually catches them
+    (audit F-G-06 — raw requests exceptions used to bypass the handlers)."""
+    kw.setdefault("timeout", 30)
+    try:
+        return requests.request(method, url, **kw)
+    except requests.RequestException as e:
+        raise StreamError(f"Stream: network {method} {url}: {e.__class__.__name__}: {e}") from e
+
+
 def _unwrap(resp: requests.Response) -> dict:
     """Cloudflare wraps everything in {success, errors, result}. Normalize it."""
     try:
@@ -63,7 +74,7 @@ def copy_from_url(source_url: str, name: str | None = None, meta: dict | None = 
         md["name"] = name
     if md:
         payload["meta"] = md
-    r = requests.post(f"{_base()}/copy", headers=_headers(), json=payload, timeout=60)
+    r = _request("POST", f"{_base()}/copy", headers=_headers(), json=payload, timeout=60)
     result = _unwrap(r)
     uid = result.get("uid")
     if not uid:
@@ -80,7 +91,7 @@ def direct_upload(file_path: str, name: str | None = None) -> str:
     """
     with open(file_path, "rb") as fh:
         files = {"file": (name or "tour.mp4", fh, "video/mp4")}
-        r = requests.post(_base(), headers=_headers(), files=files, timeout=SETTINGS.stream_timeout_s)
+        r = _request("POST", _base(), headers=_headers(), files=files, timeout=SETTINGS.stream_timeout_s)
     result = _unwrap(r)
     uid = result.get("uid")
     if not uid:
@@ -90,7 +101,7 @@ def direct_upload(file_path: str, name: str | None = None) -> str:
 
 def get(uid: str) -> dict:
     """Fetch the full video object (status, playback, thumbnails, duration…)."""
-    r = requests.get(f"{_base()}/{uid}", headers=_headers(), timeout=30)
+    r = _request("GET", f"{_base()}/{uid}", headers=_headers(), timeout=30)
     return _unwrap(r)
 
 

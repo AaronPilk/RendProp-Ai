@@ -14,7 +14,7 @@ Stream-hosted + AI-enhanced tours.
 ## Flow
 
 ```
-poll rendprop.render_jobs where status in (created, queued)
+poll render_jobs where status in (created, queued) AND the capture asset is an uploaded video in the uploads bucket
   └─ claim one            → status = processing (lock-free optimistic PATCH)
      1. download capture   from R2 rendprop-uploads (S3 API)
      2. ffmpeg render      retime · 60fps · ≤1280 · all-intra H.264 · faststart · poster
@@ -23,7 +23,7 @@ poll rendprop.render_jobs where status in (created, queued)
                            declutter / restage / hero   → cost_ledger: declutter|restage|hero|qc
      4. upload             mp4 + poster (+ enhanced stills) → R2 rendprop-renders
      5. Cloudflare Stream  copy-from-URL (presigned R2 GET) → stream_uid  (optional)
-     6. insert             rendprop.renders (slug, duration, keys, staged)
+     6. insert             renders (slug, duration, keys, staged)
      7. finish             job → ready, progress=1, finished_at
                                                         → cost_ledger: stream_store
   └─ any failure          → status = failed + error jsonb
@@ -34,11 +34,25 @@ project `ymgqpbnjpztwjsyvceld` — matching the edge functions and
 `migrations/0001_init.sql`. `SUPABASE_DB_SCHEMA` defaults to `public`; only set
 it if you deliberately isolate the tables into a named schema.
 
-Chapters: the app writes `capture_chapters` when the walkthrough's room tags are
-posted to the server (via `/uploads/:id/complete`); the tour function reads them
-at serve time. The worker only *reads* them (to segment rooms for AI
-enhancement) — it never writes them. If an asset has no chapters yet, the worker
-proceeds without room segmentation.
+Chapters: the worker only *reads* `capture_chapters` (to segment rooms for AI
+enhancement) — it never writes them. Today the only writer of that table is
+`publish_render` (the on-device publish path), so a worker-path job normally has
+**no** chapters and the pipeline falls back to blind 8-second slices; the tour
+function reads whatever rows exist at serve time. Wiring `POST /renders` to
+accept `chapters` is an open backend item (audit F-G-10). Chapter times are
+SOURCE time for capture assets (the app only rescales for tours it publishes
+itself).
+
+Which jobs the worker takes: only `render_jobs` whose capture asset is a finished
+upload (`uploaded = true`) of `kind = 'video'` in the private **uploads** bucket.
+App-published tours (asset `bucket = 'renders'`, published by
+`/renders/publish-app`) are excluded by the claim query itself and skipped —
+released back to `queued`, never failed — if one reaches `--job-id`.
+
+Enhancements: `enhancements.style` is normalised before anything runs.
+`as_is` / `as-is` / `asis` / `none` / `""` (what the app sends on every plain
+job) mean **no restage**; an unknown style is skipped with a reason; only
+`modern | rustic | minimalist | scandinavian` reach the pipeline.
 
 ---
 
@@ -69,18 +83,30 @@ Why each piece (all from `RenderEngine.swift`):
 | `scale=…:force_original_aspect_ratio=decrease:force_divisible_by=2` | ≤1280 long edge, aspect-kept, never upscaled, even dims. Single-quotes protect the commas in `min()`. |
 | `-g 1 -bf 0` + `x264 keyint=1` | **ALL-INTRA** — every frame a keyframe → any scrub position decodes instantly. The whole point. |
 | `-b:v 14M` | high bitrate keeps all-intra crisp (mirrors `AVVideoAverageBitRateKey`) |
-| `bt709` tags | HDR/Dolby-Vision phone footage tone-maps instead of washing out |
+| `bt709` tags | the output really is Rec.709 SDR: HDR sources are tone-mapped first (below) |
 | `-movflags +faststart` | moov atom up front → instant web start |
 | `-an` | the scrubbable tour is silent, like on-device |
 
-Poster: one exact frame pulled at ~12% in (all-intra → exact seek).
+Poster: one exact frame pulled at ~12% in — but at least 1 s in (skips the
+hand/floor at record start) and never past the last half-second (all-intra →
+exact seek).
 
 `-progress pipe:1` is parsed to drive `render_jobs.progress` smoothly during the
 encode (mapped into the 0.15–0.55 band).
 
-**HDR:** output is *tagged* Rec.709. A true HDR→SDR tonemap (for PQ/HLG sources)
-is behind `TONEMAP_HDR=1` and needs an ffmpeg built with `zscale`/`tonemap`
-(the Docker image qualifies). Off by default. See TODOs.
+**HDR:** every source is probed (`ffprobe` colour metadata). PQ (`smpte2084`)
+and HLG (`arib-std-b67`) sources — the iPhone default — get a real tone-map
+(`zscale → linear → hable → bt709`) inserted after the scale step; SDR and
+untagged sources are passed through untouched (the chain degrades SDR and
+errors on untagged input). Output is tagged bt709 either way. Needs an ffmpeg
+built with `zscale`/`tonemap` (the Docker image qualifies); on a build without
+them the worker warns and re-tags only. `TONEMAP_HDR=0` disables it.
+The AI pipeline extracts its keyframes with the same conditional chain, so
+Gemini/Claude never judge a washed-out HLG frame.
+
+**Timeouts:** `FFMPEG_TIMEOUT_S` (default 90 min) is enforced by a
+`threading.Timer` that kills ffmpeg when it fires — whether or not ffmpeg is
+still printing progress. ffprobe and poster extraction have their own bounds.
 
 **Stabilization:** RenderEngine's Vision path-smoothing is on-device only. Server
 -side we skip it (drone clips never needed it). GPU stabilization (`vidstab`
@@ -96,24 +122,27 @@ two-pass or Gyroflow-grade) is the v3 slot — see TODOs.
 2. Presign a short-lived R2 **GET** url (`r2.presigned_get_url`).
 3. `POST /accounts/{acct}/stream/copy { url, meta }` → Stream pulls the bytes
    itself (no bytes route through the worker) → returns a **UID**.
-4. Store `stream_uid` on `rendprop.renders`. HLS is usable immediately; by
+4. Store `stream_uid` on `renders`. HLS is usable immediately; by
    default we don't block on transcode (`STREAM_REQUIRE_READY=0`).
 
-`direct_upload()` (multipart) is the fallback when the copy source isn't
-reachable by Cloudflare. **No Stream token? We skip Stream entirely** and the
-player serves the R2 mp4 via `renders.video_key`.
+`direct_upload()` (multipart) exists for environments where the copy source
+isn't reachable by Cloudflare but is **not wired** as an automatic fallback
+yet — a copy failure simply publishes without Stream. If only the readiness
+poll (`STREAM_REQUIRE_READY=1`) times out, the UID is kept (Stream keeps
+transcoding). **No Stream token? We skip Stream entirely** and the player
+serves the R2 mp4 via `renders.video_key`.
 
 ---
 
 ## Cost metering (consistent with the pipeline)
 
-Every billable unit writes a `rendprop.cost_ledger` row; `render_jobs.cost_cents`
+Every billable unit writes a `cost_ledger` row; `render_jobs.cost_cents`
 is the rolled-up `SUM(total_cents)`.
 
 - **AI** (`declutter`/`restage`/`hero`/`qc`) — metered *inside* `services/pipeline`
   (its `providers/costs.py` is the single source of AI unit economics). The
-  worker reuses it as-is and just reroutes its ledger writes to the `rendprop`
-  schema (a contained monkeypatch in `enhance_bridge.py`).
+  worker reuses it as-is and just reroutes its ledger writes to the worker's
+  schema (`SUPABASE_DB_SCHEMA`; a contained monkeypatch in `enhance_bridge.py`).
 - **Infra** (`render`, `stream_store`) — metered by the worker in `infra_costs.py`:
   - `render` = server encode compute, `RENDER_COMPUTE_CENTS_PER_MIN` × output
     minutes. **Estimate** — set it from real Modal/Cloud-Run bills.
@@ -147,9 +176,10 @@ python worker.py --job-id <render_jobs.id>
 python worker.py
 ```
 
-To enqueue a test job, insert a `rendprop.render_jobs` row (status `queued`)
-pointing at a `capture_assets` row whose `storage_key` exists in
-`rendprop-uploads` (the iOS `/renders` edge function does this in prod).
+To enqueue a test job, insert a `render_jobs` row (status `queued`)
+pointing at a `capture_assets` row (`bucket = 'uploads'`, `uploaded = true`,
+`kind = 'video'`) whose `storage_key` exists in `rendprop-uploads` (the
+`/renders` edge function does this in prod).
 
 ---
 
@@ -170,7 +200,9 @@ docker run --rm --env-file services/worker/.env rendprop-worker
 - **Fly/ECS:** run the poller as one always-on machine; scale replicas to widen
   the queue (the lock-free claim makes multiple workers safe).
 
-**Modal:** wrap `process_specific(job_id)` in a `@app.function(timeout=1800)`
+**Modal:** wrap `process_specific(job_id)` in a `@app.function(timeout=...)` — set the
+function timeout **above** `FFMPEG_TIMEOUT_S` (default 5400 s) or lower the ffmpeg ceiling
+to match; a platform kill leaves the job stuck in `processing`
 (mount `services/pipeline` + `services/worker`, `apt_install("ffmpeg")`, set
 secrets). Trigger from the `/renders` edge function (webhook → Modal call), or
 run `process_one` on a `@app.schedule`. GPU tier only becomes worth it once
@@ -189,14 +221,15 @@ see TODOs.
   fallback + reaper for missed events.
 - **GPU stabilization:** `vidstab` two-pass or a Gyroflow-grade pass to match the
   on-device Vision smoothing (skipped server-side today).
-- **HDR tonemap default-on** once the encode host reliably has `zscale`/`tonemap`
-  and we've tuned the curve (currently opt-in via `TONEMAP_HDR`).
+- **HDR curve tuning:** the tone-map is on by default for HDR sources; the
+  `npl=100` + `hable` curve is usable but still compresses in-gamut content —
+  tune against real iPhone HLG clips.
 - **Hero clip has no first-class home:** it's uploaded to R2 and logged, but the
   schema has no column for it. Add `renders.hero_key` (or a `media` table) so the
   tour host can play it.
-- **Idempotency on retry:** re-running a failed job re-inserts a `renders` row.
-  Add a unique `renders(job_id)` or an upsert so a retry replaces rather than
-  duplicates.
+- **Heartbeat / lease:** a job whose worker dies stays `processing` forever
+  (no reaper yet). Add `lease_expires_at` + a heartbeat and let the claim query
+  reclaim expired leases.
 - **4K tier:** `render_jobs.tier` (`premium4k`/`cinematic`) is read but the encode
   is fixed at ≤1280. Branch the long-edge/bitrate on tier when 4K ships.
 - **Stream webhook:** subscribe to Stream's `video.ready` webhook instead of

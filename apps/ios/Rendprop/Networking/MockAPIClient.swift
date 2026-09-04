@@ -1,37 +1,53 @@
 import Foundation
 
 /// Fully offline API — believable sample data + simulated render progress.
-/// The app runs end-to-end on-device with no backend.
+/// The app runs end-to-end on-device with no backend. Every protocol method
+/// returns a plausible value; the AI video features report honestly that they
+/// need the live backend instead of handing back a fake file.
 actor MockAPIClient: APIClient {
     private var renders: [UUID: (render: Render, startedAt: Date)] = [:]
+    /// Listings created/updated offline, keyed by id — so `listings()` and
+    /// `updateListing` round-trip like a real server would.
+    private var created: [UUID: Listing] = [:]
 
-    private static let sampleListings: [Listing] = [
-        Listing(address: "1247 Hillcrest Drive (Sample)", beds: 4, baths: 3, sqft: 2850,
-                price: .dollars(1_175_000), status: .ready, isSample: true,
-                createdAt: Date().addingTimeInterval(-86_400 * 2)),
-        Listing(address: "88 Marina Vista #501 (Sample)", beds: 2, baths: 2, sqft: 1240,
-                price: .dollars(689_000), status: .processing, isSample: true,
-                createdAt: Date().addingTimeInterval(-3_600 * 5)),
-    ]
+    // MARK: - Listings
 
     func listings() async throws -> [Listing] {
         try? await Task.sleep(nanoseconds: 350_000_000) // feel like a network
-        return Self.sampleListings
+        // Samples for the CURRENT business type (a venue owner sees venues, not
+        // houses) plus anything created offline this session.
+        let live = created.values.sorted { $0.createdAt > $1.createdAt }
+        return SpaceType.current.sampleListings + live
     }
 
     func createListing(_ listing: Listing) async throws -> Listing {
-        listing
+        var l = listing
+        l.isSample = false
+        l.serverID = l.serverID ?? UUID()
+        created[l.id] = l
+        return l
     }
 
     func updateListing(_ listing: Listing) async throws -> Listing {
-        listing
+        var l = listing
+        if l.status == .uploading { l.status = .processing }   // mirror the live mapping
+        created[l.id] = l
+        return l
     }
+
+    func deleteListing(serverID: UUID) async throws {
+        created = created.filter { $0.value.serverID != serverID && $0.key != serverID }
+    }
+
+    // MARK: - Uploads
 
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String,
-                       role: String) async throws -> UploadTicket {
+                       role: String, contentType: String?,
+                       idempotencyKey: String?) async throws -> UploadTicket {
         // Offline dev: single-mode ticket with no presigned URL → UploadManager
-        // falls back to Simulate. `role` is irrelevant with no real buckets.
+        // falls back to Simulate (video) / returns the id directly (poster).
+        // `role`/`contentType` are irrelevant with no real buckets.
         UploadTicket(assetID: UUID().uuidString, mode: .single, putURL: nil, storageKey: nil)
     }
 
@@ -60,6 +76,8 @@ actor MockAPIClient: APIClient {
 
     func completeUpload(id: String, sha256: String?) async throws {}
 
+    // MARK: - Renders
+
     func createRender(listingID: UUID, assetID: UUID, tier: Render.Tier, durationS: Double,
                       enhancements: Enhancements) async throws -> Render {
         let render = Render(listingID: listingID, tier: tier, durationS: durationS,
@@ -68,20 +86,57 @@ actor MockAPIClient: APIClient {
         return render
     }
 
-    func publishApp(listingID: UUID, assetID: String, durationS: Double,
-                    speedFactor: Double, staged: Bool, tier: Render.Tier,
-                    enhancements: Enhancements, chapters: [[String: Any]]) async throws -> PublishedTour {
-        // Offline dev: synthesize a believable local slug so the flow completes.
-        // Never reached in the live path (publishTour is gated on useLiveBackend,
-        // which uses LiveAPIClient).
-        let slug = String(UUID().uuidString.prefix(8)).lowercased()
-        return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
-                             durationS: durationS, staged: staged)
+    func renderStatus(id: UUID) async throws -> Render {
+        guard let entry = renders[id] else {
+            throw APIError.server(status: 404, code: "not_found", message: "Render not found.")
+        }
+        // Simulated pipeline: ~14s base, +3s per enhancement step.
+        let steps = entry.render.pipelineSteps
+        let total = 14.0 + Double(max(0, steps.count - 7)) * 3.0
+        let elapsed = Date().timeIntervalSince(entry.startedAt)
+        var r = entry.render
+        r.progress = min(1.0, elapsed / total)
+        if r.progress >= 1.0 {
+            r.status = "ready"
+        } else if !steps.isEmpty {
+            r.status = steps[min(steps.count - 1, Int(r.progress * Double(steps.count)))]
+        }
+        return r
     }
 
+    func publishApp(listingID: UUID, assetID: String, durationS: Double,
+                    speedFactor: Double, tier: RenderTier,
+                    enhancements: Enhancements, chapters: [ChapterInput],
+                    posterAssetID: String?) async throws -> PublishedTour {
+        // Offline dev: synthesize a believable local slug so the flow completes.
+        // Never reached in the live path (publishTour is gated on useLiveBackend,
+        // which uses LiveAPIClient). Deterministic per (listing, asset) — like the
+        // server's idempotent replay — so a retry yields the same slug.
+        let seed = DirectUploader.sha256Hex("publish:\(listingID.uuidString):\(assetID)")
+        let slug = String(seed.prefix(8))
+        return PublishedTour(slug: slug, shareURL: "https://rendprop.com/f/\(slug)",
+                             durationS: durationS, staged: enhancements.isActive,
+                             renderID: UUID())
+    }
+
+    func updateChapters(renderID: UUID, chapters: [ChapterInput]) async throws {
+        // Offline: chapters live on the local tour already; nothing to sync.
+        _ = (renderID, chapters)
+    }
+
+    // MARK: - Account / usage / leads
+
     func me() async throws -> UsageSummary {
-        // Believable offline sample — only shown when useLiveBackend is true.
-        UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: "Dev")
+        // Offline: no plan, no allowances (nil → the UI hides the rows rather
+        // than showing an invented "Dev" plan).
+        UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: nil,
+                     entitlements: nil, userName: nil, orgName: nil, brandName: nil)
+    }
+
+    func leads(listingServerID: UUID?) async throws -> [Lead] {
+        // Offline: leads only exist once a tour is hosted — none to show.
+        try? await Task.sleep(nanoseconds: 250_000_000)
+        return []
     }
 
     func updateBrand(_ fields: [String: String]) async throws {
@@ -89,8 +144,11 @@ actor MockAPIClient: APIClient {
         _ = fields
     }
 
+    // MARK: - AI photo (offline stubs)
+
     func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
-                     style: String?, prompt: String?) async throws -> String {
+                     style: String?, prompt: String?,
+                     idempotencyKey: String?) async throws -> String {
         // Offline dev: no Gemini — echo the original back so the UI flow runs
         // (style/prompt are ignored offline).
         try? await Task.sleep(nanoseconds: 500_000_000)
@@ -125,52 +183,32 @@ actor MockAPIClient: APIClient {
 
     // MARK: - AI video (offline stubs — the real flows run only on LiveAPIClient)
 
-    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
-        Self.mockAIVideoJob(kind: "drone")
+    func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
+                      idempotencyKey: String?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "drone", grounded: nil)
     }
 
-    func aiVideoAerial(style: String?, prompt: String?, seconds: Int, aspect: String) async throws -> AIVideoJob {
-        Self.mockAIVideoJob(kind: "aerial")
+    func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "aerial", grounded: request.isGrounded)
     }
 
-    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
-        Self.mockAIVideoJob(kind: "reel")
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        Self.mockAIVideoJob(kind: "reel", grounded: true)
     }
 
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
-        // Offline dev: "complete" after a short beat with a local placeholder file
-        // so any caller's poll → download flow finishes instead of hanging. Not a
-        // real video — the AI video features are gated on useLiveBackend anyway.
+        // Offline dev: fail HONESTLY after a short beat. The old stub "completed"
+        // with a text file named .mp4, which AVPlayer and Photos then choked on.
         try? await Task.sleep(nanoseconds: 1_200_000_000)
-        let placeholder = FileManager.default.temporaryDirectory
-            .appendingPathComponent("mock-ai-video-\(job.requestId).mp4")
-        if !FileManager.default.fileExists(atPath: placeholder.path) {
-            try? Data("rendprop offline placeholder".utf8).write(to: placeholder)
-        }
-        return .completed(videoURL: placeholder)
+        return .failed("AI video needs the live backend — you're offline (mock mode).")
     }
 
-    private static func mockAIVideoJob(kind: String) -> AIVideoJob {
+    private static func mockAIVideoJob(kind: String, grounded: Bool?) -> AIVideoJob {
         let id = UUID().uuidString.lowercased()
         return AIVideoJob(requestId: id,
                           statusUrl: "https://queue.fal.run/mock/requests/\(id)/status",
                           responseUrl: "https://queue.fal.run/mock/requests/\(id)",
-                          kind: kind)
-    }
-
-    func renderStatus(id: UUID) async throws -> Render {
-        guard let entry = renders[id] else { throw APIError.badResponse(404) }
-        // Simulated pipeline: ~14s base, +3s per enhancement step.
-        let steps = entry.render.pipelineSteps
-        let total = 14.0 + Double(steps.count - 7) * 3.0
-        let elapsed = Date().timeIntervalSince(entry.startedAt)
-        var r = entry.render
-        r.progress = min(1.0, elapsed / total)
-        if r.progress >= 1.0 {
-            r.status = "ready"
-        } else {
-            r.status = steps[min(steps.count - 1, Int(r.progress * Double(steps.count)))]
-        }
-        return r
+                          kind: kind, grounded: grounded, synthetic: true)
     }
 }

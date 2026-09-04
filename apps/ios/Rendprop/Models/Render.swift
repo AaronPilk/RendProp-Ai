@@ -1,7 +1,8 @@
 import Foundation
 
-/// Interior design style for AI virtual restaging. The pipeline re-styles
-/// furniture, wall art, and decor while keeping architecture identical.
+/// Interior design style for AI virtual restaging. Kept for JSON back-compat
+/// (persisted renders + server DTOs decode it); the tour flow no longer offers
+/// it — no video restage pipeline exists yet (2026-09-03 audit, decision A5).
 enum DesignStyle: String, Codable, CaseIterable, Identifiable {
     case asIs = "as_is"
     case modern, rustic, minimalist, scandinavian
@@ -39,20 +40,16 @@ enum DesignStyle: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-/// AI enhancement add-ons applied by the render pipeline.
+/// AI enhancement add-ons. The tour flow ALWAYS sends the defaults
+/// (`declutter: false`, `style: .asIs`) — nothing in the render path restages
+/// or declutters video, and a non-default value only made the hosted page stamp
+/// an untouched video "Virtually staged" (decision A5). The type stays so
+/// persisted renders and server DTOs keep decoding.
 struct Enhancements: Codable, Hashable {
-    /// Remove boxes, clutter, and mess — video inpainting with temporal consistency.
     var declutter: Bool = false
-    /// Restage furniture/decor in a chosen style (architecture never changes).
     var style: DesignStyle = .asIs
 
     var isActive: Bool { declutter || style != .asIs }
-
-    // Audit P0-5: the declutter/restage USD add-on prices and their total were
-    // REMOVED. StoreKit is disabled during early access, so compiled
-    // digital-goods pricing (even unrendered) contradicts the free model under
-    // Guideline 3.1. Enhancements are included with early access; when paid
-    // plans launch, prices come from StoreKit products.
 }
 
 struct Render: Identifiable, Codable, Hashable {
@@ -69,17 +66,18 @@ struct Render: Identifiable, Codable, Hashable {
             }
         }
 
-        /// Plain-agent-language copy (master spec Part 39). Honest: the AI tiers
-        /// describe what actually runs today — Topaz motion smoothing + upscale
-        /// on our render farm (/ai-video/drone).
+        /// Plain-agent-language copy. Honest: the AI tiers describe what actually
+        /// runs today — Topaz motion smoothing + upscale on our render farm
+        /// (/ai-video/drone) of the on-device master; 30 fps vs 60 fps is the
+        /// real difference between them.
         var blurb: String {
             switch self {
             case .smooth:
                 return "A silky drone-style glide in HD. Perfect for most tours."
             case .premium4k:
-                return "AI motion smoothing + true 4K upscale on our render farm — the premium look for standout spaces."
+                return "AI motion smoothing + upscale (up to 4K, 30 fps) on our render farm — the premium look for standout spaces."
             case .cinematic:
-                return "AI motion smoothing + 4K upscale at 60fps on our render farm. The scroll-stopping version for social."
+                return "AI motion smoothing + upscale (up to 4K, 60 fps) on our render farm. The scroll-stopping version for social."
             }
         }
 
@@ -90,6 +88,14 @@ struct Render: Identifiable, Codable, Hashable {
             case .cinematic: return "sparkles"
             }
         }
+
+        /// The AI tiers run the server pass; Smooth publishes the on-device render.
+        var usesServerAI: Bool { self != .smooth }
+
+        /// `/ai-video/drone` tier parameter + target fps. 4K Premium = 30 fps,
+        /// Cinematic = 60 fps — the two tiers used to send identical requests.
+        var droneTierParam: String { self == .premium4k ? "4k30" : "4k60" }
+        var droneTargetFPS: Int { self == .premium4k ? 30 : 60 }
     }
 
     var id = UUID()
@@ -109,14 +115,10 @@ struct Render: Identifiable, Codable, Hashable {
     var videoURL: String? = nil
     var posterURL: String? = nil
 
-    /// Pipeline steps for this render (drives status UI). Enhancement steps
-    /// appear only when purchased.
+    /// Pipeline steps for this render (drives the Mock status simulation).
+    /// No enhancement steps — nothing declutters/restages video (decision A5).
     var pipelineSteps: [String] {
-        var steps = ["Validating", "Stabilizing", "Interpolating 60fps"]
-        if enhancements.declutter { steps.append("Decluttering") }
-        if enhancements.style != .asIs { steps.append("Restaging · \(enhancements.style.displayName)") }
-        steps += ["Grading", "Encoding", "Packaging", "Publishing"]
-        return steps
+        ["Validating", "Stabilizing", "Interpolating 60fps", "Grading", "Encoding", "Packaging", "Publishing"]
     }
 }
 
@@ -163,28 +165,5 @@ extension Render {
         scrubURL     = try c.decodeIfPresent(String.self, forKey: .scrubURL)
         videoURL     = try c.decodeIfPresent(String.self, forKey: .videoURL)
         posterURL    = try c.decodeIfPresent(String.self, forKey: .posterURL)
-    }
-}
-
-/// Output duration bands. These label how long a finished tour runs; every tier
-/// is included with early access.
-///
-/// The per-tier USD price table that used to live here was REMOVED (audit
-/// P0-5): with StoreKit disabled, shipping digital-goods prices — even ones no
-/// screen renders — puts compiled price data in the binary that contradicts the
-/// free early-access model under App Review Guideline 3.1. When paid plans
-/// launch, pricing comes from StoreKit products, not hardcoded literals.
-enum PricingBand {
-    struct Band {
-        let name: String
-    }
-
-    static func band(forDuration s: Double) -> Band {
-        switch s {
-        case ..<95:  return Band(name: "Up to 90 seconds")
-        case ..<185: return Band(name: "90 seconds – 3 minutes")
-        case ..<365: return Band(name: "3 – 6 minutes")
-        default:     return Band(name: "6 – 10 minutes")
-        }
     }
 }

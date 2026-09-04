@@ -1,15 +1,27 @@
 // tours — PUBLIC read of a published tour by slug (for the Cloudflare tour host).
 //
 //   GET /tours/:slug -> { listing (public subset), video_url, poster, chapters,
-//                         agent_card, cta, staged, staged_disclosure, ... }
+//                         agent_card, cta, staged, staged_disclosure, status, sold_at, ... }
 //
 // Uses the service-role client (RLS bypass) but ONLY ever returns a published,
-// non-sensitive subset. Org internals (plan, ids, cost, emails) are never leaked.
+// non-sensitive subset. Org internals (plan, ids, cost, emails-as-names) are
+// never leaked.
+//
+// Fix wave 1 (2026-09-03):
+//   • 404 when the listing is soft-deleted (the 0011 trigger also unpublishes,
+//     but a tour must never outlive its listing — audit F-supabase-07).
+//   • `status` + `sold_at` are returned so the player can show SOLD / Archived
+//     (decision A17).
+//   • The agent card name is brand_kit.name, else the listing agent's profile
+//     name — NEVER the org name, which used to be the sign-in email (decision
+//     A14, audit F-supabase-06 / F-E-10). Anything that looks like an email is
+//     dropped rather than published.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
+import { buildAgentCard } from "../_shared/agentcard.ts";
 import { buildCta } from "./cta.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -49,20 +61,21 @@ Deno.serve(async (req) => {
     if (rErr) throw new HttpError(500, `Render lookup failed: ${rErr.message}`);
     if (!render) throw new HttpError(404, "Tour not found or not published");
 
-    // 2. Listing (public subset) + its org.
+    // 2. Listing (public subset) + its org. A deleted listing has no public tour.
     const { data: listing, error: lErr } = await admin
       .from("listings")
-      .select("id, org_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, lat, lng")
+      .select("id, org_id, agent_id, space_type, address, tagline, details, beds, baths, sqft, price_cents, zillow_url, lat, lng, status, sold_at, deleted_at")
       .eq("id", render.listing_id)
       .maybeSingle();
     if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
-    if (!listing) throw new HttpError(404, "Tour listing not found");
+    if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found or not published");
 
-    const { data: org } = await admin
-      .from("orgs")
-      .select("name, handle, space_type, brand_kit")
-      .eq("id", listing.org_id)
-      .maybeSingle();
+    const [{ data: org }, { data: agentProfile }] = await Promise.all([
+      admin.from("orgs").select("handle, space_type, brand_kit").eq("id", listing.org_id).maybeSingle(),
+      listing.agent_id
+        ? admin.from("profiles").select("name").eq("id", listing.agent_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: Array<{ label: string; t_ms: number; sort: number }> = [];
@@ -85,21 +98,12 @@ Deno.serve(async (req) => {
       }));
     }
 
-    // 4. Assemble the safe agent card from the org's brand kit. This response is
-    //    PUBLIC, so allow-list the display fields rather than spreading the whole
-    //    brand_kit jsonb (which could contain internal keys ever written to it).
-    const brand = (org?.brand_kit as Record<string, unknown> | null) ?? {};
-    const AGENT_CARD_FIELDS = [
-      "name", "handle", "title", "brokerage", "phone", "email", "website",
-      "avatar_url", "headshot_url", "instagram", "linkedin", "tiktok", "accent",
-    ] as const;
-    const agent_card: Record<string, unknown> = {
-      name: (brand.name as string) ?? org?.name ?? null,
-      handle: (brand.handle as string) ?? org?.handle ?? null,
-    };
-    for (const f of AGENT_CARD_FIELDS) {
-      if (brand[f] != null && agent_card[f] == null) agent_card[f] = brand[f];
-    }
+    // 4. Assemble the safe agent card from the org's brand kit (allow-listed
+    //    fields; name never falls back to the org name — see _shared/agentcard.ts).
+    const agent_card = buildAgentCard(org?.brand_kit, {
+      profileName: agentProfile?.name,
+      orgHandle: org?.handle ?? null,
+    });
 
     // Scrub fidelity: the scroll-scrub player seeks frame-accurately, which only
     // works on the all-intra mp4 served over HTTP byte-range. Cloudflare Stream
@@ -111,11 +115,17 @@ Deno.serve(async (req) => {
     const video_url = scrub_url ?? hls_url;
 
     const staged = Boolean(render.staged);
+    const sold_at = (listing.sold_at as string | null) ?? null;
+    const status = (listing.status as string) ?? "ready";
 
     return json({
       slug: render.slug,
       share_url: `${TOUR_BASE}/f/${render.slug}`,
       space_type: listing.space_type,
+      status,
+      sold_at,
+      sold: sold_at !== null,
+      archived: status === "archived",
       listing: {
         address: listing.address,
         tagline: listing.tagline,
@@ -127,6 +137,8 @@ Deno.serve(async (req) => {
         price: formatUSD(listing.price_cents as number | null),
         lat: listing.lat,
         lng: listing.lng,
+        status,
+        sold_at,
       },
       video_url,
       scrub_url,   // all-intra mp4 (byte-range) — use this for frame-accurate scrubbing
@@ -134,6 +146,7 @@ Deno.serve(async (req) => {
       poster: publicR2Url(render.poster_key as string),
       duration_s: render.duration_s,
       speed_factor: render.speed_factor,
+      published_at: render.published_at,
       chapters,
       agent_card,
       cta: buildCta(listing),

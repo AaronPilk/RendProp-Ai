@@ -1,7 +1,15 @@
 // me — the signed-in user, their org, plan, and account lifecycle (owner).
 //
-//   GET    /me                  -> { user, org, plan, usage }
-//   PATCH  /me/brand            -> { ok, brand_kit }
+//   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
+//                                    usage: { month, by_feature, windows, renders, leads, leads_new, listings, cost_cents },
+//                                    portfolio_url }
+//                                  plan = EFFECTIVE plan (an expired trial reads `free`),
+//                                  entitlement = the plan_entitlements row the server enforces,
+//                                  usage.by_feature = this window's consumption per meter
+//                                  (audit F-supabase-16 / F-E-15; decision B4).
+//   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle }, portfolio_url }
+//                                  brand-kit fields + `handle` (public portfolio slug,
+//                                  unique → 409) + `org_name` (business name; never an email)
 //   POST   /me/apple-code       -> { ok, stored }      (Sign in with Apple: exchange +
 //                                  store the refresh token for later revocation, TN3194)
 //   DELETE /me                  -> { ok, deletion_request_id, cleanup_complete, pending, warnings? }
@@ -22,6 +30,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError, round4 } from "../_shared/http.ts";
+import { entitlementFor } from "../_shared/entitlements.ts";
 import {
   deleteObjects,
   R2_BUCKET_RENDERS,
@@ -38,6 +47,8 @@ import {
   preferredOrg,
   userClient,
 } from "../_shared/supabase.ts";
+
+const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
@@ -70,42 +81,124 @@ Deno.serve(async (req) => {
 });
 
 // ── GET /me ───────────────────────────────────────────────────────────────────
+//
+// The app builds its "plan + usage" screen and its tier gating from this ONE
+// response, so it must say what the server actually enforces:
+//   plan            effective_plan() — an expired trial reads `free` here exactly
+//                   as it does in the charge paths (audit F-supabase-04/16)
+//   plan_raw        orgs.plan as stored (so the UI can say "trial ended")
+//   entitlement     the plan_entitlements row (renders/edits/clips/aerials/topaz/seats)
+//   usage.by_feature this window's consumption per meter — the same rate_limits
+//                   rows the AI routes charge, plus the month's WORKER render jobs
+//                   (app publishes are free and excluded, decision A15)
+//   usage.windows   when each 30-day meter resets (null = not started yet)
+//   usage.renders   is MONTH-scoped (it was all-time, audit F-E-15)
+
+const METERS: Record<string, string> = {
+  photo_edits: "aiphotomo",
+  reels: "reelmo",
+  aerials: "aerialmo",
+  drone: "dronemo",
+};
 
 async function handleGet(req: Request, userId: string, userEmail: string | null): Promise<Response> {
   const db = userClient(req);
+  const admin = adminClient();
   const orgId = await orgForUser(userId, preferredOrg(req));
 
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
   const month = monthStart.slice(0, 7); // YYYY-MM
+  const meterKeys = Object.values(METERS).map((k) => `${k}:${orgId}`);
 
-  const [profileRes, orgRes, ledgerRes, leadsRes, rendersRes, listingsRes] = await Promise.all([
-    db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
-    db.from("orgs").select("id, name, handle, space_type, plan, brand_kit").eq("id", orgId).maybeSingle(),
-    db.from("cost_ledger").select("total_cents").eq("org_id", orgId).gte("created_at", monthStart),
-    db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", monthStart),
-    // renders has no org_id; RLS already scopes it to the caller's org.
-    db.from("renders").select("id", { count: "exact", head: true }).not("published_at", "is", null),
-    db.from("listings").select("id", { count: "exact", head: true }).is("deleted_at", null),
-  ]);
+  const [profileRes, orgRes, ledgerRes, leadsRes, leadsNewRes, listingsRes, jobsRes, metersRes, entitlement] =
+    await Promise.all([
+      db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
+      db.from("orgs").select("id, name, handle, space_type, plan, trial_ends_at, brand_kit").eq("id", orgId).maybeSingle(),
+      db.from("cost_ledger").select("total_cents").eq("org_id", orgId).gte("created_at", monthStart),
+      db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", monthStart),
+      db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "new"),
+      db.from("listings").select("id", { count: "exact", head: true }).eq("org_id", orgId).is("deleted_at", null),
+      // Worker render jobs this calendar month — the exact count create_render_job
+      // enforces the cap against. render_jobs has no org_id: join via listings.
+      admin
+        .from("render_jobs")
+        .select("id, listings!inner(org_id)", { count: "exact", head: true })
+        .eq("listings.org_id", orgId)
+        .eq("source", "worker")
+        .gte("created_at", monthStart),
+      // rate_limits is service-role only (0004): read the org's meters here.
+      admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
+      entitlementFor(orgId),
+    ]);
 
   if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
+  if (!orgRes.data) throw new HttpError(404, "Org not found");
+  const org = orgRes.data;
 
   const costCents = round4(
     (ledgerRes.data ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0),
   );
 
+  // Meter rows → used/resets_at. bump_rate still increments past the cap, so
+  // clamp what we show; an expired window counts as 0 (it resets on next use).
+  const nowMs = now.getTime();
+  const byFeature: Record<string, number> = { renders: jobsRes.count ?? 0 };
+  const windows: Record<string, { started_at: string; resets_at: string } | null> = { renders: {
+    started_at: monthStart,
+    resets_at: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1)).toISOString(),
+  } };
+  const caps: Record<string, number> = {
+    renders: entitlement.renders_per_month,
+    photo_edits: entitlement.photo_edits_per_month,
+    reels: entitlement.reels_per_month,
+    aerials: entitlement.aerials_per_month,
+    drone: entitlement.topaz_per_month,
+  };
+  const rows = (metersRes.data ?? []) as Array<{ key: string; count: number; window_start: string; window_seconds: number }>;
+  for (const [feature, prefix] of Object.entries(METERS)) {
+    const row = rows.find((r) => r.key === `${prefix}:${orgId}`);
+    if (!row) { byFeature[feature] = 0; windows[feature] = null; continue; }
+    const startMs = Date.parse(row.window_start);
+    const endMs = startMs + Number(row.window_seconds ?? 2_592_000) * 1000;
+    if (!Number.isFinite(startMs) || endMs <= nowMs) { byFeature[feature] = 0; windows[feature] = null; continue; }
+    const cap = Math.max(0, caps[feature] ?? 0);
+    const used = Math.max(0, Number(row.count ?? 0));
+    byFeature[feature] = cap > 0 ? Math.min(used, cap) : used;
+    windows[feature] = { started_at: new Date(startMs).toISOString(), resets_at: new Date(endMs).toISOString() };
+  }
+  byFeature.renders = Math.max(0, byFeature.renders);
+
+  const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
+
   return json({
     user: profileRes.data ?? { id: userId, email: userEmail },
-    org: orgRes.data,
-    plan: orgRes.data?.plan ?? "free",
+    org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
+    plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
+    plan_raw: org.plan ?? null,
+    trial_ends_at: org.trial_ends_at ?? null,
+    entitlement: {
+      plan: entitlement.plan,
+      renders_per_month: entitlement.renders_per_month,
+      photo_edits_per_month: entitlement.photo_edits_per_month,
+      reels_per_month: entitlement.reels_per_month,
+      aerials_per_month: entitlement.aerials_per_month,
+      topaz_per_month: entitlement.topaz_per_month,
+      seats: entitlement.seats,
+      ...(entitlement.degraded ? { degraded: true } : {}),
+    },
     usage: {
       month,
-      cost_cents: costCents,
+      by_feature: byFeature,        // { renders, photo_edits, reels, aerials, drone } — used this window
+      caps,                         // same keys — what the plan allows
+      windows,                      // same keys — { started_at, resets_at } | null
+      renders: byFeature.renders,   // month-scoped, worker renders only (app publishes are free)
       leads: leadsRes.count ?? 0,
-      renders: rendersRes.count ?? 0,
+      leads_new: leadsNewRes.count ?? 0,
       listings: listingsRes.count ?? 0,
+      cost_cents: costCents,        // internal provider COGS this month (legacy field)
     },
+    portfolio_url: portfolioUrl,
   });
 }
 
@@ -114,8 +207,17 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
 // Writes the agent/business card into org.brand_kit. The PUBLIC tours and
 // portfolio functions allow-list exactly these display fields, so this is the
 // single write path that makes the card appear on every hosted share link.
-// Uses the user client: RLS + the column-scoped grant (migration 0005) restrict
-// the update to orgs the caller may edit, and `plan` stays untouchable.
+// Uses the user client: RLS (owner/admin, 0007) + the column-scoped grant
+// (0005) restrict the update to orgs the caller may edit, and `plan` stays
+// untouchable.
+//
+// Also accepts the two org columns the card needs (audit F-supabase-15/06):
+//   handle    public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
+//             not a reserved word, unique (→ 409). null/"" clears it.
+//   org_name  the business name shown on the portfolio page (never an email).
+// When `name` (the card name) is set and the org still carries a placeholder
+// name ("My business" or an email left by the old trigger), the org is named
+// after the card so the portfolio page heals without a second call.
 
 const BRAND_FIELDS = [
   "name", "title", "brokerage", "phone", "email", "website",
@@ -124,6 +226,17 @@ const BRAND_FIELDS = [
 const MAX_BRAND_FIELD_CHARS = 300;
 const MAX_BRAND_KIT_BYTES = 8_000;
 const HEX_COLOR = /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$/;
+const HANDLE_RE = /^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$/;
+const RESERVED_HANDLES = new Set([
+  "admin", "api", "app", "www", "rendprop", "f", "a", "tours", "tour", "pricing", "privacy",
+  "terms", "support", "help", "login", "signup", "me", "leads", "static", "assets", "demo",
+  "estate-demo", "about", "blog", "contact", "portfolio", "agent", "agents",
+]);
+
+function isPlaceholderOrgName(name: unknown): boolean {
+  const s = String(name ?? "").trim();
+  return s === "" || s === "My business" || s.includes("@");
+}
 
 async function handleBrandPatch(req: Request, userId: string): Promise<Response> {
   const db = userClient(req);
@@ -139,13 +252,38 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
     const s = (v as string).trim();
     assert(s.length <= MAX_BRAND_FIELD_CHARS, 400, `${f} is too long (max ${MAX_BRAND_FIELD_CHARS} chars)`);
     if (f === "accent") assert(HEX_COLOR.test(s), 400, "accent must be a hex color like #7c3aed");
+    if (f === "name") assert(!s.includes("@"), 400, "name must be a display name, not an email address");
     patch[f] = s;
   }
-  assert(Object.keys(patch).length > 0, 400,
-    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}`);
+
+  // Org columns.
+  const orgPatch: Record<string, string | null> = {};
+  if ("handle" in body) {
+    const v = body.handle;
+    if (v === null || v === "") {
+      orgPatch.handle = null;
+    } else {
+      assert(typeof v === "string", 400, "handle must be a string");
+      const h = (v as string).trim().toLowerCase();
+      assert(HANDLE_RE.test(h), 400, "handle must be 3–32 characters: lowercase letters, digits and hyphens, starting and ending with a letter or digit");
+      assert(!RESERVED_HANDLES.has(h), 409, "That handle is reserved — choose another", "conflict");
+      orgPatch.handle = h;
+    }
+  }
+  if ("org_name" in body) {
+    const v = body.org_name;
+    assert(typeof v === "string" && v.trim().length > 0, 400, "org_name must be a non-empty string");
+    const n = (v as string).trim();
+    assert(n.length <= 120, 400, "org_name is too long (max 120 chars)");
+    assert(!n.includes("@"), 400, "org_name must be a business name, not an email address");
+    orgPatch.name = n;
+  }
+
+  assert(Object.keys(patch).length + Object.keys(orgPatch).length > 0, 400,
+    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name`);
 
   const { data: org, error: oErr } = await db
-    .from("orgs").select("id, brand_kit").eq("id", orgId).maybeSingle();
+    .from("orgs").select("id, name, handle, brand_kit").eq("id", orgId).maybeSingle();
   if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
   if (!org) throw new HttpError(404, "Org not found");
 
@@ -156,10 +294,33 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   }
   assert(JSON.stringify(merged).length <= MAX_BRAND_KIT_BYTES, 400, "brand kit is too large");
 
-  const { error: upErr } = await db.from("orgs").update({ brand_kit: merged }).eq("id", orgId);
-  if (upErr) throw new HttpError(500, `Brand update failed: ${upErr.message}`);
+  // Heal a placeholder/email org name from the card name (see header).
+  if (!("name" in orgPatch) && typeof patch.name === "string" && isPlaceholderOrgName(org.name)) {
+    orgPatch.name = patch.name;
+  }
 
-  return json({ ok: true, brand_kit: merged });
+  const update: Record<string, unknown> = { ...orgPatch };
+  if (Object.keys(patch).length > 0) update.brand_kit = merged;
+
+  const { data: updated, error: upErr } = await db
+    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, brand_kit").maybeSingle();
+  if (upErr) {
+    // 23505 = unique_violation on orgs.handle.
+    if ((upErr as { code?: string }).code === "23505" || /duplicate key|orgs_handle_key/i.test(upErr.message)) {
+      throw new HttpError(409, "That handle is already taken — choose another", "conflict");
+    }
+    throw new HttpError(500, `Brand update failed: ${upErr.message}`);
+  }
+  // RLS (owner/admin only) filtered the row: a member without the right role.
+  if (!updated) throw new HttpError(403, "Only the workspace owner or an admin can edit the brand card");
+
+  const handle = (updated.handle as string | null) ?? null;
+  return json({
+    ok: true,
+    brand_kit: updated.brand_kit ?? merged,
+    org: { name: updated.name, handle },
+    portfolio_url: handle ? `${TOUR_BASE}/a/${handle}` : null,
+  });
 }
 
 // ── POST /me/apple-code ───────────────────────────────────────────────────────

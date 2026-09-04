@@ -29,7 +29,7 @@
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Rendprop uses your location to fill in your space's address automatically.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Rendprop records audio with your walkthrough (optional; muted in the flythrough).</string>
+	<string>Flythroughs are silent, so Rendprop does not record audio today. The microphone would only be requested if you add a voice-over in a future update.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Rendprop reads motion data to stabilize your video and guide a steady, level walkthrough.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

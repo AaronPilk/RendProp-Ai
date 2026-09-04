@@ -16,12 +16,20 @@ import Vision
 ///   • 60 FPS    — output frame cadence for a fluid scroll-scrub.
 ///   • SCRUB     — ≤720p H.264, ALL-INTRA (every frame a keyframe) → the player
 ///                 seeks any position instantly.
-///   • COLOR     — output tagged Rec.709 SDR so HDR/Dolby-Vision phone footage
-///                 tone-maps instead of looking washed out or crushed.
+///   • COLOR     — both compositions and the writer are tagged Rec.709 SDR so
+///                 HDR/Dolby-Vision phone footage tone-maps instead of looking
+///                 washed out or crushed.
 ///
 /// HONEST FALLBACK: stabilization is best-effort. If registration is low-
-/// confidence (fast pans, low light, featureless walls), we drop to identity
-/// corrections and still ship the retimed/encoded tour — never worse than v1.
+/// confidence (fast pans, low light, featureless walls) — or pass 1 fails for
+/// any reason other than cancellation — we drop to identity corrections and
+/// still ship the retimed/encoded tour — never worse than v1.
+///
+/// OUTPUT SAFETY: the encode writes to a unique temp file next to the final
+/// path and is moved into place only after the writer reports `.completed`.
+/// The existing tour (if any) is never deleted first, so a failed or cancelled
+/// re-render can't take the live tour with it (audit F-D-01).
+///
 /// Server-side v3 (Gyroflow-grade, AI frame interpolation, 4K, grade) slots in
 /// behind this same interface later.
 enum RenderEngine {
@@ -35,11 +43,19 @@ enum RenderEngine {
 
     enum RenderError: LocalizedError {
         case noVideoTrack, cannotBuild, cancelled
+        case badDimensions
+        case tooShort
+        case tooLong(Double)
         var errorDescription: String? {
             switch self {
-            case .noVideoTrack: return "The video has no usable video track."
-            case .cannotBuild:  return "Could not prepare the render."
-            case .cancelled:    return "Render cancelled."
+            case .noVideoTrack:  return "The video has no usable video track."
+            case .cannotBuild:   return "Could not prepare the render."
+            case .cancelled:     return "Render cancelled."
+            case .badDimensions: return "The video reports no picture size, so it can't be rendered. Try re-exporting it."
+            case .tooShort:      return "The video is too short to render — record at least a second."
+            case .tooLong(let s):
+                let minutes = Int(s / 60), seconds = Int(s) % 60
+                return "This video is \(minutes):\(String(format: "%02d", seconds)) long. Tours render up to \(Int(RenderEngine.maxSourceSeconds / 60)) minutes — trim it and try again."
             }
         }
     }
@@ -59,6 +75,24 @@ enum RenderEngine {
         var isCancelled: Bool { lock.lock(); defer { lock.unlock() }; return flag }
     }
 
+    /// Progress reporter throttled to ~10 Hz (the encode loop produces a sample
+    /// per output frame — 60/s — and each report used to hop to the main actor).
+    private final class ProgressThrottle: @unchecked Sendable {
+        private let lock = NSLock()
+        private var last = Date.distantPast
+        private var lastValue = -1.0
+        private let report: @Sendable (Double) -> Void
+        init(_ report: @escaping @Sendable (Double) -> Void) { self.report = report }
+        func send(_ value: Double, force: Bool = false) {
+            lock.lock()
+            let now = Date()
+            let due = force || value >= 1.0 || now.timeIntervalSince(last) >= 0.1 || value - lastValue >= 0.02
+            if due { last = now; lastValue = value }
+            lock.unlock()
+            if due { report(value) }
+        }
+    }
+
     // Tuning
     private static let outputFPS: Int32 = 60
     private static let encodeLongEdge: CGFloat = 1280
@@ -67,6 +101,14 @@ enum RenderEngine {
     private static let stabStrength: CGFloat = 0.9         // apply 90% of correction (avoid overshoot)
     private static let maxCropZoom: CGFloat = 1.12         // never crop more than 12%
     private static let maxRegistrationFailRatio = 0.4      // above this → skip stabilization
+    /// A registration offset larger than this fraction of the frame is a scene
+    /// cut / whip pan, not jitter — count it as a failure (audit F-D-32).
+    private static let maxPlausibleShiftFraction: CGFloat = 0.08
+    /// Sources longer than this are refused with a clear error (kept in step
+    /// with MediaImporter.maxDurationSeconds and the capture cap).
+    static let maxSourceSeconds: Double = MediaImporter.maxDurationSeconds
+    /// Anything shorter than this is a tap, not a walkthrough.
+    static let minSourceSeconds: Double = MediaImporter.minDurationSeconds
 
     // MARK: - Public entry
 
@@ -76,6 +118,9 @@ enum RenderEngine {
         // CancelFlag) so leaving the screen actually stops the encode instead
         // of burning CPU/battery to completion in the background.
         let cancelFlag = CancelFlag()
+        // Screen-awake / background-task holds for the render are owned by the
+        // caller (RenderCoordinator keeps `isIdleTimerDisabled` for the whole
+        // render + publish job) — the engine stays UI-agnostic.
         return try await withTaskCancellationHandler {
             try await renderBody(asset: asset, cancelFlag: cancelFlag, progress: progress)
         } onCancel: {
@@ -87,6 +132,7 @@ enum RenderEngine {
                                    cancelFlag: CancelFlag,
                                    progress: @escaping @Sendable (Double, String) -> Void) async throws -> Output {
         progress(0.02, "Preparing your video…")
+        sweepStaleTempFiles(in: FileStore.recordingsDir)
 
         let source = AVURLAsset(url: asset.localURL)
         guard let srcTrack = try await source.loadTracks(withMediaType: .video).first else {
@@ -95,7 +141,12 @@ enum RenderEngine {
         let naturalSize = try await srcTrack.load(.naturalSize)
         let transform = try await srcTrack.load(.preferredTransform)
         let duration = try await source.load(.duration)
-        guard duration.seconds.isFinite, duration.seconds > 0.2 else { throw RenderError.cannotBuild }
+        guard naturalSize.width > 0, naturalSize.height > 0,
+              naturalSize.width.isFinite, naturalSize.height.isFinite else {
+            throw RenderError.badDimensions
+        }
+        guard duration.seconds.isFinite, duration.seconds >= minSourceSeconds else { throw RenderError.tooShort }
+        guard duration.seconds <= maxSourceSeconds else { throw RenderError.tooLong(duration.seconds) }
 
         // Adaptive speed: short clips shouldn't feel frantic.
         let baseSpeed: Double = asset.isDrone ? 1.25 : 2.0
@@ -105,6 +156,9 @@ enum RenderEngine {
 
         // Geometry for the full-res encode.
         let encode = geometry(naturalSize: naturalSize, transform: transform, longEdge: encodeLongEdge)
+        guard encode.renderSize.width >= 2, encode.renderSize.height >= 2 else {
+            throw RenderError.badDimensions
+        }
 
         // ── Pass 1: analyze camera jitter (skipped for drone clips) ──────────
         var corrections = [CGPoint](repeating: .zero, count: frameCount)
@@ -114,11 +168,26 @@ enum RenderEngine {
         if !asset.isDrone {
             progress(0.05, "Smoothing the motion…")
             let analyze = geometry(naturalSize: naturalSize, transform: transform, longEdge: analyzeLongEdge)
-            if let result = try await analyzeJitter(source: source, srcTrack: srcTrack,
-                                                    duration: duration, outDuration: outDuration,
-                                                    speed: speed, frameCount: frameCount,
-                                                    geo: analyze, cancelFlag: cancelFlag,
-                                                    progress: { p in progress(0.05 + 0.38 * p, "Smoothing the motion…") }) {
+            let analyzeProgress = ProgressThrottle { p in progress(0.05 + 0.38 * p, "Smoothing the motion…") }
+            var result: AnalyzeResult?
+            do {
+                result = try await analyzeJitter(source: source, srcTrack: srcTrack,
+                                                 duration: duration, outDuration: outDuration,
+                                                 speed: speed, frameCount: frameCount,
+                                                 geo: analyze, cancelFlag: cancelFlag,
+                                                 progress: { p in analyzeProgress.send(p) })
+            } catch RenderError.cancelled {
+                throw RenderError.cancelled
+            } catch is CancellationError {
+                throw RenderError.cancelled
+            } catch {
+                // Any other pass-1 failure (reader error, Vision unavailable,
+                // odd pixel format) → ship the UNSTABILIZED tour rather than
+                // failing the whole render (audit F-D-12).
+                result = nil
+            }
+            if cancelFlag.isCancelled { throw RenderError.cancelled }
+            if let result {
                 // Corrections were measured in analyze space; scale to encode space.
                 let s = encode.renderSize.width / analyze.renderSize.width
                 corrections = clampCorrections(result.corrections.map { CGPoint(x: $0.x * s, y: $0.y * s) },
@@ -132,24 +201,65 @@ enum RenderEngine {
         progress(0.45, "Rendering your tour…")
         let outURL = FileStore.recordingsDir
             .appendingPathComponent("tour-\(asset.id.uuidString.prefix(8)).mp4")
-        try? FileManager.default.removeItem(at: outURL)
+        // Unique temp name in the SAME directory (same volume → the final move
+        // is an atomic rename). The existing tour is left untouched until the
+        // new file is complete.
+        let tempURL = FileStore.recordingsDir
+            .appendingPathComponent(".tour-\(asset.id.uuidString.prefix(8))-\(UUID().uuidString.prefix(8)).part.mp4")
+        try? FileManager.default.removeItem(at: tempURL)
 
+        let encodeProgress = ProgressThrottle { p in progress(0.45 + 0.53 * p, "Rendering your tour…") }
         do {
             try await encodePass(source: source, srcTrack: srcTrack,
                                  duration: duration, outDuration: outDuration,
                                  speed: speed, frameCount: frameCount,
                                  geo: encode, corrections: corrections, cropZoom: cropZoom,
-                                 outURL: outURL, cancelFlag: cancelFlag,
-                                 progress: { p in progress(0.45 + 0.53 * p, "Rendering your tour…") })
+                                 outURL: tempURL, cancelFlag: cancelFlag,
+                                 progress: { p in encodeProgress.send(p) })
         } catch {
             // Never leave a partial mp4 in Documents on failure/cancel — it
-            // would linger (and get backed up) forever.
-            try? FileManager.default.removeItem(at: outURL)
+            // would linger (and get backed up) forever. The previous tour, if
+            // any, is still intact at outURL.
+            try? FileManager.default.removeItem(at: tempURL)
             throw error
+        }
+
+        // Move into place only now that the writer reported .completed.
+        do {
+            try replaceItem(at: outURL, with: tempURL)
+        } catch {
+            try? FileManager.default.removeItem(at: tempURL)
+            throw RenderError.cannotBuild
         }
 
         progress(1.0, "Done")
         return Output(url: outURL, durationS: outDuration.seconds, speedFactor: speed, stabilized: stabilized)
+    }
+
+    // MARK: - File plumbing
+
+    /// Atomic-as-possible swap: `replaceItemAt` when a previous tour exists
+    /// (an APFS rename), a plain move otherwise.
+    private static func replaceItem(at dest: URL, with temp: URL) throws {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: dest.path) {
+            _ = try fm.replaceItemAt(dest, withItemAt: temp, backupItemName: nil, options: [])
+        } else {
+            try fm.moveItem(at: temp, to: dest)
+        }
+    }
+
+    /// A render killed mid-encode (app terminated) leaves a `.part.mp4` behind;
+    /// clear any older than an hour so they can't accumulate.
+    private static func sweepStaleTempFiles(in dir: URL) {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey],
+                                                      options: []) else { return }
+        let cutoff = Date().addingTimeInterval(-3600)
+        for url in items where url.lastPathComponent.hasPrefix(".tour-") && url.lastPathComponent.hasSuffix(".part.mp4") {
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if modified < cutoff { try? fm.removeItem(at: url) }
+        }
     }
 
     // MARK: - Geometry (orientation + downscale to ≤ longEdge)
@@ -162,7 +272,7 @@ enum RenderEngine {
     private static func geometry(naturalSize: CGSize, transform: CGAffineTransform, longEdge: CGFloat) -> Geometry {
         let orientedRect = CGRect(origin: .zero, size: naturalSize).applying(transform)
         let orientedSize = CGSize(width: abs(orientedRect.width), height: abs(orientedRect.height))
-        let scale = min(1.0, longEdge / max(orientedSize.width, orientedSize.height))
+        let scale = min(1.0, longEdge / max(1, max(orientedSize.width, orientedSize.height)))
         let renderSize = CGSize(width: (orientedSize.width * scale / 2).rounded(.down) * 2,
                                 height: (orientedSize.height * scale / 2).rounded(.down) * 2)
         var normalize = transform
@@ -187,6 +297,16 @@ enum RenderEngine {
         return (composition, compTrack)
     }
 
+    /// Tag the composition output as Rec.709 SDR. HDR / Dolby Vision sources
+    /// are then tone-mapped by the compositor (not just relabelled by the
+    /// writer's color properties) — audit F-D-11. Applied to BOTH passes so
+    /// the analysis sees the same picture that gets encoded.
+    private static func tag709(_ vc: AVMutableVideoComposition) {
+        vc.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        vc.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        vc.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+    }
+
     // MARK: - Pass 1: jitter analysis
 
     private struct AnalyzeResult { let corrections: [CGPoint] }
@@ -203,6 +323,7 @@ enum RenderEngine {
         let vc = AVMutableVideoComposition()
         vc.renderSize = geo.renderSize
         vc.frameDuration = CMTime(value: 1, timescale: outputFPS)
+        tag709(vc)
         let instr = AVMutableVideoCompositionInstruction()
         instr.timeRange = CMTimeRange(start: .zero, duration: outDuration)
         let li = AVMutableVideoCompositionLayerInstruction(assetTrack: compTrack)
@@ -220,8 +341,11 @@ enum RenderEngine {
         reader.add(output)
         guard reader.startReading() else { throw reader.error ?? RenderError.cannotBuild }
 
+        let maxShiftX = geo.renderSize.width * maxPlausibleShiftFraction
+        let maxShiftY = geo.renderSize.height * maxPlausibleShiftFraction
+
         return try await runOnQueue { () throws -> AnalyzeResult? in
-            var raw = [CGPoint]()                 // cumulative measured camera path
+            var raw = [CGPoint]()                 // cumulative CONTENT path (top-left coords)
             raw.reserveCapacity(frameCount)
             var pos = CGPoint.zero
             raw.append(pos)
@@ -241,7 +365,17 @@ enum RenderEngine {
                             try handler.perform([req])
                             if let obs = req.results?.first as? VNImageTranslationAlignmentObservation {
                                 let t = obs.alignmentTransform
-                                pos = CGPoint(x: pos.x + t.tx, y: pos.y + t.ty)
+                                if abs(t.tx) > maxShiftX || abs(t.ty) > maxShiftY {
+                                    // Implausible jump (scene cut / whip pan) — not jitter.
+                                    failures += 1
+                                } else {
+                                    // SIGN (measured empirically, see audit/VISION-SIGN.txt):
+                                    // Vision returns the transform aligning CURRENT back onto
+                                    // PREVIOUS, in its lower-left image space. In top-left
+                                    // content terms that is  Δx = −tx  and  Δy = +ty.
+                                    // Accumulating +tx on x amplified horizontal jitter (~1.9×).
+                                    pos = CGPoint(x: pos.x - t.tx, y: pos.y + t.ty)
+                                }
                             } else { failures += 1 }
                         } catch { failures += 1 }
                         raw.append(pos)
@@ -261,7 +395,8 @@ enum RenderEngine {
                 return nil
             }
 
-            // Smooth the path, correction = smoothed − raw, apply strength.
+            // Smooth the content path; correction = smoothed − raw moves the
+            // content toward the smoothed path. Apply strength.
             let smoothed = gaussianSmooth(raw, sigma: smoothingSigmaFrames)
             var corrections = zip(smoothed, raw).map { s, r in
                 CGPoint(x: (s.x - r.x) * stabStrength, y: (s.y - r.y) * stabStrength)
@@ -291,9 +426,10 @@ enum RenderEngine {
         vc.renderSize = geo.renderSize
         let fd = CMTime(value: 1, timescale: outputFPS)
         vc.frameDuration = fd
+        tag709(vc)
 
         // One instruction per output frame so each gets its own stabilization transform.
-        // (Metadata only — cheap. Same top-left coord space as Vision, so no y-flip bug.)
+        // (Metadata only — cheap. Same top-left coord space as the content path.)
         let W = geo.renderSize.width, H = geo.renderSize.height
         var instructions = [AVMutableVideoCompositionInstruction]()
         instructions.reserveCapacity(frameCount)
@@ -344,6 +480,9 @@ enum RenderEngine {
                 AVVideoMaxKeyFrameIntervalKey: 1,          // keyframe every frame (all-intra)
                 AVVideoAllowFrameReorderingKey: false,     // no B-frames → every frame independent
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+                // Lets the encoder size its rate control for a 60 fps stream
+                // instead of guessing from the first samples.
+                AVVideoExpectedSourceFrameRateKey: Int(outputFPS),
             ],
         ])
         writerInput.expectsMediaDataInRealTime = false
@@ -406,22 +545,27 @@ enum RenderEngine {
 
     // MARK: - Transform + smoothing helpers
 
-    /// Zoom-about-center (hides moving borders) then translate by the correction,
-    /// all in the render space (top-left origin — matches Vision's measurements).
+    /// Translate by the correction, then zoom about the center (hides the
+    /// moving borders). The translate happens BEFORE the zoom, so it is scaled
+    /// by the zoom on screen — divide by `zoom` so the effective on-screen shift
+    /// equals the intended correction (audit F-D-30 / VISION-SIGN.txt).
     private static func stabilizeTransform(correction: CGPoint, zoom: CGFloat,
                                            width: CGFloat, height: CGFloat) -> CGAffineTransform {
+        let z = max(zoom, 1.0)
         let zoomAboutCenter = CGAffineTransform(translationX: width / 2, y: height / 2)
-            .scaledBy(x: zoom, y: zoom)
+            .scaledBy(x: z, y: z)
             .translatedBy(x: -width / 2, y: -height / 2)
-        let translate = CGAffineTransform(translationX: correction.x, y: correction.y)
+        let translate = CGAffineTransform(translationX: correction.x / z, y: correction.y / z)
         return translate.concatenating(zoomAboutCenter)   // translate first, then zoom
     }
 
     /// Pick the smallest crop-zoom that hides the largest correction, then clamp
     /// every correction into that margin so no black borders can appear.
+    /// (Margins are in on-screen pixels; stabilizeTransform divides by the zoom
+    /// so the applied shift is exactly the clamped value.)
     private static func clampCorrections(_ corrections: [CGPoint], renderSize: CGSize,
                                          zoom: inout CGFloat) -> [CGPoint] {
-        let W = renderSize.width, H = renderSize.height
+        let W = max(1, renderSize.width), H = max(1, renderSize.height)
         let maxFrac = corrections.map { max(abs($0.x) / W, abs($0.y) / H) }.max() ?? 0
         zoom = min(maxCropZoom, max(1.0, 1.0 + 2.0 * maxFrac + 0.02))
         guard zoom > 1.0001 else { return [CGPoint](repeating: .zero, count: corrections.count) }

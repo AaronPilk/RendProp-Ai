@@ -2,172 +2,232 @@ import SwiftUI
 import UIKit
 import CoreLocation
 
-/// Stupid-simple: type the address, then one of two big buttons —
-/// Record or Upload. Everything else is optional and out of the way.
+// MARK: - Form data shared by New Listing and Edit
+
+/// Everything the owner types about a space, independent of the screen that
+/// collects it. Real estate: address + beds/baths/sqft/price; every other
+/// type: name/address + tagline + the industry's `detailFields`.
+struct ListingFormData: Equatable {
+    var address = ""
+    /// 0 = unknown for beds/baths (shown as "—"). Never publish invented facts.
+    var beds = 0
+    var baths = 0.0
+    var sqft = ""
+    var priceDollars = ""
+    var tagline = ""
+    var details: [String: String] = [:]
+    var spaceType: SpaceType = SpaceType.current
+
+    init() {}
+
+    init(listing: Listing) {
+        address = listing.address
+        beds = listing.beds
+        baths = listing.baths
+        sqft = listing.sqft > 0 ? String(listing.sqft) : ""
+        priceDollars = listing.price.cents > 0 ? String(listing.price.cents / 100) : ""
+        tagline = listing.tagline ?? ""
+        details = listing.details ?? [:]
+        spaceType = listing.spaceType
+    }
+
+    var isRealEstate: Bool { spaceType.showsPropertyDetails }
+    var isValid: Bool { !address.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private var trimmedAddress: String { address.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var trimmedTagline: String? {
+        let t = tagline.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
+    }
+    private var cleanedDetails: [String: String]? {
+        let kept = details.filter { !$0.value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return kept.isEmpty ? nil : kept
+    }
+    /// "2,850" / "2850 sq ft" → 2850.
+    private var sqftValue: Int {
+        let digits = sqft.filter { $0.isNumber }
+        guard !digits.isEmpty, digits.count <= 9 else { return 0 }
+        return Int(digits) ?? 0
+    }
+
+    /// Write the form into a listing (edit path). Beds/baths/sqft/price are
+    /// real-estate concepts — never store the steppers on a venue/gym listing.
+    func apply(to l: inout Listing) {
+        l.address = trimmedAddress
+        l.beds = isRealEstate ? beds : 0
+        l.baths = isRealEstate ? baths : 0
+        l.sqft = isRealEstate ? sqftValue : 0
+        l.price = .dollars(isRealEstate ? (Money.parseDollars(priceDollars) ?? 0) : 0)
+        l.tagline = isRealEstate ? nil : trimmedTagline
+        l.details = isRealEstate ? nil : cleanedDetails
+    }
+
+    /// A brand-new listing from the form (create path).
+    func makeListing(coordinate: CLLocationCoordinate2D?) -> Listing {
+        var l = Listing(address: trimmedAddress,
+                        beds: 0, baths: 0, sqft: 0,
+                        price: Money(cents: 0),
+                        status: .draft,
+                        spaceTypeRaw: spaceType.rawValue,   // stamp the industry
+                        latitude: coordinate?.latitude,
+                        longitude: coordinate?.longitude)
+        apply(to: &l)
+        return l
+    }
+}
+
+// MARK: - The form itself (address → [middle] → optional details)
+
+/// The listing fields, reused by New Listing (with the video step in the
+/// middle) and by the edit sheet (no middle). Per-type placeholders and
+/// content types: street-address autofill only for real estate.
+struct ListingFieldsForm<Middle: View>: View {
+    @Binding var form: ListingFormData
+    var locationAction: (() -> Void)? = nil
+    var locating = false
+    @ViewBuilder var middle: () -> Middle
+
+    private var space: SpaceType { form.spaceType }
+
+    var body: some View {
+        VStack(spacing: Theme.spacing) {
+            addressCard
+            middle()
+            if space.showsPropertyDetails {
+                propertyDetailsCard
+            } else {
+                taglineCard
+                businessDetailsCard
+            }
+        }
+    }
+
+    private var addressCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(locationAction == nil ? "The \(space.spaceNoun)" : "Step 1 · The \(space.spaceNoun)",
+                  systemImage: space.systemImage)
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+            TextField(space.showsPropertyDetails
+                      ? "Type the home's address"
+                      : "Name or address of your \(space.spaceNoun)", text: $form.address)
+                .textContentType(space.showsPropertyDetails ? .fullStreetAddress : .organizationName)
+                .textInputAutocapitalization(.words)
+                .submitLabel(.done)
+                .font(.body)
+                .padding(14)
+                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+
+            if let locationAction {
+                Button {
+                    locationAction()
+                } label: {
+                    HStack(spacing: 8) {
+                        if locating { ProgressView() }
+                        else { Image(systemName: "location.fill") }
+                        Text(locating ? "Finding you…" : "Use current location")
+                    }
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                }
+                .disabled(locating)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private var propertyDetailsCard: some View {
+        DisclosureGroup {
+            VStack(spacing: 14) {
+                Stepper(form.beds > 0 ? "Bedrooms: \(form.beds)" : "Bedrooms: —",
+                        value: $form.beds, in: 0...12)
+                Stepper(form.baths > 0 ? String(format: "Bathrooms: %g", form.baths) : "Bathrooms: —",
+                        value: $form.baths, in: 0...12, step: 0.5)
+                TextField("Square feet", text: $form.sqft)
+                    .keyboardType(.numberPad)
+                    .padding(12)
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                TextField("Asking price", text: $form.priceDollars)
+                    .keyboardType(.numberPad)
+                    .padding(12)
+                    .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                Text("Leave anything you don't know blank — only real facts show on the tour.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(.top, 8)
+        } label: {
+            Label("\(space.spaceNounCap) details (optional)", systemImage: "list.bullet")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+        }
+        .tint(Theme.inkDim)
+        .card()
+    }
+
+    private var taglineCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Description (optional)", systemImage: "text.alignleft")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+            TextField(Self.taglinePlaceholder(for: space), text: $form.tagline)
+                .font(.body)
+                .padding(14)
+                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private var businessDetailsCard: some View {
+        DisclosureGroup {
+            DetailFieldsEditor(fields: space.detailFields, values: $form.details)
+                .padding(.top, 10)
+        } label: {
+            Label("\(space.displayName) details (optional)", systemImage: "list.bullet")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+        }
+        .tint(Theme.inkDim)
+        .card()
+    }
+
+    static func taglinePlaceholder(for type: SpaceType) -> String {
+        switch type {
+        case .realEstate: return "e.g. Sun-filled craftsman near the park"
+        case .venue:      return "e.g. Historic ballroom · Seats 220"
+        case .restaurant: return "e.g. Rooftop cocktail bar with skyline views"
+        case .retail:     return "e.g. Neighborhood grocery · Open daily 7am–9pm"
+        case .fitness:    return "e.g. Strength gym · Open 24/7 · Classes daily"
+        case .other:      return "e.g. Creative studio & community space"
+        }
+    }
+}
+
+// MARK: - New listing (address → video → review)
+
+/// Stupid-simple: type the address, then one of two big buttons — Record or
+/// Upload. Everything else is optional and out of the way. The listing is
+/// created ONLY once a usable video exists (decision A4) — cancelling a
+/// picker never leaves a "Not finished" card behind.
 struct NewListingView: View {
     @EnvironmentObject var model: AppModel
-    @Environment(\.dismiss) private var dismiss
 
     @StateObject private var locator = OneShotLocation()
     @State private var locating = false
     @State private var pendingCoord: CLLocationCoordinate2D?
 
-    @State private var address = ""
-    @State private var beds = 3
-    @State private var baths = 2.0
-    @State private var sqft = ""
-    @State private var priceDollars = ""
-    @State private var tagline = ""
-    @State private var pendingDetails: [String: String] = [:]
-
-    @State private var showCapture = false
-    @State private var showUploadChoice = false
-    @State private var showPhotoPicker = false
-    @State private var showFilesPicker = false
-    @State private var importIsDrone = false
+    @State private var form = ListingFormData()
     @State private var pendingAsset: CaptureAsset?
-    @State private var goToReview = false
     @State private var createdListing: Listing?
-    /// Non-nil while a picked video is copying out of the Photos library
-    /// (0…1). Big 4K / iCloud clips take a while — this drives the visible
-    /// "Importing video…" progress so the screen never looks frozen.
-    @State private var importProgress: Double?
-    @State private var importFailed = false
-
-    private var formValid: Bool { !address.trimmingCharacters(in: .whitespaces).isEmpty }
+    @State private var goToReview = false
 
     var body: some View {
         ScrollView {
-            VStack(spacing: Theme.spacing) {
-                // Step 1 — address
-                VStack(alignment: .leading, spacing: 10) {
-                    Label("Step 1 · The \(SpaceType.current.spaceNoun)", systemImage: SpaceType.current.systemImage)
-                        .font(.rpHeadline)
-                        .foregroundStyle(Theme.ink)
-                    TextField(SpaceType.current.showsPropertyDetails
-                              ? "Type the home's address"
-                              : "Name or address of your \(SpaceType.current.spaceNoun)", text: $address)
-                        .textContentType(.fullStreetAddress)
-                        .submitLabel(.done)
-                        .font(.body)
-                        .padding(14)
-                        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                    Button {
-                        useCurrentLocation()
-                    } label: {
-                        HStack(spacing: 8) {
-                            if locating { ProgressView() }
-                            else { Image(systemName: "location.fill") }
-                            Text(locating ? "Finding you…" : "Use current location")
-                        }
-                        .font(.rpBody.weight(.semibold))
-                        .foregroundStyle(Theme.accent)
-                    }
-                    .disabled(locating)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .card()
-
-                // Step 2 — video (two big buttons)
-                VStack(alignment: .leading, spacing: 12) {
-                    Label("Step 2 · The video", systemImage: "video.fill")
-                        .font(.rpHeadline)
-                        .foregroundStyle(Theme.ink)
-
-                    bigActionButton(
-                        title: "Upload a video",
-                        subtitle: "Use a clip from your Photos or a drone — the easiest way",
-                        icon: "square.and.arrow.up.fill",
-                        filled: true
-                    ) {
-                        guard prepareListing() else { return }
-                        showUploadChoice = true
-                    }
-
-                    bigActionButton(
-                        title: "Record a walkthrough",
-                        subtitle: "Prefer to film now? We'll coach your pace",
-                        icon: "record.circle.fill",
-                        filled: false
-                    ) {
-                        guard prepareListing() else { return }
-                        showCapture = true
-                    }
-
-                    if !formValid {
-                        Label("Type the address first, then pick one.", systemImage: "info.circle")
-                            .font(.rpCaption)
-                            .foregroundStyle(Theme.inkDim)
-                    }
-
-                    if let p = importProgress {
-                        let clamped = min(max(p, 0), 1)
-                        VStack(alignment: .leading, spacing: 6) {
-                            ProgressView(value: clamped) {
-                                Text("Importing video… \(Int(clamped * 100))%")
-                                    .font(.rpCaption.weight(.semibold))
-                                    .foregroundStyle(Theme.ink)
-                            }
-                            .tint(Theme.accent)
-                            Text("Big videos can take a minute — keep the app open.")
-                                .font(.rpCaption)
-                                .foregroundStyle(Theme.inkDim)
-                        }
-                        .padding(.top, 4)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .card()
-
-                // Optional details — real estate gets beds/baths/sqft/price;
-                // other businesses get a short description instead.
-                if SpaceType.current.showsPropertyDetails {
-                    DisclosureGroup {
-                        VStack(spacing: 14) {
-                            Stepper("Bedrooms: \(beds)", value: $beds, in: 0...12)
-                            Stepper(String(format: "Bathrooms: %g", baths), value: $baths, in: 0...12, step: 0.5)
-                            TextField("Square feet", text: $sqft)
-                                .keyboardType(.numberPad)
-                                .padding(12)
-                                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                            TextField("Asking price", text: $priceDollars)
-                                .keyboardType(.numberPad)
-                                .padding(12)
-                                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        }
-                        .padding(.top, 8)
-                    } label: {
-                        Label("\(SpaceType.current.spaceNounCap) details (optional)", systemImage: "list.bullet")
-                            .font(.rpHeadline)
-                            .foregroundStyle(Theme.ink)
-                    }
-                    .tint(Theme.inkDim)
-                    .card()
-                } else {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label("Description (optional)", systemImage: "text.alignleft")
-                            .font(.rpHeadline)
-                            .foregroundStyle(Theme.ink)
-                        TextField("e.g. Rooftop cocktail bar with skyline views", text: $tagline)
-                            .font(.body)
-                            .padding(14)
-                            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .card()
-
-                    DisclosureGroup {
-                        DetailFieldsEditor(fields: SpaceType.current.detailFields, values: $pendingDetails)
-                            .padding(.top, 10)
-                    } label: {
-                        Label("\(SpaceType.current.displayName) details (optional)", systemImage: "list.bullet")
-                            .font(.rpHeadline)
-                            .foregroundStyle(Theme.ink)
-                    }
-                    .tint(Theme.inkDim)
-                    .card()
-                }
+            ListingFieldsForm(form: $form, locationAction: { useCurrentLocation() }, locating: locating) {
+                videoCard
             }
             .padding()
         }
@@ -175,58 +235,174 @@ struct NewListingView: View {
         .scrollDismissesKeyboard(.interactively)
         .navigationTitle(SpaceType.current.newItemTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .fullScreenCover(isPresented: $showCapture) {
-            CaptureView { asset in
-                receive(asset)
-            }
-        }
-        .confirmationDialog("Where is your video?", isPresented: $showUploadChoice, titleVisibility: .visible) {
-            Button("My Photos") {
-                importIsDrone = false
-                showPhotoPicker = true
-            }
-            Button("A file or drone clip") {
-                importIsDrone = true
-                showFilesPicker = true
-            }
-            Button("Cancel", role: .cancel) {}
-        }
-        .sheet(isPresented: $showPhotoPicker) {
-            PhotoVideoPicker(
-                onPicked: { url in
-                    Task {
-                        let asset = await MediaImporter.makeAsset(from: url, isDrone: false)
-                        await MainActor.run {
-                            importProgress = nil
-                            receive(asset)
-                        }
-                    }
-                },
-                onProgress: { importProgress = $0 },
-                onFailed: {
-                    importProgress = nil
-                    importFailed = true
-                })
-            .ignoresSafeArea()
-        }
-        .sheet(isPresented: $showFilesPicker) {
-            FilesVideoPicker { url in
-                Task {
-                    let asset = await MediaImporter.makeAsset(from: url, isDrone: importIsDrone)
-                    await MainActor.run { receive(asset) }
-                }
-            }
-            .ignoresSafeArea()
-        }
         .navigationDestination(isPresented: $goToReview) {
             if let listing = createdListing, let asset = pendingAsset {
                 ReviewSubmitView(listing: listing, asset: asset)
             }
         }
-        .alert("Couldn't import that video", isPresented: $importFailed) {
+    }
+
+    // Step 2 — video (two big buttons, shared with AddVideoFlowView)
+    private var videoCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("Step 2 · The video", systemImage: "video.fill")
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+
+            VideoSourcePicker(enabled: form.isValid) { asset in
+                receive(asset)
+            }
+
+            if !form.isValid {
+                Label("Type the \(form.isRealEstate ? "address" : "name") first, then pick one.", systemImage: "info.circle")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private func useCurrentLocation() {
+        locating = true
+        locator.request { loc in
+            guard let loc else { locating = false; return }
+            // Keep only a ~110 m coarse fix (3 decimals) — the precise fix is
+            // used transiently below to resolve the street address, never stored.
+            pendingCoord = CLLocationCoordinate2D(latitude: coarseCoordinate(loc.coordinate.latitude),
+                                                  longitude: coarseCoordinate(loc.coordinate.longitude))
+            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
+                if let p = placemarks?.first {
+                    form.address = Self.formatAddress(p)
+                }
+                locating = false
+            }
+        }
+    }
+
+    private static func formatAddress(_ p: CLPlacemark) -> String {
+        var parts: [String] = []
+        let line1 = [p.subThoroughfare, p.thoroughfare].compactMap { $0 }.joined(separator: " ")
+        if !line1.isEmpty { parts.append(line1) }
+        if let city = p.locality { parts.append(city) }
+        let stateZip = [p.administrativeArea, p.postalCode].compactMap { $0 }.joined(separator: " ")
+        if !stateZip.isEmpty { parts.append(stateZip) }
+        return parts.joined(separator: ", ")
+    }
+
+    /// A usable video exists → NOW create the listing (once) with everything
+    /// typed so far, incl. the location fix, and go to Review.
+    private func receive(_ asset: CaptureAsset) {
+        guard form.isValid else { return }
+        let listing: Listing
+        if let existing = createdListing, model.listings.contains(where: { $0.id == existing.id }) {
+            // Came back from Review and picked a different video: keep the
+            // listing, refresh its fields, drop the previous file.
+            model.modify(existing.id, sync: false) { form.apply(to: &$0) }
+            if let old = model.assets[existing.id], old.localURL != asset.localURL {
+                FileStore.removeVideoAndPreview(old.localURL)
+                if let sidecar = old.motionSidecarURL { try? FileManager.default.removeItem(at: sidecar) }
+            }
+            listing = model.listings.first(where: { $0.id == existing.id }) ?? existing
+        } else {
+            listing = form.makeListing(coordinate: pendingCoord)
+            model.add(listing)
+        }
+        model.assets[listing.id] = asset
+        createdListing = listing
+        pendingAsset = asset
+        goToReview = true
+    }
+}
+
+// MARK: - Video source picker (Photos / Files / Record) + import validation
+
+/// The three ways a walkthrough gets into the app. Owns the pickers, the
+/// import progress and the validation; hands back a usable `CaptureAsset`.
+/// Drone vs handheld is NOT inferred here (decision A8) — Review & Submit asks.
+struct VideoSourcePicker: View {
+    var enabled: Bool = true
+    var onAsset: (CaptureAsset) -> Void
+
+    @State private var showCapture = false
+    @State private var showUploadChoice = false
+    @State private var showPhotoPicker = false
+    @State private var showFilesPicker = false
+    /// Non-nil while a picked video is copying in (0…1). Big 4K / iCloud clips
+    /// take a while — this drives the visible "Importing video…" progress.
+    @State private var importProgress: Double?
+    @State private var importFailed = false
+    @State private var importFailureMessage = ""
+
+    private var busy: Bool { importProgress != nil }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            bigActionButton(
+                title: "Upload a video",
+                subtitle: "A clip from Photos or Files — the easiest way",
+                icon: "square.and.arrow.up.fill",
+                filled: true
+            ) {
+                showUploadChoice = true
+            }
+
+            bigActionButton(
+                title: "Record a walkthrough",
+                subtitle: "Prefer to film now? We'll coach your pace",
+                icon: "record.circle.fill",
+                filled: false
+            ) {
+                showCapture = true
+            }
+
+            if let p = importProgress {
+                let clamped = min(max(p, 0), 1)
+                VStack(alignment: .leading, spacing: 6) {
+                    ProgressView(value: clamped) {
+                        Text("Importing video… \(Int(clamped * 100))%")
+                            .font(.rpCaption.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                    }
+                    .tint(Theme.accent)
+                    Text("Big videos can take a minute — keep the app open.")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+                .padding(.top, 4)
+            }
+        }
+        .fullScreenCover(isPresented: $showCapture) {
+            CaptureView { asset in
+                deliver(asset)
+            }
+        }
+        .confirmationDialog("Where is your video?", isPresented: $showUploadChoice, titleVisibility: .visible) {
+            Button("Photos") { showPhotoPicker = true }
+            Button("Files") { showFilesPicker = true }
+            Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showPhotoPicker) {
+            PhotoVideoPicker(
+                onPicked: { url in importFile(url) },
+                onProgress: { importProgress = $0 },
+                onFailed: {
+                    importProgress = nil
+                    fail("Please try again. If the video is in iCloud, keep the app open while it downloads.")
+                })
+            .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showFilesPicker) {
+            FilesVideoPicker { url in
+                importProgress = 0
+                importFile(url)
+            }
+            .ignoresSafeArea()
+        }
+        .alert("Couldn't use that video", isPresented: $importFailed) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("Please try again. If the video is in iCloud, keep the app open while it downloads.")
+            Text(importFailureMessage)
         }
     }
 
@@ -259,85 +435,185 @@ struct NewListingView: View {
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .fill(filled ? Theme.accent : Theme.accentSoft)
             )
-            .opacity(formValid && importProgress == nil ? 1 : 0.5)
+            .opacity(enabled && !busy ? 1 : 0.5)
         }
         .buttonStyle(ScalePressStyle())
-        .disabled(!formValid || importProgress != nil)   // no double-imports mid-copy
+        .disabled(!enabled || busy)   // no double-imports mid-copy
         .accessibilityLabel(Text("\(title). \(subtitle)"))
     }
 
-    @discardableResult
-    private func prepareListing() -> Bool {
-        guard formValid else { return false }
-        let trimmedTagline = tagline.trimmingCharacters(in: .whitespaces)
-        // Beds/baths/sqft/price are real-estate concepts — never store the
-        // UI's default 3bd/2ba on a venue/gym/restaurant listing.
-        let isRE = SpaceType.current.showsPropertyDetails
-
-        // Already created (they tapped a picker earlier, backed out, THEN filled
-        // in beds/baths/sqft or edited the address)? Re-sync the form into the
-        // existing listing — otherwise the finished tour shows the stale
-        // 3 bd / 2 ba defaults instead of what the user typed.
-        if let id = createdListing?.id {
-            model.modify(id) { l in
-                l.address = address.trimmingCharacters(in: .whitespaces)
-                l.beds = isRE ? beds : 0
-                l.baths = isRE ? baths : 0
-                l.sqft = isRE ? (Int(sqft) ?? 0) : 0
-                l.price = .dollars(isRE ? (Int(priceDollars) ?? 0) : 0)
-                l.tagline = trimmedTagline.isEmpty ? nil : trimmedTagline
-                l.details = pendingDetails.isEmpty ? nil : pendingDetails
-            }
-            if let updated = model.listings.first(where: { $0.id == id }) {
-                createdListing = updated
-            }
-            return true
-        }
-
-        let listing = Listing(address: address.trimmingCharacters(in: .whitespaces),
-                              beds: isRE ? beds : 0,
-                              baths: isRE ? baths : 0,
-                              sqft: isRE ? (Int(sqft) ?? 0) : 0,
-                              price: .dollars(isRE ? (Int(priceDollars) ?? 0) : 0),
-                              status: .draft,
-                              spaceTypeRaw: SpaceType.current.rawValue,  // stamp the industry
-                              latitude: pendingCoord?.latitude,
-                              longitude: pendingCoord?.longitude,
-                              tagline: trimmedTagline.isEmpty ? nil : trimmedTagline,
-                              details: pendingDetails.isEmpty ? nil : pendingDetails)
-        createdListing = listing
-        model.add(listing)
-        return true
-    }
-
-    private func useCurrentLocation() {
-        locating = true
-        locator.request { loc in
-            guard let loc else { locating = false; return }
-            // Keep only a ~110 m coarse fix (3 decimals) — the precise fix is
-            // used transiently below to resolve the street address, never stored.
-            pendingCoord = CLLocationCoordinate2D(latitude: coarseCoordinate(loc.coordinate.latitude),
-                                                  longitude: coarseCoordinate(loc.coordinate.longitude))
-            CLGeocoder().reverseGeocodeLocation(loc) { placemarks, _ in
-                if let p = placemarks?.first {
-                    address = Self.formatAddress(p)
+    /// Probe + validate a file that landed in the app container. The importer
+    /// may reject unreadable files itself (decision A9); anything that slips
+    /// through with no usable track is refused here with the same alert.
+    private func importFile(_ url: URL) {
+        Task {
+            do {
+                let asset = try await MediaImporter.makeAsset(from: url, isDrone: false)
+                await MainActor.run {
+                    importProgress = nil
+                    if Self.isUsable(asset) {
+                        deliver(asset)
+                    } else {
+                        try? FileManager.default.removeItem(at: asset.localURL)
+                        fail("This file has no usable video — it needs a video track longer than a second.")
+                    }
                 }
-                locating = false
+            } catch {
+                await MainActor.run {
+                    importProgress = nil
+                    fail(error.localizedDescription)
+                }
             }
         }
     }
 
-    private static func formatAddress(_ p: CLPlacemark) -> String {
-        var parts: [String] = []
-        let line1 = [p.subThoroughfare, p.thoroughfare].compactMap { $0 }.joined(separator: " ")
-        if !line1.isEmpty { parts.append(line1) }
-        if let city = p.locality { parts.append(city) }
-        let stateZip = [p.administrativeArea, p.postalCode].compactMap { $0 }.joined(separator: " ")
-        if !stateZip.isEmpty { parts.append(stateZip) }
-        return parts.joined(separator: ", ")
+    static func isUsable(_ asset: CaptureAsset) -> Bool {
+        asset.durationS.isFinite && asset.durationS > 0.2
+            && asset.width > 0 && asset.height > 0 && asset.bytes > 0
+    }
+
+    private func deliver(_ asset: CaptureAsset) {
+        guard Self.isUsable(asset) else {
+            fail("This recording has no usable video. Please try again.")
+            return
+        }
+        onAsset(asset)
+    }
+
+    private func fail(_ message: String) {
+        importFailureMessage = message
+        importFailed = true
+    }
+}
+
+// MARK: - Edit an existing listing (decision A3)
+
+/// Same fields as New Listing, prefilled. Saving writes through
+/// `AppModel.modify`, flags the listing dirty and PATCHes the server when the
+/// listing has been published (decision A6).
+struct ListingEditSheet: View {
+    @EnvironmentObject var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    let listing: Listing
+    @State private var form: ListingFormData
+    private let original: ListingFormData
+
+    init(listing: Listing) {
+        self.listing = listing
+        let data = ListingFormData(listing: listing)
+        self._form = State(initialValue: data)
+        self.original = data
+    }
+
+    private var canSave: Bool { form.isValid && form != original }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                ListingFieldsForm(form: $form) {
+                    EmptyView()
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .scrollDismissesKeyboard(.interactively)
+            .navigationTitle("Edit \(listing.spaceType.spaceNoun)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }
+                        .fontWeight(.semibold)
+                        .disabled(!canSave)
+                }
+            }
+        }
+    }
+
+    private func save() {
+        guard canSave, !listing.isSample else { return }
+        let id = listing.id
+        model.modify(id, sync: false) { form.apply(to: &$0) }
+        model.markDirty(id)
+        Task { await model.syncListing(id) }
+        Haptics.success()
+        dismiss()
+    }
+}
+
+// MARK: - Add a walkthrough video to an existing listing (decision A2/A4)
+
+/// Photos / Files / Record for a listing that has no video yet (or whose
+/// render never finished). Stores the asset, resets the listing to draft and
+/// continues into Review & Submit. Push it inside a NavigationStack.
+struct AddVideoFlowView: View {
+    @EnvironmentObject var model: AppModel
+
+    let listing: Listing
+    @State private var pendingAsset: CaptureAsset?
+    @State private var goToReview = false
+
+    private var currentListing: Listing {
+        model.listings.first(where: { $0.id == listing.id }) ?? listing
+    }
+    private var noun: String { listing.spaceType.spaceNoun }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: Theme.spacing) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(listing.address)
+                        .font(.rpTitle)
+                        .foregroundStyle(Theme.ink)
+                    Text("Add the walkthrough video for this \(noun). The tour, the share link and the leads all start from it.")
+                        .font(.rpBody)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("The video", systemImage: "video.fill")
+                        .font(.rpHeadline)
+                        .foregroundStyle(Theme.ink)
+                    VideoSourcePicker(enabled: !listing.isSample) { asset in
+                        receive(asset)
+                    }
+                    if listing.isSample {
+                        Label("Samples are read-only — create a \(noun) first.", systemImage: "info.circle")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .card()
+            }
+            .padding()
+        }
+        .background(Theme.bg)
+        .navigationTitle("Add video")
+        .navigationBarTitleDisplayMode(.inline)
+        .navigationDestination(isPresented: $goToReview) {
+            if let asset = pendingAsset {
+                ReviewSubmitView(listing: currentListing, asset: asset)
+            }
+        }
     }
 
     private func receive(_ asset: CaptureAsset) {
+        guard !listing.isSample else { return }
+        let id = listing.id
+        if let old = model.assets[id], old.localURL != asset.localURL {
+            FileStore.removeVideoAndPreview(old.localURL)
+            if let sidecar = old.motionSidecarURL { try? FileManager.default.removeItem(at: sidecar) }
+        }
+        model.assets[id] = asset
+        model.setStatus(.draft, for: id)
+        model.setLastError(nil, for: id)
         pendingAsset = asset
         goToReview = true
     }

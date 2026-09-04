@@ -21,17 +21,34 @@
 //   • Residual (manual gate): an R2 lifecycle rule on the `_staging/` prefix to
 //     reap abandoned staged objects.
 //
+// Fix wave 1 (2026-09-03, audit F-E-01 / F-supabase-01 / -18 / F-E-05):
+//   • `content_type` is accepted (allow-listed) on every ticket and the row
+//     records whether the CLIENT declared it (content_type_declared). At
+//     /complete the observed type must be allow-listed; it must ALSO equal the
+//     declared type only when the client declared one. Before this, the app's
+//     single-PUT (`video/quicktime` header) against a render ticket (server
+//     default `video/mp4`) was rejected and DELETED — no tour ≤64 MB could be
+//     published.
+//   • `role:"render"` may carry `kind:"photo"`: the tour POSTER, stored in the
+//     public renders bucket at renders/<org>/<listing>/<asset>.<jpg|png|webp>
+//     and referenced by publish-app via `poster_asset_id` (server-verified).
+//   • /complete is idempotent: a replay on an already-completed asset returns
+//     200 + the row when no NEW staged object exists (a lost response no longer
+//     strands the upload); a multipart whose R2 assembly already happened
+//     (NoSuchUpload on retry) is verified at the final key and completed.
+//   • Errors carry `{ error, code }` (see _shared/http.ts).
+//
 //   POST /uploads
-//     { listing_id, filename, bytes, sha256?, kind, content_type?, multipart? }
-//     video>64MB (or multipart:true) -> { asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count }
-//     otherwise                      -> { asset_id, mode:"single", put_url, storage_key }
+//     { listing_id, filename, bytes, sha256?, kind:"video"|"photo", content_type?, multipart?, role:"capture"|"render" }
+//     video>64MB (or multipart:true) -> { asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count, content_type }
+//     otherwise                      -> { asset_id, mode:"single", put_url, storage_key, content_type }
 //
 //   POST /uploads/batch
 //     { listing_id, kind:"photo", files:[{filename,bytes,sha256?,content_type?}] }
-//     -> { assets:[{ index, asset_id, put_url, storage_key }] }
+//     -> { assets:[{ index, asset_id, put_url, storage_key, content_type }] }
 //
 //   POST /uploads/:asset_id/part-urls   { numbers:[1,2,…] } -> { urls:[{ number, url }] }
-//   POST /uploads/:asset_id/complete    multipart: { parts:[{number,etag}], … } | single: { … } -> asset
+//   POST /uploads/:asset_id/complete    multipart: { parts:[{number,etag}], … } | single: { … } -> asset (200; idempotent replay returns the same row)
 //   POST /uploads/:asset_id/abort       { } -> { ok:true }
 
 import { handleOptions } from "../_shared/cors.ts";
@@ -47,6 +64,7 @@ import {
   deleteObject,
   extFromFilename,
   headObject,
+  isNoSuchUpload,
   presignPut,
   presignUploadPart,
   R2_BUCKET_RENDERS,
@@ -110,8 +128,12 @@ const STAGING_PUT_TTL_SECONDS = 900;
 // arbitrary-type or absurdly large object.
 const MAX_VIDEO_BYTES = 12 * 1024 * 1024 * 1024; // 12 GB (a 4K / 9-min walkthrough is ~8 GB)
 const MAX_PHOTO_BYTES = 50 * 1024 * 1024; // 50 MB
+const MAX_POSTER_BYTES = 10 * 1024 * 1024; // 10 MB — a 1280px JPEG is ~300 KB
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/x-m4v"];
 const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"];
+// Posters are served to browsers as og:image / <video poster>: HEIC is out.
+const ALLOWED_POSTER_TYPES = ["image/jpeg", "image/png", "image/webp"];
+const POSTER_EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
 // Per-org daily budgets. Tickets are charged per FILE; bytes per MiB declared.
 // A heavy team (20 listings/day × 70 photos + a few walkthroughs) stays well
@@ -129,7 +151,7 @@ async function chargeUploadBudget(orgId: string, fileCount: number, totalBytes: 
     86400,
     fileCount,
   );
-  if (!tickets) throw new HttpError(429, "Daily upload limit reached for this workspace");
+  if (!tickets) throw new HttpError(429, "Daily upload limit reached for this workspace", "rate_limited");
   const mb = Math.max(1, Math.ceil(totalBytes / MB));
   const bytesOk = await durableRateLimit(
     `uploadmb:${orgId}`,
@@ -137,17 +159,28 @@ async function chargeUploadBudget(orgId: string, fileCount: number, totalBytes: 
     86400,
     mb,
   );
-  if (!bytesOk) throw new HttpError(429, "Daily upload data budget reached for this workspace");
+  if (!bytesOk) throw new HttpError(429, "Daily upload data budget reached for this workspace", "rate_limited");
+}
+
+/** Media type only (no parameters), lower-cased; "" when absent. */
+function mediaType(raw: unknown): string {
+  return String(raw ?? "").split(";")[0].trim().toLowerCase();
 }
 
 /** Bound + validate one file's claimed size/type for its kind. */
-function validateFileMeta(kind: "video" | "photo", bytes: number | null | undefined, contentType: string, label = "") {
-  const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
+function validateFileMeta(
+  kind: "video" | "photo",
+  bytes: number | null | undefined,
+  contentType: string,
+  label = "",
+  opts: { poster?: boolean } = {},
+) {
+  const maxBytes = opts.poster ? MAX_POSTER_BYTES : kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
   assert(bytes != null && Number.isFinite(bytes) && bytes > 0 && bytes <= maxBytes, 400,
-    `bytes is required and must be between 1 and ${maxBytes} for a ${kind}${label}`);
-  const allowed = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+    `bytes is required and must be between 1 and ${maxBytes} for a ${opts.poster ? "poster" : kind}${label}`);
+  const allowed = opts.poster ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
   assert(allowed.includes(contentType), 400,
-    `content_type "${contentType}" is not an allowed ${kind} type${label}`);
+    `content_type "${contentType}" is not an allowed ${opts.poster ? "poster" : kind} type${label} (allowed: ${allowed.join(", ")})`);
 }
 
 /** Sanitize optional completion metadata (client-claimed, bounded). */
@@ -182,8 +215,9 @@ interface CreateBody {
   kind?: "video" | "photo";
   content_type?: string;
   multipart?: boolean;
-  /** "render" = the app's on-device rendered mp4 → public renders bucket.
-   *  default "capture" = raw walkthrough/photo → private uploads bucket. */
+  /** "render" = the app's on-device rendered mp4 (kind video) or its poster
+   *  (kind photo) → public renders bucket. default "capture" = raw
+   *  walkthrough/photo → private uploads bucket. */
   role?: "capture" | "render";
 }
 
@@ -226,7 +260,11 @@ Deno.serve(async (req) => {
       const files = body.files ?? [];
       assert(files.length > 0, 400, "files[] is required");
       assert(files.length <= MAX_PHOTOS_PER_BATCH, 400, `at most ${MAX_PHOTOS_PER_BATCH} files per batch`);
-      const kind: "video" | "photo" = body.kind === "video" ? "video" : "photo";
+      // Batch is the PHOTO path (single PUT each). Video belongs on POST /uploads,
+      // whose multipart mode is the only safe way past R2's 5 GB single-PUT cap
+      // (audit F-supabase-19).
+      assert(body.kind !== "video", 400, "kind:\"video\" is not supported in a batch — use POST /uploads per video");
+      const kind = "photo" as const;
 
       const listing = await requireListing(db, body.listing_id);
       await requireWriteRole(admin, user.id, listing.org_id);
@@ -234,11 +272,14 @@ Deno.serve(async (req) => {
 
       // Validate every file BEFORE charging or creating anything.
       let totalBytes = 0;
+      const metas: Array<{ contentType: string; declared: boolean }> = [];
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        const ct = f.content_type ?? (kind === "photo" ? "image/jpeg" : "video/mp4");
+        const declared = typeof f.content_type === "string" && mediaType(f.content_type) !== "";
+        const ct = declared ? mediaType(f.content_type) : "image/jpeg";
         validateFileMeta(kind, f.bytes, ct, ` (files[${i}])`);
         totalBytes += f.bytes ?? 0;
+        metas.push({ contentType: ct, declared });
       }
 
       // Per-file + per-byte budget (audit P0-2: was one unit per batch).
@@ -249,7 +290,7 @@ Deno.serve(async (req) => {
         const f = files[i];
         const assetId = crypto.randomUUID();
         const ext = extFromFilename(f.filename, kind);
-        const contentType = f.content_type ?? (kind === "photo" ? "image/jpeg" : "video/mp4");
+        const { contentType, declared } = metas[i];
         const storageKey = `uploads/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
         const { error } = await admin.from("capture_assets").insert({
           id: assetId,
@@ -259,19 +300,19 @@ Deno.serve(async (req) => {
           sha256: f.sha256 ?? null,
           bytes: f.bytes ?? null,
           content_type: contentType,
+          content_type_declared: declared,
           uploaded: false,
         });
         if (error) throw new HttpError(400, `Asset create failed (#${i}): ${error.message}`);
         // PUT targets the STAGING key; /complete verifies then copies to the
-        // final key. (contentType is passed for the app's own header, but note
-        // it is NOT enforced by the signature — /complete's HEAD check is.)
+        // final key. (contentType is advisory — /complete's HEAD check enforces.)
         const putUrl = await presignPut({
           bucket: R2_BUCKET_UPLOADS,
           key: stagingKey(storageKey),
           expiresIn: STAGING_PUT_TTL_SECONDS,
-          contentType: kind === "photo" ? contentType : undefined,
+          contentType,
         });
-        assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey });
+        assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey, content_type: contentType });
       }
       return json({ assets }, 201);
     }
@@ -317,11 +358,25 @@ Deno.serve(async (req) => {
       const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
       const isMultipart = !!asset.upload_id;
 
-      // ONE-SHOT. Completion used to be replayable: after a successful
-      // complete, the staging PUT URL is still valid, so re-uploading and
-      // calling complete again promoted a NEW object over the final key,
-      // defeating the whole point of copy-to-final (audit round 4).
-      assert(asset.uploaded !== true, 409, "This upload is already complete");
+      // Completion is one-shot for the OBJECT (a second staged object must never
+      // be promoted over a verified final key — audit round 4) but the CALL is
+      // idempotent: a replay after a lost response returns the completed row so
+      // the client can move on (audit F-E-05). Only a NEW staged object turns a
+      // replay into a 409.
+      if (asset.uploaded === true) {
+        const staged = await headObject(bucket, stagingKey(key));
+        if (staged.exists) {
+          throw new HttpError(
+            409,
+            "This upload is already complete; a new staged object cannot replace it — create a new upload ticket",
+            "conflict",
+            { already_complete: true },
+          );
+        }
+        const { data: row, error: rErr } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
+        if (rErr || !row) throw new HttpError(500, `Asset reload failed: ${rErr?.message ?? "not found"}`);
+        return json(row, 200);
+      }
 
       // A ticket with no declared size can't be size-verified — the equality
       // check would be skipped and any size would pass. Refuse it.
@@ -352,12 +407,32 @@ Deno.serve(async (req) => {
           400,
           `parts[] must contain each part 1…${partsTotal} exactly once`,
         );
-        await completeMultipartUpload({
-          bucket,
-          key,
-          uploadId: asset.upload_id as string,
-          parts: parts.map((p) => ({ partNumber: p.number, etag: p.etag })),
-        });
+        // Idempotent assembly (audit F-supabase-18): if an earlier attempt
+        // already completed the multipart in R2 (then died before the row
+        // update), the final object exists at the declared size — don't send
+        // Complete again (R2 would answer NoSuchUpload forever).
+        const already = await headObject(bucket, key);
+        const assembled = already.exists && already.bytes === claimedBytes;
+        if (!assembled) {
+          try {
+            await completeMultipartUpload({
+              bucket,
+              key,
+              uploadId: asset.upload_id as string,
+              parts: parts.map((p) => ({ partNumber: p.number, etag: p.etag })),
+            });
+          } catch (e) {
+            if (!isNoSuchUpload(e)) throw e;
+            const now = await headObject(bucket, key);
+            if (!(now.exists && now.bytes === claimedBytes)) {
+              throw new HttpError(
+                409,
+                "The multipart session has expired and no assembled object was found — start a new upload",
+                "conflict",
+              );
+            }
+          }
+        }
       }
 
       // Server-side verification: the object must exist and match what the
@@ -372,28 +447,33 @@ Deno.serve(async (req) => {
         throw new HttpError(502, "Storage did not return an ETag for the staged object — retry the upload");
       }
 
-      const maxBytes = kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
+      const isPoster = kind === "photo" && asset.bucket === "renders";
+      const maxBytes = isPoster ? MAX_POSTER_BYTES : kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
       const sizeOk = head.bytes != null && head.bytes > 0 && head.bytes <= maxBytes &&
         head.bytes === claimedBytes;
-      const allowed = kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
+      const allowed = isPoster ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
       // Take only the media type before any parameter, then require an EXACT
-      // allowlist match AND agreement with the type declared at ticket time —
-      // "video/mp4;evil" must not launder into "video/mp4".
-      const observedType = (head.contentType ?? "").split(";")[0].trim().toLowerCase();
-      const declaredType = String(asset.content_type ?? "").split(";")[0].trim().toLowerCase();
-      const typeOk = allowed.includes(observedType) &&
-        (declaredType === "" || observedType === declaredType);
-      if (!sizeOk || !typeOk) {
+      // allowlist match — "video/mp4;evil" must not launder into "video/mp4".
+      // Agreement with the ticket's type is required only when the CLIENT
+      // declared it: a server-defaulted type is a guess, and rejecting a
+      // perfectly valid mp4 for arriving as video/quicktime deleted every
+      // sub-64 MB tour the app tried to publish (audit F-E-01).
+      const observedType = mediaType(head.contentType);
+      const declaredType = mediaType(asset.content_type);
+      const declaredByClient = asset.content_type_declared === true;
+      const allowedOk = allowed.includes(observedType);
+      const matchOk = !declaredByClient || declaredType === "" || observedType === declaredType;
+      if (!sizeOk || !allowedOk || !matchOk) {
         // The staged/assembled object doesn't match its ticket — remove it so a
         // lying client can't park arbitrary content behind a validated row.
         await deleteObject(bucket, verifyKey).catch(() => {});
         await admin.from("capture_assets").update({ uploaded: false, upload_id: null }).eq("id", assetId);
-        throw new HttpError(
-          400,
-          !sizeOk
-            ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
-            : `Uploaded object content-type "${observedType}" is not an allowed ${kind} type`,
-        );
+        const why = !sizeOk
+          ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
+          : !allowedOk
+          ? `Uploaded object content-type "${observedType}" is not an allowed ${isPoster ? "poster" : kind} type (allowed: ${allowed.join(", ")})`
+          : `Uploaded object content-type "${observedType}" does not match the declared type "${declaredType}" — PUT with the declared Content-Type or declare the real one on the ticket`;
+        throw new HttpError(400, why, "validation", { observed_type: observedType, declared_type: declaredType });
       }
 
       // Single PUT: promote the verified staging object to the final key (which
@@ -426,8 +506,14 @@ Deno.serve(async (req) => {
         .select()
         .maybeSingle();
       if (error) throw new HttpError(400, `Complete failed: ${error.message}`);
-      if (!data) throw new HttpError(409, "This upload was already completed by another request");
-      return json(data);
+      if (!data) {
+        // Lost the race to a concurrent complete of the same verified bytes —
+        // that request owns the transition; this one still succeeds.
+        const { data: row } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
+        if (row?.uploaded === true) return json(row, 200);
+        throw new HttpError(409, "This upload was already completed by another request");
+      }
+      return json(data, 200);
     }
 
     // ---- POST /uploads/:asset_id/abort ----
@@ -440,15 +526,24 @@ Deno.serve(async (req) => {
       // was still publicly reachable (audit round 4). Deleting is a separate,
       // deliberate operation.
       assert(asset.uploaded !== true, 409, "This upload is already complete and cannot be aborted");
+      const bucket = r2BucketFor(asset.bucket);
       if (asset.upload_id) {
+        // If R2 already assembled the object (Complete succeeded, row update
+        // didn't), the right move is /complete, not abort — otherwise the
+        // assembled object becomes an unreferenced orphan (audit F-supabase-18).
+        const claimed = asset.bytes != null ? Number(asset.bytes) : null;
+        const final = await headObject(bucket, asset.storage_key as string);
+        if (final.exists && claimed != null && final.bytes === claimed) {
+          throw new HttpError(409, "This upload has already been assembled — call /complete instead of /abort", "conflict");
+        }
         await abortMultipartUpload({
-          bucket: r2BucketFor(asset.bucket),
+          bucket,
           key: asset.storage_key as string,
           uploadId: asset.upload_id as string,
         });
       } else {
         // Single PUT: drop any staged bytes so an aborted upload leaves nothing.
-        await deleteObject(r2BucketFor(asset.bucket), stagingKey(asset.storage_key as string)).catch(() => {});
+        await deleteObject(bucket, stagingKey(asset.storage_key as string)).catch(() => {});
       }
       await admin.from("capture_assets").update({ upload_id: null, uploaded: false }).eq("id", assetId);
       return json({ ok: true });
@@ -459,8 +554,8 @@ Deno.serve(async (req) => {
       const body = await readJson<CreateBody>(req);
       assert(body.listing_id, 400, "listing_id is required");
       const role: "capture" | "render" = body.role === "render" ? "render" : "capture";
-      const kind: "video" | "photo" =
-        role === "render" ? "video" : (body.kind === "photo" ? "photo" : "video");
+      const kind: "video" | "photo" = body.kind === "photo" ? "photo" : "video";
+      const isPoster = role === "render" && kind === "photo";
       const bucketTag = role === "render" ? "renders" : "uploads";
       const r2Bucket = r2BucketFor(bucketTag);
 
@@ -468,15 +563,30 @@ Deno.serve(async (req) => {
       await requireWriteRole(admin, user.id, listing.org_id);
       await assertNotDeleting(user.id); // no new media once deletion starts
 
-      const assetId = crypto.randomUUID();
-      const ext = role === "render" ? "mp4" : extFromFilename(body.filename, kind);
-      const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
-      const contentType = body.content_type ??
-        (role === "render" ? "video/mp4" : (kind === "photo" ? "image/jpeg" : "video/quicktime"));
+      // Content type: the client's declaration when given (allow-listed below),
+      // otherwise a server default that /complete treats as a guess.
+      const declaredByClient = typeof body.content_type === "string" && mediaType(body.content_type) !== "";
+      const contentType = declaredByClient
+        ? mediaType(body.content_type)
+        : isPoster
+        ? "image/jpeg"
+        : role === "render"
+        ? "video/mp4"
+        : kind === "photo"
+        ? "image/jpeg"
+        : "video/quicktime";
 
       // Bound the size and require a known media type BEFORE charging.
-      validateFileMeta(kind, body.bytes, contentType);
+      validateFileMeta(kind, body.bytes, contentType, "", { poster: isPoster });
       await chargeUploadBudget(listing.org_id, 1, body.bytes ?? 0);
+
+      const assetId = crypto.randomUUID();
+      const ext = isPoster
+        ? (POSTER_EXT[contentType] ?? "jpg")
+        : role === "render"
+        ? "mp4"
+        : extFromFilename(body.filename, kind);
+      const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
 
       const useMultipart =
         kind === "video" && (body.multipart === true || (body.bytes ?? 0) > MULTIPART_THRESHOLD);
@@ -498,6 +608,7 @@ Deno.serve(async (req) => {
             sha256: body.sha256 ?? null,
             bytes: body.bytes ?? null,
             content_type: contentType,
+            content_type_declared: declaredByClient,
             upload_id: uploadId,
             part_size: partSize,
             parts_total: partCount,
@@ -516,10 +627,11 @@ Deno.serve(async (req) => {
           storage_key: storageKey,
           part_size: partSize,
           part_count: partCount,
+          content_type: contentType,
         }, 201);
       }
 
-      // Single PUT (photos + small video/render).
+      // Single PUT (photos, posters + small video/render).
       const { data: asset, error } = await admin
         .from("capture_assets")
         .insert({
@@ -531,6 +643,7 @@ Deno.serve(async (req) => {
           sha256: body.sha256 ?? null,
           bytes: body.bytes ?? null,
           content_type: contentType,
+          content_type_declared: declaredByClient,
           uploaded: false,
         })
         .select()
@@ -543,9 +656,15 @@ Deno.serve(async (req) => {
         bucket: r2Bucket,
         key: stagingKey(storageKey),
         expiresIn: STAGING_PUT_TTL_SECONDS,
-        contentType: kind === "photo" ? contentType : undefined,
+        contentType,
       });
-      return json({ asset_id: asset.id, mode: "single", put_url: putUrl, storage_key: storageKey }, 201);
+      return json({
+        asset_id: asset.id,
+        mode: "single",
+        put_url: putUrl,
+        storage_key: storageKey,
+        content_type: contentType,
+      }, 201);
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);
@@ -564,6 +683,7 @@ async function requireListing(db: any, listingId: string) {
     .from("listings")
     .select("id, org_id")
     .eq("id", listingId)
+    .is("deleted_at", null)
     .maybeSingle();
   if (error) throw new HttpError(400, `Listing lookup failed: ${error.message}`);
   if (!data) throw new HttpError(404, "Listing not found");
@@ -574,7 +694,7 @@ async function requireListing(db: any, listingId: string) {
 async function requireAsset(db: any, assetId: string) {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type")
+    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type, content_type_declared")
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);

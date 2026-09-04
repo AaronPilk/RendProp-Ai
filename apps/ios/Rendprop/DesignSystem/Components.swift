@@ -103,20 +103,47 @@ struct UploadMiniBar: View {
     }
 }
 
-// MARK: - Skeleton shimmer
-struct SkeletonRow: View {
+// MARK: - "Needs attention" chip (render/publish failed or was interrupted)
+struct AttentionChip: View {
     var body: some View {
-        HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 8).fill(Theme.fillSubtle)
-                .frame(width: 64, height: 44)
-            VStack(alignment: .leading, spacing: 6) {
-                // Theme.ink (not Color.black) so the shimmer bar stays visible
-                // on dark cards — ink flips to near-white in dark mode.
-                RoundedRectangle(cornerRadius: 4).fill(Theme.ink.opacity(0.08)).frame(width: 160, height: 12)
-                RoundedRectangle(cornerRadius: 4).fill(Theme.fillSubtle).frame(width: 100, height: 10)
+        Label("Needs attention", systemImage: "exclamationmark.triangle.fill")
+            .font(.caption.weight(.semibold))
+            .foregroundStyle(Theme.warn)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Theme.warn.opacity(0.12), in: Capsule())
+            .accessibilityLabel(Text("Needs attention"))
+    }
+}
+
+// MARK: - Secondary (soft purple) full-width button, shared by the flow screens
+struct SecondaryButton: View {
+    let title: String
+    var systemImage: String? = nil
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            Haptics.selection()
+            action()
+        } label: {
+            HStack(spacing: 8) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                }
+                Text(title).fontWeight(.semibold)
             }
-            Spacer()
+            .font(.rpBody)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 13)
+            .background(Theme.accentSoft)
+            .foregroundStyle(Theme.accent)
+            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .opacity(isDisabled ? 0.5 : 1)
         }
-        .redacted(reason: .placeholder)
+        .buttonStyle(ScalePressStyle())
+        .disabled(isDisabled)
+        .accessibilityLabel(Text(title))
     }
 }

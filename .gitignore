@@ -22,3 +22,8 @@ venv/
 services/edge/tour-host/node_modules/
 .wrangler/
 graphify-out/
+
+# Supabase deploy staging dir (deploy-functions.sh builds + deletes it; never commit)
+services/supabase/.deploy/
+services/supabase/functions/deno.json
+services/supabase/functions/deno.lock

@@ -37,6 +37,12 @@ targets:
           # Don't ship the placeholder example either — it leaks provider/model names.
           - "Resources/Secrets.example.plist"
           - "**/Secrets.example.plist"
+      # Bundled as a FOLDER reference ("player/"): everything inside ships as-is,
+      # so `index.html` and the optional `demo.mp4` (untracked — see
+      # apps/web/player/README.md for the recipe) need no per-file entries. The
+      # app copes when demo.mp4 is absent (explicit "Sample video unavailable").
+      # Runtime folders (Documents/Recordings, Imports, Aerials, Previews…) are
+      # created on device and need nothing here.
       - path: Rendprop/Resources/player
         type: folder
         buildPhase: resources
