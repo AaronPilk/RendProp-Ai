@@ -257,6 +257,117 @@ select 'no org is named after an email address', count(*) = 0,
        format('%s orgs with @ in name', count(*))
 from orgs where name like '%@%';
 
+-- ── Compliance spine (0012): AI provenance + disclosure ──────────────────────
+-- The compliance wedge is the product's moat and its legal exposure at once
+-- (CA AB 723, NorthstarMLS 10 Jul 2026, WI Act 69, HUD 2024). These assert the
+-- shape the edge functions and the public tour depend on.
+
+insert into _inv(name, pass, note)
+select 'media_provenance exists with the disclosure columns',
+       count(*) = 14, format('%s columns', count(*))
+from information_schema.columns
+where table_schema = 'public' and table_name = 'media_provenance';
+
+insert into _inv(name, pass, note)
+select 'media_provenance.disclosure is NOT NULL (a row can never be silent)',
+       count(*) = 1, ''
+from information_schema.columns
+where table_schema = 'public' and table_name = 'media_provenance'
+  and column_name = 'disclosure' and is_nullable = 'NO';
+
+insert into _inv(name, pass, note)
+select 'media_provenance has RLS enabled', coalesce(bool_and(relrowsecurity), false), ''
+from pg_class where oid = 'public.media_provenance'::regclass;
+
+insert into _inv(name, pass, note)
+select 'media_provenance is member-read only (one SELECT policy on is_org_member)',
+       count(*) = 1, coalesce(string_agg(polname || ':' || polcmd::text, ', '), '(none)')
+from pg_policy
+where polrelid = 'public.media_provenance'::regclass
+  and polcmd = 'r'
+  and pg_get_expr(polqual, polrelid) like '%is_org_member%';
+
+-- anon must not reach the table at all: the PUBLIC tour reads it through the
+-- service-role client and returns only the disclosure/label/URL subset.
+insert into _inv(name, pass, note)
+select 'anon has NO privilege on media_provenance',
+       not has_table_privilege('anon', 'public.media_provenance', 'SELECT')
+       and not has_table_privilege('anon', 'public.media_provenance', 'INSERT'), '';
+
+insert into _inv(name, pass, note)
+select 'authenticated may SELECT but never write media_provenance',
+       has_table_privilege('authenticated', 'public.media_provenance', 'SELECT')
+       and not has_table_privilege('authenticated', 'public.media_provenance', 'INSERT')
+       and not has_table_privilege('authenticated', 'public.media_provenance', 'UPDATE')
+       and not has_table_privilege('authenticated', 'public.media_provenance', 'DELETE'), '';
+
+insert into _inv(name, pass, note)
+select 'record_provenance / set_provenance_media are role-gated definers',
+       count(*) = 2, format('%s of 2 found', count(*))
+from pg_proc
+where proname in ('record_provenance', 'set_provenance_media')
+  and prosecdef and prosrc like '%org_role%';
+
+insert into _inv(name, pass, note)
+select 'the provenance RPCs are NOT executable by anon',
+       not has_function_privilege('anon', 'public.record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)', 'EXECUTE')
+       and not has_function_privilege('anon', 'public.set_provenance_media(uuid,uuid,uuid,text)', 'EXECUTE'), '';
+
+insert into _inv(name, pass, note)
+select 'the provenance RPCs ARE executable by authenticated',
+       has_function_privilege('authenticated', 'public.record_provenance(uuid,text,text,text,text,text,text,uuid,uuid,uuid)', 'EXECUTE')
+       and has_function_privilege('authenticated', 'public.set_provenance_media(uuid,uuid,uuid,text)', 'EXECUTE'), '';
+
+-- The caller never supplies the public sentence: record_provenance derives it.
+insert into _inv(name, pass, note)
+select 'record_provenance takes NO caller-supplied disclosure',
+       coalesce(bool_and(args not like '%p_disclosure%'), false),
+       coalesce(string_agg(args, ' | '), '(function missing)')
+from (select pg_get_function_identity_arguments(oid) as args
+        from pg_proc where proname = 'record_provenance') s;
+
+insert into _inv(name, pass, note)
+select 'record_provenance derives the disclosure via provenance_disclosure()',
+       count(*) = 1, ''
+from pg_proc where proname = 'record_provenance' and prosrc like '%provenance_disclosure(%';
+
+-- HousingWire's recommended wording, verbatim. The tour host renders this
+-- sentence for every aerial; changing it here changes what the law sees.
+insert into _inv(name, pass, note)
+select 'an aerial discloses the exact simulated-movement sentence',
+       public.provenance_disclosure('aerial') like
+         'Drone-style movement is simulated. No drone footage was captured.%',
+       left(public.provenance_disclosure('aerial'), 66);
+
+insert into _inv(name, pass, note)
+select 'every provenance kind has a non-empty disclosure',
+       bool_and(length(coalesce(public.provenance_disclosure(k), '')) > 20),
+       string_agg(k, ', ')
+from unnest(array['photo_edit','virtual_stage','declutter','aerial','reel','other']) as k;
+
+-- Media keys are SERVER-DERIVED from capture_asset ids (the poster anti-spoof
+-- rule from 0008): a free-text key would let a caller point "View original" at
+-- any object in the public bucket.
+insert into _inv(name, pass, note)
+select 'the provenance RPCs take ASSET IDS, never free-text R2 keys',
+       coalesce(bool_and(args like '%uuid%' and args not like '%_key text%'), false),
+       coalesce(string_agg(proname || '(' || args || ')', ' | '), '(missing)')
+from (select proname, pg_get_function_identity_arguments(oid) as args
+        from pg_proc where proname in ('record_provenance','set_provenance_media')) s;
+
+insert into _inv(name, pass, note)
+select 'provenance_asset_key is internal (no role may execute it)',
+       not has_function_privilege('anon', 'public.provenance_asset_key(uuid,uuid)', 'EXECUTE')
+       and not has_function_privilege('authenticated', 'public.provenance_asset_key(uuid,uuid)', 'EXECUTE')
+       and not has_function_privilege('service_role', 'public.provenance_asset_key(uuid,uuid)', 'EXECUTE'), '';
+
+insert into _inv(name, pass, note)
+select 'provenance rows are indexed for the tour + the audit export',
+       count(*) >= 2, string_agg(indexname, ', ')
+from pg_indexes
+where schemaname = 'public' and tablename = 'media_provenance'
+  and indexname in ('idx_provenance_listing', 'idx_provenance_org');
+
 -- ── Data integrity ───────────────────────────────────────────────────────────
 
 insert into _inv(name, pass, note)

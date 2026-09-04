@@ -124,6 +124,110 @@ struct AIEditSuggestion: Codable, Sendable {
     let confidence: Double?
 }
 
+/// One AI-altered or AI-generated asset in the org's provenance log
+/// (`GET /me/compliance?listing_id=`, W2-B3). This is the row a broker or a
+/// compliance officer is entitled to see, and the row the public tour prints
+/// its disclosure from.
+///
+/// `disclosure` is the legally-required sentence (California AB 723 from
+/// 1 Jan 2026; NorthstarMLS from 10 Jul 2026; Wisconsin Act 69 from
+/// 1 Jan 2027). It is NEVER null and it is shown VERBATIM — never summarised,
+/// truncated or re-worded by the app.
+struct ProvenanceRecord: Identifiable, Hashable, Sendable {
+    /// `media_provenance.id` (a server UUID string).
+    let id: String
+    var listingID: UUID? = nil
+    /// photo_edit | virtual_stage | declutter | aerial | reel | other.
+    var kind: String
+    /// "Living room", "Aerial intro" — may be null; fall back to `displayLabel`.
+    var label: String? = nil
+    /// The preset that ran (twilight | sky | lawn | declutter | stage | custom |
+    /// aerial | reel), when the server recorded one.
+    var edit: String? = nil
+    var style: String? = nil
+    /// Model family in plain words — "AI image edit" | "AI video". Never a
+    /// vendor model string (that stays in the org's own CSV export).
+    var model: String
+    /// The exact public sentence. Show verbatim.
+    var disclosure: String
+    /// The UNALTERED original, when it was published (CA AB 723's
+    /// "access to the original"). Nil = we never got one.
+    var originalURL: URL? = nil
+    /// The published altered asset, when one exists.
+    var alteredURL: URL? = nil
+    var createdAt: Date? = nil
+
+    /// Plain-words model family for a kind — mirrors `modelFamily()` in
+    /// services/supabase/functions/tours/index.ts, for the routes that send the
+    /// raw `model_id` instead.
+    static func modelFamily(_ kind: String) -> String {
+        (kind == "aerial" || kind == "reel") ? "AI video" : "AI image edit"
+    }
+
+    /// Human name for a `kind` — used when the row carries no label.
+    static func kindName(_ kind: String) -> String {
+        switch kind {
+        case "photo_edit":    return "Edited photo"
+        case "virtual_stage": return "Virtually staged photo"
+        case "declutter":     return "Decluttered photo"
+        case "aerial":        return "Aerial intro"
+        case "reel":          return "Reel clip"
+        default:              return "Altered media"
+        }
+    }
+
+    /// What the row is called on screen — its label, else a human name for its kind.
+    var displayLabel: String {
+        if let l = label?.trimmingCharacters(in: .whitespacesAndNewlines), !l.isEmpty { return l }
+        return Self.kindName(kind)
+    }
+
+    /// True when the unaltered original is publicly reachable. Amber when false:
+    /// the disclosure is there but the "access to the original" half is not.
+    var hasOriginal: Bool { originalURL != nil }
+}
+
+/// One `POST /ai-photo` edit. Carries the COMPLIANCE fields alongside the
+/// image: the listing the photo belongs to (without it the server cannot log
+/// the edit at all), a human label for the disclosure line, and the asset id of
+/// the untouched ORIGINAL uploaded with `role:"original"` — which is what makes
+/// the public "View original" link real (California AB 723).
+struct AIPhotoEditRequest: Sendable, Hashable {
+    var imageBase64: String
+    var mime: String = "image/jpeg"
+    /// "twilight" | "sky" | "lawn" | "declutter" | "stage" | "custom".
+    var edit: String
+    /// Stage only ("modern" | "rustic" | "minimalist" | "scandinavian").
+    var style: String? = nil
+    /// Custom only (free text, ≤ 600 chars server-side).
+    var prompt: String? = nil
+    /// SERVER listing id (`listings.id`), never the local UUID.
+    var listingServerID: UUID? = nil
+    /// "Living room", "Front exterior" — printed next to the public disclosure.
+    var label: String? = nil
+    /// `capture_assets.id` of the untouched source (uploads `role:"original"`).
+    var originalAssetID: String? = nil
+    /// One UUID per user TAP (billed provider call).
+    var idempotencyKey: String? = nil
+}
+
+/// The result of one `/ai-photo` edit: the image plus its compliance envelope.
+struct AIPhotoEditResult: Sendable, Hashable {
+    /// Base64 of the edited image.
+    let imageBase64: String
+    var mime: String? = nil
+    /// The exact sentence the public tour will print for this asset. Show it
+    /// VERBATIM. Nil only on a server that predates the compliance wave.
+    var disclosure: String? = nil
+    /// `media_provenance.id` when the row was written.
+    var provenanceID: String? = nil
+    /// False when the edit could NOT be entered in the audit log (no listing id
+    /// yet, RLS, a DB error). The edit itself still succeeded.
+    var provenanceRecorded: Bool = false
+    /// The server's reason, when it sent one.
+    var provenanceReason: String? = nil
+}
+
 /// Everything the Aerial intro sheet knows about THE PROPERTY, sent to
 /// `POST /ai-video/aerial` (contract §B4). With `imageJPEGBase64` the server runs
 /// image-to-video grounded on the exterior photo; without it the result is a
@@ -139,6 +243,12 @@ struct AerialRequest: Sendable, Hashable {
     var style: String? = nil              // ≤200 chars free-text look hint
     var seconds: Int = 6                  // 4 | 6 | 8
     var aspect: String = "16:9"           // "16:9" | "9:16"
+    /// SERVER listing id — anchors the aerial's provenance row so the clip is
+    /// disclosed on the tour and appears in the broker's audit log (W2-C4).
+    var listingServerID: UUID? = nil
+    /// Label for the public disclosure line (defaults to "Aerial intro"
+    /// server-side).
+    var label: String? = nil
 
     var isGrounded: Bool { !(imageJPEGBase64 ?? "").isEmpty }
 }
@@ -265,15 +375,41 @@ protocol APIClient: Sendable {
     /// the field server-side. Best-effort: callers fire-and-forget.
     func updateBrand(_ fields: [String: String]) async throws
 
-    /// POST /ai-photo — single-image AI edit. `edit` = "twilight" | "sky" |
-    /// "lawn" | "declutter" | "stage" | "custom". `style` applies to stage only
-    /// ("modern" | "rustic" | "minimalist" | "scandinavian"); `prompt` to custom
-    /// only (free text, ≤ 600 chars). Pass nil for both on the preset edits.
-    /// Sends the photo as base64, returns the edited image as base64 (PNG).
-    /// `idempotencyKey`: one UUID per user tap (billed provider call).
-    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
-                     style: String?, prompt: String?,
-                     idempotencyKey: String?) async throws -> String
+    /// POST /ai-photo — single-image AI edit. `request.edit` = "twilight" |
+    /// "sky" | "lawn" | "declutter" | "stage" | "custom"; `style` applies to
+    /// stage only, `prompt` to custom only. Sends the photo as base64 and
+    /// returns the edited image PLUS its compliance envelope: the exact
+    /// `disclosure` sentence the public tour will print, and whether the edit
+    /// was entered in the org's audit log.
+    ///
+    /// Send `listingServerID` and `originalAssetID` whenever you have them —
+    /// without a listing id nothing is logged at all, and without the original
+    /// asset the public "View original" link (California AB 723) is dead.
+    ///
+    /// Throws `APIError.server(status: 400, code: "unsupported_edit", ...)` when
+    /// the fair-housing denylist refuses a free-text prompt. Show the server's
+    /// message, let the user re-word, and NEVER auto-retry.
+    func aiPhotoEdit(_ request: AIPhotoEditRequest) async throws -> AIPhotoEditResult
+
+    /// GET /me/compliance?listing_id= — the org's AI provenance rows for one
+    /// listing (member-gated), newest first. Every row's `disclosure` is the
+    /// legally-required sentence and is shown VERBATIM.
+    func provenance(listingServerID: UUID) async throws -> [ProvenanceRecord]
+
+    /// GET /me/compliance?format=csv — the broker-exportable AI audit log as raw
+    /// CSV bytes. `listingServerID` narrows it to one listing; nil exports the
+    /// whole workspace.
+    func complianceCSV(listingServerID: UUID?) async throws -> Data
+
+    /// PATCH /me/compliance/:id — attach the untouched ORIGINAL and/or the
+    /// published ALTERED result to a provenance row after their uploads land.
+    /// The original alone satisfies California AB 723's access requirement; both
+    /// together let the tour render the side-by-side "Before / after" pair
+    /// NorthstarMLS asks for. Each id is a `capture_assets.id` of an uploaded
+    /// PHOTO in the public renders bucket for the SAME listing — the server
+    /// refuses anything else, so "View original" can never be spoofed.
+    func attachProvenanceMedia(provenanceID: String, originalAssetID: String?,
+                               alteredAssetID: String?) async throws
 
     /// POST /ai-photo with `edit: "suggest"` — the AI looks at the photo and
     /// returns up to 3 recommended preset edits (twilight | sky | lawn |
@@ -307,8 +443,11 @@ protocol APIClient: Sendable {
     func aiVideoAerial(_ request: AerialRequest, idempotencyKey: String?) async throws -> AIVideoJob
 
     /// POST /ai-video/reel-clip — animate a photo (base64) into a 2–12 s motion
-    /// clip (Seedance image-to-video).
+    /// clip (Seedance image-to-video). `listingServerID` anchors the clip's
+    /// provenance row so the generated motion is disclosed on the tour and in
+    /// the broker's audit log.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob
 
     /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
@@ -340,19 +479,46 @@ extension APIClient {
         try await aiVideoAerial(request, idempotencyKey: nil)
     }
 
+    /// Source-compatible edit without the compliance fields — returns only the
+    /// image. Prefer `aiPhotoEdit(_:)`: the listing id, the label and the
+    /// original asset id are what make the disclosure and the public
+    /// "View original" link real.
+    func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
+                     style: String?, prompt: String?,
+                     idempotencyKey: String?) async throws -> String {
+        try await aiPhotoEdit(AIPhotoEditRequest(imageBase64: imageBase64, mime: mime, edit: edit,
+                                                 style: style, prompt: prompt,
+                                                 idempotencyKey: idempotencyKey)).imageBase64
+    }
+
     func aiPhotoEdit(imageBase64: String, mime: String, edit: String,
                      style: String?, prompt: String?) async throws -> String {
         try await aiPhotoEdit(imageBase64: imageBase64, mime: mime, edit: edit,
                               style: style, prompt: prompt, idempotencyKey: nil)
     }
 
+    /// Whole-workspace audit export (every listing).
+    func complianceCSV() async throws -> Data {
+        try await complianceCSV(listingServerID: nil)
+    }
+
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?) async throws -> AIVideoJob {
         try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
     }
 
+    /// Source-compatible reel clip with no listing anchor — the generation is
+    /// NOT entered in the compliance log. Prefer the listing-aware requirement.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
+                                  seconds: seconds, listingServerID: nil, label: nil,
+                                  idempotencyKey: idempotencyKey)
+    }
+
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
         try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
-                                  seconds: seconds, idempotencyKey: nil)
+                                  seconds: seconds, listingServerID: nil, label: nil,
+                                  idempotencyKey: nil)
     }
 
     /// Source-compat for the pre-audit publish call (`staged:` + raw chapter
@@ -389,6 +555,27 @@ struct AIVideoJob: Codable, Sendable {
     var grounded: Bool? = nil
     /// True for AI-generated footage the UI must disclose as such.
     var synthetic: Bool? = nil
+    /// The exact disclosure sentence for THIS generation, written by the server
+    /// (an aerial's begins "Drone-style movement is simulated. No drone footage
+    /// was captured."). Show it verbatim in the app and in the share text.
+    /// Optional so a job persisted by an older build still decodes.
+    var disclosure: String? = nil
+    /// `media_provenance.id` when the server logged the generation.
+    var provenanceID: String? = nil
+
+    /// The sentence to show when the server sent none (older server / offline):
+    /// HousingWire's recommended simulated-movement disclosure.
+    static let aerialFallbackDisclosure =
+        "Drone-style movement is simulated. No drone footage was captured. "
+        + "This establishing shot was generated by AI."
+
+    /// The disclosure to print for this job — the server's own sentence when it
+    /// sent one, otherwise the aerial fallback for aerials. Never empty for an
+    /// aerial; nil for kinds we have no canned sentence for.
+    var disclosureText: String? {
+        if let d = disclosure?.trimmingCharacters(in: .whitespacesAndNewlines), !d.isEmpty { return d }
+        return kind == "aerial" ? Self.aerialFallbackDisclosure : nil
+    }
 }
 
 /// One poll of `GET /ai-video/status`.
@@ -404,6 +591,10 @@ enum AIVideoStatus: Sendable {
 struct PublishedTour: Sendable, Hashable {
     let slug: String
     let shareURL: String
+    /// The MLS-safe `/u/<slug>` twin (`unbranded_url`). Optional — a server
+    /// that predates the compliance wave doesn't send it and the app derives
+    /// it from the slug instead.
+    var unbrandedURL: String? = nil
     var videoURL: String? = nil
     var posterURL: String? = nil
     var durationS: Double? = nil

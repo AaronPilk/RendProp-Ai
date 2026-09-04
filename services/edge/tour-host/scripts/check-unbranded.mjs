@@ -1,0 +1,626 @@
+#!/usr/bin/env node
+// check-unbranded.mjs — the hard gate on the MLS-safe page (W2-A1).
+//
+// WHY THIS EXISTS
+// An MLS unbranded virtual-tour field bans agent/broker identification,
+// "comment or contact forms, ratings … or social media profiles", and
+// "advertising of any kind, including links to additional content or external
+// sites not related to the specific property". Fines are real (RI Statewide
+// MLS: $50 for a first branded-photo offence, escalating). `/u/<slug>` is the
+// only URL an agent may paste into that field, so a single leaked agent name,
+// mailto:, <form> or rendprop.com link is a compliance defect, not a nit.
+//
+// WHAT IT DOES
+//   1. Transpiles src/*.ts with the repo's own TypeScript (no build step, no
+//      new dependency) and imports the REAL renderer — not a copy of it.
+//   2. Renders two synthetic tours (a real-estate one and a venue one) whose
+//      agent card, CTA, socials, Zillow URL, secondary links, share URLs and
+//      per-industry booking/contact details are all unique sentinel strings.
+//   3. Fails if ANY sentinel — or any of rendprop.com, mailto:, tel:, <form>,
+//      <input>, "Book a showing" — survives into the unbranded HTML.
+//   4. Fails if the BRANDED page lost those things (otherwise the check above
+//      would pass just as happily on an empty page).
+//   5. Fails if the required property content (address, media, the AI
+//      disclosure block, the floor plan) is missing from the unbranded page.
+//
+// Run: npm test
+
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import ts from "typescript";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const ROOT = resolve(HERE, "..");
+const SRC = join(ROOT, "src");
+const OUT = join(ROOT, "node_modules", ".cache", "unbranded-check");
+
+// ---------------------------------------------------------------------------
+// 1. Build: transpile src/*.ts into ESM we can import. Relative specifiers get
+//    a .js suffix (Node does not resolve extensionless imports).
+// ---------------------------------------------------------------------------
+function buildRenderer() {
+  rmSync(OUT, { recursive: true, force: true });
+  mkdirSync(OUT, { recursive: true });
+  for (const file of readdirSync(SRC).filter((f) => f.endsWith(".ts"))) {
+    const source = readFileSync(join(SRC, file), "utf8");
+    const { outputText, diagnostics } = ts.transpileModule(source, {
+      fileName: file,
+      reportDiagnostics: true,
+      compilerOptions: {
+        target: ts.ScriptTarget.ES2022,
+        module: ts.ModuleKind.ESNext,
+        isolatedModules: true,
+      },
+    });
+    if (diagnostics && diagnostics.length) {
+      for (const d of diagnostics) {
+        console.error(`transpile ${file}: ${ts.flattenDiagnosticMessageText(d.messageText, " ")}`);
+      }
+      throw new Error(`could not transpile src/${file}`);
+    }
+    const js = outputText.replace(
+      /(\bfrom\s*["'])(\.\.?\/[^"']+?)(["'])/g,
+      (m, pre, spec, post) => (/\.(js|mjs|json)$/.test(spec) ? m : `${pre}${spec}.js${post}`),
+    );
+    writeFileSync(join(OUT, file.replace(/\.ts$/, ".js")), js);
+  }
+  return import(pathToFileURL(join(OUT, "player.js")).href);
+}
+
+// ---------------------------------------------------------------------------
+// 2. Sentinels — every branded value the payload can carry, made unique so a
+//    substring match cannot be a coincidence.
+// ---------------------------------------------------------------------------
+const S = {
+  agentName: "Sentinelia Qx7 Brandleak",
+  agentTitle: "Sentinel Qx7 Listing Specialist",
+  brokerage: "Sentinel Qx7 Brokerage Group",
+  phone: "(555) 010-7788",
+  email: "sentinel-agent-qx7@example.com",
+  headshot: "https://cdn.example.com/sentinel-headshot-qx7.jpg",
+  agentSite: "https://sentinel-agent-site-qx7.example.com",
+  instagram: "sentinel_ig_qx7",
+  tiktok: "sentinel_tt_qx7",
+  facebook: "sentinel_fb_qx7",
+  linkedin: "sentinel_li_qx7",
+  handle: "sentinel-handle-qx7",
+  ctaLabel: "Book a showing",
+  zillow: "https://www.zillow.com/homedetails/sentinel-zillow-qx7/",
+  secondaryLabel: "Sentinel Qx7 Secondary Link",
+  secondaryUrl: "https://sentinel-secondary-qx7.example.com/",
+  bookingUrl: "https://sentinel-booking-qx7.example.com/",
+  menuUrl: "https://sentinel-menu-qx7.example.com/",
+  detailSite: "https://sentinel-detail-site-qx7.example.com",
+  detailPhone: "(555) 010-9911",
+  reelUrl: "https://cdn.example.com/sentinel-reel-qx7.mp4",
+  shareUrl: "https://rendprop.com/f/sentinelqx7",
+  unbrandedUrl: "https://rendprop.com/u/sentinelqx7",
+  accent: "#ab12cd",
+};
+
+/** Everything that must NOT appear in the unbranded HTML. */
+const SENTINEL_VALUES = Object.entries(S).map(([k, v]) => [`sentinel:${k}`, v]);
+
+/** The literal tokens the spec names, asserted independently of src/player.ts
+ *  so this file stays a real second opinion rather than an echo. */
+const FORBIDDEN_TOKENS = [
+  "rendprop.com",
+  "rendprop",          // the wordmark, in any casing ("RENDPROP", "Made with Rendprop")
+  "mailto:",
+  "tel:",
+  "<form",
+  "<input",
+  "<textarea",
+  "book a showing",
+  "zillow",
+  "instagram.com",
+  "tiktok.com",
+  "facebook.com",
+  "linkedin.com",
+  "youtube.com",
+  "wa.me/",
+  "pilk.ai",
+  "wsmlending.com",
+  "tractrealestate.com",
+  "google.com/maps",
+  "challenges.cloudflare.com",
+  "turnstile",
+  "leadform",
+  "endcard",
+  'rel="canonical"',
+  'property="og:',
+  'name="twitter:',
+  '"/terms"',
+  '"/privacy"',
+];
+
+const AGENT_CARD = {
+  name: S.agentName,
+  title: S.agentTitle,
+  brokerage: S.brokerage,
+  handle: S.handle,
+  phone: S.phone,
+  email: S.email,
+  headshot_url: S.headshot,
+  website: S.agentSite,
+  instagram: S.instagram,
+  tiktok: S.tiktok,
+  facebook: S.facebook,
+  linkedin: S.linkedin,
+  accent: S.accent,
+};
+
+const ALTERED_MEDIA = [
+  {
+    label: "Living room",
+    kind: "virtual_stage",
+    disclosure: "Furniture in this room was added digitally. The room itself is unchanged.",
+    original_url: "https://cdn.example.com/original-living.jpg",
+    altered_url: "https://cdn.example.com/staged-living.jpg",
+  },
+  {
+    label: "Aerial intro",
+    kind: "aerial",
+    disclosure: "This establishing shot was generated by an AI video model from a single exterior photo.",
+    original_url: "https://cdn.example.com/original-exterior.jpg",
+    altered_url: "https://cdn.example.com/aerial.mp4",
+  },
+  {
+    label: "Kitchen",
+    kind: "declutter",
+    disclosure: "Countertop clutter was digitally removed.",
+    original_url: null,
+    altered_url: "https://cdn.example.com/kitchen.jpg",
+  },
+];
+
+function realEstateTour() {
+  return {
+    slug: "sentinelqx7",
+    share_url: S.shareUrl,
+    unbranded_url: S.unbrandedUrl,
+    space_type: "real_estate",
+    listing: {
+      address: "1180 Crestline Ridge",
+      tagline: "A glass-and-oak modern estate that opens to the canyon.",
+      details: {
+        year_built: "2023",
+        acres: "0.7",
+        story: "Set on a private ridge above the canyon.\n\nMaterials were chosen for how they age.",
+        gallery: [{ url: "https://cdn.example.com/g1.jpg", label: "Great room" }],
+        features: { Interior: ["Wide-plank oak floors"] },
+        floorplan: { levels: [{ name: "Main level", sqft: "2,900 SF", blurb: "Great room and kitchen." }] },
+        neighborhood: { blurb: "Minutes to the water.", commute: [{ time: "6 min", label: "To the marina" }] },
+        // Branded/contact keys that must be stripped out of `details`:
+        phone: S.detailPhone,
+        website: S.detailSite,
+        bookingUrl: S.bookingUrl,
+        reel_url: S.reelUrl,
+      },
+      beds: 5,
+      baths: 6,
+      sqft: 6200,
+      price_cents: 425000000,
+      price: "$4,250,000",
+      lat: 25.77,
+      lng: -80.19,
+    },
+    video_url: "https://cdn.example.com/tour.mp4",
+    scrub_url: "https://cdn.example.com/tour.mp4",
+    hls_url: null,
+    poster: "https://cdn.example.com/poster.jpg",
+    duration_s: 137,
+    speed_factor: 1,
+    chapters: [
+      { label: "Arrival", t_ms: 0, sort: 0 },
+      { label: "Chef's kitchen", t_ms: 14000, sort: 1 },
+      { label: "Primary suite", t_ms: 55000, sort: 2 },
+    ],
+    agent_card: { ...AGENT_CARD },
+    cta: {
+      label: S.ctaLabel,
+      mode: "lead_form",
+      url: null,
+      secondary: [
+        { label: "View on Zillow", url: S.zillow },
+        { label: S.secondaryLabel, url: S.secondaryUrl },
+      ],
+      lead_fields: ["preferred_date", "message"],
+    },
+    staged: true,
+    staged_disclosure:
+      "Some imagery in this tour has been virtually staged or digitally decluttered.",
+    disclosure_chip: "✦ Virtually staged",
+    altered_media: ALTERED_MEDIA,
+    floorplan_url: "https://cdn.example.com/floorplan.png",
+  };
+}
+
+/** A venue exercises the per-industry block: booking/menu buttons, phone
+ *  facts, "Get directions" (Google Maps) and a deep-link CTA. */
+function venueTour() {
+  const t = realEstateTour();
+  return {
+    ...t,
+    space_type: "venue",
+    listing: {
+      ...t.listing,
+      address: "The Sentinel Qx7 Loft",
+      details: {
+        ...t.listing.details,
+        startingPrice: "3500",
+        capacitySeated: "180",
+        capacityStanding: "260",
+        spaceSetting: "Industrial loft",
+        eventTypes: "Weddings, Corporate",
+        amenities: "In-house AV, Bridal suite",
+        hours: "Mon-Sun 9-11",
+        menuUrl: S.menuUrl,
+      },
+    },
+    cta: {
+      ...t.cta,
+      mode: "deeplink",
+      url: S.bookingUrl,
+      label: "Check availability",
+    },
+  };
+}
+
+/** A bare payload from an OLDER tours function: no altered_media, no
+ *  floorplan_url, no unbranded_url. The page must still render. */
+function legacyTour() {
+  const t = realEstateTour();
+  delete t.altered_media;
+  delete t.floorplan_url;
+  delete t.unbranded_url;
+  t.staged = false;
+  t.staged_disclosure = null;
+  t.disclosure_chip = null;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// 3. Assertions
+// ---------------------------------------------------------------------------
+const failures = [];
+let checks = 0;
+
+function fail(msg) { failures.push(msg); }
+function ok(msg) { checks++; if (process.env.VERBOSE) console.log(`  ok  ${msg}`); }
+
+function mustNotContain(html, label, id, needle) {
+  checks++;
+  if (String(html).toLowerCase().includes(String(needle).toLowerCase())) {
+    const i = html.toLowerCase().indexOf(String(needle).toLowerCase());
+    fail(`[${label}] LEAK ${id}: found ${JSON.stringify(needle)} at offset ${i}\n        …${html.slice(Math.max(0, i - 70), i + 90).replace(/\s+/g, " ")}…`);
+  }
+}
+
+function mustContain(html, label, what, needle) {
+  checks++;
+  if (!String(html).includes(needle)) fail(`[${label}] MISSING ${what}: expected ${JSON.stringify(needle)}`);
+  else ok(`${label}: ${what}`);
+}
+
+function auditUnbranded(html, label, tour, player) {
+  // (a) no sentinel value survives
+  for (const [id, value] of SENTINEL_VALUES) mustNotContain(html, label, id, value);
+  // (b) none of the literal tokens the spec names
+  for (const token of FORBIDDEN_TOKENS) mustNotContain(html, label, `token ${token}`, token);
+  // (c) the renderer's own self-check agrees (single source of truth in prod)
+  checks++;
+  const violations = player.unbrandedSelfCheck(html, tour);
+  if (violations.length) fail(`[${label}] unbrandedSelfCheck() reported: ${violations.join(", ")}`);
+  // (d) it must be a real page, not an empty string that trivially passes
+  checks++;
+  if (html.length < 8000) fail(`[${label}] suspiciously small unbranded page (${html.length} bytes)`);
+  // (e) noindex
+  mustContain(html, label, "robots noindex", '<meta name="robots" content="noindex">');
+  // (f) the beacon is flagged as unbranded traffic, and no lead handoff exists
+  mustContain(html, label, "beacon unbranded flag", '"unbranded":true');
+  mustContain(html, label, "no CTA handoff", '"handoffUrl":""');
+}
+
+async function main() {
+  const player = await buildRenderer();
+  const FN = "https://example.supabase.co/functions/v1";
+
+  // ---- real estate --------------------------------------------------------
+  const re = realEstateTour();
+  const reUn = player.renderTourPage(re, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  const reBr = player.renderTourPage(realEstateTour(), FN, "anon", "site-key", { origin: "https://rendprop.com" });
+
+  auditUnbranded(reUn, "real_estate /u/", re, player);
+
+  // required property content survives
+  mustContain(reUn, "real_estate /u/", "address", "1180 Crestline Ridge");
+  mustContain(reUn, "real_estate /u/", "price", "$4,250,000");
+  mustContain(reUn, "real_estate /u/", "player video element", 'id="scrub"');
+  mustContain(reUn, "real_estate /u/", "chapter rail", 'id="rail"');
+  mustContain(reUn, "real_estate /u/", "chapter label", "Chef&#39;s kitchen");
+  mustContain(reUn, "real_estate /u/", "gallery", "https://cdn.example.com/g1.jpg");
+  // A2 — disclosure block
+  mustContain(reUn, "real_estate /u/", "disclosure section", 'id="disclosure"');
+  mustContain(reUn, "real_estate /u/", "disclosure chip", 'id="staged"');
+  mustContain(reUn, "real_estate /u/", "staging sentence", "virtually staged or digitally decluttered");
+  mustContain(reUn, "real_estate /u/", "per-asset label", "Living room — virtually staged");
+  mustContain(reUn, "real_estate /u/", "model family (image)", "AI image edit");
+  mustContain(reUn, "real_estate /u/", "model family (video)", "AI video");
+  mustContain(reUn, "real_estate /u/", "HousingWire drone sentence", player.DRONE_DISCLOSURE);
+  mustContain(reUn, "real_estate /u/", "View original link", "View original");
+  mustContain(reUn, "real_estate /u/", "before/after pair", "disc-ba");
+  mustContain(reUn, "real_estate /u/", "one-line summary", "disc-sum");
+  // A3 — promoted floor plan above the gallery
+  mustContain(reUn, "real_estate /u/", "floor plan section", 'id="plan"');
+  mustContain(reUn, "real_estate /u/", "floor plan image", "https://cdn.example.com/floorplan.png");
+  mustContain(reUn, "real_estate /u/", "room seek button", 'data-seek="14"');
+  checks++;
+  if (reUn.indexOf('id="plan"') > reUn.indexOf('id="gallery"')) fail('[real_estate /u/] #plan must render ABOVE #gallery');
+
+  // ---- the branded control: the test is worthless if /f/ lost these --------
+  for (const [what, needle] of [
+    ["agent name", S.agentName],
+    ["brokerage", S.brokerage],
+    ["agent phone", S.phone],
+    ["agent email", S.email],
+    ["Zillow link", S.zillow],
+    ["secondary link", S.secondaryUrl],
+    ["lead form", "<form"],
+    ["form input", "<input"],
+    ["CTA label", S.ctaLabel],
+    ["Rendprop watermark", "Made with <b>Rendprop</b>"],
+    ["canonical", 'rel="canonical"'],
+    ["og:title", 'property="og:title"'],
+    ["disclosure section", 'id="disclosure"'],
+    ["floor plan section", 'id="plan"'],
+    ["drone sentence", player.DRONE_DISCLOSURE],
+  ]) mustContain(reBr, "real_estate /f/", what, needle);
+
+  checks++;
+  if (reBr.includes('<meta name="robots" content="noindex">')) fail("[real_estate /f/] branded page must stay indexable");
+
+  // ---- venue (per-industry block: booking, menu, phone, directions) -------
+  const ve = venueTour();
+  const veUn = player.renderTourPage(ve, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  const veBr = player.renderTourPage(venueTour(), FN, "anon", "site-key", { origin: "https://rendprop.com" });
+  auditUnbranded(veUn, "venue /u/", ve, player);
+  mustContain(veUn, "venue /u/", "business name", "The Sentinel Qx7 Loft".replace("Sentinel Qx7 ", "Sentinel Qx7 "));
+  mustContain(veUn, "venue /u/", "capacity fact", "Seats 180");
+  mustContain(veUn, "venue /u/", "amenity chip", "In-house AV");
+  mustContain(veBr, "venue /f/", "booking button", S.bookingUrl);
+  mustContain(veBr, "venue /f/", "directions button", "google.com/maps");
+
+  // ---- legacy payload (no altered_media / floorplan_url / unbranded_url) --
+  const lg = legacyTour();
+  const lgUn = player.renderTourPage(lg, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  const lgBr = player.renderTourPage(legacyTour(), FN, "anon", "site-key", { origin: "https://rendprop.com" });
+  auditUnbranded(lgUn, "legacy /u/", lg, player);
+  mustContain(lgUn, "legacy /u/", "address still renders", "1180 Crestline Ridge");
+  mustContain(lgUn, "legacy /u/", "player still renders", 'id="scrub"');
+  checks++;
+  if (lgUn.includes('id="disclosure"')) fail("[legacy /u/] disclosure section must not render with nothing to disclose");
+  checks++;
+  if (lgUn.includes('id="plan"')) fail("[legacy /u/] plan section must not render without floorplan_url");
+  checks++;
+  if (lgBr.includes('id="disclosure"')) fail("[legacy /f/] disclosure section must not render with nothing to disclose");
+  // A chip with no section behind it must not link to a dangling #disclosure.
+  const stagedNoText = legacyTour();
+  stagedNoText.staged = true;
+  stagedNoText.disclosure_chip = "✦ Virtually staged";
+  for (const [label, html] of [
+    ["staged-no-text /u/", player.renderTourPage(stagedNoText, FN, "anon", "", { unbranded: true })],
+    ["staged-no-text /f/", player.renderTourPage(stagedNoText, FN, "anon", "")],
+  ]) {
+    checks++;
+    if (html.includes('href="#disclosure"') && !html.includes('id="disclosure"')) {
+      fail(`[${label}] dangling #disclosure anchor: the chip links to a section that is not rendered`);
+    }
+  }
+
+  // ---- embed mode on /u/ (in-app hero card) is still clean ----------------
+  const emUn = player.renderTourPage(realEstateTour(), FN, "anon", "site-key", { unbranded: true, embed: true });
+  for (const [id, value] of SENTINEL_VALUES) mustNotContain(emUn, "embed /u/", id, value);
+  for (const token of FORBIDDEN_TOKENS) mustNotContain(emUn, "embed /u/", `token ${token}`, token);
+
+  // ---- the PUBLIC demo (/u/estate-demo) — the page people actually open ---
+  const demoMod = await import(pathToFileURL(join(OUT, "demo.js")).href);
+  const demoTour = demoMod.buildDemoTour();
+  const demoUn = player.renderTourPage(demoTour, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  for (const token of FORBIDDEN_TOKENS) mustNotContain(demoUn, "demo /u/", `token ${token}`, token);
+  checks++;
+  const demoViolations = player.unbrandedSelfCheck(demoUn, demoMod.buildDemoTour());
+  if (demoViolations.length) fail(`[demo /u/] unbrandedSelfCheck() reported: ${demoViolations.join(", ")}`);
+  mustContain(demoUn, "demo /u/", "address", "1180 Crestline Ridge");
+  mustContain(demoUn, "demo /u/", "disclosure section", 'id="disclosure"');
+  mustContain(demoUn, "demo /u/", "before/after pair", "disc-ba");
+  mustContain(demoUn, "demo /u/", "View original", "View original");
+  // The demo's agent card is Alexandra Reyes / Meridian Estates / aaron@pilk.ai.
+  for (const v of ["Alexandra Reyes", "Meridian Estates", "(305) 555-0142", "aaron@pilk.ai", "meridian"]) {
+    mustNotContain(demoUn, "demo /u/", "demo agent value", v);
+  }
+
+  // ---- the SHAPE services/supabase/functions/tours actually sends ---------
+  // W2-B bakes the qualifier into `label` ("Great room — virtually staged"),
+  // sends an explicit `model`, prefixes the aerial disclosure with the drone
+  // sentence, and builds demo asset URLs on https://rendprop.com/assets/*.
+  // All four have to render right — and the rendprop.com media URLs must not
+  // fail-close the page.
+  const b2 = realEstateTour();
+  b2.altered_media = [
+    {
+      label: "Great room — virtually staged",
+      kind: "virtual_stage",
+      disclosure: "This photo was virtually staged with AI: furniture and decor were digitally added or restyled. The architecture, dimensions, and views are unchanged.",
+      model: "AI image edit",
+      original_url: "https://rendprop.com/assets/example-staging-before.webp",
+      altered_url: "https://rendprop.com/assets/example-staging-after.webp",
+      created_at: null,
+    },
+    {
+      label: "Twilight arrival — sky and lighting",
+      kind: "photo_edit",
+      disclosure: "This photo was digitally altered with AI: the sky and lighting were changed to simulate dusk. The property itself is unchanged.",
+      model: "AI image edit",
+      original_url: "https://rendprop.com/assets/example-twilight-before.webp",
+      altered_url: "https://rendprop.com/assets/example-twilight-after.webp",
+      created_at: null,
+    },
+    {
+      label: "Aerial intro — AI generated",
+      kind: "aerial",
+      disclosure: "Drone-style movement is simulated. No drone footage was captured. This establishing shot was generated by AI.",
+      model: "AI video",
+      original_url: null,
+      altered_url: null,
+      created_at: null,
+    },
+  ];
+  const b2Un = player.renderTourPage(b2, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  for (const [id, value] of SENTINEL_VALUES) mustNotContain(b2Un, "tours-shape /u/", id, value);
+  checks++;
+  const b2v = player.unbrandedSelfCheck(b2Un, b2);
+  if (b2v.length) fail(`[tours-shape /u/] unbrandedSelfCheck() reported: ${b2v.join(", ")}`);
+  mustContain(b2Un, "tours-shape /u/", "label used verbatim", ">Great room — virtually staged<");
+  mustContain(b2Un, "tours-shape /u/", "server model family", ">AI video<");
+  // No doubled qualifier, and no doubled drone sentence.
+  for (const dup of [
+    "virtually staged — virtually staged",
+    "AI generated — AI generated",
+    "sky and lighting — digitally edited",
+  ]) mustNotContain(b2Un, "tours-shape /u/", "doubled qualifier", dup);
+  checks++;
+  const droneCount = b2Un.split(player.DRONE_DISCLOSURE).length - 1;
+  if (droneCount !== 1) fail(`[tours-shape /u/] drone sentence appears ${droneCount}x, want exactly 1`);
+
+  // ---- the CDN host may legitimately be a rendprop.com subdomain ----------
+  // R2_PUBLIC_BASE_URL is an operator-set env var. If it is
+  // https://media.rendprop.com, every poster/scrub/gallery URL carries the
+  // vendor domain — that is media delivery, not branding, and must NOT
+  // fail-close the page. The wordmark must still be absent from what a viewer
+  // (or an MLS compliance reviewer) actually reads.
+  const cdn = realEstateTour();
+  cdn.poster = "https://media.rendprop.com/renders/o/l/poster.jpg";
+  cdn.scrub_url = "https://media.rendprop.com/renders/o/l/tour.mp4";
+  cdn.video_url = cdn.scrub_url;
+  cdn.hls_url = "https://customer-abc.cloudflarestream.com/uid/manifest/video.m3u8";
+  cdn.floorplan_url = "https://media.rendprop.com/renders/o/l/plan.png";
+  cdn.listing.details.gallery = [{ url: "https://media.rendprop.com/renders/o/l/g1.jpg", label: "Great room" }];
+  cdn.altered_media = ALTERED_MEDIA.map((m) => ({
+    ...m,
+    original_url: m.original_url ? "https://media.rendprop.com/renders/o/l/original.jpg" : null,
+    altered_url: "https://media.rendprop.com/renders/o/l/altered.jpg",
+  }));
+  const cdnUn = player.renderTourPage(cdn, FN, "anon", "site-key", { unbranded: true, origin: "https://rendprop.com" });
+  for (const [id, value] of SENTINEL_VALUES) mustNotContain(cdnUn, "cdn-host /u/", id, value);
+  checks++;
+  const cdnViolations = player.unbrandedSelfCheck(cdnUn, cdn);
+  if (cdnViolations.length) {
+    fail(`[cdn-host /u/] a rendprop.com MEDIA host must not fail-close the page; got: ${cdnViolations.join(", ")}`);
+  }
+  // …but the wordmark must still be absent from the readable page.
+  const visible = cdnUn
+    .replace(/<script[\s\S]*?<\/script>/g, " ")
+    .replace(/<style[\s\S]*?<\/style>/g, " ")
+    .replace(/<[^>]+>/g, " ");
+  mustNotContain(visible, "cdn-host /u/ visible text", "wordmark", "rendprop");
+  mustContain(cdnUn, "cdn-host /u/", "media still renders", "https://media.rendprop.com/renders/o/l/tour.mp4");
+
+  // ---- the DATA-level strip, tested on its own ---------------------------
+  // The render only omits the branded chrome; sanitizeTourForUnbranded() is
+  // what guarantees the branded values are not in the object at all. Both
+  // layers have to hold on their own, so this is asserted independently of
+  // any HTML.
+  const before = realEstateTour();
+  const after = player.sanitizeTourForUnbranded(before);
+  const D = "sanitize()";
+  const expectEq = (what, got, want) => {
+    checks++;
+    if (got !== want) fail(`[${D}] ${what}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+  };
+  expectEq("agent_card is emptied", Object.keys(after.agent_card).length, 0);
+  expectEq("cta.label cleared", after.cta.label, "");
+  expectEq("cta.url cleared", after.cta.url, null);
+  expectEq("cta.secondary emptied (drops the Zillow link)", after.cta.secondary.length, 0);
+  expectEq("cta.lead_fields emptied", after.cta.lead_fields.length, 0);
+  expectEq("share_url dropped", after.share_url, undefined);
+  expectEq("unbranded_url dropped", after.unbranded_url, undefined);
+  expectEq("lat nulled (kills the Maps link)", after.listing.lat, null);
+  expectEq("lng nulled", after.listing.lng, null);
+  for (const k of ["phone", "website", "bookingUrl", "reel_url"]) {
+    checks++;
+    if (k in after.listing.details) fail(`[${D}] details.${k} must be stripped`);
+  }
+  for (const k of ["story", "gallery", "features", "floorplan", "neighborhood", "year_built", "acres"]) {
+    checks++;
+    if (!(k in after.listing.details)) fail(`[${D}] details.${k} is property content and must survive`);
+  }
+  // Disclosure + property media survive.
+  expectEq("altered_media survives", after.altered_media.length, ALTERED_MEDIA.length);
+  expectEq("floorplan_url survives", after.floorplan_url, "https://cdn.example.com/floorplan.png");
+  expectEq("staged flag survives", after.staged, true);
+  // details.floorplan_url is url-ish by name but is property media.
+  checks++;
+  const allow = player.sanitizeTourForUnbranded({
+    ...before,
+    listing: { ...before.listing, details: { floorplan_url: "https://cdn.example.com/fp.png", menuUrl: "https://x/" } },
+  });
+  if (allow.listing.details.floorplan_url !== "https://cdn.example.com/fp.png") fail(`[${D}] details.floorplan_url must be allow-listed`);
+  if ("menuUrl" in allow.listing.details) fail(`[${D}] details.menuUrl must be stripped`);
+  // The ORIGINAL must not be mutated: src/index.ts self-checks the rendered
+  // HTML against the un-sanitized tour, and the same object is re-rendered for
+  // the branded page.
+  checks++;
+  if (before.agent_card.name !== S.agentName || before.cta.secondary.length !== 2 || before.listing.lat !== 25.77) {
+    fail(`[${D}] sanitizeTourForUnbranded() mutated its input`);
+  }
+
+  // ---- the gate itself: it must actually catch a leak ---------------------
+  for (const [what, sample] of [
+    ["a link to the vendor site", '<a href="https://rendprop.com">Home</a>'],
+    ["a visible wordmark", "<p>Made with Rendprop</p>"],
+    ["a lead form", '<form id="leadform"><input name="email"></form>'],
+    ["a mailto link", '<a href="mailto:a@b.com">Email</a>'],
+    ["a phone link", '<a href="tel:5550100">Call</a>'],
+    ["a Zillow link", '<a href="https://www.zillow.com/x/">View on Zillow</a>'],
+    ["a social profile", '<a href="https://instagram.com/agent">Instagram</a>'],
+    ["an og: tag", '<meta property="og:url" content="x">'],
+    ["a canonical", '<link rel="canonical" href="x">'],
+  ]) {
+    checks++;
+    if (!player.unbrandedViolations(sample).length) fail(`[gate] unbrandedViolations() failed to catch ${what}: ${sample}`);
+  }
+  for (const [what, sample] of [
+    ["a media src on the vendor CDN", '<img src="https://media.rendprop.com/a.jpg">'],
+    ["a poster on the vendor CDN", '<video poster="https://media.rendprop.com/p.webp"></video>'],
+    ["plain property copy", "<p>The hotel: a five-minute walk. Blog: none.</p>"],
+  ]) {
+    checks++;
+    const v = player.unbrandedViolations(sample);
+    if (v.length) fail(`[gate] unbrandedViolations() false-positived on ${what}: ${v.join(", ")}`);
+  }
+
+  // ---- the neutral fallback pages served on /u/ 404 / 5xx -----------------
+  const notice = player.unbrandedNoticePage("This tour isn't available", "The link may have expired.");
+  for (const token of FORBIDDEN_TOKENS) mustNotContain(notice, "unbranded notice page", `token ${token}`, token);
+
+  // ---- report -------------------------------------------------------------
+  if (failures.length) {
+    console.error(`\n✖ unbranded check FAILED — ${failures.length} problem(s) across ${checks} assertions:\n`);
+    for (const f of failures) console.error("  - " + f);
+    console.error(
+      "\n  /u/<slug> is the ONLY link an agent may put in an MLS unbranded virtual-tour\n" +
+      "  field. Anything above is a compliance defect. Strip it at the DATA level in\n" +
+      "  sanitizeTourForUnbranded() (src/player.ts), not with CSS.\n",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`✔ unbranded check passed — ${checks} assertions over 8 renders (real_estate, venue, legacy, embed, demo, tours-shape, cdn-host, notice page) + 12 gate self-tests.`);
+}
+
+main().catch((err) => {
+  console.error("unbranded check crashed:", err && err.stack ? err.stack : err);
+  process.exitCode = 1;
+});

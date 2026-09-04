@@ -8,13 +8,14 @@ workers_dev = false
 # ---------------------------------------------------------------------------
 # Routes — bind the public paths on the apex domain to this Worker.
 # Requires rendprop.com to be an active zone on this Cloudflare account. The
-# tour-host owns /f/*, /a/*, and the legal pages (/terms, /privacy — linked
-# from the iOS app's Settings); the marketing site keeps everything else.
+# tour-host owns /f/*, /u/* (the MLS-unbranded twin), /a/*, and the legal pages
+# (/terms, /privacy — linked from the iOS app's Settings); the marketing site
+# keeps everything else.
 # ---------------------------------------------------------------------------
 # Catch-all: the Worker owns the whole apex (serves the landing page at /,
-# tours at /f/*, portfolios at /a/*, and the legal pages). Without this, any
-# un-routed path (like the bare domain) falls through to the placeholder DNS
-# record and 525s.
+# tours at /f/*, MLS-unbranded tours at /u/*, portfolios at /a/*, and the legal
+# pages). Without this, any un-routed path (like the bare domain) falls through
+# to the placeholder DNS record and 525s.
 routes = [
   { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
 ]

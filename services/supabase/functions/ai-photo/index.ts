@@ -2,8 +2,10 @@
 // custom) via Gemini image edit ("Nano Banana"). Owner-authenticated.
 // Mirrors services/pipeline providers/gemini.py + router.PHOTO_EDIT_PROMPTS.
 //
-//   POST /ai-photo  { image_b64, mime?, edit, style?, prompt?, space_type? }
-//              ->  { image_b64, mime, edit, style?, space_type }
+//   POST /ai-photo  { image_b64, mime?, edit, style?, prompt?, space_type?,
+//                     listing_id?, label?, original_asset_id? }
+//              ->  { image_b64, mime, edit, style?, space_type,
+//                     disclosure, provenance: { id, recorded, reason? } }
 //
 //   edit       = twilight | sky | lawn | declutter | stage | custom
 //   style      = modern | rustic | minimalist | scandinavian   (stage only; default modern)
@@ -31,12 +33,45 @@
 // (base64, with Gemini's ACTUAL mime type) so the app can show a before/after.
 // Errors carry { error, code } — 402 plan_required / 429 quota_exceeded carry
 // {feature, used, cap, plan} so the app can prompt an upgrade.
+//
+// ── COMPLIANCE (wave 2, W2-B3) ───────────────────────────────────────────────
+//
+// FAIR HOUSING. Every prompt this function builds — canned and free-text — gets
+// the guardrails from _shared/fairhousing.ts appended server-side:
+//   "Do not add or alter people, pets, religious or cultural objects, flags, or
+//    signage." + "Do not change the exterior, the view out of windows, or any
+//    permanent feature."
+// The exterior edits (twilight | sky | lawn) get the same fair-housing sentence
+// plus a SCOPED permanence clause instead of the blanket one — those three
+// edits exist to change the sky, the light and the landscaping, so "do not
+// change the exterior" would fight the instruction. See fairhousing.ts.
+// Free-text prompts (edit:"custom" and edit:"improve_prompt") are additionally
+// checked against the DENYLIST documented in full in _shared/fairhousing.ts —
+// people / pets / religious + cultural objects only when the prompt is ADDING
+// them, and neighborhood / school-district / demographic claims always. A hit
+// is a 400 with code `unsupported_edit` naming the term and how to rephrase.
+// ("remove the personal items" and "brighten the flag stone patio" pass; "add a
+// family in the living room" and "make it look like a good school district"
+// do not.)
+//
+// PROVENANCE. A successful edit records one media_provenance row (migration
+// 0012) via the record_provenance RPC when `listing_id` is sent, mapping
+// stage → virtual_stage, declutter → declutter, everything else → photo_edit.
+// The response always carries `disclosure` (the exact sentence the public tour
+// will print for this asset — CA AB 723 / NorthstarMLS) and `provenance`
+// ({ id, recorded, reason? }). Recording is BEST EFFORT: a failed audit insert
+// never fails an edit the caller has already paid for.
+// `original_asset_id` (optional) is the untouched source uploaded via
+// POST /uploads role:"original", which makes "View original" a real public link
+// — the access-to-the-original half of AB 723.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
+import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
+import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -318,6 +353,21 @@ interface Body {
   /** Free-text instruction for edit:"custom" (Mirino-style prompting). */
   prompt?: string;
   space_type?: string;
+  /** Compliance (W2-B3): the listing this photo belongs to. Without it the edit
+   *  still runs, but it cannot be entered in the org's AI audit log. */
+  listing_id?: string;
+  /** "Living room", "Front exterior" — shown next to the public disclosure. */
+  label?: string;
+  /** capture_asset of the UNTOUCHED source, uploaded via POST /uploads
+   *  role:"original". Makes "View original" a real link (CA AB 723). */
+  original_asset_id?: string;
+}
+
+/** edit id → the provenance `kind` the audit log and the tour disclose. */
+function provenanceKind(edit: string): ProvenanceKind {
+  if (edit === "stage") return "virtual_stage";
+  if (edit === "declutter") return "declutter";
+  return "photo_edit";
 }
 
 const MAX_CUSTOM_PROMPT = 600;
@@ -368,6 +418,8 @@ Deno.serve(async (req) => {
       assert(rough.length > 0, 400, "edit:'improve_prompt' requires a non-empty `prompt`");
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
+      // Refuse before spending tokens polishing something we would never run.
+      assertFairHousing(rough, "That idea");
       await guardHelper(user.id, req);
       return json({ prompt: await improvePrompt(rough, profile), space_type: space });
     }
@@ -386,12 +438,18 @@ Deno.serve(async (req) => {
       assert(userText.length > 0, 400, "edit:'custom' requires a non-empty `prompt`");
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
              `prompt too long (max ${MAX_CUSTOM_PROMPT} chars)`);
+      // Fair-housing denylist — refuse BEFORE charging anything (see header).
+      assertFairHousing(userText, "This custom edit");
       prompt = customPrompt(profile, userText);
     } else {
       prompt = (space === "real_estate" ? RE_PROMPTS : prompts(profile))[edit];
       assert(prompt, 400,
              `edit must be twilight|sky|lawn|declutter|stage|custom|suggest|improve_prompt (got ${edit})`);
     }
+
+    // FAIR-HOUSING GUARDRAILS on every prompt, canned or free-text (HUD 2024).
+    // twilight|sky|lawn get the scoped permanence clause — see fairhousing.ts.
+    prompt = `${prompt} ${guardrailsFor(edit)}`;
 
     // Everything validated — NOW charge the quota, immediately before the
     // billable Gemini call.
@@ -440,12 +498,36 @@ Deno.serve(async (req) => {
     if (!outB64) {
       throw new HttpError(502, `Gemini returned no image. ${texts.join(" | ").slice(0, 300)}`, "upstream");
     }
+
+    // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
+    // exact sentence the public tour will print. Best effort — never fatal (the
+    // image is already generated and already billed). See _shared/provenance.ts.
+    const prov = await recordProvenance(req, {
+      listingId: body.listing_id,
+      kind: provenanceKind(edit),
+      label: body.label ?? null,
+      modelId: MODEL,
+      edit,
+      style: style ?? null,
+      // Free-text only, and only the user's own words (the canned guardrails
+      // add nothing). Bounded and stripped by the RPC; never public.
+      promptSummary: edit === "custom" ? (body.prompt ?? "").trim().slice(0, 300) : null,
+      originalAssetId: body.original_asset_id ?? null,
+    });
+
     return json({
       image_b64: outB64,
       mime: outMime ?? "image/png",
       edit,
       space_type: space,
       ...(style ? { style } : {}),
+      // The disclosure this edit carries onto the tour (CA AB 723 / NorthstarMLS).
+      disclosure: prov.disclosure,
+      provenance: {
+        id: prov.id,
+        recorded: prov.recorded,
+        ...(prov.reason ? { reason: prov.reason } : {}),
+      },
     });
   } catch (err) {
     return respondError(err);

@@ -4,7 +4,8 @@ Serves Rendprop's **public** pages at the edge:
 
 | Route | Renders | Source |
 |---|---|---|
-| `GET /f/:slug` | the scroll-scrub **tour player** | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
+| `GET /f/:slug` | the scroll-scrub **tour player** — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
+| `GET /u/:slug` | the **same tour, unbranded** — MLS-safe | the same payload |
 | `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
 
 Each request is server-rendered to a **self-contained HTML page** (no build step, no
@@ -14,6 +15,64 @@ rAF-lerp scrub loop, buffer gate, chapter rail, room label, jank watchdog and au
 fallback — adapted to stream its video instead of bundling a demo file.
 
 This is the component from `docs/BACKEND-ARCHITECTURE.md` §1.5 / step 7.
+
+---
+
+## `/f/` vs `/u/` — the branded link and the MLS link
+
+Every tour has **two** URLs off the same slug and the same payload:
+
+| | `/f/<slug>` — **branded** | `/u/<slug>` — **unbranded** |
+|---|---|---|
+| Agent card, phone, email, socials | yes | **no** |
+| Lead form / CTA / deep link | yes | **no** |
+| Zillow + secondary links, house partners, financing | yes | **no** |
+| "Made with Rendprop", wordmark, `rendprop.com` links | yes | **no** |
+| `og:*` / `twitter:` cards, `rel=canonical` | yes | **no** |
+| Property media, address, details, floor plan, chapters | yes | yes |
+| **AI disclosure block** (`#disclosure`) | yes | **yes** — it is property information |
+| Robots | indexable, self-canonical | `noindex` meta **and** `X-Robots-Tag`, never in the sitemap |
+| View beacon | counted | counted, with `unbranded: true` |
+| Lead events | fired | never |
+| CSP | `frame-ancestors 'self'`, Turnstile allowed | `form-action 'none'`, `frame-ancestors *` (MLS systems iframe it) |
+
+**Use the right one.** MLS unbranded virtual-tour rules ban agent/broker
+identification, "comment or contact forms, ratings … or social media profiles",
+and "advertising of any kind, including links to additional content or external
+sites not related to the specific property". Branding violations are fined (RI
+Statewide MLS: $50 for a first offence, escalating). The unbranded field is
+also the one that syndicates to Zillow/Realtor.com — so `/u/` is what buyers see
+and `/f/` is what the agent sends by email, text, social and open-house QR.
+
+### How the guarantee is enforced
+
+1. **One renderer, no fork.** `renderTourPage(tour, …, { unbranded: true })`.
+   A second copy of the page would drift, and the drift is a legal problem.
+2. **Stripped at the DATA level, not with CSS.** `sanitizeTourForUnbranded()`
+   builds a new tour with `agent_card: {}`, a no-op `cta`, no `share_url`, no
+   lat/lng, and the contact/booking/social keys deleted from the freeform
+   `details` bag. Nothing branded exists to leak into markup, meta tags, or the
+   inline `window.__CFG__`. The end-card CSS and the lead-form half of the
+   engine are separate strings that are not even concatenated into the page.
+3. **Self-checked at the edge.** Every `/u/` response runs
+   `unbrandedSelfCheck()` — a forbidden-token list plus a check that none of
+   *this tour's own* agent/CTA values appear in the HTML. On a hit the Worker
+   **fails closed**: a neutral 503, never a leaking page. `/u/` 404s and 5xx
+   use an unbranded notice page for the same reason.
+4. **Gated in CI.** `npm test` (`scripts/check-unbranded.mjs`) renders the real
+   renderer with sentinel-loaded branded fields and fails on any leak. It also
+   asserts the **branded** page still has the agent card, the form and the
+   Zillow link — otherwise the check would pass on an empty page.
+
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # the unbranded (MLS-safe) gate
+```
+
+> **Deployment constraint:** the host rules ignore media-delivery URLs (any
+> quoted string ending in an image/video extension), so an `R2_PUBLIC_BASE_URL`
+> on a `rendprop.com` subdomain is fine. A media URL **without** a file
+> extension on that domain would fail the check and 503 the page.
 
 ---
 

@@ -10,6 +10,16 @@
 //   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle }, portfolio_url }
 //                                  brand-kit fields + `handle` (public portfolio slug,
 //                                  unique → 409) + `org_name` (business name; never an email)
+//   GET    /me/compliance       -> { org_id, from, to, count, truncated, rows[] }
+//                                  ?from=&to=&listing_id=&limit=&format=csv
+//                                  The BROKER-EXPORTABLE AI audit log: every
+//                                  media_provenance row for the workspace (see
+//                                  §"Compliance export" below).
+//   PATCH  /me/compliance/:id   -> { ok, provenance }
+//                                  { original_asset_id?, altered_asset_id?, label? }
+//                                  Attaches the untouched original and/or the
+//                                  published result to a provenance row after
+//                                  their uploads finish.
 //   POST   /me/apple-code       -> { ok, stored }      (Sign in with Apple: exchange +
 //                                  store the refresh token for later revocation, TN3194)
 //   DELETE /me                  -> { ok, deletion_request_id, cleanup_complete, pending, warnings? }
@@ -29,14 +39,16 @@
 //      pending and the response is a 500, not a false success.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError, round4 } from "../_shared/http.ts";
+import { HttpError, assert, json, pathSegments, readJson, respondError, round4, throwRpc } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import {
   deleteObjects,
+  publicR2Url,
   R2_BUCKET_RENDERS,
   R2_BUCKET_UPLOADS,
   type R2Object,
 } from "../_shared/r2.ts";
+import { corsHeaders } from "../_shared/cors.ts";
 import { deleteStreamVideo, streamConfigured } from "../_shared/stream.ts";
 import { appleConfigured, exchangeAppleCode, revokeAppleToken } from "../_shared/apple.ts";
 import {
@@ -64,17 +76,28 @@ Deno.serve(async (req) => {
 
     const user = await getUser(req);
 
+    // The broker's AI audit log (compliance wave, W2-B3).
+    if (req.method === "GET" && seg[0] === "compliance") {
+      return await handleCompliance(req, user.id);
+    }
+    if (req.method === "PATCH" && seg[0] === "compliance") {
+      return await handleCompliancePatch(req, user.id, seg[1]);
+    }
+
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
       if (seg[0] === "brand") return await handleBrandPatch(req, user.id);
-      throw new HttpError(404, "Unknown route — PATCH /me/brand");
+      throw new HttpError(404, "Unknown route — PATCH /me/brand or PATCH /me/compliance/:id");
     }
     if (req.method === "POST" && seg[0] === "apple-code") {
       return await handleAppleCode(req, user.id);
     }
     if (req.method === "DELETE") return await handleDelete(user.id, user.email ?? null);
 
-    throw new HttpError(405, "Only GET, PATCH, POST /me/apple-code, and DELETE are supported");
+    throw new HttpError(
+      405,
+      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/compliance/:id, POST /me/apple-code, and DELETE are supported",
+    );
   } catch (err) {
     return respondError(err);
   }
@@ -321,6 +344,199 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
     org: { name: updated.name, handle },
     portfolio_url: handle ? `${TOUR_BASE}/a/${handle}` : null,
   });
+}
+
+// ── GET /me/compliance ────────────────────────────────────────────────────────
+//
+// The broker-exportable AI audit log (W2-B3). One row per AI-altered or
+// AI-generated asset the workspace has produced: what was changed, by which
+// model, against which unaltered original, and the exact disclosure sentence the
+// public tour prints.
+//
+// WHY IT EXISTS. California AB 723 (in force 1 Jan 2026) makes both the
+// disclosure AND access to the original unaltered image the licensee's legal
+// obligation, at up to $2,500 per violation; NorthstarMLS (10 Jul 2026) wants an
+// unaltered "Before" for every altered room; Wisconsin Act 69 extends the same
+// to generated video from 1 Jan 2027. A compliance officer needs to be able to
+// pull the whole workspace's record, not click through listings — so this route
+// is member-gated (any role, including marketing: reading the audit log is not a
+// write) and offers `format=csv` for the file they actually email.
+//
+// Member-scoped by RLS: the user client only ever sees the caller's orgs, and
+// this route narrows to the acting workspace (X-Org-Id / default).
+//
+//   ?from=  ISO date/timestamp, inclusive   ?to= ISO date/timestamp, exclusive
+//   ?listing_id=  one listing only (this is what the iOS COMPLIANCE card reads)
+//   ?limit=  default 500, max 5000
+//   ?format=csv  → text/csv attachment instead of JSON
+
+const COMPLIANCE_DEFAULT_LIMIT = 500;
+const COMPLIANCE_MAX_LIMIT = 5000;
+
+const CSV_COLUMNS = [
+  "created_at", "listing_id", "listing_address", "kind", "label", "edit", "style",
+  "model_id", "disclosure", "original_url", "altered_url", "prompt_summary", "id",
+] as const;
+
+/** RFC4180-ish cell: quote everything, double interior quotes, never a raw newline. */
+function csvCell(v: unknown): string {
+  const s = v == null ? "" : String(v).replace(/\r?\n/g, " ");
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+/** An ISO date/timestamp query param, or null. Rejects junk rather than ignoring it. */
+function isoParam(raw: string | null, name: string): string | null {
+  if (!raw) return null;
+  const t = Date.parse(raw);
+  assert(Number.isFinite(t), 400, `${name} must be an ISO date or timestamp (e.g. 2026-01-01)`);
+  return new Date(t).toISOString();
+}
+
+async function handleCompliance(req: Request, userId: string): Promise<Response> {
+  const db = userClient(req);
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  const params = new URL(req.url).searchParams;
+
+  const from = isoParam(params.get("from"), "from");
+  const to = isoParam(params.get("to"), "to");
+  const listingId = (params.get("listing_id") ?? "").trim();
+  if (listingId) {
+    assert(UUID_RE.test(listingId), 400, "listing_id must be a UUID");
+  }
+  const rawLimit = Number(params.get("limit") ?? COMPLIANCE_DEFAULT_LIMIT);
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(COMPLIANCE_MAX_LIMIT, Math.max(1, Math.round(rawLimit)))
+    : COMPLIANCE_DEFAULT_LIMIT;
+  const wantCsv = (params.get("format") ?? "").toLowerCase() === "csv";
+
+  let q = db
+    .from("media_provenance")
+    .select(
+      "id, listing_id, render_id, kind, label, model_id, edit, style, prompt_summary, " +
+        "original_key, altered_key, disclosure, created_at, listings(address, space_type)",
+    )
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false })
+    .limit(limit + 1); // one extra so we can report `truncated` honestly
+  if (from) q = q.gte("created_at", from);
+  if (to) q = q.lt("created_at", to);
+  if (listingId) q = q.eq("listing_id", listingId);
+
+  const { data, error } = await q;
+  if (error) throw new HttpError(500, `Compliance lookup failed: ${error.message}`);
+
+  const all = (data ?? []) as unknown as Array<Record<string, unknown>>;
+  const truncated = all.length > limit;
+  const rows = all.slice(0, limit).map((r) => {
+    const l = (Array.isArray(r.listings) ? r.listings[0] : r.listings) as
+      | { address: string | null; space_type: string | null }
+      | null
+      | undefined;
+    return {
+      id: r.id as string,
+      created_at: r.created_at as string,
+      listing_id: (r.listing_id as string | null) ?? null,
+      listing_address: l?.address ?? null,
+      space_type: l?.space_type ?? null,
+      render_id: (r.render_id as string | null) ?? null,
+      kind: r.kind as string,
+      label: (r.label as string | null) ?? null,
+      edit: (r.edit as string | null) ?? null,
+      style: (r.style as string | null) ?? null,
+      model_id: (r.model_id as string | null) ?? null,
+      // The org's OWN audit export may see the prompt summary; the public tour
+      // never does (tours/index.ts returns the disclosure + URLs only).
+      prompt_summary: (r.prompt_summary as string | null) ?? null,
+      disclosure: r.disclosure as string,
+      original_url: publicR2Url(r.original_key as string | null),
+      altered_url: publicR2Url(r.altered_key as string | null),
+      /** true when the unaltered original is publicly reachable (AB 723). */
+      original_available: publicR2Url(r.original_key as string | null) !== null,
+    };
+  });
+
+  if (wantCsv) {
+    const lines = [CSV_COLUMNS.map(csvCell).join(",")];
+    for (const r of rows) {
+      lines.push(CSV_COLUMNS.map((c) => csvCell((r as Record<string, unknown>)[c])).join(","));
+    }
+    const stamp = new Date().toISOString().slice(0, 10);
+    return new Response(lines.join("\r\n") + "\r\n", {
+      status: 200,
+      headers: {
+        ...corsHeaders,
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="rendprop-ai-disclosure-${stamp}.csv"`,
+      },
+    });
+  }
+
+  return json({
+    org_id: orgId,
+    from,
+    to,
+    listing_id: listingId || null,
+    count: rows.length,
+    truncated,
+    rows,
+  });
+}
+
+// ── PATCH /me/compliance/:id ──────────────────────────────────────────────────
+//
+// The generation call records the provenance row, but the media it points at is
+// uploaded around it: the untouched ORIGINAL may go up before or after the edit,
+// and the published RESULT always after. This attaches either (or both) once
+// their uploads complete — the RPC derives the R2 keys from the asset ids and
+// refuses an asset that is not an uploaded photo in the public renders bucket
+// for the SAME listing, so "View original" can never be pointed at somebody
+// else's object.
+
+async function handleCompliancePatch(req: Request, userId: string, id: string | undefined): Promise<Response> {
+  assert(id && UUID_RE.test(id), 400, "PATCH /me/compliance/:id requires the provenance record's UUID");
+  const db = userClient(req);
+  const body = await readJson<Record<string, unknown>>(req);
+
+  const originalAsset = optionalUuidField(body.original_asset_id, "original_asset_id");
+  const alteredAsset = optionalUuidField(body.altered_asset_id, "altered_asset_id");
+  const label = typeof body.label === "string" ? body.label.trim().slice(0, 80) : null;
+  assert(
+    originalAsset || alteredAsset || label,
+    400,
+    "Send at least one of original_asset_id, altered_asset_id, label",
+  );
+
+  const { data, error } = await db.rpc("set_provenance_media", {
+    p_id: id,
+    p_original_asset: originalAsset,
+    p_altered_asset: alteredAsset,
+    p_label: label,
+  });
+  if (error) throwRpc(error.message);
+
+  const row = (data ?? {}) as Record<string, unknown>;
+  return json({
+    ok: true,
+    provenance: {
+      id: row.id as string,
+      listing_id: (row.listing_id as string | null) ?? null,
+      kind: row.kind as string,
+      label: (row.label as string | null) ?? null,
+      disclosure: row.disclosure as string,
+      original_url: publicR2Url(row.original_key as string | null),
+      altered_url: publicR2Url(row.altered_key as string | null),
+      created_at: (row.created_at as string | null) ?? null,
+    },
+  });
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An optional UUID body field. Rejects a present-but-malformed value. */
+function optionalUuidField(v: unknown, name: string): string | null {
+  if (v === undefined || v === null || v === "") return null;
+  assert(typeof v === "string" && UUID_RE.test(v), 400, `${name} must be a UUID`);
+  return v as string;
 }
 
 // ── POST /me/apple-code ───────────────────────────────────────────────────────

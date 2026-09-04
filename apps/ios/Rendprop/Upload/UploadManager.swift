@@ -378,13 +378,63 @@ final class UploadManager: NSObject, ObservableObject {
     /// (mock) tickets carry no PUT URL → the synthetic id is returned so the
     /// publish flow completes.
     func uploadPoster(fileURL: URL, listingID: UUID) async throws -> String {
+        try await uploadBrowserPhoto(fileURL: fileURL, listingID: listingID,
+                                     role: "render", contentType: "image/jpeg",
+                                     keyPrefix: "poster")
+    }
+
+    /// Upload the UNTOUCHED ORIGINAL behind an AI photo edit (contract §2.7 /
+    /// W2-B4): `POST /uploads {kind:"photo", role:"original", content_type,
+    /// listing_id}` → one foreground PUT → `/complete`. Returns the SERVER asset
+    /// id, which goes to `POST /ai-photo {original_asset_id}` so the tour's
+    /// public "View original" link is a real file — California AB 723 requires
+    /// access to the unaltered version, not just a disclosure sentence.
+    ///
+    /// The server allows jpeg/png/webp ONLY here (a HEIC "View original" link
+    /// would not open in a browser) with the full 50 MB photo ceiling. We refuse
+    /// anything else up front rather than burning a round trip on a 400.
+    /// `listingID` is the SERVER listing id.
+    func uploadOriginal(fileURL: URL, listingID: UUID) async throws -> String {
+        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
+            throw UploadError.server(
+                "The original has to be a JPEG, PNG or WebP so the public \"View original\" link opens.")
+        }
+        return try await uploadBrowserPhoto(fileURL: fileURL, listingID: listingID,
+                                            role: "original", contentType: contentType,
+                                            keyPrefix: "original")
+    }
+
+    /// Upload the PUBLISHED ALTERED photo behind an AI edit (`role:"render"`,
+    /// `kind:"photo"` → the public renders bucket, same path the tour poster
+    /// takes). Its asset id goes to `PATCH /me/compliance/:id
+    /// {altered_asset_id}` so the tour can render the side-by-side
+    /// "Before / after" pair NorthstarMLS asks for. Server ceiling for this role
+    /// is 10 MB and jpeg/png/webp. `listingID` is the SERVER listing id.
+    func uploadAlteredPhoto(fileURL: URL, listingID: UUID) async throws -> String {
+        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
+            throw UploadError.server("The edited photo has to be a JPEG, PNG or WebP to be published.")
+        }
+        return try await uploadBrowserPhoto(fileURL: fileURL, listingID: listingID,
+                                            role: "render", contentType: contentType,
+                                            keyPrefix: "altered")
+    }
+
+    /// Shared single-PUT path for the browser-served photos we publish to the
+    /// PUBLIC renders bucket: the tour poster and the AI edit's altered result
+    /// (`role:"render"`), and its unaltered original (`role:"original"`).
+    /// Independent of the persisted video-upload state, so it never disturbs an
+    /// in-flight walkthrough upload. Offline (mock) tickets carry no PUT URL →
+    /// the synthetic id is returned so the calling flow completes.
+    private func uploadBrowserPhoto(fileURL: URL, listingID: UUID, role: String,
+                                    contentType: String, keyPrefix: String) async throws -> String {
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0 else { throw UploadError.missingFile }
-        let contentType = "image/jpeg"
-        let key = "poster:" + DirectUploader.sha256Hex(FileStore.relativePath(for: fileURL)) + ":\(bytes)"
+        let key = keyPrefix + ":" + DirectUploader.sha256Hex(FileStore.relativePath(for: fileURL)) + ":\(bytes)"
         let ticket = try await api.requestUpload(
             filename: fileURL.lastPathComponent, bytes: bytes, listingID: listingID,
-            sha256: nil, kind: "photo", role: "render", contentType: contentType,
+            sha256: nil, kind: "photo", role: role, contentType: contentType,
             idempotencyKey: key)
         guard let putURL = ticket.putURL else {
             if Config.useLiveBackend { throw UploadError.failed }   // server bug: single ticket without a URL

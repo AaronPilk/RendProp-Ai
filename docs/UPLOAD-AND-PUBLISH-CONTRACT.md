@@ -1,10 +1,24 @@
 # Rendprop — Upload & Publish contract (DEPLOYED) + iOS client design
 
 Status: backend **live** on Supabase project `ymgqpbnjpztwjsyvceld` (edge functions
-`uploads`, `renders`, `tours`, `leads`, `me`, `listings` — fix wave 1, 2026-09-03; schema
-through migration `0011_app_publish_and_lifecycle`). This doc is the source of truth for
-the iOS client that talks to it. #1 rule: **works perfectly for large files — no shortcuts.**
+`uploads` v18, `renders` v15, `tours` v14, `me` v16, `ai-photo` v13, `ai-video` v11, plus
+`leads`, `listings`, `beacon`, `portfolio` — compliance wave 2, 2026-09-04; schema through
+migration `0012_provenance_and_unbranded`). This doc is the source of truth for the iOS
+client that talks to it. #1 rule: **works perfectly for large files — no shortcuts.**
 Target load: a 9-minute 4K walkthrough (2–8 GB) and 70+ photos per listing.
+
+**Compliance wave 2 in one paragraph.** Every tour now has TWO links: the **branded**
+`https://rendprop.com/f/<slug>` (agent card, CTA, lead form — the agent's own channels) and
+the **unbranded** `https://rendprop.com/u/<slug>` (the property and nothing else — the only
+one that may go in an MLS virtual-tour field; MLS unbranded rules ban agent branding,
+contact forms and external links, and it is the unbranded field that syndicates to
+Zillow/Realtor.com). Every AI generation now records a **provenance row** carrying the
+public disclosure sentence, the model, and a link to the unaltered original — because
+California AB 723 (in force 1 Jan 2026) requires both disclosure AND access to the
+original, NorthstarMLS (10 Jul 2026) requires an unaltered "Before" per altered room, and
+Wisconsin Act 69 extends both to generated video from 1 Jan 2027. Every AI prompt now
+carries fair-housing guardrails, and free-text prompts are refused when they ask for people,
+pets, religious/cultural objects or neighborhood claims (HUD 2024).
 
 ---
 
@@ -29,6 +43,7 @@ Every non-2xx response is JSON:
 | `quota_exceeded` | 429 (402 from `create_render_job`) | "Upgrade plan" CTA + `used of cap` |
 | `rate_limited` | 429 | "try again in a few minutes" |
 | `payload_too_large` | 413 | downscale the image and retry |
+| `unsupported_edit` | 400 | the FAIR-HOUSING guardrails refused this prompt — show `error` verbatim (it names the term and how to rephrase) and let the user edit the prompt; never auto-retry. Carries `term`. |
 | `upstream` | 502/503 | retry later (provider / storage / plan lookup) |
 | `internal` | 500 | show `error` |
 
@@ -54,7 +69,7 @@ Optional `X-Org-Id` pins the workspace; optional `Idempotency-Key` (8–128 char
 (`publish:<serverListing>:<asset>`), never mint a fresh UUID per request.
 
 ### 2.1 Start an upload — `POST /uploads`
-Body: `{ listing_id, filename, bytes, sha256?, kind: "video"|"photo", content_type?, multipart?, role: "capture"|"render" }`
+Body: `{ listing_id, filename, bytes, sha256?, kind: "video"|"photo", content_type?, multipart?, role: "capture"|"render"|"original" }`
 
 - **Always send `content_type`** — derive it from the file (`.mp4 → video/mp4`,
   `.mov → video/quicktime`, `.m4v → video/x-m4v`, `.jpg → image/jpeg`, …) and PUT with
@@ -70,6 +85,14 @@ Body: `{ listing_id, filename, bytes, sha256?, kind: "video"|"photo", content_ty
 - `role:"render"` + `kind:"photo"` → the tour **poster**, public renders bucket, key
   `renders/<org>/<listing>/<asset>.<jpg|png|webp>` (first frame of the tour, ≤ 1280 px
   JPEG q0.8). Its `asset_id` goes to `publish-app` as `poster_asset_id`.
+- `role:"original"` → the **UNTOUCHED source of an AI-altered photo**, public renders
+  bucket, key `renders/<org>/<listing>/original-<asset>.<jpg|png|webp>`. Always
+  `kind:"photo"` (the server forces it). Types `image/jpeg|png|webp` only — a HEIC "View
+  original" link would not open in a browser — but the full **50 MB** photo ceiling, not
+  the poster's 10 MB, because an original is a full-resolution photo. Its `asset_id` goes
+  to `POST /ai-photo` as `original_asset_id`, or to `PATCH /me/compliance/:id`. This is what
+  makes CA AB 723's "access to the original unaltered version" a real public link — the
+  private uploads bucket has no public URL, so a capture-role original cannot satisfy it.
 - Video with `bytes > 64 MB` (or `multipart:true`) → **multipart**:
   `{ asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count, content_type }`
 - Otherwise → **single**:
@@ -119,7 +142,7 @@ Upload each with a single PUT (same `Content-Type`), then `POST /uploads/:asset_
   **`asset_id` MUST be the SERVER `asset_id` from `/uploads`** (not a local id) and
   the upload MUST be completed first, or the server 409s.
 - `GET /renders/:job_id` → `{ id, listing_id, status, source, tier, current_step, progress, cost_cents, error, tour? }` where
-  `tour = { render_id, slug, share_url, video_url, scrub_url, hls_url, poster, staged, duration_s, published_at }`.
+  `tour = { render_id, slug, share_url, unbranded_url, video_url, scrub_url, hls_url, poster, staged, duration_s, published_at }`.
 - Scrub fidelity: **`scrub_url` is the all-intra R2 mp4** (byte-range, frame-accurate
   scrubbing — the product's crown jewel). `hls_url` is Stream, an adaptive fallback
   ONLY. Prefer `scrub_url` in the player.
@@ -133,8 +156,13 @@ The on-device render IS the tour. Three steps:
    `{ listing_id, bytes, content_type:"image/jpeg", kind:"photo", role:"render" }` → PUT → `/complete`.
 3. **Publish:** `POST /renders/publish-app` (+ `Idempotency-Key: publish:<listing>:<asset>`)
    `{ listing_id, asset_id, duration_s, speed_factor?, tier?, enhancements?, chapters:[{label,t_ms,sort}], poster_asset_id? }`
-   → `201 { ...render, id, job_id, slug, share_url, poster, poster_key, video_key, staged, duration_s, published_at }`.
+   → `201 { ...render, id, job_id, slug, share_url, unbranded_url, poster, poster_key, video_key, staged, duration_s, published_at }`.
    `id` is the **render** id (use it for `PATCH /renders/:id/chapters`); `job_id` is the job.
+   **Persist BOTH links.** `share_url` = `/f/<slug>` (branded: agent card + lead capture —
+   email, social, texts, QR). `unbranded_url` = `/u/<slug>` (MLS-safe: the property and
+   nothing else). Never put the branded link in an MLS unbranded field — most MLSs fine for
+   that (RI Statewide MLS: $50 first branded-photo offense, escalating). `POST
+   /renders/:job_id/publish` returns the same pair.
 
    Server behaviour: creates a `source:"app"` job — **free, never counted against
    `renders_per_month`, never claimed by the worker** (pricing: publishing is always
@@ -180,6 +208,108 @@ unique → `409 conflict`) and `org_name`; returns `{ ok, brand_kit, org:{name, 
 Adds `status`, `sold_at`, `sold`, `archived`, `published_at`; `404` for deleted listings;
 `agent_card.name` is the brand-kit name, else the agent's profile name, never an email.
 
+Compliance wave 2 adds three fields:
+
+- **`unbranded_url`** — the `/u/<slug>` twin of `share_url`, so no client ever builds it.
+- **`floorplan_url`** — the floor-plan image promoted out of `listing.details` (accepts
+  `details.floorplan_url` | `floor_plan_url` | `floorplan.image_url` | `.image` | `.url`),
+  `null` when the listing has none. The tour host renders it ABOVE the gallery on both
+  pages (NAR 2025: floor plans 57% "very useful" vs virtual tours 38%).
+- **`altered_media[]`** — every AI-altered / AI-generated asset for the listing, newest
+  first, capped at 40. **Public by design** — disclosure is the legal obligation:
+
+```json
+"altered_media": [
+  {
+    "label": "Living room — virtually staged",
+    "kind": "virtual_stage",
+    "disclosure": "This photo was virtually staged with AI: furniture and decor were digitally added or restyled. The architecture, dimensions, and views are unchanged.",
+    "model": "AI image edit",
+    "original_url": "https://…/renders/<org>/<listing>/original-<uuid>.jpg",
+    "altered_url": "https://…/renders/<org>/<listing>/<uuid>.jpg",
+    "created_at": "2026-09-04T04:12:24.066Z"
+  }
+]
+```
+
+`kind` ∈ `photo_edit | virtual_stage | declutter | aerial | reel | other`. `model` is the
+family in plain words (`"AI image edit"` | `"AI video"`) — the public page never names a
+vendor model. `label`, `original_url`, `altered_url` and `created_at` may each be `null`.
+`disclosure` is **server-derived** from `kind` (+ the edit) by
+`public.provenance_disclosure()` — a caller can never write its own sentence — and for
+`kind:"aerial"` it always begins with HousingWire's exact wording: *"Drone-style movement is
+simulated. No drone footage was captured."* The internal columns (`prompt_summary`,
+`model_id`) are **never** in this payload; they belong to the org's own audit export
+(§2.13). `disclosure_chip` is `"✦ Virtually staged"` when `staged`, else
+`"✦ AI-altered media"` when `altered_media` is non-empty, else `null`.
+
+### 2.13 Compliance / AI audit log — `GET /me/compliance`, `PATCH /me/compliance/:id`
+
+`GET /me/compliance?from=&to=&listing_id=&limit=&format=csv` — the broker-exportable AI
+disclosure log for the acting workspace, member-gated (any role: reading an audit log is
+not a write), newest first.
+
+→ `{ org_id, from, to, listing_id, count, truncated, rows: [{ id, created_at, listing_id,
+listing_address, space_type, render_id, kind, label, edit, style, model_id, prompt_summary,
+disclosure, original_url, altered_url, original_available }] }`
+
+- `from` / `to` are ISO dates or timestamps (`to` exclusive); junk is a `400`, not ignored.
+- `limit` default 500, max 5000; `truncated:true` means there are more rows in range.
+- `listing_id` narrows to one listing — this is what the iOS COMPLIANCE card reads.
+- `format=csv` returns `text/csv` with
+  `Content-Disposition: attachment; filename="rendprop-ai-disclosure-<YYYY-MM-DD>.csv"`
+  — the file the compliance officer actually gets emailed. Columns: `created_at,
+  listing_id, listing_address, kind, label, edit, style, model_id, disclosure, original_url,
+  altered_url, prompt_summary, id`.
+- `original_available` is `true` when the unaltered original is publicly reachable — the
+  half of CA AB 723 that is not just disclosure.
+
+`PATCH /me/compliance/:id` `{ original_asset_id?, altered_asset_id?, label? }` →
+`{ ok, provenance: { id, listing_id, kind, label, disclosure, original_url, altered_url, created_at } }`.
+The generation call records the row, but its media is uploaded around it: the untouched
+ORIGINAL may go up before or after the edit, and the published RESULT always after. This
+attaches either or both once their uploads complete. The server derives the R2 keys from
+the asset ids and refuses anything that is not an uploaded photo in the public renders
+bucket **for the same listing** (`400`), so "View original" can never be pointed at another
+object. Send at least one field. Role: owner/admin/agent (`403` for marketing).
+
+### 2.14 AI routes — disclosure + fair housing
+
+`POST /ai-photo` gains three optional inputs and two outputs:
+
+- in: `listing_id` (without it the edit still runs but is NOT entered in the audit log),
+  `label` ("Living room"), `original_asset_id` (the `role:"original"` upload).
+- out: `disclosure` — the exact sentence the public tour will print for this asset — and
+  `provenance: { id, recorded, reason? }`. Recording is **best effort**: a failed audit
+  insert never fails an edit the caller has already paid for, so check `recorded` and
+  surface `reason` rather than assuming success. Keep `provenance.id` — it is what
+  `PATCH /me/compliance/:id` takes.
+
+`POST /ai-video/aerial`, `/reel-clip` and `/declutter` gain the same optional `listing_id`
++ `label` and return the same `disclosure` + `provenance` in their `202`. The aerial's
+`disclosure` is the sentence the app must show on the result screen and include in the
+share text. `POST /ai-video/drone` (Topaz upscale + interpolation) is deliberately NOT
+recorded: it re-times and sharpens footage the agent actually captured, which is the
+basic-enhancement carve-out in AB 723, not synthesis.
+
+**Fair housing (HUD 2024).** Every prompt the server builds — canned AND free-text — now
+carries `"Do not add or alter people, pets, religious or cultural objects, flags, or
+signage."` plus a permanence clause. Free-text fields (`ai-photo` `edit:"custom"` and
+`edit:"improve_prompt"`; `ai-video` `reel-clip.prompt`, `declutter.prompt`, `aerial.style`
+and `aerial.region`) are checked against a denylist and refused with `400`
+`unsupported_edit`:
+
+- **always refused** — neighborhood / demographics / ethnicity / race / "school district" /
+  "good schools" / "family-friendly" / "up and coming" / "safe area" / "the right kind of
+  people" / religion / places of worship / religious objects.
+- **refused only when the prompt is ADDING them** — people, pets, flags, crosses, holiday
+  or religious decoration, political signage. Removing them is legitimate and still works.
+
+Deliberately NOT refused: *"remove the personal items"*, *"brighten the flag stone patio"*,
+*"improve the cross ventilation"*, *"remove the family photos"*. The full denylist is
+documented in `services/supabase/functions/_shared/fairhousing.ts`. `error` names the term
+and how to rephrase — show it verbatim.
+
 ---
 
 ## 3. Delivery model (large 4K without shipping 40 GB)
@@ -206,9 +336,22 @@ works with no network, as today). Going online is a **Publish** step:
    relaunch or a failed attempt can resume without re-rendering.
 4. `POST /renders/publish-app` with the chapters (from the walkthrough's local room
    tags) → server **slug**. Room tags edited later → `PATCH /renders/:id/chapters`.
-5. Persist the slug on the listing; share `https://rendprop.com/f/<slug>`.
+5. Persist the slug on the listing AND both links; share `share_url` in the agent's own
+   channels and `unbranded_url` in the MLS virtual-tour field.
 
 Never fabricate a slug from a local UUID. The share link must be the server slug.
+
+**Compliance step (wave 2), when the listing has AI-altered media.** Around each AI edit:
+1. Upload the UNTOUCHED original — `POST /uploads { role:"original", kind:"photo",
+   content_type:"image/jpeg" }` → PUT → `/complete` → `asset_id`.
+2. Run the edit — `POST /ai-photo { …, listing_id, label, original_asset_id }`. Keep
+   `provenance.id` and show `disclosure` next to the result ("This edit will be disclosed
+   on your tour").
+3. When the EDITED photo is uploaded (`role:"render"` or `"original"`-style public key),
+   attach it — `PATCH /me/compliance/<provenance.id> { altered_asset_id }` — so the tour can
+   render a real before/after pair (NorthstarMLS wants one unaltered "Before" per altered
+   room).
+Never delete an original that backs a published altered asset.
 
 ---
 

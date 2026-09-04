@@ -1,6 +1,11 @@
 // tour-host — the Cloudflare Worker that serves Rendprop's public pages:
 //
 //   GET /f/:slug     the scroll-scrub tour player (renders GET /tours/:slug)
+//   GET /u/:slug     the SAME tour, unbranded — safe for an MLS unbranded
+//                    virtual-tour field: no agent card, no CTA, no lead form,
+//                    no socials, no external links, no Rendprop wordmark.
+//                    Same renderer, `unbranded: true` (see src/player.ts), and
+//                    every response is self-checked before it leaves the edge.
 //   GET /a/:handle   an org's portfolio grid  (renders GET /portfolio/:handle)
 //   GET /terms       Terms of Service   (static; linked from the iOS app)
 //   GET /privacy     Privacy Policy     (static; linked from the iOS app)
@@ -25,7 +30,7 @@ import type { Env, Portfolio, Tour } from "./types";
 import { buildDemoTour, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
-import { renderTourPage } from "./player";
+import { renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
 
 const DEFAULT_TTL = 60; // seconds — published HTML can change on republish
@@ -39,16 +44,36 @@ function functionsBase(env: Env): string {
   return String(env.SUPABASE_FUNCTIONS_URL || "").replace(/\/+$/, "");
 }
 
-function htmlResponse(html: string, status = 200, extraHeaders: Record<string, string> = {}): Response {
-  return new Response(html, {
-    status,
-    headers: {
-      "Content-Type": "text/html; charset=utf-8",
-      "X-Content-Type-Options": "nosniff",
-      "Referrer-Policy": "strict-origin-when-cross-origin",
-      // CSP: inline styles/scripts (the player engine), hls.js from cdnjs, media
-      // from Stream/R2 over https + MSE blobs, and XHR/fetch to Supabase.
-      "Content-Security-Policy": [
+function htmlResponse(
+  html: string,
+  status = 200,
+  extraHeaders: Record<string, string> = {},
+  opts: { unbranded?: boolean } = {},
+): Response {
+  // The unbranded page has no form, no Turnstile and no lead capture, so its
+  // policy is strictly tighter — except frame-ancestors: MLS systems and
+  // portals commonly iframe an unbranded virtual-tour URL, and the
+  // clickjacking risk that motivated 'self' on /f/ (the lead form) does not
+  // exist here. Blocking the frame would break the one job this page has.
+  const csp = opts.unbranded
+    ? [
+        "default-src 'self'",
+        "base-uri 'self'",
+        "img-src 'self' https: data: blob:",
+        "media-src 'self' https: data: blob:",
+        "style-src 'self' 'unsafe-inline'",
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+        "worker-src 'self' blob:",
+        "child-src 'self' blob:",
+        "frame-src 'none'",
+        "connect-src 'self' https:",
+        "font-src 'self' data:",
+        "form-action 'none'",
+        "frame-ancestors *",
+      ]
+    : [
+        // CSP: inline styles/scripts (the player engine), hls.js from cdnjs, media
+        // from Stream/R2 over https + MSE blobs, and XHR/fetch to Supabase.
         "default-src 'self'",
         "base-uri 'self'",
         "img-src 'self' https: data: blob:",
@@ -67,10 +92,36 @@ function htmlResponse(html: string, status = 200, extraHeaders: Record<string, s
         // arbitrary https sites iframe them (clickjacking). The iOS demo card
         // loads pages top-level in a WKWebView, which frame-ancestors ignores.
         "frame-ancestors 'self'",
-      ].join("; "),
+      ];
+  return new Response(html, {
+    status,
+    headers: {
+      "Content-Type": "text/html; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "strict-origin-when-cross-origin",
+      "Content-Security-Policy": csp.join("; "),
       ...extraHeaders,
     },
   });
+}
+
+/** A5: `/u/` is never indexed — the branded `/f/` page is the canonical one. */
+const UNBRANDED_HEADERS: Record<string, string> = { "X-Robots-Tag": "noindex, nofollow" };
+
+/** 404 / 5xx on `/u/` must ALSO be unbranded: the ordinary fallback pages
+ *  carry the RENDPROP mark and a rendprop.com button, which would be a
+ *  violation if an MLS or a portal fetched a dead unbranded link. */
+function unbrandedFallback(kind: "notfound" | "error" | "blocked"): string {
+  if (kind === "notfound") {
+    return unbrandedNoticePage(
+      "This tour isn't available",
+      "The link may have expired, been unpublished, or mistyped.",
+    );
+  }
+  return unbrandedNoticePage(
+    "This tour is temporarily unavailable",
+    "Please try again in a few minutes.",
+  );
 }
 
 /** Stable, query-independent cache key so /f/x and /f/x/ share one entry. */
@@ -107,70 +158,96 @@ async function fetchSupabase(path: string, env: Env): Promise<Response> {
   });
 }
 
-async function handleTour(slug: string, req: Request, url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
+async function handleTour(
+  slug: string,
+  req: Request,
+  url: URL,
+  env: Env,
+  ctx: ExecutionContext,
+  unbranded = false,
+): Promise<Response> {
+  const base = unbranded ? UNBRANDED_HEADERS : {};
+  const notFound = () =>
+    unbranded
+      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "public, max-age=30" }, { unbranded })
+      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
+  const upstreamError = () =>
+    unbranded
+      ? htmlResponse(unbrandedFallback("error"), 502, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(errorPage(), 502, { "Cache-Control": "no-store" });
+
   // Slugs are nanoid (base64url) — reject anything else fast.
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) return htmlResponse(notFoundPage(), 404);
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) {
+    return unbranded
+      ? htmlResponse(unbrandedFallback("notfound"), 404, base, { unbranded })
+      : htmlResponse(notFoundPage(), 404);
+  }
 
   // ?embed=1 renders ONLY the flythrough hero (for the in-app "See it in
   // action" card); the full page is served otherwise. Keep separate cache keys.
   const embed = url.searchParams.has("embed");
 
   const cache = caches.default;
-  const key = cacheKeyFor(url, `/f/${slug}${embed ? "?embed=1" : ""}`);
+  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}`);
   const hit = await cache.match(key);
   if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
 
-  // Demo tour — self-contained, no DB. Renders through the SAME renderer a real
-  // listing uses, so rendprop.com/f/estate-demo IS the product (and powers the
-  // in-app Home demo). demo:true makes the lead form confirm locally.
-  if (isDemoSlug(slug)) {
+  const renderOpts = { embed, unbranded, origin: url.origin };
+
+  /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
+  const finish = (tour: Tour): Response => {
     const t = ttl(env);
-    // demo:false so the Book-a-showing form posts for real — the leads function
-    // has a demo-slug branch that captures it (source "tour-demo") without a DB
-    // render row. embed=1 still renders just the flythrough for the in-app card.
     const html = renderTourPage(
-      buildDemoTour(),
+      tour,
       functionsBase(env),
       env.SUPABASE_ANON_KEY || "",
       env.TURNSTILE_SITE_KEY || "",
-      { embed },
+      renderOpts,
     );
-    const resp = htmlResponse(html, 200, { "Cache-Control": `public, max-age=${t}, s-maxage=${t}` });
+    if (unbranded) {
+      // Fail CLOSED. An MLS unbranded field must never receive a page with
+      // agent branding, a contact form or an external link in it — a neutral
+      // "temporarily unavailable" page is the safe failure, a leak is not.
+      const violations = unbrandedSelfCheck(html, tour);
+      if (violations.length) {
+        console.error(`tour-host UNBRANDED SELF-CHECK FAILED slug=${slug} violations=${violations.join(",")}`);
+        return htmlResponse(unbrandedFallback("blocked"), 503, { ...base, "Cache-Control": "no-store" }, { unbranded });
+      }
+    }
+    const resp = htmlResponse(
+      html,
+      200,
+      { ...base, "Cache-Control": `public, max-age=${t}, s-maxage=${t}` },
+      { unbranded },
+    );
     if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
     return req.method === "HEAD" ? new Response(null, resp) : resp;
-  }
+  };
+
+  // Demo tour — self-contained, no DB. Renders through the SAME renderer a real
+  // listing uses, so rendprop.com/f/estate-demo IS the product (and powers the
+  // in-app Home demo). /u/estate-demo is the MLS-safe cut of the same tour.
+  if (isDemoSlug(slug)) return finish(buildDemoTour());
 
   let upstream: Response;
   try {
     upstream = await fetchSupabase(`/tours/${encodeURIComponent(slug)}`, env);
   } catch {
-    return htmlResponse(errorPage(), 502, { "Cache-Control": "no-store" });
+    return upstreamError();
   }
 
-  if (upstream.status === 404) {
-    return htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
-  }
-  if (!upstream.ok) {
-    return htmlResponse(errorPage(), 502, { "Cache-Control": "no-store" });
-  }
+  if (upstream.status === 404) return notFound();
+  if (!upstream.ok) return upstreamError();
 
   let tour: Tour;
   try {
     tour = (await upstream.json()) as Tour;
   } catch {
-    return htmlResponse(errorPage(), 502, { "Cache-Control": "no-store" });
+    return upstreamError();
   }
-  if (!tour || !tour.slug) {
-    return htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
-  }
+  if (!tour || !tour.slug) return notFound();
 
-  const t = ttl(env);
-  const html = renderTourPage(tour, functionsBase(env), env.SUPABASE_ANON_KEY || "", env.TURNSTILE_SITE_KEY || "", { embed });
-  const resp = htmlResponse(html, 200, {
-    "Cache-Control": `public, max-age=${t}, s-maxage=${t}`,
-  });
-  if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
-  return req.method === "HEAD" ? new Response(null, resp) : resp;
+  return finish(tour);
 }
 
 async function handlePortfolio(handle: string, req: Request, url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -221,6 +298,21 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     return handleTour(slug, req, url, env, ctx);
   }
 
+  // The MLS-safe twin of /f/. Same slug, same payload, same renderer.
+  const uMatch = path.match(/^\/u\/([^/]+)$/);
+  if (uMatch) {
+    const slug = safeDecode(uMatch[1]);
+    if (slug === null) {
+      return htmlResponse(
+        unbrandedFallback("notfound"),
+        404,
+        { ...UNBRANDED_HEADERS, "Cache-Control": "public, max-age=30" },
+        { unbranded: true },
+      );
+    }
+    return handleTour(slug, req, url, env, ctx, true);
+  }
+
   const aMatch = path.match(/^\/a\/([^/]+)$/);
   if (aMatch) {
     const handle = safeDecode(aMatch[1]);
@@ -238,8 +330,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
 
   if (path === "/healthz") return new Response("ok", { status: 200, headers: { "Content-Type": "text/plain" } });
 
-  // Bare /f and /a aren't tours — send them to the marketing site.
-  if (path === "/f" || path === "/a") {
+  // Bare /f, /u and /a aren't tours — send them to the marketing site.
+  if (path === "/f" || path === "/u" || path === "/a") {
     return Response.redirect(`${url.origin}/`, 302);
   }
 
@@ -264,8 +356,16 @@ export default {
       // Cloudflare error page. no-store so a transient bug isn't cached.
       console.error("tour-host unhandled error", err instanceof Error ? err.stack || err.message : String(err));
       let kind: "tour" | "page" = "page";
-      try { kind = /^\/f\//.test(new URL(req.url).pathname) ? "tour" : "page"; } catch { /* keep "page" */ }
-      const resp = htmlResponse(errorPage(kind), 500, { "Cache-Control": "no-store" });
+      let unbranded = false;
+      try {
+        const p = new URL(req.url).pathname;
+        kind = /^\/f\//.test(p) ? "tour" : "page";
+        // A crash on /u/ must not answer with the branded error page.
+        unbranded = /^\/u\//.test(p);
+      } catch { /* keep "page" */ }
+      const resp = unbranded
+        ? htmlResponse(unbrandedFallback("error"), 500, { ...UNBRANDED_HEADERS, "Cache-Control": "no-store" }, { unbranded: true })
+        : htmlResponse(errorPage(kind), 500, { "Cache-Control": "no-store" });
       return req.method === "HEAD" ? new Response(null, resp) : resp;
     }
   },

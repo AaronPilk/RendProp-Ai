@@ -19,7 +19,7 @@
 //   GET   /renders/:job_id         -> { status, current_step, progress, cost_cents, error, tour? }
 //   POST  /renders/:job_id/publish { duration_s?, speed_factor?, chapters?, poster_asset_id? } -> render
 //   POST  /renders/publish-app     { listing_id, asset_id, duration_s?, speed_factor?, tier?, enhancements?,
-//                                    chapters?, poster_asset_id? } -> { ...render, id, job_id, share_url }
+//                                    chapters?, poster_asset_id? } -> { ...render, id, job_id, share_url, unbranded_url }
 //   PATCH /renders/:render_id/chapters { chapters:[{label,t_ms,sort}] } -> { ok, count, chapters }
 
 import { handleOptions } from "../_shared/cors.ts";
@@ -29,7 +29,13 @@ import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 
 const TIERS = ["smooth", "premium4k", "cinematic"];
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
+// BRANDED link — agent card, CTA, lead form. The agent's own channels.
 const shareUrl = (slug: string) => `${TOUR_BASE}/f/${slug}`;
+// UNBRANDED link — the property and nothing else. This is the one that goes in
+// an MLS virtual-tour field; unbranded rules ban agent branding, contact forms
+// and external links, and it is the unbranded field that syndicates to the
+// portals. Returned on every publish so the app never has to build it (W2-B2).
+const unbrandedUrl = (slug: string) => `${TOUR_BASE}/u/${slug}`;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
@@ -108,7 +114,11 @@ Deno.serve(async (req) => {
         p_poster_asset: optionalUuid(body.poster_asset_id, "poster_asset_id"),
       });
       if (error) throwRpc(error.message);
-      return json({ ...render, share_url: shareUrl(render.slug as string) }, 201);
+      return json({
+        ...render,
+        share_url: shareUrl(render.slug as string),
+        unbranded_url: unbrandedUrl(render.slug as string),
+      }, 201);
     }
 
     // ---- POST /renders/publish-app ----
@@ -161,6 +171,7 @@ Deno.serve(async (req) => {
         id: render.id,
         job_id: job.id,
         share_url: shareUrl(render.slug as string),
+        unbranded_url: unbrandedUrl(render.slug as string),
         poster: publicR2Url(render.poster_key as string | null),
       }, 201);
     }
@@ -227,6 +238,7 @@ Deno.serve(async (req) => {
           render_id: render.id,
           slug: render.slug,
           share_url: shareUrl(render.slug as string),
+          unbranded_url: unbrandedUrl(render.slug as string),
           video_url: scrubUrl ?? hlsUrl,
           scrub_url: scrubUrl,
           hls_url: hlsUrl,
