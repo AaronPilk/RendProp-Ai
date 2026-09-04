@@ -47,11 +47,19 @@
       <key>NSPrivacyCollectedDataTypePurposes</key>
       <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
     </dict>
-    <!-- Coarse location used only to tag/contextualize a listing when the user allows it.
-         Fixes are rounded to 3 decimals (~110 m) before storage/upload — never precise. -->
+    <!-- Location of the LISTING, used to place its map pin and to derive the
+         city/state region label. Two sources, both stored on the listing and
+         uploaded with it: (a) a one-shot Core Location fix requested at
+         kCLLocationAccuracyHundredMeters and rounded to 3 decimals, and (b) a
+         forward geocode of the street address the user typed.
+         MUST BE DECLARED PRECISE, NOT COARSE: Apple defines Precise Location as
+         "the same or greater resolution as a latitude and longitude with three
+         or more decimal places", and both sources land at or above that. The
+         matching App Store Connect answer is Location -> Precise Location:
+         Yes / Linked to the user / Not used for tracking / App Functionality. -->
     <dict>
       <key>NSPrivacyCollectedDataType</key>
-      <string>NSPrivacyCollectedDataTypeCoarseLocation</string>
+      <string>NSPrivacyCollectedDataTypePreciseLocation</string>
       <key>NSPrivacyCollectedDataTypeLinked</key><true/>
       <key>NSPrivacyCollectedDataTypeTracking</key><false/>
       <key>NSPrivacyCollectedDataTypePurposes</key>
@@ -114,12 +122,21 @@
       <key>NSPrivacyAccessedAPITypeReasons</key>
       <array><string>C617.1</string></array>
     </dict>
-    <!-- Disk space checks before large 4K uploads/renders. -->
+    <!-- Disk space (FileStore.freeSpaceBytes → volumeAvailableCapacityForImportantUsage).
+         BOTH approved reasons apply and both are declared:
+           E174.1 — CameraManager.startRecording() refuses a take that would not
+                    fit, so nothing is half-written.
+           85F4.1 — the same check DISPLAYS the numbers to the user
+                    ("…needs about 12 GB free, and only 3.1 GB is left").
+         Never leaves the device. -->
     <dict>
       <key>NSPrivacyAccessedAPIType</key>
       <string>NSPrivacyAccessedAPICategoryDiskSpace</string>
       <key>NSPrivacyAccessedAPITypeReasons</key>
-      <array><string>E174.1</string></array>
+      <array>
+        <string>E174.1</string>
+        <string>85F4.1</string>
+      </array>
     </dict>
     <!-- systemUptime for capture pacing/motion timing (not for fingerprinting). -->
     <dict>

@@ -87,6 +87,7 @@ struct ReviewSubmitView: View {
         }
         .task(id: auth.isSignedIn) { await loadEntitlements() }
         .task { await detectSourceIfNeeded() }
+        .aiConsentGate()
     }
 
     // MARK: - Sections
@@ -211,8 +212,19 @@ struct ReviewSubmitView: View {
         let selected = tier == t
         return Button {
             guard !locked else { return }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
-            Haptics.selection()
+            // Guideline 5.1.2(i): the AI tiers upload the finished master and
+            // hand it to Topaz Labs for motion smoothing + upscale. Picking one
+            // is the moment to ask; Smooth (on-device) never leaves the phone.
+            guard t.usesServerAI else {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
+                Haptics.selection()
+                return
+            }
+            Task {
+                guard await AIConsent.shared.ensureGranted() else { return }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.9)) { tier = t }
+                Haptics.selection()
+            }
         } label: {
             HStack(spacing: 12) {
                 Image(systemName: t.systemImage)

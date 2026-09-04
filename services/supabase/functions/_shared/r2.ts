@@ -8,18 +8,33 @@
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 import { HttpError } from "./http.ts";
 
-const ACCOUNT_ID = Deno.env.get("CLOUDFLARE_ACCOUNT_ID");
-const ACCESS_KEY_ID = Deno.env.get("R2_ACCESS_KEY_ID");
-const SECRET_ACCESS_KEY = Deno.env.get("R2_SECRET_ACCESS_KEY");
+// TRIM every credential. A single trailing newline in the R2 access key (from a
+// `echo`-piped `supabase secrets set`) took the ENTIRE storage layer down in
+// production on 2026-09-04: the key became 33 bytes, presigned PUTs reached R2
+// and were rejected with `Credential access key has length 33, should be 32`,
+// and every header-signed call (head/copy/delete/multipart) threw
+// "Invalid header value" inside Deno before it left the function. Nothing could
+// upload, so nothing could publish. One character of invisible whitespace must
+// never be able to do that again.
+const trimmedEnv = (name: string): string | undefined => {
+  const raw = Deno.env.get(name);
+  if (raw === undefined) return undefined;
+  const clean = raw.trim();
+  return clean === "" ? undefined : clean;
+};
 
-export const R2_BUCKET_UPLOADS = Deno.env.get("R2_BUCKET_UPLOADS") ?? "rendprop-uploads";
-export const R2_BUCKET_RENDERS = Deno.env.get("R2_BUCKET_RENDERS") ?? "rendprop-renders";
-export const R2_BUCKET_PUBLIC = Deno.env.get("R2_BUCKET_PUBLIC") ?? "rendprop-public";
+const ACCOUNT_ID = trimmedEnv("CLOUDFLARE_ACCOUNT_ID");
+const ACCESS_KEY_ID = trimmedEnv("R2_ACCESS_KEY_ID");
+const SECRET_ACCESS_KEY = trimmedEnv("R2_SECRET_ACCESS_KEY");
+
+export const R2_BUCKET_UPLOADS = trimmedEnv("R2_BUCKET_UPLOADS") ?? "rendprop-uploads";
+export const R2_BUCKET_RENDERS = trimmedEnv("R2_BUCKET_RENDERS") ?? "rendprop-renders";
+export const R2_BUCKET_PUBLIC = trimmedEnv("R2_BUCKET_PUBLIC") ?? "rendprop-public";
 
 // Optional public base (a custom domain or r2.dev subdomain mapped to the
 // renders/public bucket). When unset, publicR2Url returns null rather than a
 // non-public S3 endpoint URL.
-const R2_PUBLIC_BASE_URL = Deno.env.get("R2_PUBLIC_BASE_URL")?.replace(/\/+$/, "");
+const R2_PUBLIC_BASE_URL = trimmedEnv("R2_PUBLIC_BASE_URL")?.replace(/\/+$/, "");
 
 // Cloudflare Stream customer subdomain code, e.g. "abcd1234" in
 // https://customer-abcd1234.cloudflarestream.com/<uid>/manifest/video.m3u8

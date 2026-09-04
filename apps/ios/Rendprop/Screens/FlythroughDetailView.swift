@@ -1343,7 +1343,10 @@ private struct AIFailure: Identifiable {
     let isUnauthorized: Bool
     let isRateLimited: Bool
 
-    static var pricingURL: URL? { Config.pricingURL ?? URL(string: "https://rendprop.com/pricing") }
+    /// Storefront-gated — nil off the US storefront, where an external purchase
+    /// CTA is still a 3.1.1 violation. NEVER add a hardcoded fallback here: the
+    /// old `?? URL(string: …)` defeated the gate and shipped the link worldwide.
+    @MainActor static var pricingURL: URL? { Config.pricingURL }
 
     init(_ error: Error, title: String = "That one didn't work") {
         self.title = title
@@ -1800,6 +1803,7 @@ struct PhotoStudioView: View {
 
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @Environment(\.dismiss) private var dismiss
     let listing: Listing
     var intent: Intent = .photos
 
@@ -2016,6 +2020,14 @@ struct PhotoStudioView: View {
             Button("OK", role: .cancel) { aiFailure = nil }
         } message: { f in
             Text(f.fullMessage)
+        }
+        // Guideline 5.1.2(i): every edit on this screen ships the photo to a
+        // third-party model (Gemini for stills, Seedance for photo→clip), so
+        // the disclosure has to be agreed BEFORE the screen can be used. Asked
+        // once per device; declining backs out of the studio.
+        .aiConsentGate()
+        .task {
+            if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
     }
 
@@ -3232,6 +3244,13 @@ struct AerialIntroSheet: View {
         } message: {
             Text("Your aerial keeps generating in the cloud. Reopen Aerial intro within 2 hours and it picks up where it left off.")
         }
+        // Guideline 5.1.2(i) — the exterior photo (when the shot is grounded)
+        // and the city/state region go to Google's video models. Agreed once
+        // per device before this sheet is usable; declining closes it.
+        .aiConsentGate()
+        .task {
+            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+        }
     }
 
     // MARK: - Header + disclosure (every state)
@@ -3950,6 +3969,13 @@ struct ReelStudioView: View {
             if idleHeld { IdleTimer.release(); idleHeld = false }
         }
         .sheet(isPresented: $showSignIn) { SignInView.forAI("reels") }
+        // Guideline 5.1.2(i) — each selected photo is animated by a
+        // third-party video model. Agreed once per device; declining closes
+        // the studio.
+        .aiConsentGate()
+        .task {
+            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+        }
     }
 
     // MARK: Sections

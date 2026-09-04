@@ -1,6 +1,10 @@
 import SwiftUI
 import UIKit
 import AVFoundation
+// StoreKit is imported ONLY to read `Storefront.current.countryCode` (see
+// `Storefronts` at the bottom of this file). Rendprop ships no StoreKit
+// products, no purchase UI and no prices — see docs/APP-STORE-CHECKLIST.md §8.
+import StoreKit
 
 // MARK: - Background URLSession bridge
 // iOS relaunches the app for background-upload events; the completion handler
@@ -1366,6 +1370,10 @@ struct RootTabView: View {
             await model.load()        // idempotent
             model.reseedSamples()     // the intro may have changed the type before this mounted
         }
+        // Resolve the App Store storefront once. Until it answers,
+        // `Config.pricingURL` is nil and no upgrade CTA renders — fail closed
+        // (App Store 3.1.3: external purchase CTAs are US-storefront only).
+        .resolveStorefront()
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
         }
@@ -1984,5 +1992,278 @@ struct Reveal: ViewModifier {
             .offset(y: on || reduceMotion ? 0 : 18)
             .animation(.spring(response: 0.55, dampingFraction: 0.85)
                         .delay(Double(index) * 0.07), value: on)
+    }
+}
+
+// MARK: - Third-party AI consent (App Review Guideline 5.1.2(i))
+//
+// "You must clearly disclose where personal data will be shared with third
+//  parties, INCLUDING WITH THIRD-PARTY AI, and obtain explicit permission
+//  before doing so."  — App Review Guidelines 5.1.2(i)
+//
+// Every AI tool in Rendprop uploads a photo or a video the user picked and
+// hands it to an outside model (Google's Gemini for photo edits, Google's Veo
+// and Seedance for generated video, Topaz Labs for motion smoothing/upscale).
+// That is personal data leaving the device for a third party, so it needs an
+// explicit, affirmative opt-in BEFORE the first transmission — a line buried in
+// the privacy policy is not enough, and a pre-checked box is not enough.
+//
+// SHAPE OF THE GATE. The consent is asked for at the DOOR of each AI surface
+// (Photo Studio, Aerial intro, Reel Studio) and at the moment an AI render tier
+// is picked — never mid-request. Asking at the door means nothing else is on
+// screen yet; gating the network call itself would have to fight whatever sheet
+// the user is already standing in.
+//
+// The answer is stored per-device in UserDefaults and is revocable from
+// Settings → Your data → "AI processing".
+@MainActor
+final class AIConsent: ObservableObject {
+    static let shared = AIConsent()
+
+    /// Bumped if the set of processors or what we send them ever changes — a
+    /// new suffix re-asks everyone, which is what a materially different
+    /// disclosure requires.
+    private static let storageKey = "ai.thirdPartyProcessing.consent.v1"
+
+    /// Drives the disclosure overlay on whichever AI surface is open.
+    @Published private(set) var isAsking = false
+    /// True once the person has explicitly agreed on this device.
+    @Published private(set) var isGranted: Bool
+
+    private var waiters: [CheckedContinuation<Bool, Never>] = []
+
+    private init() {
+        isGranted = UserDefaults.standard.bool(forKey: Self.storageKey)
+    }
+
+    /// The named processors, shown verbatim in the sheet and in Settings.
+    struct Processor: Identifiable {
+        let id = UUID()
+        let name: String
+        let detail: String
+    }
+    static let processors: [Processor] = [
+        Processor(name: "Google",
+                  detail: "Gemini edits your listing photos. Veo and Seedance generate aerial intros and reel clips."),
+        Processor(name: "Topaz Labs",
+                  detail: "Smooths the motion in your walkthrough and upscales it to 4K."),
+    ]
+
+    /// Ask once, then never again on this device. Returns true when the person
+    /// has agreed — call it before opening an AI tool, and back out on false.
+    func ensureGranted() async -> Bool {
+        if isGranted { return true }
+        return await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+            isAsking = true
+        }
+    }
+
+    func grant() {
+        UserDefaults.standard.set(true, forKey: Self.storageKey)
+        isGranted = true
+        finish(true)
+        isAsking = false
+    }
+
+    func decline() {
+        finish(false)
+        isAsking = false
+    }
+
+    /// Leaving the screen (nav Back, swipe-dismiss of the host sheet) counts as
+    /// "not now". This MUST run: a `CheckedContinuation` that is deallocated
+    /// without being resumed traps at runtime, and a stale `isAsking` would show
+    /// the overlay again on the next AI screen with nobody waiting on it.
+    func cancelIfStillWaiting() {
+        guard isAsking || !waiters.isEmpty else { return }
+        isAsking = false
+        finish(false)
+    }
+
+    /// Settings → "AI processing" → Turn off. The next AI tool asks again.
+    func revoke() {
+        UserDefaults.standard.set(false, forKey: Self.storageKey)
+        isGranted = false
+    }
+
+    private func finish(_ value: Bool) {
+        guard !waiters.isEmpty else { return }
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending { continuation.resume(returning: value) }
+    }
+}
+
+/// Attach to an AI surface. It shows the disclosure the first time that surface
+/// asks for consent and nothing thereafter.
+///
+/// Deliberately an OVERLAY, not a sheet or a fullScreenCover: the AI screens
+/// already stack their own presentations (PhotoStudioView alone carries two
+/// fullScreenCovers, AerialIntroSheet and ReelStudioView are themselves
+/// presented), and a second presentation modifier on the same view is silently
+/// dropped by SwiftUI. An overlay always draws, inside a sheet or out.
+struct AIConsentGate: ViewModifier {
+    @ObservedObject private var consent = AIConsent.shared
+
+    func body(content: Content) -> some View {
+        content
+            .overlay {
+                if consent.isAsking {
+                    AIConsentView()
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.2), value: consent.isAsking)
+            // Backing out of the screen (nav Back, swipe-dismiss of the host
+            // sheet) must resume whoever is awaiting `ensureGranted()` — an
+            // abandoned continuation is a permanently hung Task.
+            .onDisappear { consent.cancelIfStillWaiting() }
+    }
+}
+
+extension View {
+    /// Guideline 5.1.2(i) gate. Put this on any screen that can reach an AI
+    /// tool, and call `await AIConsent.shared.ensureGranted()` before the work.
+    func aiConsentGate() -> some View { modifier(AIConsentGate()) }
+}
+
+/// The disclosure itself. Names the processors, says exactly what leaves the
+/// phone and what never does, and offers a real decline.
+struct AIConsentView: View {
+    @ObservedObject private var consent = AIConsent.shared
+
+    var body: some View {
+        ZStack {
+            Theme.bg.ignoresSafeArea()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 30))
+                            .foregroundStyle(Theme.accent)
+                        Text("Rendprop's AI runs in the cloud")
+                            .font(.rpTitle)
+                            .foregroundStyle(Theme.ink)
+                        Text("AI photo edits, aerial intros, reel clips and AI-upscaled tours are not made on your phone. To make one, Rendprop sends the photo or video you pick to these AI providers:")
+                            .font(.rpBody)
+                            .foregroundStyle(Theme.inkDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        ForEach(AIConsent.processors) { p in
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(p.name).font(.rpHeadline).foregroundStyle(Theme.ink)
+                                Text(p.detail)
+                                    .font(.rpCaption)
+                                    .foregroundStyle(Theme.inkDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                            .background(Theme.fillSubtle,
+                                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        bullet("checkmark.circle.fill", Theme.good,
+                               "What we send: the image or video you choose, the words you type into a custom edit, and — for an aerial — the city and state only.")
+                        bullet("xmark.circle.fill", Theme.bad,
+                               "What we never send: your street address, your name, your email, your phone number or your device's location.")
+                        bullet("clock.arrow.circlepath", Theme.inkDim,
+                               "They process the file to return your result. Rendprop does not sell your media and does not use it for advertising.")
+                    }
+
+                    Link("Read the Privacy Policy",
+                         destination: URL(string: "https://rendprop.com/privacy")!)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+
+                    VStack(spacing: 10) {
+                        PrimaryButton(title: "Agree and continue", systemImage: "checkmark") {
+                            Haptics.success()
+                            consent.grant()
+                        }
+                        Button("Not now") {
+                            consent.decline()
+                        }
+                        .font(.rpBody)
+                        .foregroundStyle(Theme.inkDim)
+                        Text("You can turn this off any time in Settings → Your data. Capture, on-device rendering and sharing keep working either way.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(22)
+            }
+        }
+    }
+
+    private func bullet(_ symbol: String, _ tint: Color, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Image(systemName: symbol)
+                .font(.rpBody)
+                .foregroundStyle(tint)
+                .frame(width: 20)
+            Text(text)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+}
+
+// MARK: - Storefront (App Review Guideline 3.1.1 / 3.1.3)
+//
+// Rendprop sells nothing inside the app: there is no StoreKit product, no
+// price anywhere in the binary, and no checkout. Plans are a web SaaS
+// subscription bought on rendprop.com.
+//
+// A link or button that points at that page is a "call to action that directs
+// customers to purchasing mechanisms other than in-app purchase". Since
+// 1 May 2025 that is expressly ALLOWED on the United States storefront —
+// guideline 3.1.1(a): "These entitlements are not required for developers to
+// include buttons, external links, or other calls to action in their United
+// States storefront apps", and 3.1.3: "Apps in this section cannot, within the
+// app, encourage users to use a purchasing method other than in-app purchase,
+// except for apps on the United States storefront…".
+//
+// It is still a rejection EVERYWHERE ELSE. So every upgrade CTA is gated on the
+// device's actual App Store storefront: US → link out; anywhere else → the same
+// honest message with no link and no purchase invitation. Fail closed (no CTA)
+// until StoreKit answers, and if it never answers.
+@MainActor
+final class Storefronts: ObservableObject {
+    static let shared = Storefronts()
+
+    /// nil while unknown. Read `allowsExternalPurchaseLinks` — it fails closed.
+    @Published private(set) var countryCode: String?
+    @Published private(set) var didResolve = false
+
+    private init() {}
+
+    /// True ONLY on the US storefront, where 3.1.1(a) permits an external
+    /// purchase CTA without an entitlement. Anything else — a non-US
+    /// storefront, no App Store account, StoreKit unavailable — is false.
+    var allowsExternalPurchaseLinks: Bool { countryCode == "USA" }
+
+    func resolve() async {
+        guard !didResolve else { return }
+        // StoreKit 2 (iOS 15+). Returns a 3-letter ISO code ("USA", "GBR", …),
+        // or nil when there is no App Store account on the device.
+        countryCode = await StoreKit.Storefront.current?.countryCode
+        didResolve = true
+    }
+}
+
+extension View {
+    /// Resolve the storefront once so upgrade CTAs know whether they may show.
+    func resolveStorefront() -> some View {
+        task { await Storefronts.shared.resolve() }
     }
 }

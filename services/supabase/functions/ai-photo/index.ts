@@ -136,10 +136,15 @@ async function guardHelper(userId: string, req: Request): Promise<void> {
 const MAX_IMAGE_B64_CHARS = 12_000_000;
 const ALLOWED_MIMES = ["image/jpeg", "image/png", "image/webp", "image/heic", "image/heif"];
 
-const MODEL = Deno.env.get("GEMINI_IMAGE_MODEL") ?? "gemini-2.5-flash-image";
+const MODEL = (Deno.env.get("GEMINI_IMAGE_MODEL")?.trim() || "gemini-2.5-flash-image");
 // Text+vision model for the suggest / improve_prompt helper modes (NOT the
 // image model — these are plain generateContent calls returning JSON).
-const TEXT_MODEL = Deno.env.get("GEMINI_TEXT_MODEL") ?? "gemini-2.5-flash";
+// Text/vision helper model (suggest + improve_prompt). `gemini-2.5-flash` was
+// RETIRED — Google returns 404 "no longer available to new users" — which made
+// both helper buttons in the app return 502 (found in live verification
+// 2026-09-04). Keep this default on a current model and re-check it whenever
+// Google publishes a deprecation; the secret GEMINI_TEXT_MODEL overrides it.
+const TEXT_MODEL = (Deno.env.get("GEMINI_TEXT_MODEL")?.trim() || "gemini-3.6-flash");
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY");
 
 // ── Industry profiles (mirrors SpaceType in Models/Listing.swift) ─────────────

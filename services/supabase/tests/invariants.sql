@@ -179,8 +179,8 @@ from (
          (e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month, e.topaz_per_month, e.seats)
            = (x.edits, x.reels, x.aerials, x.topaz, x.seats) as ok
     from plan_entitlements e
-    join (values ('trial',   10, 1,  0, 0, 1),
-                 ('free',    10, 1,  0, 0, 1),
+    join (values ('trial',   10, 1,  2, 1, 1),
+                 ('free',    10, 1,  2, 1, 1),
                  ('starter',150, 8,  2, 0, 1),
                  ('solo',   150, 8,  2, 0, 1),
                  ('pro',    300, 20, 6, 0, 1),

@@ -61,7 +61,22 @@ enum Config {
 
     /// Where a 402 (plan boundary) "Upgrade plan" CTA sends the user. Prices are
     /// shown ONLY on the web — never compiled into the app (App Store 3.1).
-    static let pricingURL: URL? = URL(string: "https://rendprop.com/pricing")
+    ///
+    /// STOREFRONT-GATED (App Store 3.1.1(a) / 3.1.3). An "Upgrade plan" button
+    /// that opens rendprop.com is a call to action pointing at a purchasing
+    /// mechanism other than in-app purchase. Since 1 May 2025 that is expressly
+    /// permitted, with no entitlement, for apps on the UNITED STATES storefront
+    /// — and it is still a rejection on every other storefront. So this returns
+    /// nil off the US storefront (and while the storefront is still unknown),
+    /// which makes every upgrade CTA in the app disappear rather than ship a
+    /// violation. `Storefronts.shared.resolve()` runs once at launch from
+    /// `RootTabView`. Nothing else in the app links to pricing — keep it that
+    /// way: route any new CTA through this property.
+    @MainActor
+    static var pricingURL: URL? {
+        guard Storefronts.shared.allowsExternalPurchaseLinks else { return nil }
+        return URL(string: "https://rendprop.com/pricing")
+    }
 
     // Phase 2 flags — keep false until wired (master spec Parts 4.5, 9, 18)
     // enableAuth now means: Sign in with Apple → Supabase Auth (apple provider) →

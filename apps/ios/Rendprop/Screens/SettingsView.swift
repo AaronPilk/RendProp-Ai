@@ -19,6 +19,10 @@ struct SettingsView: View {
     // Real signed-in state for the Account row (never the dev-stub placeholder).
     @ObservedObject private var auth = AuthStore.shared
 
+    // Third-party AI processing permission (App Review 5.1.2(i)) — shown and
+    // revocable under "Your data".
+    @ObservedObject private var aiConsent = AIConsent.shared
+
     // Live-backend plan/usage (contract: GET /me). Loaded only when signed in.
     @State private var usage: UsageSummary?
     @State private var usageError: String?
@@ -45,6 +49,24 @@ struct SettingsView: View {
     /// True when a server account exists to sign into / delete. In the offline
     /// (mock) build there is no account — only data on this phone.
     private var serverAccountsEnabled: Bool { Config.useLiveBackend && Config.enableAuth }
+
+    /// Published contact address — the same one on rendprop.com/privacy and
+    /// /terms, so App Review sees one support channel everywhere (Guideline 1.2).
+    static let supportEmail = "aaron@pilk.ai"
+
+    static func supportMailURL(subject: String) -> URL {
+        let encoded = subject.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "Rendprop"
+        return URL(string: "mailto:\(supportEmail)?subject=\(encoded)")
+            ?? URL(string: "mailto:\(supportEmail)")!
+    }
+
+    /// Footer sentence for the AI-processing row — names the processors so the
+    /// disclosure is readable without re-opening the consent screen.
+    private var aiProcessingFooter: String {
+        aiConsent.isGranted
+            ? "AI tools may send the photo or video you pick to Google (Gemini, Veo, Seedance) and Topaz Labs to produce your result. Turning this off stops that; capture, on-device rendering and sharing keep working."
+            : "AI tools are off. The next time you open one, Rendprop asks again before sending anything to an outside AI provider."
+    }
 
     var body: some View {
         Form {
@@ -207,6 +229,17 @@ struct SettingsView: View {
             }
 
             Section {
+                // App Review 5.1.2(i): the person can see WHO processes their
+                // media and withdraw the permission they gave. Turning it off
+                // makes the next AI tool ask again from scratch.
+                LabeledContent("AI processing",
+                               value: aiConsent.isGranted ? "Allowed" : "Not allowed")
+                if aiConsent.isGranted {
+                    Button("Turn off AI processing", role: .destructive) {
+                        aiConsent.revoke()
+                        Haptics.selection()
+                    }
+                }
                 if isDeletingAccount {
                     HStack {
                         Text("Deleting account…").foregroundStyle(Theme.inkDim)
@@ -220,17 +253,29 @@ struct SettingsView: View {
             } header: {
                 Text("Your data")
             } footer: {
-                Text(serverAccountsEnabled
+                Text(aiProcessingFooter + "\n\n" + (serverAccountsEnabled
                      ? "Delete account removes your Rendprop account, published tours and leads from our servers, then clears this phone. Clear data only wipes this phone — your account and published tours stay as they are."
-                     : "Clear data removes every listing, video, tour and card stored on this phone.")
+                     : "Clear data removes every listing, video, tour and card stored on this phone."))
             }
 
-            Section("Legal") {
+            Section {
                 Link("Terms of Service", destination: URL(string: "https://rendprop.com/terms")!)
                 Link("Privacy Policy", destination: URL(string: "https://rendprop.com/privacy")!)
-                Text("Only record spaces you have the right to record and publish.")
+                // App Review 1.2 / 4.7.1: published contact information and a
+                // way to report content the AI produced or a tour that
+                // shouldn't be public. mailto opens Mail with the subject set.
+                Link(destination: Self.supportMailURL(subject: "Rendprop support")) {
+                    Label("Contact support", systemImage: "envelope")
+                }
+                Link(destination: Self.supportMailURL(subject: "Report content — Rendprop")) {
+                    Label("Report a problem with AI content or a tour",
+                          systemImage: "exclamationmark.bubble")
+                }
+                Text("Only record spaces you have the right to record and publish. Reports are reviewed and answered by a person at \(Self.supportEmail).")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+            } header: {
+                Text("Legal & support")
             }
 
             Section {
@@ -648,7 +693,9 @@ struct SettingsView: View {
 // on. `APIError.server` carries the server's own message (decision A12); the
 // helpers below cover the status-specific cases.
 enum UserFacingError {
-    static let pricingURL = URL(string: "https://rendprop.com/pricing")
+    /// Storefront-gated — see `Config.pricingURL`. nil off the US storefront so
+    /// no "Upgrade plan" CTA renders where App Store 3.1.3 forbids one.
+    @MainActor static var pricingURL: URL? { Config.pricingURL }
 
     static func message(_ error: Error, fallback: String = "Something went wrong. Please try again.") -> String {
         if let api = error as? APIError {
@@ -972,6 +1019,7 @@ struct LeadRow: View {
 struct AIPhotoStudioView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @Environment(\.dismiss) private var dismiss
 
     private enum Edit: String, CaseIterable, Identifiable {
         case twilight, sky, lawn, declutter, stage, custom
@@ -1092,6 +1140,13 @@ struct AIPhotoStudioView: View {
             SignInView {
                 enhance()
             }
+        }
+        // Guideline 5.1.2(i): the chosen photo goes to Google's Gemini image
+        // model through our edge function. Explicit opt-in before the screen is
+        // usable, asked once per device; declining pops back to Settings.
+        .aiConsentGate()
+        .task {
+            if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
     }
 

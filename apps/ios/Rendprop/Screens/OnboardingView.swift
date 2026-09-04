@@ -81,9 +81,14 @@ struct OnboardingView: View {
                         withAnimation { choosingType = true }
                     }
                 }
-                Text("Included with early access.")
+                // App Store 2.3.1 / 3.1: no price, no purchase invitation, and
+                // no promise the plan gates contradict. It states the two facts
+                // that are true on every plan: capture + on-device rendering are
+                // free, and the cloud AI tools are metered.
+                Text("Filming and rendering your tour are free.\nCloud AI tools use your monthly allowance.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 28)

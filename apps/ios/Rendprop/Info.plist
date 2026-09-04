@@ -24,18 +24,34 @@
 	<false/>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- PURPOSE STRINGS — one per API the app actually calls, and no others.
+	     An unused string invites a "we could not locate this functionality"
+	     review question; a MISSING one for an API in use is a hard crash.
+	       • Camera            — AVCaptureSession (Capture/CameraManager.swift)
+	                             + UIImagePickerController(.camera)
+	                             (Screens/FlythroughDetailView.swift · CameraPicker)
+	       • LocationWhenInUse — CLLocationManager one-shot fix to prefill the
+	                             listing address (Screens/NewListingView.swift)
+	       • Motion            — CMMotionManager device-motion log used for
+	                             stabilization (Capture/MotionRecorder.swift)
+	       • PhotoLibraryAdd   — PHPhotoLibrary .addOnly + UIImageWriteToSavedPhotosAlbum
+	     DELIBERATELY ABSENT:
+	       • NSMicrophoneUsageDescription — the capture session adds NO audio
+	         input (CameraManager: "video only, no mic"), nothing touches
+	         AVAudioSession, and flythroughs are silent. A purpose string for an
+	         API the binary never calls is dead weight at review.
+	       • NSPhotoLibraryUsageDescription — every read path is the
+	         out-of-process picker (PHPickerViewController / SwiftUI PhotosPicker)
+	         with no `photoLibrary:` parameter, which needs NO authorization; the
+	         only authorization the app ever requests is `.addOnly`. -->
 	<key>NSCameraUsageDescription</key>
-	<string>Rendprop uses your camera to record a walkthrough of your space.</string>
+	<string>Rendprop uses your camera to record a walkthrough of your space and to take listing photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Rendprop uses your location to fill in your space's address automatically.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Flythroughs are silent, so Rendprop does not record audio today. The microphone would only be requested if you add a voice-over in a future update.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Rendprop reads motion data to stabilize your video and guide a steady, level walkthrough.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>Save rendered flythroughs and teasers to your photo library.</string>
-	<key>NSPhotoLibraryUsageDescription</key>
-	<string>Import an existing walkthrough or drone video from your photo library.</string>
+	<string>Save rendered flythroughs, listing photos and reels to your photo library.</string>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>
