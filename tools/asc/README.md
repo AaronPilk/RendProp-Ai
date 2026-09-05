@@ -97,7 +97,11 @@ python3 tools/asc/asc.py status --json            # machine-readable
 ```
 
 `plan` is the same as `apply --dry-run`. Add `--quiet` to stop the HTTP request
-log. Add `--key-dir <path>` to use a key somewhere other than the default.
+log. Add `--key-dir <path>` to use a key somewhere other than the default. Add
+`--debug` to print the exact JSON body of any request that fails — useful when
+App Store Connect returns one of its vaguer validation errors. `--debug` prints
+the JSON:API document only; headers, and therefore the bearer token, are never
+included.
 
 Exit codes: `0` success, `1` failure (or, for `status`, "something is still
 missing"), `2` bad arguments.

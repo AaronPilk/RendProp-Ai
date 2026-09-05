@@ -492,10 +492,11 @@ def urllib_transport(method, url, headers, body, timeout=120):
 class Client(object):
     """A thin App Store Connect JSON:API client."""
 
-    def __init__(self, credentials=None, transport=None, verbose=True, out=None):
+    def __init__(self, credentials=None, transport=None, verbose=True, out=None, debug=False):
         self.credentials = credentials
         self.transport = transport or urllib_transport
         self.verbose = verbose
+        self.debug = debug
         self.out = out or sys.stdout
         self._token = None
         self._token_expires = 0
@@ -547,6 +548,15 @@ class Client(object):
 
         allowed = expect or (200, 201, 202, 204)
         if status not in allowed:
+            # Dump the exact request that failed so the next run is diagnosable.
+            # `body` is the JSON:API document only - headers, and therefore the
+            # bearer token, are never included.
+            if self.debug and body is not None:
+                self.out.write("    --- request body that failed (%s %s) ---\n"
+                               % (method, url.replace(API_BASE, "")))
+                for line in json.dumps(body, indent=2, sort_keys=True).splitlines():
+                    self.out.write("    %s\n" % line)
+                self.out.write("    --- end request body ---\n")
             if status == 429:
                 raise AscError(
                     "App Store Connect rate limit hit (HTTP 429 RATE_LIMIT_EXCEEDED). "
@@ -1026,6 +1036,55 @@ def check_sub_text(value, limit, label, spec):
     return value
 
 
+def price_point_territory(point):
+    """Best-effort territory for a price point.
+
+    Prefers the `territory` relationship (populated by include=territory). Falls
+    back to decoding the resource id, which App Store Connect builds as base64url
+    of {"s": <subscription id>, "t": <territory>, "p": <minor units>}. The id is
+    opaque by contract, so a decode failure is not an error - it just means this
+    cross-check cannot be made for that point.
+    """
+    related = (((point or {}).get("relationships") or {}).get("territory") or {}).get("data")
+    if isinstance(related, dict) and related.get("id"):
+        return related["id"]
+    try:
+        decoded = json.loads(b64url_decode(point["id"]).decode("utf-8"))
+    except Exception:
+        return None
+    value = decoded.get("t")
+    return value if isinstance(value, str) else None
+
+
+def usa_price_points(points, out=None):
+    """Keep only the USA price points, and say so if anything else showed up.
+
+    filter[territory]=USA should already guarantee this. The check exists because
+    a price point from the wrong territory is numerically plausible - 249.00 MXN
+    looks exactly like 249.00 USD to a price comparison - and App Store Connect
+    rejects the resulting request with a RELATIONSHIP.INVALID error that does not
+    explain itself.
+    """
+    out = out or sys.stdout
+    keep, foreign = [], set()
+    for point in points:
+        territory = price_point_territory(point)
+        if territory is None or territory == USA_TERRITORY:
+            keep.append(point)   # unknown territory: trust filter[territory]
+        else:
+            foreign.add(territory)
+    if foreign:
+        out.write("  ! ignored %d price point(s) from %s; only %s points are used\n"
+                  % (len(points) - len(keep), ", ".join(sorted(foreign)), USA_TERRITORY))
+    if not keep:
+        raise AscError(
+            "No %s price points came back for this subscription. Check that the "
+            "Paid Applications agreement is active - Apple offers no price points "
+            "until it is." % USA_TERRITORY
+        )
+    return keep
+
+
 def ensure_subscription_price(client, subscription_id, spec, plan):
     """Create the USD price if the product has none."""
     if is_pending(subscription_id):
@@ -1042,22 +1101,41 @@ def ensure_subscription_price(client, subscription_id, spec, plan):
 
     # List the USD price points offered for THIS subscription, then match the
     # target amount exactly, or take the nearest with a loud warning.
+    #
+    # include=territory populates relationships.territory so the chosen point can
+    # be proved to be a USA one before it is used. limit=8000 is the maximum the
+    # spec allows and fetches Apple's ~800 USA points in a single request instead
+    # of paging four times.
     # https://developer.apple.com/documentation/AppStoreConnectAPI/GET-v1-subscriptions-_id_-pricePoints
     points = client.get_all(
         "/v1/subscriptions/%s/pricePoints" % subscription_id,
-        params={"filter[territory]": USA_TERRITORY, "limit": 200},
+        params={
+            "filter[territory]": USA_TERRITORY,
+            "include": "territory",
+            "limit": 8000,
+        },
     )
+    points = usa_price_points(points, out=plan.out)
     point, exact, _difference = choose_price_point(points, spec["usd"], out=plan.out)
     amount = attributes_of(point).get("customerPrice")
 
     body = {
         "data": {
             "type": "subscriptionPrices",
-            # preserveCurrentPrice keeps existing subscribers on their price when a
-            # price changes. There are no subscribers yet, but it is the safe default.
-            "attributes": {"preserveCurrentPrice": False},
+            # No attributes. This is the product's FIRST price, which is what
+            # Apple's own UI creates: no startDate (so it applies immediately)
+            # and no preserveCurrentPrice (there is no current price to preserve,
+            # and no subscribers to preserve it for). Both attributes are
+            # optional in SubscriptionPriceCreateRequest; sending
+            # preserveCurrentPrice on a first price made Apple reject the request
+            # with ENTITY_ERROR.RELATIONSHIP.INVALID.
             "relationships": {
                 "subscription": relationship("subscriptions", subscription_id),
+                # The endpoint is documented as "Schedule a subscription price
+                # change for a specific territory", so the territory is sent
+                # explicitly alongside the price point rather than left to be
+                # inferred from the point's opaque id.
+                "territory": relationship("territories", USA_TERRITORY),
                 "subscriptionPricePoint": relationship("subscriptionPricePoints", point["id"]),
             },
         }
@@ -2215,6 +2293,9 @@ def build_parser():
                         help="override the directory holding AuthKey_*.p8 and config")
     parser.add_argument("--json", action="store_true", help="also print machine-readable JSON")
     parser.add_argument("--quiet", action="store_true", help="do not log HTTP requests")
+    parser.add_argument("--debug", action="store_true",
+                        help="on a failed request, print the exact JSON body that was "
+                             "sent (never the credentials)")
 
     sub = parser.add_subparsers(dest="command")
 
@@ -2260,7 +2341,8 @@ def main(argv=None, out=None, client=None):
     try:
         if client is None:
             credentials = load_credentials(args.key_dir)
-            client = Client(credentials, verbose=not args.quiet, out=out)
+            client = Client(credentials, verbose=not args.quiet, out=out,
+                            debug=getattr(args, "debug", False))
         return COMMANDS[args.command](client, args, out)
     except AscError as exc:
         out.write("\nFAILED\n")

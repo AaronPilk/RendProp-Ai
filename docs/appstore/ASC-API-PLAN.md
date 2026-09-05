@@ -62,8 +62,8 @@ copied into the repo, never printed, and never logged — the request log is
 | Group name | `POST /v1/subscriptionGroupLocalizations` | `name: "Rendprop Plans"`, `locale: "en-US"` |
 | Products (×6) | `POST /v1/subscriptions` | `name`, `productId`, `familySharable: false`, `subscriptionPeriod`, `reviewNote`, `groupLevel` |
 | Names/descriptions | `POST /v1/subscriptionLocalizations` | `name` (≤30), `description` (≤45), `locale` |
-| Price lookup | `GET /v1/subscriptions/{id}/pricePoints?filter[territory]=USA` | reads `customerPrice` |
-| Price | `POST /v1/subscriptionPrices` | `preserveCurrentPrice: false`, relationships `subscription` + `subscriptionPricePoint` |
+| Price lookup | `GET /v1/subscriptions/{id}/pricePoints?filter[territory]=USA&include=territory&limit=8000` | reads `customerPrice`, verifies the territory |
+| Price | `POST /v1/subscriptionPrices` | **no attributes**; relationships `subscription` + `territory` (USA) + `subscriptionPricePoint` |
 | Availability | `POST /v1/subscriptionAvailabilities` | `availableInNewTerritories: true`, every id from `GET /v1/territories` |
 | Free trial | `POST /v1/subscriptionIntroductoryOffers` | `offerMode: FREE_TRIAL`, `duration: ONE_WEEK`, `numberOfPeriods: 1`, no `territory` relationship (= all territories) |
 
@@ -85,6 +85,23 @@ between two products is an upgrade, a downgrade or a crossgrade.
 `Product.displayPrice` from StoreKit. This tool only tells Apple which price
 point to charge.
 
+> **Creating the first price — learned the hard way.** The first live run failed
+> here with `ENTITY_ERROR.RELATIONSHIP.INVALID` ("An error occurred while
+> processing the pricing information") pointed at
+> `/data/relationships/subscriptionPricePoint/id`. Two things were wrong, both
+> now fixed. First, the request carried `attributes: {preserveCurrentPrice:
+> false}`; a product's *first* price has no current price to preserve and no
+> subscribers to preserve it for, and Apple's own UI sends neither that nor a
+> `startDate`, so the attributes block is now omitted entirely. Second, the
+> `territory` relationship was left out — the endpoint is titled "Schedule a
+> subscription price change **for a specific territory**", so USA is now stated
+> explicitly rather than inferred from the price point.
+>
+> Price point ids are base64url of `{"s": <subscription>, "t": <territory>,
+> "p": <minor units>}`, so `asc.py` decodes the chosen id and refuses to send a
+> point that is not a USA one. That guard matters because a wrong-territory point
+> is numerically invisible: 249.00 MXN compares equal to 249.00 USD.
+>
 > **Price point caveat.** `asc.py` asks Apple which USD price points that specific
 > subscription offers, and matches the target exactly. If Apple does not offer the
 > exact amount — most likely for the annual tiers, where the high price points are

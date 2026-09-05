@@ -257,6 +257,25 @@ def price_point(identifier, customer_price):
     }
 
 
+def make_price_point(subscription_id, territory, customer_price):
+    """Build a price point shaped like a real one.
+
+    App Store Connect encodes the id as base64url of
+    {"s": <subscription id>, "t": <territory>, "p": <price in minor units>}.
+    """
+    minor = str(int(round(float(customer_price) * 100)))
+    identifier = asc.b64url_encode(
+        json.dumps({"s": subscription_id, "t": territory, "p": minor},
+                   separators=(",", ":")).encode("utf-8")
+    )
+    return {
+        "type": "subscriptionPricePoints",
+        "id": identifier,
+        "attributes": {"customerPrice": customer_price, "proceeds": customer_price},
+        "relationships": {"territory": {"data": {"type": "territories", "id": territory}}},
+    }
+
+
 class PricePointTests(unittest.TestCase):
     def setUp(self):
         self.out = io.StringIO()
@@ -321,6 +340,61 @@ class PricePointTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Length validators
 # ---------------------------------------------------------------------------
+
+
+class PricePointTerritoryTests(unittest.TestCase):
+    """Guards for the live 409 on POST /v1/subscriptionPrices."""
+
+    def test_territory_comes_from_the_relationship(self):
+        point = make_price_point("6808983164", "USA", "249.00")
+        self.assertEqual(asc.price_point_territory(point), "USA")
+
+    def test_territory_falls_back_to_decoding_the_opaque_id(self):
+        point = make_price_point("6808983164", "MEX", "249.00")
+        del point["relationships"]
+        self.assertEqual(asc.price_point_territory(point), "MEX")
+
+    def test_the_real_id_format_decodes(self):
+        # The exact shape App Store Connect returned on the live run.
+        point = {"type": "subscriptionPricePoints",
+                 "id": "eyJzIjoiNjgwODk4MzE2NCIsInQiOiJVU0EiLCJwIjoiMTAwMDAifQ"}
+        self.assertEqual(asc.price_point_territory(point), "USA")
+
+    def test_undecodable_id_is_not_an_error(self):
+        self.assertIsNone(asc.price_point_territory({"id": "not-base64-json"}))
+        self.assertIsNone(asc.price_point_territory({"id": ""}))
+
+    def test_foreign_points_are_dropped_with_a_note(self):
+        out = io.StringIO()
+        points = [make_price_point("s1", "USA", "249.00"),
+                  make_price_point("s1", "MEX", "249.00"),
+                  make_price_point("s1", "GBR", "249.00")]
+        kept = asc.usa_price_points(points, out=out)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(asc.price_point_territory(kept[0]), "USA")
+        self.assertIn("ignored 2 price point(s)", out.getvalue())
+
+    def test_points_of_unknown_territory_are_trusted(self):
+        out = io.StringIO()
+        kept = asc.usa_price_points([price_point("opaque", "249.00")], out=out)
+        self.assertEqual(len(kept), 1)
+        self.assertEqual(out.getvalue(), "")
+
+    def test_no_usa_points_points_at_the_paid_apps_agreement(self):
+        out = io.StringIO()
+        with self.assertRaises(asc.AscError) as caught:
+            asc.usa_price_points([make_price_point("s1", "MEX", "249.00")], out=out)
+        self.assertIn("Paid Applications agreement", str(caught.exception))
+
+    def test_a_foreign_point_can_never_be_chosen(self):
+        """The whole point: 249.00 MEX must not win over 249.00 USA."""
+        out = io.StringIO()
+        points = [make_price_point("s1", "MEX", "249.00"),
+                  make_price_point("s1", "USA", "249.00")]
+        chosen, exact, _ = asc.choose_price_point(
+            asc.usa_price_points(points, out=out), "249.00", out=out)
+        self.assertTrue(exact)
+        self.assertEqual(asc.price_point_territory(chosen), "USA")
 
 
 class LengthValidatorTests(unittest.TestCase):
@@ -461,6 +535,7 @@ class FakeAsc(object):
         self.calls = []
         self.writes = []
         self.last_headers = {}
+        self.last_price_body = None
         # Product ids the broad group listing pretends not to see. A targeted
         # filter[productId] lookup still finds them, which is what the planner's
         # 409 recovery does.
@@ -481,6 +556,12 @@ class FakeAsc(object):
         self.price_ladder = price_ladder or [
             "49.00", "99.00", "249.00", "490.00", "990.00", "999.99",
         ]
+        # Every territory offers the same numeric ladder, which is exactly why a
+        # wrong-territory point is dangerous: 249.00 MXN looks like 249.00 USD.
+        # USA is deliberately NOT first, so any code that forgets to filter or
+        # verify the territory picks a foreign point and gets caught, rather than
+        # passing by luck of ordering.
+        self.price_territories = ["MEX", "GBR", "USA"]
 
     # -- storage ---------------------------------------------------------
     def _insert(self, kind, attributes, parents):
@@ -561,12 +642,16 @@ class FakeAsc(object):
                 return 200, {"data": data, "links": {}}
 
             if key == ("subscriptions", "pricePoints"):
-                points = [
-                    {"type": "subscriptionPricePoints",
-                     "id": "pp-%s-%s" % (parent_id, amount.replace(".", "")),
-                     "attributes": {"customerPrice": amount}}
-                    for amount in self.price_ladder
-                ]
+                # Model App Store Connect's real behaviour: ids are base64url of
+                # {"s": subscription, "t": territory, "p": minor units}, points
+                # exist per territory, and filter[territory] narrows them.
+                wanted = query.get("filter[territory]") or self.price_territories
+                points = []
+                for territory in self.price_territories:
+                    if territory not in wanted:
+                        continue
+                    for amount in self.price_ladder:
+                        points.append(make_price_point(parent_id, territory, amount))
                 return 200, {"data": points, "links": {}}
 
             if key == ("subscriptions", "subscriptionAvailability"):
@@ -591,6 +676,24 @@ class FakeAsc(object):
         kind = self.COLLECTIONS[parts[0]]
         data = payload["data"]
         attributes = dict(data.get("attributes") or {})
+
+        # App Store Connect rejects a price whose price point belongs to a
+        # different territory than the request. This is provable from the id
+        # encoding, so the fake enforces it: it is the failure mode that produced
+        # ENTITY_ERROR.RELATIONSHIP.INVALID on the first live run.
+        if kind == "subscriptionPrices":
+            relationships = data.get("relationships") or {}
+            point_id = ((relationships.get("subscriptionPricePoint") or {}).get("data") or {}).get("id")
+            stated = ((relationships.get("territory") or {}).get("data") or {}).get("id")
+            point_territory = asc.price_point_territory({"id": point_id or ""})
+            if point_territory and stated and point_territory != stated:
+                return 409, {"errors": [{
+                    "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                    "title": "There is a problem with the request entity",
+                    "detail": "An error occurred while processing the pricing information.",
+                    "status": "409",
+                    "source": {"pointer": "/data/relationships/subscriptionPricePoint/id"}}]}
+            self.last_price_body = payload
 
         # Reject a duplicate product id the way App Store Connect does.
         if kind == "subscriptions":
@@ -772,6 +875,107 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertEqual(attributes["groupLevel"], 2)
         self.assertEqual(attributes["reviewNote"], asc.REVIEW_NOTE)
 
+    def test_price_request_is_shaped_the_way_apples_ui_creates_a_first_price(self):
+        """Regression for the live ENTITY_ERROR.RELATIONSHIP.INVALID."""
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        body = fake.last_price_body
+        self.assertIsNotNone(body, "no subscriptionPrices request was made")
+        data = body["data"]
+
+        # No attributes at all: no startDate and, above all, no
+        # preserveCurrentPrice - there is no current price to preserve.
+        self.assertNotIn("attributes", data)
+
+        # The territory is stated explicitly; the endpoint is documented as
+        # "Schedule a subscription price change for a specific territory".
+        relationships = data["relationships"]
+        self.assertEqual(relationships["territory"]["data"],
+                         {"type": "territories", "id": "USA"})
+        self.assertEqual(relationships["subscriptionPricePoint"]["data"]["type"],
+                         "subscriptionPricePoints")
+
+        # The price point id is passed through verbatim and is a USA point.
+        point_id = relationships["subscriptionPricePoint"]["data"]["id"]
+        self.assertEqual(asc.price_point_territory({"id": point_id}), "USA")
+
+    def test_prices_are_created_for_all_six_products(self):
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        for price in fake.store["subscriptionPrices"].values():
+            self.assertEqual(price["_parents"]["territory"], "USA")
+
+    def test_a_wrong_territory_price_point_would_be_rejected(self):
+        """Proves the fake reproduces the live failure, so the guard is real."""
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        bad_point = make_price_point("sub-1", "MEX", "249.00")
+        with self.assertRaises(asc.ApiError) as caught:
+            client.post("/v1/subscriptionPrices", {"data": {
+                "type": "subscriptionPrices",
+                "relationships": {
+                    "subscription": {"data": {"type": "subscriptions", "id": "sub-1"}},
+                    "territory": {"data": {"type": "territories", "id": "USA"}},
+                    "subscriptionPricePoint": {
+                        "data": {"type": "subscriptionPricePoints", "id": bad_point["id"]}},
+                }}})
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(caught.exception.codes, ["ENTITY_ERROR.RELATIONSHIP.INVALID"])
+
+    def test_resumes_a_subscription_that_has_no_price_yet(self):
+        """The exact state the live run stopped in: group + product + localization."""
+        fake = FakeAsc()
+        group_id = fake._insert(
+            "subscriptionGroups", {"referenceName": "rendprop_plans"}, {"app": fake.app_id}
+        )
+        fake._insert(
+            "subscriptionGroupLocalizations",
+            {"name": "Rendprop Plans", "locale": "en-US"},
+            {"subscriptionGroup": group_id},
+        )
+        spec = asc.SUBSCRIPTIONS[0]  # com.rendprop.app.team.monthly
+        subscription_id = fake._insert(
+            "subscriptions",
+            {"productId": spec["productId"], "name": spec["name"], "familySharable": False,
+             "subscriptionPeriod": spec["period"], "reviewNote": asc.REVIEW_NOTE,
+             "groupLevel": spec["groupLevel"]},
+            {"group": group_id},
+        )
+        fake._insert(
+            "subscriptionLocalizations",
+            {"name": spec["displayName"], "locale": "en-US",
+             "description": spec["description"]},
+            {"subscription": subscription_id},
+        )
+
+        code, output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0)
+
+        # Nothing was duplicated...
+        self.assertEqual(len(fake.store["subscriptionGroups"]), 1)
+        self.assertEqual(len(fake.store["subscriptionGroupLocalizations"]), 1)
+        self.assertEqual(len(fake.store["subscriptions"]), 6)
+        self.assertEqual(len(fake.store["subscriptionLocalizations"]), 6)
+        # ...and the half-finished product got its price, availability and trial.
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
+        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
+        self.assertIn("exists", output)
+
+        # And a further run is a clean no-op.
+        fake.writes = []
+        self.run_subscriptions(fake)
+        self.assertEqual(fake.writes, [])
+
+    def test_price_points_are_fetched_filtered_and_unpaged(self):
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        point_calls = [path for method, path in fake.calls if path.endswith("/pricePoints")]
+        # One request per product, not four pages each.
+        self.assertEqual(len(point_calls), 6)
+
     def test_annual_price_above_the_ladder_warns_loudly(self):
         fake = FakeAsc()  # ladder tops out at 999.99, below the 2490.00 annual
         _code, output = self.run_subscriptions(fake)
@@ -877,6 +1081,40 @@ class ClientTests(unittest.TestCase):
         self.assertNotIn("Authorization", printed)
         self.assertNotIn("Bearer", printed)
         self.assertNotIn("KEYID12345", printed)
+
+    def test_debug_prints_the_failed_request_body_but_never_the_token(self):
+        def transport(method, url, headers, body):
+            return 409, {}, json.dumps({"errors": [{
+                "code": "ENTITY_ERROR.RELATIONSHIP.INVALID", "status": "409",
+                "title": "There is a problem with the request entity",
+                "detail": "An error occurred while processing the pricing information.",
+                "source": {"pointer": "/data/relationships/subscriptionPricePoint/id"}}]}).encode()
+
+        out = io.StringIO()
+        credentials = asc.Credentials("KEYID12345", "issuer-uuid", "/nonexistent.p8")
+        client = asc.Client(credentials, transport=transport, verbose=False, out=out, debug=True)
+        client._token = "a.fake.token"
+        client._token_expires = 2 ** 40
+        with self.assertRaises(asc.ApiError):
+            client.post("/v1/subscriptionPrices",
+                        {"data": {"type": "subscriptionPrices",
+                                  "relationships": {"territory": {"data": {"id": "USA"}}}}})
+        printed = out.getvalue()
+        self.assertIn("request body that failed", printed)
+        self.assertIn("subscriptionPrices", printed)
+        self.assertIn("USA", printed)
+        self.assertNotIn("a.fake.token", printed)
+        self.assertNotIn("Bearer", printed)
+        self.assertNotIn("KEYID12345", printed)
+
+    def test_debug_is_off_by_default(self):
+        def transport(method, url, headers, body):
+            return 409, {}, b'{"errors":[{"code":"X","status":"409","title":"t","detail":"d"}]}'
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
+        with self.assertRaises(asc.ApiError):
+            client.post("/v1/subscriptionPrices", {"data": {"secret": "shape"}})
+        self.assertNotIn("request body that failed", out.getvalue())
 
     def test_rate_limit_header_is_captured(self):
         fake = FakeAsc()
