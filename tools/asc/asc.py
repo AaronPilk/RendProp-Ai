@@ -159,6 +159,13 @@ INTRO_OFFER_PERIODS = 1
 # Apple's territory id for the United States (GET /v1/territories).
 USA_TERRITORY = "USA"
 
+# US-only launch. Both the app and the subscriptions ship to the United States
+# only; widening later is a deliberate decision, not a default.
+# availableInNewTerritories=False stops Apple adding newly-supported storefronts
+# automatically.
+LAUNCH_TERRITORIES = [USA_TERRITORY]
+AVAILABLE_IN_NEW_TERRITORIES = False
+
 # In-app purchase display name / description limits, enforced by App Store Connect.
 SUB_DISPLAY_NAME_MAX = 30
 SUB_DESCRIPTION_MAX = 45
@@ -201,7 +208,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 METADATA_DIR = REPO_ROOT / "docs" / "appstore" / "metadata" / PRIMARY_LOCALE
 SCREENSHOT_DIR = REPO_ROOT / "docs" / "appstore" / "screenshots" / "6.9"
 IAP_SCREENSHOT = REPO_ROOT / "docs" / "appstore" / "iap-review" / "paywall.png"
-REVIEW_NOTES_FILE = REPO_ROOT / "docs" / "appstore" / "review-notes.md"
+# The notes Apple receives verbatim (<= 4000 chars). The .md next to it is the
+# human explainer and must never be sent — it discusses the owner console.
+REVIEW_NOTES_FILE = REPO_ROOT / "docs" / "appstore" / "metadata" / "en-US" / "review_notes.txt"
 
 # App Store version states in which metadata is still editable.
 EDITABLE_VERSION_STATES = {
@@ -1041,9 +1050,13 @@ def price_point_territory(point):
 
     Prefers the `territory` relationship (populated by include=territory). Falls
     back to decoding the resource id, which App Store Connect builds as base64url
-    of {"s": <subscription id>, "t": <territory>, "p": <minor units>}. The id is
-    opaque by contract, so a decode failure is not an error - it just means this
-    cross-check cannot be made for that point.
+    of {"s": <subscription id>, "t": <territory>, "p": <opaque tier id>}.
+
+    Confirmed against a live response: the USA point for USD 249.00 on
+    subscription 6808983164 is {"s":"6808983164","t":"USA","p":"10605"} - so `p`
+    is Apple's internal price-point tier, NOT the amount in minor units. Only `t`
+    is read here. The id is opaque by contract, so a decode failure is not an
+    error; it just means this cross-check cannot be made for that point.
     """
     related = (((point or {}).get("relationships") or {}).get("territory") or {}).get("data")
     if isinstance(related, dict) and related.get("id"):
@@ -1085,19 +1098,89 @@ def usa_price_points(points, out=None):
     return keep
 
 
-def ensure_subscription_price(client, subscription_id, spec, plan):
-    """Create the USD price if the product has none."""
+def priced_territories(prices):
+    """Territory ids that already have a price, from a prices listing."""
+    found = set()
+    for price in prices:
+        data = (((price.get("relationships") or {}).get("territory") or {}).get("data") or {})
+        if data.get("id"):
+            found.add(data["id"])
+    return found
+
+
+def price_other_territories(client, subscription_id, spec, usa_point, missing, plan):
+    """Price the non-USA territories from the USA point's equalizations.
+
+    Only reachable if a product ends up available outside the launch territories.
+    Apple calls the matching points in other territories "equalizations" of a
+    price point, which is exactly the mapping needed here.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/GET-v1-subscriptionPricePoints-_id_-equalizations
+    """
+    equalizations = client.get_all(
+        "/v1/subscriptionPricePoints/%s/equalizations" % usa_point["id"],
+        params={"filter[territory]": ",".join(sorted(missing)),
+                "include": "territory", "limit": 8000},
+    )
+    by_territory = {}
+    for point in equalizations:
+        territory = price_point_territory(point)
+        if territory:
+            by_territory[territory] = point
+
+    unmatched = sorted(t for t in missing if t not in by_territory)
+    if unmatched:
+        plan.warn("no equalized price point for %d territor%s (%s%s)"
+                  % (len(unmatched), "y" if len(unmatched) == 1 else "ies",
+                     ", ".join(unmatched[:8]), "..." if len(unmatched) > 8 else ""))
+
+    for territory in sorted(by_territory):
+        point = by_territory[territory]
+        body = {
+            "data": {
+                "type": "subscriptionPrices",
+                "relationships": {
+                    "subscription": relationship("subscriptions", subscription_id),
+                    "territory": relationship("territories", territory),
+                    "subscriptionPricePoint": relationship(
+                        "subscriptionPricePoints", point["id"]),
+                },
+            }
+        }
+        plan.act(
+            "price %s in %s at %s"
+            % (spec["productId"], territory, attributes_of(point).get("customerPrice")),
+            lambda body=body: client.post("/v1/subscriptionPrices", body),
+        )
+
+
+def ensure_subscription_price(client, subscription_id, spec, territories, plan):
+    """Price the product in every territory it is available in.
+
+    `territories` comes from ensure_subscription_availability, which must run
+    first - App Store Connect rejects a price for a product that has no
+    availability yet.
+    """
     if is_pending(subscription_id):
         plan.defer("price %s at USD %s" % (spec["productId"], spec["usd"]))
         return
+    territories = list(territories or LAUNCH_TERRITORIES)
     prices = client.get_all(
         "/v1/subscriptions/%s/prices" % subscription_id,
         params={"include": "subscriptionPricePoint,territory", "limit": 200},
     )
-    if prices:
-        plan.note("%s already has a price schedule (%d entr%s)"
-                  % (spec["productId"], len(prices), "y" if len(prices) == 1 else "ies"))
+    already = priced_territories(prices)
+    missing = [t for t in territories if t not in already]
+    if prices and not missing:
+        plan.note("%s is priced in all %d territor%s it sells in"
+                  % (spec["productId"], len(territories),
+                     "y" if len(territories) == 1 else "ies"))
         return
+    if prices and USA_TERRITORY in already:
+        # The USA price is set but other territories are not. This only happens
+        # if availability was widened beyond the launch territories.
+        plan.warn("%s is priced in %d territor%s but available in %d - filling the gaps"
+                  % (spec["productId"], len(already),
+                     "y" if len(already) == 1 else "ies", len(territories)))
 
     # List the USD price points offered for THIS subscription, then match the
     # target amount exactly, or take the nearest with a loud warning.
@@ -1126,9 +1209,12 @@ def ensure_subscription_price(client, subscription_id, spec, plan):
             # Apple's own UI creates: no startDate (so it applies immediately)
             # and no preserveCurrentPrice (there is no current price to preserve,
             # and no subscribers to preserve it for). Both attributes are
-            # optional in SubscriptionPriceCreateRequest; sending
-            # preserveCurrentPrice on a first price made Apple reject the request
-            # with ENTITY_ERROR.RELATIONSHIP.INVALID.
+            # optional in SubscriptionPriceCreateRequest.
+            #
+            # The live 409 on this call turned out to be ORDER, not shape: the
+            # product had no subscriptionAvailability yet. The identical request
+            # succeeded once availability existed. Availability is now created
+            # first, and the attributes stay omitted to match Apple's own UI.
             "relationships": {
                 "subscription": relationship("subscriptions", subscription_id),
                 # The endpoint is documented as "Schedule a subscription price
@@ -1141,39 +1227,28 @@ def ensure_subscription_price(client, subscription_id, spec, plan):
         }
     }
     # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionPrices
-    plan.act(
-        "price %s at USD %s%s" % (spec["productId"], amount, "" if exact else "  <-- NOT the requested %s" % spec["usd"]),
-        lambda: client.post("/v1/subscriptionPrices", body),
-    )
-
-
-def ensure_subscription_availability(client, subscription_id, spec, territories, plan):
-    """Make the product available in every territory."""
-    if is_pending(subscription_id):
-        plan.defer("make %s available in all territories" % spec["productId"])
-        return
-    current = client.get_optional("/v1/subscriptions/%s/subscriptionAvailability" % subscription_id)
-    if current and (current.get("data") or {}).get("id"):
-        availability_id = current["data"]["id"]
-        listed = client.get_all(
-            "/v1/subscriptionAvailabilities/%s/availableTerritories" % availability_id
+    if USA_TERRITORY in missing:
+        plan.act(
+            "price %s at USD %s%s" % (spec["productId"], amount,
+                                      "" if exact else "  <-- NOT the requested %s" % spec["usd"]),
+            lambda: client.post("/v1/subscriptionPrices", body),
         )
-        if len(listed) >= len(territories):
-            plan.note("%s is available in %d territories" % (spec["productId"], len(listed)))
-        else:
-            # There is no PATCH for subscriptionAvailabilities in Apple's spec.
-            plan.warn(
-                "%s is available in %d of %d territories. The API cannot widen an "
-                "existing availability (no PATCH endpoint) - fix it in App Store "
-                "Connect -> Monetization -> Subscriptions -> %s -> Availability."
-                % (spec["productId"], len(listed), len(territories), spec["productId"])
-            )
-        return
 
-    body = {
+    # US-only launch means one price is the whole schedule. This only does
+    # anything if the product turned out to be available more widely.
+    others = [t for t in missing if t != USA_TERRITORY]
+    if others and not plan.dry_run:
+        price_other_territories(client, subscription_id, spec, point, others, plan)
+    elif others:
+        plan.defer("price %s in %d further territor%s from the USA point's equalizations"
+                   % (spec["productId"], len(others), "y" if len(others) == 1 else "ies"))
+
+
+def availability_body(subscription_id, territories):
+    return {
         "data": {
             "type": "subscriptionAvailabilities",
-            "attributes": {"availableInNewTerritories": True},
+            "attributes": {"availableInNewTerritories": AVAILABLE_IN_NEW_TERRITORIES},
             "relationships": {
                 "subscription": relationship("subscriptions", subscription_id),
                 "availableTerritories": {
@@ -1182,11 +1257,78 @@ def ensure_subscription_availability(client, subscription_id, spec, territories,
             },
         }
     }
-    # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionAvailabilities
-    plan.act(
-        "make %s available in all %d territories" % (spec["productId"], len(territories)),
-        lambda: client.post("/v1/subscriptionAvailabilities", body),
+
+
+def ensure_subscription_availability(client, subscription_id, spec, plan):
+    """Make the product available in the launch territories (US only).
+
+    Availability must exist BEFORE a price can be created: on the live run, a
+    price POST against a product with no availability failed with
+    ENTITY_ERROR.RELATIONSHIP.INVALID, and the identical request succeeded once
+    availability was in place.
+
+    Returns the territory ids the product is actually available in, so pricing
+    can cover exactly those and never leave a product half-priced.
+    """
+    if is_pending(subscription_id):
+        plan.defer("make %s available in %s" % (spec["productId"], ", ".join(LAUNCH_TERRITORIES)))
+        return list(LAUNCH_TERRITORIES)
+
+    wanted = list(LAUNCH_TERRITORIES)
+    # A subscription with no availability yet returns 404 here, not an empty
+    # object - get_optional turns both into None.
+    current = client.get_optional("/v1/subscriptions/%s/subscriptionAvailability" % subscription_id)
+
+    if not (current and (current.get("data") or {}).get("id")):
+        # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionAvailabilities
+        plan.act(
+            "make %s available in %s only" % (spec["productId"], ", ".join(wanted)),
+            lambda: client.post("/v1/subscriptionAvailabilities",
+                                availability_body(subscription_id, wanted)),
+        )
+        return wanted
+
+    availability_id = current["data"]["id"]
+    listed = sorted(t["id"] for t in client.get_all(
+        "/v1/subscriptionAvailabilities/%s/availableTerritories" % availability_id))
+    if listed == sorted(wanted):
+        plan.note("%s is available in %s only" % (spec["productId"], ", ".join(wanted)))
+        return listed
+
+    # The set is wrong. There is no PATCH or DELETE for subscriptionAvailabilities
+    # in Apple's spec, so the only thing to try is another POST, in case it
+    # behaves as an upsert. If it does not, say so loudly and carry on - a wrong
+    # territory list is a business problem for a human, not a reason to abort.
+    def replace():
+        try:
+            client.post("/v1/subscriptionAvailabilities",
+                        availability_body(subscription_id, wanted))
+            return wanted
+        except ApiError as exc:
+            plan.warn(
+                "%s is available in %d territories, but this launch is %s only.\n"
+                "      Re-POSTing the availability failed (%s), so the API cannot\n"
+                "      narrow an availability that already exists.\n"
+                "      FIX THIS BY HAND before selling: App Store Connect ->\n"
+                "      Monetization -> Subscriptions -> %s -> Availability ->\n"
+                "      deselect everything except the United States.\n"
+                "      Until then this product is priced only in %s but listed in\n"
+                "      %d territories."
+                % (spec["productId"], len(listed), ", ".join(wanted),
+                   ", ".join(exc.codes) or exc.status, spec["productId"],
+                   ", ".join(wanted), len(listed))
+            )
+            return None
+
+    outcome = plan.act(
+        "narrow %s availability from %d territories to %s"
+        % (spec["productId"], len(listed), ", ".join(wanted)),
+        replace,
     )
+    if plan.dry_run:
+        return wanted
+    # If the replace failed, price what the product is actually available in.
+    return wanted if outcome == wanted else listed
 
 
 def ensure_introductory_offer(client, subscription_id, spec, plan):
@@ -1214,7 +1356,7 @@ def ensure_introductory_offer(client, subscription_id, spec, plan):
     }
     # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionIntroductoryOffers
     plan.act(
-        "add a 1-week free trial to %s (all territories)" % spec["productId"],
+        "add a 1-week free trial to %s (every territory it sells in)" % spec["productId"],
         lambda: client.post("/v1/subscriptionIntroductoryOffers", body),
     )
 
@@ -1275,17 +1417,17 @@ def cmd_subscriptions(client, args, out):
         for subscription in client.get_all("/v1/subscriptionGroups/%s/subscriptions" % group_id):
             existing_by_product[attributes_of(subscription).get("productId")] = subscription
 
-    # Territories are a read, so this is safe in a dry run and lets the plan say
-    # how many territories each product would be sold in.
-    territories = [t["id"] for t in client.get_all("/v1/territories")]
-    out.write("\nTerritories: %d available\n" % len(territories))
+    out.write("\nLaunch territories: %s only (availableInNewTerritories=%s)\n"
+              % (", ".join(LAUNCH_TERRITORIES), str(AVAILABLE_IN_NEW_TERRITORIES).lower()))
 
     for spec in SUBSCRIPTIONS:
         out.write("\n%s\n" % spec["productId"])
         subscription_id = ensure_subscription(client, group_id, spec, existing_by_product, plan)
         ensure_subscription_localization(client, subscription_id, spec, plan)
-        ensure_subscription_price(client, subscription_id, spec, plan)
-        ensure_subscription_availability(client, subscription_id, spec, territories, plan)
+        # Availability MUST come before pricing: App Store Connect rejects a
+        # price for a product that has no availability yet.
+        territories = ensure_subscription_availability(client, subscription_id, spec, plan)
+        ensure_subscription_price(client, subscription_id, spec, territories, plan)
         ensure_introductory_offer(client, subscription_id, spec, plan)
 
     summarise(plan, out, "subscriptions")
@@ -1462,6 +1604,70 @@ def ensure_app_info_localization(client, app_info, name, subtitle, plan):
              lambda: client.post("/v1/appInfoLocalizations", body))
 
 
+def ensure_app_availability_usa(client, app_id, plan):
+    """Restrict the app itself to the launch territories (US only).
+
+    POST /v2/appAvailabilities uses JSON:API inline creates: the
+    territoryAvailabilities relationship references placeholder ids that are
+    defined in the top-level `included` array.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v2-appAvailabilities
+    """
+    wanted = sorted(LAUNCH_TERRITORIES)
+    current = client.get_optional("/v1/apps/%s/appAvailabilityV2" % app_id)
+    if current and (current.get("data") or {}).get("id"):
+        availability_id = current["data"]["id"]
+        listed = client.get_all(
+            "/v2/appAvailabilities/%s/territoryAvailabilities" % availability_id,
+            params={"include": "territory", "limit": 200},
+        )
+        available = sorted(
+            ((((t.get("relationships") or {}).get("territory") or {}).get("data") or {}).get("id"))
+            for t in listed if attributes_of(t).get("available")
+        )
+        available = [t for t in available if t]
+        if available == wanted:
+            plan.note("the app itself is available in %s only" % ", ".join(wanted))
+            return
+        plan.note("the app is currently available in %d territor%s"
+                  % (len(available), "y" if len(available) == 1 else "ies"))
+
+    body = {
+        "data": {
+            "type": "appAvailabilities",
+            "attributes": {"availableInNewTerritories": AVAILABLE_IN_NEW_TERRITORIES},
+            "relationships": {
+                "app": relationship("apps", app_id),
+                "territoryAvailabilities": {
+                    "data": [{"type": "territoryAvailabilities", "id": t} for t in wanted]
+                },
+            },
+        },
+        "included": [
+            {
+                "type": "territoryAvailabilities",
+                "id": t,
+                "attributes": {"available": True},
+                "relationships": {"territory": relationship("territories", t)},
+            }
+            for t in wanted
+        ],
+    }
+
+    def apply_availability():
+        try:
+            return client.post("/v2/appAvailabilities", body)
+        except ApiError as exc:
+            plan.warn(
+                "could not set the app's territory availability (%s).\n"
+                "      Set it by hand: App Store Connect -> your app -> Pricing and\n"
+                "      Availability -> Availability -> Edit -> United States only."
+                % (", ".join(exc.codes) or exc.status)
+            )
+            return None
+
+    plan.act("make the app available in %s only" % ", ".join(wanted), apply_availability)
+
+
 def find_editable_version(client, app_id):
     """Find the 1.0 iOS App Store version that is still editable."""
     versions = client.get_all(
@@ -1635,6 +1841,9 @@ def cmd_metadata(client, args, out):
     ensure_app_info_localization(client, app_info, values["name"], values["subtitle"], plan)
     ensure_categories(client, app_info, plan)
     ensure_age_rating(client, app_info, plan)
+
+    out.write("\nAvailability\n")
+    ensure_app_availability_usa(client, app["id"], plan)
 
     out.write("\nVersion %s\n" % VERSION_STRING)
     version_id = ensure_app_store_version(client, app["id"], plan, values["copyright"])
@@ -1946,6 +2155,8 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
 
 
 def cmd_review(client, args, out):
+    if getattr(args, "action", None) == "submit":
+        return cmd_review_submit(client, args, out)
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
@@ -2003,6 +2214,90 @@ def cmd_review(client, args, out):
                 )
 
     summarise(plan, out, "review")
+    return 0
+
+
+# Subscription states, from filter[state] on the subscriptions endpoint:
+# MISSING_METADATA, READY_TO_SUBMIT, WAITING_FOR_REVIEW, IN_REVIEW,
+# DEVELOPER_ACTION_NEEDED, PENDING_BINARY_APPROVAL, APPROVED,
+# DEVELOPER_REMOVED_FROM_SALE, REMOVED_FROM_SALE, REJECTED.
+SUBMITTABLE_STATE = "READY_TO_SUBMIT"
+ALREADY_SUBMITTED_STATES = {
+    "WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_BINARY_APPROVAL", "APPROVED",
+}
+
+
+def cmd_review_submit(client, args, out):
+    """Submit each ready subscription for review. Never run by `apply`.
+
+    The resource is `subscriptionSubmissions`; there is no
+    `subscriptionAppStoreReviewSubmissions` in Apple's spec. A whole group can
+    also be submitted at once via POST /v1/subscriptionGroupSubmissions.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionSubmissions
+    """
+    plan = Plan(dry_run=args.dry_run, out=out)
+    app = require_app(client)
+    group = find_group(client, app["id"])
+    if group is None:
+        raise AscError(
+            "No %r subscription group - run `subscriptions apply` first."
+            % SUBSCRIPTION_GROUP_REFERENCE_NAME
+        )
+
+    subscriptions = client.get_all("/v1/subscriptionGroups/%s/subscriptions" % group["id"])
+    by_product = {attributes_of(s).get("productId"): s for s in subscriptions}
+
+    out.write("Subscriptions in %r\n\n" % SUBSCRIPTION_GROUP_REFERENCE_NAME)
+    blocked = []
+    for spec in SUBSCRIPTIONS:
+        subscription = by_product.get(spec["productId"])
+        if subscription is None:
+            plan.warn("%s does not exist" % spec["productId"])
+            blocked.append(spec["productId"])
+            continue
+        state = attributes_of(subscription).get("state")
+
+        if state in ALREADY_SUBMITTED_STATES:
+            plan.note("%s is already %s" % (spec["productId"], state))
+            continue
+        if state != SUBMITTABLE_STATE:
+            plan.warn(
+                "%s is %s, not %s - it cannot be submitted yet.%s"
+                % (spec["productId"], state, SUBMITTABLE_STATE,
+                   "\n      MISSING_METADATA usually means no localization, no price, no\n"
+                   "      availability, or no App Review screenshot. Run\n"
+                   "      `asc.py subscriptions apply` then `asc.py review apply`."
+                   if state == "MISSING_METADATA" else "")
+            )
+            blocked.append(spec["productId"])
+            continue
+
+        body = {
+            "data": {
+                "type": "subscriptionSubmissions",
+                "relationships": {
+                    "subscription": relationship("subscriptions", subscription["id"])
+                },
+            }
+        }
+
+        def submit(body=body, spec=spec):
+            try:
+                return client.post("/v1/subscriptionSubmissions", body)
+            except ApiError as exc:
+                plan.warn("could not submit %s (%s)"
+                          % (spec["productId"], ", ".join(exc.codes) or exc.status))
+                blocked.append(spec["productId"])
+                return None
+
+        plan.act("submit %s for review" % spec["productId"], submit)
+
+    out.write("\n")
+    if blocked:
+        out.write("Not submitted: %s\n" % ", ".join(sorted(set(blocked))))
+        out.write("Run `python3 tools/asc/asc.py status` to see what each one is missing.\n")
+        return 1
+    summarise(plan, out, "submission")
     return 0
 
 
@@ -2067,6 +2362,27 @@ def cmd_status(client, args, out):
               % ("set" if production else "NOT SET", "set" if sandbox else "NOT SET"))
     if production != NOTIFICATION_URL or sandbox != NOTIFICATION_URL:
         missing.append("App Store Server Notification V2 URLs")
+
+    app_availability = client.get_optional("/v1/apps/%s/appAvailabilityV2" % app["id"])
+    app_territories = []
+    if app_availability and (app_availability.get("data") or {}).get("id"):
+        rows = client.get_all(
+            "/v2/appAvailabilities/%s/territoryAvailabilities" % app_availability["data"]["id"],
+            params={"include": "territory", "limit": 200},
+        )
+        app_territories = sorted(
+            t for t in (
+                (((r.get("relationships") or {}).get("territory") or {}).get("data") or {}).get("id")
+                for r in rows if attributes_of(r).get("available")
+            ) if t
+        )
+    out.write("  app availability: %s\n"
+              % (",".join(app_territories) if 0 < len(app_territories) <= 3
+                 else ("%d territories" % len(app_territories) if app_territories else "NOT SET")))
+    if app_territories and app_territories != sorted(LAUNCH_TERRITORIES):
+        missing.append("app availability is %d territories, launch is %s only"
+                       % (len(app_territories), ",".join(LAUNCH_TERRITORIES)))
+    report["appTerritories"] = app_territories
 
     # --- version -----------------------------------------------------------
     out.write("\nVERSION\n")
@@ -2167,7 +2483,8 @@ def cmd_status(client, args, out):
             attributes_of(s).get("productId"): s
             for s in client.get_all("/v1/subscriptionGroups/%s/subscriptions" % group["id"])
         }
-        out.write("  %-34s %-10s %-22s %s\n" % ("product", "state", "price/offer/avail", "loc"))
+        out.write("  %-34s %-17s %-8s %-18s %-6s %-5s %s\n"
+                  % ("product", "state", "avail", "prices", "trial", "loc", "shot"))
         for spec in SUBSCRIPTIONS:
             subscription = by_product.get(spec["productId"])
             if subscription is None:
@@ -2176,25 +2493,65 @@ def cmd_status(client, args, out):
                 continue
             sub_id = subscription["id"]
             state = attributes_of(subscription).get("state")
-            prices = client.get_all("/v1/subscriptions/%s/prices" % sub_id)
+            prices = client.get_all(
+                "/v1/subscriptions/%s/prices" % sub_id,
+                params={"include": "territory", "limit": 200},
+            )
             offers = client.get_all("/v1/subscriptions/%s/introductoryOffers" % sub_id)
-            availability = client.get_optional("/v1/subscriptions/%s/subscriptionAvailability" % sub_id)
             locs = client.get_all("/v1/subscriptions/%s/subscriptionLocalizations" % sub_id)
             shot = client.get_optional("/v1/subscriptions/%s/appStoreReviewScreenshot" % sub_id)
-            flags = "%s/%s/%s" % (
-                "price" if prices else "NO PRICE",
-                "trial" if offers else "NO TRIAL",
-                "avail" if availability else "NO AVAIL",
-            )
-            out.write("  %-34s %-10s %-22s %s %s\n"
-                      % (spec["productId"], state or "?", flags,
-                         "%d loc" % len(locs), "shot" if shot else "NO SHOT"))
+
+            # Availability returns 404 until it has been set.
+            availability = client.get_optional(
+                "/v1/subscriptions/%s/subscriptionAvailability" % sub_id)
+            territories_listed = []
+            if availability and (availability.get("data") or {}).get("id"):
+                territories_listed = [t["id"] for t in client.get_all(
+                    "/v1/subscriptionAvailabilities/%s/availableTerritories"
+                    % availability["data"]["id"])]
+
+            price_territories = sorted(priced_territories(prices))
+            if territories_listed:
+                avail_text = (",".join(sorted(territories_listed))
+                              if len(territories_listed) <= 2
+                              else "%d terr" % len(territories_listed))
+            else:
+                avail_text = "NONE"
+            if price_territories:
+                price_text = ("%d (%s)" % (len(prices), ",".join(price_territories))
+                              if len(price_territories) <= 2
+                              else "%d prices" % len(prices))
+            else:
+                price_text = "%d (?)" % len(prices) if prices else "NONE"
+
+            out.write("  %-34s %-17s %-8s %-18s %-6s %-5s %s\n"
+                      % (spec["productId"], state or "?", avail_text, price_text,
+                         "yes" if offers else "NO", len(locs), "yes" if shot else "NO"))
+
             for label, ok in (("price", prices), ("free trial", offers),
-                              ("availability", availability), ("localization", locs),
+                              ("availability", territories_listed), ("localization", locs),
                               ("review screenshot", shot)):
                 if not ok:
                     missing.append("%s %s" % (spec["productId"], label))
-            products.append({"productId": spec["productId"], "state": state})
+            if territories_listed and sorted(territories_listed) != sorted(LAUNCH_TERRITORIES):
+                missing.append(
+                    "%s availability is %d territories, launch is %s only"
+                    % (spec["productId"], len(territories_listed), ",".join(LAUNCH_TERRITORIES)))
+            unpriced = [t for t in territories_listed if t not in price_territories]
+            if unpriced:
+                missing.append("%s has no price in %d territor%s it sells in"
+                               % (spec["productId"], len(unpriced),
+                                  "y" if len(unpriced) == 1 else "ies"))
+            if state == "MISSING_METADATA":
+                missing.append("%s is MISSING_METADATA (not yet submittable)" % spec["productId"])
+            products.append({
+                "productId": spec["productId"], "state": state,
+                "territories": sorted(territories_listed),
+                "pricedTerritories": price_territories,
+                "introductoryOffers": len(offers),
+                "localizations": len(locs),
+                "reviewScreenshot": bool(shot),
+            })
     report["subscriptions"] = products
 
     # --- review details ----------------------------------------------------
@@ -2307,9 +2664,15 @@ def build_parser():
         ("screenshots", "upload docs/appstore/screenshots/6.9/*.png"),
         ("review", "set App Review details and the subscription review screenshot"),
     ):
+        # `review` also takes `submit`, which sends the subscriptions to App
+        # Review. It is never part of `apply` - submitting is the owner's call.
+        actions = ["plan", "apply"] + (["submit"] if name == "review" else [])
         command = sub.add_parser(name, help=help_text)
-        command.add_argument("action", choices=["plan", "apply"],
-                             help="plan = show what would change; apply = do it")
+        command.add_argument(
+            "action", choices=actions,
+            help="plan = show what would change; apply = do it"
+                 + ("; submit = send the subscriptions to App Review" if name == "review" else ""),
+        )
         command.add_argument("--dry-run", action="store_true",
                              help="same as the plan action")
 

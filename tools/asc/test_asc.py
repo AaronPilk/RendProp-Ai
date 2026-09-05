@@ -527,6 +527,8 @@ class FakeAsc(object):
         "subscriptionPrices": "subscriptionPrices",
         "subscriptionAvailabilities": "subscriptionAvailabilities",
         "subscriptionIntroductoryOffers": "subscriptionIntroductoryOffers",
+        "subscriptionSubmissions": "subscriptionSubmissions",
+        "appAvailabilities": "appAvailabilities",
     }
 
     def __init__(self, price_ladder=None, app_attributes=None):
@@ -562,6 +564,11 @@ class FakeAsc(object):
         # verify the territory picks a foreign point and gets caught, rather than
         # passing by luck of ordering.
         self.price_territories = ["MEX", "GBR", "USA"]
+        self.point_amounts = {}
+        self.submitted = []
+        # Whether a second POST to subscriptionAvailabilities replaces the set.
+        # Unknown against the live API; the conservative answer is the default.
+        self.availability_upsert = False
 
     # -- storage ---------------------------------------------------------
     def _insert(self, kind, attributes, parents):
@@ -658,7 +665,36 @@ class FakeAsc(object):
                 for resource in self.store.get("subscriptionAvailabilities", {}).values():
                     if resource["_parents"].get("subscription") == parent_id:
                         return 200, {"data": self._public(resource)}
-                return 200, {"data": None}
+                # The live API 404s here rather than returning an empty object.
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "The specified resource does not exist",
+                                         "detail": "subscriptionAvailability"}]}
+
+            if key == ("subscriptionPricePoints", "equalizations"):
+                # Equalized points in other territories for the same tier.
+                wanted = query.get("filter[territory]")
+                wanted = wanted[0].split(",") if wanted else self.price_territories
+                amount = self.point_amounts.get(parent_id, "249.00")
+                source_territory = asc.price_point_territory({"id": parent_id})
+                points = [make_price_point("equalized", t, amount)
+                          for t in wanted if t != source_territory]
+                return 200, {"data": points, "links": {}}
+
+            if key == ("appAvailabilities", "territoryAvailabilities"):
+                resource = self.store["appAvailabilities"][parent_id]
+                return 200, {"data": [
+                    {"type": "territoryAvailabilities", "id": t,
+                     "attributes": {"available": True},
+                     "relationships": {"territory": {"data": {"type": "territories", "id": t}}}}
+                    for t in resource["attributes"].get("_territories") or []
+                ], "links": {}}
+
+            if key == ("apps", "appAvailabilityV2"):
+                for resource in self.store.get("appAvailabilities", {}).values():
+                    if resource["_parents"].get("app") == parent_id:
+                        return 200, {"data": self._public(resource)}
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no availability", "detail": "app"}]}
 
             if key == ("subscriptionAvailabilities", "availableTerritories"):
                 resource = self.store["subscriptionAvailabilities"][parent_id]
@@ -685,7 +721,24 @@ class FakeAsc(object):
             relationships = data.get("relationships") or {}
             point_id = ((relationships.get("subscriptionPricePoint") or {}).get("data") or {}).get("id")
             stated = ((relationships.get("territory") or {}).get("data") or {}).get("id")
+            subscription_id = ((relationships.get("subscription") or {}).get("data") or {}).get("id")
             point_territory = asc.price_point_territory({"id": point_id or ""})
+
+            # ORDER: a product with no availability cannot be priced. This is the
+            # live failure the first run hit - the identical request succeeded
+            # once subscriptionAvailabilities existed.
+            has_availability = any(
+                r["_parents"].get("subscription") == subscription_id
+                for r in self.store.get("subscriptionAvailabilities", {}).values()
+            )
+            if not has_availability:
+                return 409, {"errors": [{
+                    "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                    "title": "There is a problem with the request entity",
+                    "detail": "An error occurred while processing the pricing information.",
+                    "status": "409",
+                    "source": {"pointer": "/data/relationships/subscriptionPricePoint/id"}}]}
+
             if point_territory and stated and point_territory != stated:
                 return 409, {"errors": [{
                     "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
@@ -694,6 +747,30 @@ class FakeAsc(object):
                     "status": "409",
                     "source": {"pointer": "/data/relationships/subscriptionPricePoint/id"}}]}
             self.last_price_body = payload
+
+        # There is no PATCH or DELETE for subscriptionAvailabilities, so whether a
+        # second POST replaces the set is unknown. Default to the conservative
+        # answer (409); flip availability_upsert to test the other branch.
+        if kind == "subscriptionAvailabilities" and not self.availability_upsert:
+            subscription_id = (((data.get("relationships") or {}).get("subscription")
+                                or {}).get("data") or {}).get("id")
+            for resource in self.store.get("subscriptionAvailabilities", {}).values():
+                if resource["_parents"].get("subscription") == subscription_id:
+                    return 409, {"errors": [{
+                        "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                        "title": "There is a problem with the request entity",
+                        "detail": "The subscription already has an availability.",
+                        "status": "409"}]}
+
+        if kind == "subscriptionSubmissions":
+            subscription_id = (((data.get("relationships") or {}).get("subscription")
+                                or {}).get("data") or {}).get("id")
+            resource = self.store.get("subscriptions", {}).get(subscription_id)
+            if resource is None:
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no such subscription", "detail": ""}]}
+            resource["attributes"]["state"] = "WAITING_FOR_REVIEW"
+            self.submitted.append(subscription_id)
 
         # Reject a duplicate product id the way App Store Connect does.
         if kind == "subscriptions":
@@ -788,13 +865,106 @@ class SubscriptionPlanTests(unittest.TestCase):
             # No territory relationship means every territory.
             self.assertNotIn("territory", offer["_parents"])
 
-    def test_availability_covers_every_territory(self):
+    def test_availability_is_usa_only_for_a_us_launch(self):
         fake = FakeAsc()
         self.run_subscriptions(fake)
+        self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
         for availability in fake.store["subscriptionAvailabilities"].values():
-            self.assertIs(availability["attributes"]["availableInNewTerritories"], True)
-            self.assertEqual(sorted(availability["attributes"]["_territories"]),
-                             sorted(fake.territories))
+            self.assertIs(availability["attributes"]["availableInNewTerritories"], False)
+            self.assertEqual(availability["attributes"]["_territories"], ["USA"])
+
+    def test_availability_is_created_before_the_price(self):
+        """The live 409 was ordering: no availability means no price."""
+        fake = FakeAsc()
+        code, _output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0)
+        writes = [path for method, path in fake.writes]
+        first_availability = writes.index("/v1/subscriptionAvailabilities")
+        first_price = writes.index("/v1/subscriptionPrices")
+        self.assertLess(first_availability, first_price,
+                        "availability must be POSTed before the price")
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+
+    def test_pricing_before_availability_would_be_rejected(self):
+        """Proves the fake reproduces the live ordering failure."""
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        point = make_price_point("sub-1", "USA", "249.00")
+        with self.assertRaises(asc.ApiError) as caught:
+            client.post("/v1/subscriptionPrices", {"data": {
+                "type": "subscriptionPrices",
+                "relationships": {
+                    "subscription": {"data": {"type": "subscriptions", "id": "sub-1"}},
+                    "territory": {"data": {"type": "territories", "id": "USA"}},
+                    "subscriptionPricePoint": {
+                        "data": {"type": "subscriptionPricePoints", "id": point["id"]}},
+                }}})
+        self.assertEqual(caught.exception.status, 409)
+        self.assertEqual(caught.exception.codes, ["ENTITY_ERROR.RELATIONSHIP.INVALID"])
+
+    def test_absent_availability_404_is_treated_as_not_set(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        # The fake 404s, exactly as the live API does.
+        status, _headers, _body = fake("GET", asc.API_BASE + "/v1/subscriptions/x/subscriptionAvailability", {}, None)
+        self.assertEqual(status, 404)
+        self.assertIsNone(client.get_optional("/v1/subscriptions/x/subscriptionAvailability"))
+
+    def test_too_wide_availability_warns_loudly_and_does_not_fail(self):
+        """The probe left team.monthly available in all 175 territories."""
+        fake = FakeAsc()
+        group_id = fake._insert(
+            "subscriptionGroups", {"referenceName": "rendprop_plans"}, {"app": fake.app_id})
+        spec = asc.SUBSCRIPTIONS[0]
+        subscription_id = fake._insert(
+            "subscriptions",
+            {"productId": spec["productId"], "name": spec["name"], "familySharable": False,
+             "subscriptionPeriod": spec["period"], "reviewNote": asc.REVIEW_NOTE,
+             "groupLevel": spec["groupLevel"]},
+            {"group": group_id})
+        fake._insert(
+            "subscriptionAvailabilities",
+            {"availableInNewTerritories": True,
+             "_territories": ["USA", "MEX", "GBR"]},
+            {"subscription": subscription_id})
+
+        code, output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0, "a wrong territory list must not abort the run")
+        self.assertIn("FIX THIS BY HAND", output)
+        self.assertIn("United States", output)
+        # It priced everything the product is actually available in, so the
+        # product is never left half-priced.
+        priced = {p["_parents"]["territory"] for p in fake.store["subscriptionPrices"].values()
+                  if p["_parents"].get("subscription") == subscription_id}
+        self.assertEqual(priced, {"USA", "MEX", "GBR"})
+
+    def test_availability_upsert_is_used_when_the_api_allows_it(self):
+        fake = FakeAsc()
+        fake.availability_upsert = True
+        group_id = fake._insert(
+            "subscriptionGroups", {"referenceName": "rendprop_plans"}, {"app": fake.app_id})
+        spec = asc.SUBSCRIPTIONS[0]
+        subscription_id = fake._insert(
+            "subscriptions",
+            {"productId": spec["productId"], "name": spec["name"], "familySharable": False,
+             "subscriptionPeriod": spec["period"], "reviewNote": asc.REVIEW_NOTE,
+             "groupLevel": spec["groupLevel"]},
+            {"group": group_id})
+        fake._insert(
+            "subscriptionAvailabilities",
+            {"availableInNewTerritories": True, "_territories": ["USA", "MEX", "GBR"]},
+            {"subscription": subscription_id})
+
+        code, output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0)
+        self.assertNotIn("FIX THIS BY HAND", output)
+        self.assertIn("narrow", output)
+        # Only the USA price, because the narrowed availability is USA only.
+        priced = {p["_parents"]["territory"] for p in fake.store["subscriptionPrices"].values()
+                  if p["_parents"].get("subscription") == subscription_id}
+        self.assertEqual(priced, {"USA"})
 
     def test_notification_urls_are_set_on_the_app(self):
         fake = FakeAsc()
@@ -1037,6 +1207,170 @@ class SubscriptionPlanTests(unittest.TestCase):
         with self.assertRaises(asc.AscError) as caught:
             asc.cmd_subscriptions(client, Args(), out)
         self.assertIn("cannot create app records", str(caught.exception))
+
+
+class ReviewSubmitTests(unittest.TestCase):
+    """`review submit` is explicit and never part of `apply`."""
+
+    def build(self, states):
+        fake = FakeAsc()
+        group_id = fake._insert(
+            "subscriptionGroups", {"referenceName": "rendprop_plans"}, {"app": fake.app_id})
+        for spec in asc.SUBSCRIPTIONS:
+            fake._insert(
+                "subscriptions",
+                {"productId": spec["productId"], "name": spec["name"],
+                 "state": states.get(spec["productId"], "READY_TO_SUBMIT")},
+                {"group": group_id})
+        return fake
+
+    def run_submit(self, fake, dry_run=False):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_review_submit(client, Args(dry_run=dry_run), out)
+        return code, out.getvalue()
+
+    def test_submit_uses_subscriptionSubmissions(self):
+        fake = self.build({})
+        code, output = self.run_submit(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.submitted), 6)
+        self.assertTrue(any(path == "/v1/subscriptionSubmissions"
+                            for _method, path in fake.writes))
+        for resource in fake.store["subscriptions"].values():
+            self.assertEqual(resource["attributes"]["state"], "WAITING_FOR_REVIEW")
+        self.assertIn("submit com.rendprop.app.pro.monthly for review", output)
+
+    def test_missing_metadata_is_skipped_with_an_explanation(self):
+        fake = self.build({"com.rendprop.app.pro.monthly": "MISSING_METADATA"})
+        code, output = self.run_submit(fake)
+        self.assertEqual(code, 1, "a blocked product must exit non-zero")
+        self.assertIn("MISSING_METADATA", output)
+        self.assertIn("review apply", output)
+        self.assertEqual(len(fake.submitted), 5)
+        self.assertIn("Not submitted: com.rendprop.app.pro.monthly", output)
+
+    def test_already_submitted_products_are_left_alone(self):
+        fake = self.build({p["productId"]: "WAITING_FOR_REVIEW" for p in asc.SUBSCRIPTIONS})
+        code, output = self.run_submit(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.submitted, [])
+        self.assertIn("already WAITING_FOR_REVIEW", output)
+
+    def test_dry_run_submits_nothing(self):
+        fake = self.build({})
+        code, output = self.run_submit(fake, dry_run=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.submitted, [])
+        self.assertIn("WOULD submit", output)
+
+    def test_only_the_submit_action_reaches_the_submit_path(self):
+        """`review apply` must never submit anything to App Review."""
+        calls = []
+        original = asc.cmd_review_submit
+        asc.cmd_review_submit = lambda client, args, out: calls.append(args.action) or 0
+        try:
+            out = io.StringIO()
+            # `submit` dispatches...
+            asc.cmd_review(None, Args(action="submit"), out)
+            self.assertEqual(calls, ["submit"])
+            # ...and `apply` gets far enough to prove it did not.
+            try:
+                asc.cmd_review(asc.Client(credentials=None,
+                                          transport=FakeAsc(), verbose=False, out=out),
+                               Args(action="apply"), out)
+            except Exception:
+                pass  # apply needs more of the API than the fake models
+            self.assertEqual(calls, ["submit"], "apply must not reach the submit path")
+        finally:
+            asc.cmd_review_submit = original
+
+    def test_the_bridge_never_calls_submit(self):
+        bridge = (Path(asc.__file__).resolve().parent / "bridge-610-asc-apply.sh"
+                  ).read_text(encoding="utf-8")
+        self.assertIn("review", bridge)
+        self.assertNotIn("review submit", bridge)
+        self.assertNotIn("subscriptionSubmissions", bridge)
+
+    def test_the_cli_exposes_submit_only_on_review(self):
+        parser = asc.build_parser()
+        args = parser.parse_args(["review", "submit"])
+        self.assertEqual(args.action, "submit")
+        for command in ("subscriptions", "metadata", "screenshots"):
+            buffer = io.StringIO()
+            with self.assertRaises(SystemExit):
+                sys.stderr = buffer
+                try:
+                    parser.parse_args([command, "submit"])
+                finally:
+                    sys.stderr = sys.__stderr__
+
+
+class AppAvailabilityTests(unittest.TestCase):
+    def test_app_is_restricted_to_the_usa(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        plan = asc.Plan(dry_run=False, out=out)
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, fake.app_id, plan)
+
+        self.assertEqual(len(fake.store["appAvailabilities"]), 1)
+        availability = list(fake.store["appAvailabilities"].values())[0]
+        self.assertIs(availability["attributes"]["availableInNewTerritories"], False)
+        self.assertEqual(availability["attributes"]["_territories"], ["USA"])
+
+    def test_it_is_idempotent(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
+        fake.writes = []
+        second = io.StringIO()
+        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=second))
+        self.assertEqual(fake.writes, [])
+        self.assertIn("available in USA only", second.getvalue())
+
+    def test_the_inline_create_shape_matches_the_spec(self):
+        """territoryAvailabilities are JSON:API inline creates in `included`."""
+        captured = {}
+
+        def transport(method, url, headers, body):
+            if method == "POST":
+                captured["body"] = json.loads(body.decode())
+                return 201, {}, json.dumps({"data": {"type": "appAvailabilities", "id": "a1"}}).encode()
+            return 404, {}, b'{"errors":[{"code":"NOT_FOUND","status":"404","title":"t","detail":"d"}]}'
+
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, "app-1", asc.Plan(out=out))
+
+        body = captured["body"]
+        self.assertEqual(body["data"]["type"], "appAvailabilities")
+        self.assertIs(body["data"]["attributes"]["availableInNewTerritories"], False)
+        self.assertEqual(body["data"]["relationships"]["territoryAvailabilities"]["data"],
+                         [{"type": "territoryAvailabilities", "id": "USA"}])
+        self.assertEqual(len(body["included"]), 1)
+        included = body["included"][0]
+        self.assertEqual(included["type"], "territoryAvailabilities")
+        self.assertEqual(included["id"], "USA")
+        self.assertIs(included["attributes"]["available"], True)
+        self.assertEqual(included["relationships"]["territory"]["data"],
+                         {"type": "territories", "id": "USA"})
+
+    def test_a_failure_warns_with_the_ui_path_instead_of_raising(self):
+        def transport(method, url, headers, body):
+            if method == "POST":
+                return 409, {}, json.dumps({"errors": [{
+                    "code": "ENTITY_ERROR", "status": "409",
+                    "title": "nope", "detail": "nope"}]}).encode()
+            return 404, {}, b'{"errors":[{"code":"NOT_FOUND","status":"404","title":"t","detail":"d"}]}'
+
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, "app-1", asc.Plan(out=out))
+        printed = out.getvalue()
+        self.assertIn("Pricing and", printed)
+        self.assertIn("United States only", printed)
 
 
 class AppCommandTests(unittest.TestCase):

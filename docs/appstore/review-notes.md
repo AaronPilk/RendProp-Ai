@@ -18,6 +18,8 @@ no invite list and no allow-list.
 
 ## Notes field — copy-paste
 
+> The text Apple actually receives lives in `metadata/en-US/review_notes.txt` (≤ 4000 characters; `asc.py review apply` uploads that file, never this one). Keep the two in step.
+
 > Rendprop turns a walkthrough you film on an iPhone into a smooth "drone-style" property
 > tour, hosted as a web link the user shares with clients.
 >

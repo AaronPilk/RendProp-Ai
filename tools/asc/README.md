@@ -67,8 +67,8 @@ That runs, in order, stopping at the first failure:
 | # | Command | What it does |
 |---|---|---|
 | 1 | `asc.py app` | Finds the app record, or prints the New App form values. |
-| 2 | `asc.py subscriptions apply` | Subscription group, six products, en-US names and descriptions, USD prices, all-territory availability, 1-week free trials, and the App Store Server Notification URLs. |
-| 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, then the version's description, keywords, promotional text, release notes, support and marketing URLs. |
+| 2 | `asc.py subscriptions apply` | Subscription group, six products, en-US names and descriptions, US-only availability, USD prices, 1-week free trials, and the App Store Server Notification URLs. |
+| 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, US-only app availability, then the version's description, keywords, promotional text, release notes, support and marketing URLs. |
 | 4 | `asc.py screenshots apply` | Uploads `docs/appstore/screenshots/6.9/*.png` in filename order. |
 | 5 | `asc.py review apply` | App Review contact + notes, and the paywall screenshot on every subscription. |
 | 6 | `asc.py status` | One page saying where everything stands and what is still missing. |
@@ -92,9 +92,16 @@ python3 tools/asc/asc.py subscriptions plan       # or: apply
 python3 tools/asc/asc.py metadata plan            # or: apply
 python3 tools/asc/asc.py screenshots apply
 python3 tools/asc/asc.py review apply
+python3 tools/asc/asc.py review submit            # send subscriptions to review
 python3 tools/asc/asc.py status
 python3 tools/asc/asc.py status --json            # machine-readable
 ```
+
+`review submit` is deliberately separate: it is never run by `review apply` or by
+the bridge, because deciding to submit is the owner's call. It submits only
+products in state `READY_TO_SUBMIT`, skips anything still `MISSING_METADATA` with
+an explanation, leaves already-submitted products alone, and exits non-zero if
+anything was blocked.
 
 `plan` is the same as `apply --dry-run`. Add `--quiet` to stop the HTTP request
 log. Add `--key-dir <path>` to use a key somewhere other than the default. Add
@@ -174,8 +181,15 @@ Verified against Apple's own OpenAPI specification for the App Store Connect API
 
 ### It can
 
-* Create the subscription group, the six products, their localizations, prices,
-  availability and introductory offers.
+* Create the subscription group, the six products, their localizations,
+  availability, prices and introductory offers. **Availability must be created
+  before pricing** — App Store Connect rejects a price for a product that has no
+  availability yet, with a `RELATIONSHIP.INVALID` error that blames the price
+  point rather than the missing availability.
+* Restrict both the app (`POST /v2/appAvailabilities`) and the subscriptions to
+  the United States for this launch.
+* Submit subscriptions for review via `POST /v1/subscriptionSubmissions` — but
+  only through the explicit `review submit` command.
 * Set the **App Store Server Notifications V2 URLs** — both production and
   sandbox. This one is worth calling out because it is widely believed to be
   UI-only: `PATCH /v1/apps/{id}` accepts `subscriptionStatusUrl`,
@@ -193,7 +207,8 @@ Verified against Apple's own OpenAPI specification for the App Store Connect API
 | **Privacy nutrition labels** | The spec contains no data-usage or privacy-label endpoints at all. | App Privacy → Get Started (see `docs/appstore/privacy-labels.md`) |
 | **Create sandbox testers** | `/v2/sandboxTesters` is GET-only. You can list, edit and clear purchase history, but not create. | Users and Access → Sandbox → Testers |
 | **Set the app's price to Free** | Technically possible via `POST /v1/appPriceSchedules`, but it needs a base territory and per-territory `appPrices`, and it is one click in the UI. Not automated here on purpose. | Pricing and Availability → Price Schedule |
-| **Press Submit for Review** | Deliberately not automated. | The version page → Add for Review |
+| **Narrow an existing subscription availability** | `subscriptionAvailabilities` has POST and GET but no PATCH or DELETE. The tool re-POSTs in case that upserts; if Apple refuses it prints `FIX THIS BY HAND` and carries on. | Monetization → Subscriptions → the product → Availability |
+| **Submit the app version for review** | Deliberately not automated (subscriptions can be submitted with `review submit`). | The version page → Add for Review |
 
 The full list, with the remaining manual steps in order, is in
 [`docs/appstore/ASC-API-PLAN.md`](../../docs/appstore/ASC-API-PLAN.md).

@@ -62,10 +62,42 @@ copied into the repo, never printed, and never logged — the request log is
 | Group name | `POST /v1/subscriptionGroupLocalizations` | `name: "Rendprop Plans"`, `locale: "en-US"` |
 | Products (×6) | `POST /v1/subscriptions` | `name`, `productId`, `familySharable: false`, `subscriptionPeriod`, `reviewNote`, `groupLevel` |
 | Names/descriptions | `POST /v1/subscriptionLocalizations` | `name` (≤30), `description` (≤45), `locale` |
+| **Availability** | `POST /v1/subscriptionAvailabilities` | `availableInNewTerritories: false`, `availableTerritories: [USA]` |
 | Price lookup | `GET /v1/subscriptions/{id}/pricePoints?filter[territory]=USA&include=territory&limit=8000` | reads `customerPrice`, verifies the territory |
 | Price | `POST /v1/subscriptionPrices` | **no attributes**; relationships `subscription` + `territory` (USA) + `subscriptionPricePoint` |
-| Availability | `POST /v1/subscriptionAvailabilities` | `availableInNewTerritories: true`, every id from `GET /v1/territories` |
-| Free trial | `POST /v1/subscriptionIntroductoryOffers` | `offerMode: FREE_TRIAL`, `duration: ONE_WEEK`, `numberOfPeriods: 1`, no `territory` relationship (= all territories) |
+| Free trial | `POST /v1/subscriptionIntroductoryOffers` | `offerMode: FREE_TRIAL`, `duration: ONE_WEEK`, `numberOfPeriods: 1`, no `territory` relationship (= every territory it sells in) |
+
+> **Order matters: availability must exist before pricing.** On the first live
+> run the price POST failed with `ENTITY_ERROR.RELATIONSHIP.INVALID` pointed at
+> the price point id. A follow-up probe proved the cause was ordering, not the
+> request shape: the *identical* request succeeded once
+> `POST /v1/subscriptionAvailabilities` had run. `GET
+> /v1/subscriptions/{id}/subscriptionAvailability` returns **404** — not an empty
+> object — before availability exists, which is what "not set" looks like.
+
+### US-only launch
+
+Both the app and the six subscriptions ship to the **United States only**, with
+`availableInNewTerritories: false` so Apple does not add new storefronts
+automatically. Widening later is a deliberate decision.
+
+Two consequences:
+
+* **One price is the whole schedule.** With USA-only availability there is
+  nothing to equalize. If a product ever *is* available more widely, `asc.py`
+  fills the gaps from `GET /v1/subscriptionPricePoints/{usaPointId}/equalizations`
+  and posts one price per territory, so a product is never left half-priced.
+* **An availability that is already too wide cannot be narrowed by the API.**
+  `subscriptionAvailabilities` has POST and GET but **no PATCH and no DELETE**.
+  `asc.py` re-POSTs in case that behaves as an upsert; if Apple refuses, it warns
+  loudly with the exact UI path and carries on rather than aborting. Whether the
+  re-POST works is **UNVERIFIED** — no live attempt has been made. The live probe
+  created `com.rendprop.app.team.monthly` with all 175 territories, so **that one
+  product will hit this path** on the next run: watch for `FIX THIS BY HAND`.
+
+The app's own territories are set with `POST /v2/appAvailabilities`
+(`availableInNewTerritories: false`, plus `territoryAvailabilities` as JSON:API
+inline creates in the `included` array). This runs in `metadata apply`.
 
 The six products, matching `docs/LAUNCH-CONTRACT.md`:
 
@@ -85,22 +117,22 @@ between two products is an upgrade, a downgrade or a crossgrade.
 `Product.displayPrice` from StoreKit. This tool only tells Apple which price
 point to charge.
 
-> **Creating the first price — learned the hard way.** The first live run failed
-> here with `ENTITY_ERROR.RELATIONSHIP.INVALID` ("An error occurred while
-> processing the pricing information") pointed at
-> `/data/relationships/subscriptionPricePoint/id`. Two things were wrong, both
-> now fixed. First, the request carried `attributes: {preserveCurrentPrice:
-> false}`; a product's *first* price has no current price to preserve and no
-> subscribers to preserve it for, and Apple's own UI sends neither that nor a
-> `startDate`, so the attributes block is now omitted entirely. Second, the
-> `territory` relationship was left out — the endpoint is titled "Schedule a
-> subscription price change **for a specific territory**", so USA is now stated
-> explicitly rather than inferred from the price point.
+> **Creating the first price — learned the hard way.** The root cause was
+> ordering (see above). Two other things were tightened at the same time. The
+> request no longer carries `attributes: {preserveCurrentPrice: false}` — a
+> product's *first* price has no current price to preserve and no subscribers to
+> preserve it for, and Apple's own UI sends neither that nor a `startDate`. And
+> the `territory` relationship is now stated explicitly, since the endpoint is
+> titled "Schedule a subscription price change **for a specific territory**".
 >
 > Price point ids are base64url of `{"s": <subscription>, "t": <territory>,
-> "p": <minor units>}`, so `asc.py` decodes the chosen id and refuses to send a
-> point that is not a USA one. That guard matters because a wrong-territory point
-> is numerically invisible: 249.00 MXN compares equal to 249.00 USD.
+> "p": <opaque tier id>}` — confirmed live: the USD 249.00 USA point on
+> subscription 6808983164 is `{"s":"6808983164","t":"USA","p":"10605"}`, so `p`
+> is Apple's internal tier, **not** the amount in minor units. `asc.py` reads
+> only `t`, decoding the chosen id to refuse any point that is not a USA one.
+> That guard matters because a wrong-territory point is numerically invisible:
+> 249.00 MXN compares equal to 249.00 USD. (`customerPrice` also comes back as
+> `"249.0"`, one decimal place, which `Decimal` comparison handles.)
 >
 > **Price point caveat.** `asc.py` asks Apple which USD price points that specific
 > subscription offers, and matches the target exactly. If Apple does not offer the
@@ -252,13 +284,30 @@ of `appPrices` resources built from `appPricePoints`. It is one click in the UI
 and getting it wrong affects what customers are charged, so `asc.py` leaves it
 alone. Do it by hand.
 
-### Submitting for review — possible but deliberately not automated
+### Submitting for review — possible, and exposed as an explicit command
 
-`POST /v1/reviewSubmissions` and `POST /v1/reviewSubmissionItems` exist (the item
-can reference an `appStoreVersion`, a `subscriptionVersion` or a
-`subscriptionGroupVersion`), as does `POST /v1/subscriptionGroupSubmissions`.
-Pressing submit is a judgement call, so it stays a human action. On a first
-release the subscriptions are reviewed alongside the app version anyway.
+There is **no `subscriptionAppStoreReviewSubmissions` resource** — that name does
+not appear anywhere in the spec. The real resources are:
+
+| Resource | What it submits |
+|---|---|
+| `POST /v1/subscriptionSubmissions` | one subscription (`subscription` relationship) |
+| `POST /v1/subscriptionGroupSubmissions` | a whole subscription group |
+| `POST /v1/reviewSubmissions` + `POST /v1/reviewSubmissionItems` | the app version, and optionally `subscriptionVersion` / `subscriptionGroupVersion` items |
+
+`asc.py review submit` uses `subscriptionSubmissions`, one product at a time, so
+it can report per-product status. It is **never** run by `review apply` or by the
+bridge — submitting is the owner's call.
+
+A subscription can only be submitted from state `READY_TO_SUBMIT`. The states are
+`MISSING_METADATA`, `READY_TO_SUBMIT`, `WAITING_FOR_REVIEW`, `IN_REVIEW`,
+`DEVELOPER_ACTION_NEEDED`, `PENDING_BINARY_APPROVAL`, `APPROVED`,
+`DEVELOPER_REMOVED_FROM_SALE`, `REMOVED_FROM_SALE`, `REJECTED`.
+`MISSING_METADATA` means something is still absent — usually the localization,
+price, availability or App Review screenshot. `review submit` skips anything not
+`READY_TO_SUBMIT`, says why, leaves already-submitted products alone, and exits
+non-zero if anything was blocked. Submitting the app version itself is still a
+human action in the UI.
 
 ---
 
@@ -318,7 +367,13 @@ form. Then **Publish**. The version cannot be submitted until this is complete.
 **Your app → Pricing and Availability**
 
 * **Price Schedule** → **Free** (the app is free; revenue is the subscriptions).
-* **Availability** → all countries and regions, matching the subscriptions.
+  This one is still manual — see above.
+* **Availability** → `metadata apply` sets this to **United States only**. Just
+  confirm it looks right.
+* If the run printed `FIX THIS BY HAND` for any subscription, go to
+  **Monetization → Subscriptions → that product → Availability** and deselect
+  everything except the United States. `com.rendprop.app.team.monthly` is the
+  likely one, because a diagnostic probe gave it all 175 territories.
 
 ### 6. Upload a build — **blocker**
 
@@ -351,11 +406,18 @@ confirmation.
 
 ### 9. Submit
 
-**Your app → the 1.0 version → Add for Review → Submit to App Review**
+Run `python3 tools/asc/asc.py status` first — it lists anything still missing,
+and shows each product's state, territories, prices, trial and review screenshot.
 
-On a first release the six subscriptions are reviewed together with the app, so
-confirm they appear in the submission. Run `python3 tools/asc/asc.py status` one
-last time first — it lists anything still missing.
+Optionally send the subscriptions on their own:
+
+```bash
+python3 tools/asc/asc.py review submit          # or: review submit --dry-run
+```
+
+Then the app version itself: **your app → the 1.0 version → Add for Review →
+Submit to App Review**. On a first release the six subscriptions are reviewed
+together with the app, so confirm they appear in the submission.
 
 ---
 

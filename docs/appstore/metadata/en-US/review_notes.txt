@@ -1,0 +1,17 @@
+Rendprop turns a walkthrough you film on an iPhone into a smooth "drone-style" property tour, hosted as a web link the user shares with clients.
+
+DEMO FLOW (no account needed): Home tab → "See it in action" plays a live sample tour — scroll inside the video to move through the space. To build one: Home tab → "Add a home" → type an address → "Upload a video" (any clip from the photo library) or "Record a walkthrough" → tag rooms → "Create tour". The flythrough renders on the device.
+
+SIGN IN WITH APPLE is required only to PUBLISH a tour to the web, because publishing creates the hosted page, the unbranded MLS link and the contact form. Capture, on-device rendering, the AI photo studio, reels, aerial intros and floor plans all work signed out. Any Apple ID can sign in; there is no invite list.
+
+SUBSCRIPTIONS: Rendprop sells auto-renewable subscriptions through StoreKit 2 — Starter, Pro and Team, monthly or yearly, in one subscription group (rendprop_plans), each with a 7-day free introductory offer. They unlock monthly allowances for tour renders and the AI features (plan list in the App Store description). Settings → "Plan & usage" → "Upgrade plan" opens the paywall; "Manage subscription" opens Apple's management sheet. Every price shown comes from StoreKit's Product.displayPrice; there is no other way to pay inside the app.
+
+If the paywall says "Plans aren't available right now", StoreKit returned no products — that only happens before the subscriptions are approved with this build. It is the app's correct behaviour for an empty product list. Once approved, the paywall lists all three plans with live prices and the "Start 7-day free trial" button.
+
+ACCOUNT DELETION: Settings → Account → "Delete account". It deletes the server account, published tours, uploaded media and leads, then wipes local data. It also works for guests (local wipe).
+
+AI-GENERATED CONTENT: the AI photo edits (sky, twilight, lawn, tidy the room, virtual staging) and the AI aerial intro produce altered or synthetic imagery. Every altered asset carries a disclosure in-app, the tour page shows a persistent "Virtually staged" label to viewers, and the unaltered original is published alongside the edit. A listing's Compliance section lists every AI asset and can export the audit log.
+
+USER CONTENT: users record their own spaces and the app says "Only record spaces you have the right to record and publish." There is no in-app feed and no way to browse another user's content.
+
+Contact: aaron@pilk.ai
