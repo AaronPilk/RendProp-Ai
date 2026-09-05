@@ -35,7 +35,9 @@
 		746869BBFBC1762BAFEC0795 /* AnalyticsAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EBFE3D8EECD646B7988FF79 /* AnalyticsAPI.swift */; };
 		758E75217D27104E3E91E281 /* RendpropApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 486A2245D2766F4943B5016A /* RendpropApp.swift */; };
 		79DC90F16E748C270092860C /* AdminConsoleView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CD9CD0718417F2C5891A5EF /* AdminConsoleView.swift */; };
+		7B0A83D7C5618BAFD6966BE8 /* PaywallShot.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FB36AC65842D674A68E40D7 /* PaywallShot.swift */; };
 		7C62E6C46EA9E5FC05B27D70 /* Analytics.swift in Sources */ = {isa = PBXBuildFile; fileRef = B94375D670695480CE3E4617 /* Analytics.swift */; };
+		7D6E20EDE65922F3078128D2 /* Rendprop.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 940C8220D43BFD22629B6B08 /* Rendprop.storekit */; };
 		8D827D4D42BBDCFD1534BCBC /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018491D467DE946745CF3D0F /* Theme.swift */; };
 		900239439C3FF1B9C934F76D /* UploadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC1C4552BDC87F2784B2524 /* UploadStore.swift */; };
 		950A7098FE3FAD991195CB09 /* CaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C668F17153B23B136BF59CD2 /* CaptureView.swift */; };
@@ -109,11 +111,13 @@
 		7AE5E0B43390D091776A9739 /* Products.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Products.swift; sourceTree = "<group>"; };
 		7DF74276AC7DEB9312C026E3 /* PaywallView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallView.swift; sourceTree = "<group>"; };
 		7F31D014BAD4F175BA1951C3 /* PlayerWebView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerWebView.swift; sourceTree = "<group>"; };
+		7FB36AC65842D674A68E40D7 /* PaywallShot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallShot.swift; sourceTree = "<group>"; };
 		80381560DC3B2225305BBD0E /* Typography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Typography.swift; sourceTree = "<group>"; };
 		851A5759A1E43E13E52F3078 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		8F6923003FD522B9ABD95A17 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		8FBB854578BF4F7A9D1A44AA /* PurchasesAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchasesAPI.swift; sourceTree = "<group>"; };
 		8FFE29B1467DA3FB45305D48 /* Rendprop.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Rendprop.entitlements; sourceTree = "<group>"; };
+		940C8220D43BFD22629B6B08 /* Rendprop.storekit */ = {isa = PBXFileReference; path = Rendprop.storekit; sourceTree = "<group>"; };
 		9CA2F6510EFF14F20A8690DB /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		9CD9CD0718417F2C5891A5EF /* AdminConsoleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminConsoleView.swift; sourceTree = "<group>"; };
 		9FBACFE1B0540B32F3BD4EAB /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
@@ -160,6 +164,7 @@
 		3C2858C25AE8771F7B57534E = {
 			isa = PBXGroup;
 			children = (
+				940C8220D43BFD22629B6B08 /* Rendprop.storekit */,
 				742292FC30FE504A491FDED6 /* Rendprop */,
 				40FEE209ED5B64E613B3AD0D /* RendpropUITests */,
 				7DC52B8A2F906136269A30B5 /* Products */,
@@ -169,6 +174,7 @@
 		40FEE209ED5B64E613B3AD0D /* RendpropUITests */ = {
 			isa = PBXGroup;
 			children = (
+				7FB36AC65842D674A68E40D7 /* PaywallShot.swift */,
 				CE47E2786B286E7686A64479 /* RendpropUITests.swift */,
 				1F9C834E078530F4D64C049E /* ReviewerWalk.swift */,
 				A75E823CB294986BAAAFEE29 /* StoreShots.swift */,
@@ -358,6 +364,7 @@
 			buildConfigurationList = 6DB3447EE49B38114523C5EC /* Build configuration list for PBXNativeTarget "RendpropUITests" */;
 			buildPhases = (
 				28B4C0FD380C6F0AE3E6F792 /* Sources */,
+				E6F45ADBA4A802277B61EFDC /* Resources */,
 			);
 			buildRules = (
 			);
@@ -440,6 +447,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		E6F45ADBA4A802277B61EFDC /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7D6E20EDE65922F3078128D2 /* Rendprop.storekit in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -447,6 +462,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				7B0A83D7C5618BAFD6966BE8 /* PaywallShot.swift in Sources */,
 				FECBB1D3CFC854E498F2588F /* RendpropUITests.swift in Sources */,
 				EB5397AABC3998E4AA155950 /* ReviewerWalk.swift in Sources */,
 				D747EDCEF62AC9B9B4C853D4 /* StoreShots.swift in Sources */,
@@ -530,6 +546,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PLATFORM_DIR)/Developer/Library/Frameworks",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "";
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -550,6 +570,10 @@
 				BUNDLE_LOADER = "$(TEST_HOST)";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PLATFORM_DIR)/Developer/Library/Frameworks",
+				);
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = "";
 				LD_RUNPATH_SEARCH_PATHS = (
