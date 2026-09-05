@@ -87,12 +87,14 @@ final class StoreShots: XCTestCase {
     // MARK: - The capture
 
     func testStoreShots() {
-        step01HomeShowroom()
         step02SampleTour()
         step03NewHome()
         let inStudio = step04PhotoStudio()
         step05ReelStudio(reachedPhotoStudio: inStudio)
         step06AerialIntro()
+        // Home is captured LAST on purpose: by now step 04 has created one real
+        // home, so "My Homes" shows a listing instead of the empty-state card.
+        step01HomeShowroom()
         step07PlanAndUsage()
         step08PublishedTour()
     }
@@ -109,18 +111,17 @@ final class StoreShots: XCTestCase {
     /// which is what s02 captures.
     private func step01HomeShowroom() {
         activity("s01 — Home · showroom") {
-            guard waitForHome(timeout: screenTimeout) else {
+            popToRoot()
+            guard openHomeTab(), waitForHome(timeout: screenTimeout) else {
                 note("Home never appeared within \(Int(screenTimeout))s — capturing whatever is on screen.")
                 shot("s01-home-showroom")
                 return
             }
+            // The TOP of Home is the store's first image: the hero promise, the
+            // home the walk created under "My Homes", and the first tool tiles.
+            // (s02 already shows the grid + the player further down.)
+            scrollToTop()
             settle(1.5)
-            // Scroll the feature grid into frame. "Make something" is the
-            // section title; the tiles carry `home.feature.<name>` ids.
-            if scrollTo(ids: ["home.feature.tour"], labels: ["Make something"], swipes: 4) == nil {
-                note("The showroom grid never scrolled into view — capturing the top of Home instead.")
-            }
-            settle()
             shot("s01-home-showroom")
         }
     }
@@ -235,10 +236,11 @@ final class StoreShots: XCTestCase {
                 return
             }
             reached = true
-            addPhotosFromLibrary(count: 3)
+            // The studio's own showcase — "Add a photo, then tap one button" and
+            // the six one-tap edits — IS the store shot. The system photo picker
+            // is a separate process that cannot be driven reliably (the first
+            // run captured the picker itself), and NO EDIT IS EVER RUN here.
             settle(1.5)
-            // NO EDIT IS RUN — see the file header. The shot shows the photos
-            // and the edits on offer, not a fabricated AI result.
             shot("s04-photo-studio")
         }
         return reached
