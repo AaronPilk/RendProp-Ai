@@ -147,7 +147,12 @@ final class AuthStore: ObservableObject {
     init() {
         let hasToken = Self.storedAccessToken() != nil
         // Dev stub stays "signed in"; real auth gates on a persisted token.
-        self.isSignedIn = Config.enableAuth ? hasToken : true
+        // UI WALK: `-uiTesting` makes every API client a MockAPIClient (see
+        // Config.makeAPIClient), which answers every route with no token. Report
+        // a session so Settings draws Plan & usage and the owner-console rows —
+        // otherwise the walk photographs an empty screen. A launch argument can
+        // only come from Xcode / `xcodebuild test`, never from a shipped build.
+        self.isSignedIn = Config.isUITesting ? true : (Config.enableAuth ? hasToken : true)
         let storedName = UserDefaults.standard.string(forKey: Keys.userName) ?? ""
         // The pre-audit placeholder "Dev Agent" must never surface as a name.
         let name = storedName == "Dev Agent" ? "" : storedName
@@ -179,7 +184,18 @@ final class AuthStore: ObservableObject {
     /// May be STALE right at launch — `validAccessToken()` is the async accessor
     /// that guarantees freshness. Backed by the Keychain.
     static var currentAccessToken: String? {
-        _ = AuthStore.shared   // first touch arms the auto-refresh loop
+        // First touch arms the auto-refresh loop. This accessor is called from
+        // URLSession / cooperative-pool contexts (LiveAPIClient.makeRequest),
+        // so the singleton is constructed ON MAIN — `init` sets @Published
+        // state and registers a main-queue observer, neither of which belongs
+        // on a background thread (audit F-E-24). The token read below is a
+        // static Keychain lookup and does not need the instance, so nothing
+        // waits for that hop.
+        if Thread.isMainThread {
+            _ = AuthStore.shared
+        } else {
+            DispatchQueue.main.async { _ = AuthStore.shared }
+        }
         return storedAccessToken()
     }
 

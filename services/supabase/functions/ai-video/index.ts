@@ -74,6 +74,15 @@ import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
+import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
+import type { RouteStep } from "../_shared/router.ts";
+import { routerEnabled } from "../_shared/router.ts";
+import { adapterFor } from "../_shared/providers/index.ts";
+import { resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { falSubmitEcho } from "../_shared/providers/fal.ts";
+import { persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
+import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
+import { type RouterJobToken, routerJobFrom, routerStatusUrl } from "../_shared/providers/jobtoken.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
 // queue, so cap submissions per burst window AND per rolling month per org,
@@ -129,7 +138,7 @@ const ALLOWED_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
  * otherwise picks the caller's highest-privilege membership, so a user in two
  * workspaces could have quota charged to the wrong one.
  */
-async function guardGenerate(userId: string, req: Request, kind: GenKind): Promise<string> {
+async function guardGenerate(userId: string, req: Request, kind: GenKind): Promise<{ orgId: string; plan: string }> {
   const orgId = await orgForUser(userId, preferredOrg(req));
   const admin = adminClient();
 
@@ -163,7 +172,9 @@ async function guardGenerate(userId: string, req: Request, kind: GenKind): Promi
   if (!(await durableRateLimit(`${meterKeyFor(kind)}:${orgId}`, monthlyCap, MONTH_SECONDS))) {
     throw quotaError(labelFor(kind), monthlyCap, monthlyCap, ent.plan);
   }
-  return orgId;
+  // The effective plan rides along for the router's RouteContext — it is the
+  // number entitlementForCharge() just read, not a second lookup.
+  return { orgId, plan: ent.plan };
 }
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
@@ -182,9 +193,98 @@ const DRONE_TIERS: Record<string, { longEdge: number; fps: number }> = {
   "4k60": { longEdge: 3840, fps: 60 },
 };
 
+// Topaz drone-glide cost per OUTPUT second, by tier (F-E-15). Authoritative
+// numbers live in _shared/ledger.ts APP_AI_UNIT_CENTS (mirrors costs.py + admin).
+const DRONE_TIER_CENTS: Record<string, number> = {
+  "1080p60": APP_AI_UNIT_CENTS.topaz_1080p60_per_s,
+  "4k30": APP_AI_UNIT_CENTS.topaz_4k30_per_s,
+  "4k60": APP_AI_UNIT_CENTS.topaz_4k60_per_s,
+};
+
 // Bria hard limit: "duration must be less than 5s" (input schema). We disable
 // auto_trim (never silently cut the user's clip) and pre-flight the duration.
 const BRIA_MAX_SECONDS = 5;
+
+// ── AI router glue (docs/AI-ROUTER-CONTRACT.md) ──────────────────────────────
+//
+// This function is ASYNC by design: it submits and returns 202, and the app
+// polls GET /ai-video/status. The chain therefore covers the SUBMIT — the only
+// point where failing over to another vendor is free. Once a job is accepted it
+// has been paid for, so poll and persist happen in the status route below,
+// through the same adapter.
+//
+// THE 202 SHAPE NEVER CHANGES. With the flag OFF a fal step echoes fal's own
+// { request_id, status_url, response_url } verbatim, exactly as it does today.
+// With the flag ON — where the provider may not be fal at all — those three
+// fields carry an OPAQUE token addressed to our own status route. The shipped
+// app round-trips them without looking inside (LiveAPIClient percent-encodes
+// them and hands them straight back), so one code path serves both.
+
+/**
+ * Durations each task's rows actually advertise.
+ *
+ * `needs` is a filter: requiring "11s" when no step advertises it empties the
+ * chain and 503s a request the shipped function serves today. So the duration
+ * is required only when it is a duration the table can satisfy — everything
+ * else falls back to the chain order, which is still 1080p i2v.
+ */
+const ADVERTISED_SECONDS: Record<string, number[]> = {
+  "video.reel_clip": [5, 6],
+  "video.aerial": [6, 8],
+  "video.aerial_no_photo": [4, 6, 8],
+};
+
+function durationNeeds(task: string, seconds: number): string[] {
+  return (ADVERTISED_SECONDS[task] ?? []).includes(seconds) ? [`${seconds}s`] : [];
+}
+
+/**
+ * The last-resort step: what THIS deploy runs today, hardcoded.
+ * resolveRoute() answers `[]` when the routing table is unreadable, and a
+ * database blip must not take video generation down.
+ */
+function legacyVideoStep(
+  task: string,
+  model: string,
+  unit: string,
+  unitCents: number,
+  capabilities: string[],
+): RouteStep {
+  return {
+    route_id: "legacy-local",
+    task,
+    provider: "fal",
+    model,
+    unit,
+    unit_cents: unitCents,
+    capabilities,
+    max_latency_s: 900,
+    min_plan: "free",
+    same_model_as: null,
+    privacy_tier: "retained_30d",
+    enabled: true,
+  };
+}
+
+/**
+ * The three fields every 202 carries.
+ *
+ * Flag OFF + fal → fal's own ids, verbatim (today's contract, unchanged).
+ * Otherwise      → our opaque token in all three fields.
+ */
+function submitEnvelope(
+  req: Request,
+  routerOn: boolean,
+  task: string,
+  ref: JobRef,
+): { request_id: string; status_url: string; response_url: string } {
+  if (!routerOn && ref.provider === "fal") {
+    const echo = falSubmitEcho(ref.id);
+    if (echo) return echo;
+  }
+  const url = routerStatusUrl(req, "ai-video", task, ref);
+  return { request_id: ref.id, status_url: url, response_url: url };
+}
 
 // ── Space-type vocabulary (mirrors SpaceType in Models/Listing.swift) ─────────
 
@@ -385,6 +485,9 @@ interface ReelBody {
   prompt?: string;
   seconds?: number;
   space_type?: string;
+  /** ADDITIVE (router): "16:9" | "9:16". The shipped app does not send one, and
+   *  without it the clip keeps the source photo's framing exactly as today. */
+  aspect?: string;
   /** Compliance (W2-B3). Defaults to the source asset's listing. */
   listing_id?: string;
   label?: string;
@@ -432,19 +535,61 @@ Deno.serve(async (req) => {
       fps = Math.min(120, Math.max(24, fps));
       const interpolate = asset.fps == null || asset.fps < fps - 0.5;
 
-      await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
-      const input: Record<string, unknown> = {
+      const { orgId, plan } = await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
+
+      // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
+      // because they are separately priced. Topaz is v2v; nothing else in the
+      // table can do it, so the chain is short by nature.
+      const task = tier === "1080p60" ? "video.upscale_1080p60" : "video.upscale_4k";
+      const routerOn = await routerEnabled();
+      const steps = await resolveChain(
+        task,
+        { plan, needs: ["v2v"], carries_customer_media: true },
+        legacyVideoStep(task, MODEL_DRONE, "second", DRONE_TIER_CENTS[tier], ["v2v"]),
+      );
+      const genInput: GenerateInput = {
+        task,
         video_url: asset.url,
-        model: "Proteus", // natural detail; interpolation gives the glide
-        upscale_factor: upscale,
-        H264_output: true,
+        extra: {
+          upscale_factor: upscale,
+          ...(interpolate ? { target_fps: fps } : {}),
+        },
       };
-      if (interpolate) input.target_fps = fps;
-      const sub = await falSubmit(MODEL_DRONE, input);
+      const attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      const step = attempt.step;
+      const sub = submitEnvelope(req, routerOn, task, attempt.value);
+
+      // COST LEDGER (F-E-15): Topaz bills per OUTPUT second, and the output runs
+      // the same wall-clock as the source, so units = the source duration. One
+      // org-scoped row, job_id = NULL, best effort. Written only after fal ACCEPTED
+      // the submit — the spend is committed at that point (E-network.md §1), and a
+      // retried Idempotency-Key was already 409'd above, so one render → one row.
+      // The drone route does not require duration_s; without it Topaz cannot be
+      // priced per-second, so we log a warning and record no row rather than a
+      // misleading $0 one (a residual gap — see HANDOFF).
+      if (asset.duration_s && asset.duration_s > 0) {
+        await recordRoutedAiCost(adminClient(), {
+          orgId,
+          feature: "drone_render",
+          step,
+          seconds: asset.duration_s,
+          // ONE route row cannot price Topaz: it bills per OUTPUT pixel-frame,
+          // so 4K60 is twice 4K30 while `video.upscale_4k` is a single row. The
+          // tier price in _shared/ledger.ts stays authoritative for Topaz; any
+          // other provider is billed at its own row price.
+          unitCentsOverride: /topaz/i.test(step.model) ? DRONE_TIER_CENTS[tier] : undefined,
+          meta: { tier, request_id: attempt.value.id, upscale_factor: upscale, target_fps: fps, interpolated: interpolate },
+        });
+      } else {
+        console.warn(
+          `ai-video drone: asset ${body.asset_id} has no probed duration; ` +
+            `Topaz ${tier} spend not recorded to cost_ledger (F-E-15 residual gap)`,
+        );
+      }
       return json({
         ...sub,
         kind: "drone",
-        model_id: MODEL_DRONE,
+        model_id: step.model,
         tier,
         target_fps: fps,
         upscale_factor: upscale,
@@ -482,6 +627,10 @@ Deno.serve(async (req) => {
         ? guardedUserPrompt(userErase, space, "Erase objects from")
         : `${DECLUTTER_PROMPT[space]}. ${GUARDRAILS}`;
 
+      // NOT ROUTED, deliberately: §3 defines no video-declutter task and the repo
+      // has no committed price for Bria (admin lists unit_cost_cents: null and no
+      // ledger row is written), so a route row would invent a price. This path
+      // stays exactly as it shipped until a price lands.
       await guardGenerate(user.id, req, "declutter"); // validated — charge, then submit
       const sub = await falSubmit(MODEL_DECLUTTER, {
         video_url: asset.url,
@@ -490,6 +639,11 @@ Deno.serve(async (req) => {
         preserve_audio: true,
         output_container_and_codec: "mp4_h264",
       });
+      // COST LEDGER (F-E-15): Bria video erase has NO committed unit price in the
+      // repo (functions/admin/index.ts lists it as unit_cost_cents: null) and it
+      // rides the reel allowance, so no cost_ledger row is written here on
+      // purpose. Give it a real per-clip price in APP_AI_UNIT_CENTS + the admin
+      // inventory first, then log it like the others (see HANDOFF).
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? asset.listing_id,
         kind: "declutter",
@@ -554,29 +708,53 @@ Deno.serve(async (req) => {
       const grounded = imageUrl !== null;
       const prompt = buildAerialPrompt({ grounded, space, motion, time, region, style });
 
-      await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
-      let sub: { request_id: string; status_url: string; response_url: string };
-      let modelId: string;
-      if (grounded) {
-        modelId = MODEL_I2V;
-        sub = await falSubmit(MODEL_I2V, {
-          prompt,
-          image_url: imageUrl,
-          resolution: "1080p",
-          duration: String(seconds), // Seedance takes duration as a string
-          aspect_ratio: aspect,
-          camera_fixed: false,
-        });
-      } else {
-        modelId = MODEL_AERIAL_T2V;
-        sub = await falSubmit(MODEL_AERIAL_T2V, {
-          prompt,
-          duration: `${seconds}s`,
-          resolution: "1080p",
-          aspect_ratio: aspect,
-          generate_audio: false, // silent b-roll; the app scores it (and it's ~33% cheaper)
-        });
-      }
+      const { orgId, plan } = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
+
+      // ROUTER (flag-gated). GROUNDED is an image-to-video task carrying the
+      // customer's own photo; UNGROUNDED is text-to-video and carries none —
+      // two different tasks, exactly as §3 seeds them.
+      const task = grounded ? "video.aerial" : "video.aerial_no_photo";
+      const routerOn = await routerEnabled();
+      const steps = await resolveChain(
+        task,
+        {
+          plan,
+          needs: grounded
+            ? ["i2v", "1080p", ...durationNeeds(task, seconds), aspect]
+            : ["t2v"],
+          carries_customer_media: grounded,
+        },
+        grounded
+          ? legacyVideoStep(task, MODEL_I2V, "second", APP_AI_UNIT_CENTS.seedance_per_s, ["i2v", "1080p", "6s", "8s", "16:9", "9:16"])
+          : legacyVideoStep(task, MODEL_AERIAL_T2V, "call", APP_AI_UNIT_CENTS.veo_aerial_clip, ["t2v"]),
+      );
+      const genInput: GenerateInput = {
+        task,
+        prompt,
+        ...(grounded && imageUrl ? { image_url: imageUrl } : {}),
+        seconds,
+        aspect,
+        resolution: "1080p",
+      };
+      const attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      const step = attempt.step;
+      const modelId = step.model;
+      const sub = submitEnvelope(req, routerOn, task, attempt.value);
+
+      // COST LEDGER (F-E-15): a GROUNDED aerial is Seedance i2v (billed per output
+      // second); an UNGROUNDED one is Veo 3.1 Fast (a flat per-clip price — the
+      // repo has no per-second Veo rate). One org-scoped row, job_id = NULL, best
+      // effort, only after fal ACCEPTED the submit (spend committed; see §1).
+      // The step's own unit decides the maths: "second" bills per output second
+      // (grounded Seedance), "call" bills flat per clip (ungrounded Veo).
+      await recordRoutedAiCost(adminClient(), {
+        orgId,
+        feature: "aerial",
+        step,
+        seconds,
+        meta: { grounded, seconds, aspect, request_id: attempt.value.id },
+      });
+
       // COMPLIANCE: an aerial is synthetic camera movement — HousingWire's
       // disclosure test names exactly this case, and WI Act 69 covers generated
       // video from 1 Jan 2027. Recorded at submit; the app attaches the finished
@@ -647,25 +825,60 @@ Deno.serve(async (req) => {
         ? guardedUserPrompt(userMotion, space, "Animate")
         : reelPrompt(space);
 
-      await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
-      const sub = await falSubmit(MODEL_I2V, {
+      const { orgId, plan } = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
+
+      // ROUTER (flag-gated). With the flag off this resolves to the one legacy
+      // step — fal Seedance — and the adapter rebuilds the payload below byte
+      // for byte (asserted by providers_test.ts).
+      const task = "video.reel_clip";
+      const routerOn = await routerEnabled();
+      const reelAspect = body.aspect === "16:9" || body.aspect === "9:16" ? body.aspect : null;
+      const steps = await resolveChain(
+        task,
+        {
+          plan,
+          // 1080p is a real requirement here: it is what the shipped clip is,
+          // and asking for it correctly drops the 768p Hailuo fallback.
+          needs: ["i2v", "1080p", ...durationNeeds(task, secs), ...(reelAspect ? [reelAspect] : [])],
+          carries_customer_media: true,
+        },
+        legacyVideoStep(task, MODEL_I2V, "second", APP_AI_UNIT_CENTS.seedance_per_s, ["i2v", "1080p", "5s", "16:9", "9:16"]),
+      );
+      const genInput: GenerateInput = {
+        task,
         prompt: reelText,
         image_url: imageUrl,
+        seconds: secs,
         resolution: "1080p",
-        duration: String(secs), // Seedance takes duration as a string
+        ...(reelAspect ? { aspect: reelAspect } : {}),
+      };
+      const attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      const step = attempt.step;
+      const sub = submitEnvelope(req, routerOn, task, attempt.value);
+
+      // COST LEDGER (F-E-15): i2v bills per output second. One org-scoped row,
+      // job_id = NULL, best effort, only after the provider ACCEPTED the submit,
+      // and attributed to the provider/model that actually ran (contract §4).
+      await recordRoutedAiCost(adminClient(), {
+        orgId,
+        feature: "reel",
+        step,
+        seconds: secs,
+        meta: { seconds: secs, space_type: space, request_id: attempt.value.id },
       });
+
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? reelListingId,
         kind: "reel",
         label: body.label ?? null,
-        modelId: MODEL_I2V,
+        modelId: step.model,
         edit: "reel",
         promptSummary: userMotion ?? null,
       });
       return json({
         ...sub,
         kind: "reel",
-        model_id: MODEL_I2V,
+        model_id: step.model,
         seconds: secs,
         space_type: space,
         disclosure: prov.disclosure,
@@ -676,6 +889,17 @@ Deno.serve(async (req) => {
     // ---- GET /ai-video/status ----
     if (req.method === "GET" && seg.length === 1 && seg[0] === "status") {
       const params = new URL(req.url).searchParams;
+
+      // A ROUTED job: the app is handing back the opaque token this function
+      // minted at submit (it round-trips status_url/response_url verbatim, so
+      // no client change is needed). Poll through the adapter and PERSIST the
+      // result into our R2 the moment it completes — every reseller expires
+      // media (fal 24 h by our own lifecycle header, Higgsfield 7 d, Kie 14 d),
+      // so the canonical asset has to become ours here. The legacy fal path
+      // below is untouched and still runs for every flag-off submit.
+      const routed = routerJobFrom(params);
+      if (routed) return await routedStatus(user.id, req, routed);
+
       const statusUrl = requireFalUrl(params.get("status_url"), "status_url");
       const responseUrl = requireFalUrl(params.get("response_url"), "response_url");
 
@@ -722,6 +946,73 @@ Deno.serve(async (req) => {
     return respondError(err);
   }
 });
+
+// ── routed job status (poll + persist through the adapter) ────────────────────
+
+/**
+ * The status answer for a job the router submitted.
+ *
+ * Same three states the app already decodes — processing / completed / failed —
+ * with `video_url` pointing at OUR R2 copy once the result has been persisted.
+ * Extra fields are additive; the shipped decoder ignores them.
+ */
+async function routedStatus(userId: string, req: Request, job: RouterJobToken): Promise<Response> {
+  const adapter = adapterFor(job.p);
+  const ref: JobRef = {
+    provider: job.p,
+    model: job.m,
+    id: job.i,
+    // The adapter re-validates this against its own host allowlist before it
+    // ever fetches with our key — the token round-trips through the client.
+    poll_url: job.u,
+    submitted_at: job.t,
+  };
+
+  const state = await adapter.poll(ref);
+  if (state.status !== "done") {
+    if (state.status === "failed") {
+      console.error(`ai-video routed job failed (${job.p}/${job.m}):`, state.message);
+      return json({ status: "failed", error: state.message, error_class: state.error_class, provider: job.p });
+    }
+    return json({ status: "processing", provider: job.p, model: job.m, queue_position: null, logs_tail: [] });
+  }
+
+  // COMPLETED → persist before we call it a success (contract §4).
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  let assetKey: string | null = null;
+  let videoUrl: string | null = null;
+  try {
+    const stored = await adapter.persist(state, routedR2Key(orgId, job.k || "video", state.mime));
+    assetKey = stored.key;
+    videoUrl = persistedUrl(stored.key);
+  } catch (e) {
+    console.error(`ai-video: persisting ${job.p} result to R2 failed:`, e instanceof Error ? e.message : e);
+  }
+
+  if (!videoUrl) {
+    // No R2 copy (storage failed, or R2_PUBLIC_BASE_URL is unset). Handing back
+    // the vendor's own URL is honest degradation — UNLESS it carries a
+    // signature, which must never leave this function.
+    const looksSigned = /[?&](x-amz-|token=|signature=|sig=|expires=)/i.test(state.result_url);
+    if (looksSigned) {
+      return json({
+        status: "failed",
+        error: "The clip was generated but could not be stored — try again.",
+        error_class: "upstream",
+      });
+    }
+    videoUrl = state.result_url;
+  }
+
+  return json({
+    status: "completed",
+    video_url: videoUrl,
+    provider: job.p,
+    model: job.m,
+    persisted: assetKey !== null,
+    ...(assetKey ? { asset_key: assetKey } : {}),
+  });
+}
 
 // ── fal queue helpers ─────────────────────────────────────────────────────────
 

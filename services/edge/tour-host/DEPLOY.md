@@ -59,6 +59,8 @@ Smoke test (use a real published slug from the app's share sheet):
 ```bash
 curl -s https://rendprop-tour-host.<subdomain>.workers.dev/healthz          # → ok
 curl -sI https://rendprop-tour-host.<subdomain>.workers.dev/f/<slug>        # → 200, text/html
+curl -sI https://rendprop-tour-host.<subdomain>.workers.dev/u/<slug>        # → 200 + X-Robots-Tag: noindex
+curl -sI "https://rendprop-tour-host.<subdomain>.workers.dev/f/%"           # → 404 (NOT 500)
 open  https://rendprop-tour-host.<subdomain>.workers.dev/f/<slug>          # scroll-scrub plays
 open  https://rendprop-tour-host.<subdomain>.workers.dev/a/<handle>        # portfolio grid
 ```
@@ -84,17 +86,39 @@ tree is platform-coupled — never copy a Linux `node_modules` to the Mac):
 
 ```bash
 rm -rf node_modules && npm ci
-npm run typecheck
+npm run predeploy            # typecheck + npm test + the demo-media preflight
 npx wrangler deploy
 ```
 
 The Worker owns the whole apex: the static marketing site is served from `./public`
-by Workers Static Assets, everything else (`/f/*`, `/a/*`, `/terms`, `/privacy`) by the script.
+by Workers Static Assets, everything else (`/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`) by the
+script.
+
+### Media the deploy expects in `./public/assets`
+
+The demo tour's two video files are **not in git** (Workers Static Assets caps a file at 25 MiB
+and they are close to it), so a fresh clone deploys a demo whose video 404s. The player degrades
+honestly — it shows "This tour's video isn't available right now" rather than a black stage — but
+the site's primary CTA is dead until the files are put back:
+
+| File | What it is |
+|---|---|
+| `public/assets/demo-tour.mp4` | the 137 s scroll-scrub master behind `/f/estate-demo` |
+| `public/assets/demo-reel.mp4` | the vertical social reel in the demo's Reel section |
+
+`npm run check:assets` fails loudly if either is missing. It runs automatically as part of
+`npm run predeploy` (and therefore before `npm run deploy`) — but **not** before a bare
+`npx wrangler deploy`, so run `npm run predeploy` first if you deploy that way. It is
+deliberately not part of `npm test`, so a fresh clone with no media still has green tests.
+Long term these belong in the public R2 bucket alongside real tours, with `demo.ts` pointing at
+absolute URLs — see HANDOFF.md (F-H-10).
 
 ## 4. Day-2
 
 ```bash
 npm run typecheck            # tsc --noEmit (keep green before every deploy)
+npm test                     # the unbranded compliance gate + the route/failure checks
+npm run check:assets         # the demo media that is not in git is present
 npm run dev                  # local dev at http://localhost:8787/f/<slug>
 npm run tail                 # live logs (wrangler tail)
 npx wrangler deployments list

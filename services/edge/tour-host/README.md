@@ -136,7 +136,7 @@ Requirements:
 - `rendprop.com` must be an **active zone** on the same Cloudflare account (nameservers on Cloudflare).
 - The Worker owns the whole apex. Requests that exactly match a file under `./public` (the marketing
   site, `/assets/*`, `robots.txt`, `sitemap.xml`, `llms.txt`) are served by Workers Static Assets
-  before the script runs; `/f/*`, `/a/*`, `/terms`, `/privacy`, `/healthz` and every unknown path
+  before the script runs; `/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`, `/healthz` and every unknown path
   land in `src/index.ts`, which always answers with a branded page (404/500 included).
 - `workers_dev = false`: there is no `*.workers.dev` hostname in production (duplicate content +
   an un-branded URL). For a pre-DNS smoke test, temporarily set it to `true` and comment the
@@ -145,10 +145,27 @@ Requirements:
 ### Crawl policy
 
 `public/robots.txt` opens the marketing site to search engines and AI crawlers, but customer
-tour pages (`/f/*`) and portfolios (`/a/*`) are disallowed for the AI-crawler user agents (they
-carry agents' names and phone numbers); only `/f/estate-demo` stays open to them. `?embed=1`
-pages carry `<meta name="robots" content="noindex">` and every tour page has a canonical link
-to its `share_url`.
+tour pages (`/f/*`), the MLS-unbranded twin (`/u/*`) and portfolios (`/a/*`) are disallowed for
+the AI-crawler user agents (they carry agents' names and phone numbers); only `/f/estate-demo`
+stays open to them.
+
+Ordinary search engines are handled **per page, not in robots.txt** (audit F-H-19): a tour ships
+`<meta name="robots" content="noindex, nofollow">` unless its owner opted in — `allow_indexing`
+(also `allowIndexing` / `search_indexing`) truthy in the listing's `details` or in the org's
+brand kit. A crawler has to be able to *fetch* the page to read that tag, which is why `/f/` is
+not `Disallow`ed for `*`. A non-opted-in tour sends `X-Robots-Tag: noindex, nofollow` as well as the meta tag, so a crawler
+that never parses the body gets the same answer. `?embed=1` and `/u/*` are always `noindex`, and
+every branded tour page carries a canonical link to its `share_url`.
+
+### Checks
+
+| Command | What it guards |
+|---|---|
+| `npm run typecheck` | `tsc --noEmit` |
+| `npm run check:unbranded` | the MLS-safe `/u/<slug>` page: no sentinel, no branding, no form, no external link, and the required property content + AI disclosure still present. Also asserts the promo/indexing defaults from F-H-17/F-H-19 |
+| `npm run check:routes` | malformed paths (`/f/%`) answer with a branded 404 not a 500, the global error boundary, `/u/` failing unbranded, HSTS, and the ordinary routes |
+| `npm test` | both of the above |
+| `npm run check:assets` | the demo media that is deliberately not in git is present and under the 25 MiB Static Assets cap (run via `npm run predeploy`) |
 
 ### Vars / secrets
 

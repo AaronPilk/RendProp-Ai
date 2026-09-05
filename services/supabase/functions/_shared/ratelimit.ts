@@ -47,3 +47,40 @@ export async function durableRateLimit(
     return ok;
   }
 }
+
+/**
+ * Give back units charged by `durableRateLimit` for work that then FAILED
+ * (audit F-E-16). The AI guards charge the monthly meter immediately before
+ * the billable provider call, so a 502 from Gemini/fal used to cost the org an
+ * allowance for a request that produced nothing.
+ *
+ * Delegates to refund_rate() (migration 0014), which subtracts inside the
+ * charge's OWN window and floors at zero — a refund can neither mint free
+ * allowance in a later window nor drive a counter negative.
+ *
+ * Best effort and never throws: a failed refund must not turn a provider error
+ * into a 500 the user sees instead of the real reason. There is no degraded
+ * fallback — the in-memory limiter is per-instance, so "refunding" there would
+ * usually target a counter that is not the one that was charged.
+ *
+ * @returns true when the counter was actually decremented.
+ */
+export async function refundRateLimit(
+  key: string,
+  windowSeconds: number,
+  cost = 1,
+): Promise<boolean> {
+  try {
+    const { data, error } = await adminClient().rpc("refund_rate", {
+      p_key: key,
+      p_window_seconds: windowSeconds,
+      p_cost: Math.max(1, Math.round(cost)),
+    });
+    if (error) throw new Error(error.message);
+    return data === true;
+  } catch (e) {
+    // Key names are org ids + feature slugs — no secrets, no user content.
+    console.error("refund_rate unavailable; quota stays charged:", e);
+    return false;
+  }
+}

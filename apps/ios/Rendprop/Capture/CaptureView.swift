@@ -239,6 +239,7 @@ struct CaptureView: View {
             } else {
                 tags.removeAll()
                 camera.startRecording()   // motion logging starts from the first written frame
+                Analytics.track("capture_started", ["space_type": SpaceType.current.rawValue])
                 Haptics.heavy()
             }
         } label: {
@@ -252,7 +253,12 @@ struct CaptureView: View {
                     .animation(.spring(response: 0.3), value: isRecording)
             }
         }
-        .disabled(camera.state == .configuring || camera.state == .idle || isFinalizing)
+        // Starting a take while the session is interrupted (a call, Control
+        // Center, another app on screen) fails in the movie output and dropped
+        // the whole screen into the ".failed" dead-end. The banner already says
+        // what is happening — keep the button out of reach until it clears.
+        .disabled(camera.state == .configuring || camera.state == .idle || isFinalizing
+                  || (!isRecording && camera.interruptionMessage != nil))
         .accessibilityLabel(Text(isRecording ? "Stop recording" : "Start recording"))
     }
 
@@ -413,7 +419,7 @@ struct CaptureView: View {
         if discardOnFinish {
             discardOnFinish = false
             motion.cancelLogging()
-            Self.deleteTake(url, sidecar: nil)
+            Self.deleteTake(url)
             tags.removeAll()
             Haptics.selection()
             return
@@ -423,6 +429,8 @@ struct CaptureView: View {
                                         width: camera.activeWidth,
                                         height: camera.activeHeight)
         Haptics.success()   // the one "clip saved" haptic (CameraManager no longer fires its own)
+        Analytics.track("capture_finished", ["space_type": SpaceType.current.rawValue,
+                                             "duration_s": String(Int(camera.elapsed))])
         let take = TakeReview(url: url, sidecar: sidecar, tags: tags, seconds: camera.elapsed)
 
         // Muted looping preview of the take behind the buttons.
@@ -466,7 +474,7 @@ struct CaptureView: View {
 
     private func retake(_ take: TakeReview) {
         stopReviewPlayback()
-        Self.deleteTake(take.url, sidecar: take.sidecar)
+        Self.deleteTake(take.url)
         tags.removeAll()
         reviewError = nil
         review = nil
@@ -480,11 +488,12 @@ struct CaptureView: View {
         reviewPlayer = nil
     }
 
-    /// Delete a take and its motion sidecar (the sidecar path is derived when
-    /// the caller doesn't have it, e.g. a discarded take that never wrote one).
-    static func deleteTake(_ url: URL, sidecar: URL?) {
-        let fm = FileManager.default
-        try? fm.removeItem(at: url)
-        try? fm.removeItem(at: sidecar ?? MotionRecorder.sidecarURL(for: url))
+    /// Delete a take and its motion sidecar. The sidecar goes through
+    /// `MotionRecorder.deleteSidecar` so the removal is ordered behind a write
+    /// that may still be encoding on the sidecar queue — otherwise a fast
+    /// Retake could delete first and have the pending write recreate the file.
+    static func deleteTake(_ url: URL) {
+        try? FileManager.default.removeItem(at: url)
+        MotionRecorder.deleteSidecar(for: url)
     }
 }

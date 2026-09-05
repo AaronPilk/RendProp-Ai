@@ -90,7 +90,7 @@ def restage(image: bytes, style_prompt: str, *, model: str | None = None) -> byt
         "generationConfig": {"responseModalities": ["IMAGE"]},
     }
     resp = request_json(url, method="POST", payload=payload,
-                        headers={"x-goog-api-key": SETTINGS.gemini_api_key}, timeout=180)
+                        headers={"x-goog-api-key": SETTINGS.gemini_api_key}, timeout=180, retries=2)
     return _extract_image(resp)
 
 

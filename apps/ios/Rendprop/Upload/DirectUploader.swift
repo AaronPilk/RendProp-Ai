@@ -20,7 +20,15 @@ enum DirectUploader {
     /// Lowercase-hex SHA-256 of a string — used to build bounded, stable
     /// idempotency keys ("ticket:<hash of path>:<bytes>").
     static func sha256Hex(_ string: String) -> String {
-        SHA256.hash(data: Data(string.utf8)).map { String(format: "%02x", $0) }.joined()
+        sha256Hex(Data(string.utf8))
+    }
+
+    /// Lowercase-hex SHA-256 of raw bytes — used to digest a request body into
+    /// a deterministic `Idempotency-Key` (LiveAPIClient) without putting the
+    /// payload itself in a header. In-memory: only for bodies we already built
+    /// in memory, never for a capture file (use `sha256(of:)` for those).
+    static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 
     // MARK: - Content types

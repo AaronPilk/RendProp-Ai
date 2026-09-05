@@ -4,7 +4,11 @@
 
 import type { AgentCard, SecondaryLink } from "./types";
 
-export const BRAND_ACCENT = "#d9a441";
+/** Rendprop purple. The tour page layers EDITORIAL_CSS on top with the same
+ *  family; this is what the portfolio page and the 404/502/notice pages use, so
+ *  keeping it here is what stops those three from being gold while every other
+ *  surface is purple (audit F-H-21). */
+export const BRAND_ACCENT = "#9b6dff";
 
 /** HTML-escape for text nodes and attribute values. */
 export function escapeHtml(input: unknown): string {
@@ -55,7 +59,12 @@ export function safeColor(v: unknown): string | null {
  * (they resolve against our own https origin).
  */
 export function safeUrl(v: unknown, extraSchemes: string[] = []): string {
-  const s = String(v ?? "").trim();
+  // Browsers strip TAB/LF/CR (and other C0 controls) from a URL *before*
+  // resolving its scheme, so "java\nscript:alert(1)" navigates as
+  // javascript:. Testing the raw string let that through. Strip the same
+  // characters we know the browser will, then test — and return the
+  // stripped form so what we emit is what the browser will parse.
+  const s = String(v ?? "").replace(/[\u0000-\u0020\u007f]/g, "");
   if (!s) return "";
   const m = /^([a-zA-Z][a-zA-Z0-9+.-]*):/.exec(s);
   if (!m) return s; // relative / anchor / query — resolves on our origin
@@ -271,7 +280,7 @@ ${headMeta(opts.title)}
   .mark { font-size:12px; letter-spacing:.35em; text-transform:uppercase; color:var(--ink-dim); margin-bottom:22px; }
   h1 { font-size:26px; font-weight:650; letter-spacing:-.01em; margin-bottom:10px; }
   p { color:var(--ink-dim); font-size:15px; line-height:1.5; margin-bottom:22px; }
-  .btn { display:inline-block; padding:13px 22px; border-radius:12px; background:var(--accent); color:#14100a; font-weight:650; font-size:15px; text-decoration:none; }
+  .btn { display:inline-block; padding:13px 22px; border-radius:12px; background:var(--accent); color:#fff; font-weight:650; font-size:15px; text-decoration:none; }
 </style>
 </head>
 <body>

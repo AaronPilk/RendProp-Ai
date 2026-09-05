@@ -4,6 +4,17 @@
 <dict>
   <!-- Rendprop privacy manifest. Required-reason APIs + data-collection
        declarations for App Store review (ITMS-91053). -->
+  <!-- STILL FALSE, and deliberately so, even though the owner runs Meta ads.
+       Apple defines tracking as linking this app's data with data from other
+       companies' apps or websites for targeted advertising or ad measurement,
+       or sharing it with a data broker. Rendprop does none of that: there is no
+       ad SDK, no IDFA, no ATT prompt, no pixel and no third-party analytics.
+       Attribution is SKAdNetwork ONLY (Info.plist SKAdNetworkItems +
+       Analytics/Attribution.swift), where iOS itself sends a signed postback
+       carrying a campaign id and a conversion value and NO identifier — Apple
+       expressly does not classify that as tracking. Product analytics is
+       first-party: our own POST /events, our own Postgres, read only by the
+       owner. -->
   <key>NSPrivacyTracking</key>
   <false/>
   <key>NSPrivacyTrackingDomains</key>
@@ -92,11 +103,74 @@
       <key>NSPrivacyCollectedDataTypePurposes</key>
       <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
     </dict>
-    <!-- Tour view metering (view counts on shared tours) — not linked to viewer identity. -->
+    <!-- Product interaction. TWO sources, and the stricter one sets the answer:
+           (a) tour view metering (view counts on shared tours) — not linked to
+               any viewer identity;
+           (b) the first-party product funnel (Analytics/Analytics.swift ->
+               POST /events): which screens and features were used, as a name
+               from a fixed 19-word vocabulary plus a few enum/count props. The
+               server attaches the signed-in account id when there is one, so
+               this IS linked and is declared linked.
+         DeveloperAdvertising is declared because the same milestones drive the
+         SKAdNetwork conversion value, which measures how well the owner's own
+         Meta ads perform. It is still not tracking: nothing is joined with any
+         other company's data and nothing goes to a data broker.
+         NO PII is in any of it — no e-mail, name, address, phone, photo, file
+         path, listing id or coordinate. Enforced three times: a fixed event
+         vocabulary, a per-event props whitelist, and a server-side regex scrub
+         (services/supabase/functions/events). -->
     <dict>
       <key>NSPrivacyCollectedDataType</key>
       <string>NSPrivacyCollectedDataTypeProductInteraction</string>
-      <key>NSPrivacyCollectedDataTypeLinked</key><false/>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+        <string>NSPrivacyCollectedDataTypePurposeDeveloperAdvertising</string>
+      </array>
+    </dict>
+    <!-- Device ID: a UUID this app generates on first launch and keeps in its
+         own Keychain item, sent with every analytics batch so the funnel can
+         count PEOPLE instead of taps. It is NOT the IDFA (never requested, no
+         ATT prompt), NOT the IDFV, and not derivable from either; it is not
+         shared with anyone and never leaves our own backend. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeDeviceID</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeDeveloperAdvertising</string>
+      </array>
+    </dict>
+    <!-- Crash data: MetricKit crash SUMMARIES (Analytics/CrashReporter.swift).
+         A kind, a signal or exception number, a termination reason clipped to
+         120 characters with path-shaped tokens removed, and ONE frame name.
+         Never the full call stack — that stays in Xcode Organizer, which Apple
+         already provides. No third-party crash SDK is in the app. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeCrashData</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array>
+        <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+        <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
+      </array>
+    </dict>
+    <!-- Performance data: MetricKit hang / CPU / disk-write exceptions and a
+         median launch time, all from the same subscriber, all as one small
+         number or category each. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePerformanceData</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
       <key>NSPrivacyCollectedDataTypeTracking</key><false/>
       <key>NSPrivacyCollectedDataTypePurposes</key>
       <array>
@@ -108,7 +182,11 @@
 
   <key>NSPrivacyAccessedAPITypes</key>
   <array>
-    <!-- UserDefaults (appearance, onboarding, agent card, non-secret prefs). -->
+    <!-- UserDefaults (appearance, onboarding, agent card, non-secret prefs, and
+         analytics: the SKAdNetwork conversion-value high-water mark, the
+         "has ever signed in" flag, and the device-id fallback used when the
+         Keychain is unreachable before first unlock). All of it is this app's
+         own data, read and written only by this app — CA92.1. -->
     <dict>
       <key>NSPrivacyAccessedAPIType</key>
       <string>NSPrivacyAccessedAPICategoryUserDefaults</string>

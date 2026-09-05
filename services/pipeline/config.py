@@ -68,27 +68,54 @@ def load_env(path: Path | None = None) -> None:
 load_env()
 
 
-def _int(name: str, default: int) -> int:
+class ConfigError(RuntimeError):
+    """An env var is SET but unusable — never silently defaulted (audit F-G-11).
+
+    MAX_GEN_COST_PER_JOB_CENTS is the ONLY thing bounding AI spend on an
+    unattended job. A warning that scrolls past while the default quietly
+    applies is not a guard. Mirrors services/worker/settings.ConfigError; the
+    worker validates the same four names in its startup preflight, so in the
+    worker path this raise is a backstop, not the first line of defence.
+    """
+
+
+def _range(name: str, value: float, raw: str, lo: float | None, hi: float | None) -> None:
+    if lo is not None and value < lo:
+        raise ConfigError(f"{name}={raw!r} is below the minimum {lo}")
+    if hi is not None and value > hi:
+        raise ConfigError(f"{name}={raw!r} is above the maximum {hi}")
+
+
+def _int(name: str, default: int, *, lo: int | None = None, hi: int | None = None) -> int:
+    """Parse an int env var. Unset/blank → default. Malformed → ConfigError."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return int(raw.strip())
+        value = int(raw.strip())
     except (TypeError, ValueError):
-        # Loud, not silent: a mistyped cap must never quietly become the default.
-        print(f"⚠ {name}={raw!r} is not an integer; using default {default}")
-        return default
+        raise ConfigError(
+            f"{name}={raw.strip()!r} is not an integer (default would have been "
+            f"{default}). Fix the value — it is NOT being defaulted."
+        ) from None
+    _range(name, value, raw.strip(), lo, hi)
+    return value
 
 
-def _float(name: str, default: float) -> float:
+def _float(name: str, default: float, *, lo: float | None = None, hi: float | None = None) -> float:
+    """Parse a float env var. Unset/blank → default. Malformed → ConfigError."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw.strip())
+        value = float(raw.strip())
     except (TypeError, ValueError):
-        print(f"⚠ {name}={raw!r} is not a number; using default {default}")
-        return default
+        raise ConfigError(
+            f"{name}={raw.strip()!r} is not a number (default would have been "
+            f"{default}). Fix the value — it is NOT being defaulted."
+        ) from None
+    _range(name, value, raw.strip(), lo, hi)
+    return value
 
 
 # ── Settings ──────────────────────────────────────────────────────────────────
@@ -143,17 +170,26 @@ class Settings:
             anthropic_model_qc=os.environ.get("ANTHROPIC_MODEL_QC", "claude-haiku-4-5"),
             anthropic_model_escalate=os.environ.get("ANTHROPIC_MODEL_ESCALATE", "claude-sonnet-5"),
             restage_route=os.environ.get("RESTAGE_ROUTE", "gemini"),
-            qc_pass_score=_int("QC_PASS_SCORE", 85),
-            qc_max_retries=_int("QC_MAX_RETRIES", 2),
-            qc_confidence_escalate=_float("QC_CONFIDENCE_ESCALATE", 0.75),
-            max_gen_cost_per_job_cents=_int("MAX_GEN_COST_PER_JOB_CENTS", 2500),
-            fal_poll_interval_s=_float("FAL_POLL_INTERVAL_S", 3.0),
-            fal_timeout_s=_int("FAL_TIMEOUT_S", 600),
+            qc_pass_score=_int("QC_PASS_SCORE", 85, lo=0, hi=100),
+            qc_max_retries=_int("QC_MAX_RETRIES", 2, lo=0, hi=10),
+            qc_confidence_escalate=_float("QC_CONFIDENCE_ESCALATE", 0.75, lo=0.0, hi=1.0),
+            max_gen_cost_per_job_cents=_int("MAX_GEN_COST_PER_JOB_CENTS", 2500, lo=1, hi=1_000_000),
+            fal_poll_interval_s=_float("FAL_POLL_INTERVAL_S", 3.0, lo=0.5, hi=60),
+            fal_timeout_s=_int("FAL_TIMEOUT_S", 600, lo=10, hi=7200),
             anthropic_version=os.environ.get("ANTHROPIC_VERSION", "2023-06-01"),
         )
 
 
-SETTINGS = Settings.from_env()
+try:
+    SETTINGS = Settings.from_env()
+except ConfigError as _cfg_err:            # noqa: F841 — re-raised below
+    # LOUD. A ConfigError (not SystemExit) so the worker's enhance_bridge, which
+    # imports this module inside a try/except, degrades to "pipeline import
+    # failed: …" and still ships the customer's base tour — while the worker's
+    # own startup preflight has already refused to run with this .env at all.
+    print(f"FATAL: bad AI-pipeline configuration: {_cfg_err}\n"
+          f"       See services/pipeline/.env.example — the value is NOT defaulted.")
+    raise
 
 
 # ── Shared prompt language ─────────────────────────────────────────────────────

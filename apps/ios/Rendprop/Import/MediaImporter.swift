@@ -92,14 +92,34 @@ enum MediaImporter {
                 result.height = Int(abs(oriented.height).rounded())
             }
         }
-        result.looksLikeDrone = await looksLikeDrone(asset)
+        // Name first — free, and it catches exports whose container metadata the
+        // maker stripped. Metadata only when the name says nothing.
+        if filenameLooksLikeDrone(url) {
+            result.looksLikeDrone = true
+        } else {
+            result.looksLikeDrone = await looksLikeDrone(asset)
+        }
         return result
+    }
+
+    /// Drone makers whose name appears in capture metadata and in the file names
+    /// their apps export (`DJI_0001.MP4`, `AUTEL_…`).
+    private static let droneMakers = ["dji", "autel", "skydio", "parrot", "hubsan",
+                                      "yuneec", "holy stone", "potensic"]
+
+    /// A drone export keeps its maker's file name. Our own copy is
+    /// `import-<uuid8>-<original name>`, so match ANYWHERE in the name rather
+    /// than at the start — the uuid8 prefix is hex, so it can never contribute
+    /// a false hit of its own.
+    static func filenameLooksLikeDrone(_ url: URL) -> Bool {
+        let name = url.lastPathComponent.lowercased()
+        return droneMakers.contains { name.contains($0) }
     }
 
     /// DJI / Autel / Skydio / Parrot / Insta360… in the make/model/software
     /// metadata → almost certainly aerial footage (decision A8 heuristic).
     static func looksLikeDrone(_ asset: AVAsset) async -> Bool {
-        let makers = ["dji", "autel", "skydio", "parrot", "hubsan", "yuneec", "holy stone", "potensic"]
+        let makers = droneMakers
         guard let items = try? await asset.load(.metadata) else { return false }
         for item in items {
             let rawKey = (item.key as? NSString).map { String($0) } ?? ""

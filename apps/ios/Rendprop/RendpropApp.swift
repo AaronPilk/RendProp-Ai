@@ -1,9 +1,11 @@
 import SwiftUI
 import UIKit
 import AVFoundation
-// StoreKit is imported ONLY to read `Storefront.current.countryCode` (see
-// `Storefronts` at the bottom of this file). Rendprop ships no StoreKit
-// products, no purchase UI and no prices — see docs/APP-STORE-CHECKLIST.md §8.
+// StoreKit is used for two things: `Storefront.current.countryCode` (see
+// `Storefronts` at the bottom of this file) and the in-app subscriptions in
+// `Purchases/` — six auto-renewable products in the `rendprop_plans` group.
+// No price string is compiled into the binary; every price comes from
+// `Product.displayPrice`.
 import StoreKit
 
 // MARK: - Background URLSession bridge
@@ -556,6 +558,7 @@ final class AppModel: ObservableObject {
                 l.status = .ready
                 listings[i] = l   // persists via didSet
             }
+            Analytics.track("tour_published", ["space_type": SpaceType.current.rawValue, "ok": "true"])
             pendingPublish.removeAll { $0 == id }
             uploadedRenderAssets.removeValue(forKey: id)
             if let posterFile { try? FileManager.default.removeItem(at: posterFile) }
@@ -854,6 +857,7 @@ final class RenderCoordinator: ObservableObject {
         // In-app viewing works from here on — store the local tour first.
         model.tours[id] = AppModel.RenderedTour(url: output.url, durationS: output.durationS,
                                                 speedFactor: output.speedFactor)
+        Analytics.track("render_finished", ["ok": "true", "duration_s": String(Int(output.durationS))])
         model.uploadedRenderAssets.removeValue(forKey: id)   // a new file: any earlier upload is stale
         model.setLastError(nil, for: id)
         update(id, run) { $0.fraction = 1; $0.stage = .rendered; $0.phase = "Rendered" }
@@ -1166,9 +1170,17 @@ enum PersistentStore {
         let uploaded = uploadedRenderAssets.filter { realIDs.contains($0.key) }
         state.uploadedRenderAssets = uploaded.isEmpty ? nil : uploaded
 
+        // A snapshot we could not read is still on disk (quarantine failed):
+        // writing an EMPTY state over it would finish destroying what the user
+        // still has. Real content is always allowed through (audit F-C-15).
+        let isEmpty = state.listings.isEmpty && state.assets.isEmpty
+            && state.tours.isEmpty && state.renders.isEmpty
+        if isEmpty && refusesEmptyOverwrite { return }
+
         do {
             let data = try JSONEncoder().encode(state)
             try data.write(to: fileURL, options: .atomic)
+            if !isEmpty { refusesEmptyOverwrite = false }
         } catch { /* non-fatal: files are safe, only this snapshot is lost */ }
     }
 
@@ -1181,16 +1193,68 @@ enum PersistentStore {
         var uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:]
     }
 
-    static func load() -> Loaded {
-        guard let data = try? Data(contentsOf: fileURL) else { return Loaded() }
-        guard let state = try? JSONDecoder().decode(PersistedState.self, from: data) else {
-            // Keep the unreadable snapshot for forensics instead of letting the
-            // next save silently overwrite it with an empty one.
-            let stamp = Int(Date().timeIntervalSince1970)
-            let backup = FileStore.documents.appendingPathComponent("rendprop-state.corrupt-\(stamp).json")
+    /// Armed by `load()` when a snapshot existed on disk but could NOT be read
+    /// or decoded AND could not be moved aside. While it is armed, `save()`
+    /// refuses to write an EMPTY snapshot — a transient read error must never
+    /// turn into "all your listings are gone" one auto-save later. Disarmed as
+    /// soon as a snapshot with real content is written.
+    /// Main-actor only: `load()`/`save()` are called from `AppModel` (@MainActor).
+    private static var refusesEmptyOverwrite = false
+
+    /// Move an unusable snapshot to `rendprop-state.corrupt-<unix>.json`.
+    /// MOVE, not copy: once it is out of the way the next save writes a clean
+    /// file and nothing the user still has is destroyed. Returns false when even
+    /// the move failed — the caller then protects the file by refusing to
+    /// overwrite it with an empty snapshot.
+    @discardableResult
+    private static func quarantineSnapshot() -> Bool {
+        let stamp = Int(Date().timeIntervalSince1970)
+        let backup = FileStore.documents.appendingPathComponent("rendprop-state.corrupt-\(stamp).json")
+        do {
+            try FileManager.default.moveItem(at: fileURL, to: backup)
+            return true
+        } catch {
+            // Last resort: a copy at least preserves the bytes for forensics.
             try? FileManager.default.copyItem(at: fileURL, to: backup)
+            return false
+        }
+    }
+
+    static func load() -> Loaded {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: fileURL.path) else {
+            refusesEmptyOverwrite = false   // fresh install / after a wipe: nothing to protect
             return Loaded()
         }
+        guard let data = try? Data(contentsOf: fileURL) else {
+            // The file is THERE but unreadable (transient I/O, protected data
+            // still locked, disk pressure). Getting this wrong is what destroys
+            // a user's library, so do not treat it as "no data".
+            refusesEmptyOverwrite = !quarantineSnapshot()
+            return Loaded()
+        }
+        guard let state = try? JSONDecoder().decode(PersistedState.self, from: data) else {
+            // Truly undecodable at the TOP level (truncated write, not JSON at
+            // all) — per-collection and per-element salvage already ran inside
+            // PersistedState.init, so reaching here means there was nothing to
+            // salvage. Move it aside rather than let the next save clobber it.
+            refusesEmptyOverwrite = !quarantineSnapshot()
+            return Loaded()
+        }
+
+        // The decode succeeded but salvaged NOTHING out of a file that clearly
+        // held something (an honestly-empty snapshot is ~48 bytes). Everything
+        // in it was undecodable, so keep a copy before the next auto-save
+        // replaces it, and don't let that save be an empty one.
+        let salvagedNothing = state.listings.isEmpty && state.assets.isEmpty
+            && state.tours.isEmpty && state.renders.isEmpty
+        if salvagedNothing && data.count > 128 {
+            _ = quarantineSnapshot()
+            refusesEmptyOverwrite = true
+        } else {
+            refusesEmptyOverwrite = false
+        }
+
         var out = Loaded()
         out.listings = state.listings
 
@@ -1256,22 +1320,76 @@ extension PersistentStore.PersistedTour {
     }
 }
 
+/// Decodes `T` but NEVER throws — a bad element yields `value == nil` instead
+/// of aborting the whole container. Because it always succeeds, an unkeyed
+/// container's cursor always advances by exactly one, so decoding can continue
+/// past the damaged element (audit F-C-15).
+private struct FailableDecodable<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
+/// Decode `[T]` at `key`, losing AT MOST the elements that are undecodable.
+/// Fast path first: the plain array decode is what runs on every healthy
+/// launch, so the salvage loop only ever executes on a snapshot that would
+/// otherwise have been thrown away wholesale.
+private func rpSalvagedArray<T: Decodable, K: CodingKey>(
+    _ type: T.Type, from c: KeyedDecodingContainer<K>, forKey key: K
+) -> [T] {
+    if let decoded = try? c.decodeIfPresent([T].self, forKey: key) { return decoded ?? [] }
+    guard var u = try? c.nestedUnkeyedContainer(forKey: key) else { return [] }
+    var out: [T] = []
+    while !u.isAtEnd {
+        guard let boxed = try? u.decode(FailableDecodable<T>.self) else { break }
+        if let v = boxed.value { out.append(v) }
+    }
+    return out
+}
+
+/// Decode `[UUID: V]` at `key`, losing AT MOST the entries that are
+/// undecodable. Swift encodes a dictionary whose Key is neither String nor Int
+/// as an UNKEYED container of alternating key, value, key, value… — so the
+/// salvage loop reads it in pairs and skips a pair whose key or value is bad,
+/// keeping the alternation intact.
+private func rpSalvagedUUIDDict<V: Decodable, K: CodingKey>(
+    _ type: V.Type, from c: KeyedDecodingContainer<K>, forKey key: K
+) -> [UUID: V] {
+    if let decoded = try? c.decodeIfPresent([UUID: V].self, forKey: key) { return decoded ?? [:] }
+    guard var u = try? c.nestedUnkeyedContainer(forKey: key) else { return [:] }
+    var out: [UUID: V] = [:]
+    while !u.isAtEnd {
+        guard let boxedKey = try? u.decode(FailableDecodable<UUID>.self) else { break }
+        guard !u.isAtEnd else { break }
+        guard let boxedValue = try? u.decode(FailableDecodable<V>.self) else { break }
+        if let k = boxedKey.value, let v = boxedValue.value { out[k] = v }
+    }
+    return out
+}
+
 extension PersistentStore.PersistedState {
     enum CodingKeys: String, CodingKey { case listings, assets, tours, renders, pendingPublish, uploadedRenderAssets }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        // Each collection is salvaged independently (`try?`): if one is
-        // malformed, only it degrades to empty — the rest still load.
-        listings = ((try? c.decodeIfPresent([Listing].self, forKey: .listings)) ?? nil) ?? []
-        assets   = ((try? c.decodeIfPresent([UUID: PersistentStore.PersistedAsset].self,
-                                            forKey: .assets)) ?? nil) ?? [:]
-        tours    = ((try? c.decodeIfPresent([UUID: PersistentStore.PersistedTour].self,
-                                            forKey: .tours)) ?? nil) ?? [:]
-        renders  = ((try? c.decodeIfPresent([UUID: Render].self, forKey: .renders)) ?? nil) ?? [:]
-        pendingPublish = (try? c.decodeIfPresent([UUID].self, forKey: .pendingPublish)) ?? nil
-        uploadedRenderAssets = (try? c.decodeIfPresent([UUID: AppModel.UploadedRenderAsset].self,
-                                                       forKey: .uploadedRenderAssets)) ?? nil
+        // Two levels of tolerance:
+        //  1. Each collection is independent — a poisoned `renders` map can't
+        //     take the listings down with it.
+        //  2. WITHIN a collection, decoding is element-by-element, so one bad
+        //     record (a `price` that isn't {cents:Int}, an asset entry missing
+        //     its relPath) costs that ONE record, not the whole library
+        //     (audit F-C-15). Element structs decode field-by-field on top of
+        //     that, so a bad FIELD usually costs nothing at all.
+        listings = rpSalvagedArray(Listing.self, from: c, forKey: .listings)
+        assets   = rpSalvagedUUIDDict(PersistentStore.PersistedAsset.self, from: c, forKey: .assets)
+        tours    = rpSalvagedUUIDDict(PersistentStore.PersistedTour.self, from: c, forKey: .tours)
+        renders  = rpSalvagedUUIDDict(Render.self, from: c, forKey: .renders)
+        let pending = rpSalvagedArray(UUID.self, from: c, forKey: .pendingPublish)
+        pendingPublish = pending.isEmpty ? nil : pending
+        let uploaded = rpSalvagedUUIDDict(AppModel.UploadedRenderAsset.self,
+                                          from: c, forKey: .uploadedRenderAssets)
+        uploadedRenderAssets = uploaded.isEmpty ? nil : uploaded
     }
 }
 
@@ -1313,6 +1431,10 @@ struct RendpropApp: App {
     @StateObject private var uploads = UploadManager.shared
     @AppStorage("hasOnboarded") private var hasOnboarded = false
     @AppStorage("appearance") private var appearanceRaw = Appearance.system.rawValue
+    // MARK: - analytics additions (P3)
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var analyticsAuth = AuthStore.shared
+    // MARK: - end analytics additions
 
     init() {
         // @AppStorage defaults are display-only; the upload engine reads the
@@ -1331,9 +1453,25 @@ struct RendpropApp: App {
             }
             .environmentObject(model)
             .environmentObject(uploads)
+            // The one paywall sheet + the StoreKit 2 lifecycle (Purchases/).
+            // Mounted here so every "Upgrade plan" CTA in the app can call
+            // `PaywallRouter.shared.present(reason:)` instead of owning a sheet.
+            .paywallHost()
             .tint(Theme.accent)
             // System / Light / Dark — set in Settings → Appearance. nil = follow iOS.
             .preferredColorScheme((Appearance(rawValue: appearanceRaw) ?? .system).colorScheme)
+            // MARK: - analytics additions (P3)
+            // First-party analytics only: our own /events route, no third-party
+            // SDK, no IDFA, no ATT prompt. `start` is idempotent.
+            .task { Analytics.start(api: model.api as? AnalyticsAPI) }
+            // Backgrounding is the one moment we KNOW the person is done, so it
+            // is the most valuable flush there is.
+            .onChange(of: scenePhase) { phase in Analytics.sceneChanged(phase) }
+            .onChange(of: analyticsAuth.isSignedIn) { signedIn in Analytics.authChanged(signedIn) }
+            // `externalSink` is `nonisolated` and hops to the main actor itself,
+            // so the purchase flow keeps knowing nothing about Analytics.
+            .onAppear { PaywallEvents.sink = Analytics.externalSink }
+            // MARK: - end analytics additions
         }
     }
 }
@@ -1381,9 +1519,13 @@ struct RootTabView: View {
 }
 
 // MARK: - Home dashboard
-// The real "home" tab is a SHOWROOM, not a brochure: an animated hero, the LIVE
-// demo tour you can scrub right here, and one bold gradient card per feature
-// that jumps straight into it. Orient in three seconds, playing in five.
+// PROJECT-FIRST. Home is the user's list of homes plus ONE big obvious action:
+// add another one. Every feature tile below runs the "Which home?" gate first
+// (ProjectFeature / ProjectGateSheet, bottom of this file), so nothing the app
+// makes — a photo, a reel, a floor plan, an aerial — can exist without a home
+// to belong to. The standalone "AI Photo Studio" entry that edited loose photos
+// with no home attached is GONE: its tile now opens the chosen home's own photo
+// studio, where every file is saved under that home.
 // Inlined here so it stays in the build target.
 struct HomeDashboardView: View {
     @EnvironmentObject var model: AppModel
@@ -1393,24 +1535,32 @@ struct HomeDashboardView: View {
     var goToListings: () -> Void = {}
 
     @State private var revealed = false          // staggers the sections in on first appear
-    @State private var showAerial = false        // aerial intro sheet from the showroom
     @State private var leadCount: Int?           // from /me when signed in
+
+    // MARK: The "Which home?" gate
+    /// The one sheet the gate uses (name your first home / pick one / aerial).
+    /// A single sheet slot — three separate `.sheet` modifiers on one view can
+    /// fight each other for it.
+    @State private var gate: ProjectGateSheet?
+    /// A home chosen while a sheet was still up. Pushed in the sheet's
+    /// `onDismiss`, so the navigation never races the dismissal.
+    @State private var queued: ProjectRoute?
+    /// What the pushed destination shows.
+    @State private var route: ProjectRoute?
+    @State private var showRoute = false
 
     private var noun: String { SpaceType.current.spaceNoun }          // home / venue / space …
     private var customer: String { SpaceType.current.customerNoun }   // buyers / guests …
+
+    /// The homes a feature may save into: the user's own, this business type's,
+    /// still active. Samples are never in here (their tools are no-ops).
+    private var projects: [Listing] { model.realProjects }
 
     /// The seeded demo listing for the current business type — powers the live
     /// sample tour on Home. nil only for the instant before `model.load()`.
     private var demoListing: Listing? {
         model.listings.first(where: { $0.isSample })
     }
-    /// The user's own most recent ACTIVE listing for this industry (never a
-    /// sample, never a sold/archived one).
-    private var firstRealListing: Listing? {
-        model.listings.first(where: { !$0.isSample && $0.belongsToCurrentType && !$0.isSold })
-    }
-    /// Best listing to open the share banner on: the user's own, else the demo.
-    private var heroListing: Listing? { firstRealListing ?? demoListing }
 
     /// The hosted demo listing page (real estate only). The Home card shows just
     /// the flythrough hero (?embed=1); "Open the full demo tour" opens the whole
@@ -1430,22 +1580,22 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: 26) {
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
-                demoSection
+                homesSection
                     .modifier(Reveal(index: 1, on: revealed))
                 showroomSection
                     .modifier(Reveal(index: 2, on: revealed))
-                howItWorksSection
+                demoSection
                     .modifier(Reveal(index: 3, on: revealed))
+                howItWorksSection
+                    .modifier(Reveal(index: 4, on: revealed))
                 // Tutorials are hidden until the videos are filmed — no "coming
                 // soon" placeholder ships to App Review (2.1). Flip the flag once
                 // tutorialSlot destinations play real content.
                 if Config.showTutorials {
                     tutorialsSection
-                        .modifier(Reveal(index: 4, on: revealed))
+                        .modifier(Reveal(index: 5, on: revealed))
                 }
                 partnersSection
-                    .modifier(Reveal(index: 5, on: revealed))
-                listingsShortcut
                     .modifier(Reveal(index: 6, on: revealed))
             }
             .padding()
@@ -1455,46 +1605,43 @@ struct HomeDashboardView: View {
         .background(Theme.bg)
         .navigationTitle("Home")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            // Top-left: the business-type switcher — the app's identity control.
-            // Picking one re-themes the ENTIRE app (Home, samples, copy, fields);
-            // RootTabView re-derives the samples on the change.
-            ToolbarItem(placement: .navigationBarLeading) {
-                Menu {
-                    Picker("Business type", selection: $spaceTypeRaw) {
-                        ForEach(SpaceType.allCases) { type in
-                            Label(type.displayName, systemImage: type.systemImage)
-                                .tag(type.rawValue)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: SpaceType.current.systemImage)
-                            .font(.system(size: 13, weight: .semibold))
-                        Text(SpaceType.current.displayName)
-                            .font(.rpCaption.weight(.semibold))
-                            .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 9, weight: .bold))
-                            .opacity(0.7)
-                    }
-                    .padding(.horizontal, 12).padding(.vertical, 7)
-                    .background(Theme.accentSoft, in: Capsule())
-                    .foregroundStyle(Theme.accent)
-                }
-                .onChange(of: spaceTypeRaw) { _ in Haptics.selection() }
-            }
-        }
+        .toolbar { ToolbarItem(placement: .navigationBarLeading) { businessTypeMenu } }
+        .navigationDestination(isPresented: $showRoute) { routeDestination }
         .task { await model.load() }        // idempotent — seeds the demo tour for this tab
         .task(id: auth.isSignedIn) { await loadLeadCount() }
         .onAppear { revealed = true }
-        .sheet(isPresented: $showAerial) {
-            // Only ever a REAL listing — the aerial is grounded on the property.
-            if let l = firstRealListing {
-                AerialIntroSheet(listing: l)
-                    .environmentObject(model)
-            }
+        .sheet(item: $gate, onDismiss: flushQueuedRoute) { sheet in
+            gateSheet(sheet)
         }
+    }
+
+    /// Top-left: the business-type switcher — the app's identity control.
+    /// Picking one re-themes the ENTIRE app (Home, samples, copy, fields);
+    /// RootTabView re-derives the samples on the change.
+    private var businessTypeMenu: some View {
+        Menu {
+            Picker("Business type", selection: $spaceTypeRaw) {
+                ForEach(SpaceType.allCases) { type in
+                    Label(type.displayName, systemImage: type.systemImage)
+                        .tag(type.rawValue)
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: SpaceType.current.systemImage)
+                    .font(.system(size: 13, weight: .semibold))
+                Text(SpaceType.current.displayName)
+                    .font(.rpCaption.weight(.semibold))
+                    .lineLimit(1)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 9, weight: .bold))
+                    .opacity(0.7)
+            }
+            .padding(.horizontal, 12).padding(.vertical, 7)
+            .background(Theme.accentSoft, in: Capsule())
+            .foregroundStyle(Theme.accent)
+        }
+        .onChange(of: spaceTypeRaw) { _ in Haptics.selection() }
     }
 
     private func loadLeadCount() async {
@@ -1503,10 +1650,103 @@ struct HomeDashboardView: View {
         leadCount = summary.entitlements?.leads ?? summary.leadCount
     }
 
+    // MARK: The gate — 0 homes / 1 home / many / cancelled / samples
+
+    /// A feature tile was tapped. Nothing starts until a home is chosen:
+    ///   • 0 homes → name one first, then land in the feature
+    ///   • 1 home  → use it, no picker
+    ///   • 2+      → "Which home?"
+    /// Samples are never candidates — `projects` excludes them.
+    private func open(_ feature: ProjectFeature) {
+        let homes = projects
+        if homes.isEmpty {
+            gate = .start(feature)
+        } else if homes.count == 1 {
+            go(homes[0], feature)
+        } else {
+            gate = .pick(feature)
+        }
+    }
+
+    /// Open `feature` on `listing`. The aerial tool is a sheet; everything else
+    /// is a push.
+    private func go(_ listing: Listing, _ feature: ProjectFeature) {
+        if feature == .aerial {
+            gate = .aerial(listing)
+        } else {
+            route = ProjectRoute(listing: listing, feature: feature)
+            showRoute = true
+        }
+    }
+
+    /// Runs after the gate sheet closes. Cancelling leaves `queued` nil, so
+    /// cancelling really does mean nothing happens.
+    private func flushQueuedRoute() {
+        guard let q = queued else { return }
+        queued = nil
+        go(q.listing, q.feature)
+    }
+
+    @ViewBuilder private func gateSheet(_ sheet: ProjectGateSheet) -> some View {
+        switch sheet {
+        case .start(let feature):
+            StartProjectSheet(feature: feature) { name in
+                if let created = model.startProject(named: name) {
+                    queued = ProjectRoute(listing: created, feature: feature)
+                }
+            }
+            .environmentObject(model)
+        case .pick(let feature):
+            ProjectPickerSheet(feature: feature, projects: projects) { listing in
+                queued = ProjectRoute(listing: listing, feature: feature)
+            }
+            .environmentObject(model)
+        case .aerial(let listing):
+            // The aerial is grounded on a REAL home's exterior photo.
+            AerialIntroSheet(listing: listing)
+                .environmentObject(model)
+        }
+    }
+
+    /// Where a resolved (home + feature) lands. Every one of these saves its
+    /// output under that home's id.
+    @ViewBuilder private var routeDestination: some View {
+        if let route {
+            switch route.feature {
+            case .photos:
+                PhotoStudioView(listing: route.listing)
+            case .reel:
+                PhotoStudioView(listing: route.listing, intent: .reel)
+            case .floorPlan:
+                FloorPlanView(listing: route.listing)
+            case .tour:
+                tourDestination(route.listing)
+            case .aerial:
+                // The aerial is presented as a sheet and never reaches here;
+                // the home itself is a safe destination if it ever does.
+                FlythroughDetailView(listing: route.listing)
+            }
+        }
+    }
+
+    /// "Make a tour" starts with the walkthrough video. A home that has none
+    /// goes straight to the video picker (→ Review & Submit → render, the
+    /// unchanged flow). A home that already has a video or a rendered tour
+    /// opens on ITSELF, where its own next step is already spelled out —
+    /// re-pointing a finished home at a new video is destructive and stays on
+    /// the home's own screen where it is explained.
+    @ViewBuilder private func tourDestination(_ listing: Listing) -> some View {
+        if model.assets[listing.id] == nil && model.tours[listing.id] == nil {
+            AddVideoFlowView(listing: listing)
+        } else {
+            FlythroughDetailView(listing: listing)
+        }
+    }
+
     // MARK: Hero — animated gradient billboard
 
     private var heroCard: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Text("RENDPROP")
                 .font(.caption.weight(.bold)).kerning(3)
                 .foregroundStyle(Color.white.opacity(0.8))
@@ -1514,23 +1754,11 @@ struct HomeDashboardView: View {
                 .font(.system(size: 28, weight: .bold, design: .rounded))
                 .foregroundStyle(Color.white)
                 .fixedSize(horizontal: false, vertical: true)
-            Text("A walkthrough video goes in. A drone-style tour comes out — with AI photos, reels, and a link \(customer) scroll like it's social.")
+            Text("Film a walkthrough. Get a drone-style tour, AI photos, and one link \(customer) can scroll.")
                 .font(.rpBody)
                 .foregroundStyle(Color.white.opacity(0.88))
                 .fixedSize(horizontal: false, vertical: true)
                 .contentTransition(.opacity)
-            NavigationLink { NewListingView() } label: {
-                HStack(spacing: 8) {
-                    Image(systemName: "plus.viewfinder")
-                    Text("Create a tour").fontWeight(.semibold)
-                }
-                .font(.rpBody)
-                .padding(.horizontal, 18).padding(.vertical, 12)
-                .background(Color.white, in: Capsule())
-                .foregroundStyle(Theme.accent)
-            }
-            .buttonStyle(ScalePressStyle())
-            .padding(.top, 2)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(20)
@@ -1560,149 +1788,129 @@ struct HomeDashboardView: View {
         }
     }
 
-    // MARK: Live demo — the real scroll-scrub player, right on Home
+    // MARK: My homes — the primary section. Project first, always.
 
-    @ViewBuilder private var demoSection: some View {
-        if let demo = demoListing {
-            VStack(alignment: .leading, spacing: 10) {
-                sectionTitle("See it in action")
-                ZStack(alignment: .topTrailing) {
-                    Group {
-                        if let url = estateDemoEmbedURL {
-                            PlayerWebView(remoteURL: url)   // hosted estate flythrough
-                        } else {
-                            PlayerWebView(listing: demo)    // bundled sample (other types)
-                        }
-                    }
-                        .id(spaceTypeRaw)   // demo re-renders when the business type changes
-                        .frame(height: 300)
-                        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                                .strokeBorder(Theme.border)
-                        )
-                    Label("Live demo", systemImage: "dot.radiowaves.left.and.right")
-                        .font(.caption2.weight(.bold))
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Color.black.opacity(0.55), in: Capsule())
-                        .foregroundStyle(Color.white)
-                        .padding(10)
-                        .allowsHitTesting(false)
-                }
-                Label("Scroll inside the video — this is the tour your \(customer) get.",
-                      systemImage: "arrow.up.arrow.down")
-                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                NavigationLink {
-                    if let url = estateDemoFullURL {
-                        // The full hosted listing microsite — flythrough → the
-                        // whole auto-built landing page buyers scroll.
-                        PlayerWebView(remoteURL: url)
-                            .ignoresSafeArea(edges: .bottom)
-                            .navigationTitle("Demo listing page")
-                            .navigationBarTitleDisplayMode(.inline)
-                    } else {
-                        FlythroughDetailView(listing: demo)
-                    }
-                } label: {
-                    HStack {
-                        Label("Open the full demo tour", systemImage: "play.rectangle.fill")
-                            .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.accent)
-                    }
-                    .padding(14)
-                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    private var homesSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            sectionTitle(SpaceType.current.collectionTitle)
+            if projects.isEmpty {
+                emptyHomesCard
+            } else {
+                homesList
+            }
+            addHomeButton
+        }
+    }
+
+    /// No homes yet: ONE sentence, ONE button (right below). Nothing else.
+    private var emptyHomesCard: some View {
+        Text("Add a \(noun) first — every photo, tour and reel is saved to it.")
+            .font(.rpBody).foregroundStyle(Theme.ink)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+    }
+
+    /// The three most recent homes, then a way to see the rest.
+    private var homesList: some View {
+        VStack(spacing: 10) {
+            ForEach(Array(projects.prefix(3))) { listing in
+                NavigationLink { FlythroughDetailView(listing: listing) } label: {
+                    ProjectPickerRow(listing: listing)
+                        .padding(12)
+                        .background(Theme.card, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(Theme.border))
                 }
                 .buttonStyle(ScalePressStyle())
+                // UI walk: same id on every row is intentional — XCUITest's
+                // `firstMatch` takes the topmost, which is the newest home.
+                .accessibilityIdentifier("home.listing.first")
+            }
+            if projects.count > 3 {
+                seeAllHomesButton
             }
         }
     }
 
-    // MARK: Feature showroom — every headline feature, one tap in
+    private var seeAllHomesButton: some View {
+        Button(action: goToListings) {
+            HStack {
+                Text("See all \(projects.count) \(noun)s")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.accent)
+            }
+            .padding(14)
+            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+    }
+
+    /// The one big obvious action on this screen.
+    private var addHomeButton: some View {
+        NavigationLink { NewListingView() } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus")
+                Text("Add a \(noun)").fontWeight(.semibold)
+            }
+            .font(.body)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(Theme.accent)
+            .foregroundStyle(Color.white)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .shadow(color: Theme.accent.opacity(0.3), radius: 10, x: 0, y: 4)
+        }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityLabel(Text("Add a \(noun)"))
+        .accessibilityIdentifier("home.addHome")
+    }
+
+    // MARK: Feature showroom — every tool, one tap in, always inside a home
 
     private var showroomSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            sectionTitle("Everything Rendprop does")
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
-                                GridItem(.flexible(), spacing: 12)], spacing: 12) {
-                NavigationLink { NewListingView() } label: {
-                    featureTile("Drone Tour", "Walk it once — glide forever",
-                                "video.fill", RPGradient.drone, ai: true)
-                }
-                .buttonStyle(ScalePressStyle())
-
-                NavigationLink { AIPhotoStudioView() } label: {
-                    featureTile("AI Photo Studio", "Twilight · blue sky · staging",
-                                "wand.and.stars", RPGradient.photo, ai: true)
-                }
-                .buttonStyle(ScalePressStyle())
-
-                reelTile
-                floorPlanTile
-                aerialTile
-
-                NavigationLink { AgentCardEditorView() } label: {
-                    featureTile(SpaceType.current.profileCardName, "You, on every tour you send",
-                                "person.text.rectangle.fill", RPGradient.agent)
-                }
-                .buttonStyle(ScalePressStyle())
-            }
+            sectionTitle("Make something")
+            Text("Everything you make is saved to one \(noun).")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            featureGrid
             leadsBanner
         }
     }
 
-    /// Reel Studio starts from a listing's photos — with no real listing yet,
-    /// the card routes to Listings to create one (and says so honestly).
-    @ViewBuilder private var reelTile: some View {
-        if let real = firstRealListing {
-            NavigationLink { PhotoStudioView(listing: real, intent: .reel) } label: {
-                featureTile("Reel Studio", "Photos → one social video",
-                            "film.stack", RPGradient.reel, ai: true)
-            }
-            .buttonStyle(ScalePressStyle())
-        } else {
-            Button { goToListings() } label: {
-                featureTile("Reel Studio", "Create a \(noun) first",
-                            "film.stack", RPGradient.reel, ai: true)
-            }
-            .buttonStyle(ScalePressStyle())
+    private var featureGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
+                            GridItem(.flexible(), spacing: 12)], spacing: 12) {
+            featureButton(.tour)
+            featureButton(.photos)
+            featureButton(.reel)
+            featureButton(.floorPlan)
+            featureButton(.aerial)
+            agentCardTile
         }
     }
 
-    /// Floor plans attach to a listing too — same honest fallback.
-    @ViewBuilder private var floorPlanTile: some View {
-        if let real = firstRealListing {
-            NavigationLink { FloorPlanView(listing: real) } label: {
-                featureTile("Floor Plans", "Scan in 3D or upload",
-                            "cube.transparent", RPGradient.plan)
-            }
-            .buttonStyle(ScalePressStyle())
-        } else {
-            Button { goToListings() } label: {
-                featureTile("Floor Plans", "Create a \(noun) first",
-                            "cube.transparent", RPGradient.plan)
-            }
-            .buttonStyle(ScalePressStyle())
+    /// One gated tile. Tapping never starts loose work — `open` picks the home
+    /// first (or asks for one).
+    private func featureButton(_ feature: ProjectFeature) -> some View {
+        Button { open(feature) } label: {
+            featureTile(feature.actionTitle, feature.promise,
+                        feature.systemImage, feature.gradient, ai: feature.usesAI)
         }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityLabel(Text("\(feature.actionTitle). \(feature.promise)"))
+        .accessibilityIdentifier("home.feature.\(feature.rawValue)")
     }
 
-    /// The aerial is grounded on a REAL property's exterior photo — never
-    /// generated against the demo listing (AI budget on a sample, orphaned file).
-    @ViewBuilder private var aerialTile: some View {
-        if firstRealListing != nil {
-            Button { showAerial = true } label: {
-                featureTile("Aerial Intro", "A cinematic opening shot",
-                            "airplane.departure", RPGradient.aerial, ai: true)
-            }
-            .buttonStyle(ScalePressStyle())
-        } else {
-            Button { goToListings() } label: {
-                featureTile("Aerial Intro", "Create a \(noun) first",
-                            "airplane.departure", RPGradient.aerial, ai: true)
-            }
-            .buttonStyle(ScalePressStyle())
+    /// The only tile that isn't per-home: your card is the same on every tour.
+    private var agentCardTile: some View {
+        NavigationLink { AgentCardEditorView() } label: {
+            featureTile(SpaceType.current.profileCardName, "You, on every tour you send",
+                        "person.text.rectangle.fill", RPGradient.agent)
         }
+        .buttonStyle(ScalePressStyle())
     }
 
     /// Wide banner: the payoff — every tour is a share link that captures
@@ -1721,7 +1929,7 @@ struct HomeDashboardView: View {
                                 in: RoundedRectangle(cornerRadius: 13, style: .continuous))
                 VStack(alignment: .leading, spacing: 3) {
                     Text(leadsTitle).font(.rpHeadline).foregroundStyle(Color.white)
-                    Text("Every tour is one link with a lead form built in. Leads appear here; email alerts are coming.")
+                    Text("Every tour is one link with a lead form built in. Leads appear here.")
                         .font(.rpCaption).foregroundStyle(Color.white.opacity(0.9))
                         .fixedSize(horizontal: false, vertical: true)
                         .multilineTextAlignment(.leading)
@@ -1777,6 +1985,73 @@ struct HomeDashboardView: View {
         .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 
+    // MARK: Live demo — the real scroll-scrub player, right on Home
+
+    @ViewBuilder private var demoSection: some View {
+        if let demo = demoListing {
+            VStack(alignment: .leading, spacing: 10) {
+                sectionTitle("See it in action")
+                demoPlayer(demo)
+                Label("Scroll inside the video — this is the tour your \(customer) get.",
+                      systemImage: "arrow.up.arrow.down")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                demoOpenLink(demo)
+            }
+        }
+    }
+
+    private func demoPlayer(_ demo: Listing) -> some View {
+        ZStack(alignment: .topTrailing) {
+            Group {
+                if let url = estateDemoEmbedURL {
+                    PlayerWebView(remoteURL: url)   // hosted estate flythrough
+                } else {
+                    PlayerWebView(listing: demo)    // bundled sample (other types)
+                }
+            }
+                .id(spaceTypeRaw)   // demo re-renders when the business type changes
+                .frame(height: 300)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                        .strokeBorder(Theme.border)
+                )
+            Label("Sample tour", systemImage: "dot.radiowaves.left.and.right")
+                .font(.caption2.weight(.bold))
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(Color.black.opacity(0.55), in: Capsule())
+                .foregroundStyle(Color.white)
+                .padding(10)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func demoOpenLink(_ demo: Listing) -> some View {
+        NavigationLink {
+            if let url = estateDemoFullURL {
+                // The full hosted listing microsite — flythrough → the whole
+                // auto-built landing page buyers scroll.
+                PlayerWebView(remoteURL: url)
+                    .ignoresSafeArea(edges: .bottom)
+                    .navigationTitle("Demo listing page")
+                    .navigationBarTitleDisplayMode(.inline)
+            } else {
+                FlythroughDetailView(listing: demo)
+            }
+        } label: {
+            HStack {
+                Label("Watch the sample tour", systemImage: "play.rectangle.fill")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.accent)
+            }
+            .padding(14)
+            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+    }
+
     // MARK: How it works — three steps, one card
 
     private var howItWorksSection: some View {
@@ -1785,9 +2060,9 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: 14) {
                 // Same instruction as the capture coaching: a steady NORMAL pace
                 // (the render retimes it into a glide) — not "slowly".
-                step(1, "Film", "Walk the \(noun) at a steady, normal pace on the 0.5× wide lens — or upload a clip.")
-                step(2, "Enhance", "Rendprop renders the glide tour on your phone; add AI photos and staged listing shots.")
-                step(3, "Share", "One link or QR code — \(customer) scroll to explore, and their inquiries land in Leads.")
+                step(1, "Add the \(noun)", "Give it a name or address. Everything you make is saved to it.")
+                step(2, "Film it", "Walk it at a steady, normal pace on the 0.5× wide lens — or upload a clip.")
+                step(3, "Share it", "One link or QR code. \(customer.capitalized) scroll it, and their questions land in Leads.")
             }
             .card()
         }
@@ -1812,21 +2087,6 @@ struct HomeDashboardView: View {
                 tutorialSlot("wand.and.stars", "Get the most from AI edits", "3 min")
             }
         }
-    }
-
-    private var listingsShortcut: some View {
-        Button(action: goToListings) {
-            HStack {
-                Label("My \(SpaceType.current.spaceNounCap.lowercased())s",
-                      systemImage: SpaceType.current.systemImage)
-                    .font(.rpHeadline).foregroundStyle(Theme.ink)
-                Spacer()
-                Image(systemName: "chevron.right").font(.rpCaption).foregroundStyle(Theme.inkDim)
-            }
-            .padding(16)
-            .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-        }
-        .buttonStyle(ScalePressStyle())
     }
 
     // MARK: More from us — the Pilk.ai family, quietly cross-promoted
@@ -2220,11 +2480,16 @@ struct AIConsentView: View {
 
 // MARK: - Storefront (App Review Guideline 3.1.1 / 3.1.3)
 //
-// Rendprop sells nothing inside the app: there is no StoreKit product, no
-// price anywhere in the binary, and no checkout. Plans are a web SaaS
-// subscription bought on rendprop.com.
+// Rendprop DOES sell inside the app. `Purchases/` implements StoreKit 2
+// auto-renewable subscriptions — six products (Starter/Pro/Team × monthly and
+// yearly) in the single App Store Connect subscription group `rendprop_plans`,
+// each with a 7-day free introductory offer. The paywall
+// (`Purchases/PaywallView.swift`, mounted once via `.paywallHost()`) is the
+// primary and worldwide way to subscribe, and every price on it comes from
+// `Product.displayPrice` — no price string is compiled into the binary.
 //
-// A link or button that points at that page is a "call to action that directs
+// The rendprop.com pricing link still exists, and it is now SECONDARY. A link
+// or button that points at that page is a "call to action that directs
 // customers to purchasing mechanisms other than in-app purchase". Since
 // 1 May 2025 that is expressly ALLOWED on the United States storefront —
 // guideline 3.1.1(a): "These entitlements are not required for developers to
@@ -2233,10 +2498,11 @@ struct AIConsentView: View {
 // app, encourage users to use a purchasing method other than in-app purchase,
 // except for apps on the United States storefront…".
 //
-// It is still a rejection EVERYWHERE ELSE. So every upgrade CTA is gated on the
-// device's actual App Store storefront: US → link out; anywhere else → the same
-// honest message with no link and no purchase invitation. Fail closed (no CTA)
-// until StoreKit answers, and if it never answers.
+// It is still a rejection EVERYWHERE ELSE. So the web link stays gated on the
+// device's actual App Store storefront: US → an extra "See plans on the web"
+// line next to the in-app paywall; anywhere else → in-app purchase only, with
+// no link and no invitation to buy elsewhere. Fail closed (no link) until
+// StoreKit answers, and if it never answers. IAP itself is never gated.
 @MainActor
 final class Storefronts: ObservableObject {
     static let shared = Storefronts()
@@ -2267,3 +2533,307 @@ extension View {
         task { await Storefronts.shared.resolve() }
     }
 }
+
+// MARK: - project-first additions
+//
+// Rendprop is PROJECT-FIRST. Every photo, reel, floor plan and aerial belongs to
+// ONE home (project) — never to nothing. Before this block, Home's "AI Photo
+// Studio" tile opened a standalone studio with no home attached, so every photo
+// edited there was an orphan: the app could not say which house it belonged to.
+// That entry is gone. Home's feature tiles now run the gate below first:
+//
+//   0 real homes  → "Start your first home" (name it) → land in the feature
+//   exactly 1     → use it, no picker, no friction
+//   2 or more     → "Which home?" picker → land in that home's feature
+//   samples       → never selectable (their tools are no-ops by design)
+//
+// Everything here is additive: no existing type or function changed.
+
+/// A feature a Home tile can open — once we know which home it is for.
+enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
+    case tour, photos, reel, floorPlan, aerial
+
+    var id: String { rawValue }
+
+    /// One clear verb. This is the words on the tile AND what happens next.
+    var actionTitle: String {
+        switch self {
+        case .tour:      return "Make a tour"
+        case .photos:    return "Take photos"
+        case .reel:      return "Make a reel"
+        case .floorPlan: return "Make a floor plan"
+        case .aerial:    return "Make an aerial shot"
+        }
+    }
+
+    /// Six words or fewer — what the feature does.
+    var promise: String {
+        switch self {
+        case .tour:      return "Walk it once — glide forever"
+        case .photos:    return "Twilight · blue sky · staging"
+        case .reel:      return "Photos → one social video"
+        case .floorPlan: return "Scan in 3D or upload"
+        case .aerial:    return "A cinematic opening shot"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .tour:      return "video.fill"
+        case .photos:    return "wand.and.stars"
+        case .reel:      return "film.stack"
+        case .floorPlan: return "cube.transparent"
+        case .aerial:    return "airplane.departure"
+        }
+    }
+
+    var gradient: LinearGradient {
+        switch self {
+        case .tour:      return RPGradient.drone
+        case .photos:    return RPGradient.photo
+        case .reel:      return RPGradient.reel
+        case .floorPlan: return RPGradient.plan
+        case .aerial:    return RPGradient.aerial
+        }
+    }
+
+    /// AI does the work here (shows the AI pill).
+    var usesAI: Bool {
+        switch self {
+        case .tour, .photos, .reel, .aerial: return true
+        case .floorPlan:                     return false
+        }
+    }
+}
+
+/// A home + the feature to open in it. The result of the gate.
+struct ProjectRoute: Identifiable, Hashable {
+    let listing: Listing
+    let feature: ProjectFeature
+    var id: String { "\(listing.id.uuidString)-\(feature.rawValue)" }
+}
+
+/// What the Home gate is asking right now. ONE sheet modifier drives all three
+/// states, so they can never fight each other for the presentation slot.
+enum ProjectGateSheet: Identifiable {
+    case start(ProjectFeature)      // no homes yet — name one
+    case pick(ProjectFeature)       // 2+ homes — which one?
+    case aerial(Listing)            // the aerial tool is itself a sheet
+
+    var id: String {
+        switch self {
+        case .start(let f):  return "start-\(f.rawValue)"
+        case .pick(let f):   return "pick-\(f.rawValue)"
+        case .aerial(let l): return "aerial-\(l.id.uuidString)"
+        }
+    }
+}
+
+extension AppModel {
+    /// The homes a feature may actually save into: the user's own, this business
+    /// type's, still active. Samples are excluded on purpose — every tool is a
+    /// no-op on a sample, so offering one as a destination would be a lie.
+    var realProjects: [Listing] {
+        listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isSold }
+    }
+
+    /// Start a home from just its name or address, so a feature always has one
+    /// to save into. The walkthrough video is added later, from the home itself.
+    /// Returns nil for an empty name.
+    @discardableResult
+    func startProject(named name: String) -> Listing? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let listing = Listing(address: trimmed,
+                              beds: 0, baths: 0, sqft: 0,
+                              price: Money(cents: 0),
+                              status: .draft,
+                              spaceTypeRaw: SpaceType.current.rawValue)
+        add(listing)
+        Analytics.track("home_created", ["space_type": SpaceType.current.rawValue])
+        return listing
+    }
+}
+
+// MARK: Cover thumbnail
+
+/// A home's cover photo for the picker rows. Falls back to the type's icon —
+/// a brand-new home has no photo yet, and that is a normal state.
+struct ProjectCoverThumb: View {
+    let listing: Listing
+    var side: CGFloat = 54
+
+    @State private var image: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFill()
+            } else {
+                Theme.accentSoft
+                Image(systemName: listing.spaceType.systemImage)
+                    .font(.system(size: side * 0.38, weight: .semibold))
+                    .foregroundStyle(Theme.accent.opacity(0.7))
+            }
+        }
+        .frame(width: side, height: side)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .task(id: listing.mainPhotoRelPath) {
+            guard let url = listing.mainPhotoURL else { image = nil; return }
+            if let cached = ImageThumbnails.cached(url) { image = cached; return }
+            let decoded = await ImageThumbnails.load(url)
+            if !Task.isCancelled { image = decoded }
+        }
+    }
+}
+
+// MARK: "Which home?" picker
+
+/// Shown only when the user has two or more homes. Address + cover photo, one
+/// tap, nothing else on the screen.
+struct ProjectPickerSheet: View {
+    let feature: ProjectFeature
+    let projects: [Listing]
+    /// Called with the chosen home; the sheet dismisses itself right after.
+    var onPick: (Listing) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    private var noun: String { SpaceType.current.spaceNoun }
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    ForEach(projects) { listing in
+                        Button {
+                            onPick(listing)
+                            dismiss()
+                        } label: {
+                            ProjectPickerRow(listing: listing)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                } header: {
+                    Text("\(feature.actionTitle) for which \(noun)?")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .textCase(nil)
+                }
+            }
+            .listStyle(.insetGrouped)
+            .navigationTitle("Pick a \(noun)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+        }
+    }
+}
+
+/// One row of the picker: cover photo, address, and what it has so far.
+struct ProjectPickerRow: View {
+    let listing: Listing
+
+    private var detail: String {
+        let sub = listing.subtitleLine.trimmingCharacters(in: .whitespaces)
+        return sub.isEmpty ? listing.status.label : sub
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            ProjectCoverThumb(listing: listing)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(listing.address)
+                    .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    .lineLimit(2)
+                Text(detail)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Image(systemName: "chevron.right")
+                .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+}
+
+// MARK: First home
+
+/// No homes yet. One field, one button — then straight into the feature the
+/// user tapped. The video comes later, from the home's own screen.
+struct StartProjectSheet: View {
+    let feature: ProjectFeature
+    /// Called with the typed name; the sheet dismisses itself right after.
+    var onCreate: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    private var space: SpaceType { SpaceType.current }
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    headline
+                    field
+                    PrimaryButton(title: "Save and continue",
+                                  systemImage: "arrow.right",
+                                  isDisabled: trimmed.isEmpty) {
+                        onCreate(trimmed)
+                        dismiss()
+                    }
+                    Text("You can add the walkthrough video later.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .navigationTitle("Add a \(space.spaceNoun)")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .onAppear { focused = true }
+        }
+    }
+
+    private var headline: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Name this \(space.spaceNoun) first")
+                .font(.rpTitle).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("Everything you make is saved to it.")
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var field: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField(space.showsPropertyDetails
+                      ? "Type the home's address"
+                      : "Name or address of your \(space.spaceNoun)",
+                      text: $name)
+                .textContentType(space.showsPropertyDetails ? .fullStreetAddress : .organizationName)
+                .textInputAutocapitalization(.words)
+                .submitLabel(.done)
+                .focused($focused)
+                .font(.body)
+                .padding(14)
+                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            Text("Next: \(feature.actionTitle.lowercased()).")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+    }
+}
+// MARK: - end project-first additions

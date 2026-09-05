@@ -1,0 +1,175 @@
+{
+  "identifier": "A1B2C3D4",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {},
+  "subscriptionGroups": [
+    {
+      "id": "5D3A9F21",
+      "localizations": [],
+      "name": "rendprop_plans",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "249.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "5A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "5A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "80 tours, 600 photo edits, 3 seats monthly.",
+              "displayName": "Team Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Team Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "2490.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "6A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "6A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "80 tours, 600 photo edits, 3 seats monthly.",
+              "displayName": "Team Yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.team.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Team Yearly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "99.00",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "3A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "3A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "25 tours, 300 photo edits, 20 reels monthly.",
+              "displayName": "Pro Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.pro.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Pro Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "990.00",
+          "familyShareable": false,
+          "groupNumber": 2,
+          "internalID": "4A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "4A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "25 tours, 300 photo edits, 20 reels monthly.",
+              "displayName": "Pro Yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.pro.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Pro Yearly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "49.00",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "1A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "1A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "8 tours, 150 photo edits, 8 reels monthly.",
+              "displayName": "Starter Monthly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.starter.monthly",
+          "recurringSubscriptionPeriod": "P1M",
+          "referenceName": "Starter Monthly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        },
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "490.00",
+          "familyShareable": false,
+          "groupNumber": 3,
+          "internalID": "2A2B3C4D",
+          "introductoryOffer": {
+            "internalID": "2A2B3C4E",
+            "numberOfPeriods": 1,
+            "paymentMode": "free",
+            "subscriptionPeriod": "P1W"
+          },
+          "localizations": [
+            {
+              "description": "8 tours, 150 photo edits, 8 reels monthly.",
+              "displayName": "Starter Yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "com.rendprop.app.starter.annual",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Starter Yearly",
+          "subscriptionGroupID": "5D3A9F21",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 2,
+    "minor": 0
+  }
+}

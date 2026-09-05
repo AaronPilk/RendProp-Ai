@@ -8,10 +8,10 @@ completeness/artifact axes, a verdict, and self-reported confidence). Haiku 4.5
 by default; the router escalates to Sonnet 5 only when Haiku's confidence is low.
 
 Cost control baked in:
-  • The static rubric is a cached system block (cache_control: ephemeral) → up to
-    ~90% off the repeated portion. (Haiku's min cacheable prompt is ~4096 tokens,
-    so the rubric is intentionally substantial; if it falls short, caching simply
-    no-ops — no error, we just don't get the discount.)
+  • NOT prompt-cached: the rubric is ~540 tokens and Haiku's minimum cacheable
+    prefix is ~4096, so a `cache_control` marker on it was inert. It has been
+    removed (audit F-G-19) — docs/AI-COST-MODEL.md §"−90% cached rubric" is
+    therefore aspirational, not current behaviour.
   • Output is capped (max_tokens) because structured JSON output is ~5× input cost.
   • ACTUAL cost is recomputed from response.usage (input/output/cache tokens) via
     costs.qc_actual_cents — so the ledger stores real money, not an estimate.
@@ -35,7 +35,8 @@ from providers.base import MissingKey, ProviderError, b64, request_json, sniff_m
 API_URL = "https://api.anthropic.com/v1/messages"
 QC_MAX_OUTPUT_TOKENS = 400  # structured JSON only — keep output cost down
 
-# The cached rubric. Static across every call → shared cache prefix.
+# The rubric. Static across every call, but NOT prompt-cached — see the module
+# docstring: it is well under Haiku's minimum cacheable prefix.
 SYSTEM_RUBRIC = """You are Rendprop's structural-consistency judge for real-estate media.
 
 Rendprop enhances listing photos/video by removing clutter (declutter) and adding
@@ -99,7 +100,45 @@ def _parse(text: str) -> dict:
     start, end = text.find("{"), text.rfind("}")
     if start == -1 or end == -1:
         raise ProviderError(f"QC judge returned non-JSON: {text[:400]}")
-    return json.loads(text[start:end + 1])
+    try:
+        obj = json.loads(text[start:end + 1])
+    except ValueError as e:
+        raise ProviderError(f"QC judge returned malformed JSON ({e}): {text[:400]}") from e
+    if not isinstance(obj, dict):
+        raise ProviderError(f"QC judge returned {type(obj).__name__}, not an object")
+    return obj
+
+
+# ── defensive coercion (audit F-G-19) ────────────────────────────────────────
+# A judge that replies `"structure": "92"`, `95.0`, `"n/a"` or omits a key used
+# to raise ValueError deep inside the loop and kill the enhancement pass. Every
+# field now coerces, and ANY coercion failure downgrades the verdict — the gate
+# must fail toward "regen"/"fail", never toward shipping an unjudged edit.
+
+class _Coerce:
+    def __init__(self) -> None:
+        self.clean = True
+
+    def score(self, raw: object, default: int = 0) -> int:
+        try:
+            return max(0, min(100, int(float(raw))))   # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            self.clean = False
+            return default
+
+    def confidence(self, raw: object) -> float:
+        try:
+            return max(0.0, min(1.0, float(raw)))      # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            self.clean = False
+            return 0.0        # unknown confidence → the router escalates
+
+    def verdict(self, raw: object) -> str:
+        v = str(raw or "").strip().lower()
+        if v in ("pass", "regen", "fail"):
+            return v
+        self.clean = False
+        return "regen"
 
 
 def judge(
@@ -131,30 +170,42 @@ def judge(
     payload = {
         "model": model,
         "max_tokens": QC_MAX_OUTPUT_TOKENS,
-        "system": [{
-            "type": "text",
-            "text": SYSTEM_RUBRIC,
-            "cache_control": {"type": "ephemeral"},  # cache the rubric prefix
-        }],
+        # NO cache_control: this rubric is ~540 tokens and Haiku's minimum
+        # cacheable prefix is ~4096, so the marker never actually cached
+        # anything — it just made the cost model claim a 90% discount that
+        # never materialised (audit F-G-19). Padding 540 tokens up to 4096 to
+        # save 90% of 540 would cost more than it saves. Re-add this only if the
+        # rubric genuinely grows past the minimum.
+        "system": [{"type": "text", "text": SYSTEM_RUBRIC}],
         "messages": [{"role": "user", "content": content}],
     }
     resp = request_json(API_URL, method="POST", payload=payload, headers={
         "x-api-key": SETTINGS.anthropic_api_key,
         "anthropic-version": SETTINGS.anthropic_version,
-    }, timeout=120)
+    }, timeout=120, retries=2)   # 429 / 529 overloaded only — never an ambiguous 5xx
 
     text = "".join(b.get("text", "") for b in resp.get("content", []))
     parsed = _parse(text)
     usage = resp.get("usage", {}) or {}
-    structure = int(parsed.get("structure", 0))
+    c = _Coerce()
+    structure = c.score(parsed.get("structure"))
+    verdict = c.verdict(parsed.get("verdict"))
+    feedback = str(parsed.get("feedback", "") or "")
+    if not c.clean:
+        # Something in the reply didn't parse. Never let that read as a pass.
+        verdict = "regen" if verdict == "pass" else verdict
+        feedback = (feedback + " (judge reply was partly unparseable; "
+                    "treating as not-passed)").strip()
+        print(f"    ⚠ QC judge reply had unparseable fields — verdict forced to "
+              f"'{verdict}': {text[:200]}")
     return QCResult(
         score=structure,
         structure=structure,
-        completeness=int(parsed.get("completeness", 0)),
-        artifacts=int(parsed.get("artifacts", 0)),
-        confidence=float(parsed.get("confidence", 0.0)),
-        verdict=str(parsed.get("verdict", "fail")),
-        feedback=str(parsed.get("feedback", "")),
+        completeness=c.score(parsed.get("completeness")),
+        artifacts=c.score(parsed.get("artifacts")),
+        confidence=c.confidence(parsed.get("confidence")),
+        verdict=verdict,
+        feedback=feedback,
         model=model,
         usage=usage,
         cost_cents=costs.qc_actual_cents(model, usage),
@@ -194,8 +245,7 @@ def understand_room(frame: bytes, *, model: str | None = None) -> RoomPlan:
     payload = {
         "model": model,
         "max_tokens": 300,
-        "system": [{"type": "text", "text": UNDERSTAND_RUBRIC,
-                    "cache_control": {"type": "ephemeral"}}],
+        "system": [{"type": "text", "text": UNDERSTAND_RUBRIC}],  # see note in judge()
         "messages": [{"role": "user", "content": [
             _img_block(frame),
             {"type": "text", "text": "Analyze this room frame."},
@@ -204,14 +254,17 @@ def understand_room(frame: bytes, *, model: str | None = None) -> RoomPlan:
     resp = request_json(API_URL, method="POST", payload=payload, headers={
         "x-api-key": SETTINGS.anthropic_api_key,
         "anthropic-version": SETTINGS.anthropic_version,
-    }, timeout=120)
+    }, timeout=120, retries=2)   # 429 / 529 overloaded only — never an ambiguous 5xx
     text = "".join(b.get("text", "") for b in resp.get("content", []))
     parsed = _parse(text)
     usage = resp.get("usage", {}) or {}
+    def _as_list(raw: object) -> list:
+        return list(raw) if isinstance(raw, (list, tuple)) else []
+
     return RoomPlan(
-        room_type=str(parsed.get("room_type", "")),
-        clutter_items=list(parsed.get("clutter_items", [])),
-        keep_identical=list(parsed.get("keep_identical", [])),
-        notes=str(parsed.get("notes", "")),
+        room_type=str(parsed.get("room_type", "") or ""),
+        clutter_items=_as_list(parsed.get("clutter_items")),
+        keep_identical=_as_list(parsed.get("keep_identical")),
+        notes=str(parsed.get("notes", "") or ""),
         model=model, usage=usage, cost_cents=costs.qc_actual_cents(model, usage),
     )

@@ -54,3 +54,64 @@ targets:
         CODE_SIGN_ENTITLEMENTS: Rendprop/Rendprop.entitlements
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+
+  # ---------------------------------------------------------------------------
+  # UI walk (docs/LAUNCH-CONTRACT.md § UI walk). ONE XCUITest that launches the
+  # app with `-uiTesting` (MockAPIClient — no network, no live backend, no real
+  # customer data) and attaches a keepAlways screenshot of every main screen.
+  # A test bundle is only ever installed by `xcodebuild test`; it is never part
+  # of an archive, so nothing here reaches the App Store build.
+  RendpropUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: RendpropUITests
+        excludes:
+          - "README.md"        # how to run it — documentation, not a bundle resource
+          - "bridge-cmd-uiwalk.sh"   # runs on the Mac bridge; never part of the bundle
+    dependencies:
+      - target: Rendprop
+    settings:
+      base:
+        TEST_TARGET_NAME: Rendprop
+        PRODUCT_BUNDLE_IDENTIFIER: com.rendprop.app.uitests
+        # The project-wide `settings.base` above points EVERY target at the
+        # app's real Info.plist. A test bundle must generate its own, and an
+        # inherited INFOPLIST_FILE beats the generator — so both keys are
+        # overridden here. Empty string = "no plist file", the generator wins.
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: "5F5C5G25Y6"   # same team as the app target
+        TARGETED_DEVICE_FAMILY: "1"      # iPhone only, like the app
+
+# Explicit shared scheme so the bridge's `-scheme Rendprop` is deterministic
+# (before this it relied on Xcode auto-creating one at open time) and so
+# `-only-testing:RendpropUITests` has a test action to attach to.
+schemes:
+  Rendprop:
+    build:
+      targets:
+        Rendprop: all
+        RendpropUITests: [test]
+    run:
+      config: Debug
+      # Simulator purchases use the local StoreKit configuration (six
+      # auto-renewable products in `rendprop_plans`); on device StoreKit talks
+      # to App Store Connect / the sandbox instead. The file lives next to
+      # project.yml, outside the sources path, so it is never bundled.
+      storeKitConfiguration: Rendprop.storekit
+    test:
+      config: Debug
+      targets:
+        - RendpropUITests
+      # Only the screenshots the walk names are attached. Xcode's automatic
+      # per-step capture would bury `01-home` … `09-health-probe` in hundreds
+      # of unnamed PNGs at export time.
+      captureScreenshotsAutomatically: false
+    profile:
+      config: Release
+    analyze:
+      config: Debug
+    archive:
+      config: Release

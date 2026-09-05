@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -53,6 +54,38 @@ class ProviderResult:
 
 # ── HTTP (stdlib) ─────────────────────────────────────────────────────────────
 
+# ── retry policy (audit F-G-08) ───────────────────────────────────────────────
+#
+# A transient 429 or an "overloaded" 529 on room 7 of 8 used to throw the whole
+# enhancement pass away. Retries are now built in — but DELIBERATELY NARROW,
+# because every POST here can create a BILLABLE generation:
+#
+#   • Retry-safe statuses are the ones that say, unambiguously, "I did not
+#     process this": 408 (request timeout), 429 (rate limited), 503 (unavailable)
+#     and Anthropic's 529 (overloaded). No job was created, so no charge.
+#   • 500/502/504 are NOT retried on a mutating request: the upstream may have
+#     completed the generation and lost the response, and a retry would pay for
+#     it twice. They ARE retried for GETs, which are idempotent.
+#   • Connection-level failures are retried only for GET, for the same reason.
+#
+# `retries=0` (the default) preserves the old single-shot behaviour; call sites
+# opt in where it is safe.
+
+RETRY_AFTER_STATUSES = frozenset({408, 429, 503, 529})
+IDEMPOTENT_5XX = frozenset({500, 502, 504})
+MAX_RETRY_SLEEP_S = 30.0
+
+
+def _retry_sleep(attempt: int, retry_after: str | None) -> float:
+    """Exponential backoff, capped, honouring a server-sent Retry-After."""
+    if retry_after:
+        try:
+            return min(MAX_RETRY_SLEEP_S, max(0.0, float(retry_after.strip())))
+        except (TypeError, ValueError):
+            pass
+    return min(MAX_RETRY_SLEEP_S, 1.0 * (2 ** attempt))
+
+
 def request_json(
     url: str,
     *,
@@ -60,31 +93,57 @@ def request_json(
     payload: dict | None = None,
     headers: dict | None = None,
     timeout: int = 120,
+    retries: int = 0,
 ) -> dict:
-    """POST/GET JSON and parse a JSON response. Raises ProviderError on non-2xx."""
+    """POST/GET JSON and parse a JSON response. Raises ProviderError on non-2xx.
+
+    `retries` is the number of EXTRA attempts (so retries=2 → up to 3 requests),
+    bounded and backed off. See the retry policy above for what is retried and
+    why a mutating call is not retried on an ambiguous 5xx.
+    """
     data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method=method)
-    req.add_header("Content-Type", "application/json")
-    req.add_header("Accept", "application/json")
-    for k, v in (headers or {}).items():
-        req.add_header(k, v)
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode()
-            return json.loads(body) if body else {}
-    except urllib.error.HTTPError as e:
-        detail = ""
+    idempotent = method.upper() in ("GET", "HEAD")
+    attempts = max(0, int(retries)) + 1
+    last: ProviderError | None = None
+
+    for attempt in range(attempts):
+        req = urllib.request.Request(url, data=data, method=method)
+        req.add_header("Content-Type", "application/json")
+        req.add_header("Accept", "application/json")
+        for k, v in (headers or {}).items():
+            req.add_header(k, v)
         try:
-            detail = e.read().decode()[:2000]
-        except Exception:  # noqa: BLE001
-            pass
-        raise ProviderError(f"HTTP {e.code} from {url}: {detail}") from e
-    except urllib.error.URLError as e:
-        raise ProviderError(f"Network error to {url}: {e.reason}") from e
-    except (TimeoutError, OSError) as e:
-        # A READ timeout surfaces as socket.timeout/TimeoutError (not URLError);
-        # it must still be a ProviderError so the per-segment fallback catches it.
-        raise ProviderError(f"Network error to {url}: {e.__class__.__name__}: {e}") from e
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                body = resp.read().decode()
+                return json.loads(body) if body else {}
+        except urllib.error.HTTPError as e:
+            detail = ""
+            try:
+                detail = e.read().decode()[:2000]
+            except Exception:  # noqa: BLE001
+                pass
+            last = ProviderError(f"HTTP {e.code} from {url}: {detail}")
+            retryable = e.code in RETRY_AFTER_STATUSES or (
+                idempotent and e.code in IDEMPOTENT_5XX)
+            if not retryable or attempt == attempts - 1:
+                raise last from e
+            wait = _retry_sleep(attempt, (e.headers or {}).get("Retry-After"))
+            print(f"    ↻ HTTP {e.code} from {url.split('?')[0]} — retry "
+                  f"{attempt + 1}/{attempts - 1} in {wait:.1f}s")
+            time.sleep(wait)
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            # A READ timeout surfaces as socket.timeout/TimeoutError (not URLError);
+            # it must still be a ProviderError so the per-segment fallback catches it.
+            reason = getattr(e, "reason", e)
+            last = ProviderError(f"Network error to {url}: {e.__class__.__name__}: {reason}")
+            if not idempotent or attempt == attempts - 1:
+                raise last from e
+            wait = _retry_sleep(attempt, None)
+            print(f"    ↻ network error on GET {url.split('?')[0]} — retry "
+                  f"{attempt + 1}/{attempts - 1} in {wait:.1f}s")
+            time.sleep(wait)
+
+    raise last or ProviderError(f"request to {url} failed")
 
 
 def download_bytes(url: str, *, timeout: int = 120) -> bytes:

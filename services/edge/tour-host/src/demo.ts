@@ -116,6 +116,12 @@ export function buildDemoTour(): Tour {
     agent_card: {
       name: "Alexandra Reyes",
       handle: "meridian",
+      // The demo is Rendprop's OWN content and is listed in sitemap.xml, so it
+      // opts itself into search indexing and into the house promotions that a
+      // real customer's page now has to opt into (audit F-H-17 / F-H-19).
+      allow_indexing: true,
+      show_financing: true,
+      show_partners: true,
       brokerage: "Meridian Estates",
       phone: "(305) 555-0142",
       email: "aaron@pilk.ai",

@@ -35,11 +35,16 @@
 	       • Motion            — CMMotionManager device-motion log used for
 	                             stabilization (Capture/MotionRecorder.swift)
 	       • PhotoLibraryAdd   — PHPhotoLibrary .addOnly + UIImageWriteToSavedPhotosAlbum
+	       • Microphone        — AVAudioRecorder voiceover capture in Reel Studio
+	                             (Voice/VoiceRecorder.swift). The walkthrough
+	                             capture session still adds NO audio input
+	                             (CameraManager: "video only, no mic"); this
+	                             string exists for the reel voiceover alone.
+	       • SpeechRecognition — SFSpeechRecognizer transcribes that voiceover to
+	                             get word timings for burned-in captions
+	                             (Voice/SpeechTranscriber.swift). On-device
+	                             wherever the device supports it.
 	     DELIBERATELY ABSENT:
-	       • NSMicrophoneUsageDescription — the capture session adds NO audio
-	         input (CameraManager: "video only, no mic"), nothing touches
-	         AVAudioSession, and flythroughs are silent. A purpose string for an
-	         API the binary never calls is dead weight at review.
 	       • NSPhotoLibraryUsageDescription — every read path is the
 	         out-of-process picker (PHPickerViewController / SwiftUI PhotosPicker)
 	         with no `photoLibrary:` parameter, which needs NO authorization; the
@@ -48,10 +53,45 @@
 	<string>Rendprop uses your camera to record a walkthrough of your space and to take listing photos.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Rendprop uses your location to fill in your space's address automatically.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Rendprop records your voice with the microphone when you add a voiceover to a reel. The recording is saved on this iPhone and is only included in a reel you choose to export or share.</string>
 	<key>NSMotionUsageDescription</key>
 	<string>Rendprop reads motion data to stabilize your video and guide a steady, level walkthrough.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Save rendered flythroughs, listing photos and reels to your photo library.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Rendprop transcribes the voiceover you record so it can put word-by-word captions on your reel. Transcription runs on this iPhone when the device supports it; otherwise the recording is sent to Apple's speech recognition service to be turned into text.</string>
+	<!-- SKADNETWORK — how Meta ads get credited without tracking anybody.
+	     The owner is running Meta ads at this app. SKAdNetwork is Apple's own
+	     attribution channel: iOS holds a per-install conversion value that only
+	     this app may raise (Analytics/Attribution.swift), and when the
+	     measurement window closes iOS — not us — sends a SIGNED postback to the
+	     ad network. The postback carries the campaign and the conversion value
+	     and NO identifier of any kind, so Meta can optimise for subscribers
+	     instead of installs while learning nothing about who anybody is.
+
+	     Listing a network here is what makes it eligible to receive that
+	     postback; it is not an SDK, it ships no code, and it collects nothing.
+	     The app therefore has NO IDFA, NO AppTrackingTransparency prompt and
+	     NSPrivacyTracking stays false in PrivacyInfo.xcprivacy — SKAdNetwork
+	     attribution is expressly not "tracking" as Apple defines it, because
+	     nothing is linked to a person or a device across apps.
+
+	     Both ids are Meta's own, verbatim from Meta's developer documentation
+	     (developers.facebook.com/docs/setting-up/platform-setup/ios/SKAdNetwork,
+	     checked 2026-09-05). Add nothing speculative here: an identifier for a
+	     network we do not buy from is dead weight in App Review. -->
+	<key>SKAdNetworkItems</key>
+	<array>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>v9wttpbfk9.skadnetwork</string>
+		</dict>
+		<dict>
+			<key>SKAdNetworkIdentifier</key>
+			<string>n38lu8286q.skadnetwork</string>
+		</dict>
+	</array>
 	<key>UILaunchScreen</key>
 	<dict/>
 	<key>UIRequiredDeviceCapabilities</key>

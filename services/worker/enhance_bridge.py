@@ -154,7 +154,7 @@ def run_enhancement(
     if missing:
         return EnhanceResult(ran=False, reason=f"skipped: missing provider keys {missing}")
 
-    # ── make the pipeline importable + reroute its ledger to `rendprop` ──
+    # ── make the pipeline importable + reroute its ledger to SETTINGS.db_schema ──
     try:
         pdir = SETTINGS.pipeline_dir
         if pdir not in sys.path:

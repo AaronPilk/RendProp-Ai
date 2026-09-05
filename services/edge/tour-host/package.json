@@ -9,8 +9,12 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/check-unbranded.mjs",
-    "tail": "wrangler tail"
+    "test": "node scripts/check-unbranded.mjs && node scripts/check-routes.mjs",
+    "tail": "wrangler tail",
+    "check:unbranded": "node scripts/check-unbranded.mjs",
+    "check:routes": "node scripts/check-routes.mjs",
+    "check:assets": "node scripts/check-assets.mjs",
+    "predeploy": "npm run typecheck && npm test && npm run check:assets"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20250712.0",

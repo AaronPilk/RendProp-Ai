@@ -77,33 +77,104 @@ def load_env(path: Path | None = None) -> None:
 load_env()
 
 
-def _int(name: str, default: int) -> int:
+class ConfigError(RuntimeError):
+    """An env var is SET but unusable. Never silently defaulted (audit F-G-11).
+
+    A cost ceiling or a QC threshold that quietly falls back to its default is
+    how an unattended bill runs away: the operator lowers the cap to $5 for
+    launch, the value never applies, and nothing says so. Anything the operator
+    deliberately typed either parses or stops the worker at startup.
+    """
+
+
+def _range(name: str, value: float, raw: str, lo: float | None, hi: float | None) -> None:
+    if lo is not None and value < lo:
+        raise ConfigError(f"{name}={raw!r} is below the minimum {lo}")
+    if hi is not None and value > hi:
+        raise ConfigError(f"{name}={raw!r} is above the maximum {hi}")
+
+
+def _int(name: str, default: int, *, lo: int | None = None, hi: int | None = None) -> int:
+    """Parse an int env var. Unset/blank → default. Malformed → ConfigError."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return int(raw.strip())
+        value = int(raw.strip())
     except (TypeError, ValueError):
-        print(f"⚠ {name}={raw!r} is not an integer; using default {default}")
-        return default
+        raise ConfigError(
+            f"{name}={raw.strip()!r} is not an integer (default would have been "
+            f"{default}). Fix the value — it is NOT being defaulted."
+        ) from None
+    _range(name, value, raw.strip(), lo, hi)
+    return value
 
 
-def _float(name: str, default: float) -> float:
+def _float(name: str, default: float, *, lo: float | None = None, hi: float | None = None) -> float:
+    """Parse a float env var. Unset/blank → default. Malformed → ConfigError."""
     raw = os.environ.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
-        return float(raw.strip())
+        value = float(raw.strip())
     except (TypeError, ValueError):
-        print(f"⚠ {name}={raw!r} is not a number; using default {default}")
-        return default
+        raise ConfigError(
+            f"{name}={raw.strip()!r} is not a number (default would have been "
+            f"{default}). Fix the value — it is NOT being defaulted."
+        ) from None
+    _range(name, value, raw.strip(), lo, hi)
+    return value
+
+
+_TRUE = ("1", "true", "yes", "on")
+_FALSE = ("0", "false", "no", "off", "")
 
 
 def _bool(name: str, default: bool = False) -> bool:
+    """Parse a bool env var. Unset → default. Unrecognised → ConfigError.
+
+    `TONEMAP_HDR=ture` used to read as False, silently disabling a guard.
+    """
     v = os.environ.get(name)
     if v is None:
         return default
-    return v.strip().lower() in ("1", "true", "yes", "on")
+    s = v.strip().lower()
+    if s == "":
+        return default
+    if s in _TRUE:
+        return True
+    if s in _FALSE:
+        return False
+    raise ConfigError(
+        f"{name}={v.strip()!r} is not a boolean; use one of {_TRUE + _FALSE[:-1]}"
+    )
+
+
+# ── shared AI-spend guards (parsed by services/pipeline/config.py) ────────────
+# The worker doesn't use these itself, but it OWNS the .env both halves read, so
+# it validates them at startup: a typo in MAX_GEN_COST_PER_JOB_CENTS must stop the
+# worker here, not surface as "pipeline import failed" on the first paid job.
+SHARED_GUARDS: tuple[tuple[str, str, float | None, float | None], ...] = (
+    ("MAX_GEN_COST_PER_JOB_CENTS", "int", 1, 1_000_000),
+    ("QC_PASS_SCORE", "int", 0, 100),
+    ("QC_MAX_RETRIES", "int", 0, 10),
+    ("QC_CONFIDENCE_ESCALATE", "float", 0.0, 1.0),
+)
+
+
+def validate_shared_guards() -> list[str]:
+    """Strictly parse the AI cost/QC guards. Raises ConfigError on the first bad
+    one; returns a human-readable echo of what is actually in force."""
+    echo = []
+    for name, kind, lo, hi in SHARED_GUARDS:
+        raw = os.environ.get(name)
+        if raw is None or raw.strip() == "":
+            continue
+        value = (_int(name, 0, lo=int(lo) if lo is not None else None,
+                      hi=int(hi) if hi is not None else None)
+                 if kind == "int" else _float(name, 0.0, lo=lo, hi=hi))
+        echo.append(f"{name}={value}")
+    return echo
 
 
 # The Postgres schema the Rendprop tables live in. ALL Supabase REST calls target
@@ -149,6 +220,15 @@ class Settings:
     # clips) and only if the ffmpeg build has zscale+tonemap. TONEMAP_HDR=0 opts
     # out entirely (output is then re-tagged bt709 and looks washed out).
     tonemap_hdr: bool = True
+    # Tone-map curve. `mobius` is the measured default: it maps out-of-range
+    # highlights smoothly while leaving IN-range material alone, which is what a
+    # room interior mostly is. `hable` (the old hard-coded curve) crushed
+    # in-gamut content — measured on a synthetic PQ source against its SDR
+    # reference: SATAVG 24.6 vs 39.4 and YAVG 73.4 vs 103.7 for hable, versus
+    # 36.1 / 99.9 for mobius. See tests/test_hdr_tonemap.py.
+    tonemap_curve: str = "mobius"
+    # Nominal peak luminance (nits) the HDR signal is linearised against.
+    tonemap_npl: float = 100.0
 
     # ── AI pipeline reuse ──
     pipeline_dir: str = ""           # default: ../pipeline relative to this file
@@ -184,24 +264,26 @@ class Settings:
             r2_bucket_uploads=os.environ.get("R2_BUCKET_UPLOADS", "rendprop-uploads"),
             r2_bucket_renders=os.environ.get("R2_BUCKET_RENDERS", "rendprop-renders"),
             r2_endpoint=endpoint,
-            r2_presign_expiry_s=_int("R2_PRESIGN_EXPIRY_S", 3600),
+            r2_presign_expiry_s=_int("R2_PRESIGN_EXPIRY_S", 3600, lo=60, hi=604800),
             cloudflare_stream_token=os.environ.get("CLOUDFLARE_STREAM_TOKEN", ""),
-            stream_poll_interval_s=_float("STREAM_POLL_INTERVAL_S", 4.0),
-            stream_timeout_s=_int("STREAM_TIMEOUT_S", 900),
+            stream_poll_interval_s=_float("STREAM_POLL_INTERVAL_S", 4.0, lo=0.5, hi=60),
+            stream_timeout_s=_int("STREAM_TIMEOUT_S", 900, lo=10, hi=7200),
             stream_require_ready=_bool("STREAM_REQUIRE_READY", False),
             ffmpeg_bin=os.environ.get("FFMPEG_BIN", "ffmpeg"),
             ffprobe_bin=os.environ.get("FFPROBE_BIN", "ffprobe"),
-            encode_long_edge=_int("ENCODE_LONG_EDGE", 1280),
-            encode_fps=_int("ENCODE_FPS", 60),
+            encode_long_edge=_int("ENCODE_LONG_EDGE", 1280, lo=240, hi=7680),
+            encode_fps=_int("ENCODE_FPS", 60, lo=1, hi=240),
             encode_bitrate=os.environ.get("ENCODE_BITRATE", "14M"),
             encode_preset=os.environ.get("ENCODE_PRESET", "medium"),
             tonemap_hdr=_bool("TONEMAP_HDR", True),
+            tonemap_curve=os.environ.get("TONEMAP_CURVE", "mobius").strip().lower() or "mobius",
+            tonemap_npl=_float("TONEMAP_NPL", 100.0, lo=1.0, hi=10000.0),
             pipeline_dir=pipeline_dir,
-            hero_seconds=_int("HERO_SECONDS", 5),
-            render_compute_cents_per_min=_float("RENDER_COMPUTE_CENTS_PER_MIN", 0.5),
+            hero_seconds=_int("HERO_SECONDS", 5, lo=2, hi=12),
+            render_compute_cents_per_min=_float("RENDER_COMPUTE_CENTS_PER_MIN", 0.5, lo=0.0),
             render_compute_provider=os.environ.get("RENDER_COMPUTE_PROVIDER", "modal"),
-            stream_store_cents_per_min=_float("STREAM_STORE_CENTS_PER_MIN", 0.5),
-            poll_interval_s=_float("POLL_INTERVAL_S", 5.0),
+            stream_store_cents_per_min=_float("STREAM_STORE_CENTS_PER_MIN", 0.5, lo=0.0),
+            poll_interval_s=_float("POLL_INTERVAL_S", 5.0, lo=0.5, hi=3600),
             run_once=_bool("RUN_ONCE", False),
             workdir=os.environ.get("WORKER_WORKDIR", "/tmp/rendprop-worker"),
         )
@@ -220,4 +302,11 @@ class Settings:
         return bool(self.cloudflare_stream_token and self.cloudflare_account_id)
 
 
-SETTINGS = Settings.from_env()
+try:
+    SETTINGS = Settings.from_env()
+except ConfigError as e:
+    # FAIL LOUD AT STARTUP. Import-time SystemExit stops the process with this
+    # message instead of running on with a guard the operator thinks is set.
+    raise SystemExit(
+        f"FATAL: bad worker configuration: {e}\nSee services/worker/.env.example."
+    ) from e

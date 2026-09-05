@@ -28,6 +28,14 @@ struct SettingsView: View {
     @State private var usageError: String?
     @State private var isLoadingUsage = false
 
+    // Owner console visibility. Decided by the SERVER — never a hardcoded email
+    // and never a local flag. `/me` may one day carry `is_admin`; today it does
+    // not, so we probe `GET /admin/spend` ONCE and hide the row on a 403.
+    // Getting this wrong only shows or hides a row: every /admin route
+    // re-checks `profiles.is_admin` server-side on every request.
+    @State private var showAdminConsole = false
+    @State private var adminProbeDone = false
+
     // Sign in / sign out
     @State private var showSignIn = false
     @State private var showSignOutConfirm = false
@@ -162,18 +170,6 @@ struct SettingsView: View {
                 Text(brandKitFooter)
             }
 
-            Section {
-                NavigationLink {
-                    AIPhotoStudioView()
-                } label: {
-                    Label("AI Photo Studio", systemImage: "wand.and.stars")
-                }
-            } header: {
-                Text("AI tools")
-            } footer: {
-                Text("Twilight, sky replacement, lawn repair, decluttering, virtual staging, and custom AI edits on any listing photo.")
-            }
-
             // Notifications section is hidden until push (APNs) is wired — a
             // reviewer must never see "Coming soon" placeholder rows (App Store
             // 2.1). Re-enable this block behind Config.enablePush when APNs ships.
@@ -226,6 +222,36 @@ struct SettingsView: View {
 
             if Config.useLiveBackend {
                 usageSection
+            }
+
+            if Config.useLiveBackend && showAdminConsole {
+                Section {
+                    NavigationLink {
+                        AdminConsoleView()
+                    } label: {
+                        Label("Spend & providers", systemImage: "chart.bar.doc.horizontal")
+                    }
+                    .accessibilityIdentifier("settings.ownerConsole")
+                    // MARK: - router additions
+                    NavigationLink {
+                        AdminRoutingView()
+                    } label: {
+                        Label("AI routing", systemImage: "arrow.triangle.branch")
+                    }
+                    .accessibilityIdentifier("admin.tab.routing")
+                    // MARK: - end router additions
+                    // MARK: - funnel additions (P3)
+                    NavigationLink {
+                        AdminFunnelView()
+                    } label: {
+                        Label("Funnel", systemImage: "chart.bar.xaxis")
+                    }
+                    // MARK: - end funnel additions
+                } header: {
+                    Text("Owner console")
+                } footer: {
+                    Text("Spend and providers are read-only. Funnel shows where people stop and whether the app is crashing. AI routing can be changed — it decides which provider runs each AI job. This row is here because the server says this account is an admin; it enforces that on every request, so nothing on this phone can unlock it.")
+                }
             }
 
             Section {
@@ -293,10 +319,13 @@ struct SettingsView: View {
         .refreshable { await loadUsage() }
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn {
+                adminProbeDone = false
                 Task { await loadUsage() }
             } else {
                 usage = nil
                 usageError = nil
+                showAdminConsole = false
+                adminProbeDone = false
             }
         }
         .sheet(isPresented: $showSignIn) {
@@ -309,6 +338,8 @@ struct SettingsView: View {
                 auth.signOut()
                 usage = nil
                 usageError = nil
+                showAdminConsole = false
+                adminProbeDone = false
                 Haptics.selection()
             }
             Button("Cancel", role: .cancel) {}
@@ -428,10 +459,57 @@ struct SettingsView: View {
                     ProgressView()
                 }
             }
+            // Buy / manage. Subscriptions are StoreKit 2 in-app purchases
+            // (Purchases/); the rows below only OPEN things — the plan itself
+            // is whatever the server says in the rows above.
+            if auth.isSignedIn {
+                PlanActionRows(planName: usage?.entitlements?.plan ?? usage?.planName,
+                               onPlanChanged: { Task { await loadUsage() } })
+            }
         } header: {
             Text("Plan & usage")
         } footer: {
             Text("Counts reset each month. Pull down to refresh.")
+        }
+    }
+
+    /// The two buttons under Plan & usage.
+    ///
+    /// A nested view rather than more `@State` on `SettingsView` so it can
+    /// observe `PurchaseManager` (and the plan-changed broadcast) without
+    /// touching anything outside this section.
+    ///
+    /// "Upgrade plan" opens the ONE paywall sheet mounted at the app root
+    /// (`.paywallHost()`), never its own. "Manage subscription" opens Apple's
+    /// sheet — the only correct place to cancel or switch.
+    private struct PlanActionRows: View {
+        let planName: String?
+        var onPlanChanged: () -> Void = {}
+
+        @ObservedObject private var purchases = PurchaseManager.shared
+
+        var body: some View {
+            Group {
+                if RendpropProducts.isUpgradeable(planName: planName) {
+                    Button {
+                        PaywallRouter.shared.present(reason: .upgrade)
+                    } label: {
+                        Label("Upgrade plan", systemImage: "arrow.up.circle.fill")
+                    }
+                    .accessibilityIdentifier("settings.upgradePlan")
+                }
+                if purchases.activePlan != nil {
+                    Button {
+                        Task { await PurchaseManager.shared.manageSubscriptions() }
+                    } label: {
+                        Label("Manage subscription", systemImage: "creditcard")
+                    }
+                }
+            }
+            // The server just wrote a new plan — the rows above are stale.
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropPlanChanged)) { _ in
+                onPlanChanged()
+            }
         }
     }
 
@@ -495,6 +573,39 @@ struct SettingsView: View {
         } catch {
             if error is CancellationError { return }
             usageError = UserFacingError.message(error, fallback: "Couldn't load usage. Pull down to refresh.")
+        }
+        await resolveAdminAccess()
+    }
+
+    /// Decide whether the owner-console row is drawn — from the SERVER only.
+    ///
+    /// Order: the `/me` flag if this build's server sends one, otherwise a
+    /// single probe of `GET /admin/spend`. A 403 (or anything else) means "no
+    /// row". The probe runs at most once per sign-in; `.onChange(of:
+    /// auth.isSignedIn)` resets it. This is presentation, not permission —
+    /// every admin route re-checks `profiles.is_admin` on every call.
+    @MainActor
+    private func resolveAdminAccess() async {
+        guard Config.useLiveBackend, auth.isSignedIn, let usage else {
+            showAdminConsole = false
+            adminProbeDone = false
+            return
+        }
+        if let flag = usage.isAdmin {
+            showAdminConsole = flag
+            adminProbeDone = true
+            return
+        }
+        guard !adminProbeDone else { return }
+        adminProbeDone = true
+        do {
+            _ = try await model.api.adminSpend(window: .today)
+            showAdminConsole = true
+        } catch {
+            // 403 = not an admin, 401 = signed out, anything else = can't tell.
+            // In every case the honest answer is to draw no row.
+            if error is CancellationError { adminProbeDone = false }
+            showAdminConsole = false
         }
     }
 
@@ -620,9 +731,36 @@ struct SettingsView: View {
     /// Remove everything the app stored on this device. Demo samples are
     /// reseeded afterwards so the app still works as a fresh install.
     ///
-    /// Documents is wiped WHOLESALE (then Recordings/Imports are recreated) so
-    /// no later-added folder (reels, FloorPlans, Aerials, Photos, enhanced-*.mp4,
-    /// preview-*.html, the state snapshot) can be missed again (audit F-C-11).
+    /// Every container directory the app can write to is wiped WHOLESALE, so no
+    /// later-added folder can be missed again (audit F-C-11). App Store 5.1.1(v)
+    /// makes this a compliance surface, not a tidiness one: after "Delete
+    /// account" the alert says the user's data is gone, so none of their media
+    /// may survive anywhere on the device.
+    ///
+    /// ── WRITE-LOCATION CHECKLIST (keep in sync; add a line when you add a writer) ──
+    /// Documents/                (wiped wholesale, step 1)
+    ///   Recordings/             capture + on-device renders + enhanced-*.mp4   FileStore.recordingsDir
+    ///   Imports/                imported source clips                          FileStore.importsDir
+    ///   Aerials/                AI aerial intros <id>-<stamp>.mp4              FileStore.aerialsDir
+    ///   Photos/<listingID>/     AI photo studio originals + edits              FlythroughDetailView
+    ///   FloorPlans/             <id>.usdz, <id>.json, <id>-upload.*            FlythroughDetailView
+    ///   reels/                  <id>-<stamp>.mp4                               FlythroughDetailView
+    ///   Previews/               generated preview-*.html                       PlayerWebView
+    ///   agent-headshot*.jpg     brand photo per business type                  AgentCard
+    ///   rendprop-state.json     the model snapshot (+ .corrupt-* quarantines)  PersistentStore
+    /// Library/Caches/           (wiped wholesale, step 2)
+    ///   player-demo/            personalized demo page + demo.mp4 copy         PlayerWebView
+    ///   posters/                poster-<listingID>.jpg — frames of the user's
+    ///                           own video                                      PosterMaker
+    /// Library/Application Support/ (wiped wholesale, step 3)
+    ///   upload-state.json       resumable-upload record                        UploadStore
+    ///   rp-upload-slices/       multipart SLICES OF THE USER'S VIDEO           DirectUploader
+    /// tmp/                      export/share scratch                           (wiped, step 2)
+    /// WKWebsiteDataStore        cookies/localStorage from hosted tour pages     (step 4)
+    /// UserDefaults              agent cards, brand bookkeeping, aerial job records,
+    ///                           AI-processing consent (step 5)
+    /// Keychain                  auth tokens — cleared by AuthStore.signOut() before this runs
+    /// ──────────────────────────────────────────────────────────────────────────────
     @MainActor
     private func wipeLocalData() {
         // Stop any render/publish first — a job finishing after the wipe would
@@ -640,32 +778,45 @@ struct SettingsView: View {
 
         let fm = FileManager.default
 
-        // 1. Documents — everything, hidden files included.
-        if let items = try? fm.contentsOfDirectory(at: FileStore.documents,
-                                                   includingPropertiesForKeys: nil,
-                                                   options: []) {
+        // Empty a directory without deleting the directory itself (iOS owns
+        // Caches/Application Support and recreates them lazily, but removing
+        // the root outright can leave the container in an odd state).
+        func emptyDirectory(_ dir: URL?) {
+            guard let dir else { return }
+            guard let items = try? fm.contentsOfDirectory(at: dir,
+                                                          includingPropertiesForKeys: nil,
+                                                          options: []) else { return }
             for url in items { try? fm.removeItem(at: url) }
         }
+
+        // 1. Documents — everything, hidden files included.
+        emptyDirectory(FileStore.documents)
         // Recreate the working folders the capture/import paths expect.
         _ = FileStore.recordingsDir
         _ = FileStore.importsDir
 
-        // 2. Caches (personalized player-demo HTML + demo video copy) and tmp.
-        if let caches = fm.urls(for: .cachesDirectory, in: .userDomainMask).first {
-            try? fm.removeItem(at: caches.appendingPathComponent("player-demo"))
-        }
-        if let tmpItems = try? fm.contentsOfDirectory(at: fm.temporaryDirectory,
-                                                      includingPropertiesForKeys: nil,
-                                                      options: []) {
-            for url in tmpItems { try? fm.removeItem(at: url) }
-        }
+        // 2. Caches (personalized player-demo HTML + demo video copy, and
+        //    posters/poster-<id>.jpg — real frames of the user's own video) and
+        //    tmp (export/share scratch). Wholesale, for the same reason as
+        //    Documents: a per-folder allow-list is what missed reels and floor
+        //    plans the first time (audit F-C-11).
+        emptyDirectory(fm.urls(for: .cachesDirectory, in: .userDomainMask).first)
+        emptyDirectory(fm.temporaryDirectory)
 
-        // 3. WebKit site data from hosted pages loaded in PlayerWebView
+        // 3. Application Support — the resumable-upload record AND
+        //    `rp-upload-slices/`, which holds multipart SLICES OF THE USER'S
+        //    VIDEO (hundreds of MB). `uploads.cancel()` only clears these when
+        //    an upload was in flight, so an interrupted publish from an earlier
+        //    launch used to leave the user's footage on the phone after the app
+        //    said their data had been removed.
+        emptyDirectory(fm.urls(for: .applicationSupportDirectory, in: .userDomainMask).first)
+
+        // 4. WebKit site data from hosted pages loaded in PlayerWebView
         //    (lead-form cookies, localStorage beacons).
         WKWebsiteDataStore.default().removeData(ofTypes: WKWebsiteDataStore.allWebsiteDataTypes(),
                                                 modifiedSince: .distantPast) {}
 
-        // 4. Profile cards for EVERY business type (keys are namespaced per
+        // 5. Profile cards for EVERY business type (keys are namespaced per
         //    industry; real estate uses the legacy bare keys) + brand bookkeeping.
         let d = UserDefaults.standard
         for type in SpaceType.allCases {
@@ -677,13 +828,18 @@ struct SettingsView: View {
         d.removeObject(forKey: AgentCard.lastPushedKey)
         d.removeObject(forKey: "auth.userName")
         d.removeObject(forKey: "auth.orgName")
+        // Third-party AI processing consent is PERSONAL (App Review 5.1.2(i)):
+        // it was granted by the person whose data we just removed, so it must
+        // not carry over to whoever uses this phone next. The next AI tool asks
+        // again from scratch.
+        aiConsent.revoke()
         // In-flight / cached aerial job records (per listing) go with the data.
         for key in d.dictionaryRepresentation().keys
         where key.hasPrefix("aerial.pending.") || key.hasPrefix("aerial.meta.") {
             d.removeObject(forKey: key)
         }
 
-        // 5. Fresh samples for the current business type.
+        // 6. Fresh samples for the current business type.
         model.reseedSamples()
     }
 }
@@ -1011,322 +1167,14 @@ struct LeadRow: View {
     }
 }
 
-// MARK: - AI Photo Studio
-// Twilight / sky-replace / lawn-repair on a listing photo via the `ai-photo`
-// edge function (Gemini). Inlined here (in a compiled file) so it can't be
-// dropped from the build target — same rule as AgentCard below.
-
-struct AIPhotoStudioView: View {
-    @EnvironmentObject var model: AppModel
-    @ObservedObject private var auth = AuthStore.shared
-    @Environment(\.dismiss) private var dismiss
-
-    private enum Edit: String, CaseIterable, Identifiable {
-        case twilight, sky, lawn, declutter, stage, custom
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .twilight:  return "Twilight"
-            case .sky:       return "Blue sky"
-            case .lawn:      return "Green lawn"
-            case .declutter: return "Declutter"
-            case .stage:     return "Staging"
-            case .custom:    return "Custom"
-            }
-        }
-    }
-
-    /// Furnishing look for `edit = .stage` — mirrors the ai-photo contract.
-    private enum StageStyle: String, CaseIterable, Identifiable {
-        case modern, rustic, minimalist, scandinavian
-        var id: String { rawValue }
-        var label: String { rawValue.capitalized }
-    }
-
-    @State private var pickerItem: PhotosPickerItem?
-    @State private var original: UIImage?
-    @State private var edited: UIImage?
-    @State private var edit: Edit = .twilight
-    @State private var stageStyle: StageStyle = .modern
-    @State private var customPrompt = ""
-    @State private var isWorking = false
-    @State private var errorMsg: String?
-    @State private var errorIsQuota = false
-    @State private var showSignIn = false
-    /// The exact disclosure sentence the server recorded for the last edit
-    /// (W2-C4). This studio has no listing attached, so the edit is NOT in the
-    /// org's compliance log — the result card says so rather than implying it is.
-    @State private var lastDisclosure: String?
-
-    private var customPromptTrimmed: String {
-        customPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private var needsSignIn: Bool { Config.useLiveBackend && Config.enableAuth && !auth.isSignedIn }
-
-    var body: some View {
-        ScrollView {
-            VStack(spacing: Theme.spacing) {
-                if let edited {
-                    resultCard(edited)
-                } else if let original {
-                    Image(uiImage: original)
-                        .resizable().scaledToFit()
-                        .frame(maxWidth: .infinity)
-                        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                    editChips
-                    if edit == .stage {
-                        Picker("Style", selection: $stageStyle) {
-                            ForEach(StageStyle.allCases) { Text($0.label).tag($0) }
-                        }
-                        .pickerStyle(.segmented)
-                        Text("Empty or dated rooms get furnished in the style you pick.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if edit == .custom {
-                        TextField("Describe the change — e.g. 'make it look freshly painted white with warm evening light'",
-                                  text: $customPrompt, axis: .vertical)
-                            .lineLimit(3...6)
-                            .textFieldStyle(.roundedBorder)
-                        Text("\(customPrompt.count)/600")
-                            .font(.rpCaption)
-                            .foregroundStyle(customPrompt.count >= 600 ? Theme.warn : Theme.inkDim)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
-                    Button(action: enhanceTapped) {
-                        HStack {
-                            if isWorking { ProgressView().tint(.white) }
-                            Text(isWorking ? "Enhancing…" : (needsSignIn ? "Sign in to enhance" : "Enhance photo"))
-                                .fontWeight(.semibold)
-                        }
-                        .frame(maxWidth: .infinity).padding(.vertical, 14)
-                        .background(Theme.accent).foregroundStyle(Color.white)
-                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                    .disabled(isWorking || (edit == .custom && customPromptTrimmed.isEmpty))
-                    PhotosPicker(selection: $pickerItem, matching: .images) {
-                        Text("Choose a different photo").font(.rpBody).foregroundStyle(Theme.accent)
-                    }
-                } else {
-                    emptyState
-                }
-
-                if let errorMsg {
-                    VStack(spacing: 8) {
-                        Text(errorMsg).font(.rpCaption).foregroundStyle(Theme.warn)
-                            .multilineTextAlignment(.center)
-                        if errorIsQuota, let url = UserFacingError.pricingURL {
-                            Link("Upgrade plan", destination: url)
-                                .font(.rpCaption.weight(.semibold))
-                                .foregroundStyle(Theme.accent)
-                        }
-                    }
-                }
-            }
-            .padding()
-            // The AI result is the payoff — crossfade to the before/after card
-            // instead of snapping when the enhanced image lands.
-            .animation(.easeInOut(duration: 0.3), value: edited != nil)
-        }
-        .background(Theme.bg)
-        .navigationTitle("AI Photo Studio")
-        .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: pickerItem) { _ in loadPicked() }
-        .onChange(of: customPrompt) { newValue in
-            if newValue.count > 600 { customPrompt = String(newValue.prefix(600)) }
-        }
-        .sheet(isPresented: $showSignIn) {
-            SignInView {
-                enhance()
-            }
-        }
-        // Guideline 5.1.2(i): the chosen photo goes to Google's Gemini image
-        // model through our edge function. Explicit opt-in before the screen is
-        // usable, asked once per device; declining pops back to Settings.
-        .aiConsentGate()
-        .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
-        }
-    }
-
-    /// One tappable chip per edit — six options don't fit a segmented control.
-    private var editChips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                ForEach(Edit.allCases) { e in
-                    Button {
-                        withAnimation(.easeInOut(duration: 0.2)) { edit = e }
-                        Haptics.selection()
-                    } label: {
-                        Text(e.label)
-                            .font(.rpCaption.weight(.semibold))
-                            .padding(.horizontal, 13).padding(.vertical, 8)
-                            .background(edit == e ? Theme.accent : Theme.accentSoft, in: Capsule())
-                            .foregroundStyle(edit == e ? Color.white : Theme.accent)
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(.vertical, 2)
-        }
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 48, weight: .light)).foregroundStyle(Theme.accent)
-            Text("Turn a listing photo into a twilight, blue-sky, or green-lawn shot — or declutter it, stage it virtually, and describe any edit in your own words.")
-                .font(.rpBody).foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center).padding(.horizontal)
-            PhotosPicker(selection: $pickerItem, matching: .images) {
-                Label("Choose a photo", systemImage: "photo.on.rectangle")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Theme.accent).foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-        }
-        .padding(.top, 40)
-    }
-
-    private func resultCard(_ img: UIImage) -> some View {
-        VStack(spacing: 12) {
-            Text("Before → After").font(.rpKicker).foregroundStyle(Theme.inkDim)
-            if let original {
-                HStack(spacing: 8) {
-                    Image(uiImage: original).resizable().scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                    Image(uiImage: img).resizable().scaledToFit()
-                        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-            }
-            Image(uiImage: img).resizable().scaledToFit()
-                .frame(maxWidth: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            Button {
-                UIImageWriteToSavedPhotosAlbum(img, nil, nil, nil)
-                Haptics.success()
-            } label: {
-                Label("Save to Photos", systemImage: "square.and.arrow.down")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 14)
-                    .background(Theme.accent).foregroundStyle(Color.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            ShareLink(item: Image(uiImage: img),
-                      preview: SharePreview("Enhanced photo", image: Image(uiImage: img))) {
-                Label("Share", systemImage: "square.and.arrow.up")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            // W2-C4: the sentence a listing's tour would print for this edit,
-            // verbatim — plus the honest caveat that a loose photo edited here
-            // is not attached to a listing and so is not in the audit log.
-            if let lastDisclosure, !lastDisclosure.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    Label(lastDisclosure, systemImage: "exclamationmark.shield.fill")
-                        .font(.rpCaption.weight(.semibold))
-                        .foregroundStyle(Theme.warn)
-                        .fixedSize(horizontal: false, vertical: true)
-                    Text("Disclose this wherever you publish the photo. Edits made from a listing's photo studio are disclosed on its tour and logged for your broker automatically — this one isn't attached to a listing.")
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-                .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            Button("Try another look") { edited = nil; lastDisclosure = nil }
-                .font(.rpBody).foregroundStyle(Theme.accent).padding(.top, 2)
-        }
-    }
-
-    private func loadPicked() {
-        guard let item = pickerItem else { return }
-        Task {
-            if let data = try? await item.loadTransferable(type: Data.self),
-               let ui = UIImage(data: data) {
-                await MainActor.run {
-                    original = ui
-                    edited = nil
-                    lastDisclosure = nil
-                    errorMsg = nil
-                    errorIsQuota = false
-                }
-            }
-        }
-    }
-
-    /// AI edits are metered per account — a signed-out user gets the sign-in
-    /// sheet first (the edit runs right after), not a 401 error string.
-    private func enhanceTapped() {
-        if needsSignIn {
-            showSignIn = true
-            return
-        }
-        enhance()
-    }
-
-    private func enhance() {
-        guard let original else { return }
-        isWorking = true; errorMsg = nil; errorIsQuota = false
-        let selectedEdit = edit
-        let selectedStyle = stageStyle
-        let prompt = String(customPromptTrimmed.prefix(600))
-        Task {
-            do {
-                let scaled = Self.downscaled(original, maxDimension: 2048)
-                guard let jpeg = scaled.jpegData(compressionQuality: 0.9) else {
-                    throw NSError(domain: "AIPhoto", code: 1,
-                                  userInfo: [NSLocalizedDescriptionKey: "Couldn't read that photo."])
-                }
-                var request = AIPhotoEditRequest(imageBase64: jpeg.base64EncodedString(),
-                                                 mime: "image/jpeg",
-                                                 edit: selectedEdit.rawValue)
-                request.style = selectedEdit == .stage ? selectedStyle.rawValue : nil
-                request.prompt = selectedEdit == .custom ? prompt : nil
-                // No listing here — this studio edits a loose photo, so the
-                // server cannot enter it in the compliance log (see the note on
-                // the result card). Edits made from a listing's Photo Studio are.
-                let result = try await model.api.aiPhotoEdit(request)
-                guard let outData = Data(base64Encoded: result.imageBase64),
-                      let outImg = UIImage(data: outData) else {
-                    throw NSError(domain: "AIPhoto", code: 2,
-                                  userInfo: [NSLocalizedDescriptionKey: "The AI didn't return an image. Try again."])
-                }
-                let sentence = result.disclosure
-                await MainActor.run {
-                    edited = outImg
-                    lastDisclosure = sentence
-                    isWorking = false
-                    Haptics.success()
-                }
-            } catch {
-                await MainActor.run {
-                    errorMsg = UserFacingError.message(error)
-                    errorIsQuota = UserFacingError.isQuota(error)
-                    isWorking = false
-                    if UserFacingError.isUnauthorized(error) { showSignIn = true }
-                }
-            }
-        }
-    }
-
-    /// Downscale so the base64 upload stays small (and cheaper) without visible loss.
-    private static func downscaled(_ image: UIImage, maxDimension: CGFloat) -> UIImage {
-        let w = image.size.width, h = image.size.height
-        let longest = max(w, h)
-        guard longest > maxDimension, longest > 0 else { return image }
-        let scale = maxDimension / longest
-        let size = CGSize(width: w * scale, height: h * scale)
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
-    }
-}
+// MARK: - AI Photo Studio (REMOVED — project-first)
+// There is no standalone AI photo studio any more. It edited a loose photo with
+// NO home attached, so every result was an orphan: the app could not say which
+// property it belonged to, and the edit never reached the listing's compliance
+// log. The real studio is per-home — `PhotoStudioView(listing:)` in
+// FlythroughDetailView.swift — reached from a home's toolbox or from Home,
+// which asks "Which home?" first (see the project-first block in
+// RendpropApp.swift). Do not re-add a listing-less studio.
 
 // MARK: - Agent Card
 // The card buyers see at the end of every flythrough. Lives here (in an
@@ -2146,4 +1994,2576 @@ struct BusinessTypeView: View {
             }
         }
     }
+}
+
+// MARK: - Owner console (admin-only: spend · providers · usage · health)
+//
+// Reachable from Settings ONLY when the SERVER says this account is an admin.
+// The role lives in `public.profiles.is_admin` and every `/admin/*` route
+// re-checks it with the service-role client, so this screen is a convenience,
+// never a permission: a hostile client that forces the row to appear still gets
+// a 403 on every request (docs/ADMIN-CONSOLE-CONTRACT.md).
+//
+// Lives in this in-target file (new-file rule — docs/handoff/A-detail.md §5).
+// See the pointer stub at Screens/AdminConsoleView.swift.
+//
+// Two rules this screen exists to honour:
+//   1. The cost ledger does NOT see in-app AI spend today, so `total_cents` is
+//      a floor, not an invoice. `coverage` says so and is rendered next to the
+//      number, every time. A figure the owner trusts and shouldn't is worse
+//      than no figure at all.
+//   2. A credential VALUE — or prefix, or suffix, or length — is never sent by
+//      the server and is never rendered here. Only env var NAMES and booleans.
+
+struct AdminConsoleView: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+
+    @State private var window: AdminSpendWindow = .today
+
+    @State private var spend: AdminSpendReport?
+    @State private var providers: AdminProvidersReport?
+    @State private var orgUsage: AdminUsageReport?
+    @State private var health: AdminHealthReport?
+
+    // "Test all keys" — GET /admin/providers/probe (Screens/AdminProbeAPI.swift).
+    // Deliberately NOT loaded with the rest of the console: it costs eleven
+    // outbound vendor calls and is rate limited to 6/hour, so it only ever runs
+    // when the owner asks for it. `lastKeyProbe` IS loaded, because it is a
+    // field on /admin/providers we are already fetching.
+    @State private var keyProbe: AdminProbeReport?
+    @State private var lastKeyProbe: AdminProbeLastRun?
+    @State private var keyProbeError: String?
+    @State private var isProbingKeys = false
+
+    @State private var spendError: String?
+    @State private var sideErrors: [String] = []
+    /// Non-nil = the server answered 403. Carries the server's own sentence.
+    @State private var forbiddenMessage: String?
+    @State private var needsSignIn = false
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+    @State private var showSignIn = false
+
+    private static let genericFailure = "Couldn't load the console. Pull down to try again."
+
+    var body: some View {
+        List {
+            content
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("Owner console")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load(includeCompanions: true) }
+        .refreshable { await load(includeCompanions: true) }
+        .onChange(of: window) { _ in
+            Task { await load(includeCompanions: false) }
+        }
+        .onChange(of: auth.isSignedIn) { _ in
+            Task { await load(includeCompanions: true) }
+        }
+        .sheet(isPresented: $showSignIn) {
+            SignInView(onSignedIn: { Task { await load(includeCompanions: true) } },
+                       title: "Sign in to open the owner console",
+                       subtitle: "The console reads your workspace's spend from the server, so it needs your account.",
+                       dismissNote: "Not now closes this — nothing is changed either way.")
+        }
+    }
+
+    // MARK: Top-level state routing
+
+    @ViewBuilder
+    private var content: some View {
+        if needsSignIn {
+            signedOutSection
+        } else if let forbiddenMessage {
+            notAdminSection(forbiddenMessage)
+        } else {
+            windowSection
+            mainContent
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if let spend {
+            staleBanner
+            spendSections(spend)
+            companionSections
+        } else if let spendError {
+            errorSection(spendError)
+        } else if isLoading || !hasLoaded {
+            loadingSection
+        } else {
+            emptySection
+        }
+    }
+
+    @ViewBuilder
+    private var companionSections: some View {
+        providersSection
+        usageLimitsSection
+        // "Test all keys" sits at the TOP of Health, above the inferred-from-
+        // ledger rows, because it answers the stronger question: those rows say
+        // a key was USED at some point in the last week, this one says it works
+        // right now.
+        keyTestSection
+        keyTestResultsSection
+        healthSection
+        sideErrorSection
+    }
+
+    // MARK: Window picker
+
+    private var windowSection: some View {
+        Section {
+            Picker("Window", selection: $window) {
+                ForEach(AdminSpendWindow.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+        } footer: {
+            Text("Spend below covers \(window.phrase). Providers, usage and health are current.")
+        }
+    }
+
+    // MARK: Spend
+
+    @ViewBuilder
+    private func spendSections(_ report: AdminSpendReport) -> some View {
+        Section {
+            totalRow(report)
+            coverageRow(report.coverage)
+        } header: {
+            Text("Spend")
+        } footer: {
+            Text(Self.spendFooter(report))
+        }
+
+        bucketSection("By provider", buckets: report.providerBuckets)
+        bucketSection("By feature", buckets: report.featureBuckets)
+        orgSpendSection(report.orgBuckets)
+    }
+
+    private func totalRow(_ report: AdminSpendReport) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(AdminMoney.amount(report.totalCents))
+                .font(.rpLargeTitle)
+                .foregroundStyle(Theme.ink)
+            Text(Self.totalCaption(report, window: window))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    /// The honesty block. Rendered next to the total on EVERY load — the
+    /// contract requires it whenever `complete` is false, and a missing
+    /// `coverage` object is treated as "we don't know", never as completeness.
+    private func coverageRow(_ coverage: AdminSpendCoverage?) -> some View {
+        let complete: Bool = coverage?.isComplete ?? false
+        let gaps: [AdminCoverageSource] = coverage?.unrepresented ?? []
+        return VStack(alignment: .leading, spacing: 8) {
+            Label(Self.coverageTitle(coverage), systemImage: Self.coverageIcon(complete))
+                .font(.rpHeadline)
+                .foregroundStyle(complete ? Theme.good : Theme.warn)
+            Text(Self.coverageBody(coverage))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(gaps.enumerated()), id: \.offset) { pair in
+                coverageGapRow(pair.element)
+            }
+        }
+        .padding(.vertical, 6)
+    }
+
+    private func coverageGapRow(_ source: AdminCoverageSource) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label(source.displayName, systemImage: "minus.circle")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.warn)
+            if let detail = Self.trimmed(source.detail) {
+                Text(detail)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func bucketSection(_ title: String, buckets: [AdminSpendBucket]) -> some View {
+        Section {
+            if buckets.isEmpty {
+                noteRow("Nothing recorded in this window.")
+            } else {
+                ForEach(Array(buckets.enumerated()), id: \.offset) { pair in
+                    bucketRow(pair.element)
+                }
+            }
+        } header: {
+            Text(title)
+        }
+    }
+
+    private func bucketRow(_ bucket: AdminSpendBucket) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(bucket.displayName)
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.ink)
+                Text(Self.bucketCaption(rows: bucket.rows, share: bucket.share))
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 8)
+            Text(AdminMoney.amount(bucket.totalCents))
+                .font(.rpBody)
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    @ViewBuilder
+    private func orgSpendSection(_ orgs: [AdminSpendOrg]) -> some View {
+        Section {
+            if orgs.isEmpty {
+                noteRow("No workspace spend in this window.")
+            } else {
+                ForEach(Array(orgs.enumerated()), id: \.offset) { pair in
+                    orgSpendRow(pair.element)
+                }
+            }
+        } header: {
+            Text("By workspace")
+        } footer: {
+            Text("Workspaces are identified by name only. A row can read \"(unattributed)\" when its workspace was deleted after the spend was recorded.")
+        }
+    }
+
+    private func orgSpendRow(_ org: AdminSpendOrg) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(org.displayName)
+                    .font(.rpBody)
+                    .foregroundStyle(Theme.ink)
+                Text(Self.orgSpendCaption(org))
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 8)
+            Text(AdminMoney.amount(org.totalCents))
+                .font(.rpBody)
+                .monospacedDigit()
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    // MARK: Providers
+
+    @ViewBuilder
+    private var providersSection: some View {
+        Section {
+            if let providers {
+                providerRows(providers.providerList)
+            } else {
+                noteRow("Couldn't load the provider list.")
+            }
+        } header: {
+            Text("Providers")
+        } footer: {
+            Text("Rendprop never receives a credential value, prefix or length — only the environment variable name and whether it is set.")
+        }
+    }
+
+    @ViewBuilder
+    private func providerRows(_ list: [AdminProvider]) -> some View {
+        if list.isEmpty {
+            noteRow("No providers reported.")
+        } else {
+            ForEach(Array(list.enumerated()), id: \.offset) { pair in
+                providerRow(pair.element)
+            }
+        }
+    }
+
+    private func providerRow(_ provider: AdminProvider) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(provider.displayName)
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                configuredChip(provider.isConfigured)
+            }
+            Text(Self.providerCaption(provider))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(provider.modelList.enumerated()), id: \.offset) { pair in
+                providerModelRow(pair.element)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func providerModelRow(_ entry: AdminProviderModel) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(entry.displayName)
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                Text(AdminMoney.unitPrice(entry.unitCostCents, unit: entry.unit))
+                    .font(.rpCaption)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.accent)
+            }
+            if let sku = Self.skuLine(entry) {
+                Text(sku)
+                    .font(.rpMono)
+                    .foregroundStyle(Theme.inkDim)
+                    .lineLimit(1)
+            }
+            if let trigger = Self.trimmed(entry.trigger) {
+                Text(trigger)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private func configuredChip(_ configured: Bool?) -> some View {
+        let tint: Color = Self.configuredTint(configured)
+        return Text(Self.configuredLabel(configured))
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: Usage & limits
+
+    @ViewBuilder
+    private var usageLimitsSection: some View {
+        Section {
+            if let orgUsage {
+                usageSummaryRow(orgUsage)
+            } else {
+                noteRow("Couldn't load usage and limits.")
+            }
+        } header: {
+            Text("Usage & limits")
+        } footer: {
+            Text("Workspace totals only — no member name, email or phone number reaches this screen.")
+        }
+        if let orgUsage {
+            orgSections(orgUsage.orgList)
+        }
+    }
+
+    private func usageSummaryRow(_ report: AdminUsageReport) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(Self.usageHeadline(report))
+                .font(.rpHeadline)
+                .foregroundStyle(report.blockedOrgs.isEmpty ? Theme.ink : Theme.warn)
+            Text(Self.usageCaption(report))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+
+    @ViewBuilder
+    private func orgSections(_ orgs: [AdminOrgUsage]) -> some View {
+        if orgs.isEmpty {
+            Section {
+                noteRow("No workspaces reported.")
+            }
+        } else {
+            ForEach(Array(orgs.enumerated()), id: \.offset) { pair in
+                orgSection(pair.element)
+            }
+        }
+    }
+
+    private func orgSection(_ org: AdminOrgUsage) -> some View {
+        Section {
+            orgHeaderRow(org)
+            ForEach(org.counters) { counter in
+                counterRow(counter)
+            }
+            blockedRows(org)
+        } header: {
+            Text(org.displayName)
+        }
+    }
+
+    private func orgHeaderRow(_ org: AdminOrgUsage) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(AdminText.plan(org.plan))
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                Text(AdminMoney.amount(org.spendCentsMonth))
+                    .font(.rpBody)
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+            }
+            Text(Self.orgUsageCaption(org))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func counterRow(_ counter: AdminUsageCounter) -> some View {
+        let tint: Color = Self.counterTint(counter)
+        return LabeledContent(counter.label) {
+            Text(Self.counterValue(counter))
+                .font(.rpBody)
+                .monospacedDigit()
+                .foregroundStyle(tint)
+        }
+    }
+
+    @ViewBuilder
+    private func blockedRows(_ org: AdminOrgUsage) -> some View {
+        if org.isBlocked {
+            VStack(alignment: .leading, spacing: 6) {
+                Label("Blocked right now", systemImage: "exclamationmark.octagon.fill")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.bad)
+                ForEach(Array(org.reasons.enumerated()), id: \.offset) { pair in
+                    Text(AdminText.blockedReason(pair.element))
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                }
+            }
+            .padding(.vertical, 2)
+        }
+    }
+
+    // MARK: Test all keys
+    //
+    // The Health rows below infer a provider is fine from a cost-ledger row
+    // written some time in the last seven days. That is real evidence, but it
+    // is old evidence, and it says nothing at all about a key that has never
+    // been used (ElevenLabs, OpenAI, Kie, Higgsfield and World Labs had never
+    // been exercised from deployed code). This button asks every vendor,
+    // directly, right now, for $0 — see admin/probe.ts for the endpoint table.
+    //
+    // Three rules on screen:
+    //   • Grey "Not set" is never red. An unset optional key is a feature that
+    //     is off, not a fault.
+    //   • Blue "Can't test" is never green. Apple has no free authenticated
+    //     endpoint; the row says so rather than implying a pass.
+    //   • A 429 is a plain sentence, not an error state. The owner tapped a
+    //     button too often; nothing is broken.
+
+    /// Non-nil once `Networking/**` conforms; nil in a build that predates it,
+    /// which draws an honest card instead of a dead button.
+    private var probeAPI: AdminProbeAPI? { model.api as? AdminProbeAPI }
+
+    @ViewBuilder
+    private var keyTestSection: some View {
+        Section {
+            if probeAPI != nil {
+                keyTestButton
+                if isProbingKeys { keyTestProgressRow }
+                if let keyProbeError { keyTestErrorRow(keyProbeError) }
+            } else {
+                noteRow("This app build can't test keys yet. The Health rows below still work.")
+            }
+        } header: {
+            Text("Are my keys working?")
+        } footer: {
+            Text(Self.keyTestFooter(report: keyProbe, lastRun: lastKeyProbe))
+        }
+    }
+
+    private var keyTestButton: some View {
+        Button {
+            Task { await runKeyProbe() }
+        } label: {
+            Label(isProbingKeys ? "Testing…" : "Test all keys", systemImage: "key.fill")
+                .font(.rpBody.weight(.semibold))
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isProbingKeys)
+        .padding(.vertical, 2)
+        .accessibilityIdentifier("admin.testAllKeys")
+    }
+
+    private var keyTestProgressRow: some View {
+        HStack(spacing: 10) {
+            ProgressView()
+            Text(Self.keyTestProgressLine(keyProbe))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func keyTestErrorRow(_ message: String) -> some View {
+        Label(message, systemImage: "exclamationmark.triangle")
+            .font(.rpCaption)
+            .foregroundStyle(Theme.warn)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var keyTestResultsSection: some View {
+        if let keyProbe {
+            Section {
+                keyProbeSummaryRow(keyProbe)
+                ForEach(Array(keyProbe.sortedResults.enumerated()), id: \.offset) { pair in
+                    keyProbeRow(pair.element)
+                }
+            } header: {
+                Text("What each key said")
+            } footer: {
+                Text("Every test is a free, read-only call — a list, a credit balance or a status lookup. Nothing here makes a photo, a video or a voice, so testing costs nothing.")
+            }
+        }
+    }
+
+    private func keyProbeSummaryRow(_ report: AdminProbeReport) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label(AdminProbeText.summary(report), systemImage: Self.keyProbeSummaryIcon(report))
+                .font(.rpHeadline)
+                .foregroundStyle(Self.keyProbeSummaryTint(report))
+            Text(Self.keyProbeSummaryCaption(report))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func keyProbeRow(_ result: AdminProbeResult) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(result.displayName)
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                keyProbeChip(result.state)
+            }
+            Text(AdminProbeText.caption(result))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            if let how = AdminProbeText.trimmed(result.how) {
+                Text(how)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func keyProbeChip(_ state: AdminProbeState) -> some View {
+        let tint: Color = Self.keyProbeTint(state)
+        return HStack(spacing: 5) {
+            Circle()
+                .fill(tint)
+                .frame(width: 8, height: 8)
+            Text(state.label)
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(tint)
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 4)
+        .background(tint.opacity(0.12), in: Capsule())
+    }
+
+    // MARK: Health
+
+    @ViewBuilder
+    private var healthSection: some View {
+        Section {
+            if let health {
+                healthRows(health.providerList)
+            } else {
+                noteRow("Couldn't load provider health.")
+            }
+        } header: {
+            Text("Health")
+                .accessibilityIdentifier("admin.tab.health")
+        } footer: {
+            Text(Self.healthFooter(health))
+        }
+        if let health, let failures = health.jobFailures {
+            failuresSection(failures)
+        }
+    }
+
+    @ViewBuilder
+    private func healthRows(_ list: [AdminHealthProvider]) -> some View {
+        if list.isEmpty {
+            noteRow("No providers reported.")
+        } else {
+            ForEach(Array(list.enumerated()), id: \.offset) { pair in
+                healthRow(pair.element)
+            }
+        }
+    }
+
+    private func healthRow(_ provider: AdminHealthProvider) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(provider.displayName)
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Spacer(minLength: 8)
+                healthChip(provider.status)
+            }
+            Text(Self.credentialLine(configured: provider.configured, env: provider.credentialEnv))
+                .font(.rpCaption)
+                .foregroundStyle(provider.configured == true ? Theme.inkDim : Theme.bad)
+            Text(Self.lastSuccessLine(provider))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func healthChip(_ status: String?) -> some View {
+        let tint: Color = Self.healthTint(status)
+        return Text(Self.healthLabel(status))
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(tint.opacity(0.12), in: Capsule())
+    }
+
+    private func failuresSection(_ failures: AdminJobFailures) -> some View {
+        Section {
+            LabeledContent("Failed jobs", value: Self.count(failures.failedJobs))
+            LabeledContent("Stuck jobs", value: Self.count(failures.orphanedJobs))
+            Text(Self.lastFailureLine(failures))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Array(failures.stepList.enumerated()), id: \.offset) { pair in
+                LabeledContent(pair.element.displayName, value: Self.count(pair.element.count))
+            }
+        } header: {
+            Text("Render job failures")
+        } footer: {
+            Text("Failures are per job, not per provider. The server sends only the pipeline step and the exception type — never the upstream message, which can carry a signed URL or key material.")
+        }
+    }
+
+    // MARK: Empty / error / gate states
+
+    private var signedOutSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Sign in to open the owner console", systemImage: "person.crop.circle.badge.checkmark")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("Your session ended. The console reads spend from the server, so it needs your account.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                Button {
+                    showSignIn = true
+                } label: {
+                    Label("Sign in with Apple", systemImage: "apple.logo")
+                        .font(.rpBody.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func notAdminSection(_ message: String) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Not available on this account", systemImage: "lock")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text(message)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The server decides who sees this console, and it said no. Nothing on this phone can change that.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func errorSection(_ message: String) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn't load the console", systemImage: "exclamationmark.triangle")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.warn)
+                Text(message)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try again") {
+                    Task { await load(includeCompanions: true) }
+                }
+                .disabled(isLoading)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var loadingSection: some View {
+        Section {
+            HStack {
+                Text("Loading spend…").foregroundStyle(Theme.inkDim)
+                Spacer()
+                ProgressView()
+            }
+        }
+    }
+
+    private var emptySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Nothing to show yet", systemImage: "tray")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("The server returned no spend for \(window.phrase). Pull down to refresh.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    /// Data on screen but the last refresh failed — keep the numbers, say so.
+    @ViewBuilder
+    private var staleBanner: some View {
+        if let spendError {
+            Section {
+                Label(spendError, systemImage: "exclamationmark.triangle")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sideErrorSection: some View {
+        if !sideErrors.isEmpty {
+            Section {
+                ForEach(Array(sideErrors.enumerated()), id: \.offset) { pair in
+                    Text(pair.element)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } header: {
+                Text("Partly loaded")
+            }
+        }
+    }
+
+    private func noteRow(_ text: String) -> some View {
+        Text(text)
+            .font(.rpCaption)
+            .foregroundStyle(Theme.inkDim)
+    }
+
+    // MARK: Loading
+
+    /// `includeCompanions` false = only the spend window changed, so only the
+    /// one route that depends on it is re-fetched.
+    @MainActor
+    private func load(includeCompanions: Bool) async {
+        if Config.enableAuth && !auth.isSignedIn {
+            needsSignIn = true
+            hasLoaded = true
+            // Drop the previous account's figures on the way out. Without this
+            // a sign-out followed by a sign-in whose fetch FAILS would leave
+            // the last admin's spend on screen behind an error banner.
+            clearData()
+            return
+        }
+        needsSignIn = false
+        isLoading = true
+        defer { isLoading = false }
+
+        do {
+            spend = try await model.api.adminSpend(window: window)
+            spendError = nil
+            forbiddenMessage = nil
+        } catch {
+            if error is CancellationError { return }
+            applySpendFailure(error)
+            hasLoaded = true
+            return
+        }
+        hasLoaded = true
+        guard includeCompanions else { return }
+        await loadCompanions()
+    }
+
+    /// 403 and 401 are DIFFERENT answers and get different screens: "not an
+    /// admin" is a permanent no for this account, "signed out" is a session
+    /// that can be renewed.
+    @MainActor
+    private func applySpendFailure(_ error: Error) {
+        guard let api = error as? APIError else {
+            spendError = UserFacingError.message(error, fallback: Self.genericFailure)
+            return
+        }
+        if api.isForbidden {
+            forbiddenMessage = Self.trimmed(api.errorDescription)
+                ?? "Admin access is required for this console."
+            clearData()
+            return
+        }
+        if api.isUnauthorized {
+            needsSignIn = true
+            clearData()
+            return
+        }
+        if api.isNotFound {
+            spendError = "This server build doesn't have the owner console yet — GET /admin/spend answered 404."
+            return
+        }
+        spendError = UserFacingError.message(error, fallback: Self.genericFailure)
+    }
+
+    @MainActor
+    private func clearData() {
+        spend = nil
+        providers = nil
+        orgUsage = nil
+        health = nil
+        // The key results go too. They are not per-account data, but leaving a
+        // green wall of provider rows behind a "sign in" screen implies the
+        // console is still live when it is not.
+        keyProbe = nil
+        lastKeyProbe = nil
+        keyProbeError = nil
+        spendError = nil
+        sideErrors = []
+    }
+
+    /// Best-effort: one failing companion route never blanks the spend numbers.
+    @MainActor
+    private func loadCompanions() async {
+        var problems: [String] = []
+        do {
+            providers = try await model.api.adminProviders()
+        } catch {
+            if !(error is CancellationError) { problems.append(Self.companionFailure("Providers", error)) }
+        }
+        do {
+            orgUsage = try await model.api.adminUsage()
+        } catch {
+            if !(error is CancellationError) { problems.append(Self.companionFailure("Usage & limits", error)) }
+        }
+        do {
+            health = try await model.api.adminHealth()
+        } catch {
+            if !(error is CancellationError) { problems.append(Self.companionFailure("Health", error)) }
+        }
+        // WHEN the keys were last tested, not a fresh test. This is one field on
+        // /admin/providers; it never calls a vendor and never costs anything.
+        // A failure here is silent on purpose — "we don't know when you last
+        // tested" is not worth a line in the partly-loaded list.
+        if let probeAPI {
+            lastKeyProbe = (try? await probeAPI.adminLastKeyProbe()) ?? lastKeyProbe
+        }
+        sideErrors = problems
+    }
+
+    /// Run every probe. The button is the ONLY thing that starts this: it is
+    /// eleven outbound vendor calls and the server allows six an hour.
+    @MainActor
+    private func runKeyProbe() async {
+        guard let api = probeAPI, !isProbingKeys else { return }
+        isProbingKeys = true
+        keyProbeError = nil
+        defer { isProbingKeys = false }
+
+        do {
+            let report = try await api.adminProbeKeys()
+            keyProbe = report
+            // The server just recorded this run, so the footer can say "just
+            // now" without a second round trip.
+            lastKeyProbe = AdminProbeLastRun(
+                at: report.checkedAt,
+                okCount: report.okCount,
+                failCount: report.failCount)
+            Haptics.success()
+        } catch {
+            if error is CancellationError { return }
+            keyProbeError = Self.keyProbeFailure(error)
+        }
+    }
+
+    // MARK: Copy helpers (plain String — kept out of the view bodies so the
+    // SwiftUI type-checker never has to solve a big expression)
+
+    private static func trimmed(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    private static func count(_ value: Int?) -> String { "\(value ?? 0)" }
+
+    private static func companionFailure(_ what: String, _ error: Error) -> String {
+        what + ": " + UserFacingError.message(error, fallback: "couldn't load.")
+    }
+
+    private static func totalCaption(_ report: AdminSpendReport, window: AdminSpendWindow) -> String {
+        var parts: [String] = ["Ledger total for " + window.phrase]
+        if let rows = report.ledgerRows {
+            parts.append("\(rows) ledger \(rows == 1 ? "row" : "rows")")
+        }
+        if report.isTruncated {
+            parts.append("lower bound — the window held more rows than the server reads at once")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func spendFooter(_ report: AdminSpendReport) -> String {
+        guard let generated = report.generatedDate else {
+            return "Read-only. Pull down to refresh."
+        }
+        return "Read-only. Updated " + Formatters.relative(generated) + ". Pull down to refresh."
+    }
+
+    private static func coverageIcon(_ complete: Bool) -> String {
+        complete ? "checkmark.seal.fill" : "exclamationmark.triangle.fill"
+    }
+
+    private static func coverageTitle(_ coverage: AdminSpendCoverage?) -> String {
+        guard let coverage else { return "The server didn't say what this total covers" }
+        return coverage.isComplete ? "This total covers every metered source" : "This total is incomplete"
+    }
+
+    private static func coverageBody(_ coverage: AdminSpendCoverage?) -> String {
+        guard let coverage else {
+            return "No coverage information came back with these figures, so treat the number as a floor rather than a bill."
+        }
+        if let headline = trimmed(coverage.headline) { return headline }
+        if coverage.isComplete {
+            return "Every billable source the app knows about writes to the cost ledger."
+        }
+        return "Some billable work never reaches the cost ledger, so real spend is HIGHER than the number above."
+    }
+
+    private static func bucketCaption(rows: Int?, share: Double?) -> String {
+        var parts: [String] = []
+        if let rows { parts.append("\(rows) ledger \(rows == 1 ? "row" : "rows")") }
+        if let percent = AdminMoney.percent(share) { parts.append(percent + " of the total") }
+        return parts.isEmpty ? "No detail reported" : parts.joined(separator: " · ")
+    }
+
+    private static func orgSpendCaption(_ org: AdminSpendOrg) -> String {
+        var parts: [String] = []
+        if let plan = trimmed(org.plan) { parts.append(AdminText.plan(plan) + " plan") }
+        if let rows = org.rows { parts.append("\(rows) ledger \(rows == 1 ? "row" : "rows")") }
+        if let percent = AdminMoney.percent(org.share) { parts.append(percent + " of the total") }
+        return parts.isEmpty ? "No detail reported" : parts.joined(separator: " · ")
+    }
+
+    private static func skuLine(_ entry: AdminProviderModel) -> String? {
+        guard let sku = trimmed(entry.sku), sku != entry.displayName else { return nil }
+        return sku
+    }
+
+    private static func providerCaption(_ provider: AdminProvider) -> String {
+        var parts: [String] = []
+        if let kind = AdminText.kind(provider.kind) { parts.append(kind) }
+        let envs = provider.envList
+        if !envs.isEmpty {
+            parts.append("Env " + envs.joined(separator: ", "))
+        }
+        if let ledger = trimmed(provider.ledgerProvider) {
+            parts.append("Ledger rows as \"" + ledger + "\"")
+        } else {
+            parts.append("Writes no ledger rows")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func configuredLabel(_ configured: Bool?) -> String {
+        guard let configured else { return "Unknown" }
+        return configured ? "Configured ✓" : "Not configured ✗"
+    }
+
+    private static func configuredTint(_ configured: Bool?) -> Color {
+        guard let configured else { return Theme.inkDim }
+        return configured ? Theme.good : Theme.bad
+    }
+
+    private static func usageHeadline(_ report: AdminUsageReport) -> String {
+        let blocked = report.blockedOrgs.count
+        if blocked == 0 { return "Nothing is at a cap" }
+        return blocked == 1 ? "1 workspace is blocked" : "\(blocked) workspaces are blocked"
+    }
+
+    private static func usageCaption(_ report: AdminUsageReport) -> String {
+        var parts: [String] = []
+        if let month = trimmed(report.month) { parts.append("Month " + month) }
+        if let orgs = report.orgCount { parts.append("\(orgs) \(orgs == 1 ? "workspace" : "workspaces")") }
+        if report.isTruncated { parts.append("top workspaces only — more exist than the server returns") }
+        return parts.isEmpty ? "Counters reset each month." : parts.joined(separator: " · ")
+    }
+
+    private static func orgUsageCaption(_ org: AdminOrgUsage) -> String {
+        var parts: [String] = ["This month"]
+        if let stored = trimmed(org.planRaw), stored.lowercased() != (org.plan ?? "").lowercased() {
+            parts.append("stored plan " + AdminText.plan(stored))
+        }
+        if let ceiling = org.cogsCeilingCents {
+            parts.append("ceiling " + AdminMoney.amount(ceiling))
+        }
+        if let share = AdminMoney.percent(org.spendShareOfCeiling) {
+            parts.append(share + " of ceiling")
+        }
+        if let inFlight = org.jobsInFlight, inFlight > 0 { parts.append("\(inFlight) in flight") }
+        if let orphaned = org.jobsOrphaned, orphaned > 0 { parts.append("\(orphaned) stuck") }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func counterValue(_ counter: AdminUsageCounter) -> String {
+        counter.isIncluded ? "\(counter.used) of \(counter.cap)" : "Not included"
+    }
+
+    private static func counterTint(_ counter: AdminUsageCounter) -> Color {
+        if counter.isAtCap { return Theme.bad }
+        return counter.isIncluded ? Theme.ink : Theme.inkDim
+    }
+
+    // MARK: Test-all-keys copy
+    //
+    // Every sentence below is assembled here rather than in a view body, for
+    // the reason the routing helpers give: SettingsView.swift has a
+    // type-checker-timeout history and none of this needs the SwiftUI solver.
+
+    /// One colour per state. Grey is never red and blue is never green — see
+    /// the three rules above `keyTestSection`.
+    private static func keyProbeTint(_ state: AdminProbeState) -> Color {
+        switch state {
+        case .working:      return Theme.good
+        case .wrongKey:     return Theme.bad
+        case .otherFailure: return Theme.bad
+        case .unreachable:  return Theme.warn
+        case .rateLimited:  return Theme.warn
+        case .notSet:       return Theme.inkDim
+        case .notTestable:  return Theme.accent
+        }
+    }
+
+    private static func keyProbeSummaryIcon(_ report: AdminProbeReport) -> String {
+        (report.failCount ?? 0) > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal.fill"
+    }
+
+    private static func keyProbeSummaryTint(_ report: AdminProbeReport) -> Color {
+        (report.failCount ?? 0) > 0 ? Theme.bad : Theme.good
+    }
+
+    private static func keyProbeSummaryCaption(_ report: AdminProbeReport) -> String {
+        var parts: [String] = []
+        if let date = AdminProbeFormat.date(report.checkedAt) {
+            parts.append("Tested " + Formatters.relative(date))
+        }
+        let untested = report.notProbeableCount ?? 0
+        if untested > 0 {
+            parts.append("\(untested) can't be tested without a real sign-in or aren't set")
+        }
+        if report.lastProbeRecorded == false {
+            parts.append("this run wasn't saved, so \"last tested\" won't update")
+        }
+        return parts.isEmpty ? "Every key was asked directly." : parts.joined(separator: " · ")
+    }
+
+    /// "Testing 13 keys…" — the count comes from the last run when we have one,
+    /// so it is never a number invented on the phone.
+    private static func keyTestProgressLine(_ report: AdminProbeReport?) -> String {
+        guard let count = report?.probeCount, count > 0 else {
+            return "Testing every key… this takes a few seconds."
+        }
+        return "Testing \(count) keys… this takes a few seconds."
+    }
+
+    private static func keyTestFooter(report: AdminProbeReport?, lastRun: AdminProbeLastRun?) -> String {
+        let base = "Each test is one free call that proves the key still works. "
+            + "The Health list below only shows keys that happened to be used recently."
+        guard let line = AdminProbeText.lastTested(lastRun) else {
+            return report == nil ? "Never tested. " + base : base
+        }
+        return line + ". " + base
+    }
+
+    /// A 429 is not an error state — it is the owner tapping too often, and it
+    /// gets a plain sentence. Everything else falls back to the server's own
+    /// copy, which for this route is already plain words.
+    private static func keyProbeFailure(_ error: Error) -> String {
+        guard let api = error as? APIError else {
+            return UserFacingError.message(error, fallback: "Couldn't test the keys. Try again in a moment.")
+        }
+        if api.isRateLimited {
+            return trimmed(api.errorDescription)
+                ?? "You've tested the keys a few times already. You can test again in about an hour."
+        }
+        if api.isNotFound {
+            return "This server build can't test keys yet — GET /admin/providers/probe answered 404."
+        }
+        if api.isForbidden {
+            return trimmed(api.errorDescription) ?? "Admin access is required to test keys."
+        }
+        return UserFacingError.message(error, fallback: "Couldn't test the keys. Try again in a moment.")
+    }
+
+    private static func healthLabel(_ status: String?) -> String {
+        switch (status ?? "").lowercased() {
+        case "ok":           return "Working"
+        case "idle":         return "No activity"
+        case "unmetered":    return "Not metered"
+        case "unconfigured": return "Key missing"
+        case "":             return "Unknown"
+        default:             return AdminText.pretty(status ?? "unknown")
+        }
+    }
+
+    private static func healthTint(_ status: String?) -> Color {
+        switch (status ?? "").lowercased() {
+        case "ok":           return Theme.good
+        case "idle":         return Theme.inkDim
+        case "unmetered":    return Theme.warn
+        case "unconfigured": return Theme.bad
+        default:             return Theme.inkDim
+        }
+    }
+
+    private static func credentialLine(configured: Bool?, env: String?) -> String {
+        let name = trimmed(env) ?? "credential"
+        guard let configured else { return name + " — the server didn't say whether it is set" }
+        return configured ? name + " is set" : name + " is NOT set — this feature is off"
+    }
+
+    private static func lastSuccessLine(_ provider: AdminHealthProvider) -> String {
+        guard let date = provider.lastSuccessDate else {
+            if trimmed(provider.ledgerProvider) == nil {
+                return "No success can be shown — this provider never writes ledger rows."
+            }
+            return "No success recorded in the window."
+        }
+        var line = "Last success " + Formatters.relative(date)
+        if let detail = trimmed(provider.lastSuccessDetail) { line += " — " + detail }
+        return line
+    }
+
+    private static func healthFooter(_ health: AdminHealthReport?) -> String {
+        let base = "This screen calls no provider API — success is inferred from ledger rows already written."
+        guard let health, let note = trimmed(health.note) else { return base }
+        return note
+    }
+
+    private static func lastFailureLine(_ failures: AdminJobFailures) -> String {
+        guard let date = failures.lastFailureDate else {
+            return "No render job failure recorded in the window."
+        }
+        var line = "Last failure " + Formatters.relative(date)
+        if let step = trimmed(failures.lastFailureStep) { line += " at the " + step + " step" }
+        if let type = trimmed(failures.lastFailureType) { line += " (" + type + ")" }
+        return line
+    }
+}
+
+// MARK: - Admin money formatting
+// Currency comes from a NumberFormatter, never string interpolation, and the
+// locale is pinned to en_US for the same reason `Money.formatted` pins it: the
+// app and the hosted page must print the same string everywhere.
+
+enum AdminMoney {
+    /// The fraction-digit range is expressed TWICE on purpose — as the
+    /// min/max properties and as an explicit `¤`-pattern. Foundation honours
+    /// the properties for `.currency` on Darwin but ignores them on
+    /// swift-corelibs-foundation, where a 3.9¢ unit price silently rounded to
+    /// "$0.04" and threw away the digit that made it worth showing. The
+    /// pattern pins the output on either implementation; the properties keep
+    /// it sane if a future Foundation ignores the pattern instead.
+    private static func currencyFormatter(minDigits: Int, maxDigits: Int) -> NumberFormatter {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.currencyCode = "USD"
+        f.locale = Locale(identifier: "en_US")
+        f.minimumFractionDigits = minDigits
+        f.maximumFractionDigits = maxDigits
+        let required = String(repeating: "0", count: max(0, minDigits))
+        let optional = String(repeating: "#", count: max(0, maxDigits - minDigits))
+        let fraction = (required + optional).isEmpty ? "" : "." + required + optional
+        f.positiveFormat = "¤#,##0" + fraction
+        f.negativeFormat = "-¤#,##0" + fraction
+        return f
+    }
+
+    /// A spend total, from (possibly fractional) cents. "—" when unknown —
+    /// never a fabricated $0.00.
+    static func amount(_ cents: Double?) -> String {
+        guard let cents, cents.isFinite else { return "—" }
+        let dollars = NSNumber(value: cents / 100.0)
+        return currencyFormatter(minDigits: 2, maxDigits: 2).string(from: dollars) ?? "—"
+    }
+
+    /// A unit price, which is routinely sub-cent (one Gemini image edit is
+    /// 3.9¢ → "$0.039 / image"), so it keeps up to 4 decimal places.
+    static func unitPrice(_ cents: Double?, unit: String?) -> String {
+        guard let cents, cents.isFinite else { return "No published price" }
+        let dollars = NSNumber(value: cents / 100.0)
+        guard let amount = currencyFormatter(minDigits: 2, maxDigits: 4).string(from: dollars) else {
+            return "No published price"
+        }
+        let trimmedUnit = (unit ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedUnit.isEmpty ? amount : amount + " / " + trimmedUnit
+    }
+
+    /// A 0–1 share as a percentage. nil when there is nothing worth showing.
+    /// A sub-1% share keeps one decimal so it never reads as a flat "0%".
+    static func percent(_ share: Double?) -> String? {
+        guard let share, share.isFinite, share > 0 else { return nil }
+        let f = NumberFormatter()
+        f.numberStyle = .percent
+        f.locale = Locale(identifier: "en_US")
+        let maxDigits = share < 0.01 ? 1 : 0
+        f.minimumFractionDigits = 0
+        f.maximumFractionDigits = maxDigits
+        f.positiveFormat = maxDigits > 0 ? "#,##0.#%" : "#,##0%"
+        return f.string(from: NSNumber(value: share))
+    }
+}
+
+// MARK: - AI routing brain: wire models
+//         (docs/AI-ROUTER-CONTRACT.md §1; server: functions/admin/index.ts
+//          `handleRouting` / `handleRoutingWrite`)
+//
+// These live HERE, not in Networking/, for two reasons:
+//   1. Networking/** belonged to another agent during the AI-router split
+//      (IOS owns Screens/** and Voice/**, CHAPTERS owns Networking/**), and
+//   2. new .swift files are not in the Xcode target until someone runs
+//      `xcodegen generate` on a Mac (Screens/AdminConsoleView.swift explains
+//      the rule), so an in-target file is the only safe home.
+// Whoever adds the three client methods should USE these types, not re-declare
+// them — a second `AdminRoutingReport` in the same module is a hard build
+// break. Moving them into Networking/APIClient.swift is welcome; copying them
+// is not. See HANDOFF-IOS.md.
+//
+// Every field is Optional on purpose (same rule as the rest of the admin
+// models): one renamed key on the server must not blank the screen while the
+// owner is standing in a driveway. The keys below are the camelCase form the
+// shared `.convertFromSnakeCase` decoder produces.
+
+/// Circuit-breaker state for one route step (`provider_health`).
+struct AdminRoutingHealth: Decodable, Hashable, Sendable {
+    var open: Bool? = nil
+    var openUntil: String? = nil
+    var consecutiveFailures: Int? = nil
+    var p95LatencyMs: Double? = nil
+    var lastOkAt: String? = nil
+    var lastFailAt: String? = nil
+    var lastErrorClass: String? = nil
+
+    /// Only a positive `true` means "circuit open". Absent = we don't know,
+    /// which is grey, never red.
+    var isOpen: Bool { open == true }
+    var openUntilDate: Date? { RoutingDate.parse(openUntil) }
+    var lastOkDate: Date? { RoutingDate.parse(lastOkAt) }
+    var failures: Int { consecutiveFailures ?? 0 }
+}
+
+/// One provider/model step in a task's ordered chain (`ai_routes`).
+struct AdminRoutingStep: Decodable, Hashable, Sendable {
+    var routeId: String? = nil
+    var position: Int? = nil
+    var provider: String? = nil
+    var model: String? = nil
+    var unit: String? = nil
+    var unitCents: Double? = nil
+    var capabilities: [String]? = nil
+    var maxLatencyS: Double? = nil
+    var minPlan: String? = nil
+    var enabled: Bool? = nil
+    /// Upstream family key. Two steps sharing it are the SAME model behind two
+    /// resellers — a price fallback, NOT an availability fallback.
+    var sameModelAs: String? = nil
+    /// "no_retention" | "retained_30d" | "trains_by_default"
+    var privacyTier: String? = nil
+    var retireAfter: String? = nil
+    /// True for the row the router returns when the master flag is OFF — i.e.
+    /// exactly what ships today. The server 409s any attempt to switch it
+    /// (`admin/index.ts`: "that is the task's legacy step"), so the UI must not
+    /// offer a switch for it.
+    var isLegacy: Bool? = nil
+    var note: String? = nil
+    var updatedAt: String? = nil
+    var health: AdminRoutingHealth? = nil
+    /// `spend_30d_cents` / `spend_30d_rows`. Foundation's
+    /// `.convertFromSnakeCase` titlecases each component after the first, and
+    /// `"30d".capitalized` is `"30D"` — so these land as `spend30DCents` /
+    /// `spend30DRows`, capital D (verified by running it, not guessed). The
+    /// lowercase spellings are declared too because that titlecasing is
+    /// ICU-dependent and Darwin/corelibs Foundation have diverged before (see
+    /// the note on `AdminMoney.currencyFormatter`); the accessors read
+    /// whichever arrived.
+    var spend30DCents: Double? = nil
+    var spend30dCents: Double? = nil
+    var spend30DRows: Int? = nil
+    var spend30dRows: Int? = nil
+
+    var spend30d: Double? { spend30DCents ?? spend30dCents }
+    var spendRows30d: Int? { spend30DRows ?? spend30dRows }
+    var isEnabled: Bool { enabled ?? false }
+    var isLegacyStep: Bool { isLegacy == true || RoutingText.trimmed(note)?.lowercased() == "legacy" }
+    var capabilityList: [String] { capabilities ?? [] }
+    var providerName: String { AdminText.name(provider, nil, fallback: "Unknown provider") }
+    var modelName: String { AdminText.name(model, nil, fallback: "—") }
+    /// Stable identity for a ForEach and for the write call. Falls back to
+    /// provider+model so a step with no id still draws — it just can't be
+    /// switched (`writeID` is nil).
+    var rowKey: String {
+        if let id = RoutingText.trimmed(routeId) { return id }
+        return (provider ?? "?") + "/" + (model ?? "?") + "/" + String(position ?? -1)
+    }
+    var writeID: String? { RoutingText.trimmed(routeId) }
+    var retireDate: Date? { RoutingDate.parse(retireAfter) }
+    /// True once the retirement day has passed — the step is dead weight even
+    /// if its `enabled` flag is still true.
+    var hasRetired: Bool {
+        guard let date = retireDate else { return false }
+        return date < Date()
+    }
+}
+
+/// The `legacy` summary the server attaches to each task: the step that runs
+/// today, with the brain off.
+struct AdminRoutingLegacy: Decodable, Hashable, Sendable {
+    var routeId: String? = nil
+    var provider: String? = nil
+    var model: String? = nil
+}
+
+/// One task and its ordered chain (`routes[]` on the wire; `tasks[]` is also
+/// accepted so an older or newer server spelling still draws).
+struct AdminRoutingTask: Decodable, Hashable, Sendable {
+    var task: String? = nil
+    var stepCount: Int? = nil
+    /// How many steps a flag-ON resolve would actually consider: enabled, not
+    /// retired, not the legacy row.
+    var liveStepCount: Int? = nil
+    var legacy: AdminRoutingLegacy? = nil
+    var steps: [AdminRoutingStep]? = nil
+
+    var slug: String { RoutingText.trimmed(task) ?? "" }
+    /// Ordered by `position`; steps with no position keep their wire order at
+    /// the end, so a missing field never silently reorders a fallback chain.
+    var orderedSteps: [AdminRoutingStep] {
+        let all = steps ?? []
+        let placed = all.filter { $0.position != nil }.sorted { ($0.position ?? 0) < ($1.position ?? 0) }
+        let unplaced = all.filter { $0.position == nil }
+        return placed + unplaced
+    }
+    /// The step the router tries first with the brain ON — what "same model
+    /// as …" is measured against. The legacy row is never it.
+    var primaryStep: AdminRoutingStep? {
+        orderedSteps.first(where: { !$0.isLegacyStep })
+    }
+    /// How many steps a flag-ON resolve would consider, computed when the
+    /// server didn't say.
+    var liveSteps: Int {
+        if let count = liveStepCount { return count }
+        return orderedSteps.filter { $0.isEnabled && !$0.isLegacyStep && !$0.hasRetired }.count
+    }
+}
+
+/// `plan_routing_policy` — read-only in this build.
+struct AdminRoutingPolicy: Decodable, Hashable, Sendable {
+    var plan: String? = nil
+    var policy: String? = nil
+}
+
+/// The master flag's audit trail. The server deliberately does NOT return the
+/// admin's user id — its own rule is that no user id but the caller's may
+/// appear in any payload — so it reports whether it was YOU instead.
+struct AdminRoutingFlag: Decodable, Hashable, Sendable {
+    var enabled: Bool? = nil
+    var changedAt: String? = nil
+    var changedByIsYou: Bool? = nil
+    var changedByRecorded: Bool? = nil
+
+    var changedDate: Date? { RoutingDate.parse(changedAt) }
+}
+
+/// `GET /admin/routing`.
+struct AdminRoutingReport: Decodable, Hashable, Sendable {
+    var generatedAt: String? = nil
+    var enabled: Bool? = nil
+    var flag: AdminRoutingFlag? = nil
+    var spendWindowDays: Int? = nil
+    var spendTruncated: Bool? = nil
+    var routesTruncated: Bool? = nil
+    /// The server's own paragraph about what these numbers mean. Shown
+    /// verbatim — it is the honest caveat on `spend_30d_cents`.
+    var note: String? = nil
+    var policies: [AdminRoutingPolicy]? = nil
+    /// The live server key.
+    var routes: [AdminRoutingTask]? = nil
+    /// Accepted alternative spelling, so a rename can't blank the screen.
+    var tasks: [AdminRoutingTask]? = nil
+
+    /// The master flag. Absent is OFF — never "on because we couldn't tell".
+    var isEnabled: Bool {
+        if let enabled { return enabled }
+        return flag?.enabled == true
+    }
+    /// `solo` is a legacy alias of `starter` that is never sold — hiding it keeps
+    /// the plan list the owner sees identical to the plans customers can buy.
+    var policyList: [AdminRoutingPolicy] { (policies ?? []).filter { $0.plan != "solo" } }
+    var taskList: [AdminRoutingTask] { routes ?? tasks ?? [] }
+    var changedDate: Date? { flag?.changedDate }
+    var isTruncated: Bool { spendTruncated == true || routesTruncated == true }
+}
+
+/// What the two write routes answer: a small ack with the server's own
+/// sentence, NOT a fresh report. The screen shows `note` and then re-reads
+/// `GET /admin/routing`, so a switch never moves on optimism.
+struct AdminRoutingWriteAck: Decodable, Hashable, Sendable {
+    var ok: Bool? = nil
+    var enabled: Bool? = nil
+    var changedAt: String? = nil
+    var note: String? = nil
+    // step writes only
+    var routeId: String? = nil
+    var task: String? = nil
+    var position: Int? = nil
+    var provider: String? = nil
+    var model: String? = nil
+    var auditRecorded: Bool? = nil
+
+    var didSucceed: Bool { ok != false }
+}
+
+/// The three calls this screen needs. Declared here and cast for at runtime, so
+/// the screen compiles and ships whether or not `Networking/**` has them yet:
+/// no conformance → the screen draws an honest "not in this build" card and
+/// every control is read-only. The moment the methods land, ONE line
+/// (`extension LiveAPIClient: AdminRoutingAPI {}`) turns the screen on.
+protocol AdminRoutingAPI {
+    /// GET /admin/routing
+    func adminRouting() async throws -> AdminRoutingReport
+    /// POST /admin/routing/flag  `{"enabled": Bool}`
+    func adminSetRoutingFlag(enabled: Bool) async throws -> AdminRoutingWriteAck
+    /// POST /admin/routing/step/{routeID}  `{"enabled": Bool}`.
+    /// 409 `conflict` when `routeID` is the task's legacy step — the UI never
+    /// offers that switch, but the server is the one that enforces it.
+    func adminSetRouteStep(routeID: String, enabled: Bool) async throws -> AdminRoutingWriteAck
+}
+
+// ---------------------------------------------------------------------------
+// LIVE. `Networking/APIClient.swift` now declares all three methods on the
+// `APIClient` protocol with exactly the signatures above, and both clients
+// implement them (`LiveAPIClient` against `/admin/routing`, `MockAPIClient`
+// against an offline fixture), so these two lines are all the conformance
+// needs — no method bodies here. With them in place `routingAPI` is non-nil,
+// the "Not in this app build yet" card never draws, and the two switches write.
+// Full note: HANDOFF-IOS.md §1.
+extension LiveAPIClient: AdminRoutingAPI {}
+extension MockAPIClient: AdminRoutingAPI {}
+// ---------------------------------------------------------------------------
+
+// MARK: - Routing copy helpers
+// Plain strings, built OUTSIDE the view bodies. SettingsView.swift has a
+// type-checker-timeout history; every sentence assembled here is one the
+// SwiftUI solver never has to look at.
+
+enum RoutingText {
+    static func trimmed(_ raw: String?) -> String? {
+        guard let raw else { return nil }
+        let value = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// Task slug → the name the owner would use. One dictionary, one place to
+    /// edit when the seed table grows (docs/AI-ROUTER-CONTRACT.md §3).
+    /// A slug with no entry falls back to `AdminText.pretty` of its last
+    /// segment, so a new server task still reads as words, never as a slug.
+    static let taskNames: [String: String] = [
+        "photo.sky":              "Blue sky",
+        "photo.twilight":         "Sunset look",
+        "photo.lawn":             "Green lawn",
+        "photo.declutter":        "Tidy the room",
+        "photo.stage":            "Add furniture",
+        "photo.custom":           "Any photo change",
+        "video.reel_clip":        "Photo → video clip",
+        "video.aerial":           "Aerial intro",
+        "video.aerial_no_photo":  "Aerial intro, no photo",
+        "video.upscale_4k":       "Make it 4K",
+        "video.upscale_1080p60":  "Make it smooth",
+        "video.chapters":         "Find the rooms in a walkthrough",
+        "tts.captioned":          "Voiceover with captions",
+        "tts.plain":              "Voiceover",
+        "stt.captions":           "Captions from the talking",
+        "stt.plain":              "Turn talking into text",
+        "text.listing_copy":      "Write the listing words",
+        "judge.fair_housing":     "Fair-housing check",
+        "judge.qc_drift":         "Check the edit didn't lie",
+        "vision.room_label":      "Name one room",
+        "3d.world":               "3D world",
+        "floorplan":              "Floor plan",
+    ]
+
+    /// "video.reel_clip" → "Photo → video clip".
+    static func taskName(_ slug: String) -> String {
+        if let name = taskNames[slug] { return name }
+        let tail = slug.split(separator: ".").last.map(String.init) ?? slug
+        return tail.isEmpty ? "Unnamed task" : AdminText.pretty(tail)
+    }
+
+    /// The slug itself, shown small under the plain name so an owner reading a
+    /// server log can match the two.
+    static func taskSlugLine(_ slug: String) -> String {
+        slug.isEmpty ? "no task id" : slug
+    }
+
+    /// "3 steps · 2 in play · 1 having trouble · first: fal" — the one-line
+    /// summary on a collapsed card.
+    static func taskSummary(_ task: AdminRoutingTask) -> String {
+        let steps = task.orderedSteps
+        guard !steps.isEmpty else { return "No steps — this task has no route yet." }
+        var parts: [String] = ["\(steps.count) \(steps.count == 1 ? "step" : "steps")"]
+        let live = task.liveSteps
+        parts.append(live == 0 ? "none in play" : "\(live) in play")
+        let openCount = steps.filter { $0.health?.isOpen == true }.count
+        if openCount > 0 { parts.append("\(openCount) having trouble") }
+        if let first = steps.first(where: { $0.isEnabled && !$0.isLegacyStep && !$0.hasRetired }) {
+            parts.append("first: " + first.providerName)
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// "With the brain off this uses fal · veo3.1/fast." — the honest answer to
+    /// "what runs right now", read off the task's own legacy row.
+    static func legacyLine(_ task: AdminRoutingTask) -> String? {
+        let provider = trimmed(task.legacy?.provider)
+            ?? task.orderedSteps.first(where: { $0.isLegacyStep }).flatMap { trimmed($0.provider) }
+        let model = trimmed(task.legacy?.model)
+            ?? task.orderedSteps.first(where: { $0.isLegacyStep }).flatMap { trimmed($0.model) }
+        guard let provider else { return nil }
+        guard let model else { return "With the brain off this uses " + provider + "." }
+        return "With the brain off this uses " + provider + " · " + model + "."
+    }
+
+    /// Privacy tier → the chip's words. Unknown tiers print themselves rather
+    /// than pretending to be safe.
+    static func privacyLabel(_ tier: String?) -> String {
+        switch (tier ?? "").lowercased() {
+        case "no_retention":      return "No retention"
+        case "retained_30d":      return "30-day"
+        case "trains_by_default": return "Trains on data"
+        case "":                  return "Privacy unknown"
+        default:                  return AdminText.pretty(tier ?? "")
+        }
+    }
+
+    /// One line under the step saying what the tier MEANS, in plain words.
+    static func privacyExplainer(_ tier: String?) -> String? {
+        switch (tier ?? "").lowercased() {
+        case "no_retention":      return nil
+        case "retained_30d":      return "This provider keeps a copy for 30 days."
+        case "trains_by_default": return "This provider trains on what we send unless we opt out. Do not send a customer's home here."
+        case "":                  return "The server didn't say what this provider does with the photo."
+        default:                  return nil
+        }
+    }
+
+    /// Health dot label. Red first (an open circuit is the thing to act on),
+    /// then green for a recent success, then grey for "no data".
+    static func healthLabel(_ health: AdminRoutingHealth?, now: Date = Date()) -> String {
+        guard let health else { return "No data" }
+        if health.isOpen {
+            guard let until = health.openUntilDate else { return "Having trouble" }
+            let minutes = Int(ceil(max(0, until.timeIntervalSince(now)) / 60))
+            if minutes <= 0 { return "Back any moment" }
+            return "Back in \(minutes) min"
+        }
+        guard let ok = health.lastOkDate else { return "No data" }
+        if now.timeIntervalSince(ok) <= recentWindow { return "Working" }
+        return "Quiet"
+    }
+
+    /// A success older than this is no longer evidence the step works, so the
+    /// dot goes grey rather than green.
+    static let recentWindow: TimeInterval = 24 * 60 * 60
+
+    /// The detail line under the dot: last success, failure streak, p95.
+    static func healthDetail(_ health: AdminRoutingHealth?, now: Date = Date()) -> String {
+        guard let health else { return "No attempts recorded yet." }
+        var parts: [String] = []
+        if let ok = health.lastOkDate {
+            parts.append("Last worked " + Formatters.relative(ok))
+        } else {
+            parts.append("Never seen working")
+        }
+        if health.failures > 0 {
+            parts.append("\(health.failures) \(health.failures == 1 ? "failure" : "failures") in a row")
+        }
+        if let p95 = health.p95LatencyMs, p95.isFinite, p95 > 0 {
+            parts.append("usually " + seconds(fromMs: p95))
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    private static func seconds(fromMs ms: Double) -> String {
+        let s = ms / 1000
+        if s < 10 { return String(format: "%.1fs", s) }
+        return "\(Int(s.rounded()))s"
+    }
+
+    /// "same model as fal" — only when this step and the FIRST step share a
+    /// `same_model_as` family. That makes it a price fallback, not an
+    /// availability fallback: if the model itself is down, both are down.
+    static func sameModelChip(step: AdminRoutingStep, primary: AdminRoutingStep?) -> String? {
+        // The legacy row is not a fallback — it is what runs with the brain
+        // OFF — so "same model as …" would be noise on it.
+        guard !step.isLegacyStep else { return nil }
+        guard let primary, primary.rowKey != step.rowKey else { return nil }
+        guard let family = trimmed(step.sameModelAs),
+              let primaryFamily = trimmed(primary.sameModelAs),
+              family == primaryFamily else { return nil }
+        return "same model as " + primary.providerName
+    }
+
+    /// The `note` the owner needs to see verbatim — the ones that explain WHY a
+    /// step is off ("disabled until commercial rights confirmed"). Matched
+    /// case-insensitively on the prefix the contract uses.
+    static func disabledUntilNote(_ note: String?) -> String? {
+        guard let note = trimmed(note) else { return nil }
+        return note.lowercased().hasPrefix("disabled until") ? note : nil
+    }
+
+    /// Any other note still gets shown — just not as the loud "why it's off" line.
+    static func plainNote(_ note: String?) -> String? {
+        guard let note = trimmed(note) else { return nil }
+        return note.lowercased().hasPrefix("disabled until") ? nil : note
+    }
+
+    /// "Solo and up" — nil for the plans everyone has, so the chip only shows
+    /// where it changes the answer.
+    static func minPlanChip(_ raw: String?) -> String? {
+        let value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch value {
+        case "", "free", "trial": return nil
+        default:                  return AdminText.plan(value) + " and up"
+        }
+    }
+
+    /// "Cheapest" / "Best", from the policy slug.
+    static func policyLabel(_ raw: String?) -> String {
+        switch (raw ?? "").lowercased() {
+        case "cheapest": return "Cheapest"
+        case "best":     return "Best"
+        case "":         return "—"
+        default:         return AdminText.pretty(raw ?? "")
+        }
+    }
+
+    /// "Last changed by you, 3h ago."
+    ///
+    /// The server never sends the admin's user id — its own privacy rule is
+    /// that no user id but the caller's may appear in any payload — so it says
+    /// whether it was YOU and whether an actor was recorded at all. nil when it
+    /// said nothing, which reads as "nobody has ever touched this".
+    static func changedLine(_ report: AdminRoutingReport) -> String? {
+        let flag = report.flag
+        let when = report.changedDate
+        let isYou = flag?.changedByIsYou
+        let recorded = flag?.changedByRecorded
+        if when == nil && isYou == nil && recorded == nil { return nil }
+        // A never-touched flag: the server sends `changed_at: null` with BOTH
+        // audit booleans false. That is an answer, not a silence — and without
+        // this branch the line below would read as the fragment "Last changed."
+        // on every fresh install.
+        if when == nil && recorded != true && isYou != true {
+            return "Nobody has changed this yet."
+        }
+        var line = "Last changed"
+        if isYou == true {
+            line += " by you"
+        } else if recorded == true {
+            line += " by another admin"
+        }
+        if let when { line += ", " + Formatters.relative(when) }
+        return line + "."
+    }
+
+    /// "gemini-2.5-flash-image · retires Oct 2 · replacement: gemini-3.1-flash-image"
+    static func retirementLine(model: String, retires: Date?, raw: String?, replacement: String?) -> String {
+        var parts: [String] = [model]
+        if let retires {
+            parts.append("retires " + RoutingDate.short(retires))
+        } else if let raw = trimmed(raw) {
+            parts.append("retires " + raw)
+        }
+        if let replacement = trimmed(replacement) {
+            parts.append("replacement: " + replacement)
+        } else {
+            parts.append("no replacement in this task yet")
+        }
+        return parts.joined(separator: " · ")
+    }
+}
+
+/// Dates on the routing payload arrive as ISO-8601 timestamps OR bare
+/// `yyyy-MM-dd` days (`retire_after` is a day). Both parse; neither throws.
+enum RoutingDate {
+    static func parse(_ raw: String?) -> Date? {
+        guard let value = RoutingText.trimmed(raw) else { return nil }
+        if let d = AdminTimestamp.parse(value) { return d }
+        return dayFormatter.date(from: value)
+    }
+
+    /// "Oct 2". Locale pinned for the same reason AdminMoney pins it: the
+    /// console and the server's own logs must print the same day.
+    static func short(_ date: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US")
+        f.timeZone = TimeZone(identifier: "UTC") ?? .current
+        f.dateFormat = "MMM d"
+        return f.string(from: date)
+    }
+
+    private static var dayFormatter: DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone(identifier: "UTC") ?? .current
+        f.dateFormat = "yyyy-MM-dd"
+        return f
+    }
+}
+
+// MARK: - Owner console → Routing (the AI routing brain)
+//
+// One screen, one question: WHICH provider runs each AI job, and what happens
+// when that provider is down or gone. The table is the truth (a model
+// retirement is a row edit, not a deploy — docs/AI-ROUTER-CONTRACT.md), so this
+// screen only ever writes two things: the master flag, and one step's ON/OFF.
+//
+// Safety rules this screen exists to hold:
+//   1. The master flag is OFF-by-default and turning it ON is confirmed. OFF
+//      means every feature keeps using today's single provider, byte for byte.
+//   2. Nothing here is optimistic. A toggle moves only after the server says it
+//      moved, so the owner never reads a state the backend doesn't have.
+//   3. A step's `note` that starts with "disabled until" is printed VERBATIM.
+//      Those notes carry the legal reason a provider is off (commercial rights,
+//      no-training terms). Paraphrasing one would be the bug.
+//
+// Lives in this in-target file — see Screens/AdminConsoleView.swift for why no
+// new .swift file may be added.
+
+struct AdminRoutingView: View {
+    @EnvironmentObject private var model: AppModel
+    @ObservedObject private var auth = AuthStore.shared
+
+    @State private var report: AdminRoutingReport?
+    @State private var loadError: String?
+    @State private var writeError: String?
+    @State private var forbiddenMessage: String?
+    @State private var needsSignIn = false
+    @State private var isLoading = false
+    @State private var hasLoaded = false
+    @State private var showSignIn = false
+    @State private var expanded: Set<String> = []
+    @State private var confirmTurnOn = false
+    @State private var isWritingFlag = false
+    /// The server's own sentence after a successful write ("The router is ON…").
+    @State private var writeNote: String?
+    @State private var busyRouteIDs: Set<String> = []
+
+    private static let genericFailure = "Couldn't load the routing table. Pull down to try again."
+
+    /// nil when this build's API client has no routing methods yet. The screen
+    /// then draws a plain explanation and stays read-only — it never pretends.
+    private var routingAPI: AdminRoutingAPI? { model.api as? AdminRoutingAPI }
+
+    private var canWrite: Bool { routingAPI != nil && forbiddenMessage == nil && !needsSignIn }
+
+    var body: some View {
+        List {
+            content
+        }
+        .listStyle(.insetGrouped)
+        .navigationTitle("AI routing")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+        .refreshable {
+            // A pull-to-refresh is the owner saying "show me the truth", so the
+            // last write's banner goes with it.
+            writeNote = nil
+            writeError = nil
+            await load()
+        }
+        .onChange(of: auth.isSignedIn) { _ in
+            Task { await load() }
+        }
+        .alert("Turn the routing brain on?", isPresented: $confirmTurnOn) {
+            Button("Cancel", role: .cancel) { }
+            Button("Turn it on") { Task { await writeFlag(true) } }
+        } message: {
+            Text(Self.turnOnWarning)
+        }
+        .sheet(isPresented: $showSignIn) {
+            SignInView(onSignedIn: { Task { await load() } },
+                       title: "Sign in to open the routing table",
+                       subtitle: "The routing table lives on the server, so it needs your account.",
+                       dismissNote: "Not now closes this — nothing is changed either way.")
+        }
+    }
+
+    // MARK: Top-level state routing
+
+    @ViewBuilder
+    private var content: some View {
+        if needsSignIn {
+            signedOutSection
+        } else if let forbiddenMessage {
+            notAdminSection(forbiddenMessage)
+        } else if routingAPI == nil {
+            notInThisBuildSection
+        } else {
+            mainContent
+        }
+    }
+
+    @ViewBuilder
+    private var mainContent: some View {
+        if let report {
+            writeStatusSection
+            flagSection(report)
+            policySection(report)
+            taskSections(report)
+            retirementsSection(report)
+        } else if let loadError {
+            errorSection(loadError)
+        } else if isLoading || !hasLoaded {
+            loadingSection
+        } else {
+            emptySection
+        }
+    }
+
+    // MARK: The master flag
+
+    @ViewBuilder
+    private func flagSection(_ report: AdminRoutingReport) -> some View {
+        Section {
+            flagHeadline(report)
+            flagToggle(report)
+            flagChangedRow(report)
+        } header: {
+            Text("The brain")
+        } footer: {
+            Text(Self.flagFooter(report))
+        }
+    }
+
+    private func flagHeadline(_ report: AdminRoutingReport) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(Self.flagTitle(report.isEnabled))
+                .font(.rpHeadline)
+                .foregroundStyle(report.isEnabled ? Theme.good : Theme.ink)
+            Text(Self.flagExplainerOff)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(Self.flagExplainerOn)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func flagToggle(_ report: AdminRoutingReport) -> some View {
+        HStack(spacing: 10) {
+            Toggle("AI routing brain", isOn: flagBinding(report))
+                .disabled(!canWrite || isWritingFlag)
+            if isWritingFlag { ProgressView() }
+        }
+    }
+
+    /// Reads the SERVER's value; writing goes through the confirm alert on the
+    /// way ON and straight through on the way OFF (turning it off is always the
+    /// safe direction — it restores today's single provider).
+    private func flagBinding(_ report: AdminRoutingReport) -> Binding<Bool> {
+        Binding(
+            get: { report.isEnabled },
+            set: { wanted in
+                guard wanted != report.isEnabled else { return }
+                if wanted {
+                    confirmTurnOn = true
+                } else {
+                    Task { await writeFlag(false) }
+                }
+            }
+        )
+    }
+
+    @ViewBuilder
+    private func flagChangedRow(_ report: AdminRoutingReport) -> some View {
+        if let line = RoutingText.changedLine(report) {
+            Text(line)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            Text("The server didn't say who last changed this.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    // MARK: Plan policy (read-only)
+
+    @ViewBuilder
+    private func policySection(_ report: AdminRoutingReport) -> some View {
+        Section {
+            if report.policyList.isEmpty {
+                noteRow("The server sent no plan policies.")
+            } else {
+                ForEach(Array(report.policyList.enumerated()), id: \.offset) { pair in
+                    policyRow(pair.element)
+                }
+            }
+        } header: {
+            Text("What each plan gets")
+        } footer: {
+            Text("Read-only here. \"Cheapest\" picks the lowest price that can still do the job. \"Best\" picks the top of the list.")
+        }
+    }
+
+    private func policyRow(_ policy: AdminRoutingPolicy) -> some View {
+        LabeledContent(AdminText.plan(policy.plan)) {
+            Text(RoutingText.policyLabel(policy.policy))
+                .font(.rpBody)
+                .foregroundStyle(Theme.ink)
+        }
+    }
+
+    // MARK: One card per task
+
+    @ViewBuilder
+    private func taskSections(_ report: AdminRoutingReport) -> some View {
+        if report.taskList.isEmpty {
+            Section {
+                noteRow("No tasks in the routing table.")
+            } header: {
+                Text("Jobs")
+            }
+        } else {
+            ForEach(Array(report.taskList.enumerated()), id: \.offset) { pair in
+                taskSection(pair.element)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func taskSection(_ task: AdminRoutingTask) -> some View {
+        Section {
+            taskHeaderButton(task)
+            if expanded.contains(task.slug) {
+                ForEach(Array(task.orderedSteps.enumerated()), id: \.offset) { pair in
+                    stepRow(pair.element, primary: task.primaryStep)
+                }
+            }
+        }
+    }
+
+    private func taskHeaderButton(_ task: AdminRoutingTask) -> some View {
+        Button {
+            toggleExpanded(task.slug)
+        } label: {
+            taskHeaderLabel(task)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func taskHeaderLabel(_ task: AdminRoutingTask) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(RoutingText.taskName(task.slug))
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text(RoutingText.taskSlugLine(task.slug))
+                    .font(.rpMono)
+                    .foregroundStyle(Theme.inkDim)
+                    .lineLimit(1)
+                Text(RoutingText.taskSummary(task))
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let legacy = RoutingText.legacyLine(task) {
+                    Text(legacy)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 8)
+            Image(systemName: expanded.contains(task.slug) ? "chevron.up" : "chevron.down")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 4)
+        .contentShape(Rectangle())
+    }
+
+    private func toggleExpanded(_ slug: String) {
+        if expanded.contains(slug) {
+            expanded.remove(slug)
+        } else {
+            expanded.insert(slug)
+        }
+        Haptics.selection()
+    }
+
+    // MARK: One step
+
+    private func stepRow(_ step: AdminRoutingStep, primary: AdminRoutingStep?) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            stepTitleLine(step)
+            stepModelLine(step)
+            stepPriceLine(step)
+            stepChips(step, primary: primary)
+            stepPrivacyExplainer(step)
+            stepHealthDetail(step)
+            stepToggle(step)
+            stepNotes(step)
+        }
+        .padding(.vertical, 5)
+        .opacity(step.isEnabled && !step.hasRetired ? 1 : 0.55)
+    }
+
+    private func stepTitleLine(_ step: AdminRoutingStep) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(Self.stepPositionLabel(step))
+                .font(.rpCaption)
+                .monospacedDigit()
+                .foregroundStyle(Theme.inkDim)
+            Text(step.providerName)
+                .font(.rpHeadline)
+                .foregroundStyle(Theme.ink)
+            if step.isLegacyStep {
+                Text("today's")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.good)
+            }
+            Spacer(minLength: 8)
+            healthDot(step.health)
+        }
+    }
+
+    private func stepModelLine(_ step: AdminRoutingStep) -> some View {
+        Text(step.modelName)
+            .font(.rpMono)
+            .foregroundStyle(Theme.inkDim)
+            .lineLimit(1)
+            .truncationMode(.middle)
+    }
+
+    private func stepPriceLine(_ step: AdminRoutingStep) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(AdminMoney.unitPrice(step.unitCents, unit: step.unit))
+                .font(.rpCaption)
+                .monospacedDigit()
+                .foregroundStyle(Theme.accent)
+            Spacer(minLength: 8)
+            Text(Self.spendLabel(step))
+                .font(.rpCaption)
+                .monospacedDigit()
+                .foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    @ViewBuilder
+    private func stepChips(_ step: AdminRoutingStep, primary: AdminRoutingStep?) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 6) {
+                chip(RoutingText.privacyLabel(step.privacyTier),
+                     tint: Self.privacyTint(step.privacyTier))
+                if let same = RoutingText.sameModelChip(step: step, primary: primary) {
+                    chip(same, tint: Theme.warn)
+                }
+                if let plan = RoutingText.minPlanChip(step.minPlan) {
+                    chip(plan, tint: Theme.accent)
+                }
+                ForEach(Array(step.capabilityList.enumerated()), id: \.offset) { pair in
+                    chip(pair.element, tint: Theme.inkDim)
+                }
+            }
+            .padding(.vertical, 1)
+        }
+    }
+
+    private func chip(_ text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.rpCaption.weight(.semibold))
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tint.opacity(0.12), in: Capsule())
+            .lineLimit(1)
+    }
+
+    @ViewBuilder
+    private func stepPrivacyExplainer(_ step: AdminRoutingStep) -> some View {
+        if let line = RoutingText.privacyExplainer(step.privacyTier) {
+            Text(line)
+                .font(.rpCaption)
+                .foregroundStyle(Self.privacyTint(step.privacyTier))
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func stepHealthDetail(_ step: AdminRoutingStep) -> some View {
+        Text(RoutingText.healthDetail(step.health))
+            .font(.rpCaption)
+            .foregroundStyle(Theme.inkDim)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func healthDot(_ health: AdminRoutingHealth?) -> some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(Self.healthTint(health))
+                .frame(width: 9, height: 9)
+            Text(RoutingText.healthLabel(health))
+                .font(.rpCaption)
+                .foregroundStyle(Self.healthTint(health))
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(Text(RoutingText.healthLabel(health)))
+    }
+
+    @ViewBuilder
+    private func stepToggle(_ step: AdminRoutingStep) -> some View {
+        if step.isLegacyStep {
+            Text("This is what runs today, with the brain off. It has no switch — turn the brain itself off instead.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        } else {
+            HStack(spacing: 10) {
+                Toggle("Use this step", isOn: stepBinding(step))
+                    .font(.rpCaption)
+                    .disabled(!canWrite || step.writeID == nil || busyRouteIDs.contains(step.rowKey))
+                if busyRouteIDs.contains(step.rowKey) { ProgressView() }
+            }
+        }
+    }
+
+    private func stepBinding(_ step: AdminRoutingStep) -> Binding<Bool> {
+        Binding(
+            get: { step.isEnabled },
+            set: { wanted in
+                guard wanted != step.isEnabled else { return }
+                Task { await writeStep(step, enabled: wanted) }
+            }
+        )
+    }
+
+    /// The "disabled until …" note is the legal reason a provider is off — it
+    /// is printed exactly as the server wrote it, never summarised.
+    @ViewBuilder
+    private func stepNotes(_ step: AdminRoutingStep) -> some View {
+        if let why = RoutingText.disabledUntilNote(step.note) {
+            Label(why, systemImage: "hand.raised.fill")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if let note = RoutingText.plainNote(step.note) {
+            Text(note)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        if step.writeID == nil {
+            Text("This step has no id, so it can't be switched from here.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: Retirements
+
+    @ViewBuilder
+    private func retirementsSection(_ report: AdminRoutingReport) -> some View {
+        let lines = Self.retirementLines(report)
+        Section {
+            if lines.isEmpty {
+                noteRow("Nothing in the table is scheduled to retire.")
+            } else {
+                ForEach(Array(lines.enumerated()), id: \.offset) { pair in
+                    retirementRow(pair.element)
+                }
+            }
+        } header: {
+            Text("Retirements")
+        } footer: {
+            Text("A model with a retirement date stops answering on that day. The replacement is the next step still switched on for the same job.")
+        }
+    }
+
+    private func retirementRow(_ line: RoutingRetirement) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(line.text)
+                .font(.rpCaption)
+                .foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(RoutingText.taskName(line.taskSlug))
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 2)
+    }
+
+    // MARK: States
+
+    private var signedOutSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Sign in to open the routing table", systemImage: "person.crop.circle.badge.checkmark")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("Your session ended. The routing table lives on the server, so it needs your account.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                Button {
+                    showSignIn = true
+                } label: {
+                    Label("Sign in with Apple", systemImage: "apple.logo")
+                        .font(.rpBody.weight(.semibold))
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func notAdminSection(_ message: String) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Not available on this account", systemImage: "lock")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text(message)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The server decides who may change routing, and it said no. Nothing on this phone can unlock it.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var notInThisBuildSection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Not in this app build yet", systemImage: "wrench.and.screwdriver")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("This copy of the app can't read the routing table. Nothing is broken — every AI feature keeps working exactly as it does today.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("The next build adds it.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private func errorSection(_ message: String) -> some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Couldn't load the routing table", systemImage: "exclamationmark.triangle")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.warn)
+                Text(message)
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Try again") {
+                    Task { await load() }
+                }
+                .disabled(isLoading)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    private var loadingSection: some View {
+        Section {
+            HStack {
+                Text("Loading the routing table…").foregroundStyle(Theme.inkDim)
+                Spacer()
+                ProgressView()
+            }
+        }
+    }
+
+    private var emptySection: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Nothing to show yet", systemImage: "tray")
+                    .font(.rpHeadline)
+                    .foregroundStyle(Theme.ink)
+                Text("The server returned no routing table. Pull down to refresh.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var writeStatusSection: some View {
+        if let writeError {
+            Section {
+                Label(writeError, systemImage: "exclamationmark.triangle")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("That change didn't stick")
+            }
+        } else if let writeNote {
+            Section {
+                Label(writeNote, systemImage: "checkmark.circle.fill")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.good)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func noteRow(_ text: String) -> some View {
+        Text(text)
+            .font(.rpCaption)
+            .foregroundStyle(Theme.inkDim)
+    }
+
+    // MARK: Loading & writing
+
+    @MainActor
+    private func load() async {
+        if Config.enableAuth && !auth.isSignedIn {
+            needsSignIn = true
+            hasLoaded = true
+            report = nil
+            return
+        }
+        needsSignIn = false
+        guard let api = routingAPI else {
+            hasLoaded = true
+            return
+        }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            report = try await api.adminRouting()
+            loadError = nil
+            forbiddenMessage = nil
+        } catch {
+            if error is CancellationError { return }
+            applyFailure(error)
+        }
+        hasLoaded = true
+    }
+
+    /// 403 and 401 are DIFFERENT answers: "not an admin" is permanent for this
+    /// account, "signed out" is a session that can be renewed. A 404 means this
+    /// server build has no routing table yet, which is not an error either.
+    @MainActor
+    private func applyFailure(_ error: Error) {
+        guard let api = error as? APIError else {
+            loadError = UserFacingError.message(error, fallback: Self.genericFailure)
+            return
+        }
+        if api.isForbidden {
+            forbiddenMessage = RoutingText.trimmed(api.errorDescription)
+                ?? "Admin access is required to see routing."
+            report = nil
+            return
+        }
+        if api.isUnauthorized {
+            needsSignIn = true
+            report = nil
+            return
+        }
+        if api.isNotFound {
+            loadError = "This server build has no routing table yet — GET /admin/routing answered 404. Every AI feature is still using today's single provider."
+            return
+        }
+        loadError = UserFacingError.message(error, fallback: Self.genericFailure)
+    }
+
+    /// Master flag. Nothing is optimistic: the write returns a small ack, not a
+    /// report, so the switch only moves after the re-read comes back.
+    @MainActor
+    private func writeFlag(_ enabled: Bool) async {
+        guard let api = routingAPI, !isWritingFlag else { return }
+        isWritingFlag = true
+        defer { isWritingFlag = false }
+        do {
+            let ack = try await api.adminSetRoutingFlag(enabled: enabled)
+            writeError = nil
+            writeNote = RoutingText.trimmed(ack.note)
+            Haptics.success()
+            await load()
+        } catch {
+            if error is CancellationError { return }
+            writeNote = nil
+            writeError = Self.writeFailure("the master switch", error)
+        }
+    }
+
+    /// One step's ON/OFF. The legacy row has no switch in the UI; the server
+    /// 409s it anyway, and that message is the one shown.
+    @MainActor
+    private func writeStep(_ step: AdminRoutingStep, enabled: Bool) async {
+        guard let api = routingAPI, let routeID = step.writeID else { return }
+        let key = step.rowKey
+        guard !busyRouteIDs.contains(key) else { return }
+        busyRouteIDs.insert(key)
+        defer { busyRouteIDs.remove(key) }
+        do {
+            let ack = try await api.adminSetRouteStep(routeID: routeID, enabled: enabled)
+            writeError = nil
+            writeNote = RoutingText.trimmed(ack.note) ?? Self.stepAck(step, enabled: enabled)
+            Haptics.success()
+            await load()
+        } catch {
+            if error is CancellationError { return }
+            writeNote = nil
+            writeError = Self.writeFailure(step.providerName + " · " + step.modelName, error)
+        }
+    }
+
+    // MARK: Copy (static — kept out of the view bodies)
+
+    private static let flagFooterBase = "Only two things on this screen write to the server: this switch, and each step's own switch. Everything else is read-only."
+
+    /// The server writes its own paragraph about what these numbers mean; it is
+    /// the honest caveat on the 30-day spend, so it is printed verbatim under
+    /// the app's own sentence rather than paraphrased.
+    private static func flagFooter(_ report: AdminRoutingReport) -> String {
+        var parts: [String] = [flagFooterBase]
+        if let note = RoutingText.trimmed(report.note) { parts.append(note) }
+        if report.isTruncated {
+            parts.append("Some rows were left out — the server returns a capped page, so the figures are a lower bound.")
+        }
+        return parts.joined(separator: "\n\n")
+    }
+
+    private static let flagExplainerOff = "OFF = every feature uses today's single provider."
+
+    private static let flagExplainerOn = "ON = the table below decides, with fallbacks."
+
+    private static let turnOnWarning = "From now on the table below picks the provider for every AI job, and falls back down the list when one is down. You can turn this off again at any time."
+
+    private static func flagTitle(_ enabled: Bool) -> String {
+        enabled ? "AI routing brain — ON" : "AI routing brain — OFF"
+    }
+
+    private static func stepAck(_ step: AdminRoutingStep, enabled: Bool) -> String {
+        (enabled ? "Turned on " : "Turned off ") + step.providerName + " · " + step.modelName + "."
+    }
+
+    private static func writeFailure(_ what: String, _ error: Error) -> String {
+        "Couldn't change " + what + " — " + UserFacingError.message(error, fallback: "the server didn't answer.")
+    }
+
+    private static func stepPositionLabel(_ step: AdminRoutingStep) -> String {
+        guard let position = step.position else { return "—" }
+        return "#\(position)"
+    }
+
+    private static func spendLabel(_ step: AdminRoutingStep) -> String {
+        AdminMoney.amount(step.spend30d) + " in 30 days"
+    }
+
+    private static func privacyTint(_ tier: String?) -> Color {
+        switch (tier ?? "").lowercased() {
+        case "no_retention":      return Theme.good
+        case "retained_30d":      return Theme.inkDim
+        case "trains_by_default": return Theme.warn
+        default:                  return Theme.inkDim
+        }
+    }
+
+    /// Green = worked recently. Red = circuit open. Grey = no data / gone quiet.
+    private static func healthTint(_ health: AdminRoutingHealth?) -> Color {
+        guard let health else { return Theme.inkDim }
+        if health.isOpen { return Theme.bad }
+        guard let ok = health.lastOkDate else { return Theme.inkDim }
+        return Date().timeIntervalSince(ok) <= RoutingText.recentWindow ? Theme.good : Theme.inkDim
+    }
+
+    /// Every step carrying a `retire_after`, with the replacement read off the
+    /// SAME task: the next step after it that is still switched on.
+    private static func retirementLines(_ report: AdminRoutingReport) -> [RoutingRetirement] {
+        var out: [RoutingRetirement] = []
+        for task in report.taskList {
+            let steps = task.orderedSteps
+            for (index, step) in steps.enumerated() {
+                guard step.retireAfter != nil else { continue }
+                let replacement = steps.dropFirst(index + 1).first(where: { $0.isEnabled })?.model
+                out.append(RoutingRetirement(
+                    taskSlug: task.slug,
+                    text: RoutingText.retirementLine(model: step.modelName,
+                                                     retires: step.retireDate,
+                                                     raw: step.retireAfter,
+                                                     replacement: replacement)))
+            }
+        }
+        return out
+    }
+}
+
+/// One line of the Retirements card.
+struct RoutingRetirement: Hashable {
+    let taskSlug: String
+    let text: String
 }

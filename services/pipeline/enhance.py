@@ -50,7 +50,7 @@ from pathlib import Path
 import router
 from config import SETTINGS, STYLES, style_prompt
 from cost_ledger import CostLedger
-from providers import anthropic_qc
+from providers import anthropic_qc, costs
 from providers.base import ProviderError
 from router import BudgetExceeded, JobBudget, JobContext
 
@@ -77,13 +77,33 @@ def _apply_edits(ctx: JobContext, source: bytes, declutter: bool, style: str | N
     return img
 
 
+def _attempt_estimate_cents(ctx: JobContext, declutter: bool, style: str | None) -> float:
+    """What ONE full attempt costs: every edit PLUS the QC that must judge it.
+
+    Prechecking per call meant an edit could be paid for and then discarded
+    because the *QC* precheck tipped over the cap — money spent for nothing
+    (audit F-G-20). The bundle is checked once, up front, so an attempt is either
+    fully affordable or never started.
+    """
+    est = 0.0
+    if declutter:
+        est += costs.declutter_cost_cents()
+    if style:
+        est += costs.restage_cost_cents(ctx.restage_route)
+    est += costs.qc_estimate_cents(SETTINGS.anthropic_model_qc)
+    return round(est, 4)
+
+
 def enhance_frame(ctx: JobContext, source: bytes, declutter: bool, style: str | None,
                   *, mask: bytes | None = None, plan: dict | None = None) -> dict:
     """Edit a single frame, QC-gate it, regen up to the cap, else fall back."""
     last_qc = None
     feedback = ""
+    bundle = _attempt_estimate_cents(ctx, declutter, style)
     for attempt in range(1 + SETTINGS.qc_max_retries):
         try:
+            # Whole-attempt affordability check BEFORE the first paid call.
+            ctx.budget.precheck("attempt", bundle)
             enhanced = _apply_edits(ctx, source, declutter, style, mask, feedback)
             last_qc = router.qc(ctx, [source], [enhanced], plan)
         except BudgetExceeded as e:
@@ -101,20 +121,35 @@ def enhance_frame(ctx: JobContext, source: bytes, declutter: bool, style: str | 
 
 
 def _maybe_analyze(ctx: JobContext, frame: bytes, analyze: bool) -> dict | None:
+    """Optional Claude room-understanding pass.
+
+    It is a PAID Anthropic call, so it goes through the same gates as every other
+    one: the ledger-degraded guard and a budget precheck (audit F-G-20 — this
+    call used to reach Anthropic with no precheck at all). Its cost is added to
+    the budget even if the ledger write itself failed: the money was spent.
+    """
     if not analyze:
         return None
     try:
+        router._guard_ledger(ctx, "qc-understand")
+        ctx.budget.precheck("qc", costs.qc_estimate_cents(SETTINGS.anthropic_model_qc))
         rp = anthropic_qc.understand_room(frame)
+    except BudgetExceeded as e:
+        print(f"    ⚠ room understanding skipped: {e}")
+        return None
+    except ProviderError as e:
+        print(f"    ⚠ room understanding skipped: {e}")
+        return None
+    try:
         ctx.ledger.record(feature="qc", provider="anthropic", model=rp.model, units=1,
                           unit_cost_cents=rp.cost_cents, total_cents=rp.cost_cents,
                           job_id=ctx.job_id, org_id=ctx.org_id,
                           meta={"phase": "understand", "room_type": rp.room_type})
-        ctx.budget.add(rp.cost_cents)
-        return {"room_type": rp.room_type, "clutter_items": rp.clutter_items,
-                "keep_identical": rp.keep_identical}
-    except ProviderError as e:
-        print(f"    ⚠ room understanding skipped: {e}")
-        return None
+    except ProviderError as e:      # includes LedgerError — row is spooled
+        print(f"    ⚠ {e}")
+    ctx.budget.add(rp.cost_cents)
+    return {"room_type": rp.room_type, "clutter_items": rp.clutter_items,
+            "keep_identical": rp.keep_identical}
 
 
 # ── ffmpeg helpers (video mode) ───────────────────────────────────────────────
@@ -188,11 +223,20 @@ def keyframe_vf(info: dict | None) -> str:
         tin = _ZSCALE_TRANSFER.get(info.get("color_transfer", ""), "arib-std-b67")
         pin = _ZSCALE_PRIMARIES.get(info.get("color_primaries", ""), "2020")
         min_ = _ZSCALE_MATRIX.get(info.get("color_space", ""), "2020_ncl")
+        curve = (os.environ.get("TONEMAP_CURVE", "mobius").strip().lower()
+                 or "mobius")
+        if curve not in ("none", "clip", "linear", "gamma", "reinhard", "hable", "mobius"):
+            curve = "mobius"
+        npl = os.environ.get("TONEMAP_NPL", "100").strip() or "100"
+        try:
+            float(npl)
+        except ValueError:
+            npl = "100"
         chain += [
-            f"zscale=tin={tin}:pin={pin}:min={min_}:t=linear:npl=100",
+            f"zscale=tin={tin}:pin={pin}:min={min_}:t=linear:npl={npl}",
             "format=gbrpf32le",
             "zscale=p=bt709",
-            "tonemap=tonemap=hable:desat=0",
+            f"tonemap=tonemap={curve}:desat=0",
             "zscale=t=bt709:m=bt709:r=tv",
         ]
     chain.append("format=yuvj420p")
@@ -242,8 +286,31 @@ def segment_video(video: Path, chapters: list | None, duration: float | None = N
             segs.append({"name": name, "start": start, "end": end})
         if segs:
             return segs
-    return [{"name": f"segment-{i + 1}", "start": t, "end": min(t + 8, dur)}
-            for i, t in enumerate(range(0, int(dur), 8))]
+    return _auto_segments(dur)
+
+
+# Chapter-less fallback bounds (audit F-G-16). A 10-minute walk sliced every 8s
+# is 75 keyframes → 75 Gemini + 75 QC cycles, roughly $8–20 of provider spend, and
+# 75 "photos" rows captioned segment-1…75 — for a job whose customer never tagged
+# a single room. One sample per NO_CHAPTER_SPACING_S, at most NO_CHAPTER_MAX, is
+# a representative walkthrough sample at bounded cost.
+NO_CHAPTER_SPACING_S = max(5.0, float(os.environ.get("NO_CHAPTER_SPACING_S", "30") or 30))
+NO_CHAPTER_MAX = max(1, int(os.environ.get("NO_CHAPTER_MAX_SEGMENTS", "12") or 12))
+
+
+def _auto_segments(dur: float) -> list:
+    """Bounded, evenly-spaced samples when the capture carries no room tags."""
+    if dur <= 0:
+        return []
+    count = max(1, min(NO_CHAPTER_MAX, int(dur // NO_CHAPTER_SPACING_S) or 1))
+    width = dur / count
+    segs = [{"name": f"segment-{i + 1}", "start": i * width,
+             "end": min((i + 1) * width, dur)} for i in range(count)]
+    if count == NO_CHAPTER_MAX and dur > NO_CHAPTER_MAX * NO_CHAPTER_SPACING_S:
+        print(f"    · no room tags: sampling {count} keyframes across {dur:.0f}s "
+              f"(capped by NO_CHAPTER_MAX_SEGMENTS) instead of one every "
+              f"{NO_CHAPTER_SPACING_S:.0f}s — bounds the per-job AI spend")
+    return segs
 
 
 # ── orchestrators ─────────────────────────────────────────────────────────────

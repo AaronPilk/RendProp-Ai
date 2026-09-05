@@ -353,3 +353,48 @@ export async function deleteObjects(
   await Promise.all(Array.from({ length: Math.min(concurrency, todo.length) }, workerLoop));
   return { deleted, errors };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Credential probe — ADDITIVE (2026-09-05, admin "Test all keys").
+//
+// Everything above this line is untouched, deliberately: one stray character in
+// this file took the entire storage layer down on 2026-09-04, so the probe is
+// appended rather than woven in.
+//
+// GET /admin/providers/probe needs to prove the R2 credentials AUTHENTICATE,
+// not merely that three env vars are non-empty. It has to do that through the
+// SAME signer every presign, HEAD, copy and delete already uses — a second copy
+// of the signing code could pass while the real one fails, which is worse than
+// no check at all. Hence this lives here, next to client(), instead of in
+// admin/probe.ts.
+//
+// The call is a ListObjectsV2 capped at ONE key: it moves no object bytes,
+// creates nothing, deletes nothing, and is safe to repeat. The response body is
+// discarded without being read into the probe — an object listing is customer
+// filenames, and no admin response has any business carrying those.
+
+/** What probeBucket observed. Deliberately carries no body and no key material. */
+export interface R2ProbeResult {
+  /** HTTP status R2 answered. 200 = signed in; 403 = credentials rejected. */
+  status: number;
+  ok: boolean;
+  /** The bucket NAME that was listed (a config value, never a secret). */
+  bucket: string;
+}
+
+/**
+ * Signed ListObjectsV2 (max-keys=1) against `bucket`. Throws the same
+ * HttpError(500) as every other helper here when the credentials are absent.
+ */
+export async function probeBucket(bucket: string = R2_BUCKET_UPLOADS): Promise<R2ProbeResult> {
+  const url = new URL(`${endpoint()}/${bucket}`);
+  url.searchParams.set("list-type", "2");
+  url.searchParams.set("max-keys", "1");
+  const res = await client().fetch(url.toString(), { method: "GET" });
+  // Release the connection WITHOUT reading the listing. cancel() on an already
+  // settled/absent body throws; that is not a probe failure.
+  try {
+    await res.body?.cancel();
+  } catch { /* body already disposed */ }
+  return { status: res.status, ok: res.ok, bucket };
+}

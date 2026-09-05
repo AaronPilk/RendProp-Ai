@@ -110,6 +110,17 @@ struct UsageSummary: Codable, Hashable {
     var orgName: String? = nil     // org.name
     var brandName: String? = nil   // org.brand_kit.name (the hosted card headline)
 
+    /// Server-declared admin flag (`/me` → `is_admin`). nil = this server build
+    /// does not send it, which is the case today (the admin role lives in
+    /// `public.profiles.is_admin` and is read only by the admin function). The
+    /// owner console then probes `GET /admin/spend` once and hides itself on a
+    /// 403. NEVER derive this from a hardcoded email or a local flag: the
+    /// server is the enforcement, this only decides whether a row is drawn.
+    var isAdmin: Bool? = nil
+    /// Membership role when the server sends one ("owner" | "admin" | "agent" |
+    /// "marketing"). Secondary to `isAdmin`.
+    var role: String? = nil
+
     /// AI spend as Money (integer-cents guardrail). Zero when unknown.
     var aiSpend: Money { Money(cents: aiSpendCents ?? 0) }
 }
@@ -253,6 +264,166 @@ struct AerialRequest: Sendable, Hashable {
     var isGrounded: Bool { !(imageJPEGBase64 ?? "").isEmpty }
 }
 
+// MARK: - AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
+
+/// One ElevenLabs voice from `GET /ai-voice/voices`.
+///
+/// Wire fields are Optional and decoded leniently — a new field, a null, or a
+/// voice the vendor returns half-populated must never fail the whole picker.
+/// Read through the non-optional accessors; the array the client hands back has
+/// already dropped anything with no usable id.
+struct AIVoice: Codable, Identifiable, Hashable, Sendable {
+    // Wire (snake_case → camelCase via .convertFromSnakeCase).
+    let voiceId: String?
+    let name: String?
+    /// Pre-flattened by the server into one display string ("narration · american").
+    let labels: String?
+
+    /// The id to send to `aiVoiceTTS`. Empty only for a row the client filtered out.
+    var voiceID: String { voiceId?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+    var id: String { voiceID }
+    /// What the picker row shows. Never empty.
+    var displayName: String {
+        let n = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return n.isEmpty ? "Voice" : n
+    }
+    /// The secondary line under the name. Empty when the vendor sent no labels.
+    var subtitle: String { labels?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "" }
+}
+
+/// The finished result of `POST /ai-voice/tts`: an audio file to download plus
+/// the word timings the captions are drawn from.
+///
+/// `words` may be EMPTY and that is a normal state, not an error — the server
+/// returns no words rather than inventing timings when ElevenLabs' alignment is
+/// missing or malformed, and captions then simply don't render (per the
+/// contract: captions degrade off, they never drift).
+struct AIVoiceResult: Sendable, Equatable {
+    /// Short-lived SIGNED R2 URL (~15 min). Download it immediately — this is
+    /// not a permanent address and it is not safe to persist.
+    let audioURL: URL
+    /// Seconds. See `durationSource` before laying out a video on it.
+    let durationS: Double
+    /// Word timings relative to the START of this audio, ready for `CaptionWord`
+    /// consumers. Empty means "no captions", never "captions at zero".
+    let words: [CaptionWord]
+    /// The voice's display name ("Rachel"), for the disclosure and the UI.
+    let voiceName: String
+    /// Characters billed to ElevenLabs for this script.
+    let characters: Int
+    /// "audio/mpeg".
+    let mime: String
+    /// Where `durationS` came from, verbatim from the server:
+    /// `"alignment"` (authoritative) | `"bitrate_estimate"` (computed from the
+    /// mp3's size at the CBR the server requested) | `"last_word"` | `"unknown"`.
+    /// `"unknown"` means `durationS` is 0 and nothing should be laid out on it.
+    let durationSource: String
+    /// The sentence the public tour prints for this AI-generated audio.
+    /// Show it verbatim; nil only if the server sent none.
+    let disclosure: String?
+    /// `media_provenance.id` when the row was written.
+    let provenanceID: String?
+    /// False when the voiceover could NOT be entered in the audit log (usually
+    /// no listing id yet). The audio itself still succeeded.
+    let provenanceRecorded: Bool
+
+    /// True when the server gave a duration it actually measured or computed,
+    /// rather than admitting it has none.
+    var hasReliableDuration: Bool { durationSource != "unknown" && durationS > 0 }
+}
+
+// MARK: - AI room chapters (ai-chapters edge function — docs/AI-CHAPTERS-CONTRACT.md)
+
+/// One AI-suggested room chapter from `POST /ai-chapters`.
+///
+/// Wire fields are Optional and decoded leniently — a new field, a null, or one
+/// half-populated suggestion must never fail the whole set. Read through the
+/// non-optional accessors; the array the client hands back has already dropped
+/// anything with no usable timestamp.
+///
+/// TIME BASE. `startS` is seconds from t=0 of the ASSET THAT WAS SUBMITTED, and
+/// the server never rescales it (contract §3). Send the ORIGINAL CAPTURE asset
+/// and `startMilliseconds` is a `RoomTag.tMs` as-is. Send the RENDER asset and
+/// you must multiply by the tour's `speedFactor` first, because the render was
+/// retimed and the tagger is written in capture time.
+struct AIChapter: Codable, Sendable, Hashable, Identifiable {
+    // Wire (snake_case → camelCase via .convertFromSnakeCase).
+    let label: String?
+    let startS: Double?
+    let endS: Double?
+    let confidence: Double?
+    let description: String?
+
+    /// Stable within one suggestion set (label + entry time), for ForEach.
+    var id: String { "\(roomLabel)@\(startMilliseconds)" }
+
+    /// The room name to pre-fill. Never empty — an unlabeled suggestion is
+    /// "Other", which is a chip the agent can rename in one tap.
+    var roomLabel: String {
+        let t = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return t.isEmpty ? "Other" : t
+    }
+
+    /// Seconds into the SUBMITTED asset. Never negative, never NaN.
+    var startSeconds: Double {
+        guard let s = startS, s.isFinite, s > 0 else { return 0 }
+        return s
+    }
+
+    /// Milliseconds into the SUBMITTED asset — the unit `RoomTag.tMs` wants.
+    var startMilliseconds: Int { Int((startSeconds * 1000).rounded()) }
+
+    /// Seconds where the camera leaves the room, when the server sent a sane
+    /// one. nil rather than a number a timeline could lay out wrongly.
+    var endSeconds: Double? {
+        guard let e = endS, e.isFinite, e >= startSeconds else { return nil }
+        return e
+    }
+
+    /// One sentence about the SPACE. nil when the model wrote none OR when it
+    /// failed the server's fair-housing gate — a nil here is a normal state, not
+    /// an error, and it is never a reason to hide the chapter.
+    var blurb: String? {
+        let t = description?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return t.isEmpty ? nil : t
+    }
+
+    /// 0…1 when the model sent one, nil when it did not. A soft UI cue only —
+    /// never a gate: a low-confidence room is still a room the agent can rename.
+    var confidenceScore: Double? {
+        guard let c = confidence, c.isFinite else { return nil }
+        return min(1, max(0, c))
+    }
+}
+
+/// The result of one `POST /ai-chapters` — suggestions to PRE-FILL the room
+/// tagger with, never something to publish.
+struct AIChaptersResult: Sendable, Hashable {
+    /// Sorted by `startSeconds`, merged, clamped and gated server-side.
+    let chapters: [AIChapter]
+    /// One or two sentences about the layout. nil when the model sent none.
+    let summary: String?
+    /// Duration the timestamps are measured against, when the server sent it.
+    let videoSeconds: Double?
+    /// The model that actually ran ("gemini-3.6-flash"), for the disclosure.
+    let model: String?
+    /// What this analysis cost, in cents. Informational.
+    let costCentsEstimate: Double?
+    /// Server-written notes ("3 short suggestions were merged"). Show them
+    /// VERBATIM — they explain why the agent sees five chips and not eight.
+    let warnings: [String]
+    /// The sentence the tour prints for AI-touched media. nil on older servers.
+    let disclosure: String?
+    /// `media_provenance.id` when the row was written.
+    let provenanceID: String?
+    /// False when this could not be entered in the audit log. The suggestions
+    /// themselves still succeeded.
+    let provenanceRecorded: Bool
+
+    /// True when there is at least one suggestion worth pre-filling.
+    var hasSuggestions: Bool { !chapters.isEmpty }
+}
+
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
@@ -309,6 +480,14 @@ protocol APIClient: Sendable {
     /// `contentType` is what the app will PUT with — the server stores it on the
     /// ticket and `/complete` rejects an object whose type differs (P0 audit
     /// fix: derive it from the file extension, never hardcode).
+    ///
+    /// `idempotencyKey` identifies the LOGICAL ticket ("ticket:<hash of the
+    /// file path>:<bytes>"). The server replays it: a retry after a lost
+    /// response, an expired staging PUT URL or a relaunch returns the SAME
+    /// `asset_id`/`storage_key` (with a fresh PUT URL) instead of minting
+    /// another asset row and charging the workspace's daily upload budget
+    /// again (audit F-E-06). Pass nil only where no retry can happen — the
+    /// client then derives a key from the route + payload.
     func requestUpload(filename: String, bytes: Int64,
                        listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?,
@@ -320,8 +499,9 @@ protocol APIClient: Sendable {
 
     /// POST /uploads/:asset_id/complete. `parts` non-nil ⇒ multipart (ETag
     /// manifest, REQUIRED); `parts` nil ⇒ single. `metadata` carries the probed
-    /// video fields. ONE-SHOT server-side: a replay returns 409 "already
-    /// complete", which callers treat as success.
+    /// video fields. Idempotent server-side: a replay returns 200 + the same
+    /// asset row. (An older server answers 409 "already complete"; callers
+    /// treat that as success too — `APIError.isAlreadyComplete`.)
     func completeUpload(assetID: String,
                         parts: [(number: Int, etag: String)]?,
                         metadata: UploadMetadata) async throws
@@ -420,9 +600,10 @@ protocol APIClient: Sendable {
 
     /// POST /ai-photo with `edit: "improve_prompt"` — rewrites a rough
     /// custom-edit idea (≤ 300 chars sent) into a sharper, more specific prompt
-    /// (≤ 400 back). The function requires `image_b64` on every call, so the
-    /// photo rides along; the rewrite itself is text-only. Not charged against
-    /// the monthly allowance.
+    /// (≤ 400 back). TEXT-ONLY: the server never looks at the image for this
+    /// mode, so `imageBase64` is accepted for source compatibility and is NOT
+    /// sent (uploading several MB over cellular for a call that ignores them
+    /// was audit F-E-16). Not charged against the monthly allowance.
     func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String
 
     // MARK: AI video (ai-video edge function — async fal submit + poll)
@@ -453,6 +634,133 @@ protocol APIClient: Sendable {
     /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
+
+    // MARK: AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
+
+    /// GET /ai-voice/voices — the ElevenLabs voice catalogue for the picker,
+    /// cached 10 minutes server-side. Rows with no usable id are dropped, so
+    /// every element is safe to pass straight back to `aiVoiceTTS`.
+    ///
+    /// Throws `APIError.server(status: 503, code: "upstream", …)` when the
+    /// server has no ElevenLabs credential configured. Show that message — it
+    /// is deliberately NOT an empty list, because an empty picker looks like
+    /// "no voices exist" rather than "this needs setting up".
+    func aiVoices() async throws -> [AIVoice]
+
+    /// POST /ai-voice/tts — speak `text` in `voiceID` and return the audio URL
+    /// plus word timings for captions.
+    ///
+    /// `text` is capped at 1,000 characters SERVER-side (400 beyond it) and is
+    /// run through the fair-housing gate before a cent is spent: a script that
+    /// steers on family status, religion, race, disability, sex, or the
+    /// safety / school / "exclusive" proxies comes back as
+    /// `APIError.server(status: 400, code: "unsupported_edit", …)` with a
+    /// message naming the offending phrase. Show that message, let the agent
+    /// re-word, and NEVER auto-retry — the same text will always be refused.
+    ///
+    /// `listingServerID` anchors the provenance row so the tour can disclose
+    /// the audio as AI-generated; without it nothing is logged.
+    /// `idempotencyKey` is one UUID per user TAP: a repeat inside two minutes
+    /// is refused with 409 `conflict` rather than billed twice.
+    ///
+    /// The returned `audioURL` is a short-lived signed URL — download it now.
+    func aiVoiceTTS(text: String, voiceID: String, listingServerID: UUID?,
+                    label: String, idempotencyKey: String) async throws -> AIVoiceResult
+
+    // MARK: AI room chapters (ai-chapters edge function — docs/AI-CHAPTERS-CONTRACT.md)
+
+    /// POST /ai-chapters — Gemini watches the walkthrough at 1 fps and returns
+    /// the rooms with entry timestamps, so the room tagger opens PRE-FILLED
+    /// instead of empty. ~1¢ for a 90-second house.
+    ///
+    /// `assetID` should be the ORIGINAL CAPTURE asset: `AIChapter.startSeconds`
+    /// is seconds into whatever was submitted and the server never rescales it,
+    /// and the capture is the timeline `RoomTag.tMs` is written in (contract
+    /// §3). A render asset works too, but its timestamps are on the RETIMED
+    /// timeline and must be multiplied by the tour's `speedFactor` before they
+    /// become room tags.
+    ///
+    /// `idempotencyKey` is one UUID per user TAP: a repeat inside two minutes is
+    /// refused with 409 `conflict` rather than analysed (and billed) twice.
+    ///
+    /// SUGGESTIONS ONLY. Nothing here is written to the server — the agent
+    /// edits the chips and the existing publish/chapters call persists them.
+    /// Never auto-publish a suggestion set.
+    ///
+    /// Bills the org's `renders_per_month` allowance: 402 `plan_required` when
+    /// the plan has none, 429 `quota_exceeded` when the month is used up, 503
+    /// `upstream` when the server has no Gemini credential. On the AUTOMATIC
+    /// path (tagger opened with zero tags) swallow those and show an empty
+    /// tagger; on the BUTTON path show the server's message.
+    func aiChapters(listingServerID: UUID, assetID: UUID, maxChapters: Int,
+                    idempotencyKey: String) async throws -> AIChaptersResult
+
+    // MARK: Admin console (owner/admin only — docs/ADMIN-CONSOLE-CONTRACT.md)
+    //
+    // Every route is a GET and the ADMIN ROLE IS SERVER-ENFORCED: the function
+    // reads `public.profiles.is_admin` for the caller's `auth.uid()` and 403s
+    // otherwise. Nothing the app sends can grant it, so these calls are a
+    // convenience for the owner, never a permission check. A 403 means "not an
+    // admin" — hide the entry point; a 401 means the session is gone.
+
+    /// GET /admin/spend?window=today|7d|30d — cost-ledger rollup for the window,
+    /// with the `coverage` object that says what the total does NOT include.
+    func adminSpend(window: AdminSpendWindow) async throws -> AdminSpendReport
+
+    /// GET /admin/providers — the external-API inventory plus a live boolean per
+    /// credential. A credential VALUE (or prefix, suffix or length) is never
+    /// returned by the server and must never be rendered by the app.
+    func adminProviders() async throws -> AdminProvidersReport
+
+    /// GET /admin/usage — per-org plan, this month's counters against the plan
+    /// entitlements, and who is blocked. Org-level aggregates only.
+    func adminUsage() async throws -> AdminUsageReport
+
+    /// GET /admin/health — credential configuration and the last success/failure
+    /// visible in data already held. Makes NO outbound provider calls.
+    func adminHealth() async throws -> AdminHealthReport
+
+    // MARK: AI routing brain (docs/ADMIN-CONSOLE-CONTRACT.md §`GET /admin/routing`)
+    //
+    // One read and the admin function's ONLY two writes. Each write sets one
+    // boolean and the server records who set it; neither can create a step,
+    // delete one, change a price or change a model id — every one of those is
+    // still a migration, which is what keeps the chain reviewable.
+    //
+    // THE WIRE MODELS ARE NOT DECLARED HERE. `AdminRoutingReport`,
+    // `AdminRoutingWriteAck` and the types they nest (`AdminRoutingTask`,
+    // `AdminRoutingStep`, `AdminRoutingHealth`, `AdminRoutingPolicy`,
+    // `AdminRoutingFlag`, `AdminRoutingLegacy`) live in
+    // `Screens/SettingsView.swift` under `MARK: - AI routing brain: wire
+    // models` — same module, so they are used from here as-is. They are there
+    // because a new .swift file is not in the Xcode target until someone runs
+    // `xcodegen generate` on a Mac (Screens/AdminConsoleView.swift has the full
+    // story). Moving them into this file is welcome; a SECOND declaration of
+    // any of those names is a hard build break.
+
+    /// GET /admin/routing — every task's ordered chain, the plan policies, the
+    /// master flag's audit line, and per step its circuit state and 30-day
+    /// spend. A 404 is a STATE, not a failure: this server build predates the
+    /// routing table, so every AI feature is still on today's single provider.
+    func adminRouting() async throws -> AdminRoutingReport
+
+    /// POST /admin/routing/flag — body `{"enabled": Bool}`. The switch that
+    /// moves live traffic: OFF means every task resolves to its legacy step and
+    /// behaviour is exactly what shipped.
+    ///
+    /// Answers the server's small ack (`{ok, enabled, changed_at, note}`), NOT
+    /// a fresh report — so a screen showing routing state must re-read
+    /// `adminRouting()` rather than trust the ack.
+    func adminSetRoutingFlag(enabled: Bool) async throws -> AdminRoutingWriteAck
+
+    /// POST /admin/routing/step/{routeID} — body `{"enabled": Bool}`, one step
+    /// of one chain on or off.
+    ///
+    /// 400 `validation` when `routeID` is not a uuid, 404 `not_found` when
+    /// there is no such step, and 409 `conflict` when it is the task's LEGACY
+    /// step: that row is the flag-off answer and is deliberately not switchable
+    /// — turn the router itself off instead. This ack carries no `note`.
+    func adminSetRouteStep(routeID: String, enabled: Bool) async throws -> AdminRoutingWriteAck
 }
 
 // MARK: - Convenience overloads (protocol requirements can't carry defaults)
@@ -539,6 +847,14 @@ extension APIClient {
         return try await publishApp(listingID: listingID, assetID: assetID, durationS: durationS,
                                     speedFactor: speedFactor, tier: tier, enhancements: enhancements,
                                     chapters: converted, posterAssetID: nil)
+    }
+
+    /// The common call: 12 suggestions, the server's default. Callers that want
+    /// a different ceiling pass `maxChapters:` explicitly.
+    func aiChapters(listingServerID: UUID, assetID: UUID,
+                    idempotencyKey: String) async throws -> AIChaptersResult {
+        try await aiChapters(listingServerID: listingServerID, assetID: assetID,
+                             maxChapters: 12, idempotencyKey: idempotencyKey)
     }
 }
 
@@ -691,5 +1007,389 @@ enum APIError: Error, LocalizedError {
         case 500..<600: return "The server had a problem. Please try again shortly."
         default: return "Server returned status \(status)."
         }
+    }
+}
+
+// MARK: - Admin console models (docs/ADMIN-CONSOLE-CONTRACT.md, version 1)
+//
+// The contract guarantees every field is present (optionals arrive as explicit
+// `null`, arrays as `[]`). We still decode EVERY field as Optional and expose
+// non-optional computed accessors, for the same reason `MeDTO` does: one added
+// or renamed key on the server must not blank the whole screen with a decoding
+// error while the owner is in the field. Wire JSON is snake_case and decodes
+// through `LiveAPIClient.decode` (`.convertFromSnakeCase`), so the property
+// names below are the camelCase form of the contract's keys.
+//
+// Timestamps stay `String` on the wire (the shared decoder sets no
+// `dateDecodingStrategy`) and are parsed on demand by `AdminTimestamp`.
+
+/// The window the spend figures cover. Raw values are the wire query values.
+enum AdminSpendWindow: String, Codable, Sendable, Hashable, CaseIterable, Identifiable {
+    case today
+    case sevenDays = "7d"
+    case thirtyDays = "30d"
+
+    var id: String { rawValue }
+
+    /// Segmented-control label.
+    var label: String {
+        switch self {
+        case .today:      return "Today"
+        case .sevenDays:  return "7 days"
+        case .thirtyDays: return "30 days"
+        }
+    }
+
+    /// Sentence form, for headers and copy.
+    var phrase: String {
+        switch self {
+        case .today:      return "today"
+        case .sevenDays:  return "the last 7 days"
+        case .thirtyDays: return "the last 30 days"
+        }
+    }
+}
+
+/// ISO-8601 → Date for the admin payloads (tolerant of fractional seconds,
+/// mirroring `LiveAPIClient.parseDate`).
+enum AdminTimestamp {
+    static func parse(_ raw: String?) -> Date? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let d = withFraction.date(from: raw) { return d }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: raw)
+    }
+}
+
+// MARK: GET /admin/spend
+
+/// One bucket of the spend breakdown (`by_provider` / `by_feature`).
+struct AdminSpendBucket: Decodable, Hashable, Sendable, Identifiable {
+    var key: String? = nil
+    var label: String? = nil
+    var totalCents: Double? = nil
+    var rows: Int? = nil
+    /// Bucket ÷ total, 0–1 (0 when the total is 0).
+    var share: Double? = nil
+
+    var id: String { key ?? label ?? UUID().uuidString }
+    var displayName: String { AdminText.name(label, key, fallback: "Unattributed") }
+}
+
+/// One workspace's slice of the window's spend (`by_org`). `orgId` and `plan`
+/// are nullable: rows whose org was deleted arrive as "(unattributed)".
+struct AdminSpendOrg: Decodable, Hashable, Sendable {
+    var orgId: String? = nil
+    var orgName: String? = nil
+    var plan: String? = nil
+    var totalCents: Double? = nil
+    var rows: Int? = nil
+    var share: Double? = nil
+
+    var displayName: String { AdminText.name(orgName, orgId, fallback: "(unattributed)") }
+}
+
+/// One place spend either does or does not become a ledger row.
+struct AdminCoverageSource: Decodable, Hashable, Sendable {
+    var key: String? = nil
+    var label: String? = nil
+    var represented: Bool? = nil
+    var detail: String? = nil
+    var reference: String? = nil
+
+    var isRepresented: Bool { represented ?? false }
+    var displayName: String { AdminText.name(label, key, fallback: "Unnamed source") }
+}
+
+/// What `total_cents` does and does not include. Rendered next to the total
+/// whenever `complete` is false — the contract requires it, and an owner who
+/// trusts an incomplete number is worse off than one shown no number at all.
+struct AdminSpendCoverage: Decodable, Hashable, Sendable {
+    var complete: Bool? = nil
+    var headline: String? = nil
+    var representedCount: Int? = nil
+    var missingCount: Int? = nil
+    var sources: [AdminCoverageSource]? = nil
+
+    /// True only when the server positively says the ledger is complete.
+    /// A missing `coverage` object is NOT completeness.
+    var isComplete: Bool { complete == true }
+    var allSources: [AdminCoverageSource] { sources ?? [] }
+    var unrepresented: [AdminCoverageSource] { allSources.filter { !$0.isRepresented } }
+}
+
+/// `GET /admin/spend?window=today|7d|30d`.
+struct AdminSpendReport: Decodable, Hashable, Sendable {
+    var window: String? = nil
+    var from: String? = nil
+    var to: String? = nil
+    var generatedAt: String? = nil
+    var totalCents: Double? = nil
+    var ledgerRows: Int? = nil
+    /// True when the window held more ledger rows than the server's read cap —
+    /// the totals are then a LOWER BOUND.
+    var truncated: Bool? = nil
+    var byProvider: [AdminSpendBucket]? = nil
+    var byFeature: [AdminSpendBucket]? = nil
+    var byOrg: [AdminSpendOrg]? = nil
+    var coverage: AdminSpendCoverage? = nil
+
+    var providerBuckets: [AdminSpendBucket] { byProvider ?? [] }
+    var featureBuckets: [AdminSpendBucket] { byFeature ?? [] }
+    var orgBuckets: [AdminSpendOrg] { byOrg ?? [] }
+    var isTruncated: Bool { truncated == true }
+    var generatedDate: Date? { AdminTimestamp.parse(generatedAt) }
+}
+
+// MARK: GET /admin/providers
+
+/// One priced SKU behind a provider: what calls it, and what a unit costs.
+struct AdminProviderModel: Decodable, Hashable, Sendable {
+    var sku: String? = nil
+    var label: String? = nil
+    var unit: String? = nil
+    /// nil where the repo has no committed price for the SKU.
+    var unitCostCents: Double? = nil
+    var trigger: String? = nil
+    var source: String? = nil
+
+    var displayName: String { AdminText.name(label, sku, fallback: "Unnamed model") }
+}
+
+/// One external API. `credentialEnv` / `envNames` are env var NAMES; the server
+/// never sends a credential value, prefix, suffix or length, and the app never
+/// renders one.
+struct AdminProvider: Decodable, Hashable, Sendable {
+    var key: String? = nil
+    var name: String? = nil
+    /// "ai" | "infra" | "integration".
+    var kind: String? = nil
+    var billable: Bool? = nil
+    var credentialEnv: String? = nil
+    var envNames: [String]? = nil
+    /// True only when every env var in `envNames` is set to a non-empty value.
+    var configured: Bool? = nil
+    /// The `cost_ledger.provider` value these rows carry — nil when the
+    /// provider never writes ledger rows (part of the coverage story).
+    var ledgerProvider: String? = nil
+    var models: [AdminProviderModel]? = nil
+
+    var displayName: String { AdminText.name(name, key, fallback: "Unnamed provider") }
+    var modelList: [AdminProviderModel] { models ?? [] }
+    var envList: [String] { envNames ?? credentialEnv.map { [$0] } ?? [] }
+    /// nil = the server did not say (never rendered as a ✓ or an ✗).
+    var isConfigured: Bool? { configured }
+}
+
+/// `GET /admin/providers`.
+struct AdminProvidersReport: Decodable, Hashable, Sendable {
+    var generatedAt: String? = nil
+    var providerCount: Int? = nil
+    var configuredCount: Int? = nil
+    var providers: [AdminProvider]? = nil
+
+    var providerList: [AdminProvider] { providers ?? [] }
+}
+
+// MARK: GET /admin/usage
+
+/// One "used of cap" counter, built from an org row's paired used/cap fields.
+struct AdminUsageCounter: Hashable, Sendable, Identifiable {
+    let key: String
+    let label: String
+    let used: Int
+    let cap: Int
+
+    var id: String { key }
+    /// cap 0 means the plan does not include the feature at all.
+    var isIncluded: Bool { cap > 0 }
+    var isAtCap: Bool { cap > 0 && used >= cap }
+}
+
+/// One workspace's plan, this month's counters and why it is blocked.
+/// Org-level aggregates only — the contract carries no person's name or email.
+struct AdminOrgUsage: Decodable, Hashable, Sendable {
+    var orgId: String? = nil
+    var orgName: String? = nil
+    /// Effective plan (an expired trial reads "free"), as the charge paths see it.
+    var plan: String? = nil
+    /// `orgs.plan` as stored, before trial-expiry mapping.
+    var planRaw: String? = nil
+    var trialEndsAt: String? = nil
+    var spendCentsMonth: Double? = nil
+    var cogsCeilingCents: Double? = nil
+    var spendShareOfCeiling: Double? = nil
+    var rendersUsed: Int? = nil
+    var rendersCap: Int? = nil
+    var photoEditsUsed: Int? = nil
+    var photoEditsCap: Int? = nil
+    var reelsUsed: Int? = nil
+    var reelsCap: Int? = nil
+    var aerialsUsed: Int? = nil
+    var aerialsCap: Int? = nil
+    var droneUsed: Int? = nil
+    var droneCap: Int? = nil
+    var jobsInFlight: Int? = nil
+    var jobsOrphaned: Int? = nil
+    var blocked: Bool? = nil
+    /// Stable slugs; `blocked` is true iff this is non-empty.
+    var blockedReasons: [String]? = nil
+
+    var displayName: String { AdminText.name(orgName, orgId, fallback: "(unattributed)") }
+    var isBlocked: Bool { blocked == true || !(blockedReasons ?? []).isEmpty }
+    var reasons: [String] { blockedReasons ?? [] }
+    var trialEndsDate: Date? { AdminTimestamp.parse(trialEndsAt) }
+
+    /// The five metered features, in the order Settings already shows them.
+    var counters: [AdminUsageCounter] {
+        [
+            AdminUsageCounter(key: "renders", label: "Tour renders",
+                              used: rendersUsed ?? 0, cap: rendersCap ?? 0),
+            AdminUsageCounter(key: "photo_edits", label: "Photo edits",
+                              used: photoEditsUsed ?? 0, cap: photoEditsCap ?? 0),
+            AdminUsageCounter(key: "reels", label: "Reel clips",
+                              used: reelsUsed ?? 0, cap: reelsCap ?? 0),
+            AdminUsageCounter(key: "aerials", label: "Aerial intros",
+                              used: aerialsUsed ?? 0, cap: aerialsCap ?? 0),
+            AdminUsageCounter(key: "drone", label: "Drone-glide upscales",
+                              used: droneUsed ?? 0, cap: droneCap ?? 0),
+        ]
+    }
+}
+
+/// `GET /admin/usage`.
+struct AdminUsageReport: Decodable, Hashable, Sendable {
+    var generatedAt: String? = nil
+    var month: String? = nil
+    var monthStart: String? = nil
+    var orgCount: Int? = nil
+    var blockedCount: Int? = nil
+    /// True when more than the server's cap of orgs exist; the list is the top N.
+    var truncated: Bool? = nil
+    var orgs: [AdminOrgUsage]? = nil
+
+    var orgList: [AdminOrgUsage] { orgs ?? [] }
+    var blockedOrgs: [AdminOrgUsage] { orgList.filter { $0.isBlocked } }
+    var isTruncated: Bool { truncated == true }
+}
+
+// MARK: GET /admin/health
+
+/// One provider's credential state and last known success.
+struct AdminHealthProvider: Decodable, Hashable, Sendable {
+    var key: String? = nil
+    var name: String? = nil
+    var credentialEnv: String? = nil
+    var configured: Bool? = nil
+    /// "ok" | "idle" | "unmetered" | "unconfigured".
+    var status: String? = nil
+    var ledgerProvider: String? = nil
+    var lastSuccessAt: String? = nil
+    var lastSuccessDetail: String? = nil
+    var rowsInWindow: Int? = nil
+    var spendCentsInWindow: Double? = nil
+
+    var displayName: String { AdminText.name(name, key, fallback: "Unnamed provider") }
+    var lastSuccessDate: Date? { AdminTimestamp.parse(lastSuccessAt) }
+}
+
+/// One failing pipeline step and how often it failed in the window.
+struct AdminFailureStep: Decodable, Hashable, Sendable {
+    var key: String? = nil
+    var count: Int? = nil
+
+    var displayName: String { AdminText.pretty(key ?? "unknown") }
+}
+
+/// Render-job failures in the window. Deliberately carries NO provider error
+/// text — an upstream message can contain a signed URL or key material, so the
+/// server sends only the step and the exception type.
+struct AdminJobFailures: Decodable, Hashable, Sendable {
+    var windowDays: Int? = nil
+    var failedJobs: Int? = nil
+    var orphanedJobs: Int? = nil
+    var lastFailureAt: String? = nil
+    var lastFailureStep: String? = nil
+    var lastFailureType: String? = nil
+    var byStep: [AdminFailureStep]? = nil
+
+    var stepList: [AdminFailureStep] { byStep ?? [] }
+    var lastFailureDate: Date? { AdminTimestamp.parse(lastFailureAt) }
+    var hasFailures: Bool { (failedJobs ?? 0) > 0 || (orphanedJobs ?? 0) > 0 }
+}
+
+/// `GET /admin/health`.
+struct AdminHealthReport: Decodable, Hashable, Sendable {
+    var generatedAt: String? = nil
+    /// Always false today: this route calls no provider API.
+    var checkedProviderApis: Bool? = nil
+    var note: String? = nil
+    var windowDays: Int? = nil
+    var providers: [AdminHealthProvider]? = nil
+    var jobFailures: AdminJobFailures? = nil
+
+    var providerList: [AdminHealthProvider] { providers ?? [] }
+    var didCallProviders: Bool { checkedProviderApis == true }
+}
+
+// MARK: - Admin display helpers
+
+/// Small string helpers shared by the admin models. Kept out of the view so the
+/// SwiftUI bodies stay short enough for the type-checker.
+enum AdminText {
+    /// First non-empty of `primary`, `secondary`, else `fallback`.
+    static func name(_ primary: String?, _ secondary: String?, fallback: String) -> String {
+        for candidate in [primary, secondary] {
+            if let value = candidate?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
+                return value
+            }
+        }
+        return fallback
+    }
+
+    /// "photo_edits_at_cap" → "Photo edits at cap".
+    static func pretty(_ slug: String) -> String {
+        let spaced = slug.replacingOccurrences(of: "_", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !spaced.isEmpty else { return "—" }
+        return spaced.prefix(1).uppercased() + spaced.dropFirst()
+    }
+
+    /// Human sentence for a `blocked_reasons` slug (contract's known values).
+    static func blockedReason(_ slug: String) -> String {
+        switch slug {
+        case "renders_at_cap":       return "Tour renders at their monthly cap"
+        case "photo_edits_at_cap":   return "Photo edits at their monthly cap"
+        case "reels_at_cap":         return "Reel clips at their monthly cap"
+        case "aerials_at_cap":       return "Aerial intros at their monthly cap"
+        case "drone_at_cap":         return "Drone-glide upscales at their monthly cap"
+        case "spend_ceiling_reached": return "Monthly spend ceiling reached"
+        case "jobs_in_flight_max":   return "Too many render jobs in flight"
+        case "orphaned_jobs":        return "Stuck render jobs need clearing"
+        default:                     return pretty(slug)
+        }
+    }
+
+    /// Provider `kind` slug → label. `pretty` alone would render "ai" as "Ai".
+    /// nil when the server sent nothing, so callers can omit the whole clause.
+    static func kind(_ raw: String?) -> String? {
+        let value = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch value {
+        case "":            return nil
+        case "ai":          return "AI"
+        case "infra":       return "Infrastructure"
+        case "integration": return "Integration"
+        default:            return pretty(value)
+        }
+    }
+
+    /// Plan slug → display label ("pro" → "Pro", "" → "—").
+    static func plan(_ raw: String?) -> String {
+        let trimmed = (raw ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "—" }
+        return pretty(trimmed)
     }
 }

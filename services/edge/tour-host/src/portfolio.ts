@@ -89,7 +89,7 @@ const PORTFOLIO_CSS = `${TOKENS_CSS}
   .psocial a { color: var(--accent); font-size: 13.5px; font-weight: 600; text-decoration: none; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; }
   .card { display: block; text-decoration: none; color: inherit; background: var(--card); border: 1px solid rgba(255,255,255,.08); border-radius: 14px; overflow: hidden; transition: transform .15s ease, border-color .15s ease; }
-  .card:hover { transform: translateY(-2px); border-color: rgba(217,164,65,.5); }
+  .card:hover { transform: translateY(-2px); border-color: rgba(155,109,255,.5); }
   .thumb { position: relative; aspect-ratio: 4 / 5; background: #12161b; display: flex; align-items: center; justify-content: center; }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
   .thumb .ph { font-size: 30px; color: rgba(255,255,255,.28); }

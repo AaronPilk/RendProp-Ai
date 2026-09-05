@@ -1,6 +1,7 @@
 // me — the signed-in user, their org, plan, and account lifecycle (owner).
 //
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
+//                                    plan_source, plan_expires_at, apple_product_id,
 //                                    usage: { month, by_feature, windows, renders, leads, leads_new, listings, cost_cents },
 //                                    portfolio_url }
 //                                  plan = EFFECTIVE plan (an expired trial reads `free`),
@@ -22,6 +23,12 @@
 //                                  their uploads finish.
 //   POST   /me/apple-code       -> { ok, stored }      (Sign in with Apple: exchange +
 //                                  store the refresh token for later revocation, TN3194)
+//   POST   /me/entitlement      -> { plan, source, expires_at, product_id,
+//                                    original_transaction_id, environment, status,
+//                                    replayed_notifications }
+//                                  { signed_transaction, signed_renewal_info? } —
+//                                  the StoreKit 2 JWS the app holds after a verified
+//                                  purchase or restore. See §"Entitlement sync" below.
 //   DELETE /me                  -> { ok, deletion_request_id, cleanup_complete, pending, warnings? }
 //   POST   /me/sweep-deletions  -> { ok, processed }   (service-role only; retry queue)
 //
@@ -39,7 +46,17 @@
 //      pending and the response is a 500, not a false success.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError, round4, throwRpc } from "../_shared/http.ts";
+import {
+  HttpError,
+  assert,
+  json,
+  pathSegments,
+  readJson,
+  readJsonLimited,
+  respondError,
+  round4,
+  throwRpc,
+} from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import {
   deleteObjects,
@@ -52,6 +69,15 @@ import { corsHeaders } from "../_shared/cors.ts";
 import { deleteStreamVideo, streamConfigured } from "../_shared/stream.ts";
 import { appleConfigured, exchangeAppleCode, revokeAppleToken } from "../_shared/apple.ts";
 import {
+  type AppleRenewalInfo,
+  decodeRenewalInfo,
+  decodeTransaction,
+  deriveEntitlement,
+  productToPlan,
+  verifyAppleJWS,
+} from "../_shared/applejws.ts";
+import { durableRateLimit } from "../_shared/ratelimit.ts";
+import {
   adminClient,
   getUser,
   isServiceRole,
@@ -61,6 +87,10 @@ import {
 } from "../_shared/supabase.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
+// The bundle id every Apple-signed transaction must carry. NAME only — this is
+// the app's public identifier (it is in the binary and on the App Store), not a
+// credential. Kept identical to apple-subscriptions/index.ts.
+const APPLE_BUNDLE_ID = (Deno.env.get("APPLE_BUNDLE_ID") ?? "com.rendprop.app").trim();
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
@@ -92,11 +122,14 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg[0] === "apple-code") {
       return await handleAppleCode(req, user.id);
     }
+    if (req.method === "POST" && seg[0] === "entitlement") {
+      return await handleEntitlement(req, user.id);
+    }
     if (req.method === "DELETE") return await handleDelete(user.id, user.email ?? null);
 
     throw new HttpError(
       405,
-      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/compliance/:id, POST /me/apple-code, and DELETE are supported",
+      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/entitlement, and DELETE are supported",
     );
   } catch (err) {
     return respondError(err);
@@ -137,7 +170,9 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const [profileRes, orgRes, ledgerRes, leadsRes, leadsNewRes, listingsRes, jobsRes, metersRes, entitlement] =
     await Promise.all([
       db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
-      db.from("orgs").select("id, name, handle, space_type, plan, trial_ends_at, brand_kit").eq("id", orgId).maybeSingle(),
+      db.from("orgs").select(
+        "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
+      ).eq("id", orgId).maybeSingle(),
       db.from("cost_ledger").select("total_cents").eq("org_id", orgId).gte("created_at", monthStart),
       db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).gte("created_at", monthStart),
       db.from("leads").select("id", { count: "exact", head: true }).eq("org_id", orgId).eq("status", "new"),
@@ -200,6 +235,11 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
     plan_raw: org.plan ?? null,
     trial_ends_at: org.trial_ends_at ?? null,
+    // Additive (launch wave, decision LC-§"Entitlement sync"). Optional in the
+    // client: an app build older than migration 0019 simply ignores them.
+    plan_source: org.plan_source ?? null,          // 'apple' | 'manual' | 'trial' | null
+    plan_expires_at: org.plan_expires_at ?? null,  // end of the paid/grace window
+    apple_product_id: org.apple_product_id ?? null,
     entitlement: {
       plan: entitlement.plan,
       renders_per_month: entitlement.renders_per_month,
@@ -566,6 +606,324 @@ async function handleAppleCode(req: Request, userId: string): Promise<Response> 
     console.error("apple code exchange failed:", e);
     return json({ ok: true, stored: false, reason: "exchange failed" });
   }
+}
+
+// ── POST /me/entitlement ──────────────────────────────────────────────────────
+//
+// The app just verified a StoreKit 2 transaction on the device and is telling
+// the server about it. The DEVICE'S WORD IS NOT THE INPUT — the JWS Apple signed
+// is. `Transaction.jwsRepresentation` is a compact JWS whose x5c chain ends at
+// the Apple Root CA - G3 bytes pinned in _shared/applejws.ts, so a jailbroken
+// device or a replayed HTTP call cannot mint a plan: it would have to forge an
+// Apple signature.
+//
+// This is the path that LINKS an App Store subscription to a workspace. Until it
+// runs, Apple's own notifications for that subscription have nowhere to land —
+// so once the link exists, every notification that arrived early is replayed,
+// in order, before the response is written.
+//
+// The checks, and what each one is protecting:
+//
+//   bundle id        a perfectly-signed transaction for another app is a 400,
+//                    not a plan.
+//   product id       a product we do not sell is a 400. There is no "unknown
+//                    product, assume pro" branch.
+//   ownership type   FAMILY_SHARED is a 403. One subscription unlocks ONE
+//                    workspace; the buyer's. (Family Sharing is off for these
+//                    products in App Store Connect — this is the server saying
+//                    the same thing, in case that ever changes by accident.)
+//   account token    when the transaction carries an appAccountToken it must be
+//                    THIS user's id, or 403. A signed transaction is not a
+//                    secret — it is on the buyer's device and in whatever the
+//                    app logs — and without this check whoever posts a copy
+//                    FIRST gets the plan and the real customer gets the 409
+//                    below. Soft on purpose: the shipped build sets no token,
+//                    so an absent one is accepted. (S1 review; migration 0021
+//                    adds the column that records it.)
+//   environment      Sandbox and Production are both accepted (App Review and
+//                    every TestFlight tester buys in Sandbox) but they may not
+//                    mix: a transaction from the other environment than the one
+//                    on file is a 409, the same rule /apple-subscriptions has
+//                    always applied to notifications.
+//   expiresDate      a purchase with no expiry is not a subscription: 400.
+//   role             only the workspace owner or an admin may attach a
+//                    subscription, so an `agent` seat in someone else's org
+//                    cannot redirect their own purchase into it.
+//   409 conflict     an originalTransactionId already bound to a DIFFERENT org
+//                    is refused rather than silently re-pointed. One person, one
+//                    subscription, one workspace — and the app shows the copy
+//                    verbatim so the user knows to sign in with the other account.
+//                    The check below is the friendly one; migration 0021 raises
+//                    RP409 inside the RPC's row lock, because a read-then-write
+//                    check is a race two concurrent claims both win (S1 review:
+//                    before 0021 the loser's org kept its plan AND the winner
+//                    got one, so a single purchase entitled two workspaces).
+//
+// The plan write itself goes through apply_apple_entitlement() (migration 0019),
+// a SECURITY DEFINER RPC only the service role may call, which is also what
+// refuses to move an owner-granted (`plan_source = 'manual'`) plan.
+
+const ENTITLEMENT_MAX_PER_WINDOW = 30;
+const ENTITLEMENT_WINDOW_SECONDS = 60;
+const MAX_JWS_CHARS = 64 * 1024;
+/** Hard ceiling on the bytes read off the wire, before any JSON parsing. */
+const MAX_ENTITLEMENT_BODY_BYTES = 256 * 1024;
+/** How many early notifications one link may replay. Far above any real backlog. */
+const MAX_REPLAY = 50;
+
+const ENTITLEMENT_ROLES = new Set(["owner", "admin"]);
+
+async function handleEntitlement(req: Request, userId: string): Promise<Response> {
+  if (
+    !(await durableRateLimit(
+      `entitlement:${userId}`,
+      ENTITLEMENT_MAX_PER_WINDOW,
+      ENTITLEMENT_WINDOW_SECONDS,
+    ))
+  ) {
+    throw new HttpError(429, "Too many subscription checks — try again in a moment.", "rate_limited");
+  }
+
+  // Capped before it is buffered: two JWS blobs are at most ~128 KB of JSON and
+  // req.json() would read whatever the caller sent into memory first.
+  const body = await readJsonLimited<
+    { signed_transaction?: unknown; signed_renewal_info?: unknown }
+  >(req, MAX_ENTITLEMENT_BODY_BYTES);
+  const signedTransaction = body.signed_transaction;
+  assert(
+    typeof signedTransaction === "string" && signedTransaction.length > 0 &&
+      signedTransaction.length <= MAX_JWS_CHARS,
+    400,
+    "signed_transaction is required (Transaction.jwsRepresentation)",
+  );
+
+  // 401 unless Apple really signed this.
+  const tx = decodeTransaction(await verifyAppleJWS(signedTransaction as string));
+
+  assert(tx.bundleId === APPLE_BUNDLE_ID, 400, "That purchase belongs to a different app");
+
+  const plan = productToPlan(tx.productId);
+  if (!plan) {
+    throw new HttpError(400, "That product isn't a Rendprop subscription", "validation", {
+      product_id: tx.productId,
+    });
+  }
+
+  if (tx.inAppOwnershipType !== null && tx.inAppOwnershipType !== "PURCHASED") {
+    throw new HttpError(
+      403,
+      "This subscription is shared through Family Sharing — the person who bought it has the plan.",
+      "forbidden",
+    );
+  }
+
+  assert(tx.expiresDate !== null, 400, "That purchase isn't a subscription");
+
+  // ── appAccountToken: the only thing that makes a JWS non-transferable ──────
+  //
+  // A signed transaction is not a secret. It lives on the buyer's device, it is
+  // in whatever the app logs, and anything that can read one HTTPS body can
+  // replay it. Nothing above this line distinguishes the buyer from someone
+  // holding a copy: the 409 further down only refuses a transaction that is
+  // ALREADY bound, so whoever posts it FIRST gets the plan — and the real
+  // customer then gets the 409.
+  //
+  // StoreKit's answer is `Product.PurchaseOption.appAccountToken(uuid)`: a UUID
+  // the app stamps on the purchase, which Apple then signs into every
+  // transaction and every notification for that subscription forever. Set it to
+  // the signed-in user's own id and a stolen JWS is worthless to anyone else.
+  //
+  // SOFT, deliberately: the shipped build calls `product.purchase()` with no
+  // options, so a real customer's transaction carries no token at all and must
+  // still work. A token that is PRESENT and names someone else is refused —
+  // that is the replay — while an absent one is accepted and the review report
+  // carries the exact iOS change that makes it present. Once a build that sets
+  // it has fully rolled out, this can be tightened to require the token.
+  if (tx.appAccountToken !== null && tx.appAccountToken.toLowerCase() !== userId.toLowerCase()) {
+    throw new HttpError(
+      403,
+      "That purchase belongs to a different Rendprop account. Sign in with the account that bought it, or use Restore Purchases there.",
+      "forbidden",
+    );
+  }
+
+  // Renewal info is optional and only trusted for THIS subscription.
+  let renewal: AppleRenewalInfo | null = null;
+  const signedRenewal = body.signed_renewal_info;
+  if (typeof signedRenewal === "string" && signedRenewal.length > 0) {
+    assert(signedRenewal.length <= MAX_JWS_CHARS, 400, "signed_renewal_info is too large");
+    const candidate = decodeRenewalInfo(await verifyAppleJWS(signedRenewal));
+    if (
+      candidate.originalTransactionId === null ||
+      candidate.originalTransactionId === tx.originalTransactionId
+    ) {
+      renewal = candidate;
+    }
+  }
+
+  const admin = adminClient();
+  const orgId = await orgForUser(userId, preferredOrg(req));
+
+  const { data: membership, error: mErr } = await admin
+    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+  if (mErr) throw new HttpError(500, `Membership lookup failed: ${mErr.message}`);
+  if (!membership || !ENTITLEMENT_ROLES.has(String(membership.role))) {
+    throw new HttpError(
+      403,
+      "Only the workspace owner or an admin can add a subscription",
+      "forbidden",
+    );
+  }
+
+  // One subscription, one workspace. This is the friendly pre-check; the RPC
+  // enforces the same rule inside its row lock (migration 0021), so two
+  // requests racing to claim the same transaction cannot both win.
+  const { data: existing, error: exErr } = await admin
+    .from("apple_subscriptions")
+    .select("org_id, environment")
+    .eq("original_transaction_id", tx.originalTransactionId)
+    .maybeSingle();
+  if (exErr) throw new HttpError(503, "Subscription lookup failed — try again.", "upstream");
+  const boundTo = (existing?.org_id as string | null) ?? null;
+  if (boundTo && boundTo !== orgId) {
+    throw new HttpError(409, "This subscription is already used by another account", "conflict");
+  }
+
+  // Sandbox and Production are both accepted — App Review and every TestFlight
+  // tester buys in Sandbox, so refusing it would fail review — but they may
+  // never mix. /apple-subscriptions has always refused a notification whose
+  // environment disagrees with the stored row; this is the same rule on the
+  // device path, which did not have it. (0021 enforces it in the RPC too, for
+  // both callers at once; this is the version that produces a sentence.)
+  const storedEnvironment = (existing?.environment as string | null) ?? null;
+  if (storedEnvironment !== null && storedEnvironment !== tx.environment) {
+    throw new HttpError(
+      409,
+      "That purchase is from a different App Store environment than this subscription.",
+      "conflict",
+    );
+  }
+
+  const derived = deriveEntitlement(tx, renewal);
+
+  const { error: rpcErr } = await admin.rpc("apply_apple_entitlement", {
+    p_org: orgId,
+    p_user: userId,
+    p_original_transaction_id: tx.originalTransactionId,
+    p_transaction_id: tx.transactionId,
+    p_product_id: tx.productId,
+    p_plan: plan,
+    p_environment: tx.environment,
+    p_status: derived.status,
+    p_expires_at: derived.expiresAt,
+    p_auto_renew: derived.autoRenew,
+    p_notification_type: null,
+  });
+  if (rpcErr) {
+    // RPnnn is the RPC refusing the input (a bug on our side — the only one it
+    // raises here is RP400). Anything else is Postgres being unreachable, which
+    // is a 503 "try again", not a 400 that tells the customer their purchase
+    // was invalid.
+    if (/RP\d{3}:/.test(rpcErr.message)) throwRpc(rpcErr.message);
+    console.error("apply_apple_entitlement failed:", rpcErr.message);
+    throw new HttpError(503, "Could not record the subscription — try again.", "upstream");
+  }
+
+  // Record the token when the build sent one, so support and the console can
+  // see which account a subscription is bound to. Best effort and non-plan:
+  // apply_apple_entitlement() stays the only writer of anything that decides a
+  // plan (migration 0019 RULE 1), and this column decides nothing — the check
+  // that matters already ran above, against the VERIFIED transaction.
+  if (tx.appAccountToken !== null) {
+    const { error: tokErr } = await admin
+      .from("apple_subscriptions")
+      .update({ app_account_token: tx.appAccountToken })
+      .eq("original_transaction_id", tx.originalTransactionId);
+    if (tokErr) console.error("app_account_token write failed:", tokErr.message);
+  }
+
+  const replayed = await replayPendingNotifications(tx.originalTransactionId, orgId);
+
+  // Answer with what the server now ENFORCES, read back after every write —
+  // effective_plan() is the same function the charge paths call, so the app can
+  // never be told it has a plan the next AI request will refuse.
+  const [{ data: effective }, { data: org }] = await Promise.all([
+    admin.rpc("effective_plan", { p_org: orgId }),
+    admin.from("orgs").select("plan, plan_source, plan_expires_at").eq("id", orgId).maybeSingle(),
+  ]);
+
+  return json({
+    plan: String(effective ?? org?.plan ?? "free"),
+    source: (org?.plan_source as string | null) ?? "apple",
+    expires_at: derived.expiresAt,
+    product_id: tx.productId,
+    original_transaction_id: tx.originalTransactionId,
+    environment: tx.environment,
+    // Additive extras the app may ignore.
+    status: derived.status,
+    auto_renew: derived.autoRenew,
+    replayed_notifications: replayed,
+  });
+}
+
+/**
+ * Apply the notifications that arrived before this workspace was linked.
+ *
+ * apple-subscriptions/index.ts stores the exact RPC arguments it computed on
+ * each `pending` row (`payload.entitlement`), so a replay re-applies the SAME
+ * decision rather than re-deriving it here from a second copy of the rules. In
+ * receipt order, because apply_apple_entitlement() resolves out-of-order
+ * signals by comparing expiries.
+ *
+ * Best effort: a failure here must not turn a successful purchase into an error
+ * the customer sees. The rows stay `pending` and the next sync retries them.
+ */
+async function replayPendingNotifications(
+  originalTransactionId: string,
+  orgId: string,
+): Promise<number> {
+  const admin = adminClient();
+  const { data, error } = await admin
+    .from("apple_notifications")
+    .select("notification_uuid, payload")
+    .eq("original_transaction_id", originalTransactionId)
+    .eq("pending", true)
+    .order("received_at", { ascending: true })
+    .limit(MAX_REPLAY);
+  if (error || !data || data.length === 0) return 0;
+
+  let applied = 0;
+  for (const row of data) {
+    const e = (row.payload as { entitlement?: Record<string, unknown> } | null)?.entitlement;
+    const uuid = row.notification_uuid as string;
+    if (!e || typeof e.status !== "string" || typeof e.original_transaction_id !== "string") {
+      // Nothing replayable on this row — clear the flag so it is not retried forever.
+      await admin.from("apple_notifications")
+        .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
+      continue;
+    }
+    const { error: rpcErr } = await admin.rpc("apply_apple_entitlement", {
+      p_org: orgId,
+      p_user: null,
+      p_original_transaction_id: e.original_transaction_id,
+      p_transaction_id: (e.transaction_id as string | null) ?? null,
+      p_product_id: (e.product_id as string | null) ?? null,
+      p_plan: (e.plan as string | null) ?? null,
+      p_environment: (e.environment as string | null) ?? null,
+      p_status: e.status,
+      p_expires_at: (e.expires_at as string | null) ?? null,
+      p_auto_renew: typeof e.auto_renew === "boolean" ? e.auto_renew : null,
+      p_notification_type: (e.notification_type as string | null) ?? null,
+    });
+    if (rpcErr) {
+      console.error("pending notification replay failed:", rpcErr.message);
+      continue; // stays pending; the next sync retries it
+    }
+    await admin.from("apple_notifications")
+      .update({ pending: false, org_id: orgId }).eq("notification_uuid", uuid);
+    applied++;
+  }
+  return applied;
 }
 
 // ── DELETE /me ────────────────────────────────────────────────────────────────
@@ -991,6 +1349,23 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
       last_error: warnings.length ? warnings.slice(0, 10).join(" | ").slice(0, 2000) : null,
       completed_at: cleanupComplete ? new Date().toISOString() : null,
     }).eq("id", requestId));
+
+  // ── Phase 6b: forget this person in the analytics table.
+  //
+  // `app_events` has no foreign key on user_id or org_id — deliberately, so a
+  // deletion can never fail on it or silently rewrite historical counts
+  // (migration 0020 §1). But that also means nothing was clearing them: 0020's
+  // own comment says "the purge and DELETE /me are what remove the rows" and
+  // DELETE /me did not touch the table, so a deleted account's id sat in it for
+  // the rest of the 180-day retention window (S1 review). Nulling the two
+  // identifiers keeps every funnel number exactly as it was — a row is still a
+  // row and device_id is still device_id — and leaves nothing in the table
+  // pointing at a person who asked to be forgotten. `device_id` stays because
+  // once user_id and org_id are gone it is a random install UUID with nothing
+  // left to join it to, and dropping it would silently rewrite every distinct-
+  // device count 0020 went out of its way to protect.
+  await step("forget analytics identifiers", () =>
+    admin.from("app_events").update({ user_id: null, org_id: null }).eq("user_id", userId));
 
   // ── Phase 7: profile + auth record. Auth deletion MUST succeed.
   await step("delete profile", () => admin.from("profiles").delete().eq("id", userId));

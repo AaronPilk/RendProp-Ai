@@ -4,10 +4,17 @@
 # search engines and AI assistants. Summary for LLMs: /llms.txt
 #
 # Customer tour pages (/f/<slug>) and portfolio pages (/a/<handle>) carry
-# agents' and business owners' names and phone numbers. They stay indexable by
-# ordinary search engines (an agent wants the listing found) but are NOT
-# offered to AI crawlers for training or answer generation. The public demo
-# tour (/f/estate-demo) is Rendprop's own content and stays open everywhere.
+# agents' and business owners' names and phone numbers, so they are NOT offered
+# to AI crawlers for training or answer generation at all.
+#
+# For ORDINARY search engines the decision is per page, not per site: since
+# audit F-H-19 a tour renders `<meta name="robots" content="noindex, nofollow">`
+# unless its owner opted in (`allow_indexing` on the listing or the brand kit).
+# That is deliberately NOT a robots.txt Disallow — a crawler has to be allowed
+# to fetch the page to read the meta tag, and blocking it here would leave
+# opted-in tours unable to be indexed and non-opted-in ones eligible for a
+# URL-only listing. The public demo tour (/f/estate-demo) is Rendprop's own
+# content, opts itself in, and stays open everywhere.
 # (Longest-match wins per the robots standard, so the Allow line for the demo
 # beats the Disallow for /f/; it is also listed first for first-match crawlers.)
 #

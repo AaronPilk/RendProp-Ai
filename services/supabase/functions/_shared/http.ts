@@ -106,15 +106,78 @@ export function respondError(err: unknown): Response {
   if (err instanceof HttpError) {
     return json({ ...(err.details ?? {}), error: err.message, code: err.code }, err.status);
   }
+  // The message of an UNEXPECTED error is logged, never returned: on a public
+  // route it can name an upstream, an env var, or a table. Every deliberate
+  // failure is an HttpError and keeps its own copy.
   console.error("Unhandled error:", err);
-  const message = err instanceof Error ? err.message : "Internal Server Error";
-  return json({ error: message, code: "internal" }, 500);
+  return json({ error: "Something went wrong on our side — try again in a moment.", code: "internal" }, 500);
 }
 
 /** Parse a JSON request body, or throw a 400. */
 export async function readJson<T = Record<string, unknown>>(req: Request): Promise<T> {
   try {
     return (await req.json()) as T;
+  } catch {
+    throw new HttpError(400, "Request body must be valid JSON");
+  }
+}
+
+/**
+ * `readJson` with a hard ceiling on the number of BYTES read.
+ *
+ * `req.json()` buffers whatever the caller sends before anything can look at
+ * it, so on a route that is reachable without a JWT — /apple-subscriptions
+ * (deployed --no-verify-jwt for Apple) and /events (anon key) — a single POST
+ * of a few hundred megabytes is an out-of-memory kill of the isolate, and the
+ * per-IP limiter does not help because one request is enough. Content-Length is
+ * checked first as the cheap path and the stream is measured as it arrives,
+ * because a chunked body has no Content-Length to lie about.
+ *
+ * `maxBytes` should be generous: the point is to refuse the absurd, not to
+ * police a payload the handler is about to validate properly anyway.
+ */
+export async function readJsonLimited<T = Record<string, unknown>>(
+  req: Request,
+  maxBytes: number,
+): Promise<T> {
+  const tooBig = () =>
+    new HttpError(413, "Request body is too large", "payload_too_large");
+
+  const declared = Number(req.headers.get("content-length") ?? "");
+  if (Number.isFinite(declared) && declared > maxBytes) throw tooBig();
+
+  const body = req.body;
+  if (!body) throw new HttpError(400, "Request body must be valid JSON");
+
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        // Stop pulling: the rest of the upload is not worth reading.
+        await reader.cancel().catch(() => {});
+        throw tooBig();
+      }
+      chunks.push(value);
+    }
+  } catch (e) {
+    if (e instanceof HttpError) throw e;
+    throw new HttpError(400, "Request body could not be read");
+  }
+
+  const joined = new Uint8Array(total);
+  let at = 0;
+  for (const c of chunks) {
+    joined.set(c, at);
+    at += c.byteLength;
+  }
+
+  try {
+    return JSON.parse(new TextDecoder().decode(joined)) as T;
   } catch {
     throw new HttpError(400, "Request body must be valid JSON");
   }

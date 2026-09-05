@@ -39,10 +39,22 @@ enum Config {
     /// PUBLISH-time actions on it — capture and on-device render stay offline.
     static let useLiveBackend = true
 
+    /// True when the app was launched by the automated UI walk
+    /// (`RendpropUITests`, which passes `-uiTesting`). The walk exists to
+    /// screenshot every screen, so it must never touch the live backend: no
+    /// real customer, no real spend figure and no real share link can end up
+    /// in a PNG the owner forwards to somebody. Read at launch only.
+    static var isUITesting: Bool {
+        ProcessInfo.processInfo.arguments.contains("-uiTesting")
+    }
+
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
     /// the live client can't be constructed (e.g. no base URL). Single source of
     /// truth so AppModel and UploadManager stay in sync.
     static func makeAPIClient() -> APIClient {
+        // The UI walk is checked BEFORE the live client: `-uiTesting` always
+        // means the offline mock, whatever `useLiveBackend` says.
+        if isUITesting { return MockAPIClient() }
         if useLiveBackend, let live = LiveAPIClient() { return live }
         return MockAPIClient()
     }
@@ -87,7 +99,7 @@ enum Config {
     // entitlement and the Apple provider enabled in Supabase Auth before publish
     // will actually succeed (DEPLOYMENT.md).
     static let enableAuth = true       // Sign in with Apple → Supabase; tokens in Keychain
-    static let enableIAP  = false      // TODO: StoreKit 2 consumable credits + subs
+    static let enableIAP  = true       // StoreKit 2 auto-renewable subscriptions (Purchases/) — read by nothing yet; documents the state
     static let enablePush = false      // TODO: APNs render-ready / lead-received
     static let showTutorials = false   // flip on once tutorial videos are filmed (no "coming soon" placeholders ship)
 }

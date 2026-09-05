@@ -72,6 +72,20 @@ import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
+import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
+import type { RouteStep } from "../_shared/router.ts";
+import { routerEnabled } from "../_shared/router.ts";
+import { adapterFor } from "../_shared/providers/index.ts";
+import { resolveChain, runChain } from "../_shared/providers/chain.ts";
+import {
+  BUDGETS,
+  ProviderError,
+  awaitJob,
+  inlineBase64,
+  inlineImageResult,
+  routedR2Key,
+} from "../_shared/providers/common.ts";
+import type { GenerateInput } from "../_shared/providers/types.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -102,7 +116,7 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(userId: string, req: Request): Promise<void> {
+async function guardEdit(userId: string, req: Request): Promise<{ orgId: string; plan: string }> {
   const orgId = await requireEditorRole(userId, req, "AI photo edits");
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
@@ -121,6 +135,11 @@ async function guardEdit(userId: string, req: Request): Promise<void> {
   if (!(await durableRateLimit(`aiphotomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
     throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
+  // Return the org the quota was charged to, so the handler can attribute the
+  // cost_ledger row (F-E-15) — and, once F-E-16 lands, refund the same key.
+  // The effective plan rides along for the router's RouteContext: it is the
+  // number entitlementForCharge() just read, not a second lookup.
+  return { orgId, plan: ent.plan };
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
@@ -366,6 +385,52 @@ interface Body {
   /** capture_asset of the UNTOUCHED source, uploaded via POST /uploads
    *  role:"original". Makes "View original" a real link (CA AB 723). */
   original_asset_id?: string;
+  /** ADDITIVE (router): a real inpaint mask for edit:"declutter". White = edit.
+   *  The shipped app does not send one; when it is absent the declutter route
+   *  asks for a prompt edit instead of a mask edit — see needsForPhotoEdit(). */
+  mask_b64?: string;
+  mask_mime?: string;
+}
+
+// ── AI router glue (docs/AI-ROUTER-CONTRACT.md) ──────────────────────────────
+
+/**
+ * The capabilities an edit genuinely REQUIRES, per contract §3.
+ *
+ * `needs` is a filter, so asking for more than you need costs you your
+ * fallbacks. declutter therefore requires "mask" ONLY when the caller actually
+ * sent one: the mask steps (flux-fill, gpt-image-2) cannot run without it, and
+ * requiring the capability with no mask to send would skip the prompt-edit step
+ * that serves every shipped client today and then fail on the mask step.
+ */
+export function needsForPhotoEdit(edit: string, hasMask: boolean): string[] {
+  if (edit === "declutter") return hasMask ? ["mask"] : ["prompt-edit"];
+  if (edit === "stage" || edit === "custom") return ["prompt-edit", "fidelity"];
+  return ["prompt-edit"];
+}
+
+/**
+ * The last-resort step: what THIS deploy runs today, hardcoded.
+ *
+ * resolveRoute() answers `[]` if the routing table is unreadable, and a
+ * database blip must not take photo editing down. GEMINI_IMAGE_MODEL still
+ * wins here, exactly as it does today.
+ */
+export function legacyPhotoStep(task: string): RouteStep {
+  return {
+    route_id: "legacy-local",
+    task,
+    provider: "gemini",
+    model: MODEL,
+    unit: "image",
+    unit_cents: APP_AI_UNIT_CENTS.gemini_image,
+    capabilities: ["prompt-edit"],
+    max_latency_s: 60,
+    min_plan: "free",
+    same_model_as: null,
+    privacy_tier: "retained_30d",
+    enabled: true,
+  };
 }
 
 /** edit id → the provenance `kind` the audit log and the tour disclose. */
@@ -410,6 +475,15 @@ Deno.serve(async (req) => {
       assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
              "image is too large — resize it before sending", "payload_too_large");
       assert(ALLOWED_MIMES.includes(mime), 400, `mime must be one of ${ALLOWED_MIMES.join(", ")}`);
+    }
+    // Same bound on the optional router mask: an unbounded second image would
+    // reopen the memory-pressure hole the image_b64 cap closed (audit round 4).
+    if (body.mask_b64 !== undefined) {
+      assert(typeof body.mask_b64 === "string", 400, "mask_b64 must be a string");
+      assert(body.mask_b64.length <= MAX_IMAGE_B64_CHARS, 413,
+             "mask is too large — resize it before sending", "payload_too_large");
+      const mm = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
+      assert(ALLOWED_MIMES.includes(mm), 400, `mask_mime must be one of ${ALLOWED_MIMES.join(", ")}`);
     }
 
     // Helper modes: text/vision analysis only — no image generation, no monthly charge.
@@ -457,52 +531,103 @@ Deno.serve(async (req) => {
     prompt = `${prompt} ${guardrailsFor(edit)}`;
 
     // Everything validated — NOW charge the quota, immediately before the
-    // billable Gemini call.
-    await guardEdit(user.id, req);
+    // billable provider call. Keep the org it charged for the cost_ledger row,
+    // and the plan for the router's RouteContext.
+    const { orgId, plan } = await guardEdit(user.id, req);
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
-    const payload = {
-      contents: [{
-        role: "user",
-        parts: [
-          { text: prompt },
-          { inline_data: { mime_type: mime, data: body.image_b64 } },
-        ],
-      }],
-      generationConfig: { responseModalities: ["IMAGE"] },
+    // ── ROUTER (flag-gated, additive) ────────────────────────────────────────
+    // The fair-housing gate above has already run — contract §4 puts it BEFORE
+    // resolveRoute on every task that takes free text, and it is the one thing
+    // no routing decision may skip.
+    //
+    // Flag OFF: resolveRoute returns exactly the legacy step (gemini
+    // gemini-2.5-flash-image), the gemini adapter rebuilds today's payload byte
+    // for byte, and this is a no-op. Flag ON: the seeded chain runs, each
+    // attempt is reported for the circuit breaker, and the ledger row carries
+    // the provider/model that actually ran.
+    const task = `photo.${edit}`;
+    const maskB64 = typeof body.mask_b64 === "string" && body.mask_b64.length > 0 ? body.mask_b64 : null;
+    const maskMime = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
+    const routerOn = await routerEnabled();
+    const steps = await resolveChain(
+      task,
+      {
+        plan,
+        needs: needsForPhotoEdit(edit, maskB64 !== null),
+        // A photograph of somebody's home: never a vendor that trains on it.
+        carries_customer_media: true,
+      },
+      legacyPhotoStep(task),
+    );
+
+    const genInput: GenerateInput = {
+      task,
+      prompt,
+      image_b64: body.image_b64,
+      // fal/OpenAI take a URL; a data URI is what this function already hands
+      // fal today, so the bytes still never leave our process except to the
+      // provider that runs the edit.
+      image_url: `data:${mime};base64,${body.image_b64}`,
+      ...(maskB64 ? { mask_url: `data:${maskMime};base64,${maskB64}` } : {}),
+      extra: { image_mime: mime, ...(maskB64 ? { mask_mime: maskMime } : {}) },
     };
 
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": GEMINI_KEY },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json().catch(() => ({} as Record<string, unknown>));
-    if (!res.ok) {
-      throw new HttpError(502, `Gemini ${res.status}: ${JSON.stringify(data).slice(0, 300)}`, "upstream");
-    }
+    // GEMINI_IMAGE_MODEL is an operator override that predates the routing
+    // table. While the router is OFF it still wins for the legacy gemini step,
+    // so the flag-off path stays exactly what THIS deploy runs today even if
+    // the secret and the seeded legacy row ever disagree.
+    const chain = routerOn ? steps : steps.map((s) =>
+      s.provider === "gemini" && s.model === "gemini-2.5-flash-image" && MODEL !== s.model ? { ...s, model: MODEL } : s
+    );
 
-    let outB64: string | null = null;
-    let outMime: string | null = null;
-    const texts: string[] = [];
-    for (const cand of (data.candidates ?? [])) {
-      for (const part of ((cand.content?.parts) ?? [])) {
-        const blob = part.inlineData ?? part.inline_data;
-        if (blob?.data) {
-          outB64 = blob.data as string;
-          // Gemini's real output type (it is PNG for the image model today, but
-          // hardcoding it mislabelled the bytes whenever that changed).
-          const m = String(blob.mimeType ?? blob.mime_type ?? "").split(";")[0].trim().toLowerCase();
-          outMime = m.startsWith("image/") ? m : null;
-          break;
+    const attempt = await runChain(task, chain, async (step) => {
+      const adapter = adapterFor(step.provider);
+      const ref = await adapter.submit(step, genInput);
+      const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
+      // One download, reused for both the inline answer and the R2 copy.
+      const local = await inlineImageResult(step.provider, done);
+      const b64 = inlineBase64(local);
+      if (!b64) throw new ProviderError(step.provider, "upstream", `${step.provider} returned no image bytes`);
+
+      // persist(): the canonical asset is ours (contract §4).
+      //
+      // Only while the router is ON — with the flag off this function stores
+      // nothing today, and a no-op deploy must not start writing objects (or
+      // spending the latency) behind an operator's back.
+      //
+      // BEST EFFORT even then, and only here: unlike a video, the edited photo
+      // is returned inline in this very response, so the caller already has the
+      // bytes and a storage hiccup must not destroy an edit they paid for.
+      let assetKey: string | null = null;
+      if (routerOn) {
+        try {
+          const stored = await adapter.persist(local, routedR2Key(orgId, task, local.mime));
+          assetKey = stored.key;
+        } catch (e) {
+          console.error("ai-photo: persist to R2 failed (edit still returned):", e instanceof Error ? e.message : e);
         }
-        if (part.text) texts.push(part.text as string);
       }
-      if (outB64) break;
-    }
-    if (!outB64) {
-      throw new HttpError(502, `Gemini returned no image. ${texts.join(" | ").slice(0, 300)}`, "upstream");
-    }
+      return { b64, mime: local.mime, assetKey };
+    });
+    const step = attempt.step;
+    const outB64 = attempt.value.b64;
+    const outMime = attempt.value.mime;
+
+    // COST LEDGER (F-E-15): the image edit succeeded and is billed, so record
+    // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
+    // spend console and the per-org monthly COGS view read for app AI. The
+    // provider/model/price come from the step that ACTUALLY ran (contract §4);
+    // with the flag off that is gemini @ 3.9c/image, exactly as before.
+    // Best effort — a failed insert must never fail an edit the caller has paid
+    // for (see recordAppAiCost). Only reached on success, so a failure above
+    // (which F-E-16 refunds) writes no row: no double-count.
+    await recordRoutedAiCost(adminClient(), {
+      orgId,
+      feature: "photo_edit",
+      step,
+      images: 1,
+      meta: { edit, space_type: space, ...(style ? { style } : {}) },
+    });
 
     // COMPLIANCE: enter the edit in the org's AI audit log and hand the app the
     // exact sentence the public tour will print. Best effort — never fatal (the
@@ -511,7 +636,7 @@ Deno.serve(async (req) => {
       listingId: body.listing_id,
       kind: provenanceKind(edit),
       label: body.label ?? null,
-      modelId: MODEL,
+      modelId: step.model,
       edit,
       style: style ?? null,
       // Free-text only, and only the user's own words (the canned guardrails
@@ -526,6 +651,14 @@ Deno.serve(async (req) => {
       edit,
       space_type: space,
       ...(style ? { style } : {}),
+      // ADDITIVE, and only while the router is on: with the flag off the body
+      // is byte-for-byte what shipped.
+      ...(routerOn
+        ? {
+          route: { provider: step.provider, model: step.model, route_id: step.route_id },
+          ...(attempt.value.assetKey ? { asset_key: attempt.value.assetKey } : {}),
+        }
+        : {}),
       // The disclosure this edit carries onto the tour (CA AB 723 / NorthstarMLS).
       disclosure: prov.disclosure,
       provenance: {

@@ -31,7 +31,7 @@ code as of 2026-08-26. Items marked **BLOCKER** must be true before you press Su
 2. [ ] Platform iOS · Name **"Rendprop"** — note: the name may already be taken by another app; if rejected at creation, fall back to "Rendprop: AI Property Tours" (subtitle-style names are fine and help search)
 3. [ ] Primary language English (U.S.) · Bundle ID `com.rendprop.app` (register it first at developer.apple.com → Identifiers if it's not in the dropdown, with Sign in with Apple capability checked) · SKU e.g. `rendprop-ios-001`
 4. [ ] Category: **Business** (primary), Photo & Video (secondary) — Business matches real-estate/venue tooling
-5. [ ] Pricing: **Free** (no IAP configured yet — see §8)
+5. [ ] Pricing: **Free** app with **auto-renewable subscriptions** (six products in group `rendprop_plans` — see §8 and docs/handoff/launch-P1.md §5 for the exact App Store Connect setup)
 
 ## 3. Screenshots (iPhone only)
 
@@ -91,10 +91,13 @@ Sign-in required: **No demo account needed** — the app is fully usable as a gu
 
 - [ ] Attach a phone number in the review contact fields
 
-## 8. Payments / IAP (read before you flip on billing)
+## 8. Payments / IAP (StoreKit 2 — launch branch, 2026-09-05)
 
-- Current build charges **nothing** — tier prices are informational and the UI says renders are included during early access. That is App Store-safe.
-- [ ] Before enabling real charges for renders/credits/subscriptions: they are **digital goods → must use StoreKit In-App Purchase** (3.1.1). Do not wire Stripe/checkout links into the iOS app for render credits.
+- The app sells **auto-renewable subscriptions** through StoreKit 2 (`apps/ios/Rendprop/Purchases/`): Starter $49, Pro $99, Team $249 per month, annual = 10 months, one subscription group `rendprop_plans`, 7-day free introductory offer. **No price string is compiled into the binary** — every price comes from `Product.displayPrice`, so App Store pricing changes need no app update.
+- The server is the only source of truth for a plan: every verified transaction is sent as JWS to `POST /me/entitlement` and Apple's App Store Server Notifications V2 hit `POST /apple-subscriptions/notify`; both verify the JWS chain against the pinned Apple Root CA G3 before touching `orgs.plan` (migration 0019). An unsynced transaction is never `finish()`ed.
+- [ ] App Store Connect, in this order (details + copy-paste text in docs/handoff/launch-P1.md §5): Paid Applications agreement **Active** (products load as an empty array until it is) → subscription group `rendprop_plans` → the six product ids `com.rendprop.app.{starter,pro,team}.{monthly,annual}` with levels Team 1 / Pro 2 / Starter 3 → 7-day free intro offer on each → App Store Server Notifications V2 URL `https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1/apple-subscriptions/notify` on **both** Sandbox and Production → a sandbox tester account.
+- [ ] Paywall shows the two links App Review requires for auto-renewables (3.1.2): Apple's standard EULA and `https://rendprop.com/privacy` — **that privacy page must be live before submission.**
+- The rendprop.com/pricing link-out (`Config.pricingURL`) stays US-storefront-only per 3.1.1(a) and is now secondary to in-app purchase; it must never be the only way to pay.
 
 ## 9. TestFlight first (recommended — do this today, submit from the same build)
 

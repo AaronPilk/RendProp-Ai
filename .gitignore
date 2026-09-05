@@ -27,3 +27,9 @@ graphify-out/
 services/supabase/.deploy/
 services/supabase/functions/deno.json
 services/supabase/functions/deno.lock
+
+# Belt-and-braces for the secret .env the audit found in a shared snapshot
+# (F-G-12). `.env` above already matches at every depth; these are explicit so a
+# future `!`-rule can't accidentally un-ignore them.
+services/pipeline/.env
+services/worker/.env
