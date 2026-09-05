@@ -268,20 +268,16 @@ private struct RenderStatusContent: View {
                         .foregroundStyle(Theme.warn)
                         .multilineTextAlignment(.center)
                     if job?.errorStatus == 402 {
-                        // In-app purchase first: StoreKit 2 subscriptions work
-                        // on every storefront (Purchases/PaywallView.swift).
+                        // In-app purchase, and ONLY in-app purchase: StoreKit 2
+                        // subscriptions work on every storefront
+                        // (Purchases/PaywallView.swift). No web pricing link
+                        // sits beside it — an external purchase CTA next to an
+                        // IAP is what 3.1.1 / 3.1.3 read as steering.
                         Button("Upgrade plan") {
                             PaywallRouter.shared.present(reason: .quota(feature: "renders"))
                         }
                         .font(.rpCaption.weight(.semibold))
                         .foregroundStyle(Theme.accent)
-                        // Secondary, and still US-storefront-only (3.1.1(a)) —
-                        // `Config.pricingURL` is nil everywhere else.
-                        if let pricing = Config.pricingURL {
-                            Link("See plans on the web", destination: pricing)
-                                .font(.rpCaption)
-                                .foregroundStyle(Theme.inkDim)
-                        }
                     }
                 }
                 if let note = job?.note {

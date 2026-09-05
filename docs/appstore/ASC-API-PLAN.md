@@ -123,14 +123,14 @@ worth spelling out. Per `AppAvailabilityV2CreateRequest` in spec v4.4.1:
     "relationships": {
       "app": { "data": { "type": "apps", "id": "<app id>" } },
       "territoryAvailabilities": {
-        "data": [ { "type": "territoryAvailabilities", "id": "USA" } ]   // <- id REQUIRED
+        "data": [ { "type": "territoryAvailabilities", "id": "${territoryAvailability-USA}" } ]  // <- id REQUIRED
       }
     }
   },
   "included": [                                     // TerritoryAvailabilityInlineCreate
     {
       "type": "territoryAvailabilities",            // only `type` is required
-      "id": "USA",                                  // client-supplied temporary handle
+      "id": "${territoryAvailability-USA}",         // the same placeholder, verbatim
       "attributes": { "available": true },
       "relationships": { "territory": { "data": { "type": "territories", "id": "USA" } } }
     }
@@ -138,16 +138,21 @@ worth spelling out. Per `AppAvailabilityV2CreateRequest` in spec v4.4.1:
 }
 ```
 
-The two halves are linked by an id the **client** invents:
+The two halves are linked by a temporary id the **client** supplies:
 `relationships.territoryAvailabilities.data[]` requires both `id` and `type`,
 while `included[]` (`TerritoryAvailabilityInlineCreate`) requires only `type` —
 so the id there exists purely to be matched. The spec ships **no example** for
-this request, and the live attempt returned
-**409 `ENTITY_ERROR.INCLUDED.INVALID_ID`**, which is exactly the id-matching
-failing. `asc.py` therefore sends the territory id as the handle, and if Apple
-returns `INCLUDED.INVALID_ID` retries once with `territoryAvailability-<t>`,
-which cannot be confused with an existing resource id. If both fail it warns with
-the UI path and carries on — a territory list is one click in the UI.
+this request. Apple's convention for JSON:API inline creates is a placeholder
+wrapped in `${...}`, used identically in both places — Apple shows
+`"id": "${price1}"` for `inAppPurchasePriceSchedules` in Developer Forums thread
+714696 (<https://developer.apple.com/forums/thread/714696>), and
+`/v2/appAvailabilities` is the same mechanism. `asc.py` sends
+`${territoryAvailability-<t>}`. The live run of 2026-09-05 had tried the bare
+territory id (`USA`) and a plain label (`territoryAvailability-USA`) and both
+came back **409 `ENTITY_ERROR.INCLUDED.INVALID_ID`** — the id-matching failing.
+If Apple ever returns that code for the `${...}` form, `asc.py` retries once
+with the bare territory id, then warns with the UI path and carries on — a
+territory list is one click in the UI.
 
 > Apple titles this endpoint **"Create an app pre-order"**, which is alarming
 > until you read the schema: `releaseDate` and `preOrderEnabled` are *optional*
@@ -235,9 +240,16 @@ made through the API can take **up to 1 hour** to appear in the sandbox.
 
 | Step | Call | Fields |
 |---|---|---|
-| App info | `GET /v1/apps/{id}/appInfos` → pick the editable one | — |
+| App info | `GET /v1/apps/{id}/appInfos?include=primaryCategory,secondaryCategory` → pick the editable one | — |
 | Name/subtitle/privacy | `POST`/`PATCH /v1/appInfoLocalizations` | `name`, `subtitle`, `privacyPolicyUrl`, `locale` |
-| Categories | `PATCH /v1/appInfos/{id}` | relationships `primaryCategory` → `BUSINESS`, `secondaryCategory` → `PHOTO_AND_VIDEO` |
+| Categories | `PATCH /v1/appInfos/{id}`, only if they differ | relationships `primaryCategory` → `BUSINESS`, `secondaryCategory` → `PHOTO_AND_VIDEO` |
+
+> The `include` on the appInfos request matters. Without it App Store Connect
+> returns each category relationship as `links` only — no `data`, no id — so set
+> categories read as unset. Live, that made `metadata apply` PATCH the same two
+> categories on every run and `status` print `NOT SET / NOT SET` for categories
+> that were set. `primaryCategory` and `secondaryCategory` are both in the
+> endpoint's `include` enum in spec v4.4.1.
 | Age rating | `GET` then `PATCH /v1/ageRatingDeclarations/{id}` | exactly the attributes the GET returns, each set to its none/false value |
 | Version | `POST /v1/appStoreVersions` | `platform: IOS`, `versionString: "1.0"`, `copyright`, `releaseType: MANUAL` |
 | Listing copy | `POST`/`PATCH /v1/appStoreVersionLocalizations` | `description`, `keywords`, `promotionalText`, `supportUrl`, `marketingUrl` — and `whatsNew` **only if the app has a released version** |
@@ -363,6 +375,19 @@ subscriptions — App Review routinely rejects subscriptions that lack one.
 
 Contact details come from `~/Rendprop AI/_bridge/.asc/review-contact.json`. If it
 is absent, the command says so plainly and sets everything else.
+
+### Build — `asc.py build attach`
+
+Not part of the bridge, because a build only exists after
+`bridge-600-archive-upload.sh` has run and Apple has finished processing it.
+
+| Step | Call | Notes |
+|---|---|---|
+| List builds | `GET /v1/builds?filter[app]=…&sort=-uploadedDate&limit=10&include=preReleaseVersion` | newest first; `processingState` is `PROCESSING`, `FAILED`, `INVALID` or `VALID` |
+| Pick one | — | the newest `VALID` build, or `--build <number-or-version>`. Refuses if the newest build is still `PROCESSING` ("wait for Apple to finish processing, try again in a few minutes") or if none is `VALID` |
+| Already attached? | `GET /v1/appStoreVersions/{id}/build` | if it is that build: `= build N already attached`, nothing else happens |
+| Export compliance | `PATCH /v1/builds/{id}` (`BuildUpdateRequest`) with `attributes.usesNonExemptEncryption: false` | only when the build's value is still `null`. `Info.plist` declares `ITSAppUsesNonExemptEncryption=false` — HTTPS only, exempt |
+| Attach | `PATCH /v1/appStoreVersions/{id}/relationships/build` (`AppStoreVersionBuildLinkageRequest`) | body `{"data": {"type": "builds", "id": "<build id>"}}` — a to-one linkage, so `data` is one object, not a list. 204 on success |
 
 ---
 
@@ -537,6 +562,11 @@ USD 2490.00, because Apple's yearly USD price points stop at 1000.00 and the
    Read the output — if the API refuses both the delete and the empty
    availability, it prints the exact place to click.
 
+   What actually happened on 2026-09-05: the DELETE was refused (409
+   `STATE_ERROR`), so `unprice` withdrew the product from every territory
+   instead (`POST /v1/subscriptionAvailabilities`, empty list, 201). It still
+   carries the USD 1000.00 price but is available nowhere, so it cannot be sold.
+
 2. Request the higher price points (Account Holder only), which adds 100 points
    up to USD 10,000:
    <https://developer.apple.com/contact/request/app-store-higher-price-points/>
@@ -547,7 +577,14 @@ USD 2490.00, because Apple's yearly USD price points stop at 1000.00 and the
    python3 tools/asc/asc.py subscriptions apply --skip-product com.rendprop.app.team.annual
    python3 tools/asc/asc.py review apply        --skip-product com.rendprop.app.team.annual
    python3 tools/asc/asc.py review submit       --skip-product com.rendprop.app.team.annual
+   python3 tools/asc/asc.py status              --skip-product com.rendprop.app.team.annual
    ```
+
+   With the flag, `status` shows the product's row marked
+   `WITHDRAWN (not sold at launch)` and one `note:` line, and does not count it
+   as missing or print the `WRONG PRICE` banner for it. If the product is ever
+   found on sale in any territory the banner comes back and
+   `… is skipped but ON SALE in …` is listed as missing.
 
 4. Once granted, drop the flag and re-run `subscriptions apply`. Confirm with
    `asc.py status`, which prints every product's actual amount and shouts
@@ -559,12 +596,19 @@ USD 2490.00, because Apple's yearly USD price points stop at 1000.00 and the
 bash tools/asc/bridge-600-archive-upload.sh
 ```
 
-Wait 5–30 minutes for processing, then **your app → the 1.0 version → Build →
-the + → pick the build**. `asc.py status` shows the build list and whether one is
-attached.
+Wait 5–30 minutes for processing (`asc.py status` shows the build list and its
+`processingState`), then attach it:
 
-Answer the **export compliance** question when prompted. Rendprop uses only
-standard HTTPS, which is the exempt case.
+```bash
+python3 tools/asc/asc.py build attach
+```
+
+It picks the newest `VALID` build, answers the **export compliance** question on
+it (`usesNonExemptEncryption: false` — Rendprop uses only standard HTTPS, which
+is the exempt case; `Info.plist` already declares `ITSAppUsesNonExemptEncryption
+= false`) and links it to the 1.0 version. It refuses while the newest build is
+still `PROCESSING`; try again in a few minutes. The UI equivalent is **your app
+→ the 1.0 version → Build → the + → pick the build**.
 
 ### 7. Sandbox testers (for testing purchases before release)
 
@@ -584,10 +628,11 @@ confirmation.
 
 ### 9. Submit
 
-Run `python3 tools/asc/asc.py status` first — it lists anything still missing,
-and shows each product's state, territories, **price amount**, trial and review
-screenshot. It exits non-zero if any price disagrees with
-`docs/LAUNCH-CONTRACT.md`, so read the `WRONG PRICE` block if one appears.
+Run `python3 tools/asc/asc.py status --skip-product com.rendprop.app.team.annual`
+first — it lists anything still missing, and shows each product's state,
+territories, **price amount**, trial and review screenshot. It exits non-zero if
+any price disagrees with `docs/LAUNCH-CONTRACT.md`, so read the `WRONG PRICE`
+block if one appears. (Team Yearly is withdrawn and skipped; see step 5b.)
 
 Optionally send the subscriptions on their own:
 
@@ -632,16 +677,25 @@ submission — and that Team Yearly does **not**, until it is priced correctly.
   empty `availableTerritories`, then to the UI path.
 * **The `appAvailabilities` inline-create id.** The spec requires an id on the
   relationship reference and makes it optional on the `included` object, but
-  ships no example, and the live attempt returned `INCLUDED.INVALID_ID`. Which
-  handle Apple actually accepts is **UNVERIFIED**; `asc.py` tries the territory
-  id, then a distinct handle, then prints the UI path.
+  ships no example. Live, the bare territory id (`USA`) and a plain label
+  (`territoryAvailability-USA`) were both refused with `INCLUDED.INVALID_ID`.
+  Apple's documented convention is a `${...}` placeholder (Developer Forums
+  thread 714696, for `inAppPurchasePriceSchedules`), which `asc.py` now sends
+  first as `${territoryAvailability-USA}`. That it is accepted on **this**
+  endpoint is **UNVERIFIED** until the next `metadata apply`; if refused,
+  `asc.py` retries once with the bare territory id, then prints the UI path.
+* **`build attach`.** `PATCH /v1/builds/{id}` and
+  `PATCH /v1/appStoreVersions/{id}/relationships/build` are taken straight from
+  `BuildUpdateRequest` and `AppStoreVersionBuildLinkageRequest` in the spec, but
+  have not been run live yet. **UNVERIFIED** in that sense only.
 * **Live API behaviour.** Four live runs have now happened (2026-09-05). What
   they proved is recorded inline above: availability before price, per-territory
   introductory offers, the yearly USD 1000.00 price ceiling, the `whatsNew`
-  STATE_ERROR, the age-rating `ATTRIBUTE.REQUIRED`, and the `appAvailabilities`
-  `INCLUDED.INVALID_ID`. Every one of them is reproduced by the fake API in
-  `tools/asc/test_asc.py`. Everything is idempotent, so a mid-run failure is safe
-  to retry.
+  STATE_ERROR, the age-rating `ATTRIBUTE.REQUIRED`, the `appAvailabilities`
+  `INCLUDED.INVALID_ID` on non-placeholder ids, and that `GET /v1/apps/{id}/appInfos`
+  returns no category ids without `include=`. Every one of them is reproduced by
+  the fake API in `tools/asc/test_asc.py`. Everything is idempotent, so a mid-run
+  failure is safe to retry.
 
 ---
 

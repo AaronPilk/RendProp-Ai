@@ -134,3 +134,135 @@ xcrun xcresulttool get test-results activities \
 
 Look for an activity whose name starts with `SKIPPED:` — it says exactly which
 control was not found.
+
+---
+
+# ReviewerWalk — what an App Store reviewer sees first
+
+`ReviewerWalk.testReviewerWalk()` is a second, separate capture in the same
+bundle. The UI walk above and the store shots both launch with
+`-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v1 YES`, so they land
+straight on Home with every gate already answered — which is precisely the part
+a reviewer never gets. This test launches like a **brand-new install** and
+photographs the first-run path in the order a reviewer walks it.
+
+| # | Attachment | Screen |
+|---|---|---|
+| 01 | `r01-onboarding-1` … `r01-onboarding-5` | Every page of the intro |
+| 02 | `r02-first-home` | Home, the moment onboarding completes |
+| 03 | `r03-homes` | The Homes tab (first-tour card + the two seeded samples) |
+| 04 | `r04-sample-detail` | The first sample home's detail (SAMPLE TOUR, "This is a sample", TOOLBOX dimmed) |
+| 05 | `r05-sample-player` | The tour player — Home → "Watch the sample tour" (hosted demo listing page) |
+| 06 | `r06-profile` | The Profile tab / agent card |
+| 07 | `r07-settings-legal` | Settings scrolled to **Legal & support** — Terms of Service + Privacy Policy |
+| 08 | `r08-delete-account` | Settings **Your data**, with "Delete account" in frame (Guideline 5.1.1(v)) |
+| 09 | `r09-delete-confirm` | The "Delete account?" confirmation alert |
+| 10 | `r10-signin-gate` | The Sign in with Apple sheet — **expected to skip**, see below |
+| 11 | `r11-ai-consent` | The Guideline 5.1.2(i) AI disclosure, first time an AI tool is opened |
+
+**There are five onboarding screens**: four feature cards in `OnboardingView`'s
+paged `TabView` ("Film with your phone", "An AI photo studio in your pocket",
+"Reels and floor plans, done for you", "One link. Real leads.") followed by the
+"What do you showcase?" business-type picker. Cards 1–3 carry a **Continue**
+button; card 4's says **Get started** and flips to the picker; the picker's own
+**Get started** sets `hasOnboarded = true`. The walk does not hard-code four —
+it screenshots whatever is on screen, presses whichever button is there, and
+stops once the picker has been photographed, so a fifth card added later is
+captured with no edit here. The real count for each run is written into the
+result bundle as an activity note.
+
+## What it launches with — and what it deliberately does not
+
+```
+-uiTesting          → Config.makeAPIClient() returns MockAPIClient
+-appearance light   → deterministic screenshots
+```
+
+That is the whole list. **No `-hasOnboarded`**, so `RendpropApp`'s
+`@AppStorage("hasOnboarded")` is false and `OnboardingView` is the root. **No
+consent override**, so `AIConsent` is ungranted and the disclosure really
+appears at the door of the AI Photo Studio — r11 is the proof it exists. **No
+`-space.type`** either: the default is `SpaceType.realEstate`, which is what the
+picker pre-selects, so the walk accepts the default the way a reviewer would.
+
+Because those flags live in **UserDefaults inside the app's container**, a
+container left over from a previous run would already have them set and the run
+would quietly capture the wrong app. `bridge-cmd-reviewerwalk.sh` therefore runs
+`xcrun simctl uninstall <udid> com.rendprop.app` **before** the test. Running
+`xcodebuild test` by hand without that uninstall gives you a walk that starts on
+Home with no intro and no consent sheet.
+
+## Safety rules this test is built around
+
+1. **No deletion is ever confirmed.** Step r09 taps "Delete account" once to
+   photograph the confirmation, then taps **Cancel** and nothing else.
+   `SettingsView.deleteAccount()` calls the live server —
+   `serverAccountsEnabled` is `Config.useLiveBackend && Config.enableAuth`,
+   neither of which `-uiTesting` turns off — so "Delete" is genuinely
+   destructive even here. The fallback path skips any button whose label
+   contains Delete / Clear / Erase / Remove / Confirm / Sign out, and leaves the
+   dialog standing rather than pressing one of them.
+2. **No AI edit is ever run.** r11 stops at the consent sheet and taps "Not
+   now". `MockAPIClient.aiPhotoEdit` echoes the submitted image back, so any
+   "result" would be a misleading screenshot.
+3. **No assertions.** `continueAfterFailure = true`, one
+   `XCTContext.runActivity` per step, and an unreachable step writes its reason
+   into the bundle instead of failing the run.
+
+## r10 is expected to skip
+
+`AuthStore` short-circuits on the walk flag —
+`isSignedIn = Config.isUITesting ? true : …` (`Auth/AuthStore.swift`) — so for
+the whole run the app believes it is signed in.
+`FlythroughDetailView.needsSignIn` is false, Settings draws "Sign out" instead
+of "Sign in with Apple", and nothing raises `SignInView`. Signing in for real
+needs an Apple ID on the simulator, which no automated walk can supply, so
+**capture the sign-in sheet by hand on a device** for the review notes. The step
+still makes the attempt, so if that `-uiTesting` shortcut is ever removed the
+shot starts appearing with no change to the test.
+
+One more consequence of the same flag: r11 creates the walk's **one real home**
+("24 Willow Bend Court") through the "Name this home first" gate, because every
+AI tool is a deliberate no-op on the seeded samples. That is why r11 runs last —
+every "fresh install" shot above is already taken by then.
+
+## Run it on the Mac build bridge
+
+```bash
+bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-reviewerwalk.sh"
+```
+
+It does xcodegen → boot → **uninstall** → status bar → test → export → `ls` in
+one block, on the existing 6.3-inch iPhone 17 Pro simulator
+`CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E`, and reports each stage's exit code
+without aborting the bridge. PNGs land in
+`~/Rendprop AI/_bridge/out/reviewerwalk/` as `r01-….png` … `r11-….png`.
+
+Unlike `bridge-cmd-storeshots.sh` it seeds **no photos** (a reviewer's phone has
+an empty library too, and r11 never picks one) and applies **no size gate**
+(these are review-notes screenshots, not App Store Connect uploads). It does
+apply the same 9:41 / full-battery / full-bars status bar, so a reviewer-walk
+PNG and a store PNG sit side by side without one being dated by a random clock.
+
+## Run it by hand
+
+```bash
+cd apps/ios
+xcodegen generate
+xcrun simctl boot CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E 2>/dev/null
+xcrun simctl uninstall CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E com.rendprop.app   # NOT optional
+
+xcodebuild test \
+  -project Rendprop.xcodeproj \
+  -scheme Rendprop \
+  -destination 'platform=iOS Simulator,id=CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E' \
+  -only-testing:RendpropUITests/ReviewerWalk \
+  -resultBundlePath /tmp/reviewerwalk.xcresult
+```
+
+Skip notes and the onboarding page count:
+
+```bash
+xcrun xcresulttool get test-results activities \
+  --path /tmp/reviewerwalk.xcresult --test-id 'ReviewerWalk/testReviewerWalk()'
+```

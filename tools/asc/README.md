@@ -71,7 +71,10 @@ That runs, in order, stopping at the first failure:
 | 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
 | 4 | `asc.py screenshots apply` | Uploads `docs/appstore/screenshots/6.9/*.png` in filename order. |
 | 5 | `asc.py review apply` | App Review contact + notes, and the paywall screenshot on every subscription. |
-| 6 | `asc.py status` | One page saying where everything stands and what is still missing. |
+| 6 | `asc.py status --skip-product com.rendprop.app.team.annual` | One page saying where everything stands and what is still missing. Team Yearly is deliberately withdrawn (see below), so it is shown but not counted. |
+
+`build attach` is not in the bridge: a build only exists after
+`bridge-600-archive-upload.sh` has run and Apple has finished processing it.
 
 To see what *would* happen without changing anything:
 
@@ -93,7 +96,10 @@ python3 tools/asc/asc.py metadata plan            # or: apply
 python3 tools/asc/asc.py screenshots apply
 python3 tools/asc/asc.py review apply
 python3 tools/asc/asc.py review submit            # send subscriptions to review
+python3 tools/asc/asc.py build attach             # newest VALID build -> version 1.0
+python3 tools/asc/asc.py build attach --build 2   # a specific build number (or version)
 python3 tools/asc/asc.py status
+python3 tools/asc/asc.py status --skip-product com.rendprop.app.team.annual
 python3 tools/asc/asc.py status --json            # machine-readable
 
 python3 tools/asc/asc.py subscriptions unprice com.rendprop.app.team.annual
@@ -101,20 +107,54 @@ python3 tools/asc/asc.py subscriptions unprice com.rendprop.app.team.annual
 
 ### Leaving one product out — `--skip-product`
 
-`subscriptions apply`, `review apply` and `review submit` all take
-`--skip-product <productId>`, repeatable. The named products are not created,
-not priced, not localized, not given a review screenshot and not submitted —
-they are left exactly as they are.
+`subscriptions apply`, `review apply`, `review submit` and `status` all take
+`--skip-product <productId>`, repeatable. For the writing commands the named
+products are not created, not priced, not localized, not given a review
+screenshot and not submitted — they are left exactly as they are.
 
 ```bash
 python3 tools/asc/asc.py subscriptions apply --skip-product com.rendprop.app.team.annual
 python3 tools/asc/asc.py review submit      --skip-product com.rendprop.app.team.annual
+python3 tools/asc/asc.py status             --skip-product com.rendprop.app.team.annual
 ```
+
+For `status` a skipped product means "deliberately not sold at launch": its row
+is still printed, with a trailing `WITHDRAWN (not sold at launch)` instead of
+`!!`, but nothing about it goes into **WHAT IS MISSING** and it does not trigger
+the `WRONG PRICE` banner. If it is mispriced, one calm `note:` line says it is
+withdrawn and where to request higher price points. The exception is a skipped
+product that is actually **on sale** in one or more territories: then the banner
+stays and `<productId> is skipped but ON SALE in <territories> at USD <amount>`
+is listed as missing — a withdrawn product that is on sale at the wrong price is
+exactly what the banner exists for.
 
 This exists because `com.rendprop.app.team.annual` (USD 2490.00) has no price
 point — see **Apple's price ceiling** below. Until Apple grants higher price
 points, that product should be excluded from every step rather than shipped at
 the wrong price. An unknown product id is an error, not a silent no-op.
+
+### `build attach`
+
+Links a build to the editable 1.0 version, which is otherwise a click in App
+Store Connect. It lists the app's builds (newest first) and picks the newest one
+whose `processingState` is `VALID`, or the one named with `--build` (a build
+number such as `2`, or a version such as `1.0`). It refuses, with exit 1, if
+the newest build is still `PROCESSING` — wait for Apple to finish processing
+and try again in a few minutes — or if no build is `VALID`.
+
+Then, in order:
+
+1. If the build's `usesNonExemptEncryption` is still unanswered (`null`),
+   `PATCH /v1/builds/{id}` sets it to `false`. `Info.plist` declares
+   `ITSAppUsesNonExemptEncryption=false`: the app uses standard HTTPS only, which
+   is exempt from export compliance. A build that already has an answer is left
+   alone.
+2. `PATCH /v1/appStoreVersions/{id}/relationships/build` with
+   `{"data": {"type": "builds", "id": "<build id>"}}` — a to-one linkage, so
+   `data` is one object, not a list.
+
+If the version already has that build attached it prints
+`= build N already attached` and does nothing. `--dry-run` shows the plan.
 
 ### `subscriptions unprice <productId>`
 
@@ -234,6 +274,7 @@ Until then, keep that product out of every step:
 python3 tools/asc/asc.py subscriptions apply --skip-product com.rendprop.app.team.annual
 python3 tools/asc/asc.py review apply           --skip-product com.rendprop.app.team.annual
 python3 tools/asc/asc.py review submit          --skip-product com.rendprop.app.team.annual
+python3 tools/asc/asc.py status                 --skip-product com.rendprop.app.team.annual
 ```
 
 If the price already exists (it does, from the 2026-09-05 run):
@@ -241,6 +282,12 @@ If the price already exists (it does, from the 2026-09-05 run):
 ```bash
 python3 tools/asc/asc.py subscriptions unprice com.rendprop.app.team.annual
 ```
+
+On the live run the price could not be deleted (`DELETE /v1/subscriptionPrices/…`
+returned 409 `STATE_ERROR`), so `unprice` withdrew the product from every
+territory instead (`POST /v1/subscriptionAvailabilities` with an empty list,
+201). The product still carries the USD 1000.00 price but is available nowhere,
+so it cannot be sold. That is the state `status --skip-product` reports calmly.
 
 ---
 
@@ -263,7 +310,12 @@ for it.
 
 `--no-upload` archives without uploading.
 
-Processing takes 5–30 minutes after upload. Check with `asc.py status`.
+Processing takes 5–30 minutes after upload. Check with `asc.py status`; once the
+build shows `VALID`, attach it to the 1.0 version:
+
+```bash
+python3 tools/asc/asc.py build attach
+```
 
 > **Verify once on the Mac:** the `exportOptions.plist` keys were taken from
 > Apple's distribution documentation, not from `xcodebuild -help`, which cannot
@@ -292,7 +344,19 @@ Verified against Apple's own OpenAPI specification for the App Store Connect API
   relationship (`RELATIONSHIP.REQUIRED`), so one offer is created per territory
   the product actually sells in.
 * Restrict both the app (`POST /v2/appAvailabilities`) and the subscriptions to
-  the United States for this launch.
+  the United States for this launch. The app request is a JSON:API inline
+  create: the `included` territoryAvailabilities are linked to the relationship
+  references by a `${...}` placeholder id (`${territoryAvailability-USA}`),
+  Apple's documented convention for inline creates
+  (<https://developer.apple.com/forums/thread/714696>). The bare territory id
+  and a plain label were both refused live with `INCLUDED.INVALID_ID`.
+* Read the categories back correctly: `GET /v1/apps/{id}/appInfos` is asked
+  with `include=primaryCategory,secondaryCategory`, because without it Apple
+  returns the category relationships as `links` only and set categories look
+  unset.
+* Attach a build to the version (`PATCH /v1/appStoreVersions/{id}/relationships/build`)
+  and answer the export-compliance question on it (`PATCH /v1/builds/{id}`,
+  `usesNonExemptEncryption: false`) — `build attach`.
 * Remove a subscription price (`DELETE /v1/subscriptionPrices/{id}`), which is
   what `subscriptions unprice` uses.
 * Submit subscriptions for review via `POST /v1/subscriptionSubmissions` — but
@@ -330,7 +394,7 @@ The full list, with the remaining manual steps in order, is in
 python3 -m unittest discover -s tools/asc -t tools/asc -v
 ```
 
-145 tests, no network, no credentials needed. Every live failure listed above is
+178 tests, no network, no credentials needed. Every live failure listed above is
 reproduced by the fake API in `test_asc.py` and then proved fixed. They cover:
 
 * **JWT** — header and payload exactly as Apple specifies, the 20-minute lifetime
@@ -362,10 +426,27 @@ reproduced by the fake API in `test_asc.py` and then proved fixed. They cover:
   verbatim and the named attributes answered on the retry; an attribute with no
   known "nothing applies" value is never guessed; and every attribute of Apple's
   `AgeRatingDeclarationUpdateRequest` is accounted for.
-* **App availability** — the inline-create ids in `included` match the
-  relationship references, no pre-order attribute is ever sent, and the live
-  `ENTITY_ERROR.INCLUDED.INVALID_ID` is retried once with a distinct id before
-  falling back to the UI path.
+* **App availability** — the `${territoryAvailability-USA}` placeholder appears
+  identically as the relationship reference and as the `included` id, no
+  pre-order attribute is ever sent, the documented form lands against a fake
+  that refuses both shapes the live run tried, and an `INCLUDED.INVALID_ID` on
+  the placeholder is retried once with the bare territory id before falling
+  back to the UI path.
+* **Categories** — the appInfos request carries
+  `include=primaryCategory,secondaryCategory`; against a fake that returns
+  `links`-only relationships without it (the live shape), set categories are a
+  no-op note, unset ones are still PATCHed, and `status` reports them as set.
+* **`status --skip-product`** — a withdrawn, mispriced product prints its row
+  with `WITHDRAWN (not sold at launch)`, one `note:` line and no `WRONG PRICE`
+  banner, and adds nothing to the missing list; the same product still on sale
+  keeps the banner and is listed as `skipped but ON SALE`. Without the flag
+  nothing changes. The bridge passes the flag.
+* **`build attach`** — picks the newest `VALID` build, passes over newer
+  failed ones with a warning, refuses a newest build that is still `PROCESSING`
+  (and writes nothing), refuses when nothing is `VALID`, is a no-op once
+  attached, sets `usesNonExemptEncryption` only when it is unanswered, and sends
+  the exact `BuildUpdateRequest` and `AppStoreVersionBuildLinkageRequest`
+  bodies. `--build` picks by build number or version; `--dry-run` writes nothing.
 * **Plan idempotency** — a fake in-memory App Store Connect is injected as the
   transport. The first `apply` creates 6 products with prices, localizations,
   availability and trials; the second makes **zero writes**. Partial state is

@@ -1808,9 +1808,25 @@ def named_attributes(error):
     return found
 
 
+# `include` values for GET /v1/apps/{id}/appInfos, from the spec's enum (app,
+# ageRatingDeclaration, appInfoLocalizations, primaryCategory,
+# primarySubcategoryOne, primarySubcategoryTwo, secondaryCategory,
+# secondarySubcategoryOne, secondarySubcategoryTwo).
+APP_INFO_INCLUDE = "primaryCategory,secondaryCategory"
+
+
 def editable_app_info(client, app_id):
-    """Return the appInfo whose metadata can still be edited."""
-    infos = client.get_all("/v1/apps/%s/appInfos" % app_id)
+    """Return the appInfo whose metadata can still be edited.
+
+    Asks for `include=primaryCategory,secondaryCategory` on purpose. Without it
+    App Store Connect returns each category relationship as `links` only - no
+    `data`, so no id - and the categories read as unset even when they are set.
+    Live, that made `ensure_categories` PATCH the same two categories on every
+    run and `status` print `NOT SET / NOT SET` for categories that were set.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/GET-v1-apps-_id_-appInfos
+    """
+    infos = client.get_all("/v1/apps/%s/appInfos" % app_id,
+                           params={"include": APP_INFO_INCLUDE})
     if not infos:
         raise AscError("The app has no appInfos resource - that should not happen.")
     for info in infos:
@@ -2030,6 +2046,19 @@ def read_app_territories(client, app_id):
     return sorted(found)
 
 
+def inline_create_id(territory):
+    """Apple's temporary id for an inline-created territoryAvailability.
+
+    App Store Connect's convention for JSON:API inline creates is a placeholder
+    wrapped in `${...}` - e.g. `"id": "${price1}"` - used identically as the
+    reference in `relationships.<name>.data[].id` and as the `included[].id` it
+    points at. Apple documents it for inAppPurchasePriceSchedules in Developer
+    Forums thread 714696, and `/v2/appAvailabilities` uses the same mechanism:
+    https://developer.apple.com/forums/thread/714696
+    """
+    return "${territoryAvailability-%s}" % territory
+
+
 def app_availability_body(app_id, territories, client_id=None):
     """Build POST /v2/appAvailabilities, per AppAvailabilityV2CreateRequest.
 
@@ -2048,12 +2077,18 @@ def app_availability_body(app_id, territories, client_id=None):
       CLIENT-SUPPLIED temporary handle whose sole job is to match the reference
       in `relationships`.
 
-    `client_id(territory)` produces that handle. The default is the territory id
-    itself, which keeps the two halves obviously in step. The spec carries no
-    example for this request, so `ensure_app_availability_usa` retries once with
-    a non-colliding handle if Apple rejects the first shape.
+    The handle follows Apple's documented convention for inline creates: a
+    placeholder wrapped in `${...}`, e.g. `${territoryAvailability-USA}`, sent
+    verbatim in both places (Developer Forums thread 714696, where Apple shows
+    `"id": "${price1}"` for inAppPurchasePriceSchedules - the same mechanism):
+    https://developer.apple.com/forums/thread/714696
+
+    That is the default `client_id`. Anything else was rejected live: both the
+    bare territory id (`USA`) and a plain label (`territoryAvailability-USA`)
+    came back 409 ENTITY_ERROR.INCLUDED.INVALID_ID. `ensure_app_availability_usa`
+    still keeps one retry with the bare territory id as the alternative reading.
     """
-    client_id = client_id or (lambda territory: territory)
+    client_id = client_id or inline_create_id
     handles = [(t, client_id(t)) for t in territories]
     return {
         "data": {
@@ -2089,12 +2124,17 @@ def ensure_app_availability_usa(client, app_id, plan):
     attributes on `TerritoryAvailabilityInlineCreate` and neither is sent here,
     so this sets territories and nothing else.
 
-    The live run returned 409 ENTITY_ERROR.INCLUDED.INVALID_ID, which points at
-    the temporary ids linking `included` to `relationships`. Both plausible
-    readings are tried - the territory id as the handle, then a handle that
-    cannot be mistaken for an existing resource id - and a failure is a warning
-    with the UI path, never a stopped run: a territory list is a business
-    decision a human can make in one click.
+    The `included` objects are linked to the relationship references by a
+    temporary id. Apple's documented convention for that id is a placeholder
+    wrapped in `${...}` - `${territoryAvailability-USA}` here, the same
+    `"id": "${price1}"` mechanism Apple shows for inAppPurchasePriceSchedules in
+    Developer Forums thread 714696 (https://developer.apple.com/forums/thread/714696)
+    - and that is what is sent first. The live run of 2026-09-05 had tried the
+    bare territory id and a plain label, and both came back 409
+    ENTITY_ERROR.INCLUDED.INVALID_ID. If Apple rejects the `${...}` form with
+    the same code, one retry uses the bare territory id as the alternative
+    reading. A failure is a warning with the UI path, never a stopped run: a
+    territory list is a business decision a human can make in one click.
     https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v2-appAvailabilities
     """
     wanted = sorted(LAUNCH_TERRITORIES)
@@ -2112,21 +2152,20 @@ def ensure_app_availability_usa(client, app_id, plan):
                                app_availability_body(app_id, wanted))
         except ApiError as first:
             # INCLUDED.INVALID_ID means Apple could not match the `included`
-            # objects to the relationship references. Reusing the territory id as
-            # the temporary handle is the reading that failed live, so try once
-            # more with a handle that is unambiguously client-side.
+            # objects to the relationship references. The `${...}` placeholder
+            # is the documented form; the one alternative reading left is the
+            # bare territory id, so try that once.
             if not any("INCLUDED" in code for code in first.codes):
                 plan.warn("could not set the app's territory availability (%s)."
                           % (", ".join(first.codes) or first.status))
                 app_availability_ui_path(plan.out, indent="      ")
                 return None
-            plan.out.write("      %s; retrying with distinct inline-create ids\n"
-                           % (", ".join(first.codes) or first.status))
+            plan.out.write("      %s; retrying with the bare territory id as the "
+                           "inline-create id\n" % (", ".join(first.codes) or first.status))
             try:
                 return client.post(
                     "/v2/appAvailabilities",
-                    app_availability_body(app_id, wanted,
-                                          client_id=lambda t: "territoryAvailability-%s" % t),
+                    app_availability_body(app_id, wanted, client_id=lambda t: t),
                 )
             except ApiError as second:
                 plan.warn("could not set the app's territory availability (%s)."
@@ -2871,6 +2910,203 @@ def find_group(client, app_id):
 
 
 # ---------------------------------------------------------------------------
+# Builds
+# ---------------------------------------------------------------------------
+
+# Build.attributes.processingState enum, verbatim from spec v4.4.1:
+# PROCESSING | FAILED | INVALID | VALID. Only a VALID build can be attached.
+BUILD_VALID = "VALID"
+BUILD_PROCESSING = "PROCESSING"
+
+# Why usesNonExemptEncryption is set to false: apps/ios/Rendprop/Info.plist
+# declares ITSAppUsesNonExemptEncryption=false. Rendprop talks HTTPS only, which
+# is the exempt case, so there is no export-compliance document to file.
+ENCRYPTION_REASON = (
+    "Info.plist declares ITSAppUsesNonExemptEncryption=false: the app uses "
+    "standard HTTPS only, which is exempt from export compliance."
+)
+
+
+def recent_builds(client, app_id, limit=10):
+    """The app's builds, newest first, plus {build id: marketing version}.
+
+    `include=preReleaseVersion` brings back the preReleaseVersions the builds
+    belong to, whose `version` attribute is the marketing version ("1.0"); the
+    build's own `version` attribute is the build number ("1"). Both are useful
+    for `--build`.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/GET-v1-builds
+    """
+    builds, included = client.get_all_included(
+        "/v1/builds",
+        params={"filter[app]": app_id, "sort": "-uploadedDate", "limit": limit,
+                "include": "preReleaseVersion"},
+    )
+    prerelease = {}
+    for resource in included or []:
+        if resource.get("type") == "preReleaseVersions" and resource.get("id"):
+            prerelease[resource["id"]] = attributes_of(resource).get("version")
+    marketing = {}
+    for build in builds:
+        related = (((build.get("relationships") or {}).get("preReleaseVersion") or {})
+                   .get("data") or {}).get("id")
+        marketing[build["id"]] = prerelease.get(related)
+    return builds, marketing
+
+
+def describe_build(build, marketing=None):
+    attrs = attributes_of(build)
+    text = "%-10s %-12s uploaded %s" % (attrs.get("version"), attrs.get("processingState"),
+                                        attrs.get("uploadedDate"))
+    version = (marketing or {}).get(build.get("id"))
+    if version:
+        text += "  (%s)" % version
+    if attrs.get("expired"):
+        text += "  EXPIRED"
+    return text
+
+
+def build_is_attachable(build):
+    attrs = attributes_of(build)
+    return attrs.get("processingState") == BUILD_VALID and not attrs.get("expired")
+
+
+def pick_build(builds, marketing, wanted, plan):
+    """Choose the build to attach, or raise AscError saying why none can be.
+
+    With `wanted` (a build number such as "1" or a marketing version such as
+    "1.0"): the newest matching build, which must be VALID. Without it: the
+    newest VALID build - and a refusal if the newest build of all is still
+    PROCESSING, because attaching an older one while a newer upload is minutes
+    from being ready is almost never what anyone means.
+    """
+    if not builds:
+        raise AscError(
+            "No builds have been uploaded for this app yet.\n"
+            "  Upload one with:  bash tools/asc/bridge-600-archive-upload.sh"
+        )
+    listing = "\n".join("    " + describe_build(b, marketing) for b in builds)
+    candidates = builds
+    if wanted:
+        candidates = [b for b in builds
+                      if attributes_of(b).get("version") == wanted
+                      or marketing.get(b["id"]) == wanted]
+        if not candidates:
+            raise AscError("No build matches --build %r.\n  Uploaded builds (newest first):\n%s"
+                           % (wanted, listing))
+
+    newest = attributes_of(candidates[0])
+    if newest.get("processingState") == BUILD_PROCESSING:
+        raise AscError(
+            "The newest build (%s, uploaded %s) is still PROCESSING - wait for Apple "
+            "to finish processing, try again in a few minutes."
+            % (newest.get("version"), newest.get("uploadedDate"))
+        )
+    usable = [b for b in candidates if build_is_attachable(b)]
+    if not usable:
+        raise AscError(
+            "No build is VALID, so none can be attached%s:\n%s\n"
+            "  Upload a new build with:  bash tools/asc/bridge-600-archive-upload.sh"
+            % (" (of those matching --build %r)" % wanted if wanted else "", listing)
+        )
+    chosen = usable[0]
+    for passed_over in candidates:
+        if passed_over["id"] == chosen["id"]:
+            break
+        plan.warn("build %s is %s%s; using the newest VALID build, %s"
+                  % (attributes_of(passed_over).get("version"),
+                     attributes_of(passed_over).get("processingState"),
+                     " (expired)" if attributes_of(passed_over).get("expired") else "",
+                     attributes_of(chosen).get("version")))
+    return chosen
+
+
+def cmd_build_attach(client, args, out):
+    """Attach the newest processed build to the editable 1.0 version.
+
+    Two writes, both from spec v4.4.1:
+
+    * `PATCH /v1/builds/{id}` (BuildUpdateRequest) with
+      `attributes.usesNonExemptEncryption: false`, only when the build has no
+      answer yet - the export-compliance question App Store Connect otherwise
+      asks in the UI ("Missing Compliance").
+      https://developer.apple.com/documentation/AppStoreConnectAPI/PATCH-v1-builds-_id_
+    * `PATCH /v1/appStoreVersions/{id}/relationships/build`
+      (AppStoreVersionBuildLinkageRequest): the body is a to-one linkage, so
+      `data` is the single `{"type": "builds", "id": ...}` object. 204 on success.
+      https://developer.apple.com/documentation/AppStoreConnectAPI/PATCH-v1-appStoreVersions-_id_-relationships-build
+    """
+    plan = Plan(dry_run=args.dry_run, out=out)
+    app = require_app(client)
+    out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
+
+    version = find_editable_version(client, app["id"])
+    if version is None:
+        raise AscError(
+            "No editable App Store version %s to attach a build to.\n"
+            "  Run `python3 tools/asc/asc.py metadata apply` first; it creates the version."
+            % VERSION_STRING
+        )
+    version_attrs = attributes_of(version)
+    version_string = version_attrs.get("versionString")
+
+    out.write("\nBuilds (newest first)\n")
+    builds, marketing = recent_builds(client, app["id"])
+    for build in builds:
+        out.write("  %s\n" % describe_build(build, marketing))
+    build = pick_build(builds, marketing, getattr(args, "build", None), plan)
+    build_id = build["id"]
+    build_number = attributes_of(build).get("version")
+
+    out.write("\nVersion %s (%s)\n"
+              % (version_string,
+                 version_attrs.get("appVersionState") or version_attrs.get("appStoreState")))
+    # https://developer.apple.com/documentation/AppStoreConnectAPI/GET-v1-appStoreVersions-_id_-build
+    attached = client.get_optional("/v1/appStoreVersions/%s/build" % version["id"])
+    attached_id = ((attached or {}).get("data") or {}).get("id")
+    if attached_id == build_id:
+        plan.note("build %s already attached" % build_number)
+        summarise(plan, out, "build attach")
+        return 0
+    if attached_id:
+        plan.note("build %s is attached now; replacing it"
+                  % (attributes_of(attached["data"]).get("version") or attached_id))
+
+    if attributes_of(build).get("usesNonExemptEncryption") is None:
+        encryption_body = {
+            "data": {
+                "type": "builds",
+                "id": build_id,
+                "attributes": {"usesNonExemptEncryption": False},
+            }
+        }
+        plan.act(
+            "declare build %s export compliance: usesNonExemptEncryption=false\n"
+            "      %s" % (build_number, ENCRYPTION_REASON),
+            lambda: client.patch("/v1/builds/%s" % build_id, encryption_body),
+        )
+    else:
+        plan.note("build %s export compliance is answered (usesNonExemptEncryption=%s)"
+                  % (build_number,
+                     str(attributes_of(build).get("usesNonExemptEncryption")).lower()))
+
+    linkage_body = {"data": {"type": "builds", "id": build_id}}
+    plan.act(
+        "attach build %s to version %s" % (build_number, version_string),
+        lambda: client.patch(
+            "/v1/appStoreVersions/%s/relationships/build" % version["id"], linkage_body),
+    )
+
+    summarise(plan, out, "build attach")
+    return 0
+
+
+def cmd_build(client, args, out):
+    if getattr(args, "action", None) == "attach":
+        return cmd_build_attach(client, args, out)
+    raise AscError("`build` takes the action `attach`.")
+
+
+# ---------------------------------------------------------------------------
 # app + status
 # ---------------------------------------------------------------------------
 
@@ -2902,9 +3138,19 @@ def cmd_app(client, args, out):
     return 0
 
 
+WITHDRAWN_MARKER = "WITHDRAWN (not sold at launch)"
+ON_SALE_MARKER = "SKIPPED but ON SALE !!"
+
+
 def cmd_status(client, args, out):
     missing = []
     report = {}
+    # --skip-product: products deliberately not sold at launch. Their rows are
+    # still printed, but they add nothing to WHAT IS MISSING and do not trigger
+    # the WRONG PRICE banner - unless one of them is actually on sale somewhere.
+    # active_subscriptions() also refuses an unknown product id.
+    skipped = ({spec["productId"] for spec in SUBSCRIPTIONS}
+               - {spec["productId"] for spec in active_subscriptions(args)})
 
     app = find_app(client)
     if app is None:
@@ -3048,11 +3294,16 @@ def cmd_status(client, args, out):
         out.write("  %-34s %-17s %-8s %-22s %-6s %-5s %s\n"
                   % ("product", "state", "avail", "price (target)", "trial", "loc", "shot"))
         mispriced = []
+        notes = []
         for spec in SUBSCRIPTIONS:
+            is_skipped = spec["productId"] in skipped
             subscription = by_product.get(spec["productId"])
             if subscription is None:
-                out.write("  %-34s %s\n" % (spec["productId"], "MISSING"))
-                missing.append(spec["productId"])
+                out.write("  %-34s %s%s\n"
+                          % (spec["productId"], "MISSING",
+                             "  %s" % WITHDRAWN_MARKER if is_skipped else ""))
+                if not is_skipped:
+                    missing.append(spec["productId"])
                 continue
             sub_id = subscription["id"]
             state = attributes_of(subscription).get("state")
@@ -3088,6 +3339,7 @@ def cmd_status(client, args, out):
             # compare it: a product can be fully "set up" and still be on sale at
             # the wrong price, which no count of prices would show.
             usa_amount = amounts.get(USA_TERRITORY)
+            wrong_price = False
             if not prices:
                 price_text = "NONE"
             elif usa_amount is None:
@@ -3095,31 +3347,58 @@ def cmd_status(client, args, out):
             elif price_is_acceptable(spec["usd"], usa_amount):
                 price_text = "%s" % usa_amount
             else:
-                price_text = "%s != %s !!" % (usa_amount, spec["usd"])
+                wrong_price = True
+                price_text = "%s != %s" % (usa_amount, spec["usd"])
+
+            # A skipped product is deliberately not sold at launch. Withdrawn
+            # (available nowhere) it is only informational; but a skipped
+            # product that IS on sale is exactly what the loud path is for.
+            on_sale = bool(territories_listed)
+            marker = ""
+            if is_skipped:
+                marker = "  %s" % (ON_SALE_MARKER if on_sale else WITHDRAWN_MARKER)
+                if wrong_price and on_sale:
+                    mispriced.append((spec, usa_amount))
+                elif wrong_price:
+                    notes.append(
+                        "%s is withdrawn from sale (%d territories); reprice it after "
+                        "Apple grants higher price points: %s"
+                        % (spec["productId"], len(territories_listed),
+                           HIGHER_PRICE_POINTS_REQUEST_URL))
+            elif wrong_price:
+                price_text += " !!"
                 mispriced.append((spec, usa_amount))
 
-            out.write("  %-34s %-17s %-8s %-22s %-6s %-5s %s\n"
+            out.write("  %-34s %-17s %-8s %-22s %-6s %-5s %s%s\n"
                       % (spec["productId"], state or "?", avail_text, price_text,
-                         "yes" if offers else "NO", len(locs), "yes" if shot else "NO"))
+                         "yes" if offers else "NO", len(locs), "yes" if shot else "NO",
+                         marker))
 
-            for label, ok in (("price", prices), ("free trial", offers),
-                              ("availability", territories_listed), ("localization", locs),
-                              ("review screenshot", shot)):
-                if not ok:
-                    missing.append("%s %s" % (spec["productId"], label))
-            if territories_listed and sorted(territories_listed) != sorted(LAUNCH_TERRITORIES):
-                missing.append(
-                    "%s availability is %d territories, launch is %s only"
-                    % (spec["productId"], len(territories_listed), ",".join(LAUNCH_TERRITORIES)))
-            unpriced = [t for t in territories_listed if t not in price_territories]
-            if unpriced:
-                missing.append("%s has no price in %d territor%s it sells in"
-                               % (spec["productId"], len(unpriced),
-                                  "y" if len(unpriced) == 1 else "ies"))
-            if state == "MISSING_METADATA":
-                missing.append("%s is MISSING_METADATA (not yet submittable)" % spec["productId"])
+            if is_skipped:
+                if on_sale:
+                    missing.append("%s is skipped but ON SALE in %s at USD %s"
+                                   % (spec["productId"], ",".join(sorted(territories_listed)),
+                                      usa_amount if usa_amount is not None else "?"))
+            else:
+                for label, ok in (("price", prices), ("free trial", offers),
+                                  ("availability", territories_listed), ("localization", locs),
+                                  ("review screenshot", shot)):
+                    if not ok:
+                        missing.append("%s %s" % (spec["productId"], label))
+                if territories_listed and sorted(territories_listed) != sorted(LAUNCH_TERRITORIES):
+                    missing.append(
+                        "%s availability is %d territories, launch is %s only"
+                        % (spec["productId"], len(territories_listed), ",".join(LAUNCH_TERRITORIES)))
+                unpriced = [t for t in territories_listed if t not in price_territories]
+                if unpriced:
+                    missing.append("%s has no price in %d territor%s it sells in"
+                                   % (spec["productId"], len(unpriced),
+                                      "y" if len(unpriced) == 1 else "ies"))
+                if state == "MISSING_METADATA":
+                    missing.append("%s is MISSING_METADATA (not yet submittable)" % spec["productId"])
             products.append({
                 "productId": spec["productId"], "state": state,
+                "skipped": is_skipped,
                 "territories": sorted(territories_listed),
                 "pricedTerritories": price_territories,
                 "targetPriceUsd": spec["usd"],
@@ -3131,6 +3410,9 @@ def cmd_status(client, args, out):
                 "localizations": len(locs),
                 "reviewScreenshot": bool(shot),
             })
+
+        for note in notes:
+            out.write("  note: %s\n" % note)
 
         if mispriced:
             out.write("\n")
@@ -3190,7 +3472,8 @@ def cmd_status(client, args, out):
     if version:
         attached = client.get_optional("/v1/appStoreVersions/%s/build" % version["id"])
         out.write("  attached to %s: %s\n"
-                  % (VERSION_STRING, "yes" if attached else "NO - pick a build in App Store Connect"))
+                  % (VERSION_STRING,
+                     "yes" if attached else "NO - run `python3 tools/asc/asc.py build attach`"))
         if not attached:
             missing.append("a build attached to version %s" % VERSION_STRING)
 
@@ -3299,7 +3582,24 @@ def build_parser():
                 "product", nargs="?", default=None,
                 help="for `unprice`: the product id to remove the price from")
 
-    sub.add_parser("status", help="one-page summary of everything and what is missing")
+    # `build attach` links the newest processed build to the 1.0 version. It is
+    # not part of the bridge because a build only exists after
+    # bridge-600-archive-upload.sh has run and Apple has finished processing.
+    build = sub.add_parser("build", help="attach the newest processed build to version %s"
+                                         % VERSION_STRING)
+    build.add_argument("action", choices=["attach"],
+                       help="attach = link the newest VALID build to the editable version")
+    build.add_argument("--build", dest="build", metavar="BUILD", default=None,
+                       help="a build number (e.g. 1) or version (e.g. 1.0) to attach "
+                            "instead of the newest VALID build")
+    build.add_argument("--dry-run", action="store_true",
+                       help="show what would change without writing anything")
+
+    status = sub.add_parser("status", help="one-page summary of everything and what is missing")
+    status.add_argument(
+        "--skip-product", action="append", metavar="PRODUCT_ID", default=[],
+        help="a product deliberately not sold at launch: its row is shown but it is "
+             "not counted as missing unless it is actually on sale; repeatable")
     return parser
 
 
@@ -3309,6 +3609,7 @@ COMMANDS = {
     "metadata": cmd_metadata,
     "screenshots": cmd_screenshots,
     "review": cmd_review,
+    "build": cmd_build,
     "status": cmd_status,
 }
 

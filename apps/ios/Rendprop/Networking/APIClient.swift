@@ -951,7 +951,7 @@ enum APIError: Error, LocalizedError {
     }
 
     /// 402 — plan boundary / monthly allowance reached → show an "Upgrade plan"
-    /// CTA opening `Config.pricingURL` (no prices in-app).
+    /// CTA that opens the in-app StoreKit paywall (`PaywallRouter`).
     var isQuota: Bool { status == 402 || code == "quota_exceeded" || code == "plan_required" }
     /// 401 — session expired/revoked → re-prompt sign-in.
     var isUnauthorized: Bool { status == 401 || code == "unauthorized" }

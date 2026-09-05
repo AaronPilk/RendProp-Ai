@@ -89,12 +89,18 @@ run_step "App Review details" review "$ACTION"
 # 6. Where everything stands. `status` exits non-zero when something is still
 #    missing, which is information rather than a failure, so it runs last and
 #    its exit code is reported without stopping the script.
+#
+#    com.rendprop.app.team.annual is deliberately not sold at launch: Apple's
+#    yearly USD price points stop at 1000.00 and its contract price is 2490.00,
+#    so `subscriptions unprice` withdrew it from every territory. --skip-product
+#    keeps it out of WHAT IS MISSING - unless it turns out to be on sale, in
+#    which case status still shouts.
 STEP_NUMBER=$((STEP_NUMBER + 1))
 printf '\n'
 printf '====================================================================\n'
 printf ' %d. Status\n' "$STEP_NUMBER"
 printf '====================================================================\n'
-python3 "$ASC" status
+python3 "$ASC" status --skip-product com.rendprop.app.team.annual
 STATUS_EXIT=$?
 
 printf '\n'

@@ -73,7 +73,9 @@ summary() {
     if [ "$UPLOAD" -eq 1 ]; then
       say "Uploaded. The build takes 5-30 minutes to finish processing before it"
       say "appears in TestFlight. Check it with:"
-      say "    python3 tools/asc/asc.py status"
+      say "    python3 tools/asc/asc.py status --skip-product com.rendprop.app.team.annual"
+      say "Once it shows VALID, attach it to the 1.0 version with:"
+      say "    python3 tools/asc/asc.py build attach"
     else
       say "Archived at $ARCHIVE_PATH (no upload was requested)."
     fi

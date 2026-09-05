@@ -1508,9 +1508,8 @@ struct RootTabView: View {
             await model.load()        // idempotent
             model.reseedSamples()     // the intro may have changed the type before this mounted
         }
-        // Resolve the App Store storefront once. Until it answers,
-        // `Config.pricingURL` is nil and no upgrade CTA renders — fail closed
-        // (App Store 3.1.3: external purchase CTAs are US-storefront only).
+        // Resolve the App Store storefront once. Informational only — no UI and
+        // no purchase path is conditioned on it (see `Storefronts`, below).
         .resolveStorefront()
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
@@ -2482,27 +2481,27 @@ struct AIConsentView: View {
 // MARK: - Storefront (App Review Guideline 3.1.1 / 3.1.3)
 //
 // Rendprop DOES sell inside the app. `Purchases/` implements StoreKit 2
-// auto-renewable subscriptions — six products (Starter/Pro/Team × monthly and
-// yearly) in the single App Store Connect subscription group `rendprop_plans`,
-// each with a 7-day free introductory offer. The paywall
-// (`Purchases/PaywallView.swift`, mounted once via `.paywallHost()`) is the
-// primary and worldwide way to subscribe, and every price on it comes from
-// `Product.displayPrice` — no price string is compiled into the binary.
+// auto-renewable subscriptions — the FIVE products the app actually requests
+// (Starter and Pro monthly + yearly, Team monthly; Team yearly is
+// `RendpropProducts.notSoldAtLaunch`) in the single App Store Connect
+// subscription group `rendprop_plans`, each with a 7-day free introductory
+// offer. That count is what the App Store review notes state, so keep the two
+// in step. The paywall (`Purchases/PaywallView.swift`, mounted once via
+// `.paywallHost()`) is the ONLY way to subscribe, on every storefront, and
+// every price on it comes from `Product.displayPrice` — no price string is
+// compiled into the binary.
 //
-// The rendprop.com pricing link still exists, and it is now SECONDARY. A link
-// or button that points at that page is a "call to action that directs
-// customers to purchasing mechanisms other than in-app purchase". Since
-// 1 May 2025 that is expressly ALLOWED on the United States storefront —
-// guideline 3.1.1(a): "These entitlements are not required for developers to
-// include buttons, external links, or other calls to action in their United
-// States storefront apps", and 3.1.3: "Apps in this section cannot, within the
-// app, encourage users to use a purchasing method other than in-app purchase,
-// except for apps on the United States storefront…".
+// The app links to NO external purchasing mechanism, on any storefront. It once
+// carried a secondary "See plans on the web" line to rendprop.com/pricing on the
+// US storefront (permitted since 1 May 2025 by 3.1.1(a) / 3.1.3), but that page
+// has no checkout now that IAP exists, so the link sold nothing and merely put
+// an external purchase CTA beside an in-app one — the shape App Review reads as
+// steering. It is gone; `Config.pricingURL` is retired and always nil.
 //
-// It is still a rejection EVERYWHERE ELSE. So the web link stays gated on the
-// device's actual App Store storefront: US → an extra "See plans on the web"
-// line next to the in-app paywall; anywhere else → in-app purchase only, with
-// no link and no invitation to buy elsewhere. Fail closed (no link) until
+// This resolver stays because it is cheap, harmless and answers a real question
+// (which storefront is this device on). Nothing gates a purchase on it, and no
+// UI is conditioned on it. If a future feature ever needs a US-only external
+// link, it can read `allowsExternalPurchaseLinks` — which fails closed until
 // StoreKit answers, and if it never answers. IAP itself is never gated.
 @MainActor
 final class Storefronts: ObservableObject {

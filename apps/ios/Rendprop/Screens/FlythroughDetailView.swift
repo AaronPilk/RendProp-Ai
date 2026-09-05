@@ -911,7 +911,7 @@ struct FlythroughDetailView: View {
                     .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(ScalePressStyle())
-                Text("Leads appear here; email alerts coming.")
+                Text("Enquiries from this tour's share link appear here.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             } else {
@@ -1390,10 +1390,8 @@ private struct AIFailure: Identifiable {
     let isUnauthorized: Bool
     let isRateLimited: Bool
 
-    /// Storefront-gated — nil off the US storefront, where an external purchase
-    /// CTA is still a 3.1.1 violation. NEVER add a hardcoded fallback here: the
-    /// old `?? URL(string: …)` defeated the gate and shipped the link worldwide.
-    @MainActor static var pricingURL: URL? { Config.pricingURL }
+    // No `pricingURL` here any more. A 402 on this screen offers the in-app
+    // paywall and nothing else — see `Config.pricingURL` (retired, always nil).
 
     init(_ error: Error, title: String = "That one didn't work") {
         self.title = title
@@ -1477,8 +1475,10 @@ private struct AIFailureCard: View {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
-                // In-app purchase first: StoreKit 2 subscriptions work on
-                // every storefront (Purchases/PaywallView.swift).
+                // In-app purchase, and ONLY in-app purchase: StoreKit 2
+                // subscriptions work on every storefront
+                // (Purchases/PaywallView.swift). No web pricing link beside it
+                // — 3.1.1 / 3.1.3.
                 Button {
                     PaywallRouter.shared.present(reason: .quota(feature: quotaFeature))
                 } label: {
@@ -1487,13 +1487,6 @@ private struct AIFailureCard: View {
                         .frame(maxWidth: .infinity).padding(.vertical, 12)
                         .background(Theme.accent).foregroundStyle(Color.white)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-                // Secondary, and still US-storefront-only (3.1.1(a)) —
-                // `AIFailure.pricingURL` is nil everywhere else.
-                if let url = AIFailure.pricingURL {
-                    Link("See plans on the web", destination: url)
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
                 }
             } else if failure.isUnauthorized {
                 Text(failure.actionHint)
@@ -1969,7 +1962,6 @@ struct PhotoStudioView: View {
     /// balanced across covers (F-A-05: an animate is a ~1-minute wait and the
     /// screen must not sleep through it).
     @State private var idleHeld = false
-    @Environment(\.openURL) private var openURL
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -2180,12 +2172,10 @@ struct PhotoStudioView: View {
                isPresented: Binding(get: { aiFailure != nil }, set: { if !$0 { aiFailure = nil } }),
                presenting: aiFailure) { f in
             if f.isQuota {
+                // In-app paywall only — no external purchase CTA (3.1.1 / 3.1.3).
                 Button("Upgrade plan") {
                     aiFailure = nil
                     PaywallRouter.shared.present(reason: .quota(feature: "photo_edits"))
-                }
-                if let url = AIFailure.pricingURL {
-                    Button("See plans on the web") { openURL(url) }
                 }
             }
             if f.isUnauthorized {

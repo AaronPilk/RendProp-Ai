@@ -71,24 +71,21 @@ enum Config {
     /// ~150 s, so the default 60 s URLSession timeout cut real edits off.
     static let aiRequestTimeout: TimeInterval = 120
 
-    /// Where a 402 (plan boundary) "Upgrade plan" CTA sends the user. Prices are
-    /// shown ONLY on the web — never compiled into the app (App Store 3.1).
+    /// RETIRED — always nil, on every storefront. Do not revive it.
     ///
-    /// STOREFRONT-GATED (App Store 3.1.1(a) / 3.1.3). An "Upgrade plan" button
-    /// that opens rendprop.com is a call to action pointing at a purchasing
-    /// mechanism other than in-app purchase. Since 1 May 2025 that is expressly
-    /// permitted, with no entitlement, for apps on the UNITED STATES storefront
-    /// — and it is still a rejection on every other storefront. So this returns
-    /// nil off the US storefront (and while the storefront is still unknown),
-    /// which makes every upgrade CTA in the app disappear rather than ship a
-    /// violation. `Storefronts.shared.resolve()` runs once at launch from
-    /// `RootTabView`. Nothing else in the app links to pricing — keep it that
-    /// way: route any new CTA through this property.
+    /// This used to return rendprop.com/pricing on the US storefront so a 402
+    /// could offer a secondary "See plans on the web" link. That was defensible
+    /// while there was no other way to pay. There now is: `Purchases/` sells the
+    /// plans with StoreKit 2 on every storefront, and rendprop.com/pricing has no
+    /// checkout — so the link bought the app nothing and cost it an external
+    /// purchase CTA sitting next to an in-app purchase, which is exactly the
+    /// shape App Review reads as steering (3.1.1 / 3.1.3). Every upgrade path in
+    /// the app now opens the in-app paywall via `PaywallRouter`.
+    ///
+    /// Kept as a property, and kept nil, so that any future call site inherits
+    /// "no external purchase CTA" instead of re-introducing one.
     @MainActor
-    static var pricingURL: URL? {
-        guard Storefronts.shared.allowsExternalPurchaseLinks else { return nil }
-        return URL(string: "https://rendprop.com/pricing")
-    }
+    static var pricingURL: URL? { nil }
 
     // Phase 2 flags — keep false until wired (master spec Parts 4.5, 9, 18)
     // enableAuth now means: Sign in with Apple → Supabase Auth (apple provider) →

@@ -554,6 +554,11 @@ class FakeAsc(object):
         self.counter = 0
         self.calls = []
         self.writes = []
+        # (method, path, {query param: [values]}) for every request, and
+        # (method, path, parsed JSON body) for every write - so a test can check
+        # the exact request that was sent, not just that one was.
+        self.queries = []
+        self.bodies = []
         self.last_headers = {}
         self.last_price_body = None
         # Product ids the broad group listing pretends not to see. A targeted
@@ -593,10 +598,15 @@ class FakeAsc(object):
         # None to actually delete. Apple does not document whether a price that
         # is already in effect can be removed, so both answers are testable.
         self.price_delete_error = None
-        # 409 ENTITY_ERROR.INCLUDED.INVALID_ID when an inline-created
-        # territoryAvailability reuses a real territory id as its temporary id.
-        # This is the live failure of POST /v2/appAvailabilities.
-        self.reject_territory_ids_as_included_ids = False
+        # POST /v2/appAvailabilities links `included` to `relationships` by a
+        # temporary id. Apple's documented form is a `${...}` placeholder
+        # (Developer Forums thread 714696). Live, 2026-09-05, a bare territory
+        # id ("USA") and a plain label ("territoryAvailability-USA") were both
+        # refused with 409 ENTITY_ERROR.INCLUDED.INVALID_ID - that is what
+        # reject_plain_included_ids reproduces. reject_placeholder_included_ids
+        # is the opposite reading, so the retry path can be exercised too.
+        self.reject_plain_included_ids = False
+        self.reject_placeholder_included_ids = False
         # PATCHing whatsNew on an app's first version returns 409 STATE_ERROR.
         self.whats_new_editable = False
         # Age-rating attributes the declaration reports, and the ones Apple
@@ -632,14 +642,38 @@ class FakeAsc(object):
         ]
 
     # -- optional records a test can add ---------------------------------
-    def add_app_info(self, state="PREPARE_FOR_SUBMISSION", age_rating="FOUR_PLUS"):
+    def add_app_info(self, state="PREPARE_FOR_SUBMISSION", age_rating="FOUR_PLUS",
+                     categories=True):
+        """An appInfo whose categories are already set (the live state), or not."""
+        parents = {"app": self.app_id}
+        if categories:
+            parents["primaryCategory"] = asc.PRIMARY_CATEGORY
+            parents["secondaryCategory"] = asc.SECONDARY_CATEGORY
         return self._insert(
-            "appInfos",
-            {"state": state, "appStoreAgeRating": age_rating},
-            {"app": self.app_id,
-             "primaryCategory": asc.PRIMARY_CATEGORY,
-             "secondaryCategory": asc.SECONDARY_CATEGORY},
-        )
+            "appInfos", {"state": state, "appStoreAgeRating": age_rating}, parents)
+
+    def add_build(self, version="1", state="VALID", uploaded="2026-09-05T08:34:43-07:00",
+                  uses_non_exempt_encryption=None, marketing_version="1.0", expired=False):
+        """A build as GET /v1/builds returns it.
+
+        `version` is the build number ("1"); the marketing version ("1.0") lives
+        on the related preReleaseVersion. usesNonExemptEncryption is None until
+        the export-compliance question has been answered.
+        """
+        prerelease_id = None
+        for resource in self.store.get("preReleaseVersions", {}).values():
+            if resource["attributes"].get("version") == marketing_version:
+                prerelease_id = resource["id"]
+        if prerelease_id is None:
+            prerelease_id = self._insert(
+                "preReleaseVersions",
+                {"version": marketing_version, "platform": asc.PLATFORM},
+                {"app": self.app_id})
+        return self._insert(
+            "builds",
+            {"version": version, "processingState": state, "uploadedDate": uploaded,
+             "expired": expired, "usesNonExemptEncryption": uses_non_exempt_encryption},
+            {"app": self.app_id, "preReleaseVersion": prerelease_id})
 
     def add_version(self, version_string="1.0", state="PREPARE_FOR_SUBMISSION",
                     localization=None):
@@ -672,6 +706,33 @@ class FakeAsc(object):
                 price["_parents"]["subscriptionPricePoint"] = point["id"]
         return point
 
+    def _shape_category_relationships(self, page, include):
+        """Return the category relationships the way App Store Connect does.
+
+        Without `include=primaryCategory,secondaryCategory` a to-one relationship
+        comes back as `links` only - no `data`, so no id. That is the live shape
+        that made every run PATCH the categories again and made `status` print
+        NOT SET for categories that were set. With the include, `data` is
+        present and the categories themselves ride along in `included`.
+        """
+        page["included"] = page.get("included") or []
+        for item in page["data"]:
+            for name in ("primaryCategory", "secondaryCategory"):
+                related = item["relationships"].get(name)
+                if related is None:
+                    continue
+                if name in include:
+                    related["data"]["type"] = "appCategories"
+                    page["included"].append({"type": "appCategories",
+                                             "id": related["data"]["id"],
+                                             "attributes": {"platforms": ["IOS"]}})
+                else:
+                    item["relationships"][name] = {"links": {
+                        "self": "https://api.appstoreconnect.apple.com/v1/appInfos/%s/"
+                                "relationships/%s" % (item["id"], name),
+                        "related": "https://api.appstoreconnect.apple.com/v1/appInfos/%s/%s"
+                                   % (item["id"], name)}}
+
     def _included_price_points(self, prices):
         """The subscriptionPricePoints an `include=` would return for `prices`."""
         included = []
@@ -694,8 +755,10 @@ class FakeAsc(object):
         query = urllib.parse.parse_qs(parsed.query)
         payload = json.loads(body.decode("utf-8")) if body else None
         self.calls.append((method, path))
+        self.queries.append((method, path, query))
         if method != "GET":
             self.writes.append((method, path))
+            self.bodies.append((method, path, payload))
         status, data = self.route(method, path, query, payload)
         raw = b"" if data is None else json.dumps(data).encode("utf-8")
         return status, {"X-Rate-Limit": "user-hour-lim:3500;user-hour-rem:3400"}, raw
@@ -742,7 +805,24 @@ class FakeAsc(object):
                          "links": {}}
 
         if parts == ["builds"]:
-            return 200, {"data": [], "links": {}}
+            wanted_app = (query.get("filter[app]") or [None])[0]
+            builds = [self._public(b) for b in self.store.get("builds", {}).values()
+                      if wanted_app in (None, b["_parents"].get("app"))]
+            if "-uploadedDate" in (query.get("sort") or []):
+                builds.sort(key=lambda b: b["attributes"].get("uploadedDate") or "",
+                            reverse=True)
+            page = {"data": builds, "links": {}}
+            include = (query.get("include") or [""])[0].split(",")
+            if "preReleaseVersion" in include:
+                page["included"], seen = [], set()
+                for build in builds:
+                    related = build["relationships"].get("preReleaseVersion", {})
+                    prerelease_id = (related.get("data") or {}).get("id")
+                    if prerelease_id and prerelease_id not in seen:
+                        seen.add(prerelease_id)
+                        page["included"].append(
+                            self._public(self.store["preReleaseVersions"][prerelease_id]))
+            return 200, page
 
         if parts == ["appCategories"]:
             return 200, {"data": [{"type": "appCategories", "id": c}
@@ -769,7 +849,19 @@ class FakeAsc(object):
                 include = (query.get("include") or [""])[0].split(",")
                 if key == ("subscriptions", "prices") and "subscriptionPricePoint" in include:
                     page["included"] = self._included_price_points(data)
+                if key == ("apps", "appInfos"):
+                    self._shape_category_relationships(page, include)
                 return 200, page
+
+            if key == ("appStoreVersions", "build"):
+                version = self.store.get("appStoreVersions", {}).get(parent_id)
+                if version is None:
+                    return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                             "title": "no such version", "detail": parent_id}]}
+                build_id = version["_parents"].get("build")
+                if not build_id:
+                    return 200, {"data": None}
+                return 200, {"data": self._public(self.store["builds"][build_id])}
 
             if key == ("appInfos", "ageRatingDeclaration"):
                 if self.age_rating is None:
@@ -897,18 +989,43 @@ class FakeAsc(object):
                         "detail": "The subscription already has an availability.",
                         "status": "409"}]}
 
-        # The live POST /v2/appAvailabilities returned 409
-        # ENTITY_ERROR.INCLUDED.INVALID_ID. The reading modelled here is that a
-        # temporary inline-create id may not be an existing territory id.
-        if kind == "appAvailabilities" and self.reject_territory_ids_as_included_ids:
-            for item in payload.get("included") or []:
-                if item.get("id") in self.territories:
+        # POST /v2/appAvailabilities: the territoryAvailabilities are inline
+        # creates. Each relationship reference must name an `included` object by
+        # its temporary id, and the territory comes from THAT object - never from
+        # the temporary id itself. Which id styles are accepted is configurable
+        # (see reject_plain_included_ids / reject_placeholder_included_ids).
+        if kind == "appAvailabilities":
+            included = {item.get("id"): item for item in payload.get("included") or []}
+            references = (((data.get("relationships") or {}).get("territoryAvailabilities")
+                           or {}).get("data") or [])
+            territories = []
+            for index, reference in enumerate(references):
+                handle = reference.get("id")
+                is_placeholder = (isinstance(handle, str) and handle.startswith("${")
+                                  and handle.endswith("}"))
+                item = included.get(handle)
+                invalid = (item is None
+                           or (self.reject_plain_included_ids and not is_placeholder)
+                           or (self.reject_placeholder_included_ids and is_placeholder))
+                if invalid:
                     return 409, {"errors": [{
                         "code": "ENTITY_ERROR.INCLUDED.INVALID_ID",
                         "title": "There is a problem with the request entity",
                         "detail": "The provided entity includes an ID that is invalid.",
                         "status": "409",
-                        "source": {"pointer": "/included/0/id"}}]}
+                        "source": {"pointer": "/included/%d/id" % index}}]}
+                territory = (((item.get("relationships") or {}).get("territory") or {})
+                             .get("data") or {}).get("id")
+                if territory not in self.territories:
+                    return 409, {"errors": [{
+                        "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                        "title": "There is a problem with the request entity",
+                        "detail": "Unknown territory %r." % territory,
+                        "status": "409"}]}
+                territories.append(territory)
+            attributes["_territories"] = territories
+            identifier = self._insert(kind, attributes, {"app": data["relationships"]["app"]["data"]["id"]})
+            return 201, {"data": self._public(self.store[kind][identifier])}
 
         # A newly created version comes back in PREPARE_FOR_SUBMISSION, which is
         # how a second run recognises it instead of creating another one.
@@ -959,6 +1076,8 @@ class FakeAsc(object):
             "source": {"pointer": "/data/attributes/whatsNew"}}]}
 
     def patch(self, parts, payload):
+        if len(parts) == 4 and parts[2] == "relationships":
+            return self.patch_linkage(parts[0], parts[1], parts[3], payload)
         if len(parts) != 2:
             return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
                                      "detail": "/".join(parts), "status": "404"}]}
@@ -995,7 +1114,45 @@ class FakeAsc(object):
             return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
                                      "detail": identifier, "status": "404"}]}
         resource["attributes"].update(attributes)
+        # A PATCH may also re-point to-one relationships (categories on appInfos).
+        for name, value in (payload["data"].get("relationships") or {}).items():
+            inner = (value or {}).get("data")
+            if isinstance(inner, dict) and inner.get("id"):
+                resource["_parents"][name] = inner["id"]
         return 200, {"data": self._public(resource)}
+
+    def patch_linkage(self, collection, identifier, name, payload):
+        """PATCH /v1/<collection>/{id}/relationships/<name> - a to-one linkage.
+
+        Only appStoreVersions.build is modelled. Per
+        AppStoreVersionBuildLinkageRequest the body's `data` is the single
+        {type, id} object, and success is 204 with no body.
+        """
+        if (collection, name) != ("appStoreVersions", "build"):
+            return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
+                                     "detail": "%s/%s" % (collection, name), "status": "404"}]}
+        version = self.store.get("appStoreVersions", {}).get(identifier)
+        if version is None:
+            return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
+                                     "detail": identifier, "status": "404"}]}
+        linkage = payload.get("data")
+        if not isinstance(linkage, dict) or linkage.get("type") != "builds" or not linkage.get("id"):
+            return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                                     "title": "There is a problem with the request entity",
+                                     "detail": "data must be one {type: builds, id}",
+                                     "status": "409"}]}
+        build = self.store.get("builds", {}).get(linkage["id"])
+        if build is None:
+            return 404, {"errors": [{"code": "NOT_FOUND", "title": "no such build",
+                                     "detail": linkage["id"], "status": "404"}]}
+        if build["attributes"].get("processingState") != "VALID" or build["attributes"].get("expired"):
+            return 409, {"errors": [{"code": "STATE_ERROR",
+                                     "title": "The request cannot be fulfilled because of "
+                                              "the state of another resource.",
+                                     "detail": "The build is not in a valid state.",
+                                     "status": "409"}]}
+        version["_parents"]["build"] = linkage["id"]
+        return 204, None
 
 
 class Args(object):
@@ -1544,14 +1701,55 @@ class AppAvailabilityTests(unittest.TestCase):
         self.assertEqual(body["data"]["type"], "appAvailabilities")
         self.assertIs(body["data"]["attributes"]["availableInNewTerritories"], False)
         self.assertEqual(body["data"]["relationships"]["territoryAvailabilities"]["data"],
-                         [{"type": "territoryAvailabilities", "id": "USA"}])
+                         [{"type": "territoryAvailabilities",
+                           "id": "${territoryAvailability-USA}"}])
         self.assertEqual(len(body["included"]), 1)
         included = body["included"][0]
         self.assertEqual(included["type"], "territoryAvailabilities")
-        self.assertEqual(included["id"], "USA")
+        self.assertEqual(included["id"], "${territoryAvailability-USA}")
         self.assertIs(included["attributes"]["available"], True)
         self.assertEqual(included["relationships"]["territory"]["data"],
                          {"type": "territories", "id": "USA"})
+
+    def test_the_placeholder_handle_is_used_in_both_halves(self):
+        """Apple's inline-create convention (forums thread 714696): a `${...}`
+        placeholder, sent identically as the relationship reference and as the
+        `included` object's id. The real territory id appears only inside the
+        included object's `territory` relationship."""
+        body = asc.app_availability_body("app-1", ["USA", "CAN"])
+        references = body["data"]["relationships"]["territoryAvailabilities"]["data"]
+        self.assertEqual([r["id"] for r in references],
+                         ["${territoryAvailability-USA}", "${territoryAvailability-CAN}"])
+        self.assertEqual([i["id"] for i in body["included"]],
+                         ["${territoryAvailability-USA}", "${territoryAvailability-CAN}"])
+        for reference, included in zip(references, body["included"]):
+            self.assertEqual(reference["id"], included["id"])
+            self.assertTrue(included["id"].startswith("${") and included["id"].endswith("}"))
+            territory = included["relationships"]["territory"]["data"]["id"]
+            self.assertEqual(included["id"], "${territoryAvailability-%s}" % territory)
+        self.assertEqual(asc.inline_create_id("USA"), "${territoryAvailability-USA}")
+
+    def test_the_documented_form_lands_where_both_live_shapes_were_refused(self):
+        """Live, both `USA` and `territoryAvailability-USA` came back 409
+        INCLUDED.INVALID_ID. With the API modelled that way, the `${...}` form
+        is accepted on the first POST and the stored territory is the real one."""
+        fake = FakeAsc()
+        fake.reject_plain_included_ids = True
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
+
+        posts = [path for method, path in fake.writes if method == "POST"]
+        self.assertEqual(posts, ["/v2/appAvailabilities"], "no retry should be needed")
+        self.assertNotIn("INCLUDED.INVALID_ID", out.getvalue())
+        availability = list(fake.store["appAvailabilities"].values())[0]
+        self.assertEqual(availability["attributes"]["_territories"], ["USA"])
+        # ...and a second run reads it back as USA-only.
+        fake.writes = []
+        second = io.StringIO()
+        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=second))
+        self.assertEqual(fake.writes, [])
+        self.assertIn("available in USA only", second.getvalue())
 
     def test_a_failure_warns_with_the_ui_path_instead_of_raising(self):
         def transport(method, url, headers, body):
@@ -1581,7 +1779,7 @@ class AppAvailabilityTests(unittest.TestCase):
 
     def test_every_included_id_is_referenced_by_the_relationship(self):
         """The two halves of a JSON:API inline create must agree, id for id."""
-        for client_id in (None, lambda t: "territoryAvailability-%s" % t):
+        for client_id in (None, lambda t: t):
             body = asc.app_availability_body("app-1", ["USA", "CAN"], client_id=client_id)
             referenced = [r["id"] for r in
                           body["data"]["relationships"]["territoryAvailabilities"]["data"]]
@@ -1595,10 +1793,11 @@ class AppAvailabilityTests(unittest.TestCase):
                 self.assertEqual(included["relationships"]["territory"]["data"]["type"],
                                  "territories")
 
-    def test_invalid_included_id_is_retried_with_a_distinct_id(self):
-        """The live 409: ENTITY_ERROR.INCLUDED.INVALID_ID on POST /v2/appAvailabilities."""
+    def test_invalid_included_id_is_retried_with_the_bare_territory_id(self):
+        """If Apple ever refuses the `${...}` form with INCLUDED.INVALID_ID, the
+        one alternative reading - the bare territory id - is tried once."""
         fake = FakeAsc()
-        fake.reject_territory_ids_as_included_ids = True
+        fake.reject_placeholder_included_ids = True
         out = io.StringIO()
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
@@ -1607,11 +1806,13 @@ class AppAvailabilityTests(unittest.TestCase):
         self.assertEqual(posts, ["/v2/appAvailabilities", "/v2/appAvailabilities"],
                          "the first shape is retried once, not abandoned")
         self.assertIn("INCLUDED.INVALID_ID", out.getvalue())
+        bodies = [body for method, path, body in fake.bodies if method == "POST"]
+        self.assertEqual(bodies[0]["included"][0]["id"], "${territoryAvailability-USA}")
+        self.assertEqual(bodies[1]["included"][0]["id"], "USA")
         # The retry landed, so the app really is USA-only.
         self.assertEqual(len(fake.store["appAvailabilities"]), 1)
         availability = list(fake.store["appAvailabilities"].values())[0]
-        self.assertEqual(availability["attributes"]["_territories"],
-                         ["territoryAvailability-USA"])
+        self.assertEqual(availability["attributes"]["_territories"], ["USA"])
 
     def test_a_second_failure_falls_back_to_the_ui_path(self):
         attempts = []
@@ -1630,8 +1831,8 @@ class AppAvailabilityTests(unittest.TestCase):
         # Never raises: a territory list is a business decision, not a crash.
         asc.ensure_app_availability_usa(client, "app-1", asc.Plan(out=out))
         self.assertEqual(len(attempts), 2)
-        self.assertEqual(attempts[0]["included"][0]["id"], "USA")
-        self.assertEqual(attempts[1]["included"][0]["id"], "territoryAvailability-USA")
+        self.assertEqual(attempts[0]["included"][0]["id"], "${territoryAvailability-USA}")
+        self.assertEqual(attempts[1]["included"][0]["id"], "USA")
         self.assertIn("United States only", out.getvalue())
 
 
@@ -2162,6 +2363,408 @@ class StatusPriceTests(unittest.TestCase):
         self.assertEqual(asc.price_amounts(prices, []), {"USA": None})
 
 
+class CategoryTests(unittest.TestCase):
+    """Categories must be read with include=; without it Apple returns no ids.
+
+    Live, 2026-09-05: GET /v1/apps/{id}/appInfos with no `include` returned each
+    category relationship as `links` only, so the set categories read as unset,
+    `metadata apply` PATCHed them on every run and `status` printed
+    `NOT SET / NOT SET`."""
+
+    def client(self, fake, out=None):
+        return asc.Client(credentials=None, transport=fake, verbose=False,
+                          out=out or io.StringIO())
+
+    def test_the_request_asks_for_the_category_relationships(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        asc.editable_app_info(self.client(fake), fake.app_id)
+        gets = [(path, query) for method, path, query in fake.queries if method == "GET"]
+        path, query = gets[-1]
+        self.assertEqual(path, "/v1/apps/%s/appInfos" % fake.app_id)
+        self.assertEqual(sorted(query["include"][0].split(",")),
+                         ["primaryCategory", "secondaryCategory"])
+        # Only values the spec's include enum allows for this endpoint.
+        allowed = {"app", "ageRatingDeclaration", "appInfoLocalizations", "primaryCategory",
+                   "primarySubcategoryOne", "primarySubcategoryTwo", "secondaryCategory",
+                   "secondarySubcategoryOne", "secondarySubcategoryTwo"}
+        self.assertTrue(set(asc.APP_INFO_INCLUDE.split(",")) <= allowed)
+
+    def test_without_the_include_apple_returns_no_category_ids(self):
+        """The fake reproduces the live shape, so the tests above mean something."""
+        fake = FakeAsc()
+        fake.add_app_info()
+        client = self.client(fake)
+        bare = client.get_all("/v1/apps/%s/appInfos" % fake.app_id)
+        self.assertNotIn("data", bare[0]["relationships"]["primaryCategory"])
+        self.assertIn("links", bare[0]["relationships"]["primaryCategory"])
+
+        included = client.get_all("/v1/apps/%s/appInfos" % fake.app_id,
+                                  params={"include": asc.APP_INFO_INCLUDE})
+        self.assertEqual(included[0]["relationships"]["primaryCategory"]["data"]["id"],
+                         asc.PRIMARY_CATEGORY)
+        self.assertEqual(included[0]["relationships"]["secondaryCategory"]["data"]["id"],
+                         asc.SECONDARY_CATEGORY)
+        # The attributes other code reads are still there.
+        self.assertEqual(included[0]["attributes"]["state"], "PREPARE_FOR_SUBMISSION")
+        self.assertEqual(included[0]["attributes"]["appStoreAgeRating"], "FOUR_PLUS")
+
+    def test_categories_that_are_set_are_a_no_op_note(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        out = io.StringIO()
+        client = self.client(fake, out)
+        app_info = asc.editable_app_info(client, fake.app_id)
+        asc.ensure_categories(client, app_info, asc.Plan(out=out))
+        self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
+        self.assertIn("= categories are BUSINESS / PHOTO_AND_VIDEO", out.getvalue())
+
+    def test_unset_categories_are_still_set_and_then_read_back(self):
+        fake = FakeAsc()
+        fake.add_app_info(categories=False)
+        out = io.StringIO()
+        client = self.client(fake, out)
+        asc.ensure_categories(client, asc.editable_app_info(client, fake.app_id),
+                              asc.Plan(out=out))
+        patches = [(path, body) for method, path, body in fake.bodies if method == "PATCH"]
+        self.assertEqual(len(patches), 1)
+        path, body = patches[0]
+        self.assertTrue(path.startswith("/v1/appInfos/"), path)
+        self.assertEqual(body["data"]["relationships"]["primaryCategory"]["data"],
+                         {"type": "appCategories", "id": "BUSINESS"})
+        self.assertEqual(body["data"]["relationships"]["secondaryCategory"]["data"],
+                         {"type": "appCategories", "id": "PHOTO_AND_VIDEO"})
+        # The second run sees them and writes nothing.
+        fake.writes = []
+        second = io.StringIO()
+        asc.ensure_categories(client, asc.editable_app_info(client, fake.app_id),
+                              asc.Plan(out=second))
+        self.assertEqual(fake.writes, [])
+        self.assertIn("categories are", second.getvalue())
+
+    def test_status_reports_set_categories_as_set(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        out = io.StringIO()
+        code = asc.cmd_status(self.client(fake, out), Args(json=True), out)
+        output = out.getvalue()
+        self.assertIn("categories ....... BUSINESS / PHOTO_AND_VIDEO", output)
+        self.assertNotIn("NOT SET / NOT SET", output)
+        report = json.loads(output[output.index("{"):])
+        self.assertEqual([m for m in report["missing"] if "categories" in m], [])
+
+
+class StatusSkipProductTests(unittest.TestCase):
+    """`status --skip-product`: a product deliberately not sold at launch.
+
+    The live state: com.rendprop.app.team.annual is priced at USD 1000.00 (Apple's
+    yearly ceiling) against a USD 2490.00 target, its price could not be deleted
+    (409 STATE_ERROR), and `subscriptions unprice` withdrew it from every
+    territory instead. `status` must say so calmly - unless it is on sale."""
+
+    PRODUCT = "com.rendprop.app.team.annual"
+
+    def build(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_subscriptions(client, Args(), out)
+        fake.add_app_info()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+                         localization={"description": "d", "keywords": "k",
+                                       "supportUrl": "https://rendprop.com/support"})
+        fake.repoint_price(self.PRODUCT, "1000.0")
+        return fake
+
+    def withdraw(self, fake):
+        """What `subscriptions unprice` left behind: available in no territory."""
+        subscription_id = [r["id"] for r in fake.store["subscriptions"].values()
+                           if r["attributes"]["productId"] == self.PRODUCT][0]
+        for resource in fake.store["subscriptionAvailabilities"].values():
+            if resource["_parents"].get("subscription") == subscription_id:
+                resource["attributes"]["_territories"] = []
+
+    def run_status(self, fake, **kwargs):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_status(client, Args(**kwargs), out)
+        return code, out.getvalue()
+
+    def report(self, output):
+        return json.loads(output[output.index("{"):])
+
+    def test_a_withdrawn_skipped_product_is_quiet(self):
+        fake = self.build()
+        self.withdraw(fake)
+        _code, output = self.run_status(fake, json=True, skip_product=[self.PRODUCT])
+        self.assertNotIn("WRONG PRICE", output)
+        self.assertIn("WITHDRAWN (not sold at launch)", output)
+        self.assertIn(
+            "  note: com.rendprop.app.team.annual is withdrawn from sale (0 territories); "
+            "reprice it after Apple grants higher price points: %s"
+            % asc.HIGHER_PRICE_POINTS_REQUEST_URL, output)
+        report = self.report(output)
+        self.assertEqual([m for m in report["missing"] if self.PRODUCT in m], [])
+        annual = {p["productId"]: p for p in report["subscriptions"]}[self.PRODUCT]
+        self.assertIs(annual["skipped"], True)
+        self.assertEqual(annual["territories"], [])
+        # The JSON still tells the truth about the price.
+        self.assertIs(annual["priceMatchesContract"], False)
+
+    def test_the_row_keeps_state_availability_and_price_without_the_alarm(self):
+        fake = self.build()
+        self.withdraw(fake)
+        _code, output = self.run_status(fake, skip_product=[self.PRODUCT])
+        rows = [line for line in output.splitlines() if line.strip().startswith(self.PRODUCT)]
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertIn("NONE", row)                 # avail
+        self.assertIn("1000.0 != 2490.00", row)    # price (target)
+        self.assertNotIn("!!", row)
+        self.assertTrue(row.rstrip().endswith("WITHDRAWN (not sold at launch)"), row)
+
+    def test_a_skipped_product_that_is_on_sale_stays_loud(self):
+        fake = self.build()   # still available in USA
+        code, output = self.run_status(fake, json=True, skip_product=[self.PRODUCT])
+        self.assertEqual(code, 1)
+        self.assertIn("WRONG PRICE", output)
+        self.assertIn("USD 1000.0, should be USD 2490.00", output)
+        self.assertIn("subscriptions unprice com.rendprop.app.team.annual", output)
+        self.assertIn("com.rendprop.app.team.annual is skipped but ON SALE in USA at USD 1000.0",
+                      self.report(output)["missing"])
+        self.assertNotIn("WITHDRAWN", output)
+        self.assertNotIn("note: com.rendprop.app.team.annual is withdrawn", output)
+
+    def test_without_the_flag_the_old_behaviour_is_unchanged(self):
+        fake = self.build()
+        self.withdraw(fake)
+        code, output = self.run_status(fake, json=True)
+        self.assertEqual(code, 1)
+        self.assertIn("WRONG PRICE", output)
+        self.assertNotIn("WITHDRAWN", output)
+        self.assertNotIn("note:", output)
+        missing = self.report(output)["missing"]
+        self.assertIn("com.rendprop.app.team.annual availability", missing)
+        self.assertIn("com.rendprop.app.team.annual is priced USD 1000.0, not the agreed USD 2490.00",
+                      missing)
+
+    def test_the_other_products_are_unaffected(self):
+        fake = self.build()
+        self.withdraw(fake)
+        _code, output = self.run_status(fake, json=True, skip_product=[self.PRODUCT])
+        for product in self.report(output)["subscriptions"]:
+            if product["productId"] == self.PRODUCT:
+                continue
+            self.assertIs(product["skipped"], False)
+            self.assertIs(product["priceMatchesContract"], True)
+            self.assertEqual(product["territories"], ["USA"])
+
+    def test_an_unknown_product_id_is_refused(self):
+        fake = self.build()
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_status(fake, skip_product=["com.rendprop.app.typo"])
+        self.assertIn("com.rendprop.app.typo", str(caught.exception))
+
+    def test_the_cli_exposes_it_on_status(self):
+        parser = asc.build_parser()
+        self.assertEqual(parser.parse_args(["status", "--skip-product", self.PRODUCT]).skip_product,
+                         [self.PRODUCT])
+        self.assertEqual(parser.parse_args(["status"]).skip_product, [])
+
+    def test_the_bridge_passes_the_flag_to_status(self):
+        bridge = (Path(asc.__file__).resolve().parent / "bridge-610-asc-apply.sh"
+                  ).read_text(encoding="utf-8")
+        self.assertIn("status --skip-product com.rendprop.app.team.annual", bridge)
+
+
+class BuildAttachTests(unittest.TestCase):
+    """`build attach` links the newest processed build to the 1.0 version."""
+
+    def build(self, *builds, **version):
+        fake = FakeAsc()
+        if version.get("with_version", True):
+            fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        for kwargs in builds:
+            fake.add_build(**kwargs)
+        return fake
+
+    def run_attach(self, fake, **kwargs):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        kwargs.setdefault("build", None)
+        code = asc.cmd_build(client, Args(action="attach", **kwargs), out)
+        return code, out.getvalue()
+
+    def attached_build_number(self, fake):
+        version = list(fake.store["appStoreVersions"].values())[0]
+        build_id = version["_parents"].get("build")
+        return fake.store["builds"][build_id]["attributes"]["version"] if build_id else None
+
+    def test_the_newest_valid_build_is_attached(self):
+        fake = self.build(dict(version="1", uploaded="2026-09-05T08:34:43-07:00"),
+                          dict(version="2", uploaded="2026-09-05T09:10:00-07:00"))
+        code, output = self.run_attach(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.attached_build_number(fake), "2")
+        self.assertIn("+ attach build 2 to version 1.0", output)
+        self.assertIn("Build attach: 2 change(s) applied.", output)
+
+    def test_newer_failed_builds_are_passed_over_with_a_warning(self):
+        fake = self.build(dict(version="1", uploaded="2026-09-05T08:34:43-07:00"),
+                          dict(version="2", state="INVALID", uploaded="2026-09-05T09:10:00-07:00"))
+        code, output = self.run_attach(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(self.attached_build_number(fake), "1")
+        self.assertIn("! build 2 is INVALID; using the newest VALID build, 1", output)
+
+    def test_a_processing_newest_build_is_refused(self):
+        fake = self.build(dict(version="1", uploaded="2026-09-05T08:34:43-07:00"),
+                          dict(version="2", state="PROCESSING",
+                               uploaded="2026-09-05T09:10:00-07:00"))
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake)
+        message = str(caught.exception)
+        self.assertIn("still PROCESSING", message)
+        self.assertIn("try again in a few minutes", message)
+        self.assertEqual(fake.writes, [], "nothing may be written while a newer build processes")
+        self.assertIsNone(self.attached_build_number(fake))
+
+    def test_no_valid_build_is_refused(self):
+        fake = self.build(dict(version="1", state="INVALID"))
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake)
+        self.assertIn("No build is VALID", str(caught.exception))
+        self.assertEqual(fake.writes, [])
+
+    def test_no_builds_at_all_is_refused(self):
+        fake = self.build()
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake)
+        self.assertIn("bridge-600-archive-upload.sh", str(caught.exception))
+
+    def test_an_expired_build_is_not_attachable(self):
+        fake = self.build(dict(version="1", expired=True))
+        with self.assertRaises(asc.AscError):
+            self.run_attach(fake)
+        self.assertEqual(fake.writes, [])
+
+    def test_it_is_idempotent_once_attached(self):
+        fake = self.build(dict(version="1"))
+        self.run_attach(fake)
+        fake.writes = []
+        code, output = self.run_attach(fake)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("= build 1 already attached", output)
+        self.assertIn("already correct, nothing to do", output)
+
+    def test_export_compliance_is_declared_only_when_unanswered(self):
+        fake = self.build(dict(version="1", uses_non_exempt_encryption=None))
+        _code, output = self.run_attach(fake)
+        build_id = list(fake.store["builds"])[0]
+        patches = [(path, body) for method, path, body in fake.bodies if method == "PATCH"]
+        self.assertEqual(patches[0][0], "/v1/builds/%s" % build_id)
+        self.assertEqual(patches[0][1], {"data": {"type": "builds", "id": build_id,
+                                                  "attributes": {"usesNonExemptEncryption": False}}})
+        self.assertIs(fake.store["builds"][build_id]["attributes"]["usesNonExemptEncryption"], False)
+        # ...and the run says why.
+        self.assertIn("ITSAppUsesNonExemptEncryption=false", output)
+        self.assertIn("HTTPS", output)
+
+    def test_an_answered_export_compliance_is_left_alone(self):
+        fake = self.build(dict(version="1", uses_non_exempt_encryption=False))
+        code, output = self.run_attach(fake)
+        self.assertEqual(code, 0)
+        build_patches = [path for method, path in fake.writes
+                         if method == "PATCH" and path.startswith("/v1/builds/")]
+        self.assertEqual(build_patches, [])
+        self.assertIn("usesNonExemptEncryption=false", output)
+        self.assertIn("Build attach: 1 change(s) applied.", output)
+
+    def test_the_linkage_body_is_a_single_to_one_object(self):
+        """AppStoreVersionBuildLinkageRequest: `data` is one {type, id}, not a list."""
+        fake = self.build(dict(version="1"))
+        self.run_attach(fake)
+        version_id = list(fake.store["appStoreVersions"])[0]
+        build_id = list(fake.store["builds"])[0]
+        linkages = [(path, body) for method, path, body in fake.bodies
+                    if method == "PATCH" and "/relationships/" in path]
+        self.assertEqual(linkages, [
+            ("/v1/appStoreVersions/%s/relationships/build" % version_id,
+             {"data": {"type": "builds", "id": build_id}}),
+        ])
+
+    def test_a_build_can_be_named_by_number_or_by_version(self):
+        fake = self.build(dict(version="1", uploaded="2026-09-05T08:00:00-07:00"),
+                          dict(version="2", uploaded="2026-09-05T09:00:00-07:00"),
+                          dict(version="3", marketing_version="1.1",
+                               uploaded="2026-09-05T10:00:00-07:00"))
+        self.run_attach(fake, build="1")
+        self.assertEqual(self.attached_build_number(fake), "1")
+        self.run_attach(fake, build="1.0")      # newest VALID build of version 1.0
+        self.assertEqual(self.attached_build_number(fake), "2")
+        self.run_attach(fake, build="1.1")
+        self.assertEqual(self.attached_build_number(fake), "3")
+
+    def test_an_unknown_build_is_refused(self):
+        fake = self.build(dict(version="1"))
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake, build="9")
+        self.assertIn("No build matches --build '9'", str(caught.exception))
+        self.assertEqual(fake.writes, [])
+
+    def test_a_named_build_that_is_processing_is_refused(self):
+        fake = self.build(dict(version="1", state="PROCESSING"))
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake, build="1")
+        self.assertIn("still PROCESSING", str(caught.exception))
+
+    def test_dry_run_writes_nothing(self):
+        fake = self.build(dict(version="1"))
+        code, output = self.run_attach(fake, dry_run=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("WOULD attach build 1 to version 1.0", output)
+        self.assertIsNone(self.attached_build_number(fake))
+
+    def test_it_needs_an_editable_version(self):
+        fake = self.build(dict(version="1"), with_version=False)
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_attach(fake)
+        self.assertIn("metadata apply", str(caught.exception))
+
+    def test_the_cli_exposes_build_attach(self):
+        parser = asc.build_parser()
+        args = parser.parse_args(["build", "attach"])
+        self.assertEqual((args.command, args.action, args.build), ("build", "attach", None))
+        self.assertEqual(parser.parse_args(["build", "attach", "--build", "1"]).build, "1")
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            with self.assertRaises(SystemExit):
+                parser.parse_args(["build", "plan"])
+        finally:
+            sys.stderr = stderr
+        # main() wires the command up end to end.
+        fake = self.build(dict(version="1"))
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        self.assertEqual(asc.main(["build", "attach"], out=out, client=client), 0)
+        self.assertEqual(self.attached_build_number(fake), "1")
+
+    def test_status_sees_the_attached_build(self):
+        fake = self.build(dict(version="1"))
+        fake.add_app_info()
+        self.run_attach(fake)
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_status(client, Args(json=True), out)
+        output = out.getvalue()
+        self.assertIn("attached to 1.0: yes", output)
+        report = json.loads(output[output.index("{"):])
+        self.assertNotIn("a build attached to version 1.0", report["missing"])
+
+
 class MetadataCommandTests(unittest.TestCase):
     """`metadata apply` end to end against the fake, with the repo's real copy."""
 
@@ -2367,6 +2970,30 @@ class ClientTests(unittest.TestCase):
         client = asc.Client(credentials=None, transport=transport, verbose=False, out=io.StringIO())
         items = client.get_all("/v1/territories")
         self.assertEqual([i["id"] for i in items], ["USA", "GBR"])
+
+    def test_get_all_keeps_data_and_included_apart(self):
+        """An `include=` adds a top-level `included` array; get_all must return
+        the items untouched and get_all_included must hand back both, across pages."""
+        pages = [
+            {"data": [{"type": "appInfos", "id": "i1"}],
+             "included": [{"type": "appCategories", "id": "BUSINESS"}],
+             "links": {"next": "https://api.appstoreconnect.apple.com/v1/apps/a/appInfos?cursor=2"}},
+            {"data": [{"type": "appInfos", "id": "i2"}],
+             "included": [{"type": "appCategories", "id": "PHOTO_AND_VIDEO"}],
+             "links": {}},
+        ]
+
+        def transport(method, url, headers, body):
+            page = pages[1] if "cursor=2" in url else pages[0]
+            return 200, {}, json.dumps(page).encode()
+
+        client = asc.Client(credentials=None, transport=transport, verbose=False, out=io.StringIO())
+        items = client.get_all("/v1/apps/a/appInfos", params={"include": "primaryCategory"})
+        self.assertEqual([i["id"] for i in items], ["i1", "i2"])
+        items, included = client.get_all_included("/v1/apps/a/appInfos",
+                                                  params={"include": "primaryCategory"})
+        self.assertEqual([i["id"] for i in items], ["i1", "i2"])
+        self.assertEqual([i["id"] for i in included], ["BUSINESS", "PHOTO_AND_VIDEO"])
 
 
 class PngTests(unittest.TestCase):

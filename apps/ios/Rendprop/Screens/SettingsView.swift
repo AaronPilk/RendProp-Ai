@@ -126,7 +126,7 @@ struct SettingsView: View {
                         }
                     }
                 } footer: {
-                    Text("People who fill in the form on your shared tours. Email alerts are coming — check here for now.")
+                    Text("People who fill in the form on your shared tours land here. Open Leads to read and reply to them.")
                 }
             }
 
@@ -462,10 +462,18 @@ struct SettingsView: View {
             // Buy / manage. Subscriptions are StoreKit 2 in-app purchases
             // (Purchases/); the rows below only OPEN things — the plan itself
             // is whatever the server says in the rows above.
-            if auth.isSignedIn {
-                PlanActionRows(planName: usage?.entitlements?.plan ?? usage?.planName,
-                               onPlanChanged: { Task { await loadUsage() } })
-            }
+            //
+            // NOT gated on `auth.isSignedIn` (App Store 2.1(b): the in-app
+            // purchases must be "visible to the reviewer"). Sign in with Apple
+            // is required only to PUBLISH, and the review notes say so, so a
+            // reviewer who never signs in must still be able to reach the
+            // paywall — this row is the only signed-out route to it. Buying
+            // while signed out is safe: StoreKit takes the purchase, the
+            // transaction is deliberately left unfinished until the server
+            // confirms it, and PurchaseManager says "Sign in to finish turning
+            // on your plan. Your purchase is safe" (PurchaseManager.sync).
+            PlanActionRows(planName: usage?.entitlements?.plan ?? usage?.planName,
+                           onPlanChanged: { Task { await loadUsage() } })
         } header: {
             Text("Plan & usage")
         } footer: {
@@ -541,7 +549,8 @@ struct SettingsView: View {
     }
 
     /// "7 of 150" — or "Not included" when the plan has no allowance for it.
-    /// Never a price: plans and pricing live on rendprop.com (App Store 3.1).
+    /// Never a price: every price the app shows comes from StoreKit's
+    /// `Product.displayPrice` on the paywall (App Store 3.1).
     private func usageRow(_ title: String, used: Int?, cap: Int) -> some View {
         let value: String
         if cap > 0 {
@@ -849,9 +858,8 @@ struct SettingsView: View {
 // on. `APIError.server` carries the server's own message (decision A12); the
 // helpers below cover the status-specific cases.
 enum UserFacingError {
-    /// Storefront-gated — see `Config.pricingURL`. nil off the US storefront so
-    /// no "Upgrade plan" CTA renders where App Store 3.1.3 forbids one.
-    @MainActor static var pricingURL: URL? { Config.pricingURL }
+    // No `pricingURL` here any more: every 402 in the app now opens the in-app
+    // paywall (`PaywallRouter`) and nothing links out to a web price page.
 
     static func message(_ error: Error, fallback: String = "Something went wrong. Please try again.") -> String {
         if let api = error as? APIError {
@@ -874,8 +882,8 @@ enum UserFacingError {
     }
 
     /// 402 from the server — the plan doesn't include this (or the monthly
-    /// allowance is used up). The UI shows an "Upgrade plan" link; prices stay
-    /// on the website (App Store 3.1).
+    /// allowance is used up). The UI shows an "Upgrade plan" button that opens
+    /// the in-app StoreKit paywall; prices come from `Product.displayPrice`.
     static func isQuota(_ error: Error) -> Bool {
         (error as? APIError)?.isQuota ?? false
     }
@@ -1014,7 +1022,7 @@ struct LeadsView: View {
         } else if leads.isEmpty {
             infoRow(icon: "tray",
                     title: "No leads yet",
-                    detail: "Leads from your tours appear here — email alerts are coming. Share your tour link to get the first one.")
+                    detail: "Leads from your tours appear here. Share your tour link to get the first one.")
         } else {
             if let errorMessage {
                 // Stale list + a refresh that failed: keep the data, say so.
@@ -1435,9 +1443,10 @@ struct AgentCardEditorView: View {
             } header: {
                 Text(editingType.profilePhotoLabel)
             } footer: {
-                // Honest: there is no upload path for the photo yet — hosted
-                // tour pages render initials (audit F-C-06).
-                Text("Shows in the app and in your in-app previews. Hosted tour pages show your initials for now — photo upload is coming.")
+                // Honest: this photo is an in-app asset — hosted tour pages
+                // render initials instead (audit F-C-06). Stated as the current
+                // behaviour, not as a promise about a future release (2.1).
+                Text("Shows in the app and in your in-app previews. Hosted tour pages show your initials.")
             }
 
             Section {
