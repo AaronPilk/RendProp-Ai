@@ -607,6 +607,9 @@ class FakeAsc(object):
         # reproduces that. The fake ALWAYS demands one row per territory, as
         # Apple does.
         self.reject_plain_included_ids = False
+        # Subscription ids that have an App Review screenshot attached. The
+        # live API answers 404 on /appStoreReviewScreenshot until one exists.
+        self.review_screenshots = set()
         # PATCHing whatsNew on an app's first version returns 409 STATE_ERROR.
         self.whats_new_editable = False
         # Age-rating attributes the declaration reports, and the ones Apple
@@ -888,6 +891,16 @@ class FakeAsc(object):
                         points.append(point)
                 return 200, {"data": points, "links": {}}
 
+            if key == ("subscriptions", "appStoreReviewScreenshot"):
+                if parent_id in self.review_screenshots:
+                    return 200, {"data": {"type": "subscriptionAppStoreReviewScreenshots",
+                                          "id": "shot-%s" % parent_id,
+                                          "attributes": {"fileName": "paywall.png",
+                                                         "sourceFileChecksum": "abc",
+                                                         "assetDeliveryState": {"state": "COMPLETE"}}}}
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no screenshot", "detail": parent_id}]}
+
             if key == ("subscriptions", "subscriptionAvailability"):
                 for resource in self.store.get("subscriptionAvailabilities", {}).values():
                     if resource["_parents"].get("subscription") == parent_id:
@@ -1033,8 +1046,11 @@ class FakeAsc(object):
             base = (((data.get("relationships") or {}).get("baseTerritory")
                      or {}).get("data") or {}).get("id")
             app_id = (((data.get("relationships") or {}).get("app") or {}).get("data") or {}).get("id")
-            for resource in self.store.get("appPriceSchedules", {}).values():
+            for key_id, resource in list(self.store.get("appPriceSchedules", {}).items()):
                 if resource["_parents"].get("app") == app_id:
+                    if getattr(self, "empty_schedule_is_virtual", False) and not resource["attributes"].get("_prices"):
+                        del self.store["appPriceSchedules"][key_id]
+                        continue
                     return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
                                              "title": "already priced", "detail": "schedule exists",
                                              "status": "409"}]}
@@ -1742,6 +1758,29 @@ class ReviewSubmitTests(unittest.TestCase):
                     sys.stderr = sys.__stderr__
 
 
+class StatusCompleteProductTests(unittest.TestCase):
+    """A product with price, trial, availability, localization and screenshot is
+    complete even though Apple's API still labels it MISSING_METADATA (the UI
+    shows "Prepare for Submission" and offers Add for Review)."""
+
+    def test_a_complete_product_is_not_reported_as_missing_metadata(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        # Build the products the way `subscriptions apply` would, then mark every
+        # one as carrying its review screenshot.
+        asc.cmd_subscriptions(client, Args(action="apply"), io.StringIO())
+        fake.review_screenshots = set(fake.store["subscriptions"])
+        for subscription in fake.store["subscriptions"].values():
+            subscription["attributes"]["state"] = "MISSING_METADATA"   # what the live API reports
+        printed = io.StringIO()
+        asc.cmd_status(client, Args(), printed)
+        text = printed.getvalue()
+        self.assertNotIn("is MISSING_METADATA (not yet submittable)", text)
+        self.assertIn("complete (API says MISSING_METADATA", text)
+
+
 class ContentRightsTests(unittest.TestCase):
     def run_rights(self, fake):
         out = io.StringIO()
@@ -1812,6 +1851,15 @@ class AppPriceTests(unittest.TestCase):
         printed = self.run_price(fake)
         self.assertEqual(fake.writes, [])
         self.assertIn("the app is free (USA 0.00)", printed)
+
+    def test_an_empty_schedule_counts_as_no_price_and_is_priced_free(self):
+        """Live: the schedule resource exists before any price does."""
+        fake = FakeAsc()
+        fake._insert("appPriceSchedules", {"_prices": []}, {"app": fake.app_id, "baseTerritory": "USA"})
+        fake.empty_schedule_is_virtual = True
+        printed = self.run_price(fake)
+        self.assertIn("set the app's price to Free", printed)
+        self.assertEqual(len([p for m, p in fake.writes if m == "POST"]), 1)
 
     def test_a_paid_app_is_warned_about_not_repriced(self):
         fake = FakeAsc()

@@ -2213,6 +2213,11 @@ def read_app_base_price(client, app_id):
         "/v1/appPriceSchedules/%s/manualPrices" % schedule_id,
         params={"include": "appPricePoint,territory", "limit": 50})
     points = {item["id"]: item for item in included if item.get("type") == "appPricePoints"}
+    if not prices:
+        # Live (2026-09-05): Apple answers GET /v1/apps/{id}/appPriceSchedule with a
+        # schedule object even before "Add Pricing" has ever been pressed; the
+        # manualPrices list is what says whether the app actually has a price.
+        return None
     for price in prices:
         rel = price.get("relationships") or {}
         territory = ((rel.get("territory") or {}).get("data") or {}).get("id")
@@ -3422,6 +3427,7 @@ def cmd_status(client, args, out):
                   % ("product", "state", "avail", "price (target)", "trial", "loc", "shot"))
         mispriced = []
         notes = []
+        submittable = []
         for spec in SUBSCRIPTIONS:
             is_skipped = spec["productId"] in skipped
             subscription = by_product.get(spec["productId"])
@@ -3521,8 +3527,16 @@ def cmd_status(client, args, out):
                     missing.append("%s has no price in %d territor%s it sells in"
                                    % (spec["productId"], len(unpriced),
                                       "y" if len(unpriced) == 1 else "ies"))
-                if state == "MISSING_METADATA":
+                complete = all((prices, offers, territories_listed, locs, shot))
+                if state == "MISSING_METADATA" and not complete:
                     missing.append("%s is MISSING_METADATA (not yet submittable)" % spec["productId"])
+                elif state == "MISSING_METADATA" and complete:
+                    # Verified in the App Store Connect UI on 2026-09-05: with every
+                    # field above present the page shows "Prepare for Submission"
+                    # with an enabled "Add for Review" button, while the API keeps
+                    # reporting MISSING_METADATA. The API label lags the new UI
+                    # states; it is not a missing field.
+                    submittable.append(spec["productId"])
             products.append({
                 "productId": spec["productId"], "state": state,
                 "skipped": is_skipped,
@@ -3541,6 +3555,10 @@ def cmd_status(client, args, out):
         for note in notes:
             out.write("  note: %s\n" % note)
 
+        if submittable:
+            out.write("  %d product(s) complete (API says MISSING_METADATA, the UI says "
+                      "'Prepare for Submission'): press Add for Review on each, then on version %s\n"
+                      % (len(submittable), VERSION_STRING))
         if mispriced:
             out.write("\n")
             out.write("  !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!\n")
