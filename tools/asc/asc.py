@@ -1507,6 +1507,32 @@ def ensure_introductory_offer(client, subscription_id, spec, plan, territories=N
         )
 
 
+CONTENT_RIGHTS = "DOES_NOT_USE_THIRD_PARTY_CONTENT"
+
+
+def ensure_content_rights(client, app, plan):
+    """Answer App Information -> Content Rights, which blocks submission while unset.
+
+    Rendprop shows only two kinds of content: the user's own recordings and
+    photos of spaces they have the right to record (the app says so in
+    Settings), and the sample tours the owner made. No licensed or third-party
+    media ships in the app, so the honest answer is
+    DOES_NOT_USE_THIRD_PARTY_CONTENT (AppUpdateRequest.attributes.contentRightsDeclaration).
+    A different answer is a business decision: change CONTENT_RIGHTS and re-run.
+    """
+    current = attributes_of(app).get("contentRightsDeclaration")
+    if current == CONTENT_RIGHTS:
+        plan.note("content rights: %s" % CONTENT_RIGHTS)
+        return
+    if current:
+        plan.note("content rights already answered differently (%s); leaving it" % current)
+        return
+    body = {"data": {"type": "apps", "id": app["id"],
+                     "attributes": {"contentRightsDeclaration": CONTENT_RIGHTS}}}
+    plan.act("declare content rights: no third-party content",
+             lambda: client.patch("/v1/apps/%s" % app["id"], body))
+
+
 def ensure_notification_urls(client, app, plan):
     """Point App Store Server Notifications V2 at the Supabase function.
 
@@ -2171,6 +2197,96 @@ def ensure_app_availability_usa(client, app_id, plan):
              % (", ".join(wanted), "all", len(wanted)), apply_availability)
 
 
+APP_PRICE_USD = "0.00"   # the app itself is free; the subscriptions carry the price
+
+
+def read_app_base_price(client, app_id):
+    """(base territory id, customer price string) of the app's price schedule, or None."""
+    schedule = client.get_optional("/v1/apps/%s/appPriceSchedule" % app_id,
+                                   params={"include": "baseTerritory"})
+    if not (schedule and (schedule.get("data") or {}).get("id")):
+        return None
+    schedule_id = schedule["data"]["id"]
+    base = (((schedule["data"].get("relationships") or {}).get("baseTerritory") or {})
+            .get("data") or {}).get("id")
+    prices, included = client.get_all_included(
+        "/v1/appPriceSchedules/%s/manualPrices" % schedule_id,
+        params={"include": "appPricePoint,territory", "limit": 50})
+    points = {item["id"]: item for item in included if item.get("type") == "appPricePoints"}
+    for price in prices:
+        rel = price.get("relationships") or {}
+        territory = ((rel.get("territory") or {}).get("data") or {}).get("id")
+        point_id = ((rel.get("appPricePoint") or {}).get("data") or {}).get("id")
+        if territory == (base or USA_TERRITORY) and point_id in points:
+            return base or USA_TERRITORY, attributes_of(points[point_id]).get("customerPrice")
+    return base or USA_TERRITORY, None
+
+
+def find_app_price_point(client, app_id, territory, customer_price):
+    """The appPricePoints id for `customer_price` in `territory` (v3 points)."""
+    points = client.get_all("/v1/apps/%s/appPricePoints" % app_id,
+                            params={"filter[territory]": territory, "limit": 200})
+    for point in points:
+        if attributes_of(point).get("customerPrice") == customer_price:
+            return point["id"]
+    raise AscError("No %s price point at %s %s for the app - Apple's list has %d points."
+                   % (territory, territory, customer_price, len(points)))
+
+
+def app_price_schedule_body(app_id, territory, point_id):
+    """POST /v1/appPriceSchedules per AppPriceScheduleCreateRequest.
+
+    The price is an inline create (`${...}` handle in both halves, Apple's
+    convention - Developer Forums thread 714696 shows exactly this body for
+    price schedules), `startDate: null` = effective now, base territory USA and
+    no automatic prices listed: Apple derives the other storefronts from the
+    base price point on its own.
+    """
+    handle = "${appPrice-%s}" % territory
+    return {
+        "data": {
+            "type": "appPriceSchedules",
+            "relationships": {
+                "app": relationship("apps", app_id),
+                "baseTerritory": relationship("territories", territory),
+                "manualPrices": {"data": [{"type": "appPrices", "id": handle}]},
+            },
+        },
+        "included": [{
+            "type": "appPrices",
+            "id": handle,
+            "attributes": {"startDate": None},
+            "relationships": {"appPricePoint": relationship("appPricePoints", point_id)},
+        }],
+    }
+
+
+def ensure_app_price_free(client, app_id, plan):
+    """The app itself is free to download; subscriptions carry the price.
+
+    App Store Connect refuses to submit a version until the app has a price
+    schedule ("Pricing and Availability -> Add Pricing"), and the API cannot
+    read a "missing" state from anywhere else, so this checks and sets it.
+    """
+    current = read_app_base_price(client, app_id)
+    if current is not None:
+        territory, amount = current
+        if amount == APP_PRICE_USD:
+            plan.note("the app is free (%s %s)" % (territory, amount))
+            return
+        if amount is None:
+            plan.note("the app has a price schedule (base %s); amount not readable, leaving it" % territory)
+            return
+        plan.warn("the app is PRICED at %s %s - it should be free; change it under "
+                  "Pricing and Availability -> Price Schedule" % (territory, amount))
+        return
+
+    point_id = find_app_price_point(client, app_id, USA_TERRITORY, APP_PRICE_USD)
+    plan.act("set the app's price to Free (base territory %s)" % USA_TERRITORY,
+             lambda: client.post("/v1/appPriceSchedules",
+                                 app_price_schedule_body(app_id, USA_TERRITORY, point_id)))
+
+
 def find_editable_version(client, app_id):
     """Find the 1.0 iOS App Store version that is still editable."""
     versions = client.get_all(
@@ -2431,6 +2547,12 @@ def cmd_metadata(client, args, out):
     ensure_app_info_localization(client, app_info, values["name"], values["subtitle"], plan)
     ensure_categories(client, app_info, plan)
     ensure_age_rating(client, app_info, plan)
+
+    out.write("\nContent rights\n")
+    ensure_content_rights(client, app, plan)
+
+    out.write("\nPrice\n")
+    ensure_app_price_free(client, app["id"], plan)
 
     out.write("\nAvailability\n")
     ensure_app_availability_usa(client, app["id"], plan)
@@ -3186,6 +3308,16 @@ def cmd_status(client, args, out):
         missing.append("app availability is %d territories, launch is %s only"
                        % (len(app_territories), ",".join(LAUNCH_TERRITORIES)))
     report["appTerritories"] = app_territories
+    app_price = read_app_base_price(client, app["id"])
+    if app_price is None:
+        out.write("  app price: NOT SET - run `metadata apply` (sets Free)\n")
+        missing.append("the app's own price (Free)")
+    else:
+        out.write("  app price: %s %s%s\n" % (app_price[0], app_price[1],
+                                                " (free)" if app_price[1] == APP_PRICE_USD else " !! not free"))
+        if app_price[1] not in (None, APP_PRICE_USD):
+            missing.append("the app is priced %s %s, it should be free" % app_price)
+    report["appPrice"] = None if app_price is None else {"territory": app_price[0], "amount": app_price[1]}
 
     # --- version -----------------------------------------------------------
     out.write("\nVERSION\n")

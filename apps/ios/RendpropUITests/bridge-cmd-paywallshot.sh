@@ -291,7 +291,10 @@ fi
 # ONLY the monthly shot, ONLY when it exists and is exactly 1320 x 2868. An
 # EMPTY capture has a different name and can never land here.
 PAYWALL_PNG="MISSING"
-SRC="$RAW_DIR/$DELIVERABLE"
+# xcresulttool names exports "<name>_0_<UUID>.png"; the manifest rename keeps
+# that suffix, so match on the prefix rather than the exact name.
+SRC="$(ls "$RAW_DIR"/p01-paywall-monthly*.png 2>/dev/null | head -n 1)"
+[ -n "$SRC" ] || SRC="$RAW_DIR/$DELIVERABLE"
 if [ -e "$SRC" ]; then
   W=$(sips -g pixelWidth  "$SRC" 2>/dev/null | awk '/pixelWidth/{print $2}')
   H=$(sips -g pixelHeight "$SRC" 2>/dev/null | awk '/pixelHeight/{print $2}')

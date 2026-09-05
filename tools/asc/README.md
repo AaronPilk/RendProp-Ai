@@ -68,7 +68,7 @@ That runs, in order, stopping at the first failure:
 |---|---|---|
 | 1 | `asc.py app` | Finds the app record, or prints the New App form values. |
 | 2 | `asc.py subscriptions apply` | Subscription group, six products, en-US names and descriptions, then per product **availability → price → 1-week free trial** in that order, plus the App Store Server Notification URLs. A product Apple has no price point for is left unpriced and reported. |
-| 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
+| 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, content rights (no third-party content), the app's own price (Free, base territory USA), US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
 | 4 | `asc.py screenshots apply` | Uploads `docs/appstore/screenshots/6.9/*.png` in filename order. |
 | 5 | `asc.py review apply` | App Review contact + notes, and the paywall screenshot on every subscription. |
 | 6 | `asc.py status --skip-product com.rendprop.app.team.annual` | One page saying where everything stands and what is still missing. Team Yearly is deliberately withdrawn (see below), so it is shown but not counted. |

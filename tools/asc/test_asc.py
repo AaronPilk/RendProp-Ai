@@ -537,6 +537,7 @@ class FakeAsc(object):
         "subscriptionIntroductoryOffers": "subscriptionIntroductoryOffers",
         "subscriptionSubmissions": "subscriptionSubmissions",
         "appAvailabilities": "appAvailabilities",
+        "appPriceSchedules": "appPriceSchedules",
         "appStoreVersions": "appStoreVersions",
         "appStoreVersionLocalizations": "appStoreVersionLocalizations",
         "appInfoLocalizations": "appInfoLocalizations",
@@ -915,6 +916,41 @@ class FakeAsc(object):
                     for t in resource["attributes"].get("_territories") or []
                 ], "links": {}}
 
+            if key == ("apps", "appPricePoints"):
+                # v3 points: one per territory per amount; Free is "0.00".
+                wanted = query.get("filter[territory]") or ["USA"]
+                points = []
+                for territory in wanted:
+                    for amount in ["0.00", "0.99", "1.99", "4.99"]:
+                        points.append({"type": "appPricePoints",
+                                       "id": "app-point-%s-%s" % (territory, amount),
+                                       "attributes": {"customerPrice": amount,
+                                                      "proceeds": amount},
+                                       "relationships": {"territory": {"data": {
+                                           "type": "territories", "id": territory}}}})
+                return 200, {"data": points, "links": {}}
+
+            if key == ("apps", "appPriceSchedule"):
+                for resource in self.store.get("appPriceSchedules", {}).values():
+                    if resource["_parents"].get("app") == parent_id:
+                        return 200, {"data": self._public(resource)}
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no price schedule", "detail": "app"}]}
+
+            if key == ("appPriceSchedules", "manualPrices"):
+                resource = self.store["appPriceSchedules"][parent_id]
+                prices = resource["attributes"].get("_prices") or []
+                data = [{"type": "appPrices", "id": "price-%d" % i,
+                         "attributes": {"manual": True, "startDate": None, "endDate": None},
+                         "relationships": {
+                             "territory": {"data": {"type": "territories", "id": pr["territory"]}},
+                             "appPricePoint": {"data": {"type": "appPricePoints", "id": pr["point"]}}}}
+                        for i, pr in enumerate(prices)]
+                included = [{"type": "appPricePoints", "id": pr["point"],
+                             "attributes": {"customerPrice": pr["amount"], "proceeds": pr["amount"]}}
+                            for pr in prices]
+                return 200, {"data": data, "included": included, "links": {}}
+
             if key == ("apps", "appAvailabilityV2"):
                 for resource in self.store.get("appAvailabilities", {}).values():
                     if resource["_parents"].get("app") == parent_id:
@@ -987,6 +1023,40 @@ class FakeAsc(object):
                         "title": "There is a problem with the request entity",
                         "detail": "The subscription already has an availability.",
                         "status": "409"}]}
+
+        # POST /v1/appPriceSchedules: manualPrices are inline creates linked by
+        # a `${...}` handle (Developer Forums thread 714696 shows this body).
+        if kind == "appPriceSchedules":
+            included = {item.get("id"): item for item in payload.get("included") or []}
+            references = (((data.get("relationships") or {}).get("manualPrices")
+                           or {}).get("data") or [])
+            base = (((data.get("relationships") or {}).get("baseTerritory")
+                     or {}).get("data") or {}).get("id")
+            app_id = (((data.get("relationships") or {}).get("app") or {}).get("data") or {}).get("id")
+            for resource in self.store.get("appPriceSchedules", {}).values():
+                if resource["_parents"].get("app") == app_id:
+                    return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                                             "title": "already priced", "detail": "schedule exists",
+                                             "status": "409"}]}
+            prices = []
+            for reference in references:
+                handle = reference.get("id")
+                item = included.get(handle)
+                if item is None or not (isinstance(handle, str) and handle.startswith("${")):
+                    return 409, {"errors": [{"code": "ENTITY_ERROR.INCLUDED.INVALID_ID",
+                                             "title": "bad handle", "detail": str(handle),
+                                             "status": "409"}]}
+                point = (((item.get("relationships") or {}).get("appPricePoint") or {})
+                         .get("data") or {}).get("id")
+                if not point or not point.startswith("app-point-%s-" % base):
+                    return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                                             "title": "wrong territory point", "detail": str(point),
+                                             "status": "409"}]}
+                prices.append({"territory": base, "point": point,
+                               "amount": point.rsplit("-", 1)[-1]})
+            attributes["_prices"] = prices
+            identifier = self._insert(kind, attributes, {"app": app_id, "baseTerritory": base})
+            return 201, {"data": self._public(self.store[kind][identifier])}
 
         # POST /v2/appAvailabilities: the territoryAvailabilities are inline
         # creates. Each relationship reference must name an `included` object by
@@ -1670,6 +1740,98 @@ class ReviewSubmitTests(unittest.TestCase):
                     parser.parse_args([command, "submit"])
                 finally:
                     sys.stderr = sys.__stderr__
+
+
+class ContentRightsTests(unittest.TestCase):
+    def run_rights(self, fake):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        app = asc.require_app(client)
+        asc.ensure_content_rights(client, app, asc.Plan(out=out))
+        return out.getvalue()
+
+    def test_an_unanswered_declaration_is_set_to_no_third_party_content(self):
+        fake = FakeAsc()
+        printed = self.run_rights(fake)
+        self.assertIn("declare content rights", printed)
+        app = fake.store["apps"][fake.app_id]
+        self.assertEqual(app["attributes"]["contentRightsDeclaration"],
+                         "DOES_NOT_USE_THIRD_PARTY_CONTENT")
+        patches = [(m, p) for m, p in fake.writes if m == "PATCH"]
+        self.assertEqual(patches, [("PATCH", "/v1/apps/%s" % fake.app_id)])
+
+    def test_it_is_idempotent(self):
+        fake = FakeAsc()
+        self.run_rights(fake)
+        fake.writes = []
+        printed = self.run_rights(fake)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("content rights: DOES_NOT_USE_THIRD_PARTY_CONTENT", printed)
+
+    def test_a_different_human_answer_is_left_alone(self):
+        fake = FakeAsc(app_attributes={"contentRightsDeclaration": "USES_THIRD_PARTY_CONTENT"})
+        printed = self.run_rights(fake)
+        self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
+        self.assertIn("answered differently", printed)
+
+
+class AppPriceTests(unittest.TestCase):
+    def run_price(self, fake):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.ensure_app_price_free(client, fake.app_id, asc.Plan(out=out))
+        return out.getvalue()
+
+    def test_a_new_app_is_priced_free_in_the_usa(self):
+        fake = FakeAsc()
+        printed = self.run_price(fake)
+        self.assertIn("set the app's price to Free", printed)
+        schedules = list(fake.store["appPriceSchedules"].values())
+        self.assertEqual(len(schedules), 1)
+        self.assertEqual(schedules[0]["_parents"]["baseTerritory"], "USA")
+        self.assertEqual(schedules[0]["attributes"]["_prices"],
+                         [{"territory": "USA", "point": "app-point-USA-0.00", "amount": "0.00"}])
+
+    def test_the_body_is_an_inline_create_with_a_placeholder_handle(self):
+        body = asc.app_price_schedule_body("app-1", "USA", "app-point-USA-0.00")
+        self.assertEqual(body["data"]["type"], "appPriceSchedules")
+        self.assertEqual(body["data"]["relationships"]["baseTerritory"]["data"],
+                         {"type": "territories", "id": "USA"})
+        handle = body["data"]["relationships"]["manualPrices"]["data"][0]["id"]
+        self.assertTrue(handle.startswith("${") and handle.endswith("}"))
+        self.assertEqual(body["included"][0]["id"], handle)
+        self.assertEqual(body["included"][0]["type"], "appPrices")
+        self.assertIsNone(body["included"][0]["attributes"]["startDate"])
+        self.assertEqual(body["included"][0]["relationships"]["appPricePoint"]["data"],
+                         {"type": "appPricePoints", "id": "app-point-USA-0.00"})
+
+    def test_it_is_idempotent(self):
+        fake = FakeAsc()
+        self.run_price(fake)
+        fake.writes = []
+        printed = self.run_price(fake)
+        self.assertEqual(fake.writes, [])
+        self.assertIn("the app is free (USA 0.00)", printed)
+
+    def test_a_paid_app_is_warned_about_not_repriced(self):
+        fake = FakeAsc()
+        fake._insert("appPriceSchedules",
+                     {"_prices": [{"territory": "USA", "point": "app-point-USA-4.99", "amount": "4.99"}]},
+                     {"app": fake.app_id, "baseTerritory": "USA"})
+        printed = self.run_price(fake)
+        self.assertEqual([p for m, p in fake.writes if m == "POST"], [])
+        self.assertIn("PRICED at USA 4.99", printed)
+
+    def test_metadata_apply_prices_the_app(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.age_rating = {"violenceRealistic": "NONE"}
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_metadata(client, Args(), out)
+        self.assertEqual(code, 0)
+        self.assertIn("\nPrice\n", out.getvalue())
+        self.assertEqual(len(fake.store.get("appPriceSchedules", {})), 1)
 
 
 class AppAvailabilityTests(unittest.TestCase):

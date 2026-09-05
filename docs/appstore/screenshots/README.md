@@ -73,11 +73,11 @@ weaker image, and `s05` skips itself because the reel card stays disabled below 
 misleading screenshot and a 2.3.3 rejection. If you want a genuine before/after in the set,
 capture it on a real device against the live backend and add it by hand.
 
-**Why the paywall is never captured.** The scheme attaches `Rendprop.storekit` to the
-**run** action only, not the test action, so under `xcodebuild test` `Product.products(for:)`
-returns an empty array and the paywall correctly renders "Plans aren't available right now".
-That empty state must never reach the App Store. The IAP review screenshot has its own
-recipe — `docs/appstore/iap-review/README.md`.
+**Why the paywall is not in this set.** `StoreShots` attaches no StoreKit configuration, so
+under `xcodebuild test` `Product.products(for:)` returns an empty array and the paywall
+correctly renders "Plans aren't available right now". That empty state must never reach the
+App Store. The IAP review screenshot is produced by `PaywallShot` (an `SKTestSession` makes
+the real prices render) — `docs/appstore/iap-review/README.md`.
 
 ## Fair housing
 

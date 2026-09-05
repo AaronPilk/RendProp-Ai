@@ -21,12 +21,12 @@
 //     after" built from that would be two identical photos presented as an AI
 //     result — a misleading screenshot, and grounds for rejection under 2.3.3.
 //     The studio is captured showing the one-tap edits on offer, never a result.
-//  3. THE PAYWALL IS NEVER CAPTURED. Under `xcodebuild test` no StoreKit
-//     configuration is attached, so `Product.products(for:)` returns an empty
-//     array and the paywall correctly renders "Plans aren't available right
-//     now". That empty state must never reach the App Store. The IAP review
-//     screenshot is captured on a real phone instead — see
-//     docs/appstore/iap-review/README.md.
+//  3. THE PAYWALL IS NEVER CAPTURED HERE. This test attaches no StoreKit
+//     configuration, so `Product.products(for:)` returns an empty array and the
+//     paywall correctly renders "Plans aren't available right now". That empty
+//     state must never reach the App Store. The IAP review screenshot comes
+//     from `PaywallShot.swift`, which opens an `SKTestSession` first so the
+//     real prices render — see docs/appstore/iap-review/README.md.
 //
 //  Everything else matches the walk: identifier first, visible label second,
 //  never coordinates; `continueAfterFailure = true`; one `XCTContext.runActivity`
