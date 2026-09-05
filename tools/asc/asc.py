@@ -1331,34 +1331,57 @@ def ensure_subscription_availability(client, subscription_id, spec, plan):
     return wanted if outcome == wanted else listed
 
 
-def ensure_introductory_offer(client, subscription_id, spec, plan):
-    """Add the 1-week free trial if the product has no introductory offer."""
+def ensure_introductory_offer(client, subscription_id, spec, plan, territories=None):
+    """Add the 1-week free trial in every territory the product sells in.
+
+    Apple requires the `territory` relationship on this request — the live run
+    without it failed with ENTITY_ERROR.RELATIONSHIP.REQUIRED ("You must provide
+    a value for the relationship 'territory'"). So one offer is created PER
+    territory the product is available in (USA only at launch), and territories
+    that already carry an offer are left alone.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionIntroductoryOffers
+    """
     if is_pending(subscription_id):
         plan.defer("add a 1-week free trial to %s" % spec["productId"])
         return
-    offers = client.get_all("/v1/subscriptions/%s/introductoryOffers" % subscription_id)
-    if offers:
+    wanted = list(territories or LAUNCH_TERRITORIES)
+    offers = client.get_all(
+        "/v1/subscriptions/%s/introductoryOffers" % subscription_id,
+        params={"include": "territory", "limit": 200},
+    )
+    covered = set()
+    for offer in offers:
+        rel = ((offer.get("relationships") or {}).get("territory") or {}).get("data") or {}
+        if rel.get("id"):
+            covered.add(rel["id"])
+    if offers and not covered:
+        # An offer with no territory relationship in the response applies
+        # everywhere; nothing to add.
         plan.note("%s already has an introductory offer" % spec["productId"])
         return
-
-    body = {
-        "data": {
-            "type": "subscriptionIntroductoryOffers",
-            "attributes": {
-                "duration": INTRO_OFFER_DURATION,
-                "offerMode": INTRO_OFFER_MODE,
-                "numberOfPeriods": INTRO_OFFER_PERIODS,
-            },
-            # The `territory` relationship is optional. Omitting it applies the
-            # offer to every territory the product is sold in.
-            "relationships": {"subscription": relationship("subscriptions", subscription_id)},
+    missing = [t for t in wanted if t not in covered]
+    if not missing:
+        plan.note("%s already has a free trial in every launch territory" % spec["productId"])
+        return
+    for territory_id in missing:
+        body = {
+            "data": {
+                "type": "subscriptionIntroductoryOffers",
+                "attributes": {
+                    "duration": INTRO_OFFER_DURATION,
+                    "offerMode": INTRO_OFFER_MODE,
+                    "numberOfPeriods": INTRO_OFFER_PERIODS,
+                },
+                "relationships": {
+                    "subscription": relationship("subscriptions", subscription_id),
+                    "territory": relationship("territories", territory_id),
+                },
+            }
         }
-    }
-    # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-subscriptionIntroductoryOffers
-    plan.act(
-        "add a 1-week free trial to %s (every territory it sells in)" % spec["productId"],
-        lambda: client.post("/v1/subscriptionIntroductoryOffers", body),
-    )
+        plan.act(
+            "add a 1-week free trial to %s in %s" % (spec["productId"], territory_id),
+            lambda body=body: client.post("/v1/subscriptionIntroductoryOffers", body),
+        )
 
 
 def ensure_notification_urls(client, app, plan):
@@ -1428,7 +1451,7 @@ def cmd_subscriptions(client, args, out):
         # price for a product that has no availability yet.
         territories = ensure_subscription_availability(client, subscription_id, spec, plan)
         ensure_subscription_price(client, subscription_id, spec, territories, plan)
-        ensure_introductory_offer(client, subscription_id, spec, plan)
+        ensure_introductory_offer(client, subscription_id, spec, plan, territories)
 
     summarise(plan, out, "subscriptions")
     return 0

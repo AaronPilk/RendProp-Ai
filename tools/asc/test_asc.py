@@ -862,8 +862,10 @@ class SubscriptionPlanTests(unittest.TestCase):
             self.assertEqual(offer["attributes"]["offerMode"], "FREE_TRIAL")
             self.assertEqual(offer["attributes"]["duration"], "ONE_WEEK")
             self.assertEqual(offer["attributes"]["numberOfPeriods"], 1)
-            # No territory relationship means every territory.
-            self.assertNotIn("territory", offer["_parents"])
+            # Apple REQUIRES the territory relationship on this request (live
+            # run 2026-09-05: ENTITY_ERROR.RELATIONSHIP.REQUIRED without it), so
+            # one offer per launch territory, USA only at launch.
+            self.assertEqual(offer["_parents"].get("territory"), "USA")
 
     def test_availability_is_usa_only_for_a_us_launch(self):
         fake = FakeAsc()
