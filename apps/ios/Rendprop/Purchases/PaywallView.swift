@@ -160,22 +160,47 @@ struct PaywallView: View {
 
     @ViewBuilder
     private func planCard(_ plan: RendpropPlan) -> some View {
-        let productID = plan.productID(for: period)
-        let product = purchases.product(for: productID)
+        let offer = planOffer(for: plan)
         Button {
             Haptics.selection()
             selectedPlan = plan
         } label: {
             PlanCardBody(plan: plan,
-                         period: period,
-                         priceText: Self.priceText(product, period: period),
+                         period: offer.period,
+                         priceText: Self.priceText(offer.product, period: offer.period),
+                         note: offer.note,
                          isSelected: selectedPlan == plan,
                          isCurrent: isCurrentPlan(plan))
         }
         .buttonStyle(.plain)
-        .disabled(product == nil)
-        .opacity(product == nil ? 0.45 : 1)
+        .disabled(offer.product == nil)
+        .opacity(offer.product == nil ? 0.45 : 1)
         .accessibilityElement(children: .combine)
+    }
+
+    /// What one card offers while the picker is on `period`.
+    ///
+    /// A plan doesn't have to sell both periods. Team has no yearly product at
+    /// launch (`RendpropProducts.notSoldAtLaunch`), so on the Yearly tab its
+    /// card falls back to the monthly product: a real price, "Billed every
+    /// month.", and a small "Monthly only" note — never an empty card, and
+    /// never a Subscribe button pointed at a product that isn't for sale.
+    private struct PlanOffer {
+        let product: Product?
+        /// The period actually on offer — what the price suffix, the billing
+        /// note, and the purchase all use.
+        let period: BillingPeriod
+        /// Set only when that differs from the tab the user is on.
+        let note: String?
+    }
+
+    private func planOffer(for plan: RendpropPlan) -> PlanOffer {
+        guard let sold = plan.soldPeriod(for: period) else {
+            return PlanOffer(product: nil, period: period, note: nil)
+        }
+        return PlanOffer(product: purchases.product(for: plan.productID(for: sold)),
+                         period: sold,
+                         note: sold == period ? nil : sold.onlyNote)
     }
 
     /// StoreKit's price string, or a plain dash when that product didn't load.
@@ -221,31 +246,37 @@ struct PaywallView: View {
     @ViewBuilder
     private var buyBar: some View {
         if !purchases.products.isEmpty {
-            VStack(spacing: 10) {
-                if let product = selectedProduct {
-                    buyButton(product)
-                    Text(disclosure(for: product))
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                } else {
-                    // Only some of the six products came back. Say so instead
-                    // of offering a button that would buy the wrong plan.
-                    Text("That plan isn't available right now. Pick another one above.")
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.inkDim)
-                        .multilineTextAlignment(.center)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                restoreButton
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.horizontal, 20)
-            .padding(.top, 12)
-            .padding(.bottom, 10)
-            .background(.bar)
+            buyBarContent(planOffer(for: selectedPlan))
         }
+    }
+
+    private func buyBarContent(_ offer: PlanOffer) -> some View {
+        VStack(spacing: 10) {
+            if let product = offer.product {
+                buyButton(product)
+                // `offer.period`, not the picker: the button buys what the card
+                // shows, so the billing sentence has to match the card too.
+                Text(disclosure(for: product, period: offer.period))
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                // Only some of the products came back. Say so instead of
+                // offering a button that would buy the wrong plan.
+                Text("That plan isn't available right now. Pick another one above.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            restoreButton
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
+        .padding(.bottom, 10)
+        .background(.bar)
     }
 
     private func buyButton(_ product: Product) -> some View {
@@ -278,17 +309,13 @@ struct PaywallView: View {
         .foregroundStyle(Theme.accent)
     }
 
-    private var selectedProduct: Product? {
-        purchases.product(for: selectedPlan.productID(for: period))
-    }
-
     /// "Start 7-day free trial" ONLY when the customer is eligible AND the
     /// product actually carries an introductory offer. Otherwise "Subscribe".
     private func buyTitle(for product: Product) -> String {
         purchases.showsIntroOffer(for: product) ? "Start 7-day free trial" : "Subscribe"
     }
 
-    private func disclosure(for product: Product) -> String {
+    private func disclosure(for product: Product, period: BillingPeriod) -> String {
         if purchases.showsIntroOffer(for: product) {
             return PaywallLegal.trialDisclosure + " " + PaywallLegal.autoRenewDisclosure
         }
@@ -326,17 +353,19 @@ struct PaywallView: View {
 
 private struct PlanCardBody: View {
     let plan: RendpropPlan
+    /// The period this card is actually offering, which is not always the tab
+    /// the user is on — see `PaywallView.PlanOffer`.
     let period: BillingPeriod
     let priceText: String
+    /// "Monthly only" when this plan sells only the other period. nil normally.
+    let note: String?
     let isSelected: Bool
     let isCurrent: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             titleRow
-            Text(priceText)
-                .font(.rpTitle)
-                .foregroundStyle(Theme.ink)
+            priceRow
             Text(period.billingNote)
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
@@ -359,6 +388,23 @@ private struct PlanCardBody: View {
                 .strokeBorder(isSelected ? Theme.accent : Theme.border,
                               lineWidth: isSelected ? 2 : 1)
         )
+    }
+
+    private var priceRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(priceText)
+                .font(.rpTitle)
+                .foregroundStyle(Theme.ink)
+            if let note {
+                Text(note)
+                    .font(.rpKicker)
+                    .foregroundStyle(Theme.inkDim)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(Theme.fillSubtle, in: Capsule())
+            }
+            Spacer(minLength: 0)
+        }
     }
 
     private var titleRow: some View {

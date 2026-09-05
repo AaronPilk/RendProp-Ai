@@ -232,7 +232,7 @@ Subscription Level controls upgrade vs downgrade — **1 is the highest tier**:
 | Product ID | Reference Name | Duration | Price (USD) | Level |
 |---|---|---|---|---|
 | `com.rendprop.app.team.monthly` | Team Monthly | 1 Month | 249.00 | 1 |
-| `com.rendprop.app.team.annual` | Team Yearly | 1 Year | 2490.00 | 1 |
+| `com.rendprop.app.team.annual` | Team Yearly — **NOT SOLD AT LAUNCH — needs Apple's higher price points** | 1 Year | 2490.00 | 1 |
 | `com.rendprop.app.pro.monthly` | Pro Monthly | 1 Month | 99.00 | 2 |
 | `com.rendprop.app.pro.annual` | Pro Yearly | 1 Year | 990.00 | 2 |
 | `com.rendprop.app.starter.monthly` | Starter Monthly | 1 Month | 49.00 | 3 |
@@ -240,12 +240,25 @@ Subscription Level controls upgrade vs downgrade — **1 is the highest tier**:
 
 Family Sharing: **off** on all six.
 
-> ⚠️ **Price points.** `$990.00` and `$2,490.00` are above App Store Connect's
-> default price list. You may have to request **additional (extended) price
-> points** for the app before you can pick them — Apple approves these but it is
-> not instant. Do this early. If the exact number isn't offered, pick the nearest
-> point; the app never hardcodes a price, so whatever you choose is what the
-> paywall shows, and only the "2 months free" badge wording assumes 12-for-10.
+> 🚫 **`com.rendprop.app.team.annual` is NOT SOLD AT LAUNCH (decided 2026-09-05)
+> — it needs Apple's higher price points.** App Store Connect's yearly price
+> points stop at **USD 1,000** unless Apple grants extended ones, and $2,490 is
+> above that; the request is open. So build **five** products, not six: Team
+> ships monthly-only. The id is still defined in `Products.swift` and still maps
+> to `team`, so an existing sandbox purchase keeps its entitlement — it is
+> listed in `RendpropProducts.notSoldAtLaunch`, which the app filters out of
+> `RendpropProducts.all` before asking StoreKit, and the paywall's Yearly tab
+> shows the Team card at its monthly price with a "Monthly only" note. **To sell
+> it once Apple grants the price points: empty that set (one line), create the
+> product in ASC per the row above, and put the Team Yearly line back in
+> `docs/appstore/metadata/en-US/description.txt`.**
+
+> ⚠️ **Price points.** `$990.00` is above App Store Connect's default price
+> list. You may have to request **additional (extended) price points** for the
+> app before you can pick it — Apple approves these but it is not instant. Do
+> this early. If the exact number isn't offered, pick the nearest point; the app
+> never hardcodes a price, so whatever you choose is what the paywall shows, and
+> only the "2 months free" badge wording assumes 12-for-10.
 
 ### 5.4 Localizations — copy/paste (en-US)
 
@@ -258,7 +271,7 @@ Display Name is capped at **30 characters**, Description at **45**. These fit.
 | pro.monthly | `Pro Monthly` | `25 tours, 300 photo edits, 20 reels monthly.` |
 | pro.annual | `Pro Yearly` | `25 tours, 300 photo edits, 20 reels monthly.` |
 | team.monthly | `Team Monthly` | `80 tours, 600 photo edits, 3 seats monthly.` |
-| team.annual | `Team Yearly` | `80 tours, 600 photo edits, 3 seats monthly.` |
+| team.annual *(not at launch — see §5.3)* | `Team Yearly` | `80 tours, 600 photo edits, 3 seats monthly.` |
 
 These numbers are the real `plan_entitlements` allowances. Don't inflate them —
 the server enforces them and the app shows "8 of 8" against the same figures.
@@ -353,9 +366,11 @@ screen that shows the plan must observe it too.
 **R5 — the 402 quota copy is generic in two places.** See §3.5. Honest, just less
 specific than it could be.
 
-**R6 — annual price points.** See the warning in §5.3. If Apple will not grant
-`$2,490.00`, the "2 months free" badge stops being exactly true. The badge string
-is one constant: `BillingPeriod.annualBadge` in `Products.swift`.
+**R6 — annual price points. HAPPENED (2026-09-05).** Apple has not granted
+`$2,490.00`, so Team Yearly is not sold at launch (see §5.3) and the badge now
+names the plans it is true for: `BillingPeriod.annualBadge` in `Products.swift`
+reads "2 months free on Starter and Pro". `$990.00` still needs extended price
+points. The badge is still one constant — change it there and nowhere else.
 
 **R7 — plan numbers are duplicated.** `Products.swift` copies the allowances from
 `0010_pricing_entitlements_and_spend_ceiling.sql`. If that table changes, change

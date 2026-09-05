@@ -13,7 +13,8 @@
   --card-brd: rgba(23, 20, 35, .10);
   --ink: #17141f;
   --dim: rgba(23, 20, 31, .64);
-  --faint: rgba(23, 20, 31, .42);
+  /* .60 (not .42) so 12–13px small print clears WCAG AA at 4.64:1 on --bg. */
+  --faint: rgba(23, 20, 31, .60);
   --accent: #7c3aed;
   --accent-2: #6428d9;
   --accent-3: #6d3ae0;          /* accent-tinted text, AA on light bg */
@@ -27,7 +28,8 @@
   --shadow-lg: 0 30px 80px rgba(23, 20, 35, .16);
   --grad-text: linear-gradient(115deg, #4c1d95 0%, #7c3aed 55%, #9b6dff 100%);
   --tick-bg: rgba(124, 58, 237, .12);
-  --ok: #0f9d58;
+  --ok: #0a7a44;                /* 5.03:1 on --bg — the old #0f9d58 was 3.26:1 */
+  --bad: #cc2f35;               /* 4.85:1 on --bg — the old #e5484d was 3.64:1 */
   --radius: 24px;
   --nav-h: 64px;
   --max: 1180px;
@@ -45,7 +47,7 @@ html[data-theme="dark"] {
   --card-brd: rgba(255, 255, 255, .09);
   --ink: #f4f2fb;
   --dim: rgba(244, 242, 251, .62);
-  --faint: rgba(244, 242, 251, .38);
+  --faint: rgba(244, 242, 251, .55);
   --accent: #9b6dff;
   --accent-2: #7c3aed;
   --accent-3: #c4a8ff;
@@ -60,6 +62,7 @@ html[data-theme="dark"] {
   --grad-text: linear-gradient(115deg, #e9defc 0%, #c4a8ff 38%, #9b6dff 62%, #7c3aed 100%);
   --tick-bg: rgba(155, 109, 255, .16);
   --ok: #34d399;
+  --bad: #ff6b6f;
 }
 @media (prefers-color-scheme: dark) {
   html:not([data-theme="light"]) {
@@ -70,7 +73,7 @@ html[data-theme="dark"] {
     --card-brd: rgba(255, 255, 255, .09);
     --ink: #f4f2fb;
     --dim: rgba(244, 242, 251, .62);
-    --faint: rgba(244, 242, 251, .38);
+    --faint: rgba(244, 242, 251, .55);
     --accent: #9b6dff;
     --accent-2: #7c3aed;
     --accent-3: #c4a8ff;
@@ -102,6 +105,20 @@ img { display: block; max-width: 100%; height: auto; }
 a { color: inherit; }
 ::selection { background: rgba(155, 109, 255, .35); }
 .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+
+/* ---------- Keyboard focus ----------
+   Every interactive thing here is custom-painted, so the UA's default ring is
+   nearly invisible on the dark bands and the gradient buttons. One rule, one
+   accent outline, everywhere. */
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 6px; }
+.band-dark :focus-visible, .hero :focus-visible { outline-color: #c4a8ff; }
+.app-badge:focus-visible { outline-offset: 4px; }
+
+/* Skip link — off-screen until it takes focus. */
+.skip { position: absolute; left: 12px; top: -60px; z-index: 200; padding: 11px 18px;
+  border-radius: 12px; background: var(--accent); color: #fff; font-weight: 700;
+  font-size: 14px; text-decoration: none; transition: top .2s var(--ease); }
+.skip:focus { top: 12px; }
 section { position: relative; padding: clamp(72px, 10vw, 128px) 0; }
 section[id] { scroll-margin-top: calc(var(--nav-h) + 16px); }
 
@@ -151,7 +168,31 @@ h3 { font-size: clamp(19px, 2.2vw, 24px); letter-spacing: -.015em; }
 .nav-links a { text-decoration: none; font-size: 14.5px; font-weight: 600; color: var(--dim); transition: color .25s; }
 .nav-links a:hover, .nav-links a[aria-current="page"] { color: var(--ink); }
 .nav-cta { padding: 10px 18px; font-size: 14.5px; color: #fff !important; }
-@media (max-width: 900px) { .nav-links a:not(.nav-cta):not(.theme-btn) { display: none; } }
+/* The page links live in their own row so they can become a panel on phones. */
+.nav-menu { display: flex; align-items: center; gap: 22px; }
+.menu-btn { display: none; }
+@media (max-width: 900px) {
+  .menu-btn { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px;
+    border: 1px solid var(--card-brd); background: var(--card); color: var(--ink);
+    font-size: 16px; line-height: 1; cursor: pointer; font-family: inherit; }
+  .nav-menu { display: none; position: absolute; top: calc(var(--nav-h) - 6px); left: 16px; right: 16px;
+    flex-direction: column; align-items: stretch; gap: 2px; padding: 10px;
+    background: var(--nav-bg); -webkit-backdrop-filter: blur(18px) saturate(1.4);
+    backdrop-filter: blur(18px) saturate(1.4);
+    border: 1px solid var(--nav-brd); border-radius: 18px; box-shadow: var(--shadow); }
+  .nav-menu[data-open="true"] { display: flex; }
+  .nav-menu a { padding: 12px 14px; border-radius: 12px; font-size: 15.5px; }
+  .nav-menu a:hover, .nav-menu a[aria-current="page"] { background: var(--card); }
+}
+/* Small phones: the bar is brand + menu + theme + CTA, and at 360px that only
+   fits if the wordmark and the gaps tighten. Nothing here changes the desktop. */
+@media (max-width: 620px) {
+  .nav-inner { padding: 0 16px; }
+  .brand { font-size: 12.5px; letter-spacing: .16em; white-space: nowrap; }
+  .nav-links { gap: 10px; }
+  .nav-cta { padding: 9px 14px; font-size: 14px; }
+  .menu-btn, .theme-btn { width: 36px; height: 36px; }
+}
 
 /* Theme toggle */
 .theme-btn { width: 38px; height: 38px; border-radius: 12px; border: 1px solid var(--card-brd);
@@ -405,6 +446,7 @@ a.ind:active { transform: translateY(-2px) scale(.995); transition-duration: .1s
 .tier-name { font-size: 14px; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; color: var(--accent-3); }
 .tier-price { font-size: 46px; font-weight: 800; letter-spacing: -.03em; margin-top: 10px; }
 .tier-price small { font-size: 16px; font-weight: 600; color: var(--dim); letter-spacing: 0; }
+.tier-alt { color: var(--accent-3); font-size: 13.5px; font-weight: 650; margin-top: 4px; }
 .tier-for { color: var(--dim); font-size: 14px; margin-top: 6px; min-height: 2.6em; }
 .tier ul { list-style: none; margin: 22px 0; display: grid; gap: 11px; }
 .tier li { display: flex; gap: 10px; align-items: flex-start; font-size: 14.5px; color: var(--dim); }
@@ -439,7 +481,7 @@ table.cmp { width: 100%; border-collapse: collapse; min-width: 760px; font-size:
   border-bottom: 1px dashed var(--card-brd); font-size: 15px; color: var(--dim); }
 .math-row b { color: var(--ink); white-space: nowrap; }
 .math-total { display: flex; justify-content: space-between; padding-top: 16px; font-size: 17px; font-weight: 800; }
-.math-total .bad { color: #e5484d; } .math-total .good { color: var(--ok); }
+.math-total .bad { color: var(--bad); } .math-total .good { color: var(--ok); }
 
 /* ---------- FAQ ---------- */
 .faq { max-width: 760px; margin: 48px auto 0; display: grid; gap: 12px; }

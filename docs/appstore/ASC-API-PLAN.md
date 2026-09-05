@@ -65,15 +65,29 @@ copied into the repo, never printed, and never logged — the request log is
 | **Availability** | `POST /v1/subscriptionAvailabilities` | `availableInNewTerritories: false`, `availableTerritories: [USA]` |
 | Price lookup | `GET /v1/subscriptions/{id}/pricePoints?filter[territory]=USA&include=territory&limit=8000` | reads `customerPrice`, verifies the territory |
 | Price | `POST /v1/subscriptionPrices` | **no attributes**; relationships `subscription` + `territory` (USA) + `subscriptionPricePoint` |
-| Free trial | `POST /v1/subscriptionIntroductoryOffers` | `offerMode: FREE_TRIAL`, `duration: ONE_WEEK`, `numberOfPeriods: 1`, no `territory` relationship (= every territory it sells in) |
+| Free trial | `POST /v1/subscriptionIntroductoryOffers` | `offerMode: FREE_TRIAL`, `duration: ONE_WEEK`, `numberOfPeriods: 1`, **`territory` relationship required** — one offer per territory |
+| Un-price | `DELETE /v1/subscriptionPrices/{id}` | `subscriptions unprice` only. 204 on success |
 
-> **Order matters: availability must exist before pricing.** On the first live
-> run the price POST failed with `ENTITY_ERROR.RELATIONSHIP.INVALID` pointed at
-> the price point id. A follow-up probe proved the cause was ordering, not the
-> request shape: the *identical* request succeeded once
-> `POST /v1/subscriptionAvailabilities` had run. `GET
-> /v1/subscriptions/{id}/subscriptionAvailability` returns **404** — not an empty
-> object — before availability exists, which is what "not set" looks like.
+> ### Order matters: availability → price → introductory offer, per territory
+>
+> This is the single most important thing learned from the live runs, and all
+> three steps are per-territory.
+>
+> 1. **Availability first.** The price POST failed with
+>    `ENTITY_ERROR.RELATIONSHIP.INVALID` pointed at the price point id. A
+>    follow-up probe proved the cause was ordering, not the request shape: the
+>    *identical* request succeeded once `POST /v1/subscriptionAvailabilities` had
+>    run. `GET /v1/subscriptions/{id}/subscriptionAvailability` returns **404** —
+>    not an empty object — before availability exists, which is what "not set"
+>    looks like.
+> 2. **Then the price**, for each territory the product is actually available in
+>    (`asc.py` reads that back rather than assuming the launch list).
+> 3. **Then the introductory offer, with an explicit `territory`.** Live
+>    2026-09-05: without it, `ENTITY_ERROR.RELATIONSHIP.REQUIRED` — "You must
+>    provide a value for the relationship 'territory'". The relationship is
+>    *optional in the spec* and required in practice, so `asc.py` creates one
+>    offer per territory the product sells in and skips territories that already
+>    have one.
 
 ### US-only launch
 
@@ -88,16 +102,58 @@ Two consequences:
   fills the gaps from `GET /v1/subscriptionPricePoints/{usaPointId}/equalizations`
   and posts one price per territory, so a product is never left half-priced.
 * **An availability that is already too wide cannot be narrowed by the API.**
-  `subscriptionAvailabilities` has POST and GET but **no PATCH and no DELETE**.
-  `asc.py` re-POSTs in case that behaves as an upsert; if Apple refuses, it warns
-  loudly with the exact UI path and carries on rather than aborting. Whether the
-  re-POST works is **UNVERIFIED** — no live attempt has been made. The live probe
-  created `com.rendprop.app.team.monthly` with all 175 territories, so **that one
-  product will hit this path** on the next run: watch for `FIX THIS BY HAND`.
+  `subscriptionAvailabilities` has POST and GET but **no PATCH and no DELETE**
+  (and the POST is marked `deprecated` in spec v4.4.1, while remaining the only
+  write there is). `asc.py` re-POSTs in case that behaves as an upsert; if Apple
+  refuses, it warns loudly with the exact UI path and carries on rather than
+  aborting. Whether the re-POST works is still **UNVERIFIED** — as of the
+  2026-09-05 runs all six products read back as USA-only, so the path has not had
+  to fire. The same re-POST, with an **empty** territory list, is what
+  `subscriptions unprice` falls back on to take a product off sale.
 
-The app's own territories are set with `POST /v2/appAvailabilities`
-(`availableInNewTerritories: false`, plus `territoryAvailabilities` as JSON:API
-inline creates in the `included` array). This runs in `metadata apply`.
+The app's own territories are set with `POST /v2/appAvailabilities`, in
+`metadata apply`. The request body is the fiddliest one this tool sends, so it is
+worth spelling out. Per `AppAvailabilityV2CreateRequest` in spec v4.4.1:
+
+```jsonc
+{
+  "data": {
+    "type": "appAvailabilities",
+    "attributes": { "availableInNewTerritories": false },
+    "relationships": {
+      "app": { "data": { "type": "apps", "id": "<app id>" } },
+      "territoryAvailabilities": {
+        "data": [ { "type": "territoryAvailabilities", "id": "USA" } ]   // <- id REQUIRED
+      }
+    }
+  },
+  "included": [                                     // TerritoryAvailabilityInlineCreate
+    {
+      "type": "territoryAvailabilities",            // only `type` is required
+      "id": "USA",                                  // client-supplied temporary handle
+      "attributes": { "available": true },
+      "relationships": { "territory": { "data": { "type": "territories", "id": "USA" } } }
+    }
+  ]
+}
+```
+
+The two halves are linked by an id the **client** invents:
+`relationships.territoryAvailabilities.data[]` requires both `id` and `type`,
+while `included[]` (`TerritoryAvailabilityInlineCreate`) requires only `type` —
+so the id there exists purely to be matched. The spec ships **no example** for
+this request, and the live attempt returned
+**409 `ENTITY_ERROR.INCLUDED.INVALID_ID`**, which is exactly the id-matching
+failing. `asc.py` therefore sends the territory id as the handle, and if Apple
+returns `INCLUDED.INVALID_ID` retries once with `territoryAvailability-<t>`,
+which cannot be confused with an existing resource id. If both fail it warns with
+the UI path and carries on — a territory list is one click in the UI.
+
+> Apple titles this endpoint **"Create an app pre-order"**, which is alarming
+> until you read the schema: `releaseDate` and `preOrderEnabled` are *optional*
+> attributes of `TerritoryAvailabilityInlineCreate` and `asc.py` sends neither.
+> Only `available: true` is sent, so this sets territories and nothing else. A
+> test asserts that no other attribute is ever included.
 
 The six products, matching `docs/LAUNCH-CONTRACT.md`:
 
@@ -134,12 +190,43 @@ point to charge.
 > 249.00 MXN compares equal to 249.00 USD. (`customerPrice` also comes back as
 > `"249.0"`, one decimal place, which `Decimal` comparison handles.)
 >
-> **Price point caveat.** `asc.py` asks Apple which USD price points that specific
-> subscription offers, and matches the target exactly. If Apple does not offer the
-> exact amount — most likely for the annual tiers, where the high price points are
-> sparse — it picks the **nearest** and prints a large, unmissable warning naming
-> both amounts. It never silently substitutes a different tier. If the substitute
-> is wrong, fix it in Monetization → Subscriptions.
+> **Price point caveat — and the guard that now enforces it.** `asc.py` asks
+> Apple which USD price points that specific subscription offers and matches the
+> target exactly. If Apple does not offer the exact amount it takes the nearest
+> **only if that is within `PRICE_TOLERANCE` (2 %)**, with a loud warning naming
+> both amounts. Further away than that, **no price is created at all**.
+>
+> This guard exists because of a real loss. On the live run of 2026-09-05 there
+> was no guard: Apple's USD points for a *yearly* subscription stop at
+> **USD 1000.00**, so `com.rendprop.app.team.annual` (target USD 2490.00) was
+> priced at USD 1000.00 and the POST returned **201**. The product became
+> genuinely sellable at 40 % of its intended price. An unpriced subscription
+> cannot be sold; a wrongly priced one can, so refusing is the safe outcome.
+>
+> Consequences, all automated:
+>
+> * Refused products are listed under `UNPRICED` in the run summary.
+> * `asc.py status` prints **every product's actual amount** and raises a
+>   `WRONG PRICE` block, plus a non-zero exit, for any that disagrees with
+>   `docs/LAUNCH-CONTRACT.md`. It reads the amount from the price point via
+>   `include=subscriptionPricePoint` — the amount is not an attribute of the
+>   price itself.
+> * `asc.py subscriptions unprice <productId>` takes a wrongly priced product off
+>   sale: `DELETE /v1/subscriptionPrices/{id}` first, then a re-POST of
+>   `subscriptionAvailabilities` with an **empty** `availableTerritories` array
+>   (legal — `SubscriptionAvailabilityCreateRequest` sets no `minItems`), then
+>   the exact UI path.
+> * `--skip-product <productId>`, repeatable, excludes a product from
+>   `subscriptions apply`, `review apply` and `review submit` entirely.
+>
+> **The fix is to ask Apple for higher price points.** Every app gets 800; the
+> Account Holder can request 100 more, up to USD 10,000, at
+> <https://developer.apple.com/contact/request/app-store-higher-price-points/>
+> (linked from Apple's
+> [Set a price](https://developer.apple.com/help/app-store-connect/manage-app-pricing/set-a-price/)
+> help page). In the UI they appear under **Pricing and Availability → Price
+> Schedule → Add Pricing → See Additional Prices**. Once granted, re-run
+> `subscriptions apply` and the guard passes.
 
 **Sandbox lag.** Apple's own note on the subscription endpoints: metadata changes
 made through the API can take **up to 1 hour** to appear in the sandbox.
@@ -151,9 +238,69 @@ made through the API can take **up to 1 hour** to appear in the sandbox.
 | App info | `GET /v1/apps/{id}/appInfos` → pick the editable one | — |
 | Name/subtitle/privacy | `POST`/`PATCH /v1/appInfoLocalizations` | `name`, `subtitle`, `privacyPolicyUrl`, `locale` |
 | Categories | `PATCH /v1/appInfos/{id}` | relationships `primaryCategory` → `BUSINESS`, `secondaryCategory` → `PHOTO_AND_VIDEO` |
-| Age rating | `PATCH /v1/ageRatingDeclarations/{id}` | every content field `NONE`, every boolean `false` → 4+ |
+| Age rating | `GET` then `PATCH /v1/ageRatingDeclarations/{id}` | exactly the attributes the GET returns, each set to its none/false value |
 | Version | `POST /v1/appStoreVersions` | `platform: IOS`, `versionString: "1.0"`, `copyright`, `releaseType: MANUAL` |
-| Listing copy | `POST`/`PATCH /v1/appStoreVersionLocalizations` | `description`, `keywords`, `promotionalText`, `whatsNew`, `supportUrl`, `marketingUrl` |
+| Listing copy | `POST`/`PATCH /v1/appStoreVersionLocalizations` | `description`, `keywords`, `promotionalText`, `supportUrl`, `marketingUrl` — and `whatsNew` **only if the app has a released version** |
+
+> ### "What's New" does not exist on a first version
+>
+> Live 2026-09-05, on the app's first and only `appStoreVersion`
+> (`PREPARE_FOR_SUBMISSION`, never released):
+>
+> ```
+> PATCH /v1/appStoreVersionLocalizations/{id} -> 409
+> [STATE_ERROR] The request cannot be fulfilled because of the state of another resource.
+>     Attribute 'whatsNew' cannot be edited at this time.
+>     at /data/attributes/whatsNew
+> ```
+>
+> "What's New" describes what changed *since the previous release*, so on a first
+> release there is nothing for it to say and App Store Connect will not take it.
+> Two defences, because losing the whole listing to one rejected attribute would
+> be absurd:
+>
+> 1. **Do not send it.** `app_has_previous_release()` lists the app's versions and
+>    looks for one in a genuinely-released state — `READY_FOR_SALE`,
+>    `PREORDER_READY_FOR_SALE`, `REPLACED_WITH_NEW_VERSION`, `REMOVED_FROM_SALE`,
+>    `DEVELOPER_REMOVED_FROM_SALE`, `PENDING_DEVELOPER_RELEASE`,
+>    `PENDING_APPLE_RELEASE` (from `AppStoreVersionState` / `AppVersionState`).
+>    `ACCEPTED` and the other approval states are deliberately excluded: approved
+>    is not released. The version being edited is excluded too — it cannot be its
+>    own predecessor.
+> 2. **Recover if it is rejected anyway.** On that exact 409 the request is sent
+>    once more without `whatsNew`, so `description`, `keywords`, `marketingUrl`,
+>    `promotionalText` and `supportUrl` all still land. Any other error is
+>    re-raised untouched.
+>
+> `release_notes.txt` stays in the repo and starts being used at version 1.1.
+
+> ### Age rating: PATCH what Apple asks for, not what you guessed
+>
+> Live 2026-09-05: a PATCH carrying 22 attributes chosen up-front returned
+> **409 `ENTITY_ERROR.ATTRIBUTE.REQUIRED`**. The declaration's attribute set is
+> not fixed — Apple keeps adding questions (`advertising`, `ageAssurance`,
+> `lootBox`, `messagingAndChat`, `parentalControls`, `userGeneratedContent`,
+> `socialMediaAgeRestricted`, `koreaAgeRatingOverride`, `ageRatingOverrideV2`…),
+> and which ones are required varies. So `asc.py`:
+>
+> * **GETs the declaration first** and PATCHes exactly the attribute keys Apple
+>   returned, each set to its "nothing applies" value from
+>   `AgeRatingDeclarationUpdateRequest`: `false` for the 11 booleans, `"NONE"` for
+>   the 13 frequency enums (`NONE | INFREQUENT_OR_MILD | FREQUENT_OR_INTENSE |
+>   INFREQUENT | FREQUENT`), and `"NONE"` for `ageRatingOverride`,
+>   `ageRatingOverrideV2` and `koreaAgeRatingOverride`, whose enums differ from
+>   each other but all include `NONE`.
+> * **Never sends `kidsAgeBand`** (it would put the app in the Kids category) or
+>   `developerAgeRatingInfoUrl`.
+> * On `ATTRIBUTE.REQUIRED`, **prints Apple's `detail` and `source.pointer`
+>   verbatim**, then retries once having answered exactly the attributes those
+>   pointers name. An attribute with no known safe value is reported, never
+>   guessed.
+> * Never fails the run — a rejected age rating prints the UI path instead.
+>
+> A test asserts that every attribute of `AgeRatingDeclarationUpdateRequest` in
+> spec v4.4.1 is classified as boolean, frequency, override or skip, so a new
+> Apple question shows up as a test failure rather than a live 409.
 
 Category ids come from `GET /v1/appCategories?filter[platforms]=IOS&exists[parent]=false`.
 There is no endpoint to create a category — the ids are Apple's fixed set, and
@@ -375,6 +522,37 @@ form. Then **Publish**. The version cannot be submitted until this is complete.
   everything except the United States. `com.rendprop.app.team.monthly` is the
   likely one, because a diagnostic probe gave it all 175 territories.
 
+### 5b. Team Yearly's price — **blocker for that one product**
+
+`com.rendprop.app.team.annual` is on sale at **USD 1000.00** instead of
+USD 2490.00, because Apple's yearly USD price points stop at 1000.00 and the
+2026-09-05 run had no guard. Do these in order:
+
+1. Take it off sale:
+
+   ```bash
+   python3 tools/asc/asc.py subscriptions unprice com.rendprop.app.team.annual
+   ```
+
+   Read the output — if the API refuses both the delete and the empty
+   availability, it prints the exact place to click.
+
+2. Request the higher price points (Account Holder only), which adds 100 points
+   up to USD 10,000:
+   <https://developer.apple.com/contact/request/app-store-higher-price-points/>
+
+3. Until that is granted, keep the product out of every run:
+
+   ```bash
+   python3 tools/asc/asc.py subscriptions apply --skip-product com.rendprop.app.team.annual
+   python3 tools/asc/asc.py review apply        --skip-product com.rendprop.app.team.annual
+   python3 tools/asc/asc.py review submit       --skip-product com.rendprop.app.team.annual
+   ```
+
+4. Once granted, drop the flag and re-run `subscriptions apply`. Confirm with
+   `asc.py status`, which prints every product's actual amount and shouts
+   `WRONG PRICE` if any of them disagrees with `docs/LAUNCH-CONTRACT.md`.
+
 ### 6. Upload a build — **blocker**
 
 ```bash
@@ -407,17 +585,23 @@ confirmation.
 ### 9. Submit
 
 Run `python3 tools/asc/asc.py status` first — it lists anything still missing,
-and shows each product's state, territories, prices, trial and review screenshot.
+and shows each product's state, territories, **price amount**, trial and review
+screenshot. It exits non-zero if any price disagrees with
+`docs/LAUNCH-CONTRACT.md`, so read the `WRONG PRICE` block if one appears.
 
 Optionally send the subscriptions on their own:
 
 ```bash
-python3 tools/asc/asc.py review submit          # or: review submit --dry-run
+python3 tools/asc/asc.py review submit --skip-product com.rendprop.app.team.annual
 ```
 
+(`--dry-run` shows what it would submit. Drop `--skip-product` once Team Yearly
+has a correct price — see step 5b.)
+
 Then the app version itself: **your app → the 1.0 version → Add for Review →
-Submit to App Review**. On a first release the six subscriptions are reviewed
-together with the app, so confirm they appear in the submission.
+Submit to App Review**. On a first release the subscriptions are reviewed
+together with the app, so confirm the ones you intend to ship appear in the
+submission — and that Team Yearly does **not**, until it is priced correctly.
 
 ---
 
@@ -434,22 +618,30 @@ together with the app, so confirm they appear in the submission.
   `-authenticationKeyPath` / `-authenticationKeyID` / `-authenticationKeyIssuerID`
   flags are likewise documented only in `xcodebuild -help`; the script falls back
   to `xcrun altool --upload-app --apiKey --apiIssuer` if they do not work.
-* **Introductory offer territory scope.** The `territory` relationship on
-  `SubscriptionIntroductoryOfferCreateRequest` is optional, and `asc.py` omits it
-  to mean "every territory". Apple's prose does not state this explicitly, so it
-  is inferred from the relationship being optional. **UNVERIFIED in prose** —
-  after the first apply, check one product under Monetization → Subscriptions →
-  Introductory Offer and confirm it reads all countries.
-* **Age rating attribute set.** Taken from `AgeRatingDeclarationUpdateRequest` in
-  spec v4.4.1. `asc.py` sets the stable content fields and skips the newer
-  `ageRatingOverrideV2`, `ageAssurance`, `kidsAgeBand` and
-  `developerAgeRatingInfoUrl`, which are not needed for a 4+ rating. If the PATCH
-  is rejected, the tool prints the exact UI path instead of failing the run.
-* **Live API behaviour.** Nothing here has been run against the real App Store
-  Connect API — there are no credentials in the build environment. Request shapes
-  were validated against Apple's OpenAPI spec and against a fake in-memory API in
-  the test suite, but the first real run is the first real run. It is idempotent,
-  so a mid-run failure is safe to retry.
+* **Introductory offer territory scope.** ~~Optional, so omitted.~~ **Settled
+  live 2026-09-05**: omitting `territory` returns
+  `ENTITY_ERROR.RELATIONSHIP.REQUIRED`. `asc.py` now creates one offer per
+  territory the product sells in (USA only at launch).
+* **Age rating attribute set.** Verified against
+  `AgeRatingDeclarationUpdateRequest` in spec v4.4.1, and no longer a fixed list
+  — the PATCH is driven by what the GET returns. See the age-rating box above.
+* **Deleting a price that is already in effect.** `DELETE
+  /v1/subscriptionPrices/{id}` exists (204), but Apple documents the POST as
+  scheduling a price *change*, and does not say whether an in-effect price can be
+  removed. **UNVERIFIED** — `subscriptions unprice` tries it and falls back to an
+  empty `availableTerritories`, then to the UI path.
+* **The `appAvailabilities` inline-create id.** The spec requires an id on the
+  relationship reference and makes it optional on the `included` object, but
+  ships no example, and the live attempt returned `INCLUDED.INVALID_ID`. Which
+  handle Apple actually accepts is **UNVERIFIED**; `asc.py` tries the territory
+  id, then a distinct handle, then prints the UI path.
+* **Live API behaviour.** Four live runs have now happened (2026-09-05). What
+  they proved is recorded inline above: availability before price, per-territory
+  introductory offers, the yearly USD 1000.00 price ceiling, the `whatsNew`
+  STATE_ERROR, the age-rating `ATTRIBUTE.REQUIRED`, and the `appAvailabilities`
+  `INCLUDED.INVALID_ID`. Every one of them is reproduced by the fake API in
+  `tools/asc/test_asc.py`. Everything is idempotent, so a mid-run failure is safe
+  to retry.
 
 ---
 

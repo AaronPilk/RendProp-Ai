@@ -418,12 +418,12 @@ function landingPage(): string {
 </head>
 <body>
   <div class="mark">RENDPROP</div>
-  <h1>Film it on your phone.<br>Show it like a film.</h1>
+  <h1>Win the listing.<br>Skip the film crew.</h1>
   <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
   photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
   <div>
-    <a class="pill" href="mailto:aaron@pilk.ai">Get early access</a>
-    <span class="soon">iOS app — coming soon</span>
+    <a class="pill" href="https://apps.apple.com/us/app/id6808982413">Get it on the App Store</a>
+    <span class="soon">iOS app — on the App Store</span>
   </div>
   <footer>
     <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:aaron@pilk.ai">Contact</a>

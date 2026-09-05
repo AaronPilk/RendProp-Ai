@@ -67,7 +67,7 @@ final class PurchaseManager: ObservableObject {
 
     /// productID → "this customer may still use the introductory offer".
     /// From `Product.SubscriptionInfo.isEligibleForIntroOffer`, which is
-    /// per subscription GROUP, so all six ids answer the same. The paywall must
+    /// per subscription GROUP, so every id answers the same. The paywall must
     /// still check that the product actually HAS an introductory offer before
     /// promising a free trial.
     @Published private(set) var introOfferEligible: [String: Bool] = [:]
@@ -150,7 +150,9 @@ final class PurchaseManager: ObservableObject {
 
     // MARK: - Products
 
-    /// Ask StoreKit for the six subscription products. An empty result is not
+    /// Ask StoreKit for the subscription products we currently sell
+    /// (`RendpropProducts.all` — which leaves out `notSoldAtLaunch` ids, Team
+    /// Yearly today). An empty result is not
     /// an error — it is the simulator with no `.storekit` file attached, or a
     /// device with no App Store account, or products still "Waiting for
     /// Review". The paywall says "Plans aren't available right now" and offers
@@ -180,8 +182,8 @@ final class PurchaseManager: ObservableObject {
         products.first { $0.id == productID }
     }
 
-    /// Eligibility is per subscription group, so one lookup answers for all six
-    /// ids — but ask through whichever product we actually have.
+    /// Eligibility is per subscription group, so one lookup answers for every
+    /// id — but ask through whichever product we actually have.
     private func refreshIntroEligibility() async {
         guard let subscription = products.compactMap({ $0.subscription }).first else {
             introOfferEligible = [:]

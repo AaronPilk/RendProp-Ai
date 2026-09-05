@@ -9,6 +9,6 @@ Rendprop turns a walkthrough you film on your iPhone into a drone-style flythrou
 • AI aerial intro shot, always disclosed as AI-generated.
 • Floor plans, scanned in 3D with RoomPlan on supported iPhones or uploaded.
 • Modes for real estate, event venues, restaurants, retail stores, and gyms.
-• Subscriptions with a 7-day free trial: Starter, Pro, and Team, monthly or yearly.
+• Subscriptions with a 7-day free trial: Starter and Pro monthly or yearly, Team monthly.
 
 Everything except publishing works without an account. Tell us what to build next: aaron@pilk.ai

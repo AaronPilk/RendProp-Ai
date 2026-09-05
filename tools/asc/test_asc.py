@@ -517,6 +517,14 @@ class FakeAsc(object):
         ("subscriptions", "prices"): ("subscriptionPrices", "subscription"),
         ("subscriptions", "introductoryOffers"):
             ("subscriptionIntroductoryOffers", "subscription"),
+        ("apps", "appStoreVersions"): ("appStoreVersions", "app"),
+        ("appStoreVersions", "appStoreVersionLocalizations"):
+            ("appStoreVersionLocalizations", "appStoreVersion"),
+        ("apps", "appInfos"): ("appInfos", "app"),
+        ("appInfos", "appInfoLocalizations"): ("appInfoLocalizations", "appInfo"),
+        ("appStoreVersionLocalizations", "appScreenshotSets"):
+            ("appScreenshotSets", "appStoreVersionLocalization"),
+        ("appScreenshotSets", "appScreenshots"): ("appScreenshots", "appScreenshotSet"),
     }
     # POST collection -> stored type
     COLLECTIONS = {
@@ -529,7 +537,17 @@ class FakeAsc(object):
         "subscriptionIntroductoryOffers": "subscriptionIntroductoryOffers",
         "subscriptionSubmissions": "subscriptionSubmissions",
         "appAvailabilities": "appAvailabilities",
+        "appStoreVersions": "appStoreVersions",
+        "appStoreVersionLocalizations": "appStoreVersionLocalizations",
+        "appInfoLocalizations": "appInfoLocalizations",
     }
+
+    # Apple's real USD ladder for a YEARLY subscription stops at 1000.00, which
+    # is why com.rendprop.app.team.annual (2490.00) was priced at 1000.00 on the
+    # live run. Pass this to reproduce that.
+    YEARLY_CEILING_LADDER = [
+        "49.00", "99.00", "249.00", "490.00", "990.00", "999.99", "1000.00",
+    ]
 
     def __init__(self, price_ladder=None, app_attributes=None):
         self.store = {}
@@ -555,8 +573,10 @@ class FakeAsc(object):
         attributes.update(app_attributes or {})
         self.app_id = self._insert("apps", attributes, {})
         self.territories = ["USA", "GBR", "CAN", "AUS", "DEU", "FRA", "JPN"]
+        # A ladder that offers every Rendprop price exactly. Tests that care
+        # about a missing price point pass YEARLY_CEILING_LADDER instead.
         self.price_ladder = price_ladder or [
-            "49.00", "99.00", "249.00", "490.00", "990.00", "999.99",
+            "49.00", "99.00", "249.00", "490.00", "990.00", "2490.00",
         ]
         # Every territory offers the same numeric ladder, which is exactly why a
         # wrong-territory point is dangerous: 249.00 MXN looks like 249.00 USD.
@@ -569,6 +589,20 @@ class FakeAsc(object):
         # Whether a second POST to subscriptionAvailabilities replaces the set.
         # Unknown against the live API; the conservative answer is the default.
         self.availability_upsert = False
+        # DELETE /v1/subscriptionPrices/{id}: (status, code) to answer with, or
+        # None to actually delete. Apple does not document whether a price that
+        # is already in effect can be removed, so both answers are testable.
+        self.price_delete_error = None
+        # 409 ENTITY_ERROR.INCLUDED.INVALID_ID when an inline-created
+        # territoryAvailability reuses a real territory id as its temporary id.
+        # This is the live failure of POST /v2/appAvailabilities.
+        self.reject_territory_ids_as_included_ids = False
+        # PATCHing whatsNew on an app's first version returns 409 STATE_ERROR.
+        self.whats_new_editable = False
+        # Age-rating attributes the declaration reports, and the ones Apple
+        # insists on receiving even though it did not report them.
+        self.age_rating = None
+        self.age_rating_required = []
 
     # -- storage ---------------------------------------------------------
     def _insert(self, kind, attributes, parents):
@@ -597,6 +631,61 @@ class FakeAsc(object):
             if r["_parents"].get(relationship_name) == parent_id
         ]
 
+    # -- optional records a test can add ---------------------------------
+    def add_app_info(self, state="PREPARE_FOR_SUBMISSION", age_rating="FOUR_PLUS"):
+        return self._insert(
+            "appInfos",
+            {"state": state, "appStoreAgeRating": age_rating},
+            {"app": self.app_id,
+             "primaryCategory": asc.PRIMARY_CATEGORY,
+             "secondaryCategory": asc.SECONDARY_CATEGORY},
+        )
+
+    def add_version(self, version_string="1.0", state="PREPARE_FOR_SUBMISSION",
+                    localization=None):
+        version_id = self._insert(
+            "appStoreVersions",
+            {"versionString": version_string, "appVersionState": state,
+             "platform": asc.PLATFORM, "copyright": asc.COPYRIGHT},
+            {"app": self.app_id},
+        )
+        if localization is not None:
+            self._insert("appStoreVersionLocalizations",
+                         dict(localization, locale=asc.PRIMARY_LOCALE),
+                         {"appStoreVersion": version_id})
+        return version_id
+
+    def repoint_price(self, product_id, amount):
+        """Point a product's existing USA price at a different amount.
+
+        Reproduces the live state: com.rendprop.app.team.annual carries a real,
+        sellable USD 1000.00 price against a USD 2490.00 target.
+        """
+        subscription_id = None
+        for resource in self.store.get("subscriptions", {}).values():
+            if resource["attributes"].get("productId") == product_id:
+                subscription_id = resource["id"]
+        point = make_price_point(subscription_id, "USA", amount)
+        self.point_amounts[point["id"]] = amount
+        for price in self.store.get("subscriptionPrices", {}).values():
+            if price["_parents"].get("subscription") == subscription_id:
+                price["_parents"]["subscriptionPricePoint"] = point["id"]
+        return point
+
+    def _included_price_points(self, prices):
+        """The subscriptionPricePoints an `include=` would return for `prices`."""
+        included = []
+        for price in prices:
+            point_id = (((price.get("relationships") or {}).get("subscriptionPricePoint")
+                         or {}).get("data") or {}).get("id")
+            if not point_id or point_id not in self.point_amounts:
+                continue
+            included.append({
+                "type": "subscriptionPricePoints", "id": point_id,
+                "attributes": {"customerPrice": self.point_amounts[point_id]},
+            })
+        return included
+
     # -- transport -------------------------------------------------------
     def __call__(self, method, url, headers, body):
         self.last_headers = dict(headers)
@@ -608,8 +697,8 @@ class FakeAsc(object):
         if method != "GET":
             self.writes.append((method, path))
         status, data = self.route(method, path, query, payload)
-        return status, {"X-Rate-Limit": "user-hour-lim:3500;user-hour-rem:3400"}, \
-            json.dumps(data).encode("utf-8")
+        raw = b"" if data is None else json.dumps(data).encode("utf-8")
+        return status, {"X-Rate-Limit": "user-hour-lim:3500;user-hour-rem:3400"}, raw
 
     def route(self, method, path, query, payload):
         parts = [p for p in path.split("/") if p][1:]  # drop the "v1"
@@ -620,7 +709,26 @@ class FakeAsc(object):
             return self.post(parts, payload)
         if method == "PATCH":
             return self.patch(parts, payload)
+        if method == "DELETE":
+            return self.delete(parts)
         return 405, {"errors": [{"code": "METHOD", "title": "no", "detail": path, "status": "405"}]}
+
+    def delete(self, parts):
+        """Only /v1/subscriptionPrices/{id} has a DELETE in Apple's spec (204)."""
+        if len(parts) != 2 or parts[0] != "subscriptionPrices":
+            return 405, {"errors": [{"code": "METHOD", "title": "no",
+                                     "detail": "/".join(parts), "status": "405"}]}
+        if self.price_delete_error:
+            status, code = self.price_delete_error
+            return status, {"errors": [{
+                "code": code, "status": str(status),
+                "title": "There is a problem with the request entity",
+                "detail": "The price cannot be deleted."}]}
+        if parts[1] not in self.store.get("subscriptionPrices", {}):
+            return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                     "title": "no such price", "detail": parts[1]}]}
+        del self.store["subscriptionPrices"][parts[1]]
+        return 204, None
 
     def get(self, parts, query):
         if parts == ["apps"]:
@@ -631,6 +739,14 @@ class FakeAsc(object):
 
         if parts == ["territories"]:
             return 200, {"data": [{"type": "territories", "id": t} for t in self.territories],
+                         "links": {}}
+
+        if parts == ["builds"]:
+            return 200, {"data": [], "links": {}}
+
+        if parts == ["appCategories"]:
+            return 200, {"data": [{"type": "appCategories", "id": c}
+                                  for c in (asc.PRIMARY_CATEGORY, asc.SECONDARY_CATEGORY)],
                          "links": {}}
 
         if len(parts) == 3:
@@ -646,7 +762,22 @@ class FakeAsc(object):
                 elif self.hidden_products:
                     data = [d for d in data
                             if d["attributes"].get("productId") not in self.hidden_products]
-                return 200, {"data": data, "links": {}}
+                page = {"data": data, "links": {}}
+                # A price's AMOUNT lives on its price point, and JSON:API returns
+                # included resources in a top-level array - never inside the
+                # item. Anything reading amounts has to go through `included`.
+                include = (query.get("include") or [""])[0].split(",")
+                if key == ("subscriptions", "prices") and "subscriptionPricePoint" in include:
+                    page["included"] = self._included_price_points(data)
+                return 200, page
+
+            if key == ("appInfos", "ageRatingDeclaration"):
+                if self.age_rating is None:
+                    return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                             "title": "no declaration", "detail": parent_id}]}
+                return 200, {"data": {"type": "ageRatingDeclarations",
+                                      "id": "decl-1",
+                                      "attributes": dict(self.age_rating)}}
 
             if key == ("subscriptions", "pricePoints"):
                 # Model App Store Connect's real behaviour: ids are base64url of
@@ -658,7 +789,11 @@ class FakeAsc(object):
                     if territory not in wanted:
                         continue
                     for amount in self.price_ladder:
-                        points.append(make_price_point(parent_id, territory, amount))
+                        point = make_price_point(parent_id, territory, amount)
+                        # Remember what each point costs, the way a caller does:
+                        # the amount is knowable only from a listing like this.
+                        self.point_amounts[point["id"]] = amount
+                        points.append(point)
                 return 200, {"data": points, "links": {}}
 
             if key == ("subscriptions", "subscriptionAvailability"):
@@ -762,6 +897,29 @@ class FakeAsc(object):
                         "detail": "The subscription already has an availability.",
                         "status": "409"}]}
 
+        # The live POST /v2/appAvailabilities returned 409
+        # ENTITY_ERROR.INCLUDED.INVALID_ID. The reading modelled here is that a
+        # temporary inline-create id may not be an existing territory id.
+        if kind == "appAvailabilities" and self.reject_territory_ids_as_included_ids:
+            for item in payload.get("included") or []:
+                if item.get("id") in self.territories:
+                    return 409, {"errors": [{
+                        "code": "ENTITY_ERROR.INCLUDED.INVALID_ID",
+                        "title": "There is a problem with the request entity",
+                        "detail": "The provided entity includes an ID that is invalid.",
+                        "status": "409",
+                        "source": {"pointer": "/included/0/id"}}]}
+
+        # A newly created version comes back in PREPARE_FOR_SUBMISSION, which is
+        # how a second run recognises it instead of creating another one.
+        if kind == "appStoreVersions":
+            attributes.setdefault("appVersionState", "PREPARE_FOR_SUBMISSION")
+
+        # "What's New" cannot be written on an app's first version.
+        if kind == "appStoreVersionLocalizations" and not self.whats_new_editable:
+            if attributes.get("whatsNew"):
+                return self._whats_new_state_error()
+
         if kind == "subscriptionSubmissions":
             subscription_id = (((data.get("relationships") or {}).get("subscription")
                                 or {}).get("data") or {}).get("id")
@@ -791,17 +949,52 @@ class FakeAsc(object):
         identifier = self._insert(kind, attributes, parents)
         return 201, {"data": self._public(self.store[kind][identifier])}
 
+    def _whats_new_state_error(self):
+        """Apple's exact 409 for whatsNew on a first version (live, 2026-09-05)."""
+        return 409, {"errors": [{
+            "code": "STATE_ERROR",
+            "title": "The request cannot be fulfilled because of the state of another resource.",
+            "detail": "Attribute 'whatsNew' cannot be edited at this time.",
+            "status": "409",
+            "source": {"pointer": "/data/attributes/whatsNew"}}]}
+
     def patch(self, parts, payload):
         if len(parts) != 2:
             return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
                                      "detail": "/".join(parts), "status": "404"}]}
         collection, identifier = parts
+        attributes = payload["data"].get("attributes") or {}
+
+        if collection == "ageRatingDeclarations":
+            if self.age_rating is None:
+                return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
+                                         "detail": identifier, "status": "404"}]}
+            # ENTITY_ERROR.ATTRIBUTE.REQUIRED, one error per attribute Apple
+            # wants but did not receive - and did not report in the GET either,
+            # which is what made the live PATCH of 22 chosen fields fail.
+            absent = [name for name in self.age_rating_required if name not in attributes]
+            if absent:
+                return 409, {"errors": [{
+                    "code": "ENTITY_ERROR.ATTRIBUTE.REQUIRED",
+                    "title": "There is a problem with the request entity",
+                    "detail": "You must provide a value for the attribute '%s' "
+                              "with this request." % name,
+                    "status": "409",
+                    "source": {"pointer": "/data/attributes/%s" % name}} for name in absent]}
+            self.age_rating.update(attributes)
+            return 200, {"data": {"type": "ageRatingDeclarations", "id": identifier,
+                                  "attributes": dict(self.age_rating)}}
+
+        if collection == "appStoreVersionLocalizations" and not self.whats_new_editable:
+            if "whatsNew" in attributes:
+                return self._whats_new_state_error()
+
         kind = self.COLLECTIONS.get(collection, collection)
         resource = self.store.get(kind, {}).get(identifier)
         if resource is None:
             return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
                                      "detail": identifier, "status": "404"}]}
-        resource["attributes"].update(payload["data"].get("attributes") or {})
+        resource["attributes"].update(attributes)
         return 200, {"data": self._public(resource)}
 
 
@@ -1149,7 +1342,8 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertEqual(len(point_calls), 6)
 
     def test_annual_price_above_the_ladder_warns_loudly(self):
-        fake = FakeAsc()  # ladder tops out at 999.99, below the 2490.00 annual
+        # Apple's yearly USD points stop at 1000.00, below the 2490.00 annual.
+        fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
         _code, output = self.run_subscriptions(fake)
         self.assertIn("PRICE POINT WARNING", output)
         self.assertIn("2490.00", output)
@@ -1373,6 +1567,669 @@ class AppAvailabilityTests(unittest.TestCase):
         printed = out.getvalue()
         self.assertIn("Pricing and", printed)
         self.assertIn("United States only", printed)
+
+    def test_no_pre_order_is_created(self):
+        """The endpoint is titled "Create an app pre-order"; this is not one.
+
+        `releaseDate` and `preOrderEnabled` are optional attributes on
+        TerritoryAvailabilityInlineCreate. Sending neither sets territories only.
+        """
+        body = asc.app_availability_body("app-1", ["USA"])
+        for included in body["included"]:
+            self.assertEqual(set(included["attributes"]), {"available"})
+        self.assertEqual(set(body["data"]["attributes"]), {"availableInNewTerritories"})
+
+    def test_every_included_id_is_referenced_by_the_relationship(self):
+        """The two halves of a JSON:API inline create must agree, id for id."""
+        for client_id in (None, lambda t: "territoryAvailability-%s" % t):
+            body = asc.app_availability_body("app-1", ["USA", "CAN"], client_id=client_id)
+            referenced = [r["id"] for r in
+                          body["data"]["relationships"]["territoryAvailabilities"]["data"]]
+            self.assertEqual([i["id"] for i in body["included"]], referenced)
+            self.assertEqual(len(set(referenced)), 2, "ids must be unique")
+            for included in body["included"]:
+                # AppAvailabilityV2CreateRequest: included[] items are
+                # TerritoryAvailabilityInlineCreate, type "territoryAvailabilities".
+                self.assertEqual(included["type"], "territoryAvailabilities")
+                self.assertIs(included["attributes"]["available"], True)
+                self.assertEqual(included["relationships"]["territory"]["data"]["type"],
+                                 "territories")
+
+    def test_invalid_included_id_is_retried_with_a_distinct_id(self):
+        """The live 409: ENTITY_ERROR.INCLUDED.INVALID_ID on POST /v2/appAvailabilities."""
+        fake = FakeAsc()
+        fake.reject_territory_ids_as_included_ids = True
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
+
+        posts = [path for method, path in fake.writes if method == "POST"]
+        self.assertEqual(posts, ["/v2/appAvailabilities", "/v2/appAvailabilities"],
+                         "the first shape is retried once, not abandoned")
+        self.assertIn("INCLUDED.INVALID_ID", out.getvalue())
+        # The retry landed, so the app really is USA-only.
+        self.assertEqual(len(fake.store["appAvailabilities"]), 1)
+        availability = list(fake.store["appAvailabilities"].values())[0]
+        self.assertEqual(availability["attributes"]["_territories"],
+                         ["territoryAvailability-USA"])
+
+    def test_a_second_failure_falls_back_to_the_ui_path(self):
+        attempts = []
+
+        def transport(method, url, headers, body):
+            if method == "POST":
+                attempts.append(json.loads(body.decode()))
+                return 409, {}, json.dumps({"errors": [{
+                    "code": "ENTITY_ERROR.INCLUDED.INVALID_ID", "status": "409",
+                    "title": "There is a problem with the request entity",
+                    "detail": "The provided entity includes an ID that is invalid."}]}).encode()
+            return 404, {}, b'{"errors":[{"code":"NOT_FOUND","status":"404","title":"t","detail":"d"}]}'
+
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
+        # Never raises: a territory list is a business decision, not a crash.
+        asc.ensure_app_availability_usa(client, "app-1", asc.Plan(out=out))
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(attempts[0]["included"][0]["id"], "USA")
+        self.assertEqual(attempts[1]["included"][0]["id"], "territoryAvailability-USA")
+        self.assertIn("United States only", out.getvalue())
+
+
+class PriceGuardTests(unittest.TestCase):
+    """Apple's yearly USD points stop at 1000.00; the 2490.00 target has no
+    near neighbour, and the live run priced the product at 1000.00 anyway."""
+
+    def run_subscriptions(self, fake, **kwargs):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_subscriptions(client, Args(**kwargs), out)
+        return code, out.getvalue()
+
+    def priced_products(self, fake):
+        by_id = {r["id"]: r["attributes"].get("productId")
+                 for r in fake.store.get("subscriptions", {}).values()}
+        return sorted(by_id[p["_parents"]["subscription"]]
+                      for p in fake.store.get("subscriptionPrices", {}).values())
+
+    def test_a_point_far_from_the_target_is_never_written(self):
+        fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
+        code, output = self.run_subscriptions(fake)
+        self.assertEqual(code, 0, "one unpriceable product must not fail the run")
+        priced = self.priced_products(fake)
+        self.assertNotIn("com.rendprop.app.team.annual", priced)
+        self.assertEqual(len(priced), 5, "every other product is still priced")
+        self.assertIn("NOT PRICING com.rendprop.app.team.annual", output)
+
+    def test_the_refusal_names_both_amounts_and_the_way_out(self):
+        fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
+        _code, output = self.run_subscriptions(fake)
+        self.assertIn("2490.00", output)
+        self.assertIn("1000.00", output)
+        self.assertIn("--skip-product com.rendprop.app.team.annual", output)
+
+    def test_the_summary_lists_every_unpriced_product(self):
+        fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
+        _code, output = self.run_subscriptions(fake)
+        self.assertIn("UNPRICED", output)
+        self.assertIn("cannot be sold", output)
+
+    def test_a_substitute_inside_the_tolerance_is_still_used(self):
+        # 2450.00 is 1.6% below 2490.00 - close enough to charge.
+        fake = FakeAsc(price_ladder=["49.00", "99.00", "249.00",
+                                     "490.00", "990.00", "2450.00"])
+        _code, output = self.run_subscriptions(fake)
+        self.assertIn("PRICE POINT WARNING", output)
+        self.assertNotIn("NOT PRICING", output)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+
+    def test_re_running_still_refuses_rather_than_settling(self):
+        fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
+        self.run_subscriptions(fake)
+        _code, output = self.run_subscriptions(fake)
+        self.assertIn("NOT PRICING com.rendprop.app.team.annual", output)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 5)
+
+    def test_an_unpriced_product_gets_no_free_trial(self):
+        """A trial on a product that cannot be sold is meaningless - and Apple
+        may refuse the offer, which would abort a run over a skipped product."""
+        fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
+        _code, output = self.run_subscriptions(fake)
+        offers = {p["_parents"]["subscription"]
+                  for p in fake.store["subscriptionIntroductoryOffers"].values()}
+        annual = [r["id"] for r in fake.store["subscriptions"].values()
+                  if r["attributes"]["productId"] == "com.rendprop.app.team.annual"][0]
+        self.assertNotIn(annual, offers)
+        self.assertEqual(len(offers), 5)
+        self.assertIn("no free trial for com.rendprop.app.team.annual", output)
+
+    def test_a_priced_product_still_gets_its_trial(self):
+        fake = FakeAsc()
+        self.run_subscriptions(fake)
+        self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
+
+    def test_the_tolerance_maths(self):
+        self.assertEqual(asc.price_gap("2490.00", "1000.0"),
+                         Decimal("1490.00") / Decimal("2490.00"))
+        self.assertTrue(asc.price_is_acceptable("249.00", "249.00"))
+        self.assertTrue(asc.price_is_acceptable("990.00", "999.99"))   # 1.0%
+        self.assertFalse(asc.price_is_acceptable("990.00", "1019.99"))  # 3.0%
+        self.assertFalse(asc.price_is_acceptable("2490.00", "1000.0"))
+        # Exactly on the 2% line is acceptable; a hair past it is not.
+        self.assertTrue(asc.price_is_acceptable("100.00", "102.00"))
+        self.assertFalse(asc.price_is_acceptable("100.00", "102.01"))
+
+    def test_the_tolerance_is_two_percent(self):
+        self.assertEqual(asc.PRICE_TOLERANCE, Decimal("0.02"))
+
+
+class SkipProductTests(unittest.TestCase):
+    """--skip-product leaves a product out of every command that writes to it."""
+
+    def test_a_skipped_product_is_never_created(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_subscriptions(
+            client, Args(skip_product=["com.rendprop.app.team.annual"]), out)
+        self.assertEqual(code, 0)
+        products = {r["attributes"]["productId"]
+                    for r in fake.store["subscriptions"].values()}
+        self.assertNotIn("com.rendprop.app.team.annual", products)
+        self.assertEqual(len(products), 5)
+        self.assertIn("Skipping 1 product", out.getvalue())
+
+    def test_the_flag_is_repeatable(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_subscriptions(client, Args(skip_product=[
+            "com.rendprop.app.team.annual", "com.rendprop.app.pro.annual"]), out)
+        self.assertEqual(len(fake.store["subscriptions"]), 4)
+
+    def test_review_submit_skips_it_too(self):
+        fake = FakeAsc()
+        group_id = fake._insert("subscriptionGroups", {"referenceName": "rendprop_plans"},
+                                {"app": fake.app_id})
+        for spec in asc.SUBSCRIPTIONS:
+            fake._insert("subscriptions",
+                         {"productId": spec["productId"], "name": spec["name"],
+                          "state": "READY_TO_SUBMIT"},
+                         {"group": group_id})
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_review_submit(client, Args(action="submit",
+                                           skip_product=["com.rendprop.app.team.annual"]), out)
+        submitted = {fake.store["subscriptions"][i]["attributes"]["productId"]
+                     for i in fake.submitted}
+        self.assertEqual(len(submitted), 5)
+        self.assertNotIn("com.rendprop.app.team.annual", submitted)
+
+    def test_an_unknown_product_id_is_refused_rather_than_ignored(self):
+        with self.assertRaises(asc.AscError) as caught:
+            asc.active_subscriptions(Args(skip_product=["com.rendprop.app.typo"]))
+        self.assertIn("com.rendprop.app.typo", str(caught.exception))
+
+    def test_the_cli_exposes_it_on_the_commands_that_write_products(self):
+        parser = asc.build_parser()
+        for command in ("subscriptions", "review"):
+            args = parser.parse_args([command, "apply",
+                                      "--skip-product", "com.rendprop.app.team.annual",
+                                      "--skip-product", "com.rendprop.app.pro.annual"])
+            self.assertEqual(args.skip_product,
+                             ["com.rendprop.app.team.annual", "com.rendprop.app.pro.annual"])
+        self.assertEqual(parser.parse_args(["review", "submit"]).skip_product, [])
+
+
+class UnpriceTests(unittest.TestCase):
+    """`subscriptions unprice` gets a wrongly priced product off sale."""
+
+    def build(self):
+        fake = FakeAsc()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_subscriptions(client, Args(), out)
+        return fake, asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+
+    def run_unprice(self, fake, client, product="com.rendprop.app.team.annual", **kwargs):
+        out = io.StringIO()
+        code = asc.cmd_subscriptions(
+            client, Args(action="unprice", product=product, **kwargs), out)
+        return code, out.getvalue()
+
+    def test_the_price_is_deleted(self):
+        fake, client = self.build()
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        code, output = self.run_unprice(fake, client)
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 5)
+        deletes = [path for method, path in fake.writes if method == "DELETE"]
+        self.assertEqual(len(deletes), 1)
+        self.assertTrue(deletes[0].startswith("/v1/subscriptionPrices/"), deletes[0])
+        self.assertIn("remove the USA price", output)
+        # The other five products are untouched.
+        self.assertEqual(len(fake.store["subscriptions"]), 6)
+
+    def test_a_refused_delete_withdraws_the_product_from_sale(self):
+        fake, client = self.build()
+        # Apple does not document whether a price already in effect is deletable.
+        fake.price_delete_error = (409, "STATE_ERROR")
+        fake.availability_upsert = True
+        code, output = self.run_unprice(fake, client)
+        self.assertEqual(code, 1, "the product still needs a human's attention")
+        self.assertIn("withdraw", output)
+        # SubscriptionAvailabilityCreateRequest puts no minItems on
+        # availableTerritories, so an empty list is a legal "sold nowhere".
+        empty = [r for r in fake.store["subscriptionAvailabilities"].values()
+                 if r["attributes"].get("_territories") == []]
+        self.assertEqual(len(empty), 1)
+        self.assertIs(empty[0]["attributes"]["availableInNewTerritories"], False)
+
+    def test_when_neither_works_the_exact_ui_path_is_printed(self):
+        fake, client = self.build()
+        fake.price_delete_error = (409, "STATE_ERROR")
+        fake.availability_upsert = False  # the re-POST 409s as well
+        code, output = self.run_unprice(fake, client)
+        self.assertEqual(code, 1)
+        self.assertIn("FIX THIS BY HAND", output)
+        self.assertIn("Monetization -> Subscriptions", output)
+        self.assertIn("Availability", output)
+
+    def test_a_product_with_no_price_is_a_no_op(self):
+        fake, client = self.build()
+        self.run_unprice(fake, client)
+        code, output = self.run_unprice(fake, client)
+        self.assertEqual(code, 0)
+        self.assertIn("no prices", output)
+
+    def test_it_needs_a_known_product_id(self):
+        fake, client = self.build()
+        with self.assertRaises(asc.AscError):
+            self.run_unprice(fake, client, product=None)
+        with self.assertRaises(asc.AscError):
+            self.run_unprice(fake, client, product="com.rendprop.app.nope")
+
+    def test_the_cli_exposes_unprice_only_on_subscriptions(self):
+        parser = asc.build_parser()
+        args = parser.parse_args(["subscriptions", "unprice", "com.rendprop.app.team.annual"])
+        self.assertEqual(args.action, "unprice")
+        self.assertEqual(args.product, "com.rendprop.app.team.annual")
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            for command in ("metadata", "screenshots", "review"):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args([command, "unprice"])
+        finally:
+            sys.stderr = stderr
+
+
+class WhatsNewTests(unittest.TestCase):
+    """A first version has no previous release, so it has no "What's New"."""
+
+    def client(self, fake, out):
+        return asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+
+    def test_an_app_with_only_a_first_version_has_no_previous_release(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        out = io.StringIO()
+        self.assertFalse(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
+
+    def test_a_released_version_counts(self):
+        fake = FakeAsc()
+        fake.add_version("1.0", "READY_FOR_SALE")
+        fake.add_version("1.1", "PREPARE_FOR_SUBMISSION")
+        out = io.StringIO()
+        self.assertTrue(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
+
+    def test_an_approved_but_unreleased_version_does_not_count(self):
+        """ACCEPTED means App Review passed, not that customers ever saw it."""
+        fake = FakeAsc()
+        fake.add_version("1.0", "ACCEPTED")
+        out = io.StringIO()
+        self.assertFalse(asc.app_has_previous_release(self.client(fake, out), fake.app_id))
+
+    def test_a_version_is_not_its_own_predecessor(self):
+        fake = FakeAsc()
+        version_id = fake.add_version("1.0", "PENDING_DEVELOPER_RELEASE")
+        out = io.StringIO()
+        client = self.client(fake, out)
+        self.assertTrue(asc.app_has_previous_release(client, fake.app_id))
+        self.assertFalse(asc.app_has_previous_release(client, fake.app_id,
+                                                      exclude_version_id=version_id))
+
+    def test_the_state_error_is_retried_without_whats_new(self):
+        """The live 409, and the point of the retry: nothing else is lost."""
+        fake = FakeAsc()
+        version_id = fake.add_version(
+            "1.0", "PREPARE_FOR_SUBMISSION",
+            localization={"description": "old", "keywords": "old"})
+        out = io.StringIO()
+        plan = asc.Plan(out=out)
+        asc.ensure_version_localization(
+            self.client(fake, out), version_id,
+            {"description": "new copy", "keywords": "a,b",
+             "promotionalText": "promo", "supportUrl": "https://rendprop.com/support",
+             "marketingUrl": "https://rendprop.com", "whatsNew": "First release"},
+            plan)
+
+        written = list(fake.store["appStoreVersionLocalizations"].values())[0]["attributes"]
+        self.assertEqual(written["description"], "new copy")
+        self.assertEqual(written["supportUrl"], "https://rendprop.com/support")
+        self.assertEqual(written["promotionalText"], "promo")
+        self.assertNotIn("whatsNew", written)
+        printed = out.getvalue()
+        self.assertIn("cannot be edited at this time", printed)
+        self.assertIn("What's New is not used for a first release", printed)
+
+    def test_a_created_localization_recovers_the_same_way(self):
+        fake = FakeAsc()
+        version_id = fake.add_version("1.0", "PREPARE_FOR_SUBMISSION")
+        out = io.StringIO()
+        asc.ensure_version_localization(
+            self.client(fake, out), version_id,
+            {"description": "copy", "whatsNew": "First release"}, asc.Plan(out=out))
+        written = list(fake.store["appStoreVersionLocalizations"].values())[0]["attributes"]
+        self.assertEqual(written["description"], "copy")
+        self.assertNotIn("whatsNew", written)
+
+    def test_whats_new_is_kept_when_the_api_accepts_it(self):
+        fake = FakeAsc()
+        fake.whats_new_editable = True
+        version_id = fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+                                      localization={"description": "old"})
+        out = io.StringIO()
+        asc.ensure_version_localization(
+            self.client(fake, out), version_id,
+            {"description": "copy", "whatsNew": "Bug fixes"}, asc.Plan(out=out))
+        written = list(fake.store["appStoreVersionLocalizations"].values())[0]["attributes"]
+        self.assertEqual(written["whatsNew"], "Bug fixes")
+
+    def test_any_other_error_still_surfaces(self):
+        """Only the whatsNew STATE_ERROR is recovered from; nothing else."""
+        def transport(method, url, headers, body):
+            if method == "GET":
+                return 200, {}, json.dumps({"data": [{
+                    "type": "appStoreVersionLocalizations", "id": "loc-1",
+                    "attributes": {"locale": "en-US"}}], "links": {}}).encode()
+            return 409, {}, json.dumps({"errors": [{
+                "code": "ENTITY_ERROR.ATTRIBUTE.INVALID", "status": "409",
+                "title": "There is a problem with the request entity",
+                "detail": "The attribute 'keywords' is too long.",
+                "source": {"pointer": "/data/attributes/keywords"}}]}).encode()
+
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
+        with self.assertRaises(asc.ApiError):
+            asc.ensure_version_localization(
+                client, "v-1", {"keywords": "x", "whatsNew": "y"}, asc.Plan(out=out))
+
+    def test_the_released_states_are_ones_apple_defines(self):
+        """Every state in RELEASED_VERSION_STATES is in Apple's own enums.
+
+        AppStoreVersionState / AppVersionState, spec v4.4.1.
+        """
+        app_store_version_state = {
+            "ACCEPTED", "DEVELOPER_REMOVED_FROM_SALE", "DEVELOPER_REJECTED", "IN_REVIEW",
+            "INVALID_BINARY", "METADATA_REJECTED", "PENDING_APPLE_RELEASE",
+            "PENDING_CONTRACT", "PENDING_DEVELOPER_RELEASE", "PREPARE_FOR_SUBMISSION",
+            "PREORDER_READY_FOR_SALE", "PROCESSING_FOR_APP_STORE", "READY_FOR_REVIEW",
+            "READY_FOR_SALE", "REJECTED", "REMOVED_FROM_SALE",
+            "WAITING_FOR_EXPORT_COMPLIANCE", "WAITING_FOR_REVIEW",
+            "REPLACED_WITH_NEW_VERSION", "NOT_APPLICABLE",
+        }
+        self.assertTrue(asc.RELEASED_VERSION_STATES <= app_store_version_state)
+        # Approval-but-not-release states must NOT be in there.
+        for state in ("ACCEPTED", "IN_REVIEW", "PREPARE_FOR_SUBMISSION", "WAITING_FOR_REVIEW"):
+            self.assertNotIn(state, asc.RELEASED_VERSION_STATES)
+
+
+class AgeRatingTests(unittest.TestCase):
+    """PATCH only what Apple returns; when it wants more, it says which."""
+
+    # Every attribute of AgeRatingDeclarationUpdateRequest in spec v4.4.1.
+    SPEC_ATTRIBUTES = {
+        "advertising", "alcoholTobaccoOrDrugUseOrReferences", "contests", "gambling",
+        "gamblingSimulated", "gunsOrOtherWeapons", "healthOrWellnessTopics", "kidsAgeBand",
+        "lootBox", "medicalOrTreatmentInformation", "messagingAndChat", "parentalControls",
+        "profanityOrCrudeHumor", "ageAssurance", "sexualContentGraphicAndNudity",
+        "sexualContentOrNudity", "socialMedia", "socialMediaAgeRestricted",
+        "horrorOrFearThemes", "matureOrSuggestiveThemes", "unrestrictedWebAccess",
+        "userGeneratedContent", "violenceCartoonOrFantasy",
+        "violenceRealisticProlongedGraphicOrSadistic", "violenceRealistic",
+        "ageRatingOverride", "ageRatingOverrideV2", "koreaAgeRatingOverride",
+        "developerAgeRatingInfoUrl",
+    }
+
+    def run_age_rating(self, fake):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        app_info_id = fake.add_app_info()
+        app_info = {"type": "appInfos", "id": app_info_id}
+        asc.ensure_age_rating(client, app_info, asc.Plan(out=out))
+        return out.getvalue()
+
+    def test_every_spec_attribute_is_classified(self):
+        """No attribute of Apple's update request is left unaccounted for."""
+        known = (set(asc.AGE_RATING_FREQUENCY_FIELDS) | set(asc.AGE_RATING_BOOLEANS)
+                 | set(asc.AGE_RATING_NONE_VALUES) | set(asc.AGE_RATING_SKIP))
+        self.assertEqual(known, self.SPEC_ATTRIBUTES)
+
+    def test_the_none_values_are_ones_the_spec_allows(self):
+        frequency = {"NONE", "INFREQUENT_OR_MILD", "FREQUENT_OR_INTENSE",
+                     "INFREQUENT", "FREQUENT"}
+        for field in asc.AGE_RATING_FREQUENCY_FIELDS:
+            self.assertIn(asc.age_rating_none_value(field), frequency)
+        for field in asc.AGE_RATING_BOOLEANS:
+            self.assertIs(asc.age_rating_none_value(field), False)
+        self.assertEqual(asc.age_rating_none_value("koreaAgeRatingOverride"), "NONE")
+        self.assertEqual(asc.age_rating_none_value("ageRatingOverrideV2"), "NONE")
+        self.assertIs(asc.age_rating_none_value("kidsAgeBand"), asc.NOT_ANSWERABLE)
+
+    def test_only_the_attributes_apple_returns_are_sent(self):
+        fake = FakeAsc()
+        fake.age_rating = {"violenceRealistic": "INFREQUENT_OR_MILD",
+                           "lootBox": True, "ageRatingOverride": "SEVENTEEN_PLUS"}
+        self.run_age_rating(fake)
+        self.assertEqual(fake.age_rating, {"violenceRealistic": "NONE",
+                                           "lootBox": False,
+                                           "ageRatingOverride": "NONE"})
+
+    def test_an_attribute_apple_did_not_return_is_not_invented(self):
+        fake = FakeAsc()
+        fake.age_rating = {"violenceRealistic": "FREQUENT"}
+        self.run_age_rating(fake)
+        self.assertEqual(set(fake.age_rating), {"violenceRealistic"})
+
+    def test_a_required_attribute_is_named_verbatim_and_then_answered(self):
+        """The live 409: ENTITY_ERROR.ATTRIBUTE.REQUIRED with 22 fields sent."""
+        fake = FakeAsc()
+        fake.age_rating = {"violenceRealistic": "FREQUENT"}
+        # Apple wants these even though the GET never mentioned them.
+        fake.age_rating_required = ["ageAssurance", "lootBox", "koreaAgeRatingOverride"]
+        printed = self.run_age_rating(fake)
+
+        # Apple's own words and pointer, verbatim.
+        self.assertIn("You must provide a value for the attribute 'ageAssurance'", printed)
+        self.assertIn("/data/attributes/ageAssurance", printed)
+        # ...and then answered with the spec's none/false values.
+        self.assertIs(fake.age_rating["ageAssurance"], False)
+        self.assertIs(fake.age_rating["lootBox"], False)
+        self.assertEqual(fake.age_rating["koreaAgeRatingOverride"], "NONE")
+        self.assertEqual(fake.age_rating["violenceRealistic"], "NONE")
+
+    def test_a_required_attribute_with_no_known_answer_is_not_guessed(self):
+        fake = FakeAsc()
+        fake.age_rating = {"violenceRealistic": "FREQUENT"}
+        fake.age_rating_required = ["somethingAppleAddedYesterday"]
+        printed = self.run_age_rating(fake)
+        self.assertIn("somethingAppleAddedYesterday", printed)
+        self.assertIn("no safe 'nothing applies' value", printed)
+        self.assertIn("App Information", printed)   # the UI path
+        self.assertNotIn("somethingAppleAddedYesterday", fake.age_rating)
+
+    def test_a_failure_never_stops_the_run(self):
+        fake = FakeAsc()
+        fake.age_rating = {"violenceRealistic": "FREQUENT"}
+        fake.age_rating_required = ["somethingAppleAddedYesterday"]
+        printed = self.run_age_rating(fake)
+        self.assertIn("Age Rating", printed)
+
+    def test_named_attributes_reads_pointer_and_detail(self):
+        error = asc.ApiError(409, "PATCH", "/v1/ageRatingDeclarations/x", {"errors": [
+            {"code": "ENTITY_ERROR.ATTRIBUTE.REQUIRED", "status": "409", "title": "t",
+             "detail": "You must provide a value for the attribute 'lootBox'.",
+             "source": {"pointer": "/data/attributes/lootBox"}},
+            {"code": "ENTITY_ERROR.ATTRIBUTE.REQUIRED", "status": "409", "title": "t",
+             "detail": "You must provide a value for the attribute 'ageAssurance'.",
+             "source": {"pointer": "/data/attributes/ageAssurance"}},
+        ]})
+        self.assertEqual(asc.named_attributes(error), ["lootBox", "ageAssurance"])
+
+    def test_an_already_correct_declaration_writes_nothing(self):
+        fake = FakeAsc()
+        fake.age_rating = {"violenceRealistic": "NONE", "lootBox": False}
+        printed = self.run_age_rating(fake)
+        self.assertEqual([w for w in fake.writes if w[0] == "PATCH"], [])
+        self.assertIn("already says nothing applies", printed)
+
+
+class StatusPriceTests(unittest.TestCase):
+    """`status` must show the amount, not just that a price exists."""
+
+    def build(self, ladder=None):
+        fake = FakeAsc(price_ladder=ladder)
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_subscriptions(client, Args(), out)
+        fake.add_app_info()
+        fake.add_version("1.0", "PREPARE_FOR_SUBMISSION",
+                         localization={"description": "d", "keywords": "k",
+                                       "supportUrl": "https://rendprop.com/support"})
+        return fake
+
+    def run_status(self, fake, **kwargs):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_status(client, Args(**kwargs), out)
+        return code, out.getvalue()
+
+    def test_every_price_amount_is_printed(self):
+        fake = self.build()
+        _code, output = self.run_status(fake)
+        for spec in asc.SUBSCRIPTIONS:
+            self.assertIn(spec["usd"], output,
+                          "%s's amount must be visible" % spec["productId"])
+
+    def test_a_wrong_price_is_flagged_loudly(self):
+        """Today's live state: team.annual sells at USD 1000.00, not 2490.00."""
+        fake = self.build()
+        fake.repoint_price("com.rendprop.app.team.annual", "1000.0")
+        code, output = self.run_status(fake)
+
+        self.assertEqual(code, 1, "a wrong price must fail the status check")
+        self.assertIn("WRONG PRICE", output)
+        self.assertIn("USD 1000.0, should be USD 2490.00", output)
+        self.assertIn("subscriptions unprice com.rendprop.app.team.annual", output)
+        self.assertIn("is priced USD 1000.0, not the agreed USD 2490.00", output)
+
+    def test_a_correct_price_is_not_flagged(self):
+        fake = self.build()
+        _code, output = self.run_status(fake)
+        self.assertNotIn("WRONG PRICE", output)
+
+    def test_the_json_report_carries_the_amount_and_the_verdict(self):
+        fake = self.build()
+        fake.repoint_price("com.rendprop.app.team.annual", "1000.0")
+        _code, output = self.run_status(fake, json=True)
+        report = json.loads(output[output.index("{"):])
+        by_product = {p["productId"]: p for p in report["subscriptions"]}
+        annual = by_product["com.rendprop.app.team.annual"]
+        self.assertEqual(annual["priceUsd"], "1000.0")
+        self.assertEqual(annual["targetPriceUsd"], "2490.00")
+        self.assertIs(annual["priceMatchesContract"], False)
+        self.assertIs(by_product["com.rendprop.app.pro.annual"]["priceMatchesContract"], True)
+
+    def test_price_amounts_come_from_the_included_price_points(self):
+        prices = [{"type": "subscriptionPrices", "id": "p1", "relationships": {
+            "territory": {"data": {"type": "territories", "id": "USA"}},
+            "subscriptionPricePoint": {
+                "data": {"type": "subscriptionPricePoints", "id": "point-1"}}}}]
+        included = [{"type": "subscriptionPricePoints", "id": "point-1",
+                     "attributes": {"customerPrice": "249.00"}},
+                    {"type": "territories", "id": "USA"}]
+        self.assertEqual(asc.price_amounts(prices, included), {"USA": "249.00"})
+        # A point that did not come back is unknown, never "correct".
+        self.assertEqual(asc.price_amounts(prices, []), {"USA": None})
+
+
+class MetadataCommandTests(unittest.TestCase):
+    """`metadata apply` end to end against the fake, with the repo's real copy."""
+
+    def run_metadata(self, fake, **kwargs):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        code = asc.cmd_metadata(client, Args(**kwargs), out)
+        return code, out.getvalue()
+
+    def written_listing(self, fake):
+        return list(fake.store["appStoreVersionLocalizations"].values())[0]["attributes"]
+
+    def test_a_first_release_writes_every_field_except_whats_new(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.age_rating = {"violenceRealistic": "NONE"}
+        code, output = self.run_metadata(fake)
+        self.assertEqual(code, 0)
+
+        listing = self.written_listing(fake)
+        for field in ("description", "keywords", "promotionalText",
+                      "supportUrl", "marketingUrl"):
+            self.assertTrue(listing.get(field), "%s must still be written" % field)
+        self.assertNotIn("whatsNew", listing)
+        self.assertIn("What's New is not used for a first release", output)
+        # ...and it never even asked App Store Connect to accept one.
+        self.assertNotIn("whatsNew", json.dumps(fake.writes))
+
+    def test_a_second_version_does_write_whats_new(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.whats_new_editable = True
+        fake.add_version("1.0", "READY_FOR_SALE")
+        code, _output = self.run_metadata(fake)
+        self.assertEqual(code, 0)
+        listing = [v["attributes"] for v in
+                   fake.store["appStoreVersionLocalizations"].values()][0]
+        self.assertTrue(listing.get("whatsNew"))
+
+    def test_the_support_url_is_the_support_page(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        self.run_metadata(fake)
+        self.assertEqual(self.written_listing(fake)["supportUrl"],
+                         "https://rendprop.com/support")
+
+    def test_it_is_idempotent(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        fake.age_rating = {"violenceRealistic": "NONE"}
+        self.run_metadata(fake)
+        fake.writes = []
+        _code, output = self.run_metadata(fake)
+        self.assertEqual(fake.writes, [], output)
+
+
+class SupportUrlTests(unittest.TestCase):
+    def test_no_bare_marketing_domain_is_hard_coded_as_a_support_url(self):
+        source = Path(asc.__file__).resolve().read_text(encoding="utf-8")
+        self.assertNotIn('SUPPORT_URL = "https://rendprop.com"', source)
+
+    def test_the_repo_support_url_is_a_support_page(self):
+        value = (asc.METADATA_DIR / "support_url.txt").read_text(encoding="utf-8").strip()
+        self.assertEqual(value, "https://rendprop.com/support")
+
+    def test_the_bare_domain_is_rejected(self):
+        for bad in asc.SUPPORT_URL_MUST_NOT_BE:
+            self.assertTrue(bad.startswith("https://rendprop.com"))
 
 
 class AppCommandTests(unittest.TestCase):

@@ -4,13 +4,24 @@
 # policy there: `frame-ancestors *` (MLS systems iframe the unbranded tour) plus
 # `X-Robots-Tag: noindex`.
 
+# script-src is HASH-PINNED, not 'unsafe-inline'. Each marketing page carries
+# exactly ONE inline script — the pre-paint theme boot, byte-identical on all
+# five pages — and the sha256 below is its digest. Everything else loads from
+# /assets/site.js ('self'), and no page uses an inline event handler (the theme
+# button and the mobile menu are bound in site.js), so an injected <script> has
+# nothing to ride in on.
+#
+#   If you edit that boot script, recompute the hash or the theme will flash:
+#   python3 -c "import base64,hashlib,re,sys; s=re.search(r'<script>(.*?)</script>',open('public/index.html').read(),re.S).group(1); print('sha256-'+base64.b64encode(hashlib.sha256(s.encode()).digest()).decode())"
+#
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=()
   Strict-Transport-Security: max-age=31536000; includeSubDomains
-  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self' data:; base-uri 'self'; form-action 'self' mailto:; frame-ancestors 'none'; object-src 'none'
+  Cross-Origin-Opener-Policy: same-origin
+  Content-Security-Policy: default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'sha256-dPD1Mxbpi+mEqJFUoL8CYPB/4K/8CY+lO1ciNefrhno='; connect-src 'self'; font-src 'self' data:; base-uri 'self'; form-action 'self' mailto:; frame-ancestors 'none'; object-src 'none'
 
 # Images, icons and fonts under /assets are effectively immutable (a new image
 # gets a new filename).

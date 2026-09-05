@@ -41,6 +41,36 @@
       addEventListener("scroll", onScrollNav, { passive: true }); onScrollNav();
     }
 
+    /* Theme button — bound here, not with an inline onclick, so the page's CSP
+       never has to allow inline script execution. */
+    var themeBtn = document.getElementById("themeBtn");
+    if (themeBtn) themeBtn.addEventListener("click", window.rpCycleTheme);
+
+    /* ---------- Mobile menu ----------
+       Under 900px the page links are a panel instead of a row. Without this
+       they were simply hidden and a phone had no way into the other pages. */
+    var menuBtn = document.getElementById("menuBtn");
+    var menu = document.getElementById("navMenu");
+    if (menuBtn && menu) {
+      var setMenu = function (open) {
+        menu.setAttribute("data-open", open ? "true" : "false");
+        menuBtn.setAttribute("aria-expanded", open ? "true" : "false");
+        menuBtn.textContent = open ? "✕" : "☰";
+      };
+      setMenu(false);
+      menuBtn.addEventListener("click", function (e) {
+        e.stopPropagation();
+        setMenu(menu.getAttribute("data-open") !== "true");
+      });
+      menu.addEventListener("click", function (e) { if (e.target.tagName === "A") setMenu(false); });
+      document.addEventListener("click", function (e) {
+        if (menu.getAttribute("data-open") === "true" && !menu.contains(e.target)) setMenu(false);
+      });
+      document.addEventListener("keydown", function (e) {
+        if (e.key === "Escape" && menu.getAttribute("data-open") === "true") { setMenu(false); menuBtn.focus(); }
+      });
+    }
+
     /* ---------- Reveal on scroll ---------- */
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); } });

@@ -69,7 +69,7 @@ Notes: motion/gyro data is processed on-device for stabilization and not collect
 
 - [ ] Description: lead with the outcome (phone walkthrough → cinematic tour link), mention AI photo enhancement and the multi-industry modes. Do **not** use "beta", "test", or promise unshipped features (2.3.1)
 - [ ] Keywords: real estate tour, virtual tour, listing video, property video, virtual staging, walkthrough, open house
-- [ ] Support URL: `https://rendprop.com` · Marketing URL (optional): same
+- [ ] Support URL: `https://rendprop.com/support` (App Review opens it and expects a real support page, not the home page) · Marketing URL (optional): `https://rendprop.com`
 - [ ] Privacy Policy URL: `https://rendprop.com/privacy` (**must be live — see §1**)
 - [ ] Copyright: 2026 Rendprop
 

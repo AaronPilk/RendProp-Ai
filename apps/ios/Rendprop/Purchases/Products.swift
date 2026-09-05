@@ -67,6 +67,23 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// True when this plan's product for `period` is on sale today — i.e. the
+    /// app asks StoreKit for it and the paywall may show a price for it.
+    /// See `RendpropProducts.notSoldAtLaunch`.
+    func isSold(_ period: BillingPeriod) -> Bool {
+        !RendpropProducts.notSoldAtLaunch.contains(productID(for: period))
+    }
+
+    /// The period this plan actually bills at when the paywall's picker is on
+    /// `period`: `period` itself when that product is on sale, otherwise the
+    /// other one (Team on Yearly → monthly, today). nil only when the plan
+    /// sells nothing at all, which no plan does.
+    func soldPeriod(for period: BillingPeriod) -> BillingPeriod? {
+        if isSold(period) { return period }
+        let fallback: BillingPeriod = (period == .annual) ? .monthly : .annual
+        return isSold(fallback) ? fallback : nil
+    }
+
     /// The server-enforced monthly allowances for this plan.
     var allowances: PlanAllowances {
         switch self {
@@ -141,25 +158,52 @@ enum BillingPeriod: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// Small note on a card that sells only this period while the picker is on
+    /// the other one — Team, on the Yearly tab, today.
+    var onlyNote: String {
+        switch self {
+        case .monthly: return "Monthly only"
+        case .annual:  return "Yearly only"
+        }
+    }
+
     /// The badge on the Yearly tab. 12 months for the price of 10 — see the
-    /// annual prices in docs/LAUNCH-CONTRACT.md (490 / 990 / 2490).
-    static let annualBadge = "2 months free"
+    /// annual prices in docs/LAUNCH-CONTRACT.md (490 / 990). It names the plans
+    /// it is true for: Team has no yearly product at launch (see
+    /// `RendpropProducts.notSoldAtLaunch`), so promising it "2 months free"
+    /// would be a lie.
+    static let annualBadge = "2 months free on Starter and Pro"
 }
 
 // MARK: - Product id ⇄ plan
 
 enum RendpropProducts {
-    /// App Store Connect subscription group reference name. All six products
-    /// live in ONE group so Apple manages upgrades/downgrades for us.
+    /// App Store Connect subscription group reference name. Every product
+    /// lives in ONE group so Apple manages upgrades/downgrades for us.
     static let subscriptionGroupReferenceName = "rendprop_plans"
 
-    /// Every product id the app asks StoreKit for, in the order the paywall
-    /// shows them.
-    static let all: [String] = RendpropPlan.allCases.flatMap {
-        [$0.monthlyProductID, $0.annualProductID]
-    }
+    /// Product ids that are DEFINED but NOT SOLD. They still map to their plan
+    /// below — an existing (sandbox or production) purchase of one keeps its
+    /// entitlement — they are simply never requested from StoreKit and never
+    /// shown a price.
+    ///
+    /// 2026-09-05 — `com.rendprop.app.team.annual` ($2,490/yr): App Store
+    /// Connect's yearly price points stop at USD 1,000 unless Apple grants
+    /// extended price points, and that request is still open, so Team ships
+    /// monthly-only. To put it back on sale when Apple grants them, empty this
+    /// set — that one line is the whole change.
+    static let notSoldAtLaunch: Set<String> = [RendpropPlan.team.annualProductID]
 
-    /// "com.rendprop.app.pro.annual" → .pro. nil for anything we don't sell.
+    /// Every product id the app asks StoreKit for, in the order the paywall
+    /// shows them. Ids in `notSoldAtLaunch` are left out: asking the App Store
+    /// for a product that isn't on sale just returns nothing.
+    static let all: [String] = RendpropPlan.allCases
+        .flatMap { [$0.monthlyProductID, $0.annualProductID] }
+        .filter { !RendpropProducts.notSoldAtLaunch.contains($0) }
+
+    /// "com.rendprop.app.pro.annual" → .pro. nil for an id that was never ours.
+    /// Deliberately covers `notSoldAtLaunch` ids too: entitlement mapping is
+    /// about what somebody already bought, not about what is on sale today.
     static func plan(for productID: String) -> RendpropPlan? {
         RendpropPlan.allCases.first {
             $0.monthlyProductID == productID || $0.annualProductID == productID

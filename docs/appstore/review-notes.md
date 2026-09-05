@@ -33,8 +33,9 @@ no invite list and no allow-list.
 > on-device rendering, the AI photo studio, reels, aerial intros, and floor plans all work
 > signed out.
 >
-> SUBSCRIPTIONS: Rendprop sells auto-renewable subscriptions through StoreKit 2 — Starter,
-> Pro, and Team, monthly or yearly, in one subscription group ("rendprop_plans"), each with
+> SUBSCRIPTIONS: Rendprop sells auto-renewable subscriptions through StoreKit 2 — Starter
+> and Pro monthly or yearly, Team monthly — five products in one subscription group
+> ("rendprop_plans"), each with
 > a 7-day free introductory offer. They unlock monthly allowances for tour renders and the
 > AI features (see the plan list in the App Store description). Settings tab → "Plan &
 > usage" → "Upgrade plan" opens the paywall; "Manage subscription" opens Apple's own
@@ -42,7 +43,7 @@ no invite list and no allow-list.
 > StoreKit's `Product.displayPrice`. There is no other way to pay inside the app.
 >
 > IF THE PAYWALL SAYS "Plans aren't available right now": that message appears only when
-> StoreKit returns no products — i.e. before the six subscriptions are approved, or before
+> StoreKit returns no products — i.e. before the five subscriptions are approved, or before
 > the Paid Applications agreement is Active. It is the app's correct, non-crashing
 > behaviour for an empty product list, not a bug. Once the products are approved with this
 > build, the paywall lists all three plans with live prices and the "Start 7-day free
@@ -89,8 +90,9 @@ in the notes. (2.3.1)
 
 Attach the IAP review screenshot described in `docs/appstore/iap-review/README.md` to the
 **subscription group's** review information (not the app's) if App Store Connect asks for
-one. The six products themselves each need a review screenshot showing the paywall with
-that plan visible.
+one. The five products themselves each need a review screenshot showing the paywall with
+that plan visible. (`com.rendprop.app.team.annual` is **not sold at launch** — see
+`docs/handoff/launch-P1.md` §5.3 — so it needs neither a product nor a screenshot yet.)
 
 ## Pre-submission truths a reviewer will test
 

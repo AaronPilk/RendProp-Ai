@@ -12,7 +12,15 @@ MockAPIClient: X` + `model.api as? X` pattern (see `AdminRoutingAPI` in
 |---|---|---|---|
 | starter | 4900 | `com.rendprop.app.starter.monthly` | `com.rendprop.app.starter.annual` = 49000 |
 | pro | 9900 | `com.rendprop.app.pro.monthly` | `com.rendprop.app.pro.annual` = 99000 |
-| team | 24900 | `com.rendprop.app.team.monthly` | `com.rendprop.app.team.annual` = 249000 |
+| team | 24900 | `com.rendprop.app.team.monthly` | `com.rendprop.app.team.annual` = 249000 — **NOT SOLD AT LAUNCH — needs Apple's higher price points** |
+
+**Team Yearly is pulled from the launch lineup (2026-09-05).** App Store Connect's yearly
+price points stop at USD 1,000 unless Apple grants extended ones, so `$2,490.00` cannot be
+sold yet: **Starter and Pro sell monthly or yearly, Team sells monthly.** The id above is
+still defined and still maps to `team` for entitlements — it is listed in
+`RendpropProducts.notSoldAtLaunch` (`Products.swift`), which keeps it out of the ids the
+app requests from StoreKit. Emptying that set re-enables it in one line once Apple grants
+the price points. Details: `docs/handoff/launch-P1.md` §5.3.
 
 `trial` (7 days, card on file) is Apple's **introductory offer** on each product — not a
 separate product. `free` is the lapsed floor: no product, it's what an expired
