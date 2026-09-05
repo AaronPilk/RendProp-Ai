@@ -9,7 +9,7 @@
 // (#7C3AED light / #9B6DFF dark — the app's Theme.accent), automatic
 // light/dark via prefers-color-scheme.
 
-const EFFECTIVE_DATE = "September 4, 2026";
+const EFFECTIVE_DATE = "September 5, 2026";
 const CONTACT_EMAIL = "aaron@pilk.ai";
 
 const LEGAL_CSS = `
@@ -147,16 +147,39 @@ You are responsible for meeting any disclosure rules that apply to you (for exam
 local advertising rules) when you publish or share AI-enhanced media.</p>
 
 <h2><span class="num">6.</span>Plans and payment</h2>
-<p>Rendprop is offered on subscription plans with monthly allowances for the AI features
-(tour renders, photo edits, video clips, and aerial shots). The plans, prices, and allowances are
-published at <a href="https://rendprop.com/pricing">rendprop.com/pricing</a>, and that page is the
-source of truth for what your plan includes.</p>
-<p><b>There are no in-app purchases.</b> Plans are set up, changed, and cancelled through
-rendprop.com (during early access, by arrangement with the Rendprop team), never inside the iOS
-app. The app only shows you what your current plan includes and tells you when you have reached
-an allowance. Nothing is charged until you have agreed to a plan, and a cancelled plan stays
-active until the end of the period you have paid for; your published tours stay live through
-that period.</p>
+<p>Rendprop is free to download. A subscription unlocks monthly allowances for the things that
+cost us money to make: tour renders, AI photo edits, reel clips, and aerial intros. Plans are
+sold as <b>auto-renewable subscriptions through the App Store</b> — Starter, Pro, and Team, each
+billed monthly or yearly. <b>The app is the source of truth</b>: the plan names, allowances, and
+prices you see there come from the App Store in your own currency, and they are what you are
+charged.</p>
+<ul>
+  <li><b>Free trial.</b> Each plan starts with a 7-day free trial. Apple grants that trial
+  <b>once per Apple ID</b> across all Rendprop plans, so changing plans does not start a second
+  one. Cancel before it ends and you pay nothing.</li>
+  <li><b>Auto-renewal.</b> Payment is charged to your Apple ID at confirmation of purchase. The
+  subscription <b>renews automatically for the same period unless you cancel at least 24 hours
+  before the current period ends</b>, and Apple charges the renewal within the 24 hours before
+  that period ends.</li>
+  <li><b>Cancelling.</b> Cancel any time on your device: <b>Settings → your name → Subscriptions
+  → Rendprop</b>, or in the app under Settings → Plan &amp; usage → Manage subscription.
+  Cancelling stops the next renewal; the plan keeps working until the end of the period you have
+  already paid for. <b>Deleting the app does not cancel a subscription.</b></li>
+  <li><b>Refunds.</b> Apple takes the payment, so Apple handles refunds — request one at
+  <a href="https://reportaproblem.apple.com">reportaproblem.apple.com</a>. We cannot refund an
+  App Store purchase ourselves.</li>
+  <li><b>Price changes.</b> If a price rises, Apple notifies you before it takes effect and, where
+  Apple requires it, asks you to agree — if you do not, the subscription simply stops renewing.
+  We will flag a material change in the app as well.</li>
+  <li><b>When a plan ends or lapses.</b> <b>Your content stays.</b> Cancelling or letting a plan
+  expire does not delete your listings, photos, reels, or published tours, and share links you
+  have already sent keep working. What stops is the monthly allowance: you cannot render new
+  tours or run AI features until you subscribe again. If you want the content gone, delete it —
+  see section 7.</li>
+</ul>
+<p><b>We never see or store your card details.</b> Apple sends us a signed record of the purchase
+— the transaction identifiers, which plan you bought, and when it expires — and that record is
+what unlocks your plan. See the <a href="/privacy">Privacy Policy</a>.</p>
 
 <h2><span class="num">7.</span>Ending things</h2>
 <p>You can delete your account any time in the app: <b>Settings → Delete account</b>. That
@@ -194,8 +217,10 @@ you accept the updated Terms.</p>
     heading: "Terms of Service",
     lede:
       "The plain-language version: only record spaces you have rights to, your content stays " +
-      "yours, we never use it for marketing or AI training without your written consent, and " +
-      "you can delete your account (and everything in it) from the app at any time.",
+      "yours, we never use it for marketing or AI training without your written consent, " +
+      "subscriptions renew through the App Store until you cancel (and your content stays even " +
+      "when a plan lapses), and you can delete your account — and everything in it — from the " +
+      "app at any time.",
     body,
     otherLabel: "Privacy Policy",
     otherHref: "/privacy",
@@ -227,18 +252,29 @@ export function privacyPage(): string {
   tour started, how long it was watched, how far the viewer scrolled) tied to the tour, not to a
   named person. The viewer's IP address is used briefly as a rate-limit key to prevent abuse of
   the lead form and view counter. Bot protection may be provided by Cloudflare Turnstile.</li>
+  <li><b>Subscriptions</b> — Apple takes the payment. When you subscribe, the App Store gives the
+  app a signed record of the purchase, and we store <b>Apple's transaction identifiers, the plan
+  (product id) you bought, the store environment, and when it expires</b> — that is what unlocks
+  your plan. <b>We never see or store your card details</b>, and Apple does not give them to
+  us.</li>
+  <li><b>App analytics and diagnostics</b> — a short, fixed list of in-app events, a device
+  identifier we generate ourselves, and crash and performance summaries from Apple. Section 4
+  sets out exactly what those are, and what they are not.</li>
   <li><b>Operational logs</b> — short-lived technical logs (like errors and request metadata)
   used to keep the service running and secure.</li>
 </ul>
-<p><b>What we don't do:</b> no advertising trackers, no third-party analytics SDKs in the app,
-and we never sell your personal information.</p>
+<p><b>What we don't do:</b> there is <b>no third-party analytics SDK, no advertising SDK, no
+advertising identifier (IDFA), and no tracking pixel</b> in the Rendprop app; we never link what
+you do in Rendprop with data from another company's app or website; we never share your data
+with a data broker; and we never sell your personal information.</p>
 
 <h2><span class="num">2.</span>How we use it</h2>
-<p>Only to operate Rendprop: signing you in, storing and processing your media, generating the
-AI enhancements you request, hosting your public tour pages, capturing your leads into your
-Leads inbox (and our CRM provider) so you can follow up, measuring tour engagement, and keeping
-the service secure. <b>Your content is never used for our marketing and never used to
-train AI models without your written consent.</b></p>
+<p>Only to operate and improve Rendprop: signing you in, storing and processing your media,
+generating the AI enhancements you request, hosting your public tour pages, capturing your leads
+into your Leads inbox (and our CRM provider) so you can follow up, measuring tour engagement,
+unlocking the plan you subscribed to, understanding which parts of the app are used and where
+they break (section 4), and keeping the service secure. <b>Your content is never used for our
+marketing and never used to train AI models without your written consent.</b></p>
 
 <h2><span class="num">3.</span>Who processes data for us</h2>
 <p>Rendprop runs on a small set of infrastructure and AI providers. They process data solely to
@@ -247,7 +283,7 @@ provide their function to us:</p>
   <tr><th>Provider</th><th>What it does</th><th>What it receives</th></tr>
   <tr><td>Supabase</td><td>Authentication, database, and the app's API</td><td>Your account, listings, leads, and tour engagement counts</td></tr>
   <tr><td>Cloudflare</td><td>Media storage (R2), video delivery (Stream), hosting of your tour pages, and Turnstile bot protection on lead forms</td><td>Your uploaded and generated media; requests to your tour pages, including viewers' IP addresses</td></tr>
-  <tr><td>Apple</td><td>Sign in with Apple</td><td>Sign-in and account-deletion tokens; Apple gives us the email (or private relay address) and name you choose to share</td></tr>
+  <tr><td>Apple</td><td>Sign in with Apple; App Store subscriptions; crash and performance summaries (MetricKit); ad attribution (SKAdNetwork)</td><td>Sign-in and account-deletion tokens; Apple gives us the email (or private relay address) and name you choose to share, and a signed record of any subscription you buy (never your card details)</td></tr>
   <tr><td>GoHighLevel (LeadConnector)</td><td>CRM — so a lead can be followed up, and so lead contacts can be deleted with your account</td><td>The name, phone, and email a viewer submits through a tour's lead form, plus tags identifying the tour</td></tr>
   <tr><td>Google&nbsp;Gemini</td><td>AI image editing — the photo studio, and per-frame edits inside the cloud tour render — plus text prompt assistance</td><td>The photos you submit for editing, and frames of the walkthrough video you send for a tour render</td></tr>
   <tr><td>fal.ai</td><td>AI image and video generation — declutter and virtual restaging, aerial intros, reel clips, and drone-glide (Topaz) upscaling</td><td>The photos and video you submit to those features, including the exterior photo used for an aerial intro</td></tr>
@@ -258,28 +294,66 @@ your result. The CRM provider receives only lead-form submissions. We do not sen
 your viewers' lead details other than the CRM, and we do not send any provider data for
 advertising.</p>
 
-<h2><span class="num">4.</span>How long we keep it</h2>
+<h2><span class="num">4.</span>Analytics, crash reports, and ads</h2>
+<p>All of this is <b>first-party</b>: our own code, sending to our own servers, read only by us.
+There is no third-party analytics SDK, no advertising SDK, no advertising identifier (IDFA), no
+App Tracking Transparency prompt, and no pixel in the Rendprop app — and none of what follows is
+ever combined with data from another company's app or website, or given to a data broker.</p>
+<ul>
+  <li><b>Product analytics.</b> The app records a short, fixed list of event names so we can see
+  which parts of Rendprop get used and where people get stuck: opening the app, signing up or in,
+  creating a space, starting and finishing a capture, finishing a render, publishing a tour,
+  running a photo edit, making a reel, adding a voiceover, making an aerial intro, opening the
+  plans, and starting, completing, or failing a purchase. Each event carries the app version, the
+  iOS version, a session id, and at most a couple of non-identifying values such as which
+  business type you are working in. <b>No photo, address, listing, name, email address, or phone
+  number is ever in an event.</b> The server enforces that three ways: only those event names are
+  accepted, only a named list of properties is kept, and anything that still looks like personal
+  data is stripped before it is stored.</li>
+  <li><b>A device identifier.</b> A random identifier the app generates the first time it runs
+  and keeps in this device's Keychain, sent with those events so the numbers count devices rather
+  than taps. <b>It is not Apple's advertising identifier</b> — Rendprop never asks for the IDFA —
+  it is not the identifier any other app can see, it is not shared with anyone, and it never
+  leaves our own systems.</li>
+  <li><b>Crash and performance diagnostics.</b> Delivered by <b>MetricKit</b>, which is part of
+  iOS. We receive <b>summaries only</b>: what kind of crash or hang it was, a signal or exception
+  number, a short termination reason with file paths removed, a single frame name, and timing
+  figures such as a median launch time. We never receive a full call stack — that stays in
+  Apple's own developer tools — and there is no third-party crash reporting SDK in the app.</li>
+  <li><b>Ad attribution.</b> When Rendprop is advertised, iOS itself measures whether an ad
+  worked, using Apple's <b>SKAdNetwork</b>. The app tells iOS a number from 0 to 5 marking how far
+  a new install has got — installed, signed up, created a space, published a tour, opened the
+  plans, subscribed — and <b>iOS</b>, not us, sends a signed postback to the ad network. That
+  postback contains a campaign identifier and that number: <b>no personal data, and no identifier
+  for you or your device</b>.</li>
+  <li><b>How long.</b> Analytics events are <b>deleted 180 days</b> after we receive them.</li>
+</ul>
+<p>This is separate from the engagement counts on your tour pages (section 1): those measure your
+tours for you, and you see them in the app.</p>
+
+<h2><span class="num">5.</span>How long we keep it</h2>
 <p>Your content stays until you delete it — delete a listing, tour, or asset in the app and the
 associated records go with it. Deleting your account (<b>Settings → Delete account</b>) removes
-your account data and the content of organizations that only you belong to. Residual copies in
-backups and logs age out on a short, fixed schedule.</p>
+your account data and the content of organizations that only you belong to. Analytics events are
+deleted after 180 days (section 4), and residual copies in backups and logs age out on a short,
+fixed schedule.</p>
 
-<h2><span class="num">5.</span>Your rights</h2>
+<h2><span class="num">6.</span>Your rights</h2>
 <p>You can see and manage your data directly in the app, and delete it there too. For anything
 the app doesn't cover — a copy of your data, a correction, or a deletion request — email
 <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> and we'll handle it. Depending on where
 you live, you may have additional statutory rights (such as access, portability, and erasure);
 we honor those.</p>
 
-<h2><span class="num">6.</span>Children</h2>
+<h2><span class="num">7.</span>Children</h2>
 <p>Rendprop is not for children under 13, and we don't knowingly collect their data. If you
 believe a child has created an account, contact us and we'll delete it.</p>
 
-<h2><span class="num">7.</span>Changes to this policy</h2>
+<h2><span class="num">8.</span>Changes to this policy</h2>
 <p>If we change this policy in a meaningful way, we'll flag it in the app or by email before
 the change takes effect. The date at the top always shows the current version.</p>
 
-<h2><span class="num">8.</span>Contact</h2>
+<h2><span class="num">9.</span>Contact</h2>
 <p>Privacy questions or requests: <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>`;
 
   return legalShell({
@@ -289,9 +363,12 @@ the change takes effect. The date at the top always shows the current version.</
     lede:
       "The plain-language version: we collect your account details (via Apple), the content and " +
       "listing details you upload (your listing's address or business name is published on its " +
-      "tour page), the leads viewers send you (stored for you and passed to our CRM provider), and " +
-      "basic engagement counts on your tour pages. We use them only to run the service, there's no " +
-      "ad tracking and no analytics SDKs in the app, and deleting your account removes your data.",
+      "tour page), the leads viewers send you (stored for you and passed to our CRM provider), " +
+      "engagement counts on your tour pages, and our own app-usage and crash statistics. We use " +
+      "them only to run and improve the service. There is no third-party analytics SDK, no ad " +
+      "SDK and no advertising identifier in the app, we never track you across other companies' " +
+      "apps or websites, Apple handles payments so we never see your card, and deleting your " +
+      "account removes your data.",
     body,
     otherLabel: "Terms of Service",
     otherHref: "/terms",

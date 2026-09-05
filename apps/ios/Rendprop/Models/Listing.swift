@@ -501,6 +501,39 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Home hero headline — the emotional promise, two short lines, in the
+    /// owner's words: it should hit what the app DOES for them (win the
+    /// listing, book the date, fill the room), not describe the mechanics.
+    /// Fair-housing safe: never people, neighborhoods or demographics.
+    var heroHeadline: String {
+        switch self {
+        case .realEstate: return "Win the listing.\nSkip the film crew."
+        case .venue:      return "Book the date before\nthey ever visit."
+        case .restaurant: return "Fill the room before\nthey see the menu."
+        case .retail:     return "Get them in the door\nfrom their couch."
+        case .fitness:    return "Sell the feeling\nbefore the first class."
+        case .other:      return "Show your space\nlike a film."
+        }
+    }
+
+    /// Home hero subline — what one walkthrough turns into, for this audience.
+    var heroSubline: String {
+        switch self {
+        case .realEstate:
+            return "One walkthrough becomes a cinematic tour, polished photos and a link buyers can't stop scrolling — in minutes, from your phone."
+        case .venue:
+            return "Walk the room once. Get a cinematic tour, polished photos and a link planners share before they've booked a visit."
+        case .restaurant:
+            return "Walk it once. Get a cinematic tour, mouth-watering photos and a link guests share — in minutes, from your phone."
+        case .retail:
+            return "One walkthrough becomes a cinematic tour, polished photos and a link shoppers can scroll before they visit."
+        case .fitness:
+            return "Walk the floor once. Get a cinematic tour, polished photos and a link that sells the space before the first class."
+        case .other:
+            return "One walkthrough becomes a cinematic tour, polished photos and a link customers can scroll — in minutes, from your phone."
+        }
+    }
+
     /// One-line pitch for the Business tab type cards.
     var pitch: String {
         switch self {

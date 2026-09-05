@@ -178,6 +178,17 @@
         <string>NSPrivacyCollectedDataTypePurposeAnalytics</string>
       </array>
     </dict>
+    <!-- Apple's signed transaction: transaction id, original transaction id,
+         product id, environment and expiry, stored server-side to unlock the
+         plan (migration 0019). No card details ever reach us. -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
   </array>
 
   <key>NSPrivacyAccessedAPITypes</key>

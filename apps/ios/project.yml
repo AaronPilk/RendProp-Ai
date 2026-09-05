@@ -68,6 +68,7 @@ targets:
       - path: RendpropUITests
         excludes:
           - "README.md"        # how to run it — documentation, not a bundle resource
+          - "bridge-cmd-*.sh"  # bridge command blocks — shell, not a bundle resource
           - "bridge-cmd-uiwalk.sh"   # runs on the Mac bridge; never part of the bundle
     dependencies:
       - target: Rendprop

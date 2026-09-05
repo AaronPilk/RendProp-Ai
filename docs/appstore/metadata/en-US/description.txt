@@ -1,0 +1,44 @@
+Film a walkthrough on your phone. Rendprop turns it into a smooth, drone-style flythrough with a share link you can text, email, or print on a flyer — no drone, no crew, no editor.
+
+HOW IT WORKS
+1. Walk the space and record on your iPhone.
+2. Tag the rooms or areas you want people to jump to.
+3. Rendprop builds the flythrough and gives you a link.
+4. Send the link. Anyone who opens it scrolls to fly through the space, and the contact form on that page drops enquiries into your inbox inside the app.
+
+EVERYTHING ELSE IN THE APP
+• AI Photo Studio — one tap for a blue sky, a twilight sky, a green lawn, a tidied room, or added furniture. Every AI edit is labelled as virtually staged on your tour, and the untouched original is published beside it.
+• Reels — turn your photos into a short vertical video with your own voiceover and word-by-word captions.
+• Aerial intro — an AI opening shot that lifts off an exterior photo you already have. Always disclosed as AI-generated.
+• Floor plan — scan a room in 3D with RoomPlan on supported iPhones, or upload a plan you already have.
+• Two links, every time — a branded page with your card and contact form, plus a separate unbranded link that is safe to paste into an MLS virtual-tour field.
+• Your card on every tour — name, business, photo, phone, and social links.
+
+NOT ONLY HOMES
+Rendprop ships with modes for real estate, event venues, restaurants, retail stores, and gyms. Pick your mode and the whole app matches what you sell: the fields you fill in, the words on screen, and the sample tour.
+
+WORKS WITHOUT AN ACCOUNT
+Record, build, and preview a tour without signing in. You only sign in with Apple when you want to publish a tour to the web, because that is the step that creates the hosted link and the contact form.
+
+WHAT A PLAN INCLUDES
+Rendprop is free to download and try. A subscription unlocks monthly allowances for tour renders and the AI features:
+• Starter — 8 tour renders, 150 AI photo edits, 8 reels, 2 aerial intros a month.
+• Pro — 25 tour renders, 300 AI photo edits, 20 reels, 6 aerial intros a month.
+• Team — 80 tour renders, 600 AI photo edits, 40 reels, 15 aerial intros, and 3 seats a month.
+
+SUBSCRIPTION DETAILS
+Rendprop sells auto-renewable subscriptions:
+• Starter Monthly — 1 month — $49.00
+• Starter Yearly — 1 year — $490.00
+• Pro Monthly — 1 month — $99.00
+• Pro Yearly — 1 year — $990.00
+• Team Monthly — 1 month — $249.00
+• Team Yearly — 1 year — $2,490.00
+Each plan starts with a 7-day free trial, available once per Apple ID.
+Payment is charged to your Apple ID account at confirmation of purchase. The subscription renews automatically unless it is cancelled at least 24 hours before the end of the current period. Your account is charged for renewal within 24 hours before the end of the current period, at the price listed above. Manage or cancel your subscription after purchase in Settings on your device: tap your name, then Subscriptions. Any unused portion of a free trial is forfeited when you buy a subscription. Prices are in U.S. dollars; the price in your country or region is shown in the app before you buy.
+
+Terms of Use: https://rendprop.com/terms
+Privacy Policy: https://rendprop.com/privacy
+
+AI AND YOUR CONTENT
+AI-generated and AI-altered media is labelled inside the app and on every tour you publish. Your videos and photos stay yours — we never use them for our own marketing, and never to train AI models, without your written permission. Only record spaces you have the right to record and publish.
