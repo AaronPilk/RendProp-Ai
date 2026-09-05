@@ -2196,6 +2196,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 <meta name="description" content="${escapeAttr(header.ogDesc)}">
 ${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
 ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(shareUrl)}">` : ""}
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="${escapeAttr(header.ogTitle)}">
 <meta property="og:description" content="${escapeAttr(header.ogDesc)}">
 <meta property="og:type" content="website">

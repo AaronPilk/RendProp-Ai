@@ -75,6 +75,8 @@ function legalShell(opts: {
   body: string;
   otherLabel: string;
   otherHref: string;
+  /** Canonical path of this page — `/terms` or `/privacy`. */
+  path: string;
 }): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -83,6 +85,9 @@ function legalShell(opts: {
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${opts.title}</title>
 <meta name="description" content="${opts.description}">
+<link rel="canonical" href="https://rendprop.com${opts.path}">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
 <meta name="theme-color" content="#0b0d10" media="(prefers-color-scheme: dark)">
 <meta name="theme-color" content="#faf9fc" media="(prefers-color-scheme: light)">
 <style>${LEGAL_CSS}</style>
@@ -96,6 +101,7 @@ function legalShell(opts: {
     ${opts.body}
     <footer>
       <a href="${opts.otherHref}">${opts.otherLabel}</a>
+      <a href="/support">Support</a>
       <a href="https://rendprop.com">rendprop.com</a>
       <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>
     </footer>
@@ -149,10 +155,10 @@ local advertising rules) when you publish or share AI-enhanced media.</p>
 <h2><span class="num">6.</span>Plans and payment</h2>
 <p>Rendprop is free to download. A subscription unlocks monthly allowances for the things that
 cost us money to make: tour renders, AI photo edits, reel clips, and aerial intros. Plans are
-sold as <b>auto-renewable subscriptions through the App Store</b> — Starter, Pro, and Team, each
-billed monthly or yearly. <b>The app is the source of truth</b>: the plan names, allowances, and
-prices you see there come from the App Store in your own currency, and they are what you are
-charged.</p>
+sold as <b>auto-renewable subscriptions through the App Store</b> — Starter and Pro, billed monthly
+or yearly, and Team, billed monthly. <b>The app is the source of truth</b>: the plan names,
+allowances, billing periods, and prices you see there come from the App Store in your own currency,
+and they are what you are charged.</p>
 <ul>
   <li><b>Free trial.</b> Each plan starts with a 7-day free trial. Apple grants that trial
   <b>once per Apple ID</b> across all Rendprop plans, so changing plans does not start a second
@@ -224,6 +230,7 @@ you accept the updated Terms.</p>
     body,
     otherLabel: "Privacy Policy",
     otherHref: "/privacy",
+    path: "/terms",
   });
 }
 
@@ -372,5 +379,6 @@ the change takes effect. The date at the top always shows the current version.</
     body,
     otherLabel: "Terms of Service",
     otherHref: "/terms",
+    path: "/privacy",
   });
 }

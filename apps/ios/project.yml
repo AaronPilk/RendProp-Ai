@@ -70,6 +70,18 @@ targets:
           - "README.md"        # how to run it — documentation, not a bundle resource
           - "bridge-cmd-*.sh"  # bridge command blocks — shell, not a bundle resource
           - "bridge-cmd-uiwalk.sh"   # runs on the Mac bridge; never part of the bundle
+      # The StoreKit configuration as a RESOURCE OF THE TEST BUNDLE ONLY.
+      # `PaywallShot` creates `SKTestSession(configurationFileNamed: "Rendprop")`
+      # before launching the app so the paywall renders real products under
+      # `xcodebuild test` (the scheme's `storeKitConfiguration` below applies to
+      # the Run action only — xcodegen has no test-action equivalent).
+      # StoreKitTest resolves the name inside the bundles loaded into the test
+      # runner, so the file has to ride inside RendpropUITests.xctest. It is
+      # NOT a source of the app target: that target's sources path is
+      # `Rendprop/`, this file sits beside project.yml, and a test bundle is
+      # never part of an archive — nothing here reaches the .app.
+      - path: Rendprop.storekit
+        buildPhase: resources
     dependencies:
       - target: Rendprop
     settings:
@@ -85,6 +97,16 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: "5F5C5G25Y6"   # same team as the app target
         TARGETED_DEVICE_FAMILY: "1"      # iPhone only, like the app
+        # `import StoreKitTest` (PaywallShot.swift). StoreKitTest.framework
+        # lives beside XCTest.framework in the platform's
+        # Developer/Library/Frameworks, which test bundles already search by
+        # default and which Swift auto-links on import — spelled out here so the
+        # build does not depend on that default. No `sdk:` dependency: a bare
+        # `sdk: StoreKitTest.framework` would point at the SDK's
+        # System/Library/Frameworks, where the framework is not.
+        FRAMEWORK_SEARCH_PATHS:
+          - "$(inherited)"
+          - "$(PLATFORM_DIR)/Developer/Library/Frameworks"
 
 # Explicit shared scheme so the bridge's `-scheme Rendprop` is deterministic
 # (before this it relied on Xcode auto-creating one at open time) and so
@@ -100,7 +122,9 @@ schemes:
       # Simulator purchases use the local StoreKit configuration (six
       # auto-renewable products in `rendprop_plans`); on device StoreKit talks
       # to App Store Connect / the sandbox instead. The file lives next to
-      # project.yml, outside the sources path, so it is never bundled.
+      # project.yml, outside the app's sources path, so it is never bundled
+      # into the .app (it IS a resource of RendpropUITests — see that target —
+      # which is how `PaywallShot` gets products under `xcodebuild test`).
       storeKitConfiguration: Rendprop.storekit
     test:
       config: Debug

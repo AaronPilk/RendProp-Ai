@@ -599,14 +599,13 @@ class FakeAsc(object):
         # is already in effect can be removed, so both answers are testable.
         self.price_delete_error = None
         # POST /v2/appAvailabilities links `included` to `relationships` by a
-        # temporary id. Apple's documented form is a `${...}` placeholder
-        # (Developer Forums thread 714696). Live, 2026-09-05, a bare territory
-        # id ("USA") and a plain label ("territoryAvailability-USA") were both
-        # refused with 409 ENTITY_ERROR.INCLUDED.INVALID_ID - that is what
-        # reject_plain_included_ids reproduces. reject_placeholder_included_ids
-        # is the opposite reading, so the retry path can be exercised too.
+        # temporary id. Apple's form is a `${...}` placeholder (Developer Forums
+        # thread 714696). Live, 2026-09-05, a bare territory id ("USA") and a
+        # plain label ("territoryAvailability-USA") were both refused with 409
+        # ENTITY_ERROR.INCLUDED.INVALID_ID - reject_plain_included_ids
+        # reproduces that. The fake ALWAYS demands one row per territory, as
+        # Apple does.
         self.reject_plain_included_ids = False
-        self.reject_placeholder_included_ids = False
         # PATCHing whatsNew on an app's first version returns 409 STATE_ERROR.
         self.whats_new_editable = False
         # Age-rating attributes the declaration reports, and the ones Apple
@@ -999,14 +998,14 @@ class FakeAsc(object):
             references = (((data.get("relationships") or {}).get("territoryAvailabilities")
                            or {}).get("data") or [])
             territories = []
+            seen = set()
             for index, reference in enumerate(references):
                 handle = reference.get("id")
                 is_placeholder = (isinstance(handle, str) and handle.startswith("${")
                                   and handle.endswith("}"))
                 item = included.get(handle)
                 invalid = (item is None
-                           or (self.reject_plain_included_ids and not is_placeholder)
-                           or (self.reject_placeholder_included_ids and is_placeholder))
+                           or (self.reject_plain_included_ids and not is_placeholder))
                 if invalid:
                     return 409, {"errors": [{
                         "code": "ENTITY_ERROR.INCLUDED.INVALID_ID",
@@ -1022,8 +1021,22 @@ class FakeAsc(object):
                         "title": "There is a problem with the request entity",
                         "detail": "Unknown territory %r." % territory,
                         "status": "409"}]}
-                territories.append(territory)
-            attributes["_territories"] = territories
+                seen.add(territory)
+                if (item.get("attributes") or {}).get("available"):
+                    territories.append(territory)
+            # Live (2026-09-05): Apple demands one row per territory it sells in
+            # and answers with one RELATIONSHIP.INVALID per territory left out.
+            left_out = [t for t in self.territories if t not in seen]
+            if left_out:
+                return 409, {"errors": [{
+                    "code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                    "title": "The provided entity includes a relationship with an invalid value",
+                    "detail": ("The relationship 'territoryAvailabilities.territory' expects an "
+                               "included resource with type 'territories' and id '%s' but no "
+                               "matching resource was included." % t),
+                    "status": "409",
+                    "source": {"pointer": "/included"}} for t in left_out]}
+            attributes["_territories"] = sorted(territories)
             identifier = self._insert(kind, attributes, {"app": data["relationships"]["app"]["data"]["id"]})
             return 201, {"data": self._public(self.store[kind][identifier])}
 
@@ -1683,56 +1696,55 @@ class AppAvailabilityTests(unittest.TestCase):
         self.assertEqual(fake.writes, [])
         self.assertIn("available in USA only", second.getvalue())
 
-    def test_the_inline_create_shape_matches_the_spec(self):
-        """territoryAvailabilities are JSON:API inline creates in `included`."""
-        captured = {}
-
-        def transport(method, url, headers, body):
-            if method == "POST":
-                captured["body"] = json.loads(body.decode())
-                return 201, {}, json.dumps({"data": {"type": "appAvailabilities", "id": "a1"}}).encode()
-            return 404, {}, b'{"errors":[{"code":"NOT_FOUND","status":"404","title":"t","detail":"d"}]}'
-
+    def test_every_territory_is_sent_and_only_the_usa_is_on(self):
+        """Live (2026-09-05): a body with only the USA row is refused with one
+        ENTITY_ERROR.RELATIONSHIP.INVALID per territory left out ("expects an
+        included resource with type 'territories' and id 'BWA'..."). The
+        accepted shape carries every territory from GET /v1/territories,
+        `available` true for the launch territories and false elsewhere."""
+        fake = FakeAsc()
         out = io.StringIO()
-        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
-        asc.ensure_app_availability_usa(client, "app-1", asc.Plan(out=out))
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
 
-        body = captured["body"]
+        bodies = [body for method, path, body in fake.bodies
+                  if method == "POST" and path == "/v2/appAvailabilities"]
+        self.assertEqual(len(bodies), 1)
+        body = bodies[0]
         self.assertEqual(body["data"]["type"], "appAvailabilities")
         self.assertIs(body["data"]["attributes"]["availableInNewTerritories"], False)
-        self.assertEqual(body["data"]["relationships"]["territoryAvailabilities"]["data"],
-                         [{"type": "territoryAvailabilities",
-                           "id": "${territoryAvailability-USA}"}])
-        self.assertEqual(len(body["included"]), 1)
-        included = body["included"][0]
-        self.assertEqual(included["type"], "territoryAvailabilities")
-        self.assertEqual(included["id"], "${territoryAvailability-USA}")
-        self.assertIs(included["attributes"]["available"], True)
-        self.assertEqual(included["relationships"]["territory"]["data"],
-                         {"type": "territories", "id": "USA"})
+        sent = {i["relationships"]["territory"]["data"]["id"]: i["attributes"]["available"]
+                for i in body["included"]}
+        self.assertEqual(sorted(sent), sorted(fake.territories))
+        self.assertEqual([t for t, on in sent.items() if on], ["USA"])
+        for included in body["included"]:
+            self.assertEqual(included["type"], "territoryAvailabilities")
+            self.assertEqual(included["relationships"]["territory"]["data"]["type"], "territories")
 
     def test_the_placeholder_handle_is_used_in_both_halves(self):
         """Apple's inline-create convention (forums thread 714696): a `${...}`
         placeholder, sent identically as the relationship reference and as the
         `included` object's id. The real territory id appears only inside the
         included object's `territory` relationship."""
-        body = asc.app_availability_body("app-1", ["USA", "CAN"])
+        body = asc.app_availability_body("app-1", ["CAN", "USA"], ["USA"])
         references = body["data"]["relationships"]["territoryAvailabilities"]["data"]
         self.assertEqual([r["id"] for r in references],
-                         ["${territoryAvailability-USA}", "${territoryAvailability-CAN}"])
+                         ["${territoryAvailability-CAN}", "${territoryAvailability-USA}"])
         self.assertEqual([i["id"] for i in body["included"]],
-                         ["${territoryAvailability-USA}", "${territoryAvailability-CAN}"])
+                         ["${territoryAvailability-CAN}", "${territoryAvailability-USA}"])
         for reference, included in zip(references, body["included"]):
             self.assertEqual(reference["id"], included["id"])
             self.assertTrue(included["id"].startswith("${") and included["id"].endswith("}"))
             territory = included["relationships"]["territory"]["data"]["id"]
             self.assertEqual(included["id"], "${territoryAvailability-%s}" % territory)
         self.assertEqual(asc.inline_create_id("USA"), "${territoryAvailability-USA}")
+        flags = {i["relationships"]["territory"]["data"]["id"]: i["attributes"]["available"]
+                 for i in body["included"]}
+        self.assertEqual(flags, {"CAN": False, "USA": True})
 
-    def test_the_documented_form_lands_where_both_live_shapes_were_refused(self):
-        """Live, both `USA` and `territoryAvailability-USA` came back 409
-        INCLUDED.INVALID_ID. With the API modelled that way, the `${...}` form
-        is accepted on the first POST and the stored territory is the real one."""
+    def test_plain_ids_are_refused_but_the_placeholder_form_lands(self):
+        """Both live shapes without `${...}` were 409 INCLUDED.INVALID_ID; the
+        placeholder form is accepted on the first POST, no retry."""
         fake = FakeAsc()
         fake.reject_plain_included_ids = True
         out = io.StringIO()
@@ -1740,23 +1752,19 @@ class AppAvailabilityTests(unittest.TestCase):
         asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
 
         posts = [path for method, path in fake.writes if method == "POST"]
-        self.assertEqual(posts, ["/v2/appAvailabilities"], "no retry should be needed")
+        self.assertEqual(posts, ["/v2/appAvailabilities"])
         self.assertNotIn("INCLUDED.INVALID_ID", out.getvalue())
         availability = list(fake.store["appAvailabilities"].values())[0]
         self.assertEqual(availability["attributes"]["_territories"], ["USA"])
-        # ...and a second run reads it back as USA-only.
-        fake.writes = []
-        second = io.StringIO()
-        asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=second))
-        self.assertEqual(fake.writes, [])
-        self.assertIn("available in USA only", second.getvalue())
 
     def test_a_failure_warns_with_the_ui_path_instead_of_raising(self):
         def transport(method, url, headers, body):
             if method == "POST":
                 return 409, {}, json.dumps({"errors": [{
                     "code": "ENTITY_ERROR", "status": "409",
-                    "title": "nope", "detail": "nope"}]}).encode()
+                    "title": "nope", "detail": "the detail Apple gave"}]}).encode()
+            if "/v1/territories" in url:
+                return 200, {}, json.dumps({"data": [{"type": "territories", "id": "USA"}]}).encode()
             return 404, {}, b'{"errors":[{"code":"NOT_FOUND","status":"404","title":"t","detail":"d"}]}'
 
         out = io.StringIO()
@@ -1765,6 +1773,7 @@ class AppAvailabilityTests(unittest.TestCase):
         printed = out.getvalue()
         self.assertIn("Pricing and", printed)
         self.assertIn("United States only", printed)
+        self.assertIn("the detail Apple gave", printed)
 
     def test_no_pre_order_is_created(self):
         """The endpoint is titled "Create an app pre-order"; this is not one.
@@ -1772,68 +1781,27 @@ class AppAvailabilityTests(unittest.TestCase):
         `releaseDate` and `preOrderEnabled` are optional attributes on
         TerritoryAvailabilityInlineCreate. Sending neither sets territories only.
         """
-        body = asc.app_availability_body("app-1", ["USA"])
+        body = asc.app_availability_body("app-1", ["USA", "CAN"], ["USA"])
         for included in body["included"]:
             self.assertEqual(set(included["attributes"]), {"available"})
         self.assertEqual(set(body["data"]["attributes"]), {"availableInNewTerritories"})
 
     def test_every_included_id_is_referenced_by_the_relationship(self):
         """The two halves of a JSON:API inline create must agree, id for id."""
-        for client_id in (None, lambda t: t):
-            body = asc.app_availability_body("app-1", ["USA", "CAN"], client_id=client_id)
-            referenced = [r["id"] for r in
-                          body["data"]["relationships"]["territoryAvailabilities"]["data"]]
-            self.assertEqual([i["id"] for i in body["included"]], referenced)
-            self.assertEqual(len(set(referenced)), 2, "ids must be unique")
-            for included in body["included"]:
-                # AppAvailabilityV2CreateRequest: included[] items are
-                # TerritoryAvailabilityInlineCreate, type "territoryAvailabilities".
-                self.assertEqual(included["type"], "territoryAvailabilities")
-                self.assertIs(included["attributes"]["available"], True)
-                self.assertEqual(included["relationships"]["territory"]["data"]["type"],
-                                 "territories")
+        body = asc.app_availability_body("app-1", ["USA", "CAN"], ["USA"])
+        referenced = [r["id"] for r in
+                      body["data"]["relationships"]["territoryAvailabilities"]["data"]]
+        self.assertEqual([i["id"] for i in body["included"]], referenced)
+        self.assertEqual(len(set(referenced)), 2, "ids must be unique")
 
-    def test_invalid_included_id_is_retried_with_the_bare_territory_id(self):
-        """If Apple ever refuses the `${...}` form with INCLUDED.INVALID_ID, the
-        one alternative reading - the bare territory id - is tried once."""
+    def test_a_launch_territory_apple_does_not_list_is_refused_locally(self):
         fake = FakeAsc()
-        fake.reject_placeholder_included_ids = True
+        fake.territories = ["GBR", "CAN"]
         out = io.StringIO()
         client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
         asc.ensure_app_availability_usa(client, fake.app_id, asc.Plan(out=out))
-
-        posts = [path for method, path in fake.writes if method == "POST"]
-        self.assertEqual(posts, ["/v2/appAvailabilities", "/v2/appAvailabilities"],
-                         "the first shape is retried once, not abandoned")
-        self.assertIn("INCLUDED.INVALID_ID", out.getvalue())
-        bodies = [body for method, path, body in fake.bodies if method == "POST"]
-        self.assertEqual(bodies[0]["included"][0]["id"], "${territoryAvailability-USA}")
-        self.assertEqual(bodies[1]["included"][0]["id"], "USA")
-        # The retry landed, so the app really is USA-only.
-        self.assertEqual(len(fake.store["appAvailabilities"]), 1)
-        availability = list(fake.store["appAvailabilities"].values())[0]
-        self.assertEqual(availability["attributes"]["_territories"], ["USA"])
-
-    def test_a_second_failure_falls_back_to_the_ui_path(self):
-        attempts = []
-
-        def transport(method, url, headers, body):
-            if method == "POST":
-                attempts.append(json.loads(body.decode()))
-                return 409, {}, json.dumps({"errors": [{
-                    "code": "ENTITY_ERROR.INCLUDED.INVALID_ID", "status": "409",
-                    "title": "There is a problem with the request entity",
-                    "detail": "The provided entity includes an ID that is invalid."}]}).encode()
-            return 404, {}, b'{"errors":[{"code":"NOT_FOUND","status":"404","title":"t","detail":"d"}]}'
-
-        out = io.StringIO()
-        client = asc.Client(credentials=None, transport=transport, verbose=False, out=out)
-        # Never raises: a territory list is a business decision, not a crash.
-        asc.ensure_app_availability_usa(client, "app-1", asc.Plan(out=out))
-        self.assertEqual(len(attempts), 2)
-        self.assertEqual(attempts[0]["included"][0]["id"], "${territoryAvailability-USA}")
-        self.assertEqual(attempts[1]["included"][0]["id"], "USA")
-        self.assertIn("United States only", out.getvalue())
+        self.assertEqual([p for m, p in fake.writes if m == "POST"], [])
+        self.assertIn("not in Apple's territory list", out.getvalue())
 
 
 class PriceGuardTests(unittest.TestCase):

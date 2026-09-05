@@ -228,6 +228,50 @@ async function main() {
   }
   ok("ordinary routes answer as documented");
 
+  // ---- canonical origin: https + apex ---------------------------------------
+  // Live on 2026-09-05, http://rendprop.com/terms answered 200 over plain HTTP
+  // and https://www.rendprop.com/ was a Cloudflare 525. The Worker's own paths
+  // now 301 to https://rendprop.com; dev/preview hosts are left alone.
+  for (const [from, to] of [
+    ["http://rendprop.com/terms", "https://rendprop.com/terms"],
+    ["http://rendprop.com/f/estate-demo?embed=1", "https://rendprop.com/f/estate-demo?embed=1"],
+    ["https://www.rendprop.com/f/estate-demo", "https://rendprop.com/f/estate-demo"],
+    ["http://www.rendprop.com/privacy", "https://rendprop.com/privacy"],
+    ["https://WWW.Rendprop.com/u/estate-demo", "https://rendprop.com/u/estate-demo"],
+  ]) {
+    const r = await worker.fetch(new Request(from), ENV, ctx);
+    expect(r.status === 301, `[${from}] want 301, got ${r.status}`);
+    expect(r.headers.get("location") === to, `[${from}] want Location ${to}, got ${r.headers.get("location")}`);
+    expect(!!r.headers.get("strict-transport-security"), `[${from}] the redirect itself should pin HSTS`);
+  }
+  for (const untouched of ["http://localhost:8787/terms", "http://127.0.0.1:8787/f/estate-demo", "https://rendprop-tour-host.example.workers.dev/terms"]) {
+    const r = await worker.fetch(new Request(untouched), ENV, ctx);
+    expect(r.status === 200, `[${untouched}] dev/preview hosts must not be redirected, got ${r.status}`);
+  }
+  ok("http:// and www. requests 301 to https://rendprop.com; dev hosts are untouched");
+
+  // ---- branded pages carry the favicon; the unbranded one never does --------
+  for (const [path, label] of [["/terms", "Terms"], ["/privacy", "Privacy"], ["/definitely-not-a-page", "404"], ["/f/estate-demo", "demo tour"]]) {
+    const r = await get(worker, path);
+    expect(r.body.includes('<link rel="icon" href="/favicon.svg"'), `[${label}] want the Rendprop favicon`);
+  }
+  for (const path of ["/terms", "/privacy"]) {
+    const r = await get(worker, path);
+    expect(r.body.includes(`<link rel="canonical" href="https://rendprop.com${path}">`), `[${path}] want a canonical link`);
+    expect(r.body.includes('href="/support"'), `[${path}] want the Support link in the footer`);
+  }
+  const unbrandedDemo = await get(worker, "/u/estate-demo");
+  expect(!unbrandedDemo.body.includes("favicon"), "[/u/estate-demo] the MLS page must not carry the Rendprop favicon");
+  ok("favicon + canonical on branded pages only");
+
+  // ---- the legal pages match the launch line-up ------------------------------
+  const terms = await get(worker, "/terms");
+  expect(/Starter and Pro, billed monthly\s+or yearly, and Team, billed monthly/.test(terms.body),
+    "[/terms] §6 must say Starter and Pro bill monthly or yearly and Team bills monthly (LAUNCH-CONTRACT: Team yearly is not sold)");
+  expect(!/each\s+billed monthly or yearly/.test(terms.body), "[/terms] must not claim every plan bills yearly");
+  expect(terms.body.includes("Effective September 5, 2026"), "[/terms] effective date");
+  ok("terms reflect the launch plan line-up");
+
   // ── safeUrl scheme allowlist (audit P1 re-open) ──────────────────────────
   // Browsers strip C0 control characters from a URL BEFORE resolving its
   // scheme, so a raw-string regex test let "java\nscript:" through and the
@@ -269,7 +313,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`✔ route check passed — ${checks} assertions (malformed paths, error boundary, upstream failures, indexing headers, ordinary routes, safeUrl scheme allowlist).`);
+  console.log(`✔ route check passed — ${checks} assertions (malformed paths, error boundary, upstream failures, indexing headers, ordinary routes, canonical origin, favicon/legal pages, safeUrl scheme allowlist).`);
 }
 
 main().catch((err) => {

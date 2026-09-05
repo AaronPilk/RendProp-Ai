@@ -347,9 +347,12 @@ Verified against Apple's own OpenAPI specification for the App Store Connect API
   the United States for this launch. The app request is a JSON:API inline
   create: the `included` territoryAvailabilities are linked to the relationship
   references by a `${...}` placeholder id (`${territoryAvailability-USA}`),
-  Apple's documented convention for inline creates
-  (<https://developer.apple.com/forums/thread/714696>). The bare territory id
-  and a plain label were both refused live with `INCLUDED.INVALID_ID`.
+  Apple's convention for inline creates
+  (<https://developer.apple.com/forums/thread/714696>), and carries one row for
+  every territory Apple sells in (175, from `GET /v1/territories`) with
+  `available` true for the USA only — Apple refuses a body that lists only the
+  wanted territory (one `RELATIONSHIP.INVALID` per territory left out). Both
+  rules were proven live on 2026-09-05.
 * Read the categories back correctly: `GET /v1/apps/{id}/appInfos` is asked
   with `include=primaryCategory,secondaryCategory`, because without it Apple
   returns the category relationships as `links` only and set categories look

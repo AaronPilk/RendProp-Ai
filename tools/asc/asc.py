@@ -2059,37 +2059,37 @@ def inline_create_id(territory):
     return "${territoryAvailability-%s}" % territory
 
 
-def app_availability_body(app_id, territories, client_id=None):
+def app_availability_body(app_id, all_territories, available_territories, client_id=None):
     """Build POST /v2/appAvailabilities, per AppAvailabilityV2CreateRequest.
 
     The territoryAvailabilities are JSON:API **inline creates**: each one is a
     whole resource object in the top-level `included` array, and the
     `relationships.territoryAvailabilities.data` array points at them by id.
 
-    Spec v4.4.1 (the authority for this shape):
+    Two things Apple enforces that the spec (v4.4.1) does not spell out, both
+    learned from the live 409s of 2026-09-05:
 
-    * `AppAvailabilityV2CreateRequest.data.relationships.territoryAvailabilities
-      .data[]` requires **both `id` and `type`**, so the reference must carry an
-      id even though the resource does not exist yet.
-    * `included[]` is `TerritoryAvailabilityInlineCreate`, whose only required
-      property is `type`; `id`, `attributes.available` and
-      `relationships.territory` are all optional. The id is therefore a
-      CLIENT-SUPPLIED temporary handle whose sole job is to match the reference
-      in `relationships`.
+    * The temporary id linking `included[]` to the relationship reference must
+      be Apple's inline-create placeholder, `${...}` - e.g.
+      `${territoryAvailability-USA}` - sent verbatim in both places. A bare
+      territory id or a plain label is 409 ENTITY_ERROR.INCLUDED.INVALID_ID.
+      (Developer Forums thread 714696 shows the same `"id": "${price1}"` form
+      for inAppPurchasePriceSchedules: https://developer.apple.com/forums/thread/714696)
+    * The request must carry ONE row PER TERRITORY APPLE SELLS IN - all 175 of
+      them, from `GET /v1/territories` - each with `attributes.available`
+      true or false. Sending only the wanted territory is 409
+      ENTITY_ERROR.RELATIONSHIP.INVALID, once per missing territory
+      ("expects an included resource with type 'territories' and id 'BWA' but
+      no matching resource was included"). With every territory present and
+      `available` true for USA alone, the call is 201 and the app reads back
+      as available in USA only.
 
-    The handle follows Apple's documented convention for inline creates: a
-    placeholder wrapped in `${...}`, e.g. `${territoryAvailability-USA}`, sent
-    verbatim in both places (Developer Forums thread 714696, where Apple shows
-    `"id": "${price1}"` for inAppPurchasePriceSchedules - the same mechanism):
-    https://developer.apple.com/forums/thread/714696
-
-    That is the default `client_id`. Anything else was rejected live: both the
-    bare territory id (`USA`) and a plain label (`territoryAvailability-USA`)
-    came back 409 ENTITY_ERROR.INCLUDED.INVALID_ID. `ensure_app_availability_usa`
-    still keeps one retry with the bare territory id as the alternative reading.
+    `all_territories` is the full list of territory ids; `available_territories`
+    the subset the app should be sold in.
     """
     client_id = client_id or inline_create_id
-    handles = [(t, client_id(t)) for t in territories]
+    wanted = set(available_territories)
+    rows = [(t, client_id(t), t in wanted) for t in all_territories]
     return {
         "data": {
             "type": "appAvailabilities",
@@ -2098,7 +2098,7 @@ def app_availability_body(app_id, territories, client_id=None):
                 "app": relationship("apps", app_id),
                 "territoryAvailabilities": {
                     "data": [{"type": "territoryAvailabilities", "id": handle}
-                             for _territory, handle in handles]
+                             for _territory, handle, _flag in rows]
                 },
             },
         },
@@ -2106,12 +2106,20 @@ def app_availability_body(app_id, territories, client_id=None):
             {
                 "type": "territoryAvailabilities",
                 "id": handle,
-                "attributes": {"available": True},
+                "attributes": {"available": flag},
                 "relationships": {"territory": relationship("territories", territory)},
             }
-            for territory, handle in handles
+            for territory, handle, flag in rows
         ],
     }
+
+
+def all_territory_ids(client):
+    """Every territory App Store Connect knows (175 as of 2026-09-05)."""
+    ids = sorted(t["id"] for t in client.get_all("/v1/territories", params={"limit": 200}))
+    if not ids:
+        raise AscError("GET /v1/territories returned no territories - cannot set availability.")
+    return ids
 
 
 def ensure_app_availability_usa(client, app_id, plan):
@@ -2124,17 +2132,11 @@ def ensure_app_availability_usa(client, app_id, plan):
     attributes on `TerritoryAvailabilityInlineCreate` and neither is sent here,
     so this sets territories and nothing else.
 
-    The `included` objects are linked to the relationship references by a
-    temporary id. Apple's documented convention for that id is a placeholder
-    wrapped in `${...}` - `${territoryAvailability-USA}` here, the same
-    `"id": "${price1}"` mechanism Apple shows for inAppPurchasePriceSchedules in
-    Developer Forums thread 714696 (https://developer.apple.com/forums/thread/714696)
-    - and that is what is sent first. The live run of 2026-09-05 had tried the
-    bare territory id and a plain label, and both came back 409
-    ENTITY_ERROR.INCLUDED.INVALID_ID. If Apple rejects the `${...}` form with
-    the same code, one retry uses the bare territory id as the alternative
-    reading. A failure is a warning with the UI path, never a stopped run: a
-    territory list is a business decision a human can make in one click.
+    The body carries every territory Apple sells in, `available` true only for
+    the launch territories, with `${...}` inline-create ids - the one shape
+    Apple accepted live (see `app_availability_body`). A failure is a warning
+    with the UI path, never a stopped run: a territory list is a business
+    decision a human can make in one click.
     https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v2-appAvailabilities
     """
     wanted = sorted(LAUNCH_TERRITORIES)
@@ -2147,33 +2149,26 @@ def ensure_app_availability_usa(client, app_id, plan):
                   % (len(available), "y" if len(available) == 1 else "ies"))
 
     def apply_availability():
+        every = all_territory_ids(client)
+        missing = [t for t in wanted if t not in every]
+        if missing:
+            plan.warn("launch territor%s %s not in Apple's territory list; not setting availability."
+                      % ("y" if len(missing) == 1 else "ies", ", ".join(missing)))
+            return None
         try:
             return client.post("/v2/appAvailabilities",
-                               app_availability_body(app_id, wanted))
-        except ApiError as first:
-            # INCLUDED.INVALID_ID means Apple could not match the `included`
-            # objects to the relationship references. The `${...}` placeholder
-            # is the documented form; the one alternative reading left is the
-            # bare territory id, so try that once.
-            if not any("INCLUDED" in code for code in first.codes):
-                plan.warn("could not set the app's territory availability (%s)."
-                          % (", ".join(first.codes) or first.status))
-                app_availability_ui_path(plan.out, indent="      ")
-                return None
-            plan.out.write("      %s; retrying with the bare territory id as the "
-                           "inline-create id\n" % (", ".join(first.codes) or first.status))
-            try:
-                return client.post(
-                    "/v2/appAvailabilities",
-                    app_availability_body(app_id, wanted, client_id=lambda t: t),
-                )
-            except ApiError as second:
-                plan.warn("could not set the app's territory availability (%s)."
-                          % (", ".join(second.codes) or second.status))
-                app_availability_ui_path(plan.out, indent="      ")
-                return None
+                               app_availability_body(app_id, every, wanted))
+        except ApiError as exc:
+            plan.warn("could not set the app's territory availability (%s)."
+                      % (", ".join(sorted(set(exc.codes))) or exc.status))
+            for item in exc.errors[:2]:
+                if item.get("detail"):
+                    plan.out.write("      %s\n" % item["detail"])
+            app_availability_ui_path(plan.out, indent="      ")
+            return None
 
-    plan.act("make the app available in %s only" % ", ".join(wanted), apply_availability)
+    plan.act("make the app available in %s only (%s territories sent, %d on)"
+             % (", ".join(wanted), "all", len(wanted)), apply_availability)
 
 
 def find_editable_version(client, app_id):

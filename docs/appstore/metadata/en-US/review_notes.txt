@@ -8,7 +8,7 @@ SUBSCRIPTIONS: Rendprop sells auto-renewable subscriptions through StoreKit 2 �
 
 If the paywall says "Plans aren't available right now", StoreKit returned no products — that only happens before the subscriptions are approved with this build. It is the app's correct behaviour for an empty product list. Once approved, the paywall lists all three plans with live prices and the "Start 7-day free trial" button.
 
-ACCOUNT DELETION: Settings → Account → "Delete account". It deletes the server account, published tours, uploaded media and leads, then wipes local data. It also works for guests (local wipe).
+ACCOUNT DELETION: Settings → "Your data" → "Delete account" (visible signed in or out). It deletes the server account, published tours, uploaded media and leads, then wipes local data. It also works for guests (local wipe).
 
 AI-GENERATED CONTENT: the AI photo edits (sky, twilight, lawn, tidy the room, virtual staging) and the AI aerial intro produce altered or synthetic imagery. Every altered asset carries a disclosure in-app, the tour page shows a persistent "Virtually staged" label to viewers, and the unaltered original is published alongside the edit. A listing's Compliance section lists every AI asset and can export the audit log.
 

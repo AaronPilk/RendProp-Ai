@@ -78,6 +78,7 @@ Cloudflare), keep/restore the routes block in `wrangler.toml` (and `workers_dev 
 ```toml
 routes = [
   { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
+  { pattern = "www.rendprop.com/*", zone_name = "rendprop.com" },
 ]
 ```
 
@@ -93,6 +94,18 @@ npx wrangler deploy
 The Worker owns the whole apex: the static marketing site is served from `./public`
 by Workers Static Assets, everything else (`/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`) by the
 script.
+
+### Zone settings the Worker cannot set (Cloudflare dashboard, once)
+
+Static Assets answer the marketing pages before the script runs, so four things are decided by
+the zone, not by this repo. Checked live 2026-09-05 — the first three were wrong:
+
+| Setting | Where | Why |
+|---|---|---|
+| **Always Use HTTPS → On** | SSL/TLS → Edge Certificates | `http://rendprop.com/pricing` served the page over plain HTTP with a 200. The Worker now 301s its own routes (`canonicalRedirect` in `src/index.ts`), but only the zone setting covers the static pages. |
+| **Redirect www → apex** | Rules → Redirect Rules → template "Redirect from WWW to root" | `https://www.rendprop.com/` was a Cloudflare 525 (no route). The `www.rendprop.com/*` route above stops the 525; the rule makes it a proper 301 for the static pages too. |
+| **JS Detections → Off** (or accept the console error) | Security → Settings → Bot traffic | Bot Fight Mode injects an inline `<script>` into every HTML response; the marketing CSP pins `script-src` to one hash, so browsers block it (a CSP error in the console on every page) and the detection never runs. It cannot be hashed (per-request values) and `_headers` cannot carry a nonce. Turn it off unless a WAF rule actually uses `cf.bot_management.js_detection.passed`. |
+| **Managed robots.txt** | Security → Bots (Content Signals / AI crawler controls) | Cloudflare prepends its own `robots.txt` block that says `Disallow: /` for GPTBot, ClaudeBot, CCBot, Google-Extended, Applebot-Extended, Bytespider, meta-externalagent and Amazonbot — the opposite of `public/robots.txt`, which deliberately opens the marketing site (and `/llms.txt`) to AI assistants and closes only customer tours. Decide which policy you want; if it is ours, turn the managed block off. |
 
 ### Media the deploy expects in `./public/assets`
 

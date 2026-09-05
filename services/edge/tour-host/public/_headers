@@ -28,7 +28,7 @@
 /assets/*
   Cache-Control: public, max-age=604800, immutable
 
-# site.css / site.js are NOT fingerprinted — the four HTML pages reference them
+# site.css / site.js are NOT fingerprinted — the five HTML pages reference them
 # by fixed name — so they must revalidate: an hour fresh, then served stale
 # while a background revalidation fetches the new file (audit F-H-14: the old
 # 7-day immutable rule kept returning visitors on a stale stylesheet after a

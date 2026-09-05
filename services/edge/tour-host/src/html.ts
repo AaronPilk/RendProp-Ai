@@ -256,11 +256,14 @@ export const TOKENS_CSS = `
   a { color: var(--accent); }
 `;
 
-/** Common <head> boilerplate shared by the non-player pages. */
+/** Common <head> boilerplate shared by the BRANDED non-player pages (404, 5xx,
+ *  portfolio-missing). Carries the Rendprop favicon, so it must never be used
+ *  for an unbranded (/u/) response — those use unbrandedNoticePage in player.ts. */
 export function headMeta(title: string, description?: string): string {
   return `<meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>${escapeHtml(title)}</title>${description ? `\n<meta name="description" content="${escapeAttr(description)}">` : ""}
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta name="theme-color" content="#0b0d10">`;
 }
 

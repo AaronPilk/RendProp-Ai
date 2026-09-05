@@ -266,3 +266,130 @@ Skip notes and the onboarding page count:
 xcrun xcresulttool get test-results activities \
   --path /tmp/reviewerwalk.xcresult --test-id 'ReviewerWalk/testReviewerWalk()'
 ```
+
+---
+
+# PaywallShot — the subscription review screenshot
+
+`PaywallShot.testPaywallShot()` is a third capture in the same bundle. It exists
+for one file: `docs/appstore/iap-review/paywall.png`, the **App Store Connect
+subscription review screenshot** that App Review requires on every
+auto-renewable subscription (`python3 tools/asc/asc.py review apply` attaches it
+to all five sold products). Apple wants the purchase UI as a customer sees it —
+real product names, real prices — and it is never shown to the public.
+
+| # | Attachment | Screen |
+|---|---|---|
+| 01 | `p01-paywall-monthly` | Settings → Plan & usage → **Upgrade plan** → the paywall, Monthly tab, with StoreKit prices. **The deliverable.** |
+| 02 | `p02-paywall-yearly` | The same sheet on the **Yearly** tab (Team falls back to its monthly price with a "Monthly only" note — Team Yearly is not sold at launch). |
+| 03 | `p03-paywall-legal` | Scrolled to the bottom: the auto-renew sentence, Terms of Use, Privacy Policy, and the pinned buy bar with **Restore purchases**. |
+| — | `p01-paywall-EMPTY` | Only when no price rendered within 20 s: the "Plans aren't available right now" state, so you can see what went wrong. Never copied into the repo. |
+
+## How it gets products under `xcodebuild test`
+
+`StoreShots` never opens the paywall because the scheme attaches
+`Rendprop.storekit` to the **Run** action only, and xcodegen has no
+`storeKitConfiguration` for the test action — so under `xcodebuild test`
+`Product.products(for:)` returns nothing and the paywall shows its (correct)
+empty state. `PaywallShot` therefore brings the StoreKit test environment up
+itself, in `setUpWithError()` **before** `app.launch()`:
+
+```swift
+let session = try SKTestSession(configurationFileNamed: "Rendprop")
+session.resetToDefaultState()
+session.disableDialogs = true
+session.clearTransactions()
+session.storefront = "USA"
+session.locale = Locale(identifier: "en_US")
+```
+
+This is Apple's automation API for StoreKit Testing in Xcode ("StoreKitTest
+works with XCTest for extending unit and UI test coverage to your in-app
+purchases" — WWDC20 10659). There is one test environment per simulator and
+every `SKTestSession` controls it, so a session created in the test runner is
+what the app sees when `PurchaseManager.loadProducts()` runs at launch. Two
+things in `project.yml` make it work:
+
+1. `Rendprop.storekit` is a **resource of the RendpropUITests target only**
+   (`sources: - path: Rendprop.storekit, buildPhase: resources`). StoreKitTest
+   resolves the name inside the bundles loaded into the runner, so the file has
+   to ride inside `RendpropUITests.xctest`. It is not in the app target and a
+   test bundle is never archived, so nothing reaches the .app.
+2. `FRAMEWORK_SEARCH_PATHS` on that target names
+   `$(PLATFORM_DIR)/Developer/Library/Frameworks`, where `StoreKitTest.framework`
+   sits next to `XCTest.framework`. Swift auto-links it on `import StoreKitTest`.
+
+The test tries `configurationFileNamed: "Rendprop"`, then `"Rendprop.storekit"`,
+then `init(contentsOf:)` on the bundle URL, and writes which one worked (or why
+none did) into the result bundle as the first activity (`STOREKIT: …`). If the
+paywall still shows its empty state, it presses the paywall's own **Try again**
+up to three times before giving up.
+
+## What it launches with
+
+The same five arguments as the UI walk and the store shots — `-uiTesting`,
+`-hasOnboarded YES`, `-space.type real_estate`, `-appearance light`,
+`-ai.thirdPartyProcessing.consent.v1 YES`. `-uiTesting` does not touch
+StoreKit: `PurchaseManager.loadProducts()` calls `Product.products(for:)`
+unconditionally, and `Config.makeAPIClient()` only swaps the REST client for the
+mock. It does make `AuthStore.isSignedIn` true, and the mock `/me` reports no
+plan, which is exactly the state in which `SettingsView.PlanActionRows` draws
+**Upgrade plan** (`RendpropProducts.isUpgradeable(planName: nil)`).
+
+## What it relies on in the app
+
+| Element | Where |
+|---|---|
+| Tab bar button **Settings** | `RootTabView`, `RendpropApp.swift` |
+| `settings.upgradePlan` / label **Upgrade plan** | `SettingsView.PlanActionRows` |
+| `paywall.root` / header **Turn any phone walkthrough…** / **Pick a plan. Cancel any time.** | `PaywallView` |
+| A label containing **/month** (or **/year** on the Yearly tab) | `PaywallView.priceText` = `Product.displayPrice` + `BillingPeriod.priceSuffix`; a missing product prints a bare dash with no suffix, so the suffix is proof a real price rendered |
+| Segmented picker buttons **Monthly** / **Yearly** | `PaywallView.periodPicker` (`BillingPeriod.pickerLabel`) |
+| **Plans aren't available right now** + button **Try again** | `PaywallView.unavailableCard` |
+| Link **Terms of Use**, button **Restore purchases**, button **Close** | `PaywallView.legalBlock`, `restoreButton`, toolbar |
+
+## Safety rules
+
+1. **No purchase button is ever tapped.** "Subscribe" / "Start 7-day free
+   trial" are photographed, never touched. The only controls pressed are the
+   Settings tab, "Upgrade plan", the Monthly/Yearly segments, the paywall's own
+   "Try again", and "Close".
+2. **No assertions.** `continueAfterFailure = true`, one activity per step, and
+   an unreachable step writes its reason into the bundle instead of failing.
+3. **Nothing empty reaches the repo.** The bridge script copies only
+   `p01-paywall-monthly.png`, only at exactly 1320 × 2868; an `EMPTY` capture
+   has a different name and cannot land in `docs/appstore/iap-review/`.
+
+## Run it on the Mac build bridge
+
+```bash
+bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-paywallshot.sh"
+```
+
+Same "Store 6.9" simulator (iPhone 17 Pro Max, 1320 × 2868) and the same 9:41
+status bar as `bridge-cmd-storeshots.sh`; no photos are seeded. PNGs land in
+`~/Rendprop AI/_bridge/out/paywallshot/`, and the monthly shot is copied to
+`~/Rendprop AI/repo/docs/appstore/iap-review/paywall.png` when it passes the
+size gate. The last line is always `PAYWALL_PNG=<path>` or `PAYWALL_PNG=MISSING`.
+
+## Run it by hand
+
+```bash
+cd apps/ios
+xcodegen generate        # adds Rendprop.storekit to the test bundle's resources
+xcrun simctl boot B4DAE2B9-B951-4808-AF5D-97D89D64CECC 2>/dev/null   # "Store 6.9"
+
+xcodebuild test \
+  -project Rendprop.xcodeproj \
+  -scheme Rendprop \
+  -destination 'platform=iOS Simulator,id=B4DAE2B9-B951-4808-AF5D-97D89D64CECC' \
+  -only-testing:RendpropUITests/PaywallShot \
+  -resultBundlePath /tmp/paywallshot.xcresult
+```
+
+The `STOREKIT:` note, the `Price rendered: …` proof and any skip reasons:
+
+```bash
+xcrun xcresulttool get test-results activities \
+  --path /tmp/paywallshot.xcresult --test-id 'PaywallShot/testPaywallShot()'
+```

@@ -88,6 +88,7 @@ html[data-theme="dark"] {
     --grad-text: linear-gradient(115deg, #e9defc 0%, #c4a8ff 38%, #9b6dff 62%, #7c3aed 100%);
     --tick-bg: rgba(155, 109, 255, .16);
     --ok: #34d399;
+    --bad: #ff6b6f;
   }
 }
 
@@ -219,8 +220,13 @@ h3 { font-size: clamp(19px, 2.2vw, 24px); letter-spacing: -.015em; }
 .hero .grad-text { background: linear-gradient(115deg, #e9defc 0%, #c4a8ff 38%, #9b6dff 62%, #7c3aed 100%);
   -webkit-background-clip: text; background-clip: text; }
 .hero-ctas { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 34px; }
-.hero-note { margin-top: 22px; font-size: 13.5px; color: rgba(255,255,255,.55);
-  display: flex; align-items: center; gap: 8px; }
+/* Plain block, not flex: as a flex row the trailing link was squeezed into its own
+   narrow column beside the sentence and wrapped word-by-word on phones. */
+.hero-note { margin-top: 22px; font-size: 13.5px; color: rgba(255,255,255,.55); max-width: 46em; }
+/* The two floating cards are positioned against the whole hero, which only works
+   with the two-column layout: once it stacks (≤980px) they land on the headline
+   and the phone mock. Decorative (aria-hidden), so they simply go. */
+@media (max-width: 980px) { .hero .f-card { display: none; } }
 .hero .btn-ghost { background: rgba(255,255,255,.09); border-color: rgba(255,255,255,.22); color: #fff; }
 
 /* ---------- iPhone frame component ---------- */
@@ -368,6 +374,12 @@ html.js .reveal.in { opacity: 1; transform: none; }
 .band-dark .band-bg::after { content: ""; position: absolute; inset: 0;
   background: linear-gradient(180deg, #0e0d14 0%, transparent 30%, transparent 70%, #0e0d14 100%); }
 .band-dark .wrap { position: relative; z-index: 1; }
+/* Feature rows inside a dark band (features.html "Handheld in. Drone-smooth out.")
+   otherwise inherit the LIGHT theme's --dim/--ink — dark text on the dark band,
+   i.e. an invisible paragraph and bullet list for every light-mode visitor. */
+.band-dark .fcopy p, .band-dark .fcopy li { color: rgba(244,242,251,.62); }
+.band-dark .fcopy li strong { color: #f4f2fb; }
+.band-dark .tick { background: rgba(155,109,255,.16); color: #c4a8ff; }
 .chips { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 34px; }
 .chip { background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.13);
   backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); border-radius: 999px;
@@ -549,15 +561,17 @@ img.brand-dot { background: none; object-fit: contain; padding: 0; }
 .foot-brands a:hover { opacity: 1; }
 .foot-brands img { height: 15px; width: auto; display: block; }
 
-/* Real Tract wordmark — theme-swapped (dark art on light bg, light art on dark bg) */
+/* Real Tract wordmark — theme-swapped (dark art on light bg, light art on dark bg).
+   Every selector carries `.foot-brands` so it outranks `.foot-brands img { display:block }`
+   above — without it both variants rendered at once in the light theme. */
 .foot-brands .tract-logo { height: 22px; width: auto; }
-.tract-on-dark { display: none; }
-.tract-on-light { display: block; }
-html[data-theme="dark"] .tract-on-light { display: none; }
-html[data-theme="dark"] .tract-on-dark { display: block; }
+.foot-brands .tract-on-dark { display: none; }
+.foot-brands .tract-on-light { display: block; }
+html[data-theme="dark"] .foot-brands .tract-on-light { display: none; }
+html[data-theme="dark"] .foot-brands .tract-on-dark { display: block; }
 @media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) .tract-on-light { display: none; }
-  html:not([data-theme="light"]) .tract-on-dark { display: block; }
+  html:not([data-theme="light"]) .foot-brands .tract-on-light { display: none; }
+  html:not([data-theme="light"]) .foot-brands .tract-on-dark { display: block; }
 }
 
 /* Wholesale Mortgage Lending mark (single purple version — reads on both themes) */

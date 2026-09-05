@@ -134,6 +134,39 @@ function cacheKeyFor(url: URL, canonicalPath: string): Request {
   return new Request(`${url.origin}${canonicalPath}`, { method: "GET" });
 }
 
+const APEX_HOST = "rendprop.com";
+
+/**
+ * Canonical origin for everything the Worker answers: `https://rendprop.com`.
+ * Verified live on 2026-09-05: `http://rendprop.com/terms` served the page with
+ * a 200 (no HTTPS upgrade — the HSTS header on a plain-HTTP response is ignored
+ * by browsers) and `https://www.rendprop.com/` answered Cloudflare's 525 page,
+ * because only the apex had a Worker route. A tour link is very often typed or
+ * pasted without a scheme, so both cases are ones real viewers hit.
+ *
+ * Only the production hosts are normalised — `wrangler dev` (localhost, http)
+ * and preview hosts are left alone. Static Assets (the marketing pages) are
+ * answered before this script runs, so for THOSE paths the zone settings
+ * ("Always Use HTTPS" + a www→apex Redirect Rule) are still required; this is
+ * the Worker's half of the fix and a safety net if a setting is ever toggled off.
+ */
+function canonicalRedirect(url: URL): Response | null {
+  const host = url.hostname.toLowerCase();
+  const isApex = host === APEX_HOST;
+  const isWww = host === `www.${APEX_HOST}`;
+  if (!isApex && !isWww) return null;
+  if (isApex && url.protocol === "https:") return null;
+  const location = `https://${APEX_HOST}${url.pathname}${url.search}`;
+  return new Response(null, {
+    status: 301,
+    headers: {
+      Location: location,
+      "Cache-Control": "public, max-age=3600",
+      "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    },
+  });
+}
+
 /**
  * `URL.pathname` keeps malformed percent-escapes (`/f/%`, `/f/%E0%A4%A`), and
  * decodeURIComponent throws a URIError on them (audit F-H-11: the exception
@@ -299,6 +332,9 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
 
   const url = new URL(req.url);
+  const canonical = canonicalRedirect(url);
+  if (canonical) return canonical;
+
   const path = url.pathname.replace(/\/+$/, "") || "/";
 
   const fMatch = path.match(/^\/f\/([^/]+)$/);
@@ -422,8 +458,8 @@ function landingPage(): string {
   <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
   photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
   <div>
-    <a class="pill" href="https://apps.apple.com/us/app/id6808982413">Get it on the App Store</a>
-    <span class="soon">iOS app — on the App Store</span>
+    <a class="pill" href="https://apps.apple.com/us/app/id6808982413">Download on the App Store</a>
+    <span class="soon">Free on iPhone · iOS 16 or later</span>
   </div>
   <footer>
     <a href="/terms">Terms</a> · <a href="/privacy">Privacy</a> · <a href="mailto:aaron@pilk.ai">Contact</a>

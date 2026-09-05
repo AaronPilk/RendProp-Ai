@@ -151,3 +151,83 @@ the list below. **Re-run this list after any copy change** — most of it is a f
 4. **Competitor facts are dated 26 August 2026** (`docs/COMPETITIVE-INTEL.md`). `/compare` states that date in the table note and the footer. Re-check the four published price ranges before any paid campaign points at that page.
 5. **The Worker's fallback landing page** (`src/index.ts` `landingPage()`) still reads "iOS app — coming soon" and links `mailto:` for early access. It only renders if the static assets are missing, but it is the one string left on the domain that contradicts the launch. `src/` was out of scope for this pass.
 6. **`docs/APP-STORE-CHECKLIST.md` §7** is superseded by `review-notes.md`; it still contains the "nothing is charged in this version" sentence that must never reach App Store Connect.
+
+---
+
+# Pass 2 — 5 September 2026 (post-deploy, live site)
+
+**Scope:** the live site as deployed at 12:23 EDT — `/`, `/pricing`, `/features`, `/compare`,
+`/support`, `/privacy`, `/terms`, `/sitemap.xml`, `/robots.txt`, `/llms.txt`, `/nope`,
+`/f/estate-demo`, `/u/estate-demo`, every referenced `/assets/*`, the outbound links, and the
+response headers — plus the sources, this time including `src/**` (the Worker) and `wrangler.toml`.
+**Ground truth:** `docs/LAUNCH-CONTRACT.md`, `Products.swift`, `Listing.swift`
+(`heroHeadline`/`heroSubline`), `docs/appstore/metadata/en-US/*.txt`, `src/legal.ts`,
+`docs/appstore/review-readiness.md`, `SettingsView.swift` (`supportEmail`), and the app/server code
+for every product claim (AI voice picker, 9:16/16:9 exports, 4/6/8 s aerial lengths with time-of-day
+and camera-move pickers, Suggest / Improve-my-prompt, "skip AI enhance & publish now", sold-listing
+form copy, RoomPlan furniture footprints, allowance refunds on failure, calendar-month renders vs
+30-day meters, the 10-minute capture/import cap, 0.5× default lens, 60 fps output — all confirmed).
+Pages were checked as rendered at 375 px and 1440 px in both themes, not only as parsed HTML.
+
+Severity scale as above. Everything marked *fixed* is in the working tree, tests green, **not deployed**.
+
+## P2-1. Rendering bugs (visible to every visitor)
+
+| # | Sev | Page | Issue | Fix |
+|---|-----|------|-------|-----|
+| P2-1.1 | **P1** | features (light theme) | The "Handheld in. Drone-smooth out." section sits in a dark band but its paragraph and four bullets inherit the light theme's `--dim`/`--ink` — **dark text on the dark band, i.e. invisible** to every light-mode visitor. "This is the heart of the app" could not be read. | `site.css`: `.band-dark .fcopy p/li/strong` and `.band-dark .tick` now use the band's light ink. |
+| P2-1.2 | **P1** | index (phones) | The two floating glass cards are positioned against the whole hero (`right:38%; top:18%`). Once the grid stacks (≤980 px) the "Tour ready" card lands **on top of the H1** — it hid the word "crew." in "Skip the film crew." on a 375 px phone — and "New enquiry" covers the phone mock's caption. | Hidden at ≤980 px (both are `aria-hidden` decoration). Desktop unchanged. |
+| P2-1.3 | **P1** | compare (phones) | The "Three differences" cards carried an inline `style="grid-template-columns:repeat(3,1fr)"`, which outranks the stylesheet's ≤880 px collapse. On a phone the three cards rendered as **three one-word-wide columns** with clipped text ("unbrande", "Rendprop"). | Inline style removed; the stylesheet already sets three columns on desktop. |
+| P2-1.4 | **P2** | all pages, footer | The Tract wordmark PNGs were wired backwards (`tract-word-dark.png` is the *white* art, `tract-word-light.png` the *black* art) **and** the show/hide rules lost to `.foot-brands img { display:block }` on specificity — so light mode showed both variants (one a near-invisible ghost taking 120 px) and dark mode showed only the black one, illegible on the dark footer. | Sources swapped in all five footers; every toggle selector now carries `.foot-brands`. Verified in both themes. |
+| P2-1.5 | **P2** | index hero | `.hero-note` was `display:flex`, so the trailing "See everything it does →" link became a second flex column beside the (now two-sentence) note and wrapped word-by-word on phones and desktop. | Plain block; the link now follows the sentence. |
+| P2-1.6 | **P2** | pricing (system-dark users) | Pass 1's `--bad` token (§3.4) was added to `html[data-theme="dark"]` but **not** to the `prefers-color-scheme: dark` block, so a visitor on system dark with no explicit choice got the light-theme `#cc2f35` on the dark panel — 3.6:1 on the "$635–1,450" total. | `--bad: #ff6b6f` added to the media-query block. |
+| P2-1.7 | **P2** | all pages, footer | The three partner logos had no `width`/`height` (Pass 1 §3.8 said every image did). | Intrinsic sizes added (`640×118`, `260×108`); CSS still sets the display height. |
+
+## P2-2. Product truth and copy
+
+| # | Sev | Page | Issue | Fix |
+|---|-----|------|-------|-----|
+| P2-2.1 | **P1** | /terms §6 | "Starter, Pro, and Team, each billed monthly or yearly" — Team yearly is **not sold at launch** (`LAUNCH-CONTRACT.md`, `Products.swift notSoldAtLaunch`); the Terms contradicted `/pricing` and the App Store description. | Now "Starter and Pro, billed monthly or yearly, and Team, billed monthly", and "billing periods" added to what the app is the source of truth for. Locked by a route-test assertion. |
+| P2-2.2 | **P1** | all 7 App Store badges | The badge read **"Get it on the App Store"** — that is Google Play's badge phrase ("GET IT ON Google Play"); Apple's is "Download on the App Store". | Wording changed on all seven badges (index ×2, pricing ×2, features, compare, support) and in the Worker's fallback landing page. The badge artwork is **custom** (a phone-outline glyph, no Apple logo) — see owner item 3. |
+| P2-2.3 | **P2** | compare | Chip "Any length — not 75 seconds": captures and imports are capped at 10 minutes (`CameraManager.maxRecordingSeconds`, `MediaImporter.maxDurationSeconds` = 600). | "Up to 10 minutes — not 75 seconds". |
+| P2-2.4 | **P2** | index | "One tap. Four seconds." — a latency figure nothing in the product backs (the edit runs an image model plus an automated quality check; the server allows up to 60 s). | "One tap. Seconds, not days." — true, and it lands the same punch against the 2–5 day turnaround on `/pricing`. |
+| P2-2.5 | **P2** | pricing | "Cancel in two taps" — the path the same card describes is Settings → your name → Subscriptions → Rendprop → Cancel. | "Cancel in a few taps". |
+| P2-2.6 | **P2** | llms.txt | The cost-context line gave different market rates from `/pricing` for the same items (video $250–600 vs $250–500, drone $100–350 vs $150–350, staging $15–50 vs $5–15 per photo, website $9–150/mo vs $15–75) — an assistant quoting both would contradict the site. | Rewritten to the `/pricing` table's figures, with the $635–1,450 per-listing total and 2–5 day turnaround. (The ranges themselves are not independently verifiable from the repo — see "not verified".) |
+| P2-2.7 | **P2** | features | "stabilizes" — the only American spelling on a site written in British English (stabilised, labelled, colour, enquiries — matching the App Store copy). | "stabilises". |
+| P2-2.8 | **P2** | index, support | FAQ JSON-LD had drifted from the visible questions/answers (index: "How is Rendprop different…" vs visible "How is this different…", plus two answers; support: "Something failed to render or upload" vs visible "A render or upload failed"). | JSON-LD now mirrors the visible text. |
+| P2-2.9 | **P2** | compare | `Article.dateModified` still `2026-08-26` although the page changed on 09-05 (Pass 1) and the sitemap says so. | `2026-09-05`. |
+| P2-2.10 | ok | all | Plan names, prices ($49/$490, $99/$990, $249 monthly-only), allowances (8/150/8/2, 25/300/20/6, 80/600/40/15 + 3 seats), 7-day trial once per Apple ID, Apple-set prices, US launch, support address `aaron@pilk.ai` (= `SettingsView.supportEmail`), hero copy (= `heroHeadline`/`heroSubline`), effective date Sept 5 2026 — all consistent across pages, JSON-LD, llms.txt, Terms and the App Store metadata. Banned-term sweep (Solo, PreOrder, early access, coming soon, beta, founding member, no in-app purchases, waitlist, fair-housing terms) clean on every live page including the demo tour. `codespell` clean. | No change. |
+
+## P2-3. SEO / metadata
+
+| # | Sev | Page | Issue | Fix |
+|---|-----|------|-------|-----|
+| P2-3.1 | **P2** | all 5 | Meta descriptions 172–247 characters; search engines truncate at ~160. | Trimmed to 156–163 without losing a claim. |
+| P2-3.2 | **P2** | /terms, /privacy | No canonical, no favicon (browsers requested `/favicon.ico` → branded 404), footer had no Support link although every static page's does. | Canonical, `favicon.svg`, apple-touch-icon and a Support link added to the legal shell. |
+| P2-3.3 | **P2** | 404 / 5xx pages, /f/* | No favicon link either. | Added to `headMeta()` (branded fallback pages) and to the branded tour head — **not** to `/u/*`, which must stay chrome-free; a test asserts it. |
+| P2-3.4 | ok | all | Titles unique (58–83 chars), one `h1`, no skipped headings, every `img` has `alt`, JSON-LD parses, every internal link and anchor resolves, `og.jpg` exists (1200×630, 161 KB, no baked-in text), sitemap = real routes, canonical = og:url, CSP hash = the inline boot script (`sha256-dPD1Mx…`), `lang="en"` everywhere. | No change. |
+
+## P2-4. Edge / transport (found only by fetching live)
+
+| # | Sev | Where | Issue | Fix |
+|---|-----|-------|-------|-----|
+| P2-4.1 | **P1** | zone | **`http://rendprop.com/…` serves every page over plain HTTP with a 200** — no upgrade to HTTPS (Cloudflare "Always Use HTTPS" is off). HSTS on a plain-HTTP response is ignored, so a viewer who types or is texted a scheme-less link stays on HTTP. | Worker: `canonicalRedirect()` 301s every path it owns (`/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`, 404s) to `https://rendprop.com`; dev/preview hosts untouched; tested. The **static pages need the zone setting** — owner item 1. |
+| P2-4.2 | **P1** | zone | **`https://www.rendprop.com/` is a Cloudflare 525 page** — `www` is a proxied record in the zone but had no Worker route, so it fell through to the placeholder origin (the same failure mode the apex had before its catch-all route). | `wrangler.toml`: `www.rendprop.com/*` route added; the Worker 301s www → apex for its paths, and Static Assets serve the marketing pages (canonical already points at the apex). A zone Redirect Rule makes those a 301 too — owner item 1. **Integrator: this adds a route on deploy.** |
+| P2-4.3 | **P1** | zone | Cloudflare **Bot Fight Mode / JS Detections injects an inline `<script>`** (`/cdn-cgi/challenge-platform/…`) into every HTML response. The marketing CSP pins `script-src` to one hash, so the browser **blocks it and logs a CSP violation on every page**; the detection never runs. Its payload carries per-request values, so it cannot be hashed, and `_headers` cannot carry a nonce. | Nothing sane in-repo (`'unsafe-inline'` would undo Pass 1 §5.1). Owner item 2. |
+| P2-4.4 | **P1** | zone | Cloudflare's **managed robots.txt** is prepended to ours live: `User-agent: GPTBot / ClaudeBot / CCBot / Google-Extended / Applebot-Extended / Bytespider / meta-externalagent / Amazonbot → Disallow: /` plus `Content-Signal: ai-train=no`. That is the opposite of `public/robots.txt`, which deliberately opens the marketing site and `/llms.txt` to AI assistants and closes only customer tours. First-match crawlers will read Cloudflare's block and skip the whole site. | Policy decision — owner item 2. |
+| P2-4.5 | ok | live headers | HSTS, CSP (hash matches), X-Content-Type-Options, Referrer-Policy, X-Frame-Options, Permissions-Policy, COOP all present on the static pages; the Worker pages carry their own CSP/HSTS; `/nope` is the branded 404 with status 404; `/index.html`, `/pricing.html`, `/pricing/` 307 to the clean URL; all 22 referenced assets and both demo videos return 200 with the intended cache headers; outbound links (pilk.ai, tractrealestate.com, wsmlending.com, reportaproblem.apple.com, Apple's EULA) all 200. | No change. |
+
+## P2-5. Not changed, or not verifiable from the repo
+
+1. **`https://apps.apple.com/us/app/id6808982413` returns 404** — as expected before approval. The hero-note sentence "The App Store link opens the moment Apple approves version 1.0." is the honest cover for the 15 CTAs that point there; it is still the one line to delete on approval day (`index.html`, `.hero-note`).
+2. **Market-rate figures** ($250–500 video, $5–15/photo staging, $635–1,450 per listing, $2,500–5,000 retainers, "$9–150 a month" single-property sites) have no source in the repo; Pass 2 only made the site agree with itself. `index`/`features` quote single-property *tools* at $9–150/month while `/pricing` costs a single-property *page* at $15–75 per listing — different framings, left as they are.
+3. **AI voice on reels** is a shipped picker (Off / My voice / AI voice, `FlythroughDetailView.swift:4806`), but it depends on the ElevenLabs key being configured in production, which the repo cannot show. If it is not, remove "or an AI voice" from `/features`, `/pricing` (Starter card) and `/compare` (voiceover row) before launch.
+4. **The App Store badge is custom art** (black pill, phone-outline glyph, no Apple logo). Apple's marketing guidelines ask for the official badge; the official SVG was deliberately not downloaded here. Swapping it in is a one-file change to the seven `<a class="app-badge">` blocks.
+5. `/f/estate-demo` and `/u/estate-demo` were read in full: copy, disclosures, lead form and footer are consistent with the site; the only "neighborhood" on the domain is the demo's location section (marina, dining, trails — no protected-class language).
+
+## P2-6. Only the owner can close these (Cloudflare dashboard, all one-click)
+
+1. **SSL/TLS → Edge Certificates → Always Use HTTPS: On**, and **Rules → Redirect Rules → "Redirect from WWW to root"**. Until then the static pages still answer over plain HTTP and at `www.` (P2-4.1/4.2).
+2. **Security → Settings → JS Detections: Off** (unless a WAF rule uses `cf.bot_management.js_detection.passed`), and decide the **managed robots.txt / Content Signals** policy — turn it off if the intended policy is the one in `public/robots.txt` (P2-4.3/4.4). Both are also written up in `services/edge/tour-host/DEPLOY.md` §3.
+3. **Deploying picks up a new route** (`www.rendprop.com/*`). If wrangler refuses it, remove that one line and rely on the Redirect Rule instead.
+4. Approval day: delete the `.hero-note` sentence (item P2-5.1), then re-run `npm test` and the checks in §8 above.

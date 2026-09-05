@@ -142,17 +142,25 @@ The two halves are linked by a temporary id the **client** supplies:
 `relationships.territoryAvailabilities.data[]` requires both `id` and `type`,
 while `included[]` (`TerritoryAvailabilityInlineCreate`) requires only `type` —
 so the id there exists purely to be matched. The spec ships **no example** for
-this request. Apple's convention for JSON:API inline creates is a placeholder
-wrapped in `${...}`, used identically in both places — Apple shows
-`"id": "${price1}"` for `inAppPurchasePriceSchedules` in Developer Forums thread
-714696 (<https://developer.apple.com/forums/thread/714696>), and
-`/v2/appAvailabilities` is the same mechanism. `asc.py` sends
-`${territoryAvailability-<t>}`. The live run of 2026-09-05 had tried the bare
-territory id (`USA`) and a plain label (`territoryAvailability-USA`) and both
-came back **409 `ENTITY_ERROR.INCLUDED.INVALID_ID`** — the id-matching failing.
-If Apple ever returns that code for the `${...}` form, `asc.py` retries once
-with the bare territory id, then warns with the UI path and carries on — a
-territory list is one click in the UI.
+this request. Two rules, both proven live on 2026-09-05 (a probe that tried the
+shapes one after another and read the result back):
+
+1. The temporary id is Apple's inline-create placeholder, wrapped in `${...}`
+   and used identically in both places — Apple shows `"id": "${price1}"` for
+   `inAppPurchasePriceSchedules` in Developer Forums thread 714696
+   (<https://developer.apple.com/forums/thread/714696>). `asc.py` sends
+   `${territoryAvailability-<t>}`. The bare territory id (`USA`) and a plain
+   label (`territoryAvailability-USA`) are both **409
+   `ENTITY_ERROR.INCLUDED.INVALID_ID`**.
+2. The body must carry **one row for every territory Apple sells in** (175, from
+   `GET /v1/territories`), each with `available` true or false. A body with the
+   USA row alone is **409 `ENTITY_ERROR.RELATIONSHIP.INVALID`**, once per
+   territory left out ("expects an included resource with type 'territories'
+   and id 'BWA' but no matching resource was included"). With all 175 rows and
+   `available: true` for USA only, the POST is **201** and
+   `GET /v1/apps/{id}/appAvailabilityV2` → `territoryAvailabilities` reads back
+   `['USA']`. That is what `metadata apply` now sends. On any other refusal it
+   prints Apple's first two error details and the UI path, and carries on.
 
 > Apple titles this endpoint **"Create an app pre-order"**, which is alarming
 > until you read the schema: `releaseDate` and `preOrderEnabled` are *optional*
@@ -675,15 +683,10 @@ submission — and that Team Yearly does **not**, until it is priced correctly.
   scheduling a price *change*, and does not say whether an in-effect price can be
   removed. **UNVERIFIED** — `subscriptions unprice` tries it and falls back to an
   empty `availableTerritories`, then to the UI path.
-* **The `appAvailabilities` inline-create id.** The spec requires an id on the
-  relationship reference and makes it optional on the `included` object, but
-  ships no example. Live, the bare territory id (`USA`) and a plain label
-  (`territoryAvailability-USA`) were both refused with `INCLUDED.INVALID_ID`.
-  Apple's documented convention is a `${...}` placeholder (Developer Forums
-  thread 714696, for `inAppPurchasePriceSchedules`), which `asc.py` now sends
-  first as `${territoryAvailability-USA}`. That it is accepted on **this**
-  endpoint is **UNVERIFIED** until the next `metadata apply`; if refused,
-  `asc.py` retries once with the bare territory id, then prints the UI path.
+* **The `appAvailabilities` request shape** is no longer unverified: the
+  `${...}` placeholder id AND the one-row-per-territory rule were both
+  established live on 2026-09-05 (see the territories section above), and the
+  app now reads back as available in USA only.
 * **`build attach`.** `PATCH /v1/builds/{id}` and
   `PATCH /v1/appStoreVersions/{id}/relationships/build` are taken straight from
   `BuildUpdateRequest` and `AppStoreVersionBuildLinkageRequest` in the spec, but
@@ -692,7 +695,8 @@ submission — and that Team Yearly does **not**, until it is priced correctly.
   they proved is recorded inline above: availability before price, per-territory
   introductory offers, the yearly USD 1000.00 price ceiling, the `whatsNew`
   STATE_ERROR, the age-rating `ATTRIBUTE.REQUIRED`, the `appAvailabilities`
-  `INCLUDED.INVALID_ID` on non-placeholder ids, and that `GET /v1/apps/{id}/appInfos`
+  `INCLUDED.INVALID_ID` on non-placeholder ids plus its one-row-per-territory
+  rule, and that `GET /v1/apps/{id}/appInfos`
   returns no category ids without `include=`. Every one of them is reproduced by
   the fake API in `tools/asc/test_asc.py`. Everything is idempotent, so a mid-run
   failure is safe to retry.

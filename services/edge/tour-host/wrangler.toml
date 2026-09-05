@@ -18,6 +18,12 @@ workers_dev = false
 # to the placeholder DNS record and 525s.
 routes = [
   { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
+  # www is a proxied DNS record in the same zone but had no route, so every
+  # www.rendprop.com URL answered Cloudflare's 525 page (verified live
+  # 2026-09-05). With the route, the Worker 301s its own paths to the apex
+  # (src/index.ts canonicalRedirect) and the static pages simply serve; a
+  # zone-level "Redirect from WWW to root" rule makes those a 301 as well.
+  { pattern = "www.rendprop.com/*", zone_name = "rendprop.com" },
 ]
 
 # ---------------------------------------------------------------------------
