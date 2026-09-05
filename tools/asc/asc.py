@@ -39,7 +39,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
@@ -2200,6 +2200,14 @@ def ensure_app_availability_usa(client, app_id, plan):
 APP_PRICE_USD = "0.00"   # the app itself is free; the subscriptions carry the price
 
 
+def same_amount(a, b):
+    """Apple prints amounts inconsistently ("0.0" live, "0.00" in docs): compare as numbers."""
+    try:
+        return Decimal(str(a)) == Decimal(str(b))
+    except (InvalidOperation, ValueError, TypeError):
+        return False
+
+
 def read_app_base_price(client, app_id):
     """(base territory id, customer price string) of the app's price schedule, or None."""
     schedule = client.get_optional("/v1/apps/%s/appPriceSchedule" % app_id,
@@ -2232,7 +2240,7 @@ def find_app_price_point(client, app_id, territory, customer_price):
     points = client.get_all("/v1/apps/%s/appPricePoints" % app_id,
                             params={"filter[territory]": territory, "limit": 200})
     for point in points:
-        if attributes_of(point).get("customerPrice") == customer_price:
+        if same_amount(attributes_of(point).get("customerPrice"), customer_price):
             return point["id"]
     raise AscError("No %s price point at %s %s for the app - Apple's list has %d points."
                    % (territory, territory, customer_price, len(points)))
@@ -2276,7 +2284,7 @@ def ensure_app_price_free(client, app_id, plan):
     current = read_app_base_price(client, app_id)
     if current is not None:
         territory, amount = current
-        if amount == APP_PRICE_USD:
+        if same_amount(amount, APP_PRICE_USD):
             plan.note("the app is free (%s %s)" % (territory, amount))
             return
         if amount is None:
@@ -3318,9 +3326,10 @@ def cmd_status(client, args, out):
         out.write("  app price: NOT SET - run `metadata apply` (sets Free)\n")
         missing.append("the app's own price (Free)")
     else:
+        free = same_amount(app_price[1], APP_PRICE_USD)
         out.write("  app price: %s %s%s\n" % (app_price[0], app_price[1],
-                                                " (free)" if app_price[1] == APP_PRICE_USD else " !! not free"))
-        if app_price[1] not in (None, APP_PRICE_USD):
+                                                " (free)" if free else " !! not free"))
+        if app_price[1] is not None and not free:
             missing.append("the app is priced %s %s, it should be free" % app_price)
     report["appPrice"] = None if app_price is None else {"territory": app_price[0], "amount": app_price[1]}
 

@@ -934,7 +934,7 @@ class FakeAsc(object):
                 wanted = query.get("filter[territory]") or ["USA"]
                 points = []
                 for territory in wanted:
-                    for amount in ["0.00", "0.99", "1.99", "4.99"]:
+                    for amount in ["0.0", "0.99", "1.99", "4.99"]:   # Apple prints Free as "0.0"
                         points.append({"type": "appPricePoints",
                                        "id": "app-point-%s-%s" % (territory, amount),
                                        "attributes": {"customerPrice": amount,
@@ -1829,7 +1829,7 @@ class AppPriceTests(unittest.TestCase):
         self.assertEqual(len(schedules), 1)
         self.assertEqual(schedules[0]["_parents"]["baseTerritory"], "USA")
         self.assertEqual(schedules[0]["attributes"]["_prices"],
-                         [{"territory": "USA", "point": "app-point-USA-0.00", "amount": "0.00"}])
+                         [{"territory": "USA", "point": "app-point-USA-0.0", "amount": "0.0"}])
 
     def test_the_body_is_an_inline_create_with_a_placeholder_handle(self):
         body = asc.app_price_schedule_body("app-1", "USA", "app-point-USA-0.00")
@@ -1850,7 +1850,7 @@ class AppPriceTests(unittest.TestCase):
         fake.writes = []
         printed = self.run_price(fake)
         self.assertEqual(fake.writes, [])
-        self.assertIn("the app is free (USA 0.00)", printed)
+        self.assertIn("the app is free (USA 0.0)", printed)
 
     def test_an_empty_schedule_counts_as_no_price_and_is_priced_free(self):
         """Live: the schedule resource exists before any price does."""
