@@ -68,9 +68,9 @@
     },
     {
       "src": "s15-share-link.png",
-      "out": "07-your-card.png",
-      "headline": "Your card on every tour",
-      "subline": "Buyers book a showing right from the tour. The lead comes straight to you.",
+      "out": "07-book-from-the-tour.png",
+      "headline": "Buyers book from the tour",
+      "subline": "Every tour page ends with your card and a booking form. The lead lands in the app.",
       "bg": "grape"
     },
     {

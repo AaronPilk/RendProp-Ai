@@ -2953,11 +2953,23 @@ def find_open_review_submission(client, app_id):
     return None
 
 
+REVIEW_ITEM_RELATIONSHIPS = "appStoreVersion,subscriptionVersion,subscriptionGroupVersion"
+
+
 def review_submission_items(client, submission_id):
-    """[(item id, relationship name, resource id)] for every item in the submission."""
+    """[(item id, relationship name, resource id)] for every item in the submission.
+
+    Proven live 2026-09-06: a plain GET of the items returns NO relationship
+    data (each relationship is links-only), so the version item could not be
+    told apart from the subscription items. Asking for the relationship
+    fields (`fields[reviewSubmissionItems]`) plus `include` makes Apple send
+    `relationships.<name>.data`.
+    """
     found = []
     for item in client.get_all("/v1/reviewSubmissions/%s/items" % submission_id,
-                               params={"limit": 50}):
+                               params={"limit": 50,
+                                       "fields[reviewSubmissionItems]": "state," + REVIEW_ITEM_RELATIONSHIPS,
+                                       "include": REVIEW_ITEM_RELATIONSHIPS}):
         for name, value in (item.get("relationships") or {}).items():
             data = (value or {}).get("data")
             if isinstance(data, dict) and data.get("id"):

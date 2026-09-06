@@ -1638,16 +1638,24 @@ private struct DetailPhotoThumb: View {
     @State private var image: UIImage?
 
     var body: some View {
-        Group {
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else {
-                Rectangle().fill(Theme.fillSubtle)
+        // The image is an OVERLAY on a fixed-height, column-wide base, not the
+        // layout view itself: a resizable `scaledToFill` image reports its own
+        // ideal width (a landscape photo at 150 pt tall wants ~270 pt), and a
+        // `.frame(maxWidth: .infinity)` around it does not cap that, so the
+        // LazyVGrid cell grew to the photo and the grid spilled off the screen
+        // (seen on the 6 Sep store captures with 16:9 photos). An overlay is
+        // sized to the base and `.clipped()` trims the fill.
+        Color.clear
+            .frame(height: height)
+            .frame(maxWidth: .infinity)
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Rectangle().fill(Theme.fillSubtle)
+                }
             }
-        }
-        .frame(height: height)
-        .frame(maxWidth: .infinity)
-        .clipped()
+            .clipped()
         .task(id: url) {
             if let hit = ImageThumbnails.cached(url) {
                 image = hit
