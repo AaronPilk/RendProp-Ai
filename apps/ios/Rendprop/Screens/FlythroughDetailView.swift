@@ -306,7 +306,18 @@ struct FlythroughDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
                 .font(.rpKicker).foregroundStyle(Theme.inkDim)
-            PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: currentListing)
+            Group {
+                if currentListing.isSample, space != .realEstate, let demo = PlayerWebView.hostedDemoEmbedURL {
+                    // A venue's / bar's / gym's sample plays the hosted demo
+                    // flythrough: the bundled sample player needs a demo.mp4
+                    // that is not in the build, and "Sample video unavailable"
+                    // is not a first impression (industry review P1-6). Real
+                    // estate keeps its reviewed bundled sample.
+                    PlayerWebView(remoteURL: demo)
+                } else {
+                    PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: currentListing)
+                }
+            }
                 .id(playerRefresh)
                 .frame(height: 460)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
@@ -323,13 +334,16 @@ struct FlythroughDetailView: View {
     /// Share actions — only once the REAL hosted link exists. Before publish
     /// there is nothing at any URL, so sharing would send a dead 404 link.
     ///
-    /// TWO links, never one (W2-C1). The branded `/f/` page carries the agent
-    /// card, the CTA and the lead form; unbranded virtual-tour rules ban all
-    /// three, and the unbranded field is the one that syndicates to
-    /// Zillow/Realtor.com. Pasting the branded link into an MLS unbranded field
-    /// is a fineable offence (RI Statewide MLS: $50 for a first branded-photo
-    /// violation, escalating from there), so the MLS link is labelled loudly and
-    /// carries the warning underneath it.
+    /// TWO links, never one, ON REAL ESTATE (W2-C1). The branded `/f/` page
+    /// carries the agent card, the CTA and the lead form; unbranded virtual-tour
+    /// rules ban all three, and the unbranded field is the one that syndicates
+    /// to Zillow/Realtor.com. Pasting the branded link into an MLS unbranded
+    /// field is a fineable offence (RI Statewide MLS: $50 for a first
+    /// branded-photo violation, escalating from there), so the MLS link is
+    /// labelled loudly and carries the warning underneath it. Every other
+    /// business type has no MLS and gets the one shareable link —
+    /// `Listing.serverUnbrandedURL` is nil off real estate (industry review
+    /// P1-2).
     private func shareSection(_ url: URL) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("SHARE").font(.rpKicker).foregroundStyle(Theme.inkDim)
@@ -339,11 +353,13 @@ struct FlythroughDetailView: View {
                 icon: "person.text.rectangle.fill",
                 tint: Theme.accent,
                 name: "Your link",
-                blurb: "Agent card + lead capture. Email, social, texts, QR.",
+                blurb: "\(space.profileCardName) + lead capture. Email, social, texts, QR.",
                 shareSubject: currentListing.address,
                 shareMessage: "Fly through \(currentListing.address) — scroll to walk the \(space.spaceNoun).",
                 shareTitle: "Share your link",
-                qrCaption: "Scan to open your branded tour — flyers, sign riders, open-house sheets.")
+                qrCaption: space == .realEstate
+                    ? "Scan to open your branded tour — flyers, sign riders, open-house sheets."
+                    : "Scan to open your branded tour — flyers, counter cards, the front window.")
 
             if let mls = currentListing.serverUnbrandedURL {
                 linkCard(
@@ -669,7 +685,11 @@ struct FlythroughDetailView: View {
                     }
                 }
 
-                if currentListing.isCalifornia {
+                // AB 723 is a real-estate LISTING statute (digitally altered
+                // listing imagery). A Sausalito wine bar gets the same
+                // disclosure rows — Rendprop labels AI-altered media everywhere
+                // — but not a claim of law that does not apply to it (P1-5).
+                if space == .realEstate, currentListing.isCalifornia {
                     Label("California requires disclosure and access to originals for altered listing media (AB 723).",
                           systemImage: "exclamationmark.shield.fill")
                         .font(.rpCaption.weight(.semibold))
@@ -698,7 +718,9 @@ struct FlythroughDetailView: View {
                 }
 
                 if !provenance.isEmpty {
-                    Text("These sentences are published on both your links — disclosure is property information, so it stays on the unbranded page too.")
+                    Text(space == .realEstate
+                         ? "These sentences are published on both your links — disclosure is property information, so it stays on the unbranded page too."
+                         : "These sentences are published with your tour — every AI-altered photo or clip is labelled wherever the link goes.")
                         .font(.rpCaption)
                         .foregroundStyle(Theme.inkDim)
                         .fixedSize(horizontal: false, vertical: true)
@@ -714,7 +736,8 @@ struct FlythroughDetailView: View {
                     .disabled(isSavingOriginals || !provenance.contains(where: { $0.hasOriginal }))
 
                     Button { exportAudit() } label: {
-                        Label(isExportingAudit ? "Building the audit…" : "Email my broker the audit",
+                        Label(isExportingAudit ? "Building the audit…"
+                                : (space == .realEstate ? "Email my broker the audit" : "Export the audit log"),
                               systemImage: "doc.text")
                             .font(.rpBody.weight(.semibold))
                             .frame(maxWidth: .infinity).padding(.vertical, 12)
@@ -846,8 +869,11 @@ struct FlythroughDetailView: View {
             let noun: String = one ? "photo" : "photos"
             let verb: String = one ? "has" : "have"
             let object: String = one ? "it" : "them"
-            text += " \(backed) AI-altered \(noun) on this listing \(verb) a published original behind \(object)"
-            text += " — download the originals from COMPLIANCE first if your broker needs them on file."
+            let subject: String = space == .realEstate ? "listing" : space.spaceNoun
+            text += " \(backed) AI-altered \(noun) on this \(subject) \(verb) a published original behind \(object)"
+            text += space == .realEstate
+                ? " — download the originals from COMPLIANCE first if your broker needs them on file."
+                : " — download the originals from COMPLIANCE first if you want to keep them on file."
         }
         return text
     }
@@ -2143,7 +2169,9 @@ struct PhotoStudioView: View {
             }
             Button("Cancel", role: .cancel) { pendingPhotoDelete = nil }
         } message: { _ in
-            Text("This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links buyers to the original — download the originals from COMPLIANCE first if your broker needs them on file.")
+            Text(space == .realEstate
+                 ? "This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links buyers to the original — download the originals from COMPLIANCE first if your broker needs them on file."
+                 : "This deletes the edited photo AND the untouched original beside it. Your published tour discloses AI edits and links \(space.customerNoun) to the original — download the originals from COMPLIANCE first if you want to keep them on file.")
         }
         .confirmationDialog("Delete this clip?", isPresented: $showClipDeleteConfirm,
                             titleVisibility: .visible, presenting: pendingClipDelete) { clip in
@@ -2298,6 +2326,7 @@ struct PhotoStudioView: View {
         let listingLocalID = listing.id
         let isSample = listing.isSample
         let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
+        let spaceRaw = space.rawValue    // THIS listing's type, not the selected one (P2-5)
         let tapKey = UUID().uuidString   // one idempotency key per user tap
         Task {
             do {
@@ -2320,6 +2349,7 @@ struct PhotoStudioView: View {
                 var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
                 request.style = style
                 request.prompt = prompt
+                request.spaceType = spaceRaw
                 request.listingServerID = serverListingID
                 request.label = disclosureLabel
                 request.originalAssetID = originalAssetID
@@ -2734,7 +2764,9 @@ struct PhotoStudioView: View {
             Text("Add a photo")
                 .font(.rpHeadline).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
-            Text("Then tap one button to fix the sky, clean the room, or stage it.")
+            Text(space == .realEstate
+                 ? "Then tap one button to fix the sky, clean the room, or stage it."
+                 : "Then tap one button to fix the sky, tidy the space, or furnish it.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
@@ -3672,7 +3704,8 @@ struct AerialIntroSheet: View {
 
     private var propertyCard: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("THE PROPERTY").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Text(space == .realEstate ? "THE PROPERTY" : "THE \(space.spaceNoun.uppercased())")
+                .font(.rpKicker).foregroundStyle(Theme.inkDim)
             HStack(alignment: .top, spacing: 12) {
                 exteriorThumb
                 VStack(alignment: .leading, spacing: 6) {
@@ -3809,7 +3842,9 @@ struct AerialIntroSheet: View {
             .pickerStyle(.segmented)
             Text(portrait
                  ? "Vertical — for Reels, TikTok and Stories."
-                 : "Widescreen — for the top of a listing video or YouTube.")
+                 : (space == .realEstate
+                    ? "Widescreen — for the top of a listing video or YouTube."
+                    : "Widescreen — for the top of your tour or YouTube."))
                 .font(.rpCaption)
                 .foregroundStyle(Theme.inkDim)
         }
@@ -6130,7 +6165,9 @@ struct FloorPlanView: View {
                                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                         }
                         if plan2DExists {
-                            Text("Open the room plan to export it as an image for a listing or a flyer.")
+                            Text(listing.spaceType == .realEstate
+                                 ? "Open the room plan to export it as an image for a listing or a flyer."
+                                 : "Open the room plan to export it as an image for your website or a flyer.")
                                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                                 .multilineTextAlignment(.center)
                         }

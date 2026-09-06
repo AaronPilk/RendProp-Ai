@@ -60,10 +60,44 @@ Status legend: ✅ shipped · 🔜 next phase (specced, not built).
 
 ---
 
+## Cross-cutting — what is real-estate-only, by design ✅
+Shipped 2026-09-06 from the per-industry review (`docs/qa/industry-review.md`, "Fixed"):
+- **Fair-housing gate scoped by the listing's `space_type`** (`_shared/fairhousing.ts`). Real estate
+  (and any missing/unknown type) keeps the full HUD rule set and wording. The five other types keep
+  the general safety layer only — no people/pets/cultural objects added to an AI image, nothing that
+  singles people out by race, origin or disability — and every refusal is worded as Rendprop's rule.
+  `ai-photo`, `ai-video` and `ai-voice` read the type from the listing row (`listing_id`), falling back
+  to the request's `space_type`, then to housing.
+- **MLS unbranded link card + warning** — real estate only (`Listing.serverUnbrandedURL` is nil off
+  real estate; the `/u/` route still publishes for everyone).
+- **California AB 723 banner, "Email my broker the audit", broker wording** — real estate only; the
+  AI-disclosure rows, "Download originals" and the audit export stay on every type.
+- **Paywall plan taglines** speak the industry (venue / restaurant or bar / store / gym or studio /
+  business); real-estate copy unchanged.
+- **Home "More from us"** shows only Pilk.ai off real estate (mortgage + Tract are real-estate products).
+- **Sample tour**: every type plays the hosted demo (`rendprop.com/f/estate-demo`) on Home and on the
+  sample's detail — no "Sample video unavailable" on first run. Real estate keeps its bundled sample
+  player on the detail screen and the full "Demo listing page".
+- **Room tagger** says "area(s)" off real estate (`SpaceType.areaNoun`); shared screens use the
+  listing's own type where one is in hand (`ReviewSubmitView`, `RenderStatusView`, `LeadsView`,
+  `AIPhotoEditRequest.spaceType`).
+
 ## Cross-cutting next phase (🔜)
 1. **Tour end-card lead form** should render the per-type extra fields + deep-link CTA (currently the in-app detail screen deep-links; the shared HTML tour only adapts the CTA *label*). Needs form-field injection + JS in `player/index.html`.
 2. **Live Open/Closed** from `hours` (restaurant/retail/gym) — a small parser + status pill.
 3. **Signature features** per type above (packages, promo banner, product highlights, capacity notes, aisle guide) — all offline-safe, mostly additive data on existing models.
 4. **Backend** turns tour + portfolio links into hosted URLs and captures leads server-side.
+5. **Per-industry demo tour** — a venue / restaurant / store / gym / other slug on the Worker
+   (`tour-host/src/demo.ts` serves only `estate-demo` today), so "See it in action" shows the owner's
+   own kind of space instead of a house.
+6. **`ai-chapters` gate scope** — `postprocess.ts` still runs the full housing script gate on AI room
+   descriptions for every type (its warning says "fair-housing rules"); thread `space_type` through
+   `passesFairHousing` the way the other three functions do.
+7. **Reel-clip `space_type`** — the app sends `listing_id` but no `space_type` for reel clips, so the
+   server prompt (not the gate — that now reads the listing row) defaults to the real-estate reel
+   prompt off real estate.
+8. **In-app CTA labels vs hosted (`P2-1`)** — `SpaceType.ctaTitle` says "Visit us" / "Book a session";
+   the hosted page publishes "Shop online" / "Get directions" and "Start free trial" / "Book a class".
+9. **Onboarding card 2** still reads "virtual staging — pro listing photos" before a type is picked.
 
 Competitor benchmarks that shaped this: Peerspace/Tagvenue (venues), Resy/OpenTable + Google Business Profile (restaurants), Google Business Profile + Instagram Shopping (retail), Mindbody/Glofox/ClassPass (fitness).

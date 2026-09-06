@@ -109,6 +109,16 @@ struct PlayerWebView: UIViewRepresentable {
 
     // MARK: - Demo (sample tours / real listings without a video yet)
 
+    /// The hosted demo tour — Rendprop's own published sample at
+    /// `rendprop.com/f/estate-demo`, the one real tour every install can play
+    /// without a bundled `demo.mp4`. Home's "See it in action" card and every
+    /// non-real-estate sample play it (industry review P1-6). `embed=1` is the
+    /// flythrough hero alone: no end card, no lead form, no listing sections.
+    /// Optional because `URL(string:)` is, never force-unwrapped; a nil simply
+    /// falls back to the bundled sample player below.
+    static let hostedDemoURL = URL(string: "https://rendprop.com/f/estate-demo")
+    static let hostedDemoEmbedURL = URL(string: "https://rendprop.com/f/estate-demo?embed=1")
+
     /// Type-adapted demo: copies the bundled demo video into Caches once, then
     /// rewrites the player HTML around the CURRENT business type — its sample
     /// name/tagline, its area tags as chapters, and its call-to-action. When

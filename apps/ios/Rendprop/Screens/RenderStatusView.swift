@@ -52,7 +52,9 @@ private struct RenderStatusContent: View {
     private var job: RenderJobState? { coordinator.jobs[listing.id] }
     private var tour: AppModel.RenderedTour? { model.tours[listing.id] }
     private var shareURL: URL? { currentListing.serverShareURL }
-    private var noun: String { SpaceType.current.spaceNoun }
+    /// THIS listing's type — a type switch while a render is on screen must not
+    /// re-label a house as a venue (industry review P2-5). Samples never render.
+    private var noun: String { currentListing.spaceType.spaceNoun }
 
     private enum Mode { case working, ready, failed, needsSignIn, publishLater, idle }
 
@@ -318,7 +320,9 @@ private struct RenderStatusContent: View {
     /// the moment a tour goes live (W2-C1). The branded page carries the agent
     /// card, the CTA and the lead form — unbranded virtual-tour rules ban all
     /// three, and the unbranded field is what syndicates to Zillow/Realtor.com.
-    /// Pasting the branded link there is the fineable mistake.
+    /// Pasting the branded link there is the fineable mistake. Real estate
+    /// only: `serverUnbrandedURL` is nil for every other business type, so a
+    /// bar or gym never reads "MLS" here (industry review P1-2).
     @ViewBuilder private var mlsLinkRow: some View {
         if let mls = currentListing.serverUnbrandedURL {
             VStack(alignment: .leading, spacing: 6) {

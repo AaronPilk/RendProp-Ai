@@ -107,7 +107,13 @@ struct Listing: Identifiable, Codable, Hashable {
     /// one; otherwise rebuild it from the slug. Nil until the tour is published
     /// — never fabricated (a `/u/<uuid>` link 404s for the MLS just as a
     /// fabricated `/f/` one does).
+    ///
+    /// REAL ESTATE ONLY. The MLS is a real-estate institution; a bar, venue,
+    /// store or gym has no unbranded-field rule to follow and must never be
+    /// shown an "MLS link" (industry review P1-2). The server still publishes
+    /// the `/u/` twin for every type — this only decides what the app surfaces.
     var serverUnbrandedURL: URL? {
+        guard spaceType == .realEstate else { return nil }
         if let s = unbrandedShareURL?.trimmingCharacters(in: .whitespaces), !s.isEmpty,
            let u = URL(string: s) { return u }
         if let branded = shareURL?.trimmingCharacters(in: .whitespaces), !branded.isEmpty,
@@ -357,6 +363,25 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
     var spaceNounCap: String { spaceNoun.prefix(1).uppercased() + spaceNoun.dropFirst() }
+
+    /// The trade, for copy that addresses the business rather than the space
+    /// ("For a busy gym or studio…"). Real estate is the agent; callers that
+    /// carry reviewed real-estate copy branch on `.realEstate` first.
+    var businessNoun: String {
+        switch self {
+        case .realEstate: return "agent"
+        case .venue:      return "venue"
+        case .restaurant: return "restaurant or bar"
+        case .retail:     return "store"
+        case .fitness:    return "gym or studio"
+        case .other:      return "business"
+        }
+    }
+
+    /// What one tagged section of the walkthrough is called: a home has rooms,
+    /// everything else has areas (the tagger's title already says "Tag areas").
+    var areaNoun: String { self == .realEstate ? "room" : "area" }
+    var areaNounPlural: String { areaNoun + "s" }
 
     var collectionTitle: String {
         switch self {

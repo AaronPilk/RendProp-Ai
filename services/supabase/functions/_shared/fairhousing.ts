@@ -71,8 +71,51 @@
 //
 // The refusal is a 400 with code `unsupported_edit` and copy that names the
 // term and says what to do instead — an agent must be able to fix it in one go.
+//
+// ── SCOPE: HOUSING vs. EVERY OTHER INDUSTRY (industry review P1-1) ───────────
+//
+// Rendprop also serves venues, restaurants and bars, stores, gyms and other
+// businesses (`space_type` ≠ real_estate). HUD's guidance and 42 U.S.C. §3604
+// are HOUSING law: "adults only" is a bar's legal reality, "perfect for
+// couples" is normal venue copy, "the chapel" is a room a wedding venue has,
+// and "seat diners at the tables" names the customers of three of the six
+// industries. So every gate below takes an optional `spaceType` and:
+//
+//   • HOUSING (real_estate, and ANY missing / empty / unknown value — the
+//     stricter gate is the fail-safe): behaviour is byte-for-byte what shipped.
+//   • THE FIVE NON-HOUSING TYPES (venue | restaurant | retail | fitness |
+//     other): the housing-only rules — steering, schools, neighborhood,
+//     familial status, places of worship, audience framing, the HUD wording —
+//     are skipped. What STAYS, for everyone, is the general safety layer:
+//       - no people (and so no minors), pets, flags or religious / holiday /
+//         political items ADDED to an AI image (tier B — it is also what the
+//         prompt lock tells the model, so letting it through would only sell a
+//         paid edit that does nothing);
+//       - no content that singles people out by a protected characteristic:
+//         "a type of people", "the right crowd", "racial(ly)", a race or origin
+//         word qualifying a group of people, "no foreigners", and every
+//         disability EXCLUSION (the ADA covers public accommodations).
+//     A marketing SCRIPT for a non-housing business is not an image prompt,
+//     so the ADD-verb people tier does not run on it: "seats 220 guests" is
+//     what a venue says.
+//   Every non-housing refusal explains itself as a Rendprop rule, never as
+//   housing law. Rules tagged `housingOnly` below are the ones that skip.
 
 import { HttpError } from "./http.ts";
+
+/** The five business types whose media HUD / the Fair Housing Act do not
+ *  govern. Anything else — including nothing at all — is treated as housing. */
+const NON_HOUSING_SPACES = new Set(["venue", "restaurant", "retail", "fitness", "other"]);
+
+/**
+ * True unless `spaceType` is one of the five known NON-housing industries.
+ * null, undefined, "" and unknown values all answer true: when in doubt the
+ * stricter (housing) gate runs.
+ */
+export function isHousingSpace(spaceType: string | null | undefined): boolean {
+  const s = String(spaceType ?? "").trim().toLowerCase().replace(/-/g, "_");
+  return !NON_HOUSING_SPACES.has(s);
+}
 
 /** Appended to EVERY generation prompt. Verbatim across photo and video. */
 export const FAIR_HOUSING_LOCK =
@@ -115,29 +158,37 @@ export function guardrailsFor(edit: string): string {
 interface Rule {
   label: string;
   re: RegExp;
+  /** Housing steering law only — skipped for the five non-housing types.
+   *  Absent = applies to every industry (the general safety layer). */
+  housingOnly?: true;
 }
 
 /** Never legitimate, whatever the verb. */
 const ALWAYS: Rule[] = [
-  { label: "neighborhood", re: /\bneighbou?rhoods?\b/i },
-  { label: "school district", re: /\bschool\s+districts?\b/i },
-  { label: "school quality", re: /\b(good|great|top|best|bad|poor|excellent)\s+schools?\b/i },
-  { label: "school ratings", re: /\bschool\s+(ratings?|scores?|rankings?)\b/i },
-  { label: "demographics", re: /\bdemographics?\b/i },
-  { label: "ethnicity", re: /\bethnic(ity|ities)?\b/i },
-  { label: "race", re: /\b(races?|racial|racially)\b/i },
-  { label: "nationality", re: /\bnationalit(y|ies)\b/i },
-  { label: "immigrants", re: /\bimmigrants?\b/i },
-  { label: "gentrification", re: /\bgentrif\w*\b/i },
-  { label: "family-friendly", re: /\b(family|kid|child|children)[\s-]friendly\b/i },
-  { label: "up and coming", re: /\bup[\s-]and[\s-]coming\b/i },
-  { label: "safe area", re: /\bsafe\s+(area|part|side|block|street|community)\b/i },
+  { label: "neighborhood", re: /\bneighbou?rhoods?\b/i, housingOnly: true },
+  { label: "school district", re: /\bschool\s+districts?\b/i, housingOnly: true },
+  { label: "school quality", re: /\b(good|great|top|best|bad|poor|excellent)\s+schools?\b/i, housingOnly: true },
+  { label: "school ratings", re: /\bschool\s+(ratings?|scores?|rankings?)\b/i, housingOnly: true },
+  { label: "demographics", re: /\bdemographics?\b/i, housingOnly: true },
+  // "ethnic cuisine" is how a restaurant describes itself; "ethnicity" is a
+  // class of people. The full rule stays for housing; the narrow one is for all.
+  { label: "ethnicity", re: /\bethnic(ity|ities)?\b/i, housingOnly: true },
+  { label: "ethnicity", re: /\bethnicit(y|ies)\b/i },
+  // "race day" and "race training" are gym copy; "racial(ly)" never is.
+  { label: "race", re: /\b(races?|racial|racially)\b/i, housingOnly: true },
+  { label: "race", re: /\b(racial|racially)\b/i },
+  { label: "nationality", re: /\bnationalit(y|ies)\b/i, housingOnly: true },
+  { label: "immigrants", re: /\bimmigrants?\b/i, housingOnly: true },
+  { label: "gentrification", re: /\bgentrif\w*\b/i, housingOnly: true },
+  { label: "family-friendly", re: /\b(family|kid|child|children)[\s-]friendly\b/i, housingOnly: true },
+  { label: "up and coming", re: /\bup[\s-]and[\s-]coming\b/i, housingOnly: true },
+  { label: "safe area", re: /\bsafe\s+(area|part|side|block|street|community)\b/i, housingOnly: true },
   { label: "a type of people", re: /\b(type|kind|sort)\s+of\s+(people|person|buyers?|families|tenants?)\b/i },
   { label: "the right crowd", re: /\bright\s+(crowd|clientele|sort|kind)\b/i },
-  { label: "religion", re: /\breligions?\b|\breligious\b/i },
-  { label: "a religious affiliation", re: /\b(christian|muslim|islamic|jewish|hindu|buddhist|catholic|protestant|mormon)s?\b/i },
-  { label: "a place of worship", re: /\b(church(es)?|mosques?|synagogues?|chapels?|temples?|shrines?|altars?)\b/i },
-  { label: "a religious object", re: /\b(crucifix(es)?|menorahs?|nativity|rosar(y|ies)|hijabs?|yarmulkes?|kippahs?|prayer\s+rugs?)\b/i },
+  { label: "religion", re: /\breligions?\b|\breligious\b/i, housingOnly: true },
+  { label: "a religious affiliation", re: /\b(christian|muslim|islamic|jewish|hindu|buddhist|catholic|protestant|mormon)s?\b/i, housingOnly: true },
+  { label: "a place of worship", re: /\b(church(es)?|mosques?|synagogues?|chapels?|temples?|shrines?|altars?)\b/i, housingOnly: true },
+  { label: "a religious object", re: /\b(crucifix(es)?|menorahs?|nativity|rosar(y|ies)|hijabs?|yarmulkes?|kippahs?|prayer\s+rugs?)\b/i, housingOnly: true },
 ];
 
 /** Only a problem when the prompt is ADDING them — removing is legitimate. */
@@ -165,17 +216,24 @@ export interface DenylistHit {
 }
 
 /**
- * Inspect a free-text prompt. Returns the first offending term, or null when the
- * prompt is fine. Pure — callers decide whether to throw.
+ * The denylist proper. `housing` selects the rule set (see the SCOPE note in
+ * the header); `contextual` says whether the ADD-verb tier runs at all — it is
+ * an IMAGE-PROMPT rule, and `assertMarketingCopy` turns it off for a
+ * non-housing script.
  */
-export function checkFairHousing(raw: string | null | undefined): DenylistHit | null {
+function checkDenylist(
+  raw: string | null | undefined,
+  housing: boolean,
+  contextual: boolean,
+): DenylistHit | null {
   const text = String(raw ?? "");
   if (!text.trim()) return null;
 
   for (const r of ALWAYS) {
+    if (r.housingOnly && !housing) continue;
     if (r.re.test(text)) return { label: r.label, tier: "always" };
   }
-  if (ADD_VERB.test(text)) {
+  if (contextual && ADD_VERB.test(text)) {
     for (const r of CONTEXTUAL) {
       if (r.re.test(text)) return { label: r.label, tier: "add" };
     }
@@ -184,13 +242,40 @@ export function checkFairHousing(raw: string | null | undefined): DenylistHit | 
 }
 
 /**
+ * Inspect a free-text prompt. Returns the first offending term, or null when the
+ * prompt is fine. Pure — callers decide whether to throw.
+ *
+ * `spaceType` is the LISTING's business type (`listings.space_type`). Omitted,
+ * null or unknown = housing, the full rule set. One of the five non-housing
+ * types = the general safety layer only (header, SCOPE).
+ */
+export function checkFairHousing(
+  raw: string | null | undefined,
+  spaceType?: string | null,
+): DenylistHit | null {
+  return checkDenylist(raw, isHousingSpace(spaceType), true);
+}
+
+/**
  * Throw the 400 `unsupported_edit` when a free-text prompt trips the denylist.
  * The copy names the term and says what to do instead — the agent must be able
  * to fix it in one edit, not guess.
+ *
+ * `spaceType`: the listing's business type — see `checkFairHousing`. A
+ * non-housing refusal is explained as Rendprop's own rule, never as housing law.
  */
-export function assertFairHousing(raw: string | null | undefined, what = "This edit"): void {
-  const hit = checkFairHousing(raw);
+export function assertFairHousing(
+  raw: string | null | undefined,
+  what = "This edit",
+  spaceType?: string | null,
+): void {
+  const housing = isHousingSpace(spaceType);
+  const hit = checkDenylist(raw, housing, true);
   if (!hit) return;
+
+  if (!housing) {
+    throw new HttpError(400, nonHousingRefusal(what, hit, "generated"), "unsupported_edit", { term: hit.label });
+  }
 
   const why = hit.tier === "always"
     ? `mentions ${hit.label}, which describes the people or the neighborhood rather than the property`
@@ -207,6 +292,30 @@ export function assertFairHousing(raw: string | null | undefined, what = "This e
       `cultural objects, or neighborhood claims in listing media. ${fix}`,
     "unsupported_edit",
     { term: hit.label },
+  );
+}
+
+/**
+ * The refusal a venue, bar, store or gym reads. Same shape as the housing one —
+ * names the term, says what to do — but the reason is Rendprop's rule for
+ * AI-made marketing media, not HUD. `verb` is "generated" (an image prompt) or
+ * "voiced" (a script).
+ */
+function nonHousingRefusal(what: string, hit: DenylistHit, verb: "generated" | "voiced"): string {
+  if (hit.tier === "always") {
+    return (
+      `${what} can't be ${verb}: it mentions ${hit.label}. Rendprop never makes marketing ` +
+      `media that singles people out by race, religion, ethnicity or origin — in any ` +
+      `industry. Describe the space itself — the room, the light, the materials — and ` +
+      `leave people out of it.`
+    );
+  }
+  return (
+    `${what} can't be ${verb}: it asks to add ${hit.label} to the image. Rendprop never ` +
+    `adds people, pets, flags, or religious, holiday or political items to an AI-edited ` +
+    `photo — your customers would be shown something that was never there. Rewrite it ` +
+    `without adding ${hit.label}. Removing or tidying is fine (for example "remove the ` +
+    `stray bags"); adding is not.`
   );
 }
 
@@ -231,8 +340,12 @@ export function assertFairHousing(raw: string | null | undefined, what = "This e
 //
 // HOW THE TWO COMPOSE. `assertMarketingCopy()` runs BOTH: the script rules
 // below AND the original `assertFairHousing()` denylist. Nothing above is
-// relaxed, re-scoped or made conditional — this tier is purely additive, and a
-// script must clear both to be spoken.
+// relaxed, re-scoped or made conditional FOR HOUSING — this tier is purely
+// additive, and a script must clear both to be spoken. For the five
+// non-housing business types (header, SCOPE) only the general-layer rules run:
+// the race and disability EXCLUSIONS here (tagged without `housingOnly`) and
+// tier A's "a type of people" / "the right crowd" / "racial(ly)"; the ADD-verb
+// people tier does not run on a script at all there.
 //
 // WHAT IT REFUSES (each rule names the phrase it matched, so the copy tells the
 // agent which words to change and why):
@@ -289,9 +402,10 @@ export function assertFairHousing(raw: string | null | undefined, what = "This e
 // runs tier B, whose CONTEXTUAL people rule fires on an ADD verb. A few script
 // sentences use one of those verbs innocently — "the family gathering space
 // SEATS twelve" trips `seat` + `family` and is refused with tier B's wording.
-// That rule is not relaxed for scripts: a rare rewrite of one sentence is a far
-// smaller cost than a hole in a fair-housing gate, and the refusal still names
-// the term. Rephrase as "the gathering space seats twelve".
+// That rule is not relaxed for HOUSING scripts: a rare rewrite of one sentence
+// is a far smaller cost than a hole in a fair-housing gate, and the refusal
+// still names the term. Rephrase as "the gathering space seats twelve". (A
+// venue's "seats 220 guests" is not a housing script and passes — see SCOPE.)
 
 /** The protected class (or steering doctrine) a script rule protects. */
 export type ScriptCategory =
@@ -305,6 +419,9 @@ export type ScriptCategory =
 interface ScriptRule {
   category: ScriptCategory;
   re: RegExp;
+  /** Housing law only — skipped for the five non-housing types. Absent =
+   *  every industry. Set per rule below, never inferred from the category. */
+  housingOnly?: true;
 }
 
 /** Why each category is refused, and what to say instead. Written for the
@@ -376,6 +493,7 @@ const SCRIPT_RULES: ScriptRule[] = [
     category: "familial_status",
     re:
       /\b(great|perfect|ideal|good|excellent|wonderful|best|nice|lovely|suited|suitable|made|built|designed|meant|tailored|geared|just\s+right)\s+(for|to)\s+(a\s+|an\s+|the\s+|your\s+)?(young|growing|new|large|small|busy|modern|professional)?\s*(famil(y|ies)|kids?|children|couples?|newlyweds?|singles?|bachelors?|bachelorettes?|professionals?|retirees?|seniors?|students?|empty[\s-]?nesters?|first[\s-]time\s+buyers?)\b/i,
+    housingOnly: true,
   },
   // "…starter home for a young couple", "…backyard for a growing family".
   // The quality word may be far from the audience, so this rule stands alone on
@@ -385,33 +503,38 @@ const SCRIPT_RULES: ScriptRule[] = [
     category: "familial_status",
     re:
       /\bfor\s+(a\s+|an\s+|the\s+|your\s+)?(young|growing|new|large|small|busy)?\s*(famil(y|ies)|couples?|newlyweds?|bachelors?|retirees?|empty[\s-]?nesters?)\b(?!\s+of\b)(?!\s+(gathering|gatherings|dinner|dinners|meal|meals|room|rooms|photos?|night|nights|movie|game|reunion|holidays?|entertaining))/i,
+    housingOnly: true,
   },
   // "a growing family will love the yard"
-  { category: "familial_status", re: /\b(young|growing|new|large)\s+famil(y|ies)\b/i },
+  { category: "familial_status", re: /\b(young|growing|new|large)\s+famil(y|ies)\b/i, housingOnly: true },
   // "family-oriented community" ("family-friendly" is already tier A)
-  { category: "familial_status", re: /\bfamily[\s-](oriented|focused|centered|centred)\b/i },
-  { category: "familial_status", re: /\bfamily\s+(community|compound|enclave)\b/i },
+  { category: "familial_status", re: /\bfamily[\s-](oriented|focused|centered|centred)\b/i, housingOnly: true },
+  { category: "familial_status", re: /\bfamily\s+(community|compound|enclave)\b/i, housingOnly: true },
   // Child exclusion
   {
     category: "familial_status",
     re: /\bno\s+(kids?|children|toddlers?|babies|infants?|teens?|teenagers?)\b/i,
+    housingOnly: true,
   },
-  { category: "familial_status", re: /\b(adults?|grown[\s-]?ups?)\s+only\b/i },
-  { category: "familial_status", re: /\bchildless\b/i },
+  { category: "familial_status", re: /\b(adults?|grown[\s-]?ups?)\s+only\b/i, housingOnly: true },
+  { category: "familial_status", re: /\bchildless\b/i, housingOnly: true },
   {
     category: "familial_status",
     re: /\bnot\s+(suitable|ideal|great|appropriate|meant|designed|good)\s+for\s+(a\s+|the\s+)?(kids?|children|famil(y|ies)|toddlers?|babies)\b/i,
+    housingOnly: true,
   },
   {
     category: "familial_status",
     re: /\b(mature|established|professional)\s+(buyers?|residents?|couples?|occupants?|tenants?)\s+only\b/i,
+    housingOnly: true,
   },
   // "a great place to raise a family", "room to start a family"
   {
     category: "familial_status",
     re: /\b(raise|raising|rais'?n|start|starting|grow|growing|expand|expanding)\s+(a\s+|your\s+|their\s+|the\s+)?famil(y|ies)\b/i,
+    housingOnly: true,
   },
-  { category: "familial_status", re: /\bplace\s+to\s+raise\b/i },
+  { category: "familial_status", re: /\bplace\s+to\s+raise\b/i, housingOnly: true },
 
   // ── Religion ───────────────────────────────────────────────────────────────
   // "walk to St. Mary's" / "steps from Saint Anne's". Proximity + a saint name.
@@ -421,11 +544,13 @@ const SCRIPT_RULES: ScriptRule[] = [
     category: "religion",
     re:
       /\b(walk|walking|walkable|steps|stroll|strolling|minutes?|blocks?|close|near|nearby|next\s+door|around\s+the\s+corner|short\s+drive)\b[^.!?]{0,30}?\b(st\.?|saint)\s+[A-Za-z]+(?:'s|s')?\b(?!\s*(st\b|street|ave\b|avenue|rd\b|road|blvd|boulevard|dr\b|drive|ln\b|lane|way\b|ct\b|court|pl\b|place|cir\b|circle|terrace|pkwy|parkway|highway|hwy|park\b|square|sq\b))/i,
+    housingOnly: true,
   },
   {
     category: "religion",
     re:
       /\b(parish(es)?|dioceses?|congregations?|ministr(y|ies)|gurdwaras?|mandirs?|masjids?|madrasas?|bible\s+study|prayer\s+(group|meeting|service)s?|sunday\s+school)\b/i,
+    housingOnly: true,
   },
 
   // ── Race / ethnicity / national origin ─────────────────────────────────────
@@ -436,10 +561,11 @@ const SCRIPT_RULES: ScriptRule[] = [
     re:
       /\b(white|black|caucasian|anglo|hispanic|latino|latina|latinx|asian|oriental|arab|arabic|african[\s-]american|afro[\s-]caribbean|native|indigenous|european|foreign)\s+(famil(y|ies)|communit(y|ies)|neighbou?rhoods?|buyers?|residents?|owners?|tenants?|households?|professionals?|clientele|folks|people|persons?|crowd|enclave|population|block|street|area)\b/i,
   },
-  { category: "race", re: /\bethnic\s+(enclave|pocket|corridor)\b/i },
+  { category: "race", re: /\bethnic\s+(enclave|pocket|corridor)\b/i, housingOnly: true },
   {
     category: "race",
     re: /\b(english|spanish|chinese|mandarin|cantonese|russian|korean|vietnamese|portuguese|french)[\s-]speaking\b/i,
+    housingOnly: true,
   },
   { category: "race", re: /\bno\s+(foreigners?|outsiders?)\b/i },
 
@@ -458,12 +584,13 @@ const SCRIPT_RULES: ScriptRule[] = [
   { category: "disability", re: /\bno\s+(mental|physical)\s+(illness|disabilit(y|ies)|impairments?)\b/i },
 
   // ── Sex / gender ───────────────────────────────────────────────────────────
-  { category: "sex", re: /\bbachelor(ette)?\s+(pad|apartment|flat|unit)\b/i },
+  { category: "sex", re: /\bbachelor(ette)?\s+(pad|apartment|flat|unit)\b/i, housingOnly: true },
   {
     category: "sex",
     re: /\b(males?|females?|men|women|ladies|gentlemen|guys)\s+(only|preferred|tenants?|roommates?|occupants?|buyers?)\b/i,
+    housingOnly: true,
   },
-  { category: "sex", re: /\bno\s+(single\s+)?(men|women|males?|females?)\b/i },
+  { category: "sex", re: /\bno\s+(single\s+)?(men|women|males?|females?)\b/i, housingOnly: true },
 
   // ── Steering proxies (safety, schools, exclusivity) ────────────────────────
   // Tier A already refuses "safe area/part/side/block/street/community"; these
@@ -472,29 +599,33 @@ const SCRIPT_RULES: ScriptRule[] = [
   {
     category: "steering",
     re: /\b(safe|safest|safer)\s+(neighbou?rhoods?|places?|spots?|pockets?|side\s+of\s+town|part\s+of\s+town|schools?)\b/i,
+    housingOnly: true,
   },
-  { category: "steering", re: /\bsafe\s+(for|to\s+raise)\b/i },
-  { category: "steering", re: /\b(feel|feels|you'?ll\s+feel)\s+safe\b/i },
-  { category: "steering", re: /\b(low|no|zero|little|minimal)\s+crime\b/i },
-  { category: "steering", re: /\bcrime[\s-]?(free|rate|rates|ridden|statistics)\b/i },
-  { category: "steering", re: /\bcrime\s+is\s+(low|down|almost\s+nonexistent)\b/i },
+  { category: "steering", re: /\bsafe\s+(for|to\s+raise)\b/i, housingOnly: true },
+  { category: "steering", re: /\b(feel|feels|you'?ll\s+feel)\s+safe\b/i, housingOnly: true },
+  { category: "steering", re: /\b(low|no|zero|little|minimal)\s+crime\b/i, housingOnly: true },
+  { category: "steering", re: /\bcrime[\s-]?(free|rate|rates|ridden|statistics)\b/i, housingOnly: true },
+  { category: "steering", re: /\bcrime\s+is\s+(low|down|almost\s+nonexistent)\b/i, housingOnly: true },
   {
     category: "steering",
     re:
       /\bexclusive\s+(communit(y|ies)|neighbou?rhoods?|areas?|enclaves?|addresses|address|clientele|buyers?|residents?|pockets?|streets?|part\s+of\s+town|side\s+of\s+town|club)\b/i,
+    housingOnly: true,
   },
-  { category: "steering", re: /\b(private|exclusive|gated)\s+enclave\b/i },
+  { category: "steering", re: /\b(private|exclusive|gated)\s+enclave\b/i, housingOnly: true },
   {
     category: "steering",
     re:
       /\b(desirable|prestigious|sought[\s-]after|elite|upscale|better|right|wrong|nicer|quieter)\s+(part\s+of\s+town|side\s+of\s+town|element|crowd|people|clientele|set)\b/i,
+    housingOnly: true,
   },
   {
     category: "steering",
     re: /\b(blue[\s-]ribbon|award[\s-]winning|highly[\s-]rated|top[\s-]rated|nationally[\s-]ranked|A[\s-]rated|five[\s-]star)\s+(schools?|school\s+districts?|elementary|middle\s+school|high\s+school)\b/i,
+    housingOnly: true,
   },
-  { category: "steering", re: /\bschool\s+(zones?|catchments?|boundar(y|ies)|attendance\s+areas?)\b/i },
-  { category: "steering", re: /\bno\s+(section\s*8|housing\s+vouchers?|vouchers?)\b/i },
+  { category: "steering", re: /\bschool\s+(zones?|catchments?|boundar(y|ies)|attendance\s+areas?)\b/i, housingOnly: true },
+  { category: "steering", re: /\bno\s+(section\s*8|housing\s+vouchers?|vouchers?)\b/i, housingOnly: true },
 
   // ── General audience exclusion / preference ────────────────────────────────
   // 42 U.S.C. §3604(c) forbids STATING A PREFERENCE for — or against — an
@@ -517,6 +648,7 @@ const SCRIPT_RULES: ScriptRule[] = [
     category: "familial_status",
     re:
       /\bno\s+(famil(y|ies)|couples?|singles?|students?|seniors?|retirees?|professionals?|roommates?|pets?\s+or\s+kids)\b/i,
+    housingOnly: true,
   },
   // Preference: "<audience> only | preferred | welcome only" — the mirror
   // image of the exclusion. The `\s+` after the noun is what keeps
@@ -526,12 +658,13 @@ const SCRIPT_RULES: ScriptRule[] = [
     category: "familial_status",
     re:
       /\b(professionals?|singles?|couples?|students?|seniors?|retirees?|famil(y|ies)|newlyweds?|bachelors?|empty[\s-]?nesters?)\s+(only|preferred|welcome\s+only)\b/i,
+    housingOnly: true,
   },
   // "families need not apply" / "students need not apply" — the classic
   // exclusionary wording, unlawful whoever it names.
-  { category: "familial_status", re: /\bneed\s+not\s+apply\b/i },
+  { category: "familial_status", re: /\bneed\s+not\s+apply\b/i, housingOnly: true },
   // Audience framing, exactly like the "young famil(y|ies)" rule above.
-  { category: "familial_status", re: /\byoung\s+professionals?\b/i },
+  { category: "familial_status", re: /\byoung\s+professionals?\b/i, housingOnly: true },
 ];
 
 export interface ScriptHit {
@@ -542,6 +675,25 @@ export interface ScriptHit {
   fix: string;
 }
 
+/** What the two general-layer categories mean to a venue, bar, store or gym.
+ *  Housing copy above talks about "the home" and "buyers"; this does not. */
+const NON_HOUSING_CATEGORY_COPY: Partial<Record<ScriptCategory, { why: string; fix: string }>> = {
+  race: {
+    why: "singles people out by race, colour, ethnicity or national origin",
+    fix:
+      "Say nothing about who your customers are. Describe the space, the food, the " +
+      "service and the offer.",
+  },
+  disability: {
+    why:
+      "excludes or discourages people with disabilities. (Describing an " +
+      "accessibility FEATURE is welcome — it is the exclusion that is not)",
+    fix:
+      "Delete the exclusion. If you meant to describe access honestly, say what IS " +
+      "there: \"a step-free entrance\", or \"the rooftop is up a flight of stairs\".",
+  },
+};
+
 /**
  * Inspect a marketing SCRIPT (voiceover narration, caption copy, listing blurb)
  * against the script rules only. Returns the first offending phrase, or null.
@@ -549,14 +701,24 @@ export interface ScriptHit {
  *
  * This is the additive tier. It does NOT replace `checkFairHousing()`; callers
  * that want the full gate should use `assertMarketingCopy()`, which runs both.
+ *
+ * `spaceType`: the listing's business type. Omitted / null / unknown = housing
+ * (every rule). A non-housing type runs only the general-layer rules (race and
+ * disability exclusions) and returns their non-housing copy.
  */
-export function checkMarketingCopy(raw: string | null | undefined): ScriptHit | null {
+export function checkMarketingCopy(
+  raw: string | null | undefined,
+  spaceType?: string | null,
+): ScriptHit | null {
   const text = String(raw ?? "");
   if (!text.trim()) return null;
+  const housing = isHousingSpace(spaceType);
   for (const rule of SCRIPT_RULES) {
+    if (rule.housingOnly && !housing) continue;
     const m = rule.re.exec(text);
     if (m) {
-      const copy = CATEGORY_COPY[rule.category];
+      const copy = (housing ? undefined : NON_HOUSING_CATEGORY_COPY[rule.category]) ??
+        CATEGORY_COPY[rule.category];
       return {
         phrase: m[0].replace(/\s+/g, " ").trim().slice(0, 80),
         category: rule.category,
@@ -576,6 +738,11 @@ const SCRIPT_LAW =
   "description: the ad may describe the PROPERTY, never a preferred or " +
   "discouraged occupant.";
 
+/** The non-housing equivalent: Rendprop's own rule, stated as such. */
+const SCRIPT_RULE_NON_HOUSING =
+  "Rendprop doesn't voice an ad that says who is or isn't welcome by race, origin " +
+  "or disability, whatever the business: describe the place, not the people.";
+
 /**
  * The FULL gate for marketing copy: the script rules AND the original
  * image-prompt denylist. Throws 400 `unsupported_edit` naming the offending
@@ -583,18 +750,39 @@ const SCRIPT_LAW =
  *
  * Server-side only, and unbypassable from the client: there is no flag, header
  * or body field that skips it — see services/supabase/functions/ai-voice.
+ *
+ * `spaceType`: the listing's business type (`listings.space_type`), read from
+ * the listing row — never trusted to loosen the gate on its own: an unknown or
+ * missing value is housing. For a non-housing type the ADD-verb people tier is
+ * not run: a script is not an image prompt, and "seats 220 guests" is what a
+ * venue says.
  */
-export function assertMarketingCopy(raw: string | null | undefined, what = "This script"): void {
-  const hit = checkMarketingCopy(raw);
+export function assertMarketingCopy(
+  raw: string | null | undefined,
+  what = "This script",
+  spaceType?: string | null,
+): void {
+  const housing = isHousingSpace(spaceType);
+  const hit = checkMarketingCopy(raw, spaceType);
   if (hit) {
     throw new HttpError(
       400,
-      `${what} can't be voiced: the phrase "${hit.phrase}" ${hit.why}. ${SCRIPT_LAW} ${hit.fix}`,
+      `${what} can't be voiced: the phrase "${hit.phrase}" ${hit.why}. ` +
+        `${housing ? SCRIPT_LAW : SCRIPT_RULE_NON_HOUSING} ${hit.fix}`,
       "unsupported_edit",
       { term: hit.phrase, category: hit.category },
     );
   }
-  // Never weaken tier A/B: a script must clear the original denylist too
-  // (neighborhood, school district, race, religion, places of worship …).
-  assertFairHousing(raw, what);
+  if (housing) {
+    // Never weaken tier A/B: a script must clear the original denylist too
+    // (neighborhood, school district, race, religion, places of worship …).
+    assertFairHousing(raw, what);
+    return;
+  }
+  // Non-housing: the general layer of tier A only ("a type of people", "the
+  // right crowd", "racial"), worded as Rendprop's rule. No ADD-verb tier.
+  const denied = checkDenylist(raw, false, false);
+  if (denied) {
+    throw new HttpError(400, nonHousingRefusal(what, denied, "voiced"), "unsupported_edit", { term: denied.label });
+  }
 }

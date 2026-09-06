@@ -212,6 +212,10 @@ struct AIPhotoEditRequest: Sendable, Hashable {
     var style: String? = nil
     /// Custom only (free text, ≤ 600 chars server-side).
     var prompt: String? = nil
+    /// The LISTING's business type (`SpaceType.rawValue`) — selects the
+    /// industry prompt set and scopes the fair-housing gate server-side. Set it
+    /// from the listing in hand; nil falls back to `SpaceType.current`.
+    var spaceType: String? = nil
     /// SERVER listing id (`listings.id`), never the local UUID.
     var listingServerID: UUID? = nil
     /// "Living room", "Front exterior" — printed next to the public disclosure.

@@ -1561,17 +1561,23 @@ struct HomeDashboardView: View {
         model.listings.first(where: { $0.isSample })
     }
 
-    /// The hosted demo listing page (real estate only). The Home card shows just
-    /// the flythrough hero (?embed=1); "Open the full demo tour" opens the whole
-    /// auto-generated listing microsite — exactly what buyers get from a shared
-    /// link. Other business types keep the bundled sample player.
-    private var estateDemoEmbedURL: URL? {
-        SpaceType.current == .realEstate
-            ? URL(string: "https://rendprop.com/f/estate-demo?embed=1") : nil
-    }
+    /// The hosted demo tour (`rendprop.com/f/estate-demo`), for EVERY business
+    /// type. The Home card shows just the flythrough hero (?embed=1). On real
+    /// estate, "Watch the sample tour" opens the whole auto-generated listing
+    /// microsite — exactly what buyers get from a shared link. Every other type
+    /// opens the same flythrough full-screen, titled "Sample tour": the bundled
+    /// sample player needs a `demo.mp4` that is not in the build, and no
+    /// industry should meet "Sample video unavailable" on its first run
+    /// (industry review P1-6). One house tour for launch — a per-industry demo
+    /// slug on the Worker is the follow-up.
+    private var estateDemoEmbedURL: URL? { PlayerWebView.hostedDemoEmbedURL }
     private var estateDemoFullURL: URL? {
-        SpaceType.current == .realEstate
-            ? URL(string: "https://rendprop.com/f/estate-demo") : nil
+        SpaceType.current == .realEstate ? PlayerWebView.hostedDemoURL : PlayerWebView.hostedDemoEmbedURL
+    }
+    /// Real estate's title is what the reviewer walk looks for; everything
+    /// else says what it is — a sample tour, not a listing.
+    private var demoPageTitle: String {
+        SpaceType.current == .realEstate ? "Demo listing page" : "Sample tour"
     }
 
     var body: some View {
@@ -2004,9 +2010,9 @@ struct HomeDashboardView: View {
         ZStack(alignment: .topTrailing) {
             Group {
                 if let url = estateDemoEmbedURL {
-                    PlayerWebView(remoteURL: url)   // hosted estate flythrough
+                    PlayerWebView(remoteURL: url)   // hosted demo flythrough, every type
                 } else {
-                    PlayerWebView(listing: demo)    // bundled sample (other types)
+                    PlayerWebView(listing: demo)    // bundled sample — only if the URL literal ever fails
                 }
             }
                 .id(spaceTypeRaw)   // demo re-renders when the business type changes
@@ -2029,11 +2035,12 @@ struct HomeDashboardView: View {
     private func demoOpenLink(_ demo: Listing) -> some View {
         NavigationLink {
             if let url = estateDemoFullURL {
-                // The full hosted listing microsite — flythrough → the whole
-                // auto-built landing page buyers scroll.
+                // Real estate: the full hosted listing microsite — flythrough →
+                // the whole auto-built landing page buyers scroll. Other types:
+                // the hosted flythrough on its own (see `estateDemoFullURL`).
                 PlayerWebView(remoteURL: url)
                     .ignoresSafeArea(edges: .bottom)
-                    .navigationTitle("Demo listing page")
+                    .navigationTitle(demoPageTitle)
                     .navigationBarTitleDisplayMode(.inline)
             } else {
                 FlythroughDetailView(listing: demo)
@@ -2097,10 +2104,15 @@ struct HomeDashboardView: View {
             VStack(spacing: 10) {
                 partnerRow("Pilk.ai", "Custom sites, apps & AI marketing systems",
                            "sparkles", "https://pilk.ai/")
-                partnerRow("Wholesale Mortgage Lending", "Get your buyers pre-approved fast",
-                           "banknote", "https://wsmlending.com/")
-                partnerRow("Tract", "The real estate system we built",
-                           "map", "https://tractrealestate.com/")
+                // Mortgages and a real-estate system are real-estate products:
+                // a gym or bar owner's first screen must not advertise them
+                // (industry review P1-4). Pilk.ai serves every business.
+                if SpaceType.current == .realEstate {
+                    partnerRow("Wholesale Mortgage Lending", "Get your buyers pre-approved fast",
+                               "banknote", "https://wsmlending.com/")
+                    partnerRow("Tract", "The real estate system we built",
+                               "map", "https://tractrealestate.com/")
+                }
             }
         }
     }
@@ -2566,11 +2578,13 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         }
     }
 
-    /// Six words or fewer — what the feature does.
+    /// Six words or fewer — what the feature does. "Staging" is a real-estate
+    /// word; every other type's studio chip says "Furnish it" (P2-4).
     var promise: String {
         switch self {
         case .tour:      return "Walk it once — glide forever"
-        case .photos:    return "Twilight · blue sky · staging"
+        case .photos:    return SpaceType.current == .realEstate
+            ? "Twilight · blue sky · staging" : "Twilight · blue sky · furnish it"
         case .reel:      return "Photos → one social video"
         case .floorPlan: return "Scan in 3D or upload"
         case .aerial:    return "A cinematic opening shot"

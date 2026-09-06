@@ -64,6 +64,13 @@
 //      "no kids" are refused with 400 `unsupported_edit` and copy naming the
 //      offending phrase. There is no header, flag or body field that skips it —
 //      the check sits between body parsing and every network call below.
+//      The gate is scoped by the LISTING's `space_type`, read from the listing
+//      row named by `listing_id` (RLS-scoped; industry review P1-1): a venue's,
+//      bar's, store's or gym's script keeps the general safety layer (nothing
+//      that singles people out by race, origin or disability) but not the
+//      housing rules — "adults only" is a bar's legal reality and "seats 220
+//      guests" is what a venue says. No listing_id, or a row the caller can't
+//      see, means the full housing gate. See _shared/fairhousing.ts, SCOPE.
 //   2. LENGTH — 1,000 characters. Longer is a 400 before anything else runs.
 //   3. ROLE — marketing is read-only, same gate as ai-photo.
 //   4. QUOTA — metered against the plan's `reels_per_month` allowance. 0 → 402.
@@ -95,7 +102,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertMarketingCopy } from "../_shared/fairhousing.ts";
@@ -521,8 +528,10 @@ Deno.serve(async (req) => {
 
       // ── FAIR HOUSING ── nothing below this line is free, and there is no way
       // for a caller to reach it without passing here. Throws 400
-      // `unsupported_edit` naming the offending phrase and why.
-      assertMarketingCopy(text, "This voiceover script");
+      // `unsupported_edit` naming the offending phrase and why. Scoped by the
+      // listing's business type (header, gate 1); null = the housing rules.
+      const spaceType = await listingSpaceType(userClient(req), body.listing_id);
+      assertMarketingCopy(text, "This voiceover script", spaceType);
 
       const voiceId = String(body.voice_id ?? "").trim();
       assert(voiceId.length > 0, 400, "voice_id is required — call GET /ai-voice/voices first");

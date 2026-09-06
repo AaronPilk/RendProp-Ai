@@ -58,6 +58,14 @@ struct SettingsView: View {
     /// (mock) build there is no account — only data on this phone.
     private var serverAccountsEnabled: Bool { Config.useLiveBackend && Config.enableAuth }
 
+    /// What the sign-out and clear-data copy calls one saved project: real
+    /// estate keeps its reviewed "listing"; a bar or gym reads its own noun
+    /// (industry review P2-4). Settings has no listing in hand, so it speaks
+    /// the selected type.
+    private var localItemNoun: String {
+        SpaceType.current == .realEstate ? "listing" : SpaceType.current.spaceNoun
+    }
+
     /// Published contact address — the same one on rendprop.com/privacy and
     /// /terms, so App Review sees one support channel everywhere (Guideline 1.2).
     static let supportEmail = "aaron@pilk.ai"
@@ -281,7 +289,7 @@ struct SettingsView: View {
             } footer: {
                 Text(aiProcessingFooter + "\n\n" + (serverAccountsEnabled
                      ? "Delete account removes your Rendprop account, published tours and leads from our servers, then clears this phone. Clear data only wipes this phone — your account and published tours stay as they are."
-                     : "Clear data removes every listing, video, tour and card stored on this phone."))
+                     : "Clear data removes every \(localItemNoun), video, tour and card stored on this phone."))
             }
 
             Section {
@@ -344,7 +352,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your listings, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again.")
+            Text("Your \(localItemNoun)s, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again.")
         }
         .alert("Upload in progress", isPresented: $showIntroConfirm) {
             Button("Watch anyway", role: .destructive) { hasOnboarded = false }
@@ -385,8 +393,8 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
-                 ? "Removes every listing, video, tour and card stored on this phone and signs you out — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
-                 : "Removes every listing, video, tour and card stored on this phone — including this phone's copies of the untouched originals behind your AI-edited photos.")
+                 ? "Removes every \(localItemNoun), video, tour and card stored on this phone and signs you out — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
+                 : "Removes every \(localItemNoun), video, tour and card stored on this phone — including this phone's copies of the untouched originals behind your AI-edited photos.")
         }
         .alert("Data cleared", isPresented: $showDataCleared) {
             Button("OK") { hasOnboarded = false }
@@ -919,6 +927,11 @@ struct LeadsView: View {
         return listing.serverID == nil
     }
 
+    /// The noun for the listing in hand — its own type, so a type switch while
+    /// this screen is up doesn't re-label it (industry review P2-5). The
+    /// account-wide view has no listing and speaks the selected type.
+    private var noun: String { (listing?.spaceType ?? SpaceType.current).spaceNoun }
+
     private struct DaySection: Identifiable {
         let id: Date
         let title: String
@@ -972,8 +985,8 @@ struct LeadsView: View {
 
         if listing?.isSample == true {
             infoRow(icon: "sparkles",
-                    title: "Sample \(SpaceType.current.spaceNoun)s don't collect leads",
-                    detail: "Create a \(SpaceType.current.spaceNoun) and publish its tour — the form on your shared link sends leads here.")
+                    title: "Sample \(noun)s don't collect leads",
+                    detail: "Create a \(noun) and publish its tour — the form on your shared link sends leads here.")
         } else if needsSignIn {
             Section {
                 VStack(alignment: .leading, spacing: 10) {
@@ -995,8 +1008,8 @@ struct LeadsView: View {
             }
         } else if listingNotPublished {
             infoRow(icon: "link.badge.plus",
-                    title: "Publish this \(SpaceType.current.spaceNoun) to start collecting leads",
-                    detail: "The form at the end of your shared tour sends leads here. This \(SpaceType.current.spaceNoun) hasn't been published yet.")
+                    title: "Publish this \(noun) to start collecting leads",
+                    detail: "The form at the end of your shared tour sends leads here. This \(noun) hasn't been published yet.")
         } else if let errorMessage, leads.isEmpty {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
@@ -1888,7 +1901,9 @@ struct BusinessTypeView: View {
                 Text("What do you show off?")
                     .font(.rpTitle)
                     .foregroundStyle(Theme.ink)
-                Text("Pick your business — Rendprop becomes an app built just for it. Your listings for every type are kept; the list shows the selected type.")
+                Text(SpaceType.current == .realEstate
+                     ? "Pick your business — Rendprop becomes an app built just for it. Your listings for every type are kept; the list shows the selected type."
+                     : "Pick your business — Rendprop becomes an app built just for it. Everything you've made under every type is kept; the list shows the selected type.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
 

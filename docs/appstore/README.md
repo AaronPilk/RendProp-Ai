@@ -11,7 +11,7 @@ written before subscriptions, first-party analytics, and SKAdNetwork existed.
 | `review-notes.md` | The App Review Information panel: sign-in answer, notes field, contact fields, and what deliberately stays out. |
 | `privacy-labels.md` | Every App Privacy questionnaire answer, with the reason for each — including the ones that are now "Yes" and used to be "No". |
 | `age-rating.md` | Every age-rating answer → 4+, including the three that need a sentence of reasoning. |
-| `screenshots/README.md` | How the 6.9-inch set is captured and regenerated; the committed PNGs live in `screenshots/6.9/`. |
+| `screenshots/README.md` | How the 6.9-inch set is captured, framed and uploaded: raw captures in `screenshots/6.9/`, the set itself in `screenshots/plan.json` (order, headlines, which captures), the composed PNGs in `screenshots/6.9-framed/` via `tools/screenshots/compose.py`. |
 | `iap-review/README.md` | Why the subscription review screenshot needs a phone, and how to take it. |
 | `ASC-API-PLAN.md` | Owned by another agent — the App Store Connect API automation plan. |
 

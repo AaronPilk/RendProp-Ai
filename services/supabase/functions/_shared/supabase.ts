@@ -111,6 +111,34 @@ export function preferredOrg(req: Request): string | undefined {
   return req.headers.get("x-org-id") ?? undefined;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The business type (`listings.space_type`) of one listing, read through the
+ * given client — pass `userClient(req)` so RLS limits it to the caller's own
+ * org. What the fair-housing gate (_shared/fairhousing.ts) scopes itself on:
+ * the LISTING's type, not whatever the request claims.
+ *
+ * NEVER throws and never blocks a request: a missing/invalid id, a row the
+ * caller can't see, or a database error all answer null, and null means the
+ * gate falls back to its stricter housing rules.
+ */
+export async function listingSpaceType(client: SupabaseClient, listingId: unknown): Promise<string | null> {
+  if (typeof listingId !== "string" || !UUID_RE.test(listingId.trim())) return null;
+  try {
+    const { data, error } = await client
+      .from("listings")
+      .select("space_type")
+      .eq("id", listingId.trim())
+      .maybeSingle();
+    if (error || !data) return null;
+    const t = (data as { space_type?: unknown }).space_type;
+    return typeof t === "string" && t.trim() ? t.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Refuse writes once account deletion has started for this user.
  *

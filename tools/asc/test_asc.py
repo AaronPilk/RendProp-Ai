@@ -541,7 +541,12 @@ class FakeAsc(object):
         "appStoreVersions": "appStoreVersions",
         "appStoreVersionLocalizations": "appStoreVersionLocalizations",
         "appInfoLocalizations": "appInfoLocalizations",
+        "appScreenshotSets": "appScreenshotSets",
+        "appScreenshots": "appScreenshots",
     }
+    # Where a reserved screenshot's uploadOperations point. Not the API host:
+    # the bearer token must never be sent there, and the fake checks that.
+    UPLOAD_HOST = "https://upload-fake.apple.invalid"
 
     # Apple's real USD ladder for a YEARLY subscription stops at 1000.00, which
     # is why com.rendprop.app.team.annual (2490.00) was priced at 1000.00 on the
@@ -562,6 +567,8 @@ class FakeAsc(object):
         self.bodies = []
         self.last_headers = {}
         self.last_price_body = None
+        # (url, headers, byte length) for every chunk PUT to UPLOAD_HOST.
+        self.uploads = []
         # Product ids the broad group listing pretends not to see. A targeted
         # filter[productId] lookup still finds them, which is what the planner's
         # 409 recovery does.
@@ -754,6 +761,13 @@ class FakeAsc(object):
     def __call__(self, method, url, headers, body):
         self.last_headers = dict(headers)
         parsed = urllib.parse.urlparse(url)
+        if url.startswith(self.UPLOAD_HOST):
+            # An uploadOperation chunk. Apple's upload hosts take the bytes
+            # with the operation's own headers and nothing else.
+            self.uploads.append((url, dict(headers), len(body or b"")))
+            if "Authorization" in headers:
+                return 403, {}, b"bearer token sent to the upload host"
+            return 200, {}, b""
         path = parsed.path
         query = urllib.parse.parse_qs(parsed.query)
         payload = json.loads(body.decode("utf-8")) if body else None
@@ -780,7 +794,15 @@ class FakeAsc(object):
         return 405, {"errors": [{"code": "METHOD", "title": "no", "detail": path, "status": "405"}]}
 
     def delete(self, parts):
-        """Only /v1/subscriptionPrices/{id} has a DELETE in Apple's spec (204)."""
+        """DELETE /v1/subscriptionPrices/{id} and /v1/appScreenshots/{id} - both
+        answer 204 with no body in Apple's spec."""
+        if len(parts) == 2 and parts[0] == "appScreenshots":
+            # https://developer.apple.com/documentation/AppStoreConnectAPI/DELETE-v1-appScreenshots-_id_
+            if parts[1] not in self.store.get("appScreenshots", {}):
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no such screenshot", "detail": parts[1]}]}
+            del self.store["appScreenshots"][parts[1]]
+            return 204, None
         if len(parts) != 2 or parts[0] != "subscriptionPrices":
             return 405, {"errors": [{"code": "METHOD", "title": "no",
                                      "detail": "/".join(parts), "status": "405"}]}
@@ -854,6 +876,14 @@ class FakeAsc(object):
                     page["included"] = self._included_price_points(data)
                 if key == ("apps", "appInfos"):
                     self._shape_category_relationships(page, include)
+                if key == ("appScreenshotSets", "appScreenshots"):
+                    # Listed in the order the last relationship PATCH set,
+                    # anything never ordered after that in creation order.
+                    order = (self.store.get("appScreenshotSets", {}).get(parent_id) or {}) \
+                        .get("attributes", {}).get("_order") or []
+                    rank = {identifier: index for index, identifier in enumerate(order)}
+                    data.sort(key=lambda d: (rank.get(d["id"], len(rank)), d["id"]))
+                    page["data"] = data
                 return 200, page
 
             if key == ("appStoreVersions", "build"):
@@ -1126,6 +1156,32 @@ class FakeAsc(object):
             identifier = self._insert(kind, attributes, {"app": data["relationships"]["app"]["data"]["id"]})
             return 201, {"data": self._public(self.store[kind][identifier])}
 
+        # POST /v1/appScreenshots reserves the asset: the answer carries the
+        # uploadOperations (one chunk here), and the screenshot waits in
+        # AWAITING_UPLOAD until the PATCH with uploaded=true + checksum.
+        # https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-appScreenshots
+        if kind == "appScreenshots":
+            set_id = (((data.get("relationships") or {}).get("appScreenshotSet")
+                       or {}).get("data") or {}).get("id")
+            if set_id not in self.store.get("appScreenshotSets", {}):
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no such set", "detail": str(set_id)}]}
+            if len(self._children("appScreenshots", "appScreenshotSets", set_id, "appScreenshotSet")) >= 10:
+                return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                                         "title": "There is a problem with the request entity",
+                                         "detail": "A screenshot set holds at most 10 screenshots.",
+                                         "status": "409"}]}
+            size = int(attributes.get("fileSize") or 0)
+            identifier = self._insert(kind, dict(attributes, uploaded=False, sourceFileChecksum=None,
+                                                 assetDeliveryState={"state": "AWAITING_UPLOAD"}),
+                                      {"appScreenshotSet": set_id})
+            resource = self.store[kind][identifier]
+            resource["attributes"]["uploadOperations"] = [{
+                "method": "PUT", "url": "%s/%s/chunk-1" % (self.UPLOAD_HOST, identifier),
+                "offset": 0, "length": size,
+                "requestHeaders": [{"name": "Content-Type", "value": "image/png"}]}]
+            return 201, {"data": self._public(resource)}
+
         # A newly created version comes back in PREPARE_FOR_SUBMISSION, which is
         # how a second run recognises it instead of creating another one.
         if kind == "appStoreVersions":
@@ -1213,6 +1269,15 @@ class FakeAsc(object):
             return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
                                      "detail": identifier, "status": "404"}]}
         resource["attributes"].update(attributes)
+        if kind == "appScreenshots" and attributes.get("uploaded"):
+            # The commit: Apple verifies the checksum against the bytes it
+            # received and moves the asset on from AWAITING_UPLOAD.
+            chunks = [u for u in self.uploads if "/%s/" % identifier in u[0]]
+            if not chunks:
+                return 409, {"errors": [{"code": "STATE_ERROR", "status": "409",
+                                         "title": "nothing was uploaded", "detail": identifier}]}
+            resource["attributes"]["assetDeliveryState"] = {"state": "COMPLETE"}
+            resource["attributes"].pop("uploadOperations", None)
         # A PATCH may also re-point to-one relationships (categories on appInfos).
         for name, value in (payload["data"].get("relationships") or {}).items():
             inner = (value or {}).get("data")
@@ -1221,12 +1286,35 @@ class FakeAsc(object):
         return 200, {"data": self._public(resource)}
 
     def patch_linkage(self, collection, identifier, name, payload):
-        """PATCH /v1/<collection>/{id}/relationships/<name> - a to-one linkage.
+        """PATCH /v1/<collection>/{id}/relationships/<name>.
 
-        Only appStoreVersions.build is modelled. Per
+        Two are modelled. appStoreVersions.build is a to-one linkage: per
         AppStoreVersionBuildLinkageRequest the body's `data` is the single
-        {type, id} object, and success is 204 with no body.
+        {type, id} object. appScreenshotSets.appScreenshots is the to-many
+        REPLACE (AppScreenshotSetAppScreenshotsLinkagesRequest): `data` is the
+        full ordered list, every id must already belong to the set. Success
+        is 204 with no body for both.
         """
+        if (collection, name) == ("appScreenshotSets", "appScreenshots"):
+            screenshot_set = self.store.get("appScreenshotSets", {}).get(identifier)
+            if screenshot_set is None:
+                return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
+                                         "detail": identifier, "status": "404"}]}
+            linkage = payload.get("data")
+            if not isinstance(linkage, list):
+                return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                                         "title": "data must be a list", "detail": "", "status": "409"}]}
+            members = {r["id"] for r in self._children("appScreenshots", "appScreenshotSets",
+                                                        identifier, "appScreenshotSet")}
+            for item in linkage:
+                if not isinstance(item, dict) or item.get("type") != "appScreenshots" \
+                        or item.get("id") not in members:
+                    return 409, {"errors": [{"code": "ENTITY_ERROR.RELATIONSHIP.INVALID",
+                                             "title": "There is a problem with the request entity",
+                                             "detail": "not a screenshot of this set: %r" % (item,),
+                                             "status": "409"}]}
+            screenshot_set["attributes"]["_order"] = [item["id"] for item in linkage]
+            return 204, None
         if (collection, name) != ("appStoreVersions", "build"):
             return 404, {"errors": [{"code": "NOT_FOUND", "title": "no",
                                      "detail": "%s/%s" % (collection, name), "status": "404"}]}
@@ -3198,6 +3286,224 @@ class PngTests(unittest.TestCase):
             self.assertIsNone(asc.png_dimensions(path))
         finally:
             shutil.rmtree(directory, ignore_errors=True)
+
+
+def write_fake_png(directory, name, width=1320, height=2868, payload=b"pixels"):
+    """A file `png_dimensions` reads as width x height. The payload makes the
+    md5 (Apple's sourceFileChecksum) differ per file."""
+    import struct
+    ihdr = b"IHDR" + struct.pack(">II", width, height) + b"\x08\x06\x00\x00\x00"
+    blob = (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + ihdr
+            + b"\x00\x00\x00\x00" + payload + b"\x00" * 16)
+    path = Path(directory) / name
+    path.write_bytes(blob)
+    return path
+
+
+class ScreenshotUploadTests(unittest.TestCase):
+    """`screenshots apply`: the APP_IPHONE_67 set, the reserve/upload/commit
+    flow, filename order, idempotence - and `--dir` / `--replace`."""
+
+    def setUp(self):
+        self.directory = tempfile.mkdtemp(prefix="asc-shots-")
+        for name in ("01-cinematic-tour.png", "02-every-tool.png", "03-every-business.png"):
+            write_fake_png(self.directory, name, payload=name.encode())
+
+    def tearDown(self):
+        shutil.rmtree(self.directory, ignore_errors=True)
+
+    def run_screenshots(self, fake, **kwargs):
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        args = Args(action="apply", dir=self.directory)
+        for key, value in kwargs.items():
+            setattr(args, key, value)
+        code = asc.cmd_screenshots(client, args, out)
+        return code, out.getvalue()
+
+    def stored_names(self, fake):
+        """File names in the set, in the order the API would list them."""
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+        set_id = list(fake.store["appScreenshotSets"])[0]
+        shots = client.get_all("/v1/appScreenshotSets/%s/appScreenshots" % set_id)
+        return [asc.attributes_of(s)["fileName"] for s in shots]
+
+    def test_first_apply_creates_the_set_uploads_commits_and_orders(self):
+        fake = FakeAsc()
+        code, output = self.run_screenshots(fake)
+        self.assertEqual(code, 0, output)
+
+        sets = list(fake.store["appScreenshotSets"].values())
+        self.assertEqual(len(sets), 1)
+        self.assertEqual(sets[0]["attributes"]["screenshotDisplayType"], asc.SCREENSHOT_DISPLAY_TYPE)
+
+        shots = fake.store["appScreenshots"]
+        self.assertEqual(len(shots), 3)
+        for shot in shots.values():
+            attrs = shot["attributes"]
+            self.assertIs(attrs["uploaded"], True)
+            self.assertEqual(attrs["assetDeliveryState"], {"state": "COMPLETE"})
+            expected = asc.md5_of(Path(self.directory) / attrs["fileName"])
+            self.assertEqual(attrs["sourceFileChecksum"], expected)
+        # One chunk per file, sent to the upload host WITHOUT the bearer token.
+        self.assertEqual(len(fake.uploads), 3)
+        for _url, headers, length in fake.uploads:
+            self.assertNotIn("Authorization", headers)
+            self.assertEqual(headers.get("Content-Type"), "image/png")
+            self.assertGreater(length, 0)
+        # Filename order, sent as the to-many replace.
+        self.assertEqual(self.stored_names(fake),
+                         ["01-cinematic-tour.png", "02-every-tool.png", "03-every-business.png"])
+        set_id = list(fake.store["appScreenshotSets"])[0]
+        orders = [body for method, path, body in fake.bodies
+                  if method == "PATCH" and path.endswith("/relationships/appScreenshots")]
+        self.assertEqual(len(orders), 1)
+        self.assertEqual([item["type"] for item in orders[0]["data"]], ["appScreenshots"] * 3)
+        self.assertEqual(path_of_set_order(fake), "/v1/appScreenshotSets/%s/relationships/appScreenshots" % set_id)
+
+    def test_second_apply_uploads_nothing(self):
+        fake = FakeAsc()
+        self.run_screenshots(fake)
+        before = len(fake.writes)
+        code, output = self.run_screenshots(fake)
+        self.assertEqual(code, 0, output)
+        later = fake.writes[before:]
+        self.assertEqual([w for w in later if w[0] in ("POST", "DELETE")], [])
+        self.assertIn("already uploaded", output)
+        self.assertEqual(len(fake.store["appScreenshots"]), 3)
+
+    def test_replace_deletes_the_old_set_before_uploading_the_new_one(self):
+        fake = FakeAsc()
+        self.run_screenshots(fake)
+        old_ids = set(fake.store["appScreenshots"])
+        # A new set: different files, one of them keeping an old name but new bytes.
+        shutil.rmtree(self.directory)
+        os.makedirs(self.directory)
+        for name in ("01-cinematic-tour.png", "02-photo-fixes.png"):
+            write_fake_png(self.directory, name, payload=b"framed:" + name.encode())
+        before = len(fake.writes)
+
+        code, output = self.run_screenshots(fake, replace=True)
+        self.assertEqual(code, 0, output)
+        later = fake.writes[before:]
+        deletes = [path for method, path in later if method == "DELETE"]
+        posts = [path for method, path in later if method == "POST" and path == "/v1/appScreenshots"]
+        self.assertEqual(sorted(deletes), sorted("/v1/appScreenshots/%s" % i for i in old_ids))
+        self.assertEqual(len(posts), 2)
+        # Every delete comes before the first upload: the old set could be
+        # sitting at Apple's cap of 10.
+        last_delete = max(i for i, (m, _p) in enumerate(later) if m == "DELETE")
+        first_post = min(i for i, (m, p) in enumerate(later) if m == "POST" and p == "/v1/appScreenshots")
+        self.assertLess(last_delete, first_post)
+        # The set is now exactly the new files, in filename order.
+        self.assertEqual(self.stored_names(fake), ["01-cinematic-tour.png", "02-photo-fixes.png"])
+        self.assertTrue(old_ids.isdisjoint(set(fake.store["appScreenshots"])))
+        self.assertIn("Remove the current set", output)
+
+    def test_replace_reuploads_even_identical_files(self):
+        """--replace never trusts the checksum shortcut: the set is rebuilt."""
+        fake = FakeAsc()
+        self.run_screenshots(fake)
+        first_ids = set(fake.store["appScreenshots"])
+        code, output = self.run_screenshots(fake, replace=True)
+        self.assertEqual(code, 0, output)
+        self.assertNotIn("already uploaded", output)
+        self.assertEqual(len(fake.store["appScreenshots"]), 3)
+        self.assertTrue(first_ids.isdisjoint(set(fake.store["appScreenshots"])))
+
+    def test_replace_on_an_empty_set_is_a_plain_upload(self):
+        fake = FakeAsc()
+        code, output = self.run_screenshots(fake, replace=True)
+        self.assertEqual(code, 0, output)
+        self.assertEqual([w for w in fake.writes if w[0] == "DELETE"], [])
+        self.assertEqual(len(fake.store["appScreenshots"]), 3)
+
+    def test_replace_dry_run_deletes_and_uploads_nothing(self):
+        fake = FakeAsc()
+        self.run_screenshots(fake)
+        before = len(fake.writes)
+        code, output = self.run_screenshots(fake, replace=True, dry_run=True)
+        self.assertEqual(code, 0, output)
+        self.assertEqual(fake.writes[before:], [])
+        self.assertIn("WOULD delete 01-cinematic-tour.png", output)
+        self.assertIn("WOULD upload 01-cinematic-tour.png", output)
+        self.assertEqual(len(fake.store["appScreenshots"]), 3)
+
+    def test_dir_is_resolved_against_the_repo_root(self):
+        relative = asc.screenshot_directory(Args(dir="docs/appstore/screenshots/6.9-framed"))
+        self.assertEqual(relative, asc.REPO_ROOT / "docs" / "appstore" / "screenshots" / "6.9-framed")
+        absolute = asc.screenshot_directory(Args(dir=self.directory))
+        self.assertEqual(absolute, Path(self.directory))
+        self.assertEqual(asc.screenshot_directory(Args()), asc.SCREENSHOT_DIR)
+        self.assertEqual(asc.screenshot_directory(Args(dir=None)), asc.SCREENSHOT_DIR)
+
+    def test_a_missing_or_empty_dir_fails_before_touching_the_api(self):
+        fake = FakeAsc()
+        with self.assertRaises(asc.AscError):
+            self.run_screenshots(fake, dir=os.path.join(self.directory, "nope"))
+        empty = tempfile.mkdtemp(prefix="asc-empty-")
+        try:
+            with self.assertRaises(asc.AscError):
+                self.run_screenshots(fake, dir=empty)
+        finally:
+            shutil.rmtree(empty, ignore_errors=True)
+        self.assertEqual(fake.calls, [])
+
+    def test_wrong_size_and_too_many_are_refused_before_any_upload(self):
+        fake = FakeAsc()
+        write_fake_png(self.directory, "04-wrong.png", width=1290, height=2796)
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_screenshots(fake)
+        self.assertIn("1290x2796", str(caught.exception))
+        os.remove(os.path.join(self.directory, "04-wrong.png"))
+        for index in range(4, 12):
+            write_fake_png(self.directory, "%02d-more.png" % index, payload=b"%d" % index)
+        with self.assertRaises(asc.AscError) as caught:
+            self.run_screenshots(fake)
+        self.assertIn("at most 10", str(caught.exception))
+        self.assertEqual([w for w in fake.writes if w[0] == "POST"], [])
+
+    def test_the_fake_rejects_a_bearer_token_on_the_upload_host(self):
+        fake = FakeAsc()
+        status, _headers, _body = fake("PUT", fake.UPLOAD_HOST + "/x/chunk-1",
+                                       {"Authorization": "Bearer nope"}, b"abc")
+        self.assertEqual(status, 403)
+
+    def test_delete_of_an_unknown_screenshot_is_404(self):
+        fake = FakeAsc()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=io.StringIO())
+        with self.assertRaises(asc.ApiError) as caught:
+            client.delete("/v1/appScreenshots/nope")
+        self.assertEqual(caught.exception.status, 404)
+
+    def test_the_cli_exposes_dir_and_replace_only_on_screenshots(self):
+        parser = asc.build_parser()
+        args = parser.parse_args(["screenshots", "apply", "--dir", "docs/appstore/screenshots/6.9-framed", "--replace"])
+        self.assertEqual(args.dir, "docs/appstore/screenshots/6.9-framed")
+        self.assertIs(args.replace, True)
+        args = parser.parse_args(["screenshots", "plan"])
+        self.assertIsNone(args.dir)
+        self.assertIs(args.replace, False)
+        stderr, sys.stderr = sys.stderr, io.StringIO()
+        try:
+            for command in ("metadata", "review", "subscriptions"):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args([command, "apply", "--replace"])
+        finally:
+            sys.stderr = stderr
+
+    def test_the_bridge_uploads_the_framed_set_and_replaces(self):
+        bridge = (Path(asc.__file__).resolve().parent / "bridge-610-asc-apply.sh"
+                  ).read_text(encoding="utf-8")
+        self.assertIn("6.9-framed", bridge)
+        self.assertIn("--replace", bridge)
+
+
+def path_of_set_order(fake):
+    for method, path in fake.writes:
+        if method == "PATCH" and path.endswith("/relationships/appScreenshots"):
+            return path
+    return None
 
 
 class UploadOperationTests(unittest.TestCase):

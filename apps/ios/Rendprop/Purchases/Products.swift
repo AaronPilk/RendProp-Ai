@@ -35,11 +35,21 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
         }
     }
 
-    /// One plain line under the name — who the plan is for.
+    /// One plain line under the name — who the plan is for. Real estate keeps
+    /// its reviewed wording; every other business type is addressed as its own
+    /// trade (a bar is never "an agent listing homes" — industry review P1-3).
+    /// Every line stays under 60 characters.
     var tagline: String {
+        let space = SpaceType.current
         switch self {
-        case .starter: return "For one agent listing a few homes a month."
-        case .pro:     return "For a busy agent shooting every week."
+        case .starter:
+            return space == .realEstate
+                ? "For one agent listing a few homes a month."
+                : "For one \(space.businessNoun) shooting a few tours a month."
+        case .pro:
+            return space == .realEstate
+                ? "For a busy agent shooting every week."
+                : "For a busy \(space.businessNoun) shooting every week."
         case .team:    return "For a small team sharing one workspace."
         }
     }

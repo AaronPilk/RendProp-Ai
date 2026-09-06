@@ -476,8 +476,9 @@ final class LiveAPIClient: APIClient {
             if !trimmed.isEmpty { body["prompt"] = String(trimmed.prefix(600)) }   // custom only, server cap 600
         }
         // Industry-aware prompts server-side (a restaurant is not staged like a
-        // living room) — contract §B4.
-        body["space_type"] = SpaceType.current.rawValue
+        // living room) — contract §B4. The LISTING's type when the caller has
+        // one; the selected type only as a fallback (industry review P2-5).
+        body["space_type"] = request.spaceType ?? SpaceType.current.rawValue
         // COMPLIANCE (W2-B3/C3): without listing_id the server cannot enter the
         // edit in the org's audit log at all; original_asset_id is what makes
         // the public "View original" link real (California AB 723).

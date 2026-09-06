@@ -393,3 +393,98 @@ The `STOREKIT:` note, the `Price rendered: …` proof and any skip reasons:
 xcrun xcresulttool get test-results activities \
   --path /tmp/paywallshot.xcresult --test-id 'PaywallShot/testPaywallShot()'
 ```
+
+---
+
+# IndustryWalk — every business type, every screen
+
+`IndustryWalk` is six tests in the same bundle — `testRealEstate` (the control),
+`testVenue`, `testRestaurant`, `testRetail`, `testFitness`, `testOther` — one per
+`SpaceType`. Each puts the app into that business type and walks every screen a
+user of that type can reach under `-uiTesting`, attaching `<type>-NN-<screen>`
+screenshots and writing one activity per expectation named `CHECK PASS …` or
+`CHECK FAIL …: <what the screen said>`. The expected strings come from the
+app's own `SpaceType` (Models/Listing.swift), the form, the studio's edit words
+and the card editor — nothing is invented — and every screen is also scanned
+for vocabulary that must not cross the line (no "listing / beds / baths / MLS /
+buyers / agent / Zillow / sold / staging / home" off real estate; no "venue /
+planners / guests / shoppers / members / archived" on it).
+
+| NN | Screen |
+|---|---|
+| 00 | The Home business-type menu (`-00-type-menu`) and Home after the switch |
+| 01–02 | Home dashboard (hero copy for the type), scrolled to the demo player |
+| 03 | The collection tab (Homes / Venues / Places / Stores / Studios / Spaces) |
+| 04–07 | The seeded sample's detail: player, toolbox (dimmed), LEADS, DETAILS rows |
+| 08 | New \<noun\> form with the optional details expanded (no beds/baths off real estate) |
+| 09 | AI Photo Studio via the "Take photos" gate (`-09a-name-gate` is the naming sheet) |
+| 10–11 | The walk's own project: detail + MANAGE (archive verb, Zillow only on real estate) |
+| 12 | Aerial intro sheet (form state) |
+| 13 | Floor plan (upload path — no LiDAR in the simulator) |
+| 14 | "Make a reel" entry (card disabled, no photos) |
+| 15 | Edit \<noun\> sheet (cancelled) |
+| 16 | Leads (empty, mock) |
+| 17–18 | Profile + the Agent / Business card editor |
+| 19 | Settings |
+| 20–21 | Settings › Business type + its preview (area tags, detail chips, tour button) |
+| 22–23 | Plan & usage + the paywall (opened, photographed, closed) |
+| 24 | Legal & support |
+| 25–26 | Delete account + its confirmation (**Cancel only**) |
+
+## How the type is selected
+
+`-key value` launch arguments sit in UserDefaults' argument domain, which wins
+over the persisted value on every read — so under `-space.type venue` the Home
+switcher would write "restaurant" and read "venue" straight back. Each test
+therefore launches **without** `-space.type` and drives the top-left
+business-type menu to its own industry (that is the switcher test; the hero
+headline changing is the proof). If the menu cannot be driven, the test
+relaunches pinned with `-space.type <raw>` and says so in the activity log.
+
+It launches with `-uiTesting`, `-hasOnboarded YES`, `-appearance light`,
+`-ai.thirdPartyProcessing.consent.v1 YES`, and brings up the same
+`SKTestSession` as PaywallShot so the plan cards render for the copy check.
+
+## Safety rules
+
+Same as the other walks: Delete account → the confirmation is photographed and
+**Cancel** is the only button pressed; no purchase button is tapped; no photo
+is added and no AI edit runs (the reel card stays disabled by design); no
+assertion — a step that cannot be reached writes `SKIPPED:` and moves on.
+
+## Run it on the Mac build bridge
+
+```bash
+bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-industrywalk.sh"
+```
+
+xcodegen → boot → **uninstall** (clean container, so each type creates exactly
+one project: "1 Walk Test Street", "Walk Test Venue", …) → status bar → test →
+export. Output in `~/Rendprop AI/_bridge/out/industrywalk/`: the PNGs,
+`checks.txt` (every CHECK line, prefixed with the test) and
+`activities-<test>.txt` (the full activity tree — skip reasons, the STOREKIT
+note, the switcher fallback). The script's last block prints every
+`CHECK FAIL` line. `KEEP_APP=1` skips the uninstall; `SIM_UDID=…` picks another
+simulator.
+
+## Run it by hand
+
+```bash
+cd apps/ios
+xcodegen generate
+xcrun simctl boot CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E 2>/dev/null
+xcrun simctl uninstall CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E com.rendprop.app   # clean container
+
+xcodebuild test \
+  -project Rendprop.xcodeproj \
+  -scheme Rendprop \
+  -destination 'platform=iOS Simulator,id=CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E' \
+  -only-testing:RendpropUITests/IndustryWalk \
+  -resultBundlePath /tmp/industrywalk.xcresult
+
+xcrun xcresulttool get test-results activities \
+  --path /tmp/industrywalk.xcresult --test-id 'IndustryWalk/testVenue()' | grep -E 'CHECK (PASS|FAIL)'
+```
+
+The static companion — what differs per industry in the code, and every leak
+the walk is expected to catch — is `docs/qa/industry-review.md`.

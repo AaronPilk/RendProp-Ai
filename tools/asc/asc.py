@@ -645,6 +645,10 @@ class Client(object):
     def patch(self, path, body, expect=None):
         return self.request("PATCH", path, body=body, expect=expect)
 
+    def delete(self, path, expect=(204,)):
+        """DELETE one resource. Apple answers 204 with no body on success."""
+        return self.request("DELETE", path, expect=expect)
+
 
 # ---------------------------------------------------------------------------
 # Plan (dry-run gate)
@@ -2682,21 +2686,36 @@ def ensure_screenshot_set(client, localization_id, plan):
     return created["data"]["id"]
 
 
+def screenshot_directory(args):
+    """`--dir` when given, else the raw 6.9-inch set. Relative paths are
+    resolved against the repo root so the bridge can pass the framed set as
+    docs/appstore/screenshots/6.9-framed from anywhere."""
+    chosen = getattr(args, "dir", None)
+    if not chosen:
+        return SCREENSHOT_DIR
+    path = Path(chosen).expanduser()
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path
+
+
 def cmd_screenshots(client, args, out):
     plan = Plan(dry_run=args.dry_run, out=out)
-    if not SCREENSHOT_DIR.is_dir():
+    directory = screenshot_directory(args)
+    replace = bool(getattr(args, "replace", False))
+    if not directory.is_dir():
         raise AscError(
             "No screenshot directory at %s\n"
             "  Expected 6.9-inch iPhone PNGs (%d x %d) there."
-            % (SCREENSHOT_DIR, SCREENSHOT_EXPECTED_SIZE[0], SCREENSHOT_EXPECTED_SIZE[1])
+            % (directory, SCREENSHOT_EXPECTED_SIZE[0], SCREENSHOT_EXPECTED_SIZE[1])
         )
-    files = sorted(SCREENSHOT_DIR.glob("*.png"), key=lambda p: p.name)
+    files = sorted(directory.glob("*.png"), key=lambda p: p.name)
     if not files:
-        raise AscError("No .png files in %s" % SCREENSHOT_DIR)
+        raise AscError("No .png files in %s" % directory)
     if len(files) > 10:
         raise AscError("App Store Connect accepts at most 10 screenshots per set; found %d." % len(files))
 
-    out.write("Screenshots in %s\n" % SCREENSHOT_DIR)
+    out.write("Screenshots in %s%s\n" % (directory, " (replacing the set)" if replace else ""))
     local = []
     for path in files:
         dimensions = png_dimensions(path)
@@ -2732,12 +2751,31 @@ def cmd_screenshots(client, args, out):
         return 0
 
     existing = client.get_all("/v1/appScreenshotSets/%s/appScreenshots" % set_id)
+    if replace and existing:
+        # --replace: every screenshot already in the set goes, whatever its
+        # name or checksum, so the set ends up as exactly the files in
+        # `directory`, in filename order. Apple's cap is 10 per set and the
+        # old set may fill it, so this comes BEFORE the uploads. Idempotent:
+        # a re-run finds an empty set and simply uploads.
+        # https://developer.apple.com/documentation/AppStoreConnectAPI/DELETE-v1-appScreenshots-_id_
+        out.write("\nRemove the current set\n")
+        for screenshot in existing:
+            name = attributes_of(screenshot).get("fileName") or screenshot["id"]
+
+            def do_delete(screenshot_id=screenshot["id"]):
+                return client.delete("/v1/appScreenshots/%s" % screenshot_id)
+
+            plan.act("delete %s" % name, do_delete)
+        existing = [] if not args.dry_run else existing
     have = {}
     for screenshot in existing:
         attrs = attributes_of(screenshot)
         state = (attrs.get("assetDeliveryState") or {}).get("state")
         if attrs.get("sourceFileChecksum") and state != "FAILED":
             have[attrs["sourceFileChecksum"]] = screenshot["id"]
+    if replace:
+        # Nothing survives a replace, so nothing is "already uploaded".
+        have = {}
 
     out.write("\nUpload\n")
     ordered_ids = []
@@ -3707,7 +3745,7 @@ def build_parser():
     for name, help_text in (
         ("subscriptions", "create the subscription group, products, prices, trials"),
         ("metadata", "fill the App Store listing from docs/appstore/metadata/en-US"),
-        ("screenshots", "upload docs/appstore/screenshots/6.9/*.png"),
+        ("screenshots", "upload docs/appstore/screenshots/6.9/*.png (or --dir; --replace clears the set first)"),
         ("review", "set App Review details and the subscription review screenshot"),
     ):
         # `review` also takes `submit`, which sends the subscriptions to App
@@ -3735,6 +3773,17 @@ def build_parser():
             command.add_argument(
                 "product", nargs="?", default=None,
                 help="for `unprice`: the product id to remove the price from")
+        if name == "screenshots":
+            command.add_argument(
+                "--dir", dest="dir", metavar="PATH", default=None,
+                help="upload the PNGs in this directory instead of "
+                     "docs/appstore/screenshots/6.9 (e.g. the framed set, "
+                     "docs/appstore/screenshots/6.9-framed)")
+            command.add_argument(
+                "--replace", action="store_true",
+                help="delete every screenshot already in the %s set first, so "
+                     "the set becomes exactly the files in the directory, in "
+                     "filename order" % SCREENSHOT_DISPLAY_TYPE)
 
     # `build attach` links the newest processed build to the 1.0 version. It is
     # not part of the bridge because a build only exists after

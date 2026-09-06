@@ -33,3 +33,7 @@ services/supabase/functions/deno.lock
 # future `!`-rule can't accidentally un-ignore them.
 services/pipeline/.env
 services/worker/.env
+
+# generated App Store screenshot sets (raw captures + framed renders) live on the Mac / in the bridge
+docs/appstore/screenshots/6.9/
+docs/appstore/screenshots/6.9-framed/

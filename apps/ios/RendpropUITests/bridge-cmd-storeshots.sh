@@ -10,7 +10,12 @@
 # (RendpropUITests/StoreShots), pulls the PNGs out of the .xcresult, and refuses
 # to hand over anything that is not exactly 1320 x 2868.
 #
-# Output: ~/Rendprop AI/_bridge/out/storeshots/s01-….png … s08-….png
+# Output: ~/Rendprop AI/_bridge/out/storeshots/s01-….png … s15-….png
+#   s01–s08  the real-estate set (Home, tour, New Home, studio, plan, tour page)
+#   s09–s11  Home for the venue / restaurant / gym business types
+#   s12–s15  reel entry, floor plan, leads, the share surface
+# docs/appstore/screenshots/plan.json says which of them the store set uses;
+# tools/screenshots/compose.py frames them (headline + brand background).
 #
 # It never fails the bridge: every stage reports its own exit code and the run
 # continues, because seven good screenshots are still worth having.
@@ -21,7 +26,7 @@ set -u -o pipefail
 ROOT="$HOME/Rendprop AI"
 IOS_DIR="$ROOT/repo/apps/ios"
 OUT_DIR="$ROOT/_bridge/out"
-SHOTS_DIR="$OUT_DIR/storeshots"          # the deliverable — only s0*.png land here
+SHOTS_DIR="$OUT_DIR/storeshots"          # the deliverable — only sNN-*.png land here
 RAW_DIR="$OUT_DIR/storeshots-raw"        # xcresulttool's dumping ground
 PHOTO_DIR="$ROOT/_bridge/in/storeshot-photos"   # OPTIONAL: your own interior photos
 DD_DIR="$ROOT/_bridge/dd-storeshots"
@@ -273,9 +278,11 @@ fi
 # ------------------------------------------- 7. size gate, then the deliverable
 # App Store Connect rejects a 6.9-inch shot that is not EXACTLY 1320 x 2868.
 # A wrong size here almost always means the test ran on the wrong simulator.
+# Every attachment the test names sNN-… (s01 … s15) goes through the gate;
+# anything else in the export (Xcode's own failure screenshots) is ignored.
 OK=0
 BAD=0
-for src in "$RAW_DIR"/s0*.png; do
+for src in "$RAW_DIR"/s[0-9][0-9]-*.png; do
   [ -e "$src" ] || continue
   W=$(sips -g pixelWidth  "$src" 2>/dev/null | awk '/pixelWidth/{print $2}')
   H=$(sips -g pixelHeight "$src" 2>/dev/null | awk '/pixelHeight/{print $2}')
@@ -301,6 +308,14 @@ ls -la "$SHOTS_DIR"/*.png 2>/dev/null \
 #   xcrun xcresulttool get test-results activities \
 #     --path "$RESULT" --test-id 'StoreShots/testStoreShots()'
 echo "SKIP_NOTES=xcrun xcresulttool get test-results activities --path \"$RESULT\" --test-id 'StoreShots/testStoreShots()'"
+
+# Next: frame them and check the set (docs/appstore/screenshots/README.md):
+#   python3 "$ROOT/repo/tools/screenshots/compose.py" --src "$SHOTS_DIR" \
+#     --plan "$ROOT/repo/docs/appstore/screenshots/plan.json" \
+#     --out "$ROOT/repo/docs/appstore/screenshots/6.9-framed" --skip-missing
+#   python3 "$ROOT/repo/tools/screenshots/compose.py" --check \
+#     --out "$ROOT/repo/docs/appstore/screenshots/6.9-framed"
+echo "NEXT=compose.py --src \"$SHOTS_DIR\" (see docs/appstore/screenshots/README.md)"
 
 # Leave the status-bar override in place: it costs nothing, and a re-run that
 # forgets it would produce a set with two different clocks.

@@ -69,7 +69,7 @@ That runs, in order, stopping at the first failure:
 | 1 | `asc.py app` | Finds the app record, or prints the New App form values. |
 | 2 | `asc.py subscriptions apply` | Subscription group, six products, en-US names and descriptions, then per product **availability → price → 1-week free trial** in that order, plus the App Store Server Notification URLs. A product Apple has no price point for is left unpriced and reported. |
 | 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, content rights (no third-party content), the app's own price (Free, base territory USA), US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
-| 4 | `asc.py screenshots apply` | Uploads `docs/appstore/screenshots/6.9/*.png` in filename order. |
+| 4 | `asc.py screenshots apply [--dir …] [--replace]` | Uploads the 6.9-inch set in filename order — `docs/appstore/screenshots/6.9-framed/*.png` (the composed set) when that directory has PNGs, else the raw `docs/appstore/screenshots/6.9/*.png`. `bash tools/asc/bridge-610-asc-apply.sh --replace-screenshots` passes `--replace`, which deletes every screenshot already in the set first — needed once after a re-frame, because a set holds at most 10 and the old images are still in it. |
 | 5 | `asc.py review apply` | App Review contact + notes, and the paywall screenshot on every subscription. |
 | 6 | `asc.py status --skip-product com.rendprop.app.team.annual` | One page saying where everything stands and what is still missing. Team Yearly is deliberately withdrawn (see below), so it is shown but not counted. |
 
@@ -94,6 +94,8 @@ python3 tools/asc/asc.py app
 python3 tools/asc/asc.py subscriptions plan       # or: apply
 python3 tools/asc/asc.py metadata plan            # or: apply
 python3 tools/asc/asc.py screenshots apply
+python3 tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace
+                                                  # the composed set; --replace rebuilds the set
 python3 tools/asc/asc.py review apply
 python3 tools/asc/asc.py review submit            # send subscriptions to review
 python3 tools/asc/asc.py build attach             # newest VALID build -> version 1.0
@@ -205,7 +207,7 @@ missing"), `2` bad arguments.
 | `docs/appstore/metadata/en-US/marketing_url.txt` | marketing URL (optional) |
 | `docs/appstore/metadata/en-US/privacy_url.txt` | privacy policy URL (optional) |
 | `docs/appstore/metadata/en-US/copyright.txt` | copyright line (optional) |
-| `docs/appstore/screenshots/6.9/*.png` | screenshots, uploaded in filename order |
+| `docs/appstore/screenshots/6.9-framed/*.png` | the composed screenshots (`tools/screenshots/compose.py` from `docs/appstore/screenshots/plan.json`), uploaded in filename order; `--dir` picks another directory, `docs/appstore/screenshots/6.9/` is the raw fallback |
 | `docs/appstore/iap-review/paywall.png` | the review screenshot on each subscription |
 | `docs/appstore/review-notes.md` | App Review notes (≤4000) |
 

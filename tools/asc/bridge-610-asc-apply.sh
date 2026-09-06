@@ -9,18 +9,33 @@
 # should report "already correct, nothing to do" throughout.
 #
 # Usage:
-#   bash tools/asc/bridge-610-asc-apply.sh              # apply
-#   bash tools/asc/bridge-610-asc-apply.sh --dry-run    # show the plan only
+#   bash tools/asc/bridge-610-asc-apply.sh                        # apply
+#   bash tools/asc/bridge-610-asc-apply.sh --dry-run              # show the plan only
+#   bash tools/asc/bridge-610-asc-apply.sh --replace-screenshots  # apply, and rebuild
+#                                                                 # the screenshot set
+#
+# Screenshots come from docs/appstore/screenshots/6.9-framed (the composed
+# set - docs/appstore/screenshots/README.md) when that directory holds PNGs,
+# else from the raw docs/appstore/screenshots/6.9. The first upload after a
+# re-frame needs --replace-screenshots: the old images are still in the set,
+# and a set holds at most 10, so they are deleted before the new ones go up.
+# Without it the step only adds what is missing by checksum.
 
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 ASC="$REPO_ROOT/tools/asc/asc.py"
+FRAMED_DIR="$REPO_ROOT/docs/appstore/screenshots/6.9-framed"
 
 DRY_RUN=0
-if [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "-n" ]; then
-  DRY_RUN=1
-fi
+REPLACE_SCREENSHOTS=0
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run|-n) DRY_RUN=1 ;;
+    --replace-screenshots) REPLACE_SCREENSHOTS=1 ;;
+    *) printf 'Unknown option: %s\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
 command -v python3 >/dev/null 2>&1 || {
   printf 'ERROR: python3 not found.\n' >&2
@@ -74,12 +89,21 @@ run_step "Subscriptions" subscriptions "$ACTION"
 #    description, keywords, promotional text, release notes, URLs.
 run_step "App Store listing metadata" metadata "$ACTION"
 
-# 4. Screenshots. Skipped in a dry run because there is no plan verb worth
-#    running before the version exists.
+# 4. Screenshots: the framed set when it exists, else the raw captures.
+#    --replace-screenshots rebuilds the set (delete, upload, order).
+SHOT_ARGS=()
+if ls "$FRAMED_DIR"/*.png >/dev/null 2>&1; then
+  SHOT_ARGS+=(--dir "$FRAMED_DIR")
+fi
+if [ "$REPLACE_SCREENSHOTS" -eq 1 ]; then
+  SHOT_ARGS+=(--replace)
+fi
+# ${SHOT_ARGS[@]+"${SHOT_ARGS[@]}"}: an empty array under `set -u` is an
+# error on the bash 3.2 macOS ships; this form expands to nothing instead.
 if [ "$DRY_RUN" -eq 1 ]; then
-  run_step "Screenshots" screenshots plan
+  run_step "Screenshots" screenshots plan ${SHOT_ARGS[@]+"${SHOT_ARGS[@]}"}
 else
-  run_step "Screenshots" screenshots apply
+  run_step "Screenshots" screenshots apply ${SHOT_ARGS[@]+"${SHOT_ARGS[@]}"}
 fi
 
 # 5. App Review contact details, review notes, and the paywall screenshot that

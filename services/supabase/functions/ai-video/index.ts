@@ -53,6 +53,12 @@
 // Before this, `reel-clip { prompt }` and `declutter { prompt }` REPLACED the
 // guarded prompt outright, so a user string reached the model with no
 // guardrails at all — that hole is closed.
+// The denylist is scoped by the LISTING's `space_type` (industry review P1-1):
+// the asset's listing row when the route loads one, else the `listing_id` in
+// the body, else the body's `space_type`, else housing. A venue, bar, store or
+// gym keeps the general safety layer but not the housing-steering rules or the
+// HUD wording — see _shared/fairhousing.ts, SCOPE. The PROMPT still uses the
+// same `space` it always did.
 //
 // PROVENANCE. `aerial`, `reel-clip` and `declutter` record one media_provenance
 // row (migration 0012) at SUBMIT time — the fal job is async, so the row is
@@ -68,7 +74,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
@@ -620,9 +626,10 @@ Deno.serve(async (req) => {
       const space = spaceTypeOf(body.space_type ?? asset.space_type);
 
       // A free-text erase instruction is checked, then WRAPPED — it can no
-      // longer replace the guardrails (see header).
+      // longer replace the guardrails (see header). The gate is scoped by the
+      // asset's LISTING type (header, FAIR HOUSING).
       const userErase = cleanPrompt(body.prompt);
-      if (userErase) assertFairHousing(userErase, "This erase instruction");
+      if (userErase) assertFairHousing(userErase, "This erase instruction", asset.space_type ?? space);
       const erasePrompt = userErase
         ? guardedUserPrompt(userErase, space, "Erase objects from")
         : `${DECLUTTER_PROMPT[space]}. ${GUARDRAILS}`;
@@ -687,8 +694,10 @@ Deno.serve(async (req) => {
       // `region` field is already sanitized to a place name by cleanRegion(),
       // but a region is exactly where steering language shows up, so it is
       // checked too ("a good school district" would otherwise pass as a place).
-      if (style) assertFairHousing(style, "This look-and-feel hint");
-      if (region) assertFairHousing(region, "This setting");
+      // Scoped by the listing's type when a listing_id is sent (header).
+      const aerialGateSpace = (await listingSpaceType(db, body.listing_id)) ?? space;
+      if (style) assertFairHousing(style, "This look-and-feel hint", aerialGateSpace);
+      if (region) assertFairHousing(region, "This setting", aerialGateSpace);
 
       // Grounding image: inline base64 (preferred — the app downsizes to ≤1280 px)
       // or a renders-bucket photo asset of the org's listing.
@@ -818,9 +827,14 @@ Deno.serve(async (req) => {
       const space = spaceTypeOf(body.space_type ?? assetSpace);
 
       // Checked, then WRAPPED — a free-text reel prompt can no longer replace
-      // the anti-hallucination + fair-housing guardrails (see header).
+      // the anti-hallucination + fair-housing guardrails (see header). The gate
+      // is scoped by the listing's type: the asset's listing, else the body's
+      // listing_id (the shipped app sends the photo inline, with listing_id).
       const userMotion = cleanPrompt(body.prompt);
-      if (userMotion) assertFairHousing(userMotion, "This clip prompt");
+      if (userMotion) {
+        const reelGateSpace = assetSpace ?? (await listingSpaceType(db, body.listing_id)) ?? space;
+        assertFairHousing(userMotion, "This clip prompt", reelGateSpace);
+      }
       const reelText = userMotion
         ? guardedUserPrompt(userMotion, space, "Animate")
         : reelPrompt(space);

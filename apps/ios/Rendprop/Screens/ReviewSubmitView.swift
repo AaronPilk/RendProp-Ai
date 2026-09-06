@@ -33,7 +33,10 @@ struct ReviewSubmitView: View {
         var label: String { self == .handheld ? "Handheld walkthrough" : "Drone footage" }
     }
 
-    private var space: SpaceType { SpaceType.current }
+    /// THIS listing's type: a type switch while the review is up must not
+    /// re-label a house as a venue (industry review P2-5). Samples carry no
+    /// video, so they never reach this screen.
+    private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     private var hasTour: Bool { model.tours[listing.id] != nil }
     private var isRendering: Bool { model.renderCoordinator.isRunning(listing.id) }
 
@@ -447,6 +450,12 @@ struct RoomTaggerView: View {
 
     private var aiTagCount: Int { tags.filter { $0.isFromAI }.count }
 
+    /// "room" for a home, "area" for everything else — the same source the
+    /// title ("Tag rooms" / "Tag areas") and the quick tags already read. The
+    /// tagger holds a video and its tags, not a listing (industry review P2-3).
+    private var areaNoun: String { SpaceType.current.areaNoun }
+    private var areaNounPlural: String { SpaceType.current.areaNounPlural }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 14) {
@@ -461,7 +470,7 @@ struct RoomTaggerView: View {
             }
             .padding(.top)
             .background(Theme.bg)
-            .navigationTitle(SpaceType.current == .realEstate ? "Tag rooms" : "Tag areas")
+            .navigationTitle("Tag \(areaNounPlural)")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -525,7 +534,7 @@ struct RoomTaggerView: View {
     }
 
     private var hintText: some View {
-        Text("Scrub to where a room begins, then tap its name to drop a marker.")
+        Text("Scrub to where \(areaNoun == "room" ? "a room" : "an area") begins, then tap its name to drop a marker.")
             .font(.rpCaption)
             .foregroundStyle(Theme.inkDim)
             .multilineTextAlignment(.center)
@@ -559,7 +568,7 @@ struct RoomTaggerView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             Button { Task { await runSuggest(automatic: false) } } label: {
-                Label(aiTagCount > 0 ? "Suggest room names again" : "Suggest room names",
+                Label(aiTagCount > 0 ? "Suggest \(areaNoun) names again" : "Suggest \(areaNoun) names",
                       systemImage: "sparkles")
                     .font(.rpBody.weight(.semibold))
                     .frame(maxWidth: .infinity)
@@ -644,13 +653,13 @@ struct RoomTaggerView: View {
 
     private var customNameRow: some View {
         HStack {
-            TextField("Custom room name", text: $customName)
+            TextField("Custom \(areaNoun) name", text: $customName)
                 .textFieldStyle(.roundedBorder)
             Button { addTag(customName); customName = "" } label: {
                 Image(systemName: "plus.circle.fill").font(.title3)
             }
             .disabled(customName.trimmingCharacters(in: .whitespaces).isEmpty)
-            .accessibilityLabel(Text("Add custom room tag"))
+            .accessibilityLabel(Text("Add custom \(areaNoun) tag"))
         }
         .padding(.horizontal)
     }
@@ -661,7 +670,7 @@ struct RoomTaggerView: View {
         ScrollView {
             VStack(spacing: 6) {
                 if sortedTags.isEmpty {
-                    Text("No rooms tagged yet.")
+                    Text("No \(areaNounPlural) tagged yet.")
                         .font(.rpCaption).foregroundStyle(Theme.inkDim)
                         .padding(.top, 8)
                 }
@@ -879,7 +888,7 @@ struct RoomTaggerView: View {
             if error is CancellationError { return }
             guard !automatic else { return }
             suggestError = UserFacingError.message(
-                error, fallback: "Couldn't read the walkthrough just now. Tag the rooms yourself and try again later.")
+                error, fallback: "Couldn't read the walkthrough just now. Tag the \(areaNounPlural) yourself and try again later.")
         }
     }
 
@@ -887,7 +896,7 @@ struct RoomTaggerView: View {
     private func apply(_ result: AIChaptersResult, automatic: Bool) {
         suggestWarnings = result.warnings
         guard result.hasSuggestions else {
-            suggestNote = automatic ? nil : "The AI didn't find any rooms it was sure about. Tag them yourself below."
+            suggestNote = automatic ? nil : "The AI didn't find any \(areaNounPlural) it was sure about. Tag them yourself below."
             return
         }
         let added = merge(result.chapters)
@@ -959,9 +968,10 @@ struct RoomTaggerView: View {
     // MARK: Copy
 
     private static func aiBannerText(_ count: Int) -> String {
-        count == 1
-            ? "AI suggested 1 room name — tap Use these to keep it, or edit it."
-            : "AI suggested \(count) room names — tap Use these to keep them, or edit any."
+        let noun = SpaceType.current.areaNoun
+        return count == 1
+            ? "AI suggested 1 \(noun) name — tap Use these to keep it, or edit it."
+            : "AI suggested \(count) \(noun) names — tap Use these to keep them, or edit any."
     }
 
     /// Said out loud, because doing nothing is a real choice here and its

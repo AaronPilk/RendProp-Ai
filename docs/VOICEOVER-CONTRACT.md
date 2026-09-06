@@ -135,6 +135,12 @@ absent, return `words: []` rather than guessing — captions degrade off, they n
   professionals" must be refused with `code: "unsupported_edit"` and copy that says which phrase
   and why. If the existing checker only covers image prompts, extend it — additively, and never
   weaken an existing rule.
+  **Scope (2026-09-06, industry review P1-1):** the gate reads the listing's `space_type` from the
+  row named by `listing_id` (RLS-scoped). Real estate — and any missing/unknown type — gets the full
+  housing gate above, unchanged. A venue / restaurant / retail / fitness / other script keeps only the
+  general safety layer (nothing that singles people out by race, origin or disability; "the right
+  crowd") and is refused in Rendprop's own words, never HUD's: "adults only" and "seats 220 guests"
+  are what a bar and a venue say. See `_shared/fairhousing.ts` (SCOPE) and `fairhousing.test.ts`.
 - **Length cap** — 1,000 characters. Longer is a 400.
 - **Quota** — meter it. Reuse `reels_per_month`; do not invent a new plan column (that needs a
   migration on every plan row and there is no time). Charge AFTER a successful ElevenLabs

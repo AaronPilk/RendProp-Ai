@@ -1,0 +1,71 @@
+{
+  "_comment": [
+    "The 6.9-inch App Store set, in upload order. Rendered by tools/screenshots/compose.py",
+    "into docs/appstore/screenshots/6.9-framed/ and uploaded by",
+    "tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace.",
+    "src names are the raw captures (StoreShots.swift attachment names); the five",
+    "numbered ones are the names the integrator staged the first set under - compose.py",
+    "resolves either spelling, and the bridge's suffixed exports (s09-venue-home_0_<id>.png).",
+    "Headlines: benefit first, plain English, <= 32 characters, no hype, no emoji, and",
+    "nothing a fair-housing reviewer could read as a claim about people or neighbourhoods."
+  ],
+  "defaults": {"fit": "bleed", "radius": 90},
+  "frames": [
+    {
+      "src": "01-published-tour.png",
+      "out": "01-cinematic-tour.png",
+      "headline": "Walk it once. A cinematic tour.",
+      "subline": "Film a walkthrough on your phone. It becomes a scroll-to-fly tour on its own page.",
+      "bg": "violet"
+    },
+    {
+      "src": "02-home-showroom.png",
+      "out": "02-every-tool.png",
+      "headline": "Every tool in one place",
+      "subline": "Tour, photos, reel, floor plan and aerial intro, all saved to one home.",
+      "bg": "grape"
+    },
+    {
+      "src": ["s09-venue-home.png", "s10-restaurant-home.png", "s11-gym-home.png"],
+      "out": "03-every-business.png",
+      "headline": "Venues, gyms and restaurants too",
+      "subline": "Pick your business type. Home, the samples and the tour switch to match.",
+      "bg": "ink"
+    },
+    {
+      "src": "04-photo-studio.png",
+      "out": "04-photo-fixes.png",
+      "headline": "Photos fixed in one tap",
+      "subline": "Twilight, blue sky, tidy room, furniture. Every AI edit is labelled on the tour.",
+      "bg": "violet"
+    },
+    {
+      "src": "03-sample-tour.png",
+      "out": "05-one-link.png",
+      "headline": "One link. Leads land in the app.",
+      "subline": "Every tour is one link with a lead form built in. Replies show up in Leads.",
+      "bg": "grape"
+    },
+    {
+      "src": "s15-share-link.png",
+      "out": "06-your-card.png",
+      "headline": "Your card on every tour",
+      "subline": "Buyers book a showing right from the tour. The lead comes straight to you.",
+      "bg": "indigo"
+    },
+    {
+      "src": "05-new-home.png",
+      "out": "07-start-in-a-minute.png",
+      "headline": "Add the home. Film it. Share it.",
+      "subline": "Walk it at a normal pace or upload a clip. No film crew, no editing.",
+      "bg": "violet"
+    },
+    {
+      "src": "s12-reel-studio.png",
+      "out": "08-social-reel.png",
+      "headline": "Photos become a social reel",
+      "subline": "Pick the photos, add your voice and captions. One vertical video, ready to post.",
+      "bg": "ink"
+    }
+  ]
+}

@@ -52,7 +52,11 @@
 // is a 400 with code `unsupported_edit` naming the term and how to rephrase.
 // ("remove the personal items" and "brighten the flag stone patio" pass; "add a
 // family in the living room" and "make it look like a good school district"
-// do not.)
+// do not.) The denylist is scoped by the LISTING's `space_type` (the row wins,
+// the request's `space_type` is the fallback, nothing = housing): a venue, bar,
+// store or gym keeps the general safety layer (no people / pets / cultural
+// objects added, nothing that singles people out) but not the housing-steering
+// rules or the HUD wording — see _shared/fairhousing.ts, SCOPE.
 //
 // PROVENANCE. A successful edit records one media_provenance row (migration
 // 0012) via the record_provenance RPC when `listing_id` is sent, mapping
@@ -67,7 +71,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
-import { adminClient, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
+import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
@@ -470,6 +474,14 @@ Deno.serve(async (req) => {
     const space = spaceTypeOf(body.space_type);
     const profile = PROFILES[space];
 
+    // The fair-housing gate scopes itself on the LISTING's business type — a
+    // bar's custom edit is not housing advertising (industry review P1-1). The
+    // listing row wins, the request's space_type is the fallback, and nothing
+    // at all means the stricter housing rules (see _shared/fairhousing.ts).
+    // Resolved only on the two free-text paths that are gated.
+    const gateSpace = async (): Promise<string> =>
+      (await listingSpaceType(userClient(req), body.listing_id)) ?? space;
+
     if (body.image_b64 !== undefined) {
       assert(typeof body.image_b64 === "string", 400, "image_b64 must be a string");
       assert(body.image_b64.length <= MAX_IMAGE_B64_CHARS, 413,
@@ -498,7 +510,7 @@ Deno.serve(async (req) => {
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
       // Refuse before spending tokens polishing something we would never run.
-      assertFairHousing(rough, "That idea");
+      assertFairHousing(rough, "That idea", await gateSpace());
       await guardHelper(user.id, req);
       return json({ prompt: await improvePrompt(rough, profile), space_type: space });
     }
@@ -518,7 +530,7 @@ Deno.serve(async (req) => {
       assert(userText.length <= MAX_CUSTOM_PROMPT, 400,
              `prompt too long (max ${MAX_CUSTOM_PROMPT} chars)`);
       // Fair-housing denylist — refuse BEFORE charging anything (see header).
-      assertFairHousing(userText, "This custom edit");
+      assertFairHousing(userText, "This custom edit", await gateSpace());
       prompt = customPrompt(profile, userText);
     } else {
       prompt = (space === "real_estate" ? RE_PROMPTS : prompts(profile))[edit];
