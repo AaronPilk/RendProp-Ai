@@ -157,6 +157,9 @@ else
 fi
 
 # -------------------------------------------------------------------- 5. test
+# TEST_RUNNER_STORESHOT_PHOTOS reaches the test as STORESHOT_PHOTOS: the seed
+# folder the app imports on its own under -uiTesting (the picker is undrivable).
+export TEST_RUNNER_STORESHOT_PHOTOS="$SEED_DIR"
 xcodebuild test \
   -project Rendprop.xcodeproj \
   -scheme Rendprop \

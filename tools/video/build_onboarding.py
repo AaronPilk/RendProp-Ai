@@ -160,14 +160,17 @@ def ass_time(t):
 
 
 def write_ass(path, timeline, W, H, family):
-    fs, margin_v, margin_lr = round(W * 0.058), round(H * 0.16), round(W * 0.08)
+    fs, margin_v, margin_lr = round(W * 0.064), round(H * 0.19), round(W * 0.07)
     lines = ["[Script Info]", "ScriptType: v4.00+", "PlayResX: %d" % W, "PlayResY: %d" % H, "WrapStyle: 2",
              "ScaledBorderAndShadow: yes", "", "[V4+ Styles]",
              "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, "
              "Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
              "Alignment, MarginL, MarginR, MarginV, Encoding",
-             "Style: Cap,%s,%d,&H00FFFFFF,&H00FFFFFF,&H00141018,&H80000000,1,0,0,0,100,100,0,0,1,%d,1,2,%d,%d,%d,1"
-             % (family, fs, max(3, round(fs * 0.08)), margin_lr, margin_lr, margin_v),
+             # BorderStyle 3 = an opaque box behind the text (BackColour, ~70% opaque
+             # near-black): readable over the app's brightest tiles. Outline = the
+             # box padding.
+             "Style: Cap,%s,%d,&H00FFFFFF,&H00FFFFFF,&H4D141018,&H4D141018,1,0,0,0,100,100,0,0,3,%d,0,2,%d,%d,%d,1"
+             % (family, fs, max(10, round(fs * 0.32)), margin_lr, margin_lr, margin_v),
              "", "[Events]", "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"]
     for seg in timeline:
         if seg["caption_lines"]:
@@ -202,8 +205,56 @@ def social_filter(W, H):
     return "scale=1080:-2:flags=lanczos,crop=1080:1920"
 
 
-def build_timeline(marks, script, raw_dur, narration_dir, offset, tail):
+def pace_segment(seg_len, narr_dur, tail, fit, min_len, max_len, max_speed):
+    """How a segment of the take becomes a segment of the video.
+
+    A UI walk is mostly waiting — elements settling, screens loading — so the
+    take runs 2–4x longer than anyone would watch. With `fit` on, each segment
+    is paced to its narration but never loses its content: the target length
+    is the longer of (narration + tail) and (the whole segment at max_speed),
+    clamped to [min_len, max_len]. The segment is sped up uniformly (setpts)
+    to that length — every screen of the step stays in, just faster — and only
+    a segment that would still run past max_len at max_speed is trimmed at
+    the end. A segment shorter than its narration is held on its last frame,
+    as before. The narration starts with the segment; a segment longer than
+    its narration simply plays on under the caption.
+
+    Returns (speed, src_len_used, out_len, hold)."""
+    if not fit:
+        hold = max(0.0, narr_dur + tail - seg_len) if narr_dur else 0.0
+        return 1.0, seg_len, seg_len, hold
+    wanted = (narr_dur + tail) if narr_dur else min_len
+    target = max(min_len, min(max_len, max(wanted, seg_len / max_speed)))
+    if seg_len <= target:
+        hold = max(0.0, narr_dur + tail - seg_len) if narr_dur else 0.0
+        return 1.0, seg_len, seg_len, hold
+    speed = min(max_speed, seg_len / target)
+    src_used = min(seg_len, target * speed)          # trim the end only when max_len bites
+    out_len = src_used / speed
+    hold = max(0.0, narr_dur + tail - out_len) if narr_dur else 0.0
+    return round(speed, 4), round(src_used, 3), round(out_len, 3), round(hold, 3)
+
+
+def parse_sources(values):
+    """--source 13=141.5-157 → {"13": (141.5, 157.0)}: the take range a segment
+    should use instead of its marks (the walk ended on the springboard, the
+    step's own footage is dull, a screen from earlier says it better)."""
+    out = {}
+    for value in values or []:
+        m = re.match(r"^\s*(\w+)\s*=\s*([0-9.]+)\s*-\s*([0-9.]+)\s*$", value)
+        if not m:
+            raise SystemExit("--source wants ID=START-END in take seconds, got %r" % value)
+        a, b = float(m.group(2)), float(m.group(3))
+        if b <= a:
+            raise SystemExit("--source %s: END must be after START" % value)
+        out[m.group(1)] = (a, b)
+    return out
+
+
+def build_timeline(marks, script, raw_dur, narration_dir, offset, tail,
+                   fit=False, min_len=5.0, max_len=20.0, max_speed=4.0, sources=None):
     segs, warnings = [], []
+    sources = sources or {}
     ids = [m[0] for m in marks]
     if "END" not in ids:
         warnings.append("no TOUR_MARK END — the last segment ends at its scripted target length")
@@ -215,6 +266,9 @@ def build_timeline(marks, script, raw_dur, narration_dir, offset, tail):
             end = marks[i + 1][1] + offset
         else:
             end = start + script.get(sid, {}).get("target", 8)
+        if sid in sources:
+            start, end = sources[sid]
+            warnings.append("segment %s uses the take at %.1f–%.1fs (--source), not its marks" % (sid, start, end))
         start, end = max(0.0, start), min(end, raw_dur)
         if end - start < 0.5:
             warnings.append("segment %s is %.2fs long in the take — dropped" % (sid, end - start))
@@ -226,10 +280,13 @@ def build_timeline(marks, script, raw_dur, narration_dir, offset, tail):
         narr = find_narration(narration_dir, sid)
         narr_dur = probe(narr)["duration"] if narr else 0.0
         seg_len = end - start
-        pad = max(0.0, narr_dur + tail - seg_len) if narr else 0.0
-        segs.append({"id": sid, "title": sc["title"], "src_start": round(start, 3), "src_end": round(end, 3),
-                     "len": round(seg_len, 3), "narration": narr, "narration_len": round(narr_dur, 3),
-                     "hold": round(pad, 3), "caption": sc["caption"], "say": sc["say"], "target": sc["target"]})
+        speed, src_used, out_len, pad = pace_segment(seg_len, narr_dur if narr else 0.0, tail,
+                                                     fit, min_len, max_len, max_speed)
+        segs.append({"id": sid, "title": sc["title"], "src_start": round(start, 3),
+                     "src_end": round(start + src_used, 3), "take_len": round(seg_len, 3),
+                     "speed": speed, "len": round(out_len, 3), "narration": narr,
+                     "narration_len": round(narr_dur, 3), "hold": round(pad, 3),
+                     "caption": sc["caption"], "say": sc["say"], "target": sc["target"]})
     for sid in script:
         if sid not in ("00", "99") and sid not in [s["id"] for s in segs]:
             warnings.append("script segment %s has no mark in the take — skipped" % sid)
@@ -249,12 +306,30 @@ def main():
     ap.add_argument("--title", default="Rendprop"); ap.add_argument("--subtitle", default="How it works")
     ap.add_argument("--end1", default="rendprop.com"); ap.add_argument("--end2", default="Rendprop on the App Store")
     ap.add_argument("--title-seconds", type=float, default=1.5); ap.add_argument("--end-seconds", type=float, default=2.0)
+    ap.add_argument("--fit", action="store_true",
+                    help="pace every segment to its narration: speed up (max --max-speed) then trim the end; "
+                         "a segment with no narration keeps --min-len seconds")
+    ap.add_argument("--min-len", type=float, default=5.0); ap.add_argument("--max-len", type=float, default=20.0)
+    ap.add_argument("--max-speed", type=float, default=4.0)
+    ap.add_argument("--source", action="append", metavar="ID=START-END",
+                    help="take range (seconds) for a segment instead of its marks; repeatable")
+    ap.add_argument("--preset", default="medium", help="libx264 preset (veryfast on a small machine)")
+    ap.add_argument("--crf", type=int, default=18)
     ap.add_argument("--dry-run", action="store_true", help="validate, print the timeline and the commands, build nothing")
     a = ap.parse_args()
 
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
             sys.exit("%s is not on PATH (brew install ffmpeg / apt install ffmpeg)" % tool)
+    # "Error : Filter not found" is all ffmpeg says when a build lacks a filter;
+    # name the missing one instead (drawtext needs libfreetype, subtitles libass).
+    have = set(re.findall(r"^\s*[TSC.]{3}\s+(\S+)", run(["ffmpeg", "-hide_banner", "-filters"], capture=True), re.M))
+    need = ["drawtext", "subtitles", "tpad", "trim", "setpts", "fps", "scale", "split", "concat", "color",
+            "anullsrc", "aresample", "aformat", "volume", "adelay", "amix", "crop", "pad"]
+    missing = [f for f in need if f not in have]
+    if missing:
+        sys.exit("this ffmpeg lacks the filter(s) %s — use a build with libfreetype + libass "
+                 "(brew's ffmpeg formula has both; a static download often does not)" % ", ".join(missing))
     for p in (a.raw, a.marks, a.script):
         if not os.path.exists(p):
             sys.exit("missing input: %s" % p)
@@ -276,7 +351,9 @@ def main():
     family, font_file = pick_font(a.font)
     W = a.width
     H = int(round(W * raw["height"] / raw["width"] / 2.0)) * 2
-    segs, warnings = build_timeline(marks, script, raw["duration"], a.narration, a.offset, a.tail)
+    segs, warnings = build_timeline(marks, script, raw["duration"], a.narration, a.offset, a.tail,
+                                    fit=a.fit, min_len=a.min_len, max_len=a.max_len, max_speed=a.max_speed,
+                                    sources=parse_sources(a.source))
     if not segs:
         sys.exit("no usable segments (check the marks against the take's %.1fs)" % raw["duration"])
 
@@ -297,10 +374,10 @@ def main():
     # ---- report
     print("take: %dx%d %.1fs  marks: %d (%s clock)  font: %s  master: %dx%d@%d" % (
         raw["width"], raw["height"], raw["duration"], len(marks), clock, family, W, H, a.fps))
-    print("%-4s %-28s %-15s %6s %8s %6s %-15s %s" % ("seg", "title", "take", "len", "narr", "hold", "out", "caption"))
+    print("%-4s %-28s %-15s %5s %6s %8s %6s %-15s %s" % ("seg", "title", "take", "x", "len", "narr", "hold", "out", "caption"))
     for s in segs:
-        print("%-4s %-28s %6.2f–%-7.2f %6.2f %8s %6.2f %6.2f–%-7.2f %s" % (
-            s["id"], s["title"][:28], s["src_start"], s["src_end"], s["len"],
+        print("%-4s %-28s %6.2f–%-7.2f %5.2f %6.2f %8s %6.2f %6.2f–%-7.2f %s" % (
+            s["id"], s["title"][:28], s["src_start"], s["src_end"], s["speed"], s["len"],
             ("%.2f" % s["narration_len"]) if s["narration"] else "—", s["hold"], s["out_start"], s["out_end"],
             " / ".join(s["caption_lines"])))
     print("cards: title %.1fs + end %.1fs   body %.1fs   TOTAL %.1fs" % (a.title_seconds, a.end_seconds,
@@ -320,6 +397,8 @@ def main():
           % (a.fps, W, H, n, "".join("[v%d]" % i for i in range(n)))]
     for i, s in enumerate(segs):
         f = "[v%d]trim=start=%.3f:end=%.3f,setpts=PTS-STARTPTS" % (i, s["src_start"], s["src_end"])
+        if s["speed"] > 1.0:
+            f += ",setpts=PTS/%.4f,fps=%d" % (s["speed"], a.fps)
         if s["hold"] > 0:
             f += ",tpad=stop_mode=clone:stop_duration=%.3f" % s["hold"]
         fc.append(f + "[c%d]" % i)
@@ -343,10 +422,10 @@ def main():
     social = os.path.abspath(os.path.join(a.out, "onboarding-9x16.mp4"))
     cmd1 = ["ffmpeg", "-y", "-loglevel", "error", "-stats", "-i", os.path.abspath(a.raw)] + inputs + [
         "-filter_complex", ";".join(fc), "-map", "[vout]", "-map", "[aout]",
-        "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p", "-r", str(a.fps),
+        "-c:v", "libx264", "-preset", a.preset, "-crf", str(a.crf), "-pix_fmt", "yuv420p", "-r", str(a.fps),
         "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", "-t", "%.3f" % total, master]
     cmd2 = ["ffmpeg", "-y", "-loglevel", "error", "-stats", "-i", master, "-vf", social_filter(W, H),
-            "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-pix_fmt", "yuv420p",
+            "-c:v", "libx264", "-preset", a.preset, "-crf", str(a.crf), "-pix_fmt", "yuv420p",
             "-c:a", "copy", "-movflags", "+faststart", social]
     if a.dry_run:
         print("DRY RUN — wrote captions.ass, timeline.json, narration-script.txt to %s; would run:" % a.out)
@@ -354,8 +433,10 @@ def main():
         print("  " + " ".join(cmd2))
         return
     run_in = dict(cwd=a.out)      # the subtitles filter gets a bare `captions.ass` — no path escaping games
-    subprocess.run(cmd1, check=True, **run_in)
-    subprocess.run(cmd2, check=True, **run_in)
+    for label, cmd in (("master", cmd1), ("9x16", cmd2)):
+        r = subprocess.run(cmd, capture_output=True, text=True, **run_in)
+        if r.returncode != 0:
+            sys.exit("ffmpeg (%s) failed with exit %d:\n%s" % (label, r.returncode, r.stderr.strip()[-3000:]))
     for p in (master, social):
         i = probe(p)
         print("OK %s  %dx%d  %.1fs  audio=%s  %.1f MB" % (os.path.basename(p), i["width"], i["height"], i["duration"],

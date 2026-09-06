@@ -7,9 +7,14 @@
     "numbered ones are the names the integrator staged the first set under - compose.py",
     "resolves either spelling, and the bridge's suffixed exports (s09-venue-home_0_<id>.png).",
     "Headlines: benefit first, plain English, <= 32 characters, no hype, no emoji, and",
-    "nothing a fair-housing reviewer could read as a claim about people or neighbourhoods."
+    "nothing a fair-housing reviewer could read as a claim about people or neighbourhoods.",
+    "03 uses the column layout (the top of each Home, hero card readable); 05 starts at the leads banner (crop_top) - a mid-scroll capture's nav bar over half-scrolled tiles is not a store image.",
+    "08 needs s05-reel-studio (StoreShots opens the Reel Studio once the studio has seeded photos — TEST_RUNNER_STORESHOT_PHOTOS); it is skipped when the capture is missing."
   ],
-  "defaults": {"fit": "bleed", "radius": 90},
+  "defaults": {
+    "fit": "bleed",
+    "radius": 90
+  },
   "frames": [
     {
       "src": "01-published-tour.png",
@@ -26,46 +31,61 @@
       "bg": "grape"
     },
     {
-      "src": ["s09-venue-home.png", "s10-restaurant-home.png", "s11-gym-home.png"],
+      "src": [
+        "s09-venue-home.png",
+        "s10-restaurant-home.png",
+        "s11-gym-home.png"
+      ],
       "out": "03-every-business.png",
       "headline": "Venues, gyms and restaurants too",
-      "subline": "Pick your business type. Home, the samples and the tour switch to match.",
-      "bg": "ink"
+      "subline": "Pick your business type. Home, the samples and every tour switch to match.",
+      "bg": "ink",
+      "layout": "column",
+      "crop_height": 820,
+      "crop_top": 190
     },
     {
       "src": "04-photo-studio.png",
       "out": "04-photo-fixes.png",
       "headline": "Photos fixed in one tap",
-      "subline": "Twilight, blue sky, tidy room, furniture. Every AI edit is labelled on the tour.",
+      "subline": "Twilight, blue sky, tidy room, furniture. Every AI edit is labeled on the tour.",
       "bg": "violet"
     },
     {
-      "src": "03-sample-tour.png",
+      "src": "s14-leads.png",
       "out": "05-one-link.png",
       "headline": "One link. Leads land in the app.",
-      "subline": "Every tour is one link with a lead form built in. Replies show up in Leads.",
-      "bg": "grape"
+      "subline": "Every tour is one link with a lead form built in. Replies land here, with a tap to call or email.",
+      "bg": "grape",
+      "fit": "bleed"
     },
     {
-      "src": "s15-share-link.png",
-      "out": "06-your-card.png",
-      "headline": "Your card on every tour",
-      "subline": "Buyers book a showing right from the tour. The lead comes straight to you.",
+      "src": "s16-tour-chapters.png",
+      "out": "06-tap-a-room.png",
+      "headline": "Tap a room. Fly straight there.",
+      "subline": "Room tags become chapters on every tour. Buyers jump to the kitchen, the yard, the primary suite.",
       "bg": "indigo"
     },
     {
-      "src": "05-new-home.png",
-      "out": "07-start-in-a-minute.png",
-      "headline": "Add the home. Film it. Share it.",
-      "subline": "Walk it at a normal pace or upload a clip. No film crew, no editing.",
-      "bg": "violet"
+      "src": "s15-share-link.png",
+      "out": "07-your-card.png",
+      "headline": "Your card on every tour",
+      "subline": "Buyers book a showing right from the tour. The lead comes straight to you.",
+      "bg": "grape"
     },
     {
-      "src": "s12-reel-studio.png",
+      "src": "s05-reel-studio.png",
       "out": "08-social-reel.png",
       "headline": "Photos become a social reel",
       "subline": "Pick the photos, add your voice and captions. One vertical video, ready to post.",
       "bg": "ink"
+    },
+    {
+      "src": "05-new-home.png",
+      "out": "09-start-in-a-minute.png",
+      "headline": "Add the home. Film it. Share it.",
+      "subline": "Walk it at a normal pace or upload a clip. No film crew, no editing.",
+      "bg": "violet"
     }
   ]
 }

@@ -109,12 +109,21 @@ final class StoreShots: XCTestCase {
     /// @AppStorage("space.type"), @AppStorage("appearance"), AIConsent
     /// "ai.thirdPartyProcessing.consent.v1".
     private var baseLaunchArguments: [String] {
-        [
+        var args = [
             "-uiTesting",
             "-hasOnboarded", "YES",
             "-appearance", "light",
             "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ui.sampleLeads",       // the mock's three invented leads (s14)
         ]
+        // STORESHOT_PHOTOS (bridge-cmd-storeshots.sh passes it as
+        // TEST_RUNNER_STORESHOT_PHOTOS): a folder of seed photos the studio
+        // imports itself, since the system picker cannot be driven. With it,
+        // s04 shows photos in the studio and s05 (Reel Studio) can open.
+        if let dir = ProcessInfo.processInfo.environment["STORESHOT_PHOTOS"], !dir.isEmpty {
+            args += ["-ui.seedPhotosDir", dir]
+        }
+        return args
     }
 
     override func setUpWithError() throws {
@@ -291,10 +300,20 @@ final class StoreShots: XCTestCase {
                 return
             }
             reached = true
-            // The studio's own showcase — "Add a photo, then tap one button" and
-            // the six one-tap edits — IS the store shot. The system photo picker
-            // is a separate process that cannot be driven reliably (the first
-            // run captured the picker itself), and NO EDIT IS EVER RUN here.
+            // With STORESHOT_PHOTOS the studio imports the seed photos itself
+            // (on-device enhance only, NO AI EDIT IS EVER RUN here); wait for
+            // its "Working on your photo…" cover to clear so the grid is up.
+            // Without it, the studio's own showcase — "Add a photo, then tap one
+            // button" and the six one-tap edits — is the store shot: the system
+            // photo picker is a separate process that cannot be driven reliably.
+            if let dir = ProcessInfo.processInfo.environment["STORESHOT_PHOTOS"], !dir.isEmpty {
+                let deadline = Date().addingTimeInterval(25)
+                settle(1.0)
+                while Date() < deadline, labelElement(containing: "Working on your photo", timeout: 0.3) != nil {
+                    settle(0.5)
+                }
+                note("Seed photos imported from \(dir).")
+            }
             settle(1.5)
             shot("s04-photo-studio")
         }
@@ -601,7 +620,11 @@ final class StoreShots: XCTestCase {
                 tap(link)
                 if waitForAny(ids: [], labels: ["Demo listing page", "Sample tour"], timeout: screenTimeout) {
                     settle(webTimeout)      // the hosted page is a real download
-                    if scrollWebPage(toLabelContaining: "Book a showing", swipes: 14) {
+                    // The hosted page is a 137 s scroll-scrub track (240 px per
+                    // second, ~33,000 px) followed by the listing sections; the
+                    // agent card + lead form are the END card. ~420 px a swipe
+                    // (measured), so the lead form is ~100 swipes down.
+                    if scrollWebPage(toLabelContaining: "Book a showing", swipes: 220, checkEvery: 5) {
                         settle(1.5)
                         shot("s15-share-link")
                         note("s15 is the hosted demo page at its agent card and lead form — what a share "
@@ -926,17 +949,19 @@ final class StoreShots: XCTestCase {
     /// label contains `text` is on screen. The web view swallows the gesture,
     /// so this scrolls the page rather than the screen. False when the label
     /// never appeared within `swipes`.
-    private func scrollWebPage(toLabelContaining text: String, swipes: Int) -> Bool {
+    private func scrollWebPage(toLabelContaining text: String, swipes: Int, checkEvery: Int = 1) -> Bool {
         let web = app.webViews.firstMatch
         guard web.exists else { return false }
-        for _ in 0...swipes {
-            if let element = labelElement(containing: text, timeout: 0.5), isOnScreen(element) {
+        for i in 0...swipes {
+            if i % max(1, checkEvery) == 0,
+               let element = labelElement(containing: text, timeout: 0.4), isOnScreen(element) {
+                settle(0.8)     // let the scroll-scrub settle on its frame
                 return true
             }
             web.swipeUp()
-            settle(0.6)
+            settle(checkEvery > 1 ? 0.3 : 0.6)
         }
-        return false
+        return labelElement(containing: text, timeout: 0.5).map(isOnScreen) ?? false
     }
 
     /// The system share sheet (UIActivityViewController) after a ShareLink

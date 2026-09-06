@@ -170,3 +170,34 @@ whole head.
   runs it for a look.
 - Nothing is purchased, deleted, AI-edited, generated, recorded or published
   by the tour, ever.
+
+## The 6 Sep cut — exactly how it was built
+
+The take (`_bridge/out/onboardingtour/tour-raw.mp4`, 361 s, 1206×2622 @ 60 fps VFR, 870 MB)
+ran through the Mac's own ffmpeg first and died with `Error : Filter not found` — that
+binary (not Homebrew's) lacks `drawtext`/`subtitles`. The builder now names the missing
+filter instead. What worked:
+
+1. On the Mac (or the bridge VM's ffmpeg 4.4, which has every filter): a 30 fps proxy of the
+   whole take, 52 MB, 2½ minutes —
+   `ffmpeg -i tour-raw.mp4 -vf "fps=30,scale=1080:2348:flags=bicubic,setsar=1" -c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -an -movflags +faststart take-30fps.mp4`
+2. The build, with every segment paced to its narration (`--fit`) and the segments whose
+   own footage was menus re-pointed at the screens that say it (`--source`, take seconds):
+   ```
+   python3 tools/video/build_onboarding.py --raw take-30fps.mp4 --marks marks.txt \
+     --script docs/marketing/onboarding-video-script.md --narration narration --out build \
+     --fit --offset -0.134 --preset medium --crf 19 \
+     --source 04=56.7-72 --source 07=104-118.5 --source 08=159.5-181 --source 09=176-190 \
+     --source 10=213.5-235 --source 11=262-271.5 --source 12=318-332 --source 13=111.5-117.5
+   ```
+   `--offset` is `record_launch_epoch − record_start_epoch` from the top of `marks.txt`.
+   Result: `onboarding.mp4` 1080×2348, 108 s, 11 segments, and `onboarding-9x16.mp4`.
+3. Narration in this cut is macOS `say` (Samantha) — a placeholder voice. To re-voice it,
+   drop `NN.mp3` / `NN.m4a` files into `narration/` (Higgsfield's "Holden" preset did 01–05
+   before the account's daily limit; `_bridge/out/onboarding/narration/README.txt` has every
+   line) and re-run step 2 — nothing else changes.
+
+Segments 05 (tag the rooms) and 06 (create the tour) are not in this cut: the simulator's
+video picker showed no clip (the seeded `walkthrough.mp4` did not land in its library), so the
+walk never reached Review & Submit. Re-run `bridge-cmd-onboardingtour.sh` after checking
+`xcrun simctl addmedia <udid> walkthrough.mp4` by hand, and the two segments fall into place.

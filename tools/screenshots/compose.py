@@ -36,6 +36,15 @@ Per frame:
             ["#top", "#bottom"] for a 2-stop vertical gradient
   fit       "bleed" (default: the screenshot runs off the bottom edge, the
             classic look) or "inset" (the whole screenshot inside the canvas)
+  crop_top  drop this many raw pixels from the TOP of the capture(s) before
+            framing (a mid-scroll capture whose nav bar sits
+            over half-scrolled tiles starts at its first clean row instead)
+  layout    for 2-3 sources: "stack" (default: the captures fan out
+            left-to-right, the last in front) or "column" (the TOP of each
+            capture, `crop_height` raw px tall, one under the other - three
+            hero cards fully readable)
+  crop_height  column layout: raw px kept from the top of each capture
+            (default 760)
   radius    corner radius of the inset in px (default 90)
   font      optional per-frame override of the bold font file
 
@@ -105,6 +114,9 @@ STACK_STEP_X = 250
 STACK_STEP_Y = 200
 STACK_TOP = 700
 STACK_LEFT = 32
+COLUMN_WIDTH_RATIO = 0.84      # "column" layout: a touch narrower than a single inset so three pieces fit
+COLUMN_CROP_HEIGHT = 760       # raw px kept from the top of each capture
+COLUMN_GAP = 40                # px between the pieces
 
 # Brand palette - services/edge/tour-host/public/assets/site.css and
 # apps/ios/Rendprop/DesignSystem/Theme.swift. Accent #7C3AED; the Home hero
@@ -455,6 +467,16 @@ def load_capture(path):
     return image.convert("RGB")
 
 
+def crop_capture(capture, top=0, height=None):
+    """The capture from `top` down (and, when given, only `height` px of it).
+    Never upscales: the box is clamped to the image."""
+    top = max(0, min(int(top), capture.size[1] - 1))
+    bottom = capture.size[1] if height is None else min(capture.size[1], top + int(height))
+    if bottom - top < 200:
+        raise ComposeError("crop leaves only %d px of the capture" % (bottom - top))
+    return capture.crop((0, top, capture.size[0], bottom))
+
+
 def paste_inset(canvas, capture, box_left, box_top, width, radius, light_bg):
     """Scale `capture` to `width`, round its corners, drop a shadow, and paste
     it at (box_left, box_top). Anything past the canvas edge is cropped."""
@@ -554,15 +576,34 @@ def render_frame(frame, src_dir, fonts, log):
                            % (frame.get("out"), worst, MIN_CONTRAST, bg_name))
 
     # --- screenshot(s) -------------------------------------------------------
+    multi_layout = str(frame.get("layout", "stack")).lower()
+    if multi_layout not in ("stack", "column"):
+        raise ComposeError("frame %r: layout must be stack or column" % frame.get("out"))
     if len(captures) == 1:
         width = int(round(CANVAS[0] * INSET_WIDTH_RATIO))
         inset_top = INSET_TOP
+        capture = captures[0]
+        if frame.get("crop_top"):
+            capture = crop_capture(capture, top=int(frame["crop_top"]))
         if fit == "inset":
             avail = CANVAS[1] - inset_top - INSET_BOTTOM_MARGIN
-            width = min(width, int(avail * CANVAS[0] / float(CANVAS[1])))
+            width = min(width, int(avail * capture.size[0] / float(capture.size[1])))
         left = (CANVAS[0] - width) // 2
-        paste_inset(canvas, captures[0], left, inset_top, width, radius, light_bg)
-        layout = "single/%s" % fit
+        paste_inset(canvas, capture, left, inset_top, width, radius, light_bg)
+        layout = "single/%s%s" % (fit, "/crop" if frame.get("crop_top") else "")
+    elif multi_layout == "column":
+        # The top of each capture, one under the other: three hero cards, all
+        # readable. The last one bleeds off the bottom edge like a single frame.
+        crop_h = int(frame.get("crop_height", COLUMN_CROP_HEIGHT))
+        crop_t = int(frame.get("crop_top", 0))
+        width = int(round(CANVAS[0] * COLUMN_WIDTH_RATIO))
+        left = (CANVAS[0] - width) // 2
+        y = STACK_TOP
+        for capture in captures:
+            piece = crop_capture(capture, top=crop_t, height=crop_h)
+            shown = paste_inset(canvas, piece, left, y, width, radius, light_bg)
+            y += shown + COLUMN_GAP
+        layout = "column/%d" % len(captures)
     else:
         width = int(round(CANVAS[0] * STACK_SCALE))
         n = len(captures)

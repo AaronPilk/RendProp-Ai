@@ -798,8 +798,15 @@ class FakeAsc(object):
         return 405, {"errors": [{"code": "METHOD", "title": "no", "detail": path, "status": "405"}]}
 
     def delete(self, parts):
-        """DELETE /v1/subscriptionPrices/{id} and /v1/appScreenshots/{id} - both
-        answer 204 with no body in Apple's spec."""
+        """DELETE /v1/subscriptionPrices/{id}, /v1/appScreenshots/{id} and
+        /v1/reviewSubmissionItems/{id} - all answer 204 with no body in Apple's spec."""
+        if len(parts) == 2 and parts[0] == "reviewSubmissionItems":
+            # https://developer.apple.com/documentation/AppStoreConnectAPI/DELETE-v1-reviewSubmissionItems-_id_
+            if parts[1] not in self.store.get("reviewSubmissionItems", {}):
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404",
+                                         "title": "no such item", "detail": parts[1]}]}
+            del self.store["reviewSubmissionItems"][parts[1]]
+            return 204, None
         if len(parts) == 2 and parts[0] == "appScreenshots":
             # https://developer.apple.com/documentation/AppStoreConnectAPI/DELETE-v1-appScreenshots-_id_
             if parts[1] not in self.store.get("appScreenshots", {}):
@@ -1370,6 +1377,19 @@ class FakeAsc(object):
                                               "the state of another resource.",
                                      "detail": "The build is not in a valid state.",
                                      "status": "409"}]}
+        # A version sitting in an open (draft) review submission cannot change
+        # its build until it is taken out of the submission.
+        for item in self.store.get("reviewSubmissionItems", {}).values():
+            if item["_parents"].get("appStoreVersion") != identifier:
+                continue
+            submission = self.store.get("reviewSubmissions", {}).get(item["_parents"].get("reviewSubmission"))
+            if submission and submission["attributes"].get("state") in ("READY_FOR_REVIEW", "UNRESOLVED_ISSUES"):
+                self.build_swap_refusals = getattr(self, "build_swap_refusals", 0) + 1
+                return 409, {"errors": [{"code": "STATE_ERROR.ENTITY_STATE_INVALID",
+                                         "title": "The request cannot be fulfilled because of "
+                                                  "the state of another resource.",
+                                         "detail": "The version is in a review submission.",
+                                         "status": "409"}]}
         version["_parents"]["build"] = linkage["id"]
         return 204, None
 
@@ -1950,6 +1970,29 @@ class ReviewStageTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("could not add App Store version", output)
         self.assertIn("App Privacy not published", output)
+
+    def test_a_new_build_can_be_attached_while_the_version_is_staged(self):
+        """Build 4 after 'Add for Review': the version is taken out of the draft,
+        the build swapped, the version put back - the draft is never submitted."""
+        fake, client = self.build()
+        fake.add_build("2")
+        asc.cmd_build(client, Args(action="attach"), io.StringIO())
+        self.run_stage(fake, client, skip_product=["com.rendprop.app.team.annual"])
+        items_before = {i["_parents"].get("appStoreVersion") for i in fake.store["reviewSubmissionItems"].values()}
+        fake.add_build("4", uploaded="2026-09-06T13:00:00-07:00")
+        out = io.StringIO()
+        code = asc.cmd_build(client, Args(action="attach"), out)
+        self.assertEqual(code, 0)
+        version = list(fake.store["appStoreVersions"].values())[0]
+        attached = fake.store["builds"][version["_parents"]["build"]]
+        self.assertEqual(attached["attributes"]["version"], "4")
+        self.assertEqual(fake.build_swap_refusals, 1)
+        self.assertIn("taking it out, attaching, putting it back", out.getvalue())
+        items_after = {i["_parents"].get("appStoreVersion") for i in fake.store["reviewSubmissionItems"].values()}
+        self.assertEqual(items_before, items_after)              # the version is back in the draft
+        self.assertEqual(len(fake.store["reviewSubmissions"]), 1)
+        self.assertEqual(list(fake.store["reviewSubmissions"].values())[0]["attributes"]["state"], "READY_FOR_REVIEW")
+        self.assertNotIn("submitted", json.dumps(fake.bodies))
 
 
 class ContentRightsTests(unittest.TestCase):

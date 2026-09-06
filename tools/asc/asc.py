@@ -2938,16 +2938,28 @@ def find_open_review_submission(client, app_id):
     return None
 
 
-def review_submission_item_ids(client, submission_id):
-    """(relationship name, resource id) pairs already in the submission."""
-    have = set()
+def review_submission_items(client, submission_id):
+    """[(item id, relationship name, resource id)] for every item in the submission."""
+    found = []
     for item in client.get_all("/v1/reviewSubmissions/%s/items" % submission_id,
                                params={"limit": 50}):
         for name, value in (item.get("relationships") or {}).items():
             data = (value or {}).get("data")
             if isinstance(data, dict) and data.get("id"):
-                have.add((name, data["id"]))
-    return have
+                found.append((item["id"], name, data["id"]))
+    return found
+
+
+def review_submission_item_ids(client, submission_id):
+    """(relationship name, resource id) pairs already in the submission."""
+    return {(name, resource_id) for _item_id, name, resource_id
+            in review_submission_items(client, submission_id)}
+
+
+def review_item_body(submission_id, kind, resource_type, resource_id):
+    return {"data": {"type": "reviewSubmissionItems", "relationships": {
+        "reviewSubmission": relationship("reviewSubmissions", submission_id),
+        kind: relationship(resource_type, resource_id)}}}
 
 
 def cmd_review_stage(client, args, out):
@@ -2998,9 +3010,7 @@ def cmd_review_stage(client, args, out):
         if (kind, resource_id) in have:
             plan.note("%s is already in the submission" % label)
             return
-        body = {"data": {"type": "reviewSubmissionItems", "relationships": {
-            "reviewSubmission": relationship("reviewSubmissions", submission_id),
-            kind: relationship(resource_type, resource_id)}}}
+        body = review_item_body(submission_id, kind, resource_type, resource_id)
 
         def post():
             try:
@@ -3388,11 +3398,39 @@ def cmd_build_attach(client, args, out):
                      str(attributes_of(build).get("usesNonExemptEncryption")).lower()))
 
     linkage_body = {"data": {"type": "builds", "id": build_id}}
-    plan.act(
-        "attach build %s to version %s" % (build_number, version_string),
-        lambda: client.patch(
-            "/v1/appStoreVersions/%s/relationships/build" % version["id"], linkage_body),
-    )
+    linkage_path = "/v1/appStoreVersions/%s/relationships/build" % version["id"]
+
+    def attach():
+        try:
+            return client.patch(linkage_path, linkage_body)
+        except ApiError as exc:
+            if exc.status not in (409, 422):
+                raise
+            # A version that already sits in the draft review submission
+            # ("Add for Review" was pressed, nothing submitted) refuses a new
+            # build. Take it out of the draft, attach, put it straight back -
+            # the submission stays a draft throughout and `submitted` is
+            # never touched.
+            submission = find_open_review_submission(client, app["id"])
+            item_id = None
+            if submission is not None:
+                for candidate, kind, resource_id in review_submission_items(client, submission["id"]):
+                    if kind == "appStoreVersion" and resource_id == version["id"]:
+                        item_id = candidate
+            if item_id is None:
+                raise
+            plan.note("version %s is in the draft review submission - taking it out, attaching, "
+                      "putting it back (still NOT submitted)" % version_string)
+            client.delete("/v1/reviewSubmissionItems/%s" % item_id)
+            try:
+                result = client.patch(linkage_path, linkage_body)
+            finally:
+                client.post("/v1/reviewSubmissionItems",
+                            review_item_body(submission["id"], "appStoreVersion",
+                                             "appStoreVersions", version["id"]))
+            return result
+
+    plan.act("attach build %s to version %s" % (build_number, version_string), attach)
 
     summarise(plan, out, "build attach")
     return 0
