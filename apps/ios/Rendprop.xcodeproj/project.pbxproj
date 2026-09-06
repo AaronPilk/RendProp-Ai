@@ -11,6 +11,7 @@
 		07EDA1A002184B983AFE35CE /* AdminFunnelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A9FCFCF590205DB9DF9FA70 /* AdminFunnelView.swift */; };
 		0D2B231A90B9BC8E6A765727 /* VoiceTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4242A4D4D9B3382CE5471DC /* VoiceTypes.swift */; };
 		10B243AEF92B1D0E75EF2548 /* RoomTagBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = B334615711A0590CE40AA4C9 /* RoomTagBar.swift */; };
+		18DE602B7F387816E839A3D9 /* OnboardingTour.swift in Sources */ = {isa = PBXBuildFile; fileRef = E78B2A8D3A09BDA9A38AA6CB /* OnboardingTour.swift */; };
 		1AF302A469774E89A13D3A73 /* MediaImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = EF368AB27AC0367798607FA4 /* MediaImporter.swift */; };
 		1C731645EC18370529018560 /* CrashReporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4CAFAF30B745B48498E15F25 /* CrashReporter.swift */; };
 		23103C7671C216BFBEA08797 /* Money.swift in Sources */ = {isa = PBXBuildFile; fileRef = C65AFC6059E55D94283A7BEF /* Money.swift */; };
@@ -42,6 +43,7 @@
 		900239439C3FF1B9C934F76D /* UploadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC1C4552BDC87F2784B2524 /* UploadStore.swift */; };
 		950A7098FE3FAD991195CB09 /* CaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C668F17153B23B136BF59CD2 /* CaptureView.swift */; };
 		975A5B03FE71859367E2BA8C /* LiveAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203C76D7B86766C1A45DC3A8 /* LiveAPIClient.swift */; };
+		980049DB3C28984CE973EF56 /* IndustryWalk.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7520835A92DA623D2F1A5CB /* IndustryWalk.swift */; };
 		99AC9E74F8298C023AD05758 /* Haptics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A8A76834D8ACA6FB3A3F20B8 /* Haptics.swift */; };
 		9F0F9FB36CE676B73AD1134D /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CA2F6510EFF14F20A8690DB /* Components.swift */; };
 		A0D7247D6BA5D1243C928816 /* Products.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE5E0B43390D091776A9739 /* Products.swift */; };
@@ -142,6 +144,8 @@
 		D6E840EECFE99535BBB90390 /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
 		D746633FD7B0C96F45695CBF /* CameraManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManager.swift; sourceTree = "<group>"; };
 		E4FB4606C39486BBD3D62359 /* PaywallHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallHost.swift; sourceTree = "<group>"; };
+		E7520835A92DA623D2F1A5CB /* IndustryWalk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndustryWalk.swift; sourceTree = "<group>"; };
+		E78B2A8D3A09BDA9A38AA6CB /* OnboardingTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTour.swift; sourceTree = "<group>"; };
 		EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminProbeAPI.swift; sourceTree = "<group>"; };
 		EE7E18BAB47DE227E3FC1A48 /* RenderEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderEngine.swift; sourceTree = "<group>"; };
 		EF368AB27AC0367798607FA4 /* MediaImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaImporter.swift; sourceTree = "<group>"; };
@@ -174,6 +178,8 @@
 		40FEE209ED5B64E613B3AD0D /* RendpropUITests */ = {
 			isa = PBXGroup;
 			children = (
+				E7520835A92DA623D2F1A5CB /* IndustryWalk.swift */,
+				E78B2A8D3A09BDA9A38AA6CB /* OnboardingTour.swift */,
 				7FB36AC65842D674A68E40D7 /* PaywallShot.swift */,
 				CE47E2786B286E7686A64479 /* RendpropUITests.swift */,
 				1F9C834E078530F4D64C049E /* ReviewerWalk.swift */,
@@ -462,6 +468,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				980049DB3C28984CE973EF56 /* IndustryWalk.swift in Sources */,
+				18DE602B7F387816E839A3D9 /* OnboardingTour.swift in Sources */,
 				7B0A83D7C5618BAFD6966BE8 /* PaywallShot.swift in Sources */,
 				FECBB1D3CFC854E498F2588F /* RendpropUITests.swift in Sources */,
 				EB5397AABC3998E4AA155950 /* ReviewerWalk.swift in Sources */,
@@ -642,7 +650,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -712,7 +720,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 2;
+				CURRENT_PROJECT_VERSION = 3;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 5F5C5G25Y6;
 				ENABLE_NS_ASSERTIONS = NO;
