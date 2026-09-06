@@ -139,7 +139,29 @@ actor MockAPIClient: APIClient {
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         // Offline: leads only exist once a tour is hosted — none to show.
         try? await Task.sleep(nanoseconds: 250_000_000)
-        return []
+        // The store-screenshot walk (`-uiTesting -ui.sampleLeads`) gets a
+        // believable inbox so the Leads screen is photographed with leads in
+        // it; every name and message below is invented. Never returned
+        // outside that walk.
+        guard Config.uiTestSampleLeads else { return [] }
+        let now = Date()
+        let address = created.values.sorted { $0.createdAt > $1.createdAt }.first?.address
+            ?? SpaceType.current.sampleListings.first?.address.replacingOccurrences(of: " (Sample)", with: "")
+        func lead(_ n: UInt8, _ name: String, _ minutesAgo: Double, _ message: String,
+                  phone: String? = nil, email: String? = nil, extra: [String: String]? = nil) -> Lead {
+            Lead(id: UUID(uuid: (0, 0, 0, n, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 0xEE)),
+                 listingID: nil, name: name, phone: phone, email: email, message: message,
+                 extra: extra, createdAt: now.addingTimeInterval(-60 * minutesAgo),
+                 source: "tour", listingAddress: address)
+        }
+        return [
+            lead(1, "Jordan Whitfield", 42, "Is Saturday morning open for a showing? We're pre-approved and ready to move.",
+                 phone: "(555) 014-7720", email: "jordan.w@example.com", extra: ["preferred_date": "Saturday 10am"]),
+            lead(2, "Priya Raman", 190, "Loved the tour — what are the HOA fees, and is the pool heated?",
+                 email: "priya.r@example.com"),
+            lead(3, "Marcus & Elena Ortiz", 1_380, "Could we see it Thursday after 5? The kitchen won us over.",
+                 phone: "(555) 014-3391", extra: ["preferred_date": "Thursday evening"]),
+        ]
     }
 
     func updateBrand(_ fields: [String: String]) async throws {

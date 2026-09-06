@@ -48,6 +48,31 @@ enum Config {
         ProcessInfo.processInfo.arguments.contains("-uiTesting")
     }
 
+    /// Store-screenshot seeding, UI walk only: `-ui.seedPhotosDir <dir>` names a
+    /// folder of JPEG/PNG files the AI Photo Studio imports into an EMPTY real
+    /// project the first time it opens, exactly as if the person had picked
+    /// them - the system photo picker runs out of process and cannot be driven
+    /// by XCUITest. Nil unless the app was launched by the walk (`-uiTesting`)
+    /// with the argument; production launches never read it. No AI runs.
+    /// `-ui.sampleLeads` (store screenshots only): the offline mock answers the
+    /// Leads inbox with three invented leads. Off for every other walk, so the
+    /// per-industry checks still see the honest empty inbox.
+    static var uiTestSampleLeads: Bool {
+        isUITesting && ProcessInfo.processInfo.arguments.contains("-ui.sampleLeads")
+    }
+
+    static var uiTestSeedPhotoURLs: [URL] {
+        guard isUITesting else { return [] }
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-ui.seedPhotosDir"), i + 1 < args.count else { return [] }
+        let dir = URL(fileURLWithPath: args[i + 1], isDirectory: true)
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+        return names.sorted()
+            .filter { ["jpg", "jpeg", "png"].contains(($0 as NSString).pathExtension.lowercased()) }
+            .prefix(4)
+            .map { dir.appendingPathComponent($0) }
+    }
+
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
     /// the live client can't be constructed (e.g. no base URL). Single source of
     /// truth so AppModel and UploadManager stay in sync.

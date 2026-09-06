@@ -2100,6 +2100,7 @@ struct PhotoStudioView: View {
         .onAppear {
             loadExisting()
             syncIdleHold()      // a dismissed cover re-appears mid-animate
+            seedPhotosForUIWalk()
         }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
         .onDisappear {
@@ -2812,6 +2813,21 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
+    }
+
+    /// UI walk only (`-uiTesting -ui.seedPhotosDir`): the store screenshots need
+    /// a studio with photos in it and a reel card that is live, and the system
+    /// picker cannot be driven. Imports the seed files through the same
+    /// `ingest` path a picked photo takes - once, into an empty real project.
+    private func seedPhotosForUIWalk() {
+        guard !listing.isSample, photos.isEmpty else { return }
+        let urls = Config.uiTestSeedPhotoURLs
+        guard !urls.isEmpty else { return }
+        let images = urls.compactMap { url -> UIImage? in
+            guard let data = try? Data(contentsOf: url) else { return nil }
+            return UIImage(data: data)
+        }
+        ingest(images)
     }
 
     private func ingest(_ images: [UIImage]) {
