@@ -236,6 +236,11 @@ IAP_SCREENSHOT = REPO_ROOT / "docs" / "appstore" / "iap-review" / "paywall.png"
 REVIEW_NOTES_FILE = REPO_ROOT / "docs" / "appstore" / "metadata" / "en-US" / "review_notes.txt"
 
 # App Store version states in which metadata is still editable.
+# READY_FOR_REVIEW is Apple's "added for review": the version sits in the DRAFT
+# review submission (nothing submitted yet) and is locked - "to submit a
+# different one, you must first remove this version". It is included so the
+# tool never tries to create a second 1.0; writes to such a version go through
+# `version_unstaged()`, which takes it out of the draft and puts it back.
 EDITABLE_VERSION_STATES = {
     "PREPARE_FOR_SUBMISSION",
     "DEVELOPER_REJECTED",
@@ -243,7 +248,9 @@ EDITABLE_VERSION_STATES = {
     "METADATA_REJECTED",
     "INVALID_BINARY",
     "WAITING_FOR_REVIEW",
+    "READY_FOR_REVIEW",
 }
+STAGED_VERSION_STATE = "READY_FOR_REVIEW"
 EDITABLE_APPINFO_STATES = {
     "PREPARE_FOR_SUBMISSION",
     "DEVELOPER_REJECTED",
@@ -2735,23 +2742,34 @@ def cmd_screenshots(client, args, out):
         out.write("  %-28s %5dx%-5d %s\n" % (path.name, dimensions[0], dimensions[1], checksum[:12]))
 
     app = require_app(client)
-    version_id = ensure_app_store_version(client, app["id"], plan)
-    if is_pending(version_id):
-        plan.defer("upload %d screenshots" % len(local))
-        summarise(plan, out, "screenshots")
-        return 0
+    version = find_editable_version(client, app["id"])
+    if version is None:
+        version_id = ensure_app_store_version(client, app["id"], plan)
+        if is_pending(version_id):
+            plan.defer("upload %d screenshots" % len(local))
+            summarise(plan, out, "screenshots")
+            return 0
+    else:
+        version_id = version["id"]
+        plan.note("App Store version %s (%s)" % (attributes_of(version).get("versionString"), version_state(version)))
+    with version_unstaged(client, app["id"], version, plan):
+        apply_screenshots(client, args, out, plan, version_id, local, replace)
+    summarise(plan, out, "screenshots")
+    return 0
+
+
+def apply_screenshots(client, args, out, plan, version_id, local, replace):
+    """The set itself: localization → set → (--replace: delete all) → upload → order."""
     localization_id = ensure_version_localization(client, version_id, {}, plan, announce=False)
     if is_pending(localization_id):
         plan.defer("upload %d screenshots" % len(local))
-        summarise(plan, out, "screenshots")
-        return 0
+        return
 
     out.write("\nScreenshot set\n")
     set_id = ensure_screenshot_set(client, localization_id, plan)
     if is_pending(set_id):
         plan.defer("upload %d screenshots" % len(local))
-        summarise(plan, out, "screenshots")
-        return 0
+        return
 
     existing = client.get_all("/v1/appScreenshotSets/%s/appScreenshots" % set_id)
     if replace and existing:
@@ -2825,9 +2843,6 @@ def cmd_screenshots(client, args, out):
                     expect=(200, 204),
                 ),
             )
-
-    summarise(plan, out, "screenshots")
-    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -2962,6 +2977,68 @@ def review_item_body(submission_id, kind, resource_type, resource_id):
         kind: relationship(resource_type, resource_id)}}}
 
 
+def version_state(version):
+    attrs = attributes_of(version)
+    return attrs.get("appVersionState") or attrs.get("appStoreState")
+
+
+class version_unstaged(object):
+    """`with version_unstaged(client, app_id, version, plan): ...`
+
+    A version that has been "added for review" (READY_FOR_REVIEW, in the draft
+    submission, NOT submitted) refuses every change - a new build, a
+    screenshot, a field. Proven live 2026-09-06: App Store Connect shows
+    "This app version has been added for review. To submit a different one,
+    you must first remove this version." and the API answers 409.
+
+    This scope takes the version out of the draft (DELETE the
+    reviewSubmissionItem), runs the block, and puts it straight back (POST
+    the same item) - in a `finally`, so a failed change never leaves the
+    version out of the draft. The submission's `submitted` flag is never
+    touched. A version in any other state, or a dry run, passes through.
+    """
+
+    def __init__(self, client, app_id, version, plan):
+        self.client, self.app_id, self.version, self.plan = client, app_id, version, plan
+        self.submission_id = None
+        self.item_id = None
+
+    def __enter__(self):
+        if self.version is None or is_pending(self.version) or version_state(self.version) != STAGED_VERSION_STATE:
+            return self
+        submission = find_open_review_submission(self.client, self.app_id)
+        if submission is None:
+            return self
+        for item_id, kind, resource_id in review_submission_items(self.client, submission["id"]):
+            if kind == "appStoreVersion" and resource_id == self.version["id"]:
+                self.submission_id, self.item_id = submission["id"], item_id
+        if self.item_id is None:
+            return self
+        if self.plan.dry_run:
+            self.plan.note("version %s is staged in the draft review submission - WOULD take it out for the "
+                           "changes below and put it back (still NOT submitted)" % attributes_of(self.version).get("versionString"))
+            self.item_id = None
+            return self
+        self.plan.note("version %s is staged in the draft review submission - taking it out for the changes "
+                       "below, putting it back after (still NOT submitted)" % attributes_of(self.version).get("versionString"))
+        self.client.delete("/v1/reviewSubmissionItems/%s" % self.item_id)
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        if self.item_id is None:
+            return False
+        try:
+            self.client.post("/v1/reviewSubmissionItems",
+                             review_item_body(self.submission_id, "appStoreVersion",
+                                              "appStoreVersions", self.version["id"]))
+            self.plan.out.write("  + version back in the draft review submission (NOT submitted)\n")
+        except ApiError as restage_error:
+            self.plan.warn("could not put the version back into the draft submission (%s) - run "
+                           "`review stage` once the version is complete again."
+                           % (", ".join(sorted(set(restage_error.codes))) or restage_error.status))
+        return False
+
+
 def cmd_review_stage(client, args, out):
     """Stage the App Review submission - Apple's "Add for Review" buttons, by API.
 
@@ -3066,6 +3143,8 @@ def cmd_review(client, args, out):
         return cmd_review_submit(client, args, out)
     if getattr(args, "action", None) == "stage":
         return cmd_review_stage(client, args, out)
+    if getattr(args, "action", None) == "send":
+        return cmd_review_send(client, args, out)
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
@@ -3134,6 +3213,97 @@ SUBMITTABLE_STATE = "READY_TO_SUBMIT"
 ALREADY_SUBMITTED_STATES = {
     "WAITING_FOR_REVIEW", "IN_REVIEW", "PENDING_BINARY_APPROVAL", "APPROVED",
 }
+
+
+SUBMITTED_REVIEW_STATES = ("WAITING_FOR_REVIEW", "IN_REVIEW", "COMPLETE", "COMPLETING")
+
+
+def cmd_review_send(client, args, out):
+    """The last click: "Submit to App Review" on the draft review submission.
+
+    `PATCH /v1/reviewSubmissions/{id}` with `attributes.submitted = true`
+    (ReviewSubmissionUpdateRequest). Refuses to run without `--yes` - the
+    owner's explicit word, given in the chat, is the only thing that presses
+    this - and refuses when the draft is not what it should be: the App Store
+    version (with a build attached and 3+ screenshots), the subscription
+    group's version and every sold subscription. Nothing else in this tool
+    ever sets `submitted`.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/PATCH-v1-reviewSubmissions-_id_
+    """
+    plan = Plan(dry_run=args.dry_run, out=out)
+    app = require_app(client)
+    app_id = app["id"]
+    out.write("App: %s (id %s)\n\n" % (attributes_of(app).get("name"), app_id))
+
+    submission = find_open_review_submission(client, app_id)
+    if submission is None:
+        for item in client.get_all("/v1/apps/%s/reviewSubmissions" % app_id,
+                                   params={"filter[platform]": PLATFORM, "limit": 50}):
+            if attributes_of(item).get("state") in SUBMITTED_REVIEW_STATES:
+                out.write("Already submitted: review submission %s is %s.\n"
+                          % (item["id"], attributes_of(item).get("state")))
+                return 0
+        raise AscError("No draft review submission - run `review stage` first.")
+    if attributes_of(submission).get("state") != "READY_FOR_REVIEW":
+        raise AscError("The draft is %s, not READY_FOR_REVIEW - fix what App Store Connect flags first."
+                       % attributes_of(submission).get("state"))
+
+    items = review_submission_items(client, submission["id"])
+    kinds = [kind for _i, kind, _r in items]
+    out.write("Draft review submission %s (%s)\n" % (submission["id"], attributes_of(submission).get("state")))
+    out.write("  items: %d app version, %d subscription group version, %d subscription versions\n"
+              % (kinds.count("appStoreVersion"), kinds.count("subscriptionGroupVersion"),
+                 kinds.count("subscriptionVersion")))
+    problems = []
+    if kinds.count("appStoreVersion") != 1:
+        problems.append("the App Store version is not in the draft (run `review stage`)")
+    wanted_products = len(active_subscriptions(args, None))
+    if kinds.count("subscriptionVersion") < wanted_products:
+        problems.append("%d of %d sold subscriptions are in the draft (run `review stage`)"
+                        % (kinds.count("subscriptionVersion"), wanted_products))
+
+    version = find_editable_version(client, app_id)
+    if version is None:
+        problems.append("no App Store version %s" % VERSION_STRING)
+    else:
+        build = client.get_optional("/v1/appStoreVersions/%s/build" % version["id"])
+        build_data = (build or {}).get("data") or {}
+        if not build_data.get("id"):
+            problems.append("no build attached to version %s (run `build attach`)" % VERSION_STRING)
+        else:
+            detail = client.get_optional("/v1/builds/%s" % build_data["id"])
+            number = attributes_of((detail or {}).get("data") or {}).get("version")
+            out.write("  build attached: %s\n" % (number or build_data["id"]))
+            wanted_build = getattr(args, "build", None)
+            if wanted_build and str(number) != str(wanted_build):
+                problems.append("build %s is attached, not build %s" % (number, wanted_build))
+        shots = 0
+        for loc in client.get_all("/v1/appStoreVersions/%s/appStoreVersionLocalizations" % version["id"]):
+            for sset in client.get_all("/v1/appStoreVersionLocalizations/%s/appScreenshotSets" % loc["id"]):
+                if attributes_of(sset).get("screenshotDisplayType") == SCREENSHOT_DISPLAY_TYPE:
+                    shots += len(client.get_all("/v1/appScreenshotSets/%s/appScreenshots" % sset["id"]))
+        out.write("  6.9-inch screenshots: %d\n" % shots)
+        if shots < 3:
+            problems.append("only %d 6.9-inch screenshots (Apple needs 3-10)" % shots)
+    if problems:
+        out.write("\nNOT submitted:\n")
+        for problem in problems:
+            out.write("  - %s\n" % problem)
+        return 1
+
+    if not getattr(args, "yes", False):
+        out.write("\nEverything is in the draft. Re-run with --yes to press Submit to App Review.\n")
+        return 0
+
+    body = {"data": {"type": "reviewSubmissions", "id": submission["id"],
+                     "attributes": {"submitted": True}}}
+    result = plan.act("SUBMIT the draft to App Review (submitted=true)",
+                      lambda: client.patch("/v1/reviewSubmissions/%s" % submission["id"], body))
+    if not plan.dry_run and result:
+        state = attributes_of(result.get("data") or {}).get("state")
+        out.write("\nReview submission %s is now %s.\n" % (submission["id"], state))
+    summarise(plan, out, "review send")
+    return 0
 
 
 def cmd_review_submit(client, args, out):
@@ -3430,7 +3600,8 @@ def cmd_build_attach(client, args, out):
                                              "appStoreVersions", version["id"]))
             return result
 
-    plan.act("attach build %s to version %s" % (build_number, version_string), attach)
+    with version_unstaged(client, app["id"], version, plan):
+        plan.act("attach build %s to version %s" % (build_number, version_string), attach)
 
     summarise(plan, out, "build attach")
     return 0
@@ -3922,6 +4093,7 @@ def build_parser():
         if name == "review":
             actions.append("stage")
             actions.append("submit")
+            actions.append("send")
         if name == "subscriptions":
             actions.append("unprice")
         command = sub.add_parser(name, help=help_text)
@@ -3929,7 +4101,8 @@ def build_parser():
             "action", choices=actions,
             help="plan = show what would change; apply = do it"
                  + ("; stage = Apple's 'Add for Review' by API (version + subscriptions into the draft, nothing submitted)"
-                    "; submit = send the subscriptions to App Review" if name == "review" else "")
+                    "; submit = send the subscriptions to App Review (legacy per-product path)"
+                    "; send = press Submit to App Review on the draft (needs --yes)" if name == "review" else "")
                  + ("; unprice = remove a product's price so it cannot be sold"
                     if name == "subscriptions" else ""),
         )
@@ -3939,6 +4112,11 @@ def build_parser():
             command.add_argument(
                 "--skip-product", action="append", metavar="PRODUCT_ID", default=[],
                 help="leave this product alone entirely; repeatable")
+        if name == "review":
+            command.add_argument("--yes", action="store_true",
+                                 help="for `send`: actually press Submit to App Review")
+            command.add_argument("--build", dest="build", metavar="BUILD", default=None,
+                                 help="for `send`: refuse unless this build number is the one attached")
         if name == "subscriptions":
             command.add_argument(
                 "product", nargs="?", default=None,
