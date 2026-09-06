@@ -567,16 +567,24 @@ final class StoreShots: XCTestCase {
                 return
             }
             tap(banner)
-            guard waitForAny(ids: [], labels: ["No leads yet", "Loading leads…", "Sign in to see your leads"],
-                             timeout: screenTimeout) else {
+            // With -ui.sampleLeads the mock answers with three invented leads
+            // (the frame plan.json uses); without it, the honest empty inbox.
+            let opened = waitForAny(ids: [], labels: ["No leads yet", "Loading leads…", "Sign in to see your leads",
+                                                      "Jordan Whitfield", "Priya Raman"],
+                                    timeout: screenTimeout)
+                || app.navigationBars["Leads"].waitForExistence(timeout: 2)
+            guard opened else {
                 note("SKIPPED: the Leads screen did not open.")
                 popToRoot()
                 return
             }
-            settle(2)                       // the mock answers with an empty list
+            settle(2)                       // let the list settle (mock latency + animation)
             shot("s14-leads")
-            note("s14 is the empty inbox (the mock has no leads). Use it only if a real inbox is captured "
-                 + "on a device; plan.json leaves it out.")
+            if labelElement(containing: "No leads yet", timeout: 0.5) != nil {
+                note("s14 is the empty inbox (launch without -ui.sampleLeads). plan.json expects the sample inbox.")
+            } else {
+                note("s14 is the sample inbox (-ui.sampleLeads): three invented leads.")
+            }
             popToRoot()
         }
     }
