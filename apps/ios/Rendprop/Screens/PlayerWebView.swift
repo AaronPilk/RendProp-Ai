@@ -119,6 +119,27 @@ struct PlayerWebView: UIViewRepresentable {
     static let hostedDemoURL = URL(string: "https://rendprop.com/f/estate-demo")
     static let hostedDemoEmbedURL = URL(string: "https://rendprop.com/f/estate-demo?embed=1")
 
+    /// The embed for a given business type. Real estate plays the demo as the
+    /// listing it is. Every other type asks the Worker (`&space=<type>`) to
+    /// present the same footage as a "Sample tour" — no "$4,250,000 · 5 bd ·
+    /// 6 ba" chip, no demo brokerage — so a venue, bar, store or gym owner's
+    /// first screen never shows a home listing. One walkthrough at launch; a
+    /// per-industry demo set is the follow-up. Older Workers ignore the param.
+    static func hostedDemoEmbedURL(for type: SpaceType) -> URL? {
+        guard type != .realEstate, let base = hostedDemoEmbedURL else { return hostedDemoEmbedURL }
+        return URL(string: base.absoluteString + "&space=" + type.rawValue) ?? base
+    }
+
+    /// True when the sample walkthrough (`player/demo.mp4`, a folder-reference
+    /// resource that git ignores) shipped in this build. With it, a venue /
+    /// bar / store / gym sample plays the bundled, type-adapted player — its
+    /// own name and tagline on the chip, its own area tags as chapters, its
+    /// own identity on the card — instead of the hosted home listing. Without
+    /// it (a CI build), the hosted demo is the fallback (industry review P1-6).
+    static var bundledDemoAvailable: Bool {
+        Bundle.main.url(forResource: "demo", withExtension: "mp4", subdirectory: "player") != nil
+    }
+
     /// Type-adapted demo: copies the bundled demo video into Caches once, then
     /// rewrites the player HTML around the CURRENT business type — its sample
     /// name/tagline, its area tags as chapters, and its call-to-action. When

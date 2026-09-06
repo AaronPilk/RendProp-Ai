@@ -140,6 +140,32 @@ async function main() {
   expect((demoUn.h("content-security-policy") || "").includes("frame-ancestors *"),
     "[/u/estate-demo] MLS systems iframe the unbranded tour — frame-ancestors must stay open");
 
+  // ---- the in-app demo card for a venue / bar / store / gym ----------------
+  // `?embed=1&space=<type>` presents the ONE launch demo (a house) as a
+  // "Sample tour" instead of a $4.25M listing. Real estate and the full page
+  // are untouched; an unknown type falls back to the plain embed.
+  const embedRE = await get(worker, "/f/estate-demo?embed=1");
+  expect(embedRE.status === 200, `[/f/estate-demo?embed=1] want 200, got ${embedRE.status}`);
+  expect(embedRE.body.includes("5 bd · 6 ba · 6,200 sqft"), "[embed] the real-estate demo keeps its listing chip");
+  expect(embedRE.body.includes("1180 Crestline Ridge") && embedRE.body.includes("$4,250,000") && !embedRE.body.includes("Sample tour"),
+    "[embed] the real-estate demo is unchanged");
+  for (const space of ["venue", "restaurant", "retail", "fitness", "other"]) {
+    const e = await get(worker, `/f/estate-demo?embed=1&space=${space}`);
+    expect(e.status === 200, `[embed&space=${space}] want 200, got ${e.status}`);
+    expect(!e.body.includes(" bd · ") && !e.body.includes("$4,250,000") && !e.body.includes("1180 Crestline"),
+      `[embed&space=${space}] must not present the demo as a home listing`);
+    expect(e.body.includes("Sample tour"), `[embed&space=${space}] the chip says "Sample tour"`);
+    expect(!e.body.includes("Alexandra Reyes") && !e.body.includes("Meridian Estates"),
+      `[embed&space=${space}] no real-estate agent card on a ${space}`);
+    expect(e.body.includes("Chef's kitchen"), `[embed&space=${space}] the footage and its chapters are unchanged`);
+  }
+  const embedBad = await get(worker, "/f/estate-demo?embed=1&space=spaceship");
+  expect(embedBad.status === 200 && embedBad.body.includes("5 bd · 6 ba · 6,200 sqft"),
+    "[embed&space=unknown] falls back to the plain real-estate embed");
+  const fullVenue = await get(worker, "/f/estate-demo?space=venue");
+  expect(fullVenue.body.includes("5 bd · 6 ba · 6,200 sqft"), "[/f/estate-demo?space=venue] the full page ignores the param");
+  ok("the in-app demo card presents itself as a sample tour for non-real-estate types");
+
   // ---- the upstream path: a real (non-demo) slug --------------------------
   // GET /tours/:slug is stubbed so this exercises handleTour end to end without
   // a network call: the happy path, the indexing header, and the three ways

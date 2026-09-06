@@ -518,6 +518,8 @@ class FakeAsc(object):
         ("subscriptions", "introductoryOffers"):
             ("subscriptionIntroductoryOffers", "subscription"),
         ("apps", "appStoreVersions"): ("appStoreVersions", "app"),
+        ("apps", "reviewSubmissions"): ("reviewSubmissions", "app"),
+        ("reviewSubmissions", "items"): ("reviewSubmissionItems", "reviewSubmission"),
         ("appStoreVersions", "appStoreVersionLocalizations"):
             ("appStoreVersionLocalizations", "appStoreVersion"),
         ("apps", "appInfos"): ("appInfos", "app"),
@@ -538,6 +540,8 @@ class FakeAsc(object):
         "subscriptionSubmissions": "subscriptionSubmissions",
         "appAvailabilities": "appAvailabilities",
         "appPriceSchedules": "appPriceSchedules",
+        "reviewSubmissions": "reviewSubmissions",
+        "reviewSubmissionItems": "reviewSubmissionItems",
         "appStoreVersions": "appStoreVersions",
         "appStoreVersionLocalizations": "appStoreVersionLocalizations",
         "appInfoLocalizations": "appInfoLocalizations",
@@ -854,6 +858,12 @@ class FakeAsc(object):
                                   for c in (asc.PRIMARY_CATEGORY, asc.SECONDARY_CATEGORY)],
                          "links": {}}
 
+        if len(parts) == 2 and parts[0] == "reviewSubmissions":
+            resource = self.store.get("reviewSubmissions", {}).get(parts[1])
+            if resource is None:
+                return 404, {"errors": [{"code": "NOT_FOUND", "status": "404", "title": "no", "detail": parts[1]}]}
+            return 200, {"data": self._public(resource)}
+
         if len(parts) == 3:
             parent_kind, parent_id, child = parts
             key = (parent_kind, child)
@@ -959,6 +969,12 @@ class FakeAsc(object):
                     for t in resource["attributes"].get("_territories") or []
                 ], "links": {}}
 
+            if key in (("subscriptionGroups", "versions"), ("subscriptions", "versions")):
+                kind = "subscriptionGroupVersions" if parent_kind == "subscriptionGroups" else "subscriptionVersions"
+                return 200, {"data": [{"type": kind, "id": "%s-v1" % parent_id,
+                                       "attributes": {"version": 1, "state": "PREPARE_FOR_SUBMISSION"}}],
+                             "links": {}}
+
             if key == ("apps", "appPricePoints"):
                 # v3 points: one per territory per amount; Free is "0.00".
                 wanted = query.get("filter[territory]") or ["USA"]
@@ -1051,7 +1067,8 @@ class FakeAsc(object):
                     "detail": "An error occurred while processing the pricing information.",
                     "status": "409",
                     "source": {"pointer": "/data/relationships/subscriptionPricePoint/id"}}]}
-            self.last_price_body = payload
+            if self.last_price_body is None:
+                self.last_price_body = payload   # the first price request = the USA one
 
         # There is no PATCH or DELETE for subscriptionAvailabilities, so whether a
         # second POST replaces the set is unknown. Default to the conservative
@@ -1066,6 +1083,21 @@ class FakeAsc(object):
                         "title": "There is a problem with the request entity",
                         "detail": "The subscription already has an availability.",
                         "status": "409"}]}
+
+        if kind == "reviewSubmissions":
+            attributes.setdefault("state", "READY_FOR_REVIEW")
+            identifier = self._insert(kind, attributes, {"app": data["relationships"]["app"]["data"]["id"]})
+            return 201, {"data": self._public(self.store[kind][identifier])}
+        if kind == "reviewSubmissionItems":
+            rel = data.get("relationships") or {}
+            parents = {name: (value or {}).get("data", {}).get("id") for name, value in rel.items()}
+            if getattr(self, "privacy_unpublished", False):
+                return 409, {"errors": [{"code": "STATE_ERROR.ENTITY_STATE_INVALID", "status": "409",
+                                         "title": "cannot be reviewed",
+                                         "detail": "This resource cannot be reviewed, please check associated errors to see why."}]}
+            attributes.setdefault("state", "READY_FOR_REVIEW")
+            identifier = self._insert(kind, attributes, parents)
+            return 201, {"data": self._public(self.store[kind][identifier])}
 
         # POST /v1/appPriceSchedules: manualPrices are inline creates linked by
         # a `${...}` handle (Developer Forums thread 714696 shows this body).
@@ -1375,7 +1407,7 @@ class SubscriptionPlanTests(unittest.TestCase):
 
         self.assertEqual(len(fake.store["subscriptions"]), 6)
         self.assertEqual(len(fake.store["subscriptionLocalizations"]), 6)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
         self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
         self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
 
@@ -1422,7 +1454,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         first_price = writes.index("/v1/subscriptionPrices")
         self.assertLess(first_availability, first_price,
                         "availability must be POSTed before the price")
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
 
     def test_pricing_before_availability_would_be_rejected(self):
         """Proves the fake reproduces the live ordering failure."""
@@ -1477,7 +1509,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         # product is never left half-priced.
         priced = {p["_parents"]["territory"] for p in fake.store["subscriptionPrices"].values()
                   if p["_parents"].get("subscription") == subscription_id}
-        self.assertEqual(priced, {"USA", "MEX", "GBR"})
+        self.assertTrue({"USA", "MEX", "GBR"} <= priced)
 
     def test_availability_upsert_is_used_when_the_api_allows_it(self):
         fake = FakeAsc()
@@ -1500,10 +1532,12 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertNotIn("FIX THIS BY HAND", output)
         self.assertIn("narrow", output)
-        # Only the USA price, because the narrowed availability is USA only.
+        # Availability is USA only, but the price sheet covers every territory
+        # (the review gate needs the full sheet; prices elsewhere are dormant).
         priced = {p["_parents"]["territory"] for p in fake.store["subscriptionPrices"].values()
                   if p["_parents"].get("subscription") == subscription_id}
-        self.assertEqual(priced, {"USA"})
+        self.assertIn("USA", priced)
+        self.assertEqual(priced, set(fake.territories))
 
     def test_notification_urls_are_set_on_the_app(self):
         fake = FakeAsc()
@@ -1611,9 +1645,10 @@ class SubscriptionPlanTests(unittest.TestCase):
     def test_prices_are_created_for_all_six_products(self):
         fake = FakeAsc()
         self.run_subscriptions(fake)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
-        for price in fake.store["subscriptionPrices"].values():
-            self.assertEqual(price["_parents"]["territory"], "USA")
+        # Every territory Apple sells in is priced (equalized from the USA point).
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
+        usa = [p for p in fake.store["subscriptionPrices"].values() if p["_parents"]["territory"] == "USA"]
+        self.assertEqual(len(usa), 6)
 
     def test_a_wrong_territory_price_point_would_be_rejected(self):
         """Proves the fake reproduces the live failure, so the guard is real."""
@@ -1668,7 +1703,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertEqual(len(fake.store["subscriptions"]), 6)
         self.assertEqual(len(fake.store["subscriptionLocalizations"]), 6)
         # ...and the half-finished product got its price, availability and trial.
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
         self.assertEqual(len(fake.store["subscriptionAvailabilities"]), 6)
         self.assertEqual(len(fake.store["subscriptionIntroductoryOffers"]), 6)
         self.assertIn("exists", output)
@@ -1720,7 +1755,7 @@ class SubscriptionPlanTests(unittest.TestCase):
         self.assertIn("already exists (HTTP 409)", output)
         # It recovered onto the existing product rather than creating a seventh.
         self.assertEqual(len(fake.store["subscriptions"]), 6)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
 
     def test_unrecoverable_409_still_fails(self):
         """If the conflicting product cannot be found, the error must surface."""
@@ -1867,6 +1902,54 @@ class StatusCompleteProductTests(unittest.TestCase):
         text = printed.getvalue()
         self.assertNotIn("is MISSING_METADATA (not yet submittable)", text)
         self.assertIn("complete (API says MISSING_METADATA", text)
+
+
+class ReviewStageTests(unittest.TestCase):
+    def build(self):
+        fake = FakeAsc()
+        fake.add_app_info()
+        out = io.StringIO()
+        client = asc.Client(credentials=None, transport=fake, verbose=False, out=out)
+        asc.cmd_subscriptions(client, Args(action="apply"), io.StringIO())
+        asc.cmd_metadata(client, Args(), io.StringIO())
+        return fake, client
+
+    def run_stage(self, fake, client, **kwargs):
+        out = io.StringIO()
+        code = asc.cmd_review(client, Args(action="stage", **kwargs), out)
+        return code, out.getvalue()
+
+    def test_it_creates_one_draft_with_the_version_group_and_five_products(self):
+        fake, client = self.build()
+        code, output = self.run_stage(fake, client, skip_product=["com.rendprop.app.team.annual"])
+        self.assertEqual(code, 0)
+        self.assertEqual(len(fake.store["reviewSubmissions"]), 1)
+        submission = list(fake.store["reviewSubmissions"].values())[0]
+        self.assertEqual(submission["attributes"]["state"], "READY_FOR_REVIEW")
+        self.assertNotIn("submitted", json.dumps(fake.bodies))
+        kinds = [set(i["_parents"]) - {"reviewSubmission"} for i in fake.store["reviewSubmissionItems"].values()]
+        flat = [next(iter(k)) for k in kinds]
+        self.assertEqual(flat.count("appStoreVersion"), 1)
+        self.assertEqual(flat.count("subscriptionGroupVersion"), 1)
+        self.assertEqual(flat.count("subscriptionVersion"), 5)
+        self.assertIn("NOT submitted", output)
+
+    def test_it_is_idempotent(self):
+        fake, client = self.build()
+        self.run_stage(fake, client, skip_product=["com.rendprop.app.team.annual"])
+        fake.writes = []
+        code, output = self.run_stage(fake, client, skip_product=["com.rendprop.app.team.annual"])
+        self.assertEqual(code, 0)
+        self.assertEqual([p for m, p in fake.writes if m == "POST"], [])
+        self.assertIn("already in the submission", output)
+
+    def test_a_refused_item_is_a_warning_not_a_crash(self):
+        fake, client = self.build()
+        fake.privacy_unpublished = True
+        code, output = self.run_stage(fake, client)
+        self.assertEqual(code, 0)
+        self.assertIn("could not add App Store version", output)
+        self.assertIn("App Privacy not published", output)
 
 
 class ContentRightsTests(unittest.TestCase):
@@ -2115,8 +2198,8 @@ class PriceGuardTests(unittest.TestCase):
     def priced_products(self, fake):
         by_id = {r["id"]: r["attributes"].get("productId")
                  for r in fake.store.get("subscriptions", {}).values()}
-        return sorted(by_id[p["_parents"]["subscription"]]
-                      for p in fake.store.get("subscriptionPrices", {}).values())
+        return sorted({by_id[p["_parents"]["subscription"]]
+                       for p in fake.store.get("subscriptionPrices", {}).values()})
 
     def test_a_point_far_from_the_target_is_never_written(self):
         fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
@@ -2147,14 +2230,14 @@ class PriceGuardTests(unittest.TestCase):
         _code, output = self.run_subscriptions(fake)
         self.assertIn("PRICE POINT WARNING", output)
         self.assertNotIn("NOT PRICING", output)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * len(fake.territories))
 
     def test_re_running_still_refuses_rather_than_settling(self):
         fake = FakeAsc(price_ladder=FakeAsc.YEARLY_CEILING_LADDER)
         self.run_subscriptions(fake)
         _code, output = self.run_subscriptions(fake)
         self.assertIn("NOT PRICING com.rendprop.app.team.annual", output)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 5)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 5 * len(fake.territories))
 
     def test_an_unpriced_product_gets_no_free_trial(self):
         """A trial on a product that cannot be sold is meaningless - and Apple
@@ -2265,12 +2348,13 @@ class UnpriceTests(unittest.TestCase):
 
     def test_the_price_is_deleted(self):
         fake, client = self.build()
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 6)
+        per_product = len(fake.territories)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 6 * per_product)
         code, output = self.run_unprice(fake, client)
         self.assertEqual(code, 0)
-        self.assertEqual(len(fake.store["subscriptionPrices"]), 5)
+        self.assertEqual(len(fake.store["subscriptionPrices"]), 5 * per_product)
         deletes = [path for method, path in fake.writes if method == "DELETE"]
-        self.assertEqual(len(deletes), 1)
+        self.assertEqual(len(deletes), per_product)
         self.assertTrue(deletes[0].startswith("/v1/subscriptionPrices/"), deletes[0])
         self.assertIn("remove the USA price", output)
         # The other five products are untouched.

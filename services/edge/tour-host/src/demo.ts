@@ -15,7 +15,53 @@ export function isDemoSlug(slug: string): boolean {
   return slug === DEMO_SLUG || slug === "demo";
 }
 
-export function buildDemoTour(): Tour {
+/** The business types the in-app embed may ask the demo to present itself as
+ *  (`?embed=1&space=venue`). Anything else — including the default — renders
+ *  the real-estate demo exactly as before. */
+export const DEMO_SPACES = ["venue", "restaurant", "retail", "fitness", "other"] as const;
+export type DemoSpace = (typeof DEMO_SPACES)[number];
+
+export function demoSpaceFrom(raw: string | null | undefined): DemoSpace | undefined {
+  return (DEMO_SPACES as readonly string[]).includes(raw || "") ? (raw as DemoSpace) : undefined;
+}
+
+/**
+ * The demo, presented for a business type that is not real estate.
+ *
+ * There is ONE demo walkthrough (a house) at launch — a per-industry demo
+ * footage set is the follow-up. Until then a venue, bar, store or gym owner's
+ * first screen shows this flythrough as "Sample tour", NOT as a
+ * "$4,250,000 · 5 bd · 6 ba" listing: the chip over the video, the page title
+ * and the OG copy stop describing a home, and the demo agent card is dropped
+ * so no real-estate brokerage is presented to a gym. The footage and its
+ * chapters are unchanged — the point of the card is the scroll-scrub tour.
+ */
+export function buildDemoTour(as?: DemoSpace): Tour {
+  const tour = buildEstateDemoTour();
+  if (!as) return tour;
+  return {
+    ...tour,
+    space_type: as,
+    listing: {
+      ...tour.listing,
+      address: "Sample tour",
+      tagline: "Scroll to fly through — this is the tour your customers get.",
+      beds: 0,
+      baths: 0,
+      sqft: 0,
+      price_cents: 0,
+      price: "",
+      details: {
+        ...tour.listing.details,
+        story: "",
+      },
+    },
+    agent_card: {},
+    cta: { label: "Get in touch", mode: "lead_form", url: null, secondary: [], lead_fields: [] },
+  };
+}
+
+function buildEstateDemoTour(): Tour {
   return {
     slug: DEMO_SLUG,
     share_url: "https://rendprop.com/f/estate-demo",

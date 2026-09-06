@@ -35,6 +35,7 @@
 #   KEEP_APP=1   skip the uninstall (re-run on a dirty container — the walk
 #                copes: with 2+ projects of a type the "Pick a …" picker is used)
 #   SIM_UDID=…   run on a different simulator
+#   ONLY_TEST=testVenue   run one industry's test instead of all six (~11 min each)
 
 set -u -o pipefail
 
@@ -128,7 +129,7 @@ xcodebuild test \
   -project Rendprop.xcodeproj \
   -scheme Rendprop \
   -destination "platform=iOS Simulator,id=$UDID" \
-  -only-testing:RendpropUITests/IndustryWalk \
+  -only-testing:"RendpropUITests/IndustryWalk${ONLY_TEST:+/$ONLY_TEST}" \
   -derivedDataPath "$DD_DIR" \
   -resultBundlePath "$RESULT" \
   > "$LOG" 2>&1

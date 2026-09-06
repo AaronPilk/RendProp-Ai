@@ -1259,7 +1259,14 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
     if is_pending(subscription_id):
         plan.defer("price %s at USD %s" % (spec["productId"], spec["usd"]))
         return None      # nothing decided yet; the id does not exist
-    territories = list(territories or LAUNCH_TERRITORIES)
+    # Price EVERY territory Apple sells in, not just the ones the product is
+    # available in. Live (2026-09-06): with only the USA priced, App Store
+    # Connect's "Add for Review" refused every subscription with "You must add
+    # a subscription price" - the API had accepted the single price, but the
+    # review gate wants the full sheet, which is what Apple's own UI writes
+    # (one base price, equalized to all 175 territories). Availability stays
+    # USA-only; prices in unavailable territories are dormant.
+    territories = sorted(set(list(territories or LAUNCH_TERRITORIES)) | set(all_territory_ids(client)))
     prices = client.get_all(
         "/v1/subscriptions/%s/prices" % subscription_id,
         params={"include": "subscriptionPricePoint,territory", "limit": 200},
@@ -1267,16 +1274,12 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
     already = priced_territories(prices)
     missing = [t for t in territories if t not in already]
     if prices and not missing:
-        plan.note("%s is priced in all %d territor%s it sells in"
-                  % (spec["productId"], len(territories),
-                     "y" if len(territories) == 1 else "ies"))
+        plan.note("%s is priced in all %d territories (sold in %s)"
+                  % (spec["productId"], len(territories), ",".join(LAUNCH_TERRITORIES)))
         return True
     if prices and USA_TERRITORY in already:
-        # The USA price is set but other territories are not. This only happens
-        # if availability was widened beyond the launch territories.
-        plan.warn("%s is priced in %d territor%s but available in %d - filling the gaps"
-                  % (spec["productId"], len(already),
-                     "y" if len(already) == 1 else "ies", len(territories)))
+        plan.note("%s is priced in %d of %d territories - filling the rest from the USA point"
+                  % (spec["productId"], len(already), len(territories)))
 
     # List the USD price points offered for THIS subscription, then match the
     # target amount exactly, or take the nearest with a loud warning.
@@ -1360,8 +1363,8 @@ def ensure_subscription_price(client, subscription_id, spec, territories, plan):
             lambda: client.post("/v1/subscriptionPrices", body),
         )
 
-    # US-only launch means one price is the whole schedule. This only does
-    # anything if the product turned out to be available more widely.
+    # Every other territory gets the equalized point (Apple's own "one base
+    # price" behaviour); the review gate requires the full sheet.
     others = [t for t in missing if t != USA_TERRITORY]
     if others and not plan.dry_run:
         price_other_territories(client, subscription_id, spec, point, others, plan)
@@ -2923,9 +2926,136 @@ def ensure_iap_review_screenshot(client, subscription_id, product_id, plan, out)
     plan.act("attach the review screenshot to %s" % product_id, do_upload)
 
 
+REVIEW_SUBMISSION_OPEN_STATES = ("READY_FOR_REVIEW", "UNRESOLVED_ISSUES")
+
+
+def find_open_review_submission(client, app_id):
+    """The draft (not yet submitted) iOS review submission, or None."""
+    for item in client.get_all("/v1/apps/%s/reviewSubmissions" % app_id,
+                               params={"filter[platform]": PLATFORM, "limit": 50}):
+        if attributes_of(item).get("state") in REVIEW_SUBMISSION_OPEN_STATES:
+            return item
+    return None
+
+
+def review_submission_item_ids(client, submission_id):
+    """(relationship name, resource id) pairs already in the submission."""
+    have = set()
+    for item in client.get_all("/v1/reviewSubmissions/%s/items" % submission_id,
+                               params={"limit": 50}):
+        for name, value in (item.get("relationships") or {}).items():
+            data = (value or {}).get("data")
+            if isinstance(data, dict) and data.get("id"):
+                have.add((name, data["id"]))
+    return have
+
+
+def cmd_review_stage(client, args, out):
+    """Stage the App Review submission - Apple's "Add for Review" buttons, by API.
+
+    Creates (or reuses) the one draft `reviewSubmissions` for iOS and adds as
+    items: the editable App Store version, the subscription group's version
+    (its display name) and every sold subscription's version. NOTHING is
+    submitted: `submitted` is never set, so the final "Submit to App Review"
+    stays a human click (or a deliberate `PATCH reviewSubmissions {submitted}`
+    that this tool does not offer).
+
+    Verified live 2026-09-06: a subscription version can only be added once the
+    App Privacy questionnaire is published AND the subscription is priced in
+    every territory (Apple's UI says "You must add a subscription price" with
+    only the USA priced, whatever the API accepted) - `subscriptions apply` now
+    prices the full sheet for that reason.
+    https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-reviewSubmissions
+    https://developer.apple.com/documentation/AppStoreConnectAPI/POST-v1-reviewSubmissionItems
+    """
+    plan = Plan(dry_run=args.dry_run, out=out)
+    app = require_app(client)
+    app_id = app["id"]
+    out.write("App: %s (id %s)\n\n" % (attributes_of(app).get("name"), app_id))
+
+    version = find_editable_version(client, app_id)
+    if version is None:
+        raise AscError("No editable App Store version %s - run `metadata apply` first." % VERSION_STRING)
+
+    submission = find_open_review_submission(client, app_id)
+    if submission is None:
+        body = {"data": {"type": "reviewSubmissions",
+                         "attributes": {"platform": PLATFORM},
+                         "relationships": {"app": relationship("apps", app_id)}}}
+        created = plan.act("create the draft review submission (nothing is submitted)",
+                           lambda: client.post("/v1/reviewSubmissions", body))
+        if plan.dry_run or not created:
+            out.write("\nNothing else can be staged until the draft exists.\n")
+            return 0
+        submission = created["data"]
+    else:
+        plan.note("draft review submission exists (%s)"
+                  % attributes_of(submission).get("state"))
+    submission_id = submission["id"]
+    have = review_submission_item_ids(client, submission_id)
+
+    def add(kind, resource_type, resource_id, label):
+        if (kind, resource_id) in have:
+            plan.note("%s is already in the submission" % label)
+            return
+        body = {"data": {"type": "reviewSubmissionItems", "relationships": {
+            "reviewSubmission": relationship("reviewSubmissions", submission_id),
+            kind: relationship(resource_type, resource_id)}}}
+
+        def post():
+            try:
+                return client.post("/v1/reviewSubmissionItems", body)
+            except ApiError as exc:
+                plan.warn("could not add %s (%s)." % (label, ", ".join(sorted(set(exc.codes))) or exc.status))
+                for item in exc.errors[:1]:
+                    if item.get("detail"):
+                        out.write("      %s\n" % item["detail"])
+                out.write("      Usual causes: App Privacy not published, a subscription without a\n"
+                          "      price in every territory, or a version with a red field in App Store Connect.\n")
+                return None
+        plan.act("add %s to the submission" % label, post)
+
+    out.write("Version\n")
+    add("appStoreVersion", "appStoreVersions", version["id"], "App Store version %s" % VERSION_STRING)
+
+    group = find_group(client, app_id)
+    if group is not None:
+        out.write("\nSubscriptions\n")
+        for gv in client.get_all("/v1/subscriptionGroups/%s/versions" % group["id"], params={"limit": 50}):
+            if attributes_of(gv).get("state") == "PREPARE_FOR_SUBMISSION":
+                add("subscriptionGroupVersion", "subscriptionGroupVersions", gv["id"],
+                    "subscription group %s (display name)" % SUBSCRIPTION_GROUP_REFERENCE_NAME)
+        by_product = {attributes_of(s).get("productId"): s
+                      for s in client.get_all("/v1/subscriptionGroups/%s/subscriptions" % group["id"])}
+        for spec in active_subscriptions(args, out):
+            subscription = by_product.get(spec["productId"])
+            if subscription is None:
+                plan.warn("%s does not exist" % spec["productId"])
+                continue
+            versions = client.get_all("/v1/subscriptions/%s/versions" % subscription["id"],
+                                      params={"limit": 50})
+            editable = [v for v in versions if attributes_of(v).get("state") == "PREPARE_FOR_SUBMISSION"]
+            if not editable:
+                plan.note("%s has no editable version (states: %s)"
+                          % (spec["productId"], ", ".join(attributes_of(v).get("state") or "?" for v in versions) or "none"))
+                continue
+            add("subscriptionVersion", "subscriptionVersions", editable[0]["id"], spec["productId"])
+
+    if not plan.dry_run:
+        final = client.get("/v1/reviewSubmissions/%s" % submission_id)
+        items = client.get_all("/v1/reviewSubmissions/%s/items" % submission_id, params={"limit": 50})
+        out.write("\nDraft submission %s: %s, %d item(s). NOT submitted - press "
+                  "\"Submit to App Review\" in App Store Connect when the phone test has passed.\n"
+                  % (submission_id, attributes_of(final["data"]).get("state"), len(items)))
+    out.write("\nReview stage: %d change(s) applied.\n" % plan.changes)
+    return 0
+
+
 def cmd_review(client, args, out):
     if getattr(args, "action", None) == "submit":
         return cmd_review_submit(client, args, out)
+    if getattr(args, "action", None) == "stage":
+        return cmd_review_stage(client, args, out)
     plan = Plan(dry_run=args.dry_run, out=out)
     app = require_app(client)
     out.write("App: %s (id %s)\n" % (attributes_of(app).get("name"), app["id"]))
@@ -3752,6 +3882,7 @@ def build_parser():
         # Review. It is never part of `apply` - submitting is the owner's call.
         actions = ["plan", "apply"]
         if name == "review":
+            actions.append("stage")
             actions.append("submit")
         if name == "subscriptions":
             actions.append("unprice")
@@ -3759,7 +3890,8 @@ def build_parser():
         command.add_argument(
             "action", choices=actions,
             help="plan = show what would change; apply = do it"
-                 + ("; submit = send the subscriptions to App Review" if name == "review" else "")
+                 + ("; stage = Apple's 'Add for Review' by API (version + subscriptions into the draft, nothing submitted)"
+                    "; submit = send the subscriptions to App Review" if name == "review" else "")
                  + ("; unprice = remove a product's price so it cannot be sold"
                     if name == "subscriptions" else ""),
         )

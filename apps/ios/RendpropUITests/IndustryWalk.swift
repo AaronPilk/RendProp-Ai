@@ -617,11 +617,13 @@ final class IndustryWalk: XCTestCase {
             if let reel { reelState = "isEnabled=\(reel.isEnabled)" } else { reelState = "tile missing" }
             check("\(i.tag): Make a reel tile present and DISABLED on the sample",
                   reel != nil && reel?.isEnabled == false, actual: reelState)
-            checkText("\(i.tag): toolbox tagging tile says \"\(i.tagAreasTitle)\"", i.tagAreasTitle)
+            // The toolbox is a LazyVGrid: a row below the fold is not in the
+            // hierarchy at all, so each tile is scrolled into view first.
+            checkTile("\(i.tag): toolbox tagging tile says \"\(i.tagAreasTitle)\"", i.tagAreasTitle)
             checkAbsent("\(i.tag): toolbox never says \"\(i.tagAreasWrongTitle)\"", i.tagAreasWrongTitle)
-            checkText("\(i.tag): \"Floor plan\" tile", "Floor plan")
-            checkText("\(i.tag): \"Aerial intro\" tile", "Aerial intro")
-            checkContains("\(i.tag): \"\(i.profileCardName)\" tile", i.profileCardName)
+            checkTile("\(i.tag): \"Floor plan\" tile", "Floor plan")
+            checkTile("\(i.tag): \"Aerial intro\" tile", "Aerial intro")
+            checkTile("\(i.tag): \"\(i.profileCardName)\" tile", i.profileCardName)
             checkContains("\(i.tag): dimmed tools say \"Create a \(i.noun) first\"", "Create a \(i.noun) first")
             checkAbsent("\(i.tag): no MANAGE section on a sample", "MANAGE")
             checkAbsent("\(i.tag): no \"Mark as \(i.archiveVerb)\" on a sample", "Mark as \(i.archiveVerb)")
@@ -1372,11 +1374,22 @@ final class IndustryWalk: XCTestCase {
     private func openCollectionTab(_ i: Industry) -> Bool {
         let tab = app.tabBars.buttons[i.tabTitle]
         if tab.waitForExistence(timeout: shortTimeout) {
-            tab.tap()
-            settle(1.5)
-            if !app.searchFields.firstMatch.waitForExistence(timeout: shortTimeout) {
-                note("Tapped the \"\(i.tabTitle)\" tab but its search field never appeared — the shot may be "
-                     + "whatever tab was already showing.")
+            // A tab tap while a screen is pushed on the current tab pops that
+            // stack instead of switching (proven on the 6 Sep walk: every
+            // "03-collection" shot was Home). Tap, confirm the tab is selected
+            // and its nav title is up, and tap once more if it is not.
+            for attempt in 0..<3 {
+                tab.tap()
+                settle(1.2)
+                if tab.isSelected, find(ids: [], labels: [i.collectionTitle], timeout: shortTimeout) != nil { break }
+                if attempt == 2 {
+                    note("Tapped the \"\(i.tabTitle)\" tab three times but it never reported itself selected with "
+                         + "\"\(i.collectionTitle)\" up — the shot may be whatever tab was already showing.")
+                }
+            }
+            if !app.searchFields.firstMatch.waitForExistence(timeout: 1) {
+                note("The \"\(i.tabTitle)\" tab's search field is not in the hierarchy (iOS 26 keeps it "
+                     + "collapsed under the title until the list is pulled down) — the prompt check reads it as absent.")
             }
             return true
         }
@@ -1597,6 +1610,14 @@ final class IndustryWalk: XCTestCase {
         check(what, found, actual: found ? "" : "no element labelled \"\(text)\"")
     }
 
+    /// A tile in a lazy grid or list: scrolled into view (down the page) before
+    /// it is judged absent — off-screen lazy rows are not in the hierarchy.
+    private func checkTile(_ what: String, _ text: String) {
+        let found = scrollTo(ids: [], labels: [text], swipes: 3, perSwipeTimeout: 0.6) != nil
+            || labelElement(containing: text, timeout: 0.5) != nil
+        check(what, found, actual: found ? "" : "no element labelled \"\(text)\" (after scrolling)")
+    }
+
     /// Any element whose label CONTAINS `text` — for sentences folded into a
     /// combined label, and for multi-line copy.
     private func checkContains(_ what: String, _ text: String, timeout: TimeInterval = 2) {
@@ -1646,8 +1667,14 @@ final class IndustryWalk: XCTestCase {
         var hits: [String] = []
         for element in matches.prefix(14) {
             let label = element.label.trimmingCharacters(in: .whitespacesAndNewlines)
-            if label.isEmpty || i.allowedExactLabels.contains(label) { continue }
+            if label.isEmpty { continue }
+            // The tab bar's "Home" is allowed whatever case the AX tree reports it in.
+            if i.allowedExactLabels.contains(where: { $0.caseInsensitiveCompare(label) == .orderedSame }) { continue }
+            // Name the element, not just its words — so a hit can be traced
+            // to the view that produced it ("home" [Button id=…]).
+            let identifier = element.identifier.isEmpty ? "" : " id=\(element.identifier)"
             let short = String(label.replacingOccurrences(of: "\n", with: " ").prefix(110))
+                + " [type=\(element.elementType.rawValue)\(identifier)]"
             if !hits.contains(short) { hits.append(short) }
             if hits.count >= 6 { break }
         }

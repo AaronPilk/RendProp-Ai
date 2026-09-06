@@ -307,12 +307,15 @@ struct FlythroughDetailView: View {
             Text(playbackURL != nil ? "YOUR TOUR" : "SAMPLE TOUR")
                 .font(.rpKicker).foregroundStyle(Theme.inkDim)
             Group {
-                if currentListing.isSample, space != .realEstate, let demo = PlayerWebView.hostedDemoEmbedURL {
-                    // A venue's / bar's / gym's sample plays the hosted demo
-                    // flythrough: the bundled sample player needs a demo.mp4
-                    // that is not in the build, and "Sample video unavailable"
-                    // is not a first impression (industry review P1-6). Real
-                    // estate keeps its reviewed bundled sample.
+                if currentListing.isSample, space != .realEstate, !PlayerWebView.bundledDemoAvailable,
+                   let demo = PlayerWebView.hostedDemoEmbedURL(for: space) {
+                    // A build WITHOUT player/demo.mp4: a venue's / bar's / gym's
+                    // sample plays the hosted demo flythrough presented as a
+                    // sample tour — "Sample video unavailable" is not a first
+                    // impression (industry review P1-6). With the clip in the
+                    // build (every archive from the Mac), the bundled player
+                    // below carries the sample's own name, tagline, chapters
+                    // and identity — never the demo home's price.
                     PlayerWebView(remoteURL: demo)
                 } else {
                     PlayerWebView(localVideoURL: playbackURL, roomTags: playbackTags, listing: currentListing)

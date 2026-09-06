@@ -27,7 +27,7 @@
 // viewer must never see Cloudflare's raw "Worker threw exception" page.
 
 import type { Env, Portfolio, Tour } from "./types";
-import { buildDemoTour, isDemoSlug } from "./demo";
+import { buildDemoTour, demoSpaceFrom, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
@@ -224,9 +224,14 @@ async function handleTour(
   // ?embed=1 renders ONLY the flythrough hero (for the in-app "See it in
   // action" card); the full page is served otherwise. Keep separate cache keys.
   const embed = url.searchParams.has("embed");
+  // The in-app card for a venue / bar / store / gym asks the demo to present
+  // itself as a sample tour rather than a home listing (`?embed=1&space=venue`).
+  // Only the demo slug honours it, only in embed mode, and only for a known
+  // business type; it is part of the cache key so the two renders never mix.
+  const demoAs = embed && isDemoSlug(slug) ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
 
   const cache = caches.default;
-  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}`);
+  const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}${demoAs ? `&space=${demoAs}` : ""}`);
   const hit = await cache.match(key);
   if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
 
@@ -270,7 +275,7 @@ async function handleTour(
   // Demo tour — self-contained, no DB. Renders through the SAME renderer a real
   // listing uses, so rendprop.com/f/estate-demo IS the product (and powers the
   // in-app Home demo). /u/estate-demo is the MLS-safe cut of the same tour.
-  if (isDemoSlug(slug)) return finish(buildDemoTour());
+  if (isDemoSlug(slug)) return finish(buildDemoTour(demoAs));
 
   let upstream: Response;
   try {

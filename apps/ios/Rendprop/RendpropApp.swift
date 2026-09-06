@@ -1570,9 +1570,21 @@ struct HomeDashboardView: View {
     /// industry should meet "Sample video unavailable" on its first run
     /// (industry review P1-6). One house tour for launch — a per-industry demo
     /// slug on the Worker is the follow-up.
-    private var estateDemoEmbedURL: URL? { PlayerWebView.hostedDemoEmbedURL }
+    /// Every type that is not real estate plays the bundled, type-adapted
+    /// sample when the build carries it — the demo footage under the venue's
+    /// / gym's own name, tagline and area chapters — so a business owner never
+    /// meets a "$4,250,000 · 5 bd · 6 ba" home on Home or on their sample.
+    /// Real estate keeps the hosted demo (it IS a listing); a build without
+    /// the clip falls back to the hosted flythrough presented as a sample tour.
+    private var usesBundledSample: Bool {
+        SpaceType.current != .realEstate && PlayerWebView.bundledDemoAvailable
+    }
+    private var estateDemoEmbedURL: URL? {
+        usesBundledSample ? nil : PlayerWebView.hostedDemoEmbedURL(for: SpaceType.current)
+    }
     private var estateDemoFullURL: URL? {
-        SpaceType.current == .realEstate ? PlayerWebView.hostedDemoURL : PlayerWebView.hostedDemoEmbedURL
+        if usesBundledSample { return nil }
+        return SpaceType.current == .realEstate ? PlayerWebView.hostedDemoURL : PlayerWebView.hostedDemoEmbedURL(for: SpaceType.current)
     }
     /// Real estate's title is what the reviewer walk looks for; everything
     /// else says what it is — a sample tour, not a listing.
@@ -2010,9 +2022,9 @@ struct HomeDashboardView: View {
         ZStack(alignment: .topTrailing) {
             Group {
                 if let url = estateDemoEmbedURL {
-                    PlayerWebView(remoteURL: url)   // hosted demo flythrough, every type
+                    PlayerWebView(remoteURL: url)   // hosted demo flythrough (real estate; fallback elsewhere)
                 } else {
-                    PlayerWebView(listing: demo)    // bundled sample — only if the URL literal ever fails
+                    PlayerWebView(listing: demo)    // bundled, type-adapted sample (venue / bar / store / gym)
                 }
             }
                 .id(spaceTypeRaw)   // demo re-renders when the business type changes
@@ -2036,13 +2048,15 @@ struct HomeDashboardView: View {
         NavigationLink {
             if let url = estateDemoFullURL {
                 // Real estate: the full hosted listing microsite — flythrough →
-                // the whole auto-built landing page buyers scroll. Other types:
-                // the hosted flythrough on its own (see `estateDemoFullURL`).
+                // the whole auto-built landing page buyers scroll. Other types
+                // without the bundled clip: the hosted flythrough on its own.
                 PlayerWebView(remoteURL: url)
                     .ignoresSafeArea(edges: .bottom)
                     .navigationTitle(demoPageTitle)
                     .navigationBarTitleDisplayMode(.inline)
             } else {
+                // The sample's own detail: the type-adapted player, its
+                // details, and every tool — the tour a venue's planners get.
                 FlythroughDetailView(listing: demo)
             }
         } label: {

@@ -179,3 +179,23 @@ Not verified here (no simulator / device / live backend in this container): the 
 type-checked; the `IndustryWalk` vocabulary scan and the four hosted/live-only checks (P1-1 with `curl`,
 P1-2, P1-5 with provenance rows, the hosted embed full-screen on a phone) still need the device run.
 Edge functions to redeploy: `ai-photo`, `ai-video`, `ai-voice` (`_shared` changes ship with each).
+
+## 6. Verified on the simulator — 2026-09-06 (build 3 code, `IndustryWalk`, 6/6 tests passed)
+
+The live walk (`_bridge/out/industrywalk/`, 152 screenshots, 907 CHECK lines) confirms every fix in §5
+on screen: the hero, tab, collection, sample DETAILS rows, new-project form (no beds / baths / sq ft / price
+off real estate), photo-studio one-tap edits ("Make the lawn green" / "Add furniture" only on real estate),
+own-project MANAGE ("Mark as archived", no Zillow / MLS row), Leads, Business card, Settings ("Business card"
+brand kit, the customer noun in the footer), the plan cards' taglines and the business-type preview all read
+the industry's words. 765 checks passed. The 142 "CHECK FAIL" lines break down as follows:
+
+| Class | Count | What it was | Verdict |
+|---|---|---|---|
+| `no real-estate-only vocabulary … : "home"` on every screen | 45 | One element whose label is the word `home` — present under sheets and pushed screens alike (the tab bar's Home tab, reported lower-case by the AX tree, is the only candidate). | Harness: the allowed-label compare is now case-insensitive and every hit names its element type + identifier, so the next run settles it. |
+| Collection tab (`03-collection`): first-tour card, sample row, subtitle, samples caption, search prompt | 30 | Every `03-collection` shot is the **Home** tab — a tab tap while a screen is pushed pops to root instead of switching. The same checks ran against Home. `04-sample-detail` then opened the right sample on the right tab. | Harness: `openCollectionTab` now confirms `isSelected` + the "My …" title and re-taps. iOS 26 keeps the search field collapsed under the title, so "no search field" stays a note, not a failure. |
+| Toolbox tiles off real estate ("Tag areas", "Floor plan", "Aerial intro", "Business card") | 20 | The toolbox is a `LazyVGrid`; a non-real-estate sample detail is longer (DETAILS), so rows 2–3 were below the fold and not in the hierarchy. Real estate (shorter page) found all four. Code is type-independent (`FlythroughDetailView.toolboxSection`). | Harness: `checkTile` scrolls each tile into view first. |
+| Home profile tile "Business card" / "Agent card", reel card copy, card-editor placeholder, "Square feet" / "Asking price", "AI processing" row | 27 | Below the fold in lazy containers, or `TextField` placeholders (not labels). All six types failed identically, real estate included — no industry leak. Every string exists on screen in the PNGs (`19-settings` shows "AI processing · Allowed"). | Harness only. |
+| **`no beds/baths line on a venue: found "5 bd · 6 ba · 6,200 sqft"`** and the `$4,250,000` chip on `04`–`07` | 5 + | **Real.** A non-real-estate sample detail played the hosted estate demo (`?embed=1`), whose chip is the demo home's price, beds and address — a gym's first sample tour presented as a $4.25M house. | **Fixed (build 4):** with `player/demo.mp4` in the build (every archive from the Mac — the file is git-ignored, so agent F's container never saw it), the bundled type-adapted player is used on Home's card and on every non-real-estate sample: the sample's own name and tagline on the chip, its area tags as chapters, its identity on the card. A build without the clip falls back to the hosted demo with `&space=<type>`, which the Worker now renders as "Sample tour" (no price / beds / brokerage; `tour-host/src/demo.ts`, `index.ts`, route-tested). Real estate is unchanged. |
+| Real-estate control: `04`–`07` sample shots missing | — | `openFirstSample` needs the collection tab; the tab-switch fault above hit real estate on both taps. The real-estate sample detail is covered by `ReviewerWalk` / `StoreShots`. | Harness (same fix). |
+
+Nothing else leaked across an industry line on any of the 152 screens.
