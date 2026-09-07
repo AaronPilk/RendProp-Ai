@@ -88,6 +88,8 @@ const FORBIDDEN_TOKENS = [
   "wsmlending.com",
   "tractrealestate.com",
   "google.com/maps",
+  "apps.apple.com",     // the app CTA (4,000 sq ft field test)
+  "apple-itunes-app",   // …and its smart banner
   "challenges.cloudflare.com",
   "turnstile",
   "leadform",
@@ -344,6 +346,9 @@ async function main() {
     ["form input", "<input"],
     ["CTA label", S.ctaLabel],
     ["Rendprop watermark", "Made with <b>Rendprop</b>"],
+    ["App Store smart banner", '<meta name="apple-itunes-app" content="app-id=6808982413">'],
+    ["app CTA section", 'id="getapp"'],
+    ["App Store link", "https://apps.apple.com/us/app/id6808982413"],
     ["canonical", 'rel="canonical"'],
     ["og:title", 'property="og:title"'],
     ["disclosure section", 'id="disclosure"'],
@@ -471,6 +476,24 @@ async function main() {
       fail(`[${label}] dangling #disclosure anchor: the chip links to a section that is not rendered`);
     }
   }
+
+  // ---- the app CTA is BRANDED-WEB only -----------------------------------
+  // `embed` is the in-app hero card: a "download this app" band inside the app
+  // is nonsense, and Apple reads an install prompt in a webview badly. Both
+  // halves are guarded on `embed || unbranded`, so assert the embed half too —
+  // the /u/ half is covered by FORBIDDEN_TOKENS on every unbranded render.
+  const emBr = player.renderTourPage(realEstateTour(), FN, "anon", "site-key", { embed: true, origin: "https://rendprop.com" });
+  for (const [what, needle] of [
+    ["smart banner", "apple-itunes-app"],
+    ["App Store link", "apps.apple.com"],
+    ["app CTA section", 'id="getapp"'],
+  ]) mustNotContain(emBr, "embed /f/", what, needle);
+  // …and an owner who wants it gone can switch it off.
+  const noApp = realEstateTour();
+  noApp.listing.details.show_app_cta = false;
+  const noAppBr = player.renderTourPage(noApp, FN, "anon", "site-key", { origin: "https://rendprop.com" });
+  mustNotContain(noAppBr, "app-cta off /f/", "app CTA section", 'id="getapp"');
+  mustContain(noAppBr, "app-cta off /f/", "smart banner still there", "apple-itunes-app");
 
   // ---- embed mode on /u/ (in-app hero card) is still clean ----------------
   const emUn = player.renderTourPage(realEstateTour(), FN, "anon", "site-key", { unbranded: true, embed: true });
@@ -640,6 +663,8 @@ async function main() {
     ["a social profile", '<a href="https://instagram.com/agent">Instagram</a>'],
     ["an og: tag", '<meta property="og:url" content="x">'],
     ["a canonical", '<link rel="canonical" href="x">'],
+    ["an App Store link", '<a href="https://apps.apple.com/us/app/id6808982413">Get the app</a>'],
+    ["an App Store smart banner", '<meta name="apple-itunes-app" content="app-id=6808982413">'],
   ]) {
     checks++;
     if (!player.unbrandedViolations(sample).length) fail(`[gate] unbrandedViolations() failed to catch ${what}: ${sample}`);

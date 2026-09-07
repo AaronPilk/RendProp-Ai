@@ -80,7 +80,8 @@ enum FileStore {
 
     /// Remove every file a listing produced: its recording/import + gyro sidecar,
     /// its rendered tour(s), `Photos/<id>`, `FloorPlans/<id>*`, `Aerials/<id>-*`,
-    /// `reels/<id>-*`, legacy root-level `enhanced-<id>*` / `aerial-<id>*`, the
+    /// `reels/<id>-*` (including the `<id>-parked` folder of paid-for reel clips),
+    /// `Voiceovers/<id>-*`, legacy root-level `enhanced-<id>*` / `aerial-<id>*`, the
     /// standard render `Recordings/tour-<asset8>.mp4`, cached poster, and every
     /// `preview-*.html` beside those videos. All best-effort; never throws.
     static func deleteListingFiles(listingID id: UUID,
@@ -106,6 +107,14 @@ enum FileStore {
         removeFiles(in: documents.appendingPathComponent("FloorPlans", isDirectory: true), withPrefix: idString)
         removeFiles(in: documents.appendingPathComponent("Aerials", isDirectory: true), withPrefix: "\(idString)-")
         removeFiles(in: documents.appendingPathComponent("reels", isDirectory: true), withPrefix: "\(idString)-")
+        // Voiceovers were the one writer this sweep never knew about (found in
+        // the 4,000 sq ft field test). A reel's recorded take or its TTS audio is
+        // filed at Documents/Voiceovers/<listingID>-<stamp>.m4a|mp3 by
+        // `Voiceover.persistAudio`, so deleting a listing left the owner's own
+        // recorded voice on the phone with nothing left pointing at it — invisible,
+        // unplayable and permanent. `removeFiles` also removes DIRECTORIES whose
+        // name matches, which is what sweeps `reels/<id>-parked/` above.
+        removeFiles(in: documents.appendingPathComponent("Voiceovers", isDirectory: true), withPrefix: "\(idString)-")
         removeFiles(in: recordingsDir, withPrefix: "enhanced-\(idString)")
         removeFiles(in: recordingsDir, withPrefix: "preview-enhanced-\(idString)")
         // Legacy locations (files written by earlier builds at the Documents root).
@@ -115,8 +124,9 @@ enum FileStore {
         removeFiles(in: documents, withPrefix: "preview-aerial-\(idString)")
     }
 
-    /// Delete every regular file in `dir` whose name starts with `prefix`
-    /// (case-insensitive). Missing directory → no-op.
+    /// Delete every item in `dir` whose name starts with `prefix`
+    /// (case-insensitive) — files AND directories, since `removeItem` handles
+    /// both (that is what sweeps `reels/<id>-parked/`). Missing directory → no-op.
     static func removeFiles(in dir: URL, withPrefix prefix: String) {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else { return }

@@ -52,6 +52,20 @@ struct FlythroughDetailView: View {
     @State private var auditExport: AuditExport?
     @State private var complianceNote: String?
     @State private var isSavingOriginals = false
+
+    // MARK: Files (the 4,000 sq ft field test)
+    /// Every file this listing has produced, read off disk on appear. NOT computed
+    /// inside `body`: a directory scan per re-render is exactly what
+    /// `PhotoStudioView.loadExisting()` avoids by loading into state once.
+    @State private var mediaItems: [ListingMediaItem] = []
+    /// The file being viewed. ONE binding for every kind — `ListingFileViewer`
+    /// switches internally — so `body` grows a single presentation modifier.
+    @State private var openedFile: ListingMediaItem?
+    /// Result of a Save-to-Photos from the files list (success or the reason it
+    /// failed), shown under the section rather than in an alert.
+    @State private var filesNote: String?
+    @State private var isSavingFile = false
+
     /// Retained for the life of the screen — a temporary CLGeocoder is released
     /// before its callback fires (F-A-26).
     @State private var geocoder = CLGeocoder()
@@ -220,6 +234,7 @@ struct FlythroughDetailView: View {
                 }
                 complianceSection
                 toolboxSection
+                filesSection
                 if !currentListing.isSample {
                     manageSection
                 }
@@ -242,6 +257,13 @@ struct FlythroughDetailView: View {
                 zillowSeeded = true
             }
             geocodeIfNeeded()
+            // Re-read on every appearance: coming back from AI Photo Studio, Reel
+            // Studio or the floor-plan scanner is a push/pop, so this is where a
+            // file made in one of them first becomes visible here.
+            loadFiles()
+        }
+        .fullScreenCover(item: $openedFile) { item in
+            ListingFileViewer(item: item)
         }
         .task { await loadCompliance() }
         .onChange(of: spaceTypeRaw) { _ in
@@ -255,7 +277,7 @@ struct FlythroughDetailView: View {
                                suggest: roomTagSuggestSource)
             }
         }
-        .sheet(isPresented: $showAerialIntro) {
+        .sheet(isPresented: $showAerialIntro, onDismiss: { loadFiles() }) {
             AerialIntroSheet(listing: currentListing)
                 .environmentObject(model)
         }
@@ -661,6 +683,174 @@ struct FlythroughDetailView: View {
                 .buttonStyle(ScalePressStyle())
             }
         }
+    }
+
+    // MARK: - Files (the 4,000 sq ft field test)
+
+    /// Everything this listing has made, on the listing screen, in one place.
+    ///
+    /// THE DEFECT, in the owner's words after the 4,000 sq ft field test: "I don't
+    /// have any of the photos or videos I made saved, I can't see them after I use
+    /// the feature. Like all those features and photos should be saved in the house
+    /// files. They all cost credits, I can't be losing them."
+    ///
+    /// Every one of these files ALREADY survived relaunch. Not one of them was
+    /// reachable from here. A finished reel sat four navigation levels deep inside
+    /// Reel Studio, behind a sign-in gate, and even there only the newest one was
+    /// ever shown. The aerial was attached to the listing and restored correctly
+    /// with nothing on this screen that read as "your video is in here". The photo
+    /// studio's own grid is the one thing that worked, and this section copies it.
+    ///
+    /// NOT sign-in gated, deliberately: these are files on the agent's own phone
+    /// that he has already paid for, and an expired session is no reason to hide
+    /// them. Samples are excluded — a sample's files are the bundled demo's, not
+    /// his (`loadFiles`).
+    @ViewBuilder private var filesSection: some View {
+        if !mediaItems.isEmpty {
+            VStack(alignment: .leading, spacing: 12) {
+                filesHeader
+                Text("Everything you've made for this \(space.spaceNoun), saved on this phone. Tap to open it. Press and hold to save it to Photos or share it.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(fileRows) { item in fileRow(item) }
+                filePhotoGrid
+                if let filesNote {
+                    Text(filesNote)
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    private var filesHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("FILES").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Spacer(minLength: 8)
+            Text("\(mediaItems.count) file\(mediaItems.count == 1 ? "" : "s")")
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Theme.inkDim)
+        }
+    }
+
+    /// The tour, the reels, the aerial, the motion clips and the floor plan — one
+    /// row each, the shape the photo studio's MOTION CLIPS card already uses.
+    private var fileRows: [ListingMediaItem] { mediaItems.filter { $0.kind != .photo } }
+
+    /// The photos, in the same two-up grid the photo studio shows them in.
+    private var filePhotos: [ListingMediaItem] { mediaItems.filter { $0.kind == .photo } }
+
+    @ViewBuilder private var filePhotoGrid: some View {
+        if !filePhotos.isEmpty {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                ForEach(filePhotos) { item in filePhotoCell(item) }
+            }
+        }
+    }
+
+    private func fileRow(_ item: ListingMediaItem) -> some View {
+        Button { openFile(item) } label: {
+            HStack(spacing: 12) {
+                MediaThumb(item: item)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(item.title)
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    Text("\(item.blurb) · \(item.dateLabel)")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .lineLimit(1).minimumScaleFactor(0.85)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+            }
+            .padding(10)
+            .background(Theme.fillSubtle,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityLabel(Text("\(item.title). \(item.dateLabel). Opens to play, save or share."))
+        .contextMenu { fileMenu(item) }
+    }
+
+    private func filePhotoCell(_ item: ListingMediaItem) -> some View {
+        Button { openFile(item) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                DetailPhotoThumb(url: item.url, height: 110)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.border))
+                Text(item.dateLabel)
+                    .font(.caption2).foregroundStyle(Theme.inkDim)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+        }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityLabel(Text("Photo. \(item.dateLabel). Opens before and after."))
+        .contextMenu { fileMenu(item) }
+    }
+
+    @ViewBuilder private func fileMenu(_ item: ListingMediaItem) -> some View {
+        // A floor-plan scan is a USDZ. A 3D model is not a Photos asset, so the
+        // only honest action for one is Share.
+        if item.kind != .floorPlan {
+            Button { saveFileToPhotos(item) } label: {
+                Label("Save to Photos", systemImage: "square.and.arrow.down")
+            }
+        }
+        ShareLink(item: item.url) {
+            Label("Share", systemImage: "square.and.arrow.up")
+        }
+    }
+
+    private func openFile(_ item: ListingMediaItem) {
+        Haptics.selection()
+        openedFile = item
+    }
+
+    /// Copy one file into the user's Photos library. Videos and photo FILES take
+    /// different `PhotosLibrarySaver` calls — `saveImageFile` writes the exact
+    /// bytes rather than re-encoding, which matters when the "photo" is a
+    /// compliance original a broker may ask for (W2-C2).
+    private func saveFileToPhotos(_ item: ListingMediaItem) {
+        guard !isSavingFile else { return }
+        isSavingFile = true
+        filesNote = nil
+        let url = item.url
+        let isVideo = item.isVideo
+        let what = item.title
+        Task {
+            do {
+                if isVideo {
+                    try await PhotosLibrarySaver.saveVideo(at: url)
+                } else {
+                    try await PhotosLibrarySaver.saveImageFile(at: url)
+                }
+                await MainActor.run {
+                    isSavingFile = false
+                    filesNote = "\(what) saved to Photos."
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingFile = false
+                    filesNote = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// Read the listing's files off disk. Samples are skipped: a sample's "tour"
+    /// is the bundled demo and its studios are disabled (decision A7), so listing
+    /// files for one would be a promise about media that is not the agent's.
+    private func loadFiles() {
+        guard !currentListing.isSample else {
+            mediaItems = []
+            return
+        }
+        mediaItems = ListingMediaItem.loadAll(listing: currentListing, tourURL: tour?.url)
     }
 
     // MARK: - Compliance (W2-C2)
@@ -1860,6 +2050,393 @@ private enum QRCodeMaker {
     }
 }
 
+// MARK: - Listing files (one item type for everything a listing produced)
+
+/// One thing a listing has made, whatever kind of thing it is, so the listing
+/// screen's FILES section can show reels, the aerial intro, AI photos, motion
+/// clips, the floor plan and the rendered tour in one list.
+///
+/// Deliberately thin — identity, a file URL and a date. Every list it is built
+/// from already exists (`ReelStudioView.reelFiles`, `EnhancedPhoto.loadAll`,
+/// `PhotoStudioView.SavedClip.loadAll`, `Listing.aerialURL`, `AppModel.tours`)
+/// and this type only UNIFIES them for display; it is not a second source of
+/// truth about what is on disk.
+struct ListingMediaItem: Identifiable, Hashable {
+    enum Kind: String, Hashable {
+        case tour, reel, aerial, motionClip, photo, floorPlan
+    }
+
+    /// Unique within one listing's list — prefixed by kind so a reel file and a
+    /// photo id can never collide inside a `ForEach`.
+    let id: String
+    let kind: Kind
+    let url: URL
+    /// The untouched "before" beside an AI-edited photo, when there is a separate
+    /// one. Nil for every other kind, and nil for a photo that is its own before.
+    let originalURL: URL?
+    let createdAt: Date
+
+    /// True when opening this plays something rather than showing it.
+    var isVideo: Bool {
+        switch kind {
+        case .tour, .reel, .aerial, .motionClip: return true
+        case .photo, .floorPlan:                 return false
+        }
+    }
+
+    var title: String {
+        switch kind {
+        case .tour:       return "Your tour"
+        case .reel:       return "Reel"
+        case .aerial:     return "Aerial intro"
+        case .motionClip: return "Motion clip"
+        case .photo:      return "Photo"
+        case .floorPlan:  return "Floor plan"
+        }
+    }
+
+    /// One plain line saying what this file IS — the agent should not have to
+    /// remember which studio made which file.
+    var blurb: String {
+        switch kind {
+        case .tour:       return "Your rendered flythrough"
+        case .reel:       return "Video for Reels, TikTok or YouTube"
+        case .aerial:     return "AI opening shot"
+        case .motionClip: return "A photo turned into video"
+        case .photo:      return "From AI Photo Studio"
+        case .floorPlan:  return "3D scan"
+        }
+    }
+
+    var icon: String {
+        switch kind {
+        case .tour:       return "play.rectangle.fill"
+        case .reel:       return "film.stack"
+        case .aerial:     return "airplane.departure"
+        case .motionClip: return "play.rectangle.on.rectangle"
+        case .photo:      return "photo"
+        case .floorPlan:  return "cube.transparent"
+        }
+    }
+
+    /// The feature's signature gradient — the same one the tool wears in the
+    /// TOOLBOX grid and on Home, so a file is recognisably from that tool.
+    ///
+    /// A plain computed property on a plain struct: `RPGradient` is not isolated,
+    /// and neither is this, so a non-isolated thumbnail view can read it.
+    var gradient: LinearGradient {
+        switch kind {
+        case .tour, .reel, .motionClip: return RPGradient.reel
+        case .aerial:                   return RPGradient.aerial
+        case .photo:                    return RPGradient.photo
+        case .floorPlan:                return RPGradient.plan
+        }
+    }
+
+    /// "Made 4 Sep at 2:15 PM", or a neutral line when the filesystem has no
+    /// creation date — same wording as `ReelStudioView.reelDateLabel`.
+    var dateLabel: String {
+        guard createdAt != .distantPast else { return "Saved on this phone" }
+        return "Made \(createdAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+}
+
+extension ListingMediaItem {
+    /// Everything this listing has on disk, newest first.
+    ///
+    /// `@MainActor`, not `nonisolated`: it calls `PhotoStudioView.SavedClip.loadAll`,
+    /// a static on a type nested inside a `View` (and a `View` is `@MainActor`).
+    /// The Mac build has already caught one call of exactly that shape from a
+    /// non-isolated context (`GearStore.normalizedASIN`), and the cost here is a
+    /// directory scan of a handful of files — the same scan `PhotoStudioView`'s
+    /// own `loadExisting()` does on the main actor when the studio opens.
+    @MainActor
+    static func loadAll(listing: Listing, tourURL: URL?) -> [ListingMediaItem] {
+        let fm = FileManager.default
+        func created(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+        }
+        var items: [ListingMediaItem] = []
+
+        if let tourURL, fm.fileExists(atPath: tourURL.path) {
+            items.append(ListingMediaItem(id: "tour", kind: .tour, url: tourURL,
+                                          originalURL: nil, createdAt: created(tourURL)))
+        }
+        // EVERY reel, not just the newest — the old "YOUR LAST REEL" card showed
+        // one, four screens deep, and pruning quietly ate the rest.
+        for url in ReelStudioView.reelFiles(for: listing.id) {
+            items.append(ListingMediaItem(id: "reel-\(url.lastPathComponent)", kind: .reel,
+                                          url: url, originalURL: nil, createdAt: created(url)))
+        }
+        // The aerial is attached to the listing and carries its own generated-at
+        // date, which is truer than the file's when a restore rewrote the file.
+        if let aerial = listing.aerialURL {
+            items.append(ListingMediaItem(id: "aerial-\(aerial.lastPathComponent)", kind: .aerial,
+                                          url: aerial, originalURL: nil,
+                                          createdAt: listing.aerialGeneratedAt ?? created(aerial)))
+        }
+        for clip in PhotoStudioView.SavedClip.loadAll(listingID: listing.id) {
+            items.append(ListingMediaItem(id: "clip-\(clip.id)", kind: .motionClip, url: clip.url,
+                                          originalURL: nil, createdAt: clip.createdAt))
+        }
+        for photo in EnhancedPhoto.loadAll(listingID: listing.id) {
+            let separateOriginal = photo.originalURL.standardizedFileURL != photo.enhancedURL.standardizedFileURL
+            items.append(ListingMediaItem(id: "photo-\(photo.id)", kind: .photo,
+                                          url: photo.enhancedURL,
+                                          originalURL: separateOriginal ? photo.originalURL : nil,
+                                          createdAt: created(photo.enhancedURL)))
+        }
+        let plan = FileStore.documents
+            .appendingPathComponent("FloorPlans", isDirectory: true)
+            .appendingPathComponent("\(listing.id.uuidString).usdz")
+        if fm.fileExists(atPath: plan.path) {
+            items.append(ListingMediaItem(id: "plan", kind: .floorPlan, url: plan,
+                                          originalURL: nil, createdAt: created(plan)))
+        }
+
+        return items.sorted { a, b in
+            a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
+        }
+    }
+}
+
+/// First-frame posters for the FILES rows, memoized in memory. Same
+/// `AVAssetImageGenerator` recipe `PosterMaker` uses for the hosted page, at row
+/// size. File scope and un-isolated on purpose: it is awaited from a `.task` and
+/// must be free to do its work off the main actor.
+private enum VideoPosters {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 120
+        c.totalCostLimit = 24 * 1024 * 1024
+        return c
+    }()
+
+    private static func key(_ url: URL, maxPixel: CGFloat) -> NSString {
+        "\(url.path)|\(Int(maxPixel))" as NSString
+    }
+
+    static func cached(_ url: URL, maxPixel: CGFloat) -> UIImage? {
+        cache.object(forKey: key(url, maxPixel: maxPixel))
+    }
+
+    /// A frame a quarter-second in, scaled to `maxPixel`. Nil when the file
+    /// cannot be read — the caller then keeps the kind's gradient tile, which is
+    /// an honest thumbnail for a video that will not open.
+    static func poster(for url: URL, maxPixel: CGFloat) async -> UIImage? {
+        if let hit = cached(url, maxPixel: maxPixel) { return hit }
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxPixel, height: maxPixel)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+        guard let result = try? await generator.image(at: CMTime(seconds: 0.25, preferredTimescale: 600))
+        else { return nil }
+        let image = UIImage(cgImage: result.image)
+        cache.setObject(image, forKey: key(url, maxPixel: maxPixel),
+                        cost: Int(image.size.width * image.size.height * 4))
+        return image
+    }
+}
+
+/// The thumbnail for one FILES row: the video's real first frame, or the photo
+/// itself, with the kind's gradient tile underneath until (or unless) that loads.
+/// Modelled on `DetailPhotoThumb` — nothing decodes inside `body`.
+private struct MediaThumb: View {
+    let item: ListingMediaItem
+    var side: CGFloat = 44
+    var corner: CGFloat = 10
+    @State private var image: UIImage?
+
+    var body: some View {
+        // Same construction as `DetailPhotoThumb` (a fixed-size clear base with
+        // the picture as an OVERLAY, so a `scaledToFill` image cannot grow the
+        // row) over the same gradient tile `clipsCard` uses for its icon.
+        Color.clear
+            .frame(width: side, height: side)
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Image(systemName: item.icon)
+                        .font(.system(size: side * 0.36, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(Color.white)
+                }
+            }
+            .background(item.gradient,
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                if item.isVideo, image != nil {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: side * 0.3))
+                        .foregroundStyle(Color.white)
+                        .shadow(color: Color.black.opacity(0.4), radius: 2)
+                        .padding(2)
+                }
+            }
+            .task(id: item.url) { await load() }
+    }
+
+    private func load() async {
+        if item.isVideo {
+            image = await VideoPosters.poster(for: item.url, maxPixel: side * 3)
+        } else if item.kind == .photo {
+            if let hit = ImageThumbnails.cached(item.url, maxPixel: 400) {
+                image = hit
+            } else {
+                image = await ImageThumbnails.load(item.url, maxPixel: 400)
+            }
+        }
+    }
+}
+
+/// Play, save and share one video from the listing's FILES section — the same
+/// three things Reel Studio's finished-reel screen offers, opened straight off
+/// the listing. In the 4,000 sq ft field test there was no way to reach a
+/// finished reel or aerial from this screen at all.
+private struct ListingFilePreview: View {
+    let item: ListingMediaItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var saved = false
+    @State private var isSaving = false
+    @State private var saveError: String?
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    if let player {
+                        VideoPlayer(player: player)
+                            .frame(height: 420)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                            .onAppear { player.play() }
+                    }
+                    Text("\(item.blurb) · \(item.dateLabel)")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { save() } label: {
+                        Label(saved ? "Saved to Photos" : "Save to Photos",
+                              systemImage: saved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 14)
+                            .background(Theme.accent).foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(saved || isSaving)
+                    ShareLink(item: item.url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 13)
+                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    if let saveError {
+                        Text(saveError)
+                            .font(.rpCaption).foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // An aerial is synthetic footage and says so EVERYWHERE it is
+                    // shown, this screen included (W2-C4). The server's own
+                    // sentence lives with the clip's meta; this is the same
+                    // fallback `AerialIntroSheet` prints when it has none.
+                    if item.kind == .aerial {
+                        Label(AIVideoJob.aerialFallbackDisclosure,
+                              systemImage: "exclamationmark.shield.fill")
+                            .font(.rpCaption.weight(.semibold))
+                            .foregroundStyle(Theme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Theme.fillSubtle,
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .navigationTitle(item.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        player?.pause()
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear { if player == nil { player = AVPlayer(url: item.url) } }
+        .onDisappear { player?.pause() }
+    }
+
+    private func save() {
+        guard !isSaving else { return }
+        isSaving = true
+        saveError = nil
+        let url = item.url
+        Task {
+            do {
+                try await PhotosLibrarySaver.saveVideo(at: url)
+                await MainActor.run {
+                    isSaving = false
+                    saved = true
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    saveError = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+/// One full-screen cover for every kind of file, so the listing screen grows a
+/// single presentation modifier rather than three (this file has hit the
+/// type-checker's expression budget before, and `body` is already long).
+/// Each branch is a viewer that already exists and already works.
+private struct ListingFileViewer: View {
+    let item: ListingMediaItem
+
+    var body: some View {
+        switch item.kind {
+        case .photo:
+            // The photo studio's own before/after view, unchanged. A photo with no
+            // separate "before" on disk is its own before, exactly as
+            // `EnhancedPhoto.loadAll` records it.
+            PhotoCompareView(photo: EnhancedPhoto(id: item.id,
+                                                  originalURL: item.originalURL ?? item.url,
+                                                  enhancedURL: item.url))
+        case .floorPlan:
+            // The same QuickLook presentation FloorPlanView uses for the USDZ.
+            NavigationStack {
+                USDZQuickLook(url: item.url)
+                    .ignoresSafeArea()
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { FileViewerDoneButton() }
+                    }
+            }
+        default:
+            ListingFilePreview(item: item)
+        }
+    }
+}
+
+/// QuickLook has no Done button of its own inside a cover; this is the one
+/// FloorPlanView puts there, factored out so the switch above stays short.
+private struct FileViewerDoneButton: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View { Button("Done") { dismiss() } }
+}
+
 // MARK: - Photo studio (phone photos → pro listing images)
 // Deterministic, on-device, zero-cost enhancement (shadow lift, vibrance,
 // contrast, sharpen) plus AI edits through `/ai-photo`. Files live per-listing
@@ -1910,15 +2487,23 @@ struct PhotoStudioView: View {
     enum Intent { case photos, reel }
 
     /// One place for the words on every edit button, so the empty-state chip,
-    /// the wand menu and the long-press menu can never drift apart. One verb
-    /// each, no jargon. The COMPLIANCE wording is separate and unchanged —
-    /// `provenanceLabel` still writes "Declutter" / "Virtual staging" to the
-    /// disclosure, which is the language a broker's audit log needs.
+    /// the wand menu and the long-press menu can never drift apart. Plain words,
+    /// no jargon — EXCEPT where the plain word would hide the feature's actual
+    /// name, which is what happened to Declutter (below). The COMPLIANCE wording
+    /// is separate and unchanged — `provenanceLabel` still writes "Declutter" /
+    /// "Virtual staging" to the disclosure, which is the language a broker's
+    /// audit log needs.
     private enum EditWords {
         static let twilight  = "Make it twilight"
         static let sky       = "Make the sky blue"
         static let lawn      = "Make the lawn green"
-        static let declutter = "Tidy the room"
+        /// "Declutter" is the FEATURE'S NAME and has to be visible. Commit 8ee0c6c
+        /// replaced the word outright with "Tidy the room"; in the 4,000 sq ft
+        /// field test the owner searched the UI for "Declutter", could not find it
+        /// anywhere, and reported the feature as removed. The plain-words gloss
+        /// still exists — as a subtitle under the word, never instead of it.
+        static let declutter = "Declutter"
+        static let declutterGloss = "Tidies the room"
         static let animate   = "Turn it into video"
         static let custom    = "Ask for anything"
         static let suggest   = "Suggest edits for this photo"
@@ -1967,6 +2552,15 @@ struct PhotoStudioView: View {
     private func isMain(_ p: EnhancedPhoto) -> Bool {
         mainRelPath == FileStore.relativePath(for: p.enhancedURL)
     }
+
+    /// This listing's finished aerial clip, if it has one — read LIVE from the
+    /// model, because `listing` is a value snapshot taken when this screen was
+    /// pushed and the aerial may have been generated since. `Listing.aerialURL`
+    /// already returns nil when the file is gone.
+    private var aerialClipURLs: [URL] {
+        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        return live.aerialURL.map { [$0] } ?? []
+    }
     private func setMain(_ p: EnhancedPhoto) {
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
@@ -1996,6 +2590,10 @@ struct PhotoStudioView: View {
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
     @State private var showSignIn = false                // AI edits run on the user's account
+    /// The edit an EMPTY-STATE CHIP asked for while there were no photos yet. The
+    /// chips used to be decoration; now one picks a photo and this remembers what
+    /// to do with it the moment the import lands. Cleared on a cancelled picker.
+    @State private var pendingShowcaseEdit: String?
     /// The disclosure sentence the server recorded for each AI edit made this
     /// session, keyed by photo id — shown verbatim in the before/after view
     /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
@@ -2068,11 +2666,14 @@ struct PhotoStudioView: View {
                     }
                 }
 
-                // The reel — named, explained and ALWAYS on screen, from zero
-                // photos. It used to appear only after two photos existed, so
-                // the voiceover behind it was invisible to anyone standing here.
-                reelCard
-
+                // AI PHOTO STUDIO LEADS WITH PHOTO EDITING. The reel card used to
+                // sit here, at the top, above everything — so opening this screen
+                // with no photos showed a dominant "Make a reel" poster and a row
+                // of inert chips, and the owner's read after the 4,000 sq ft field
+                // test was that the photo editing (declutter in particular) had
+                // been removed and the button just opened photo-to-reel. The reel
+                // card is still ALWAYS on screen and still names the voiceover —
+                // it is simply below the photos now, where it belongs.
                 if photos.isEmpty && !isProcessing {
                     emptyShowcase
                 }
@@ -2111,6 +2712,8 @@ struct PhotoStudioView: View {
                             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                 }
+
+                reelCard
 
                 clipsCard
             }
@@ -2160,7 +2763,14 @@ struct PhotoStudioView: View {
             }
         }
         .fullScreenCover(isPresented: $showReelStudio) {
-            ReelStudioView(listing: listing, photos: photos)
+            // The listing's aerial intro rides along as a ready-made lead clip,
+            // the same way `AerialIntroSheet` passes its own. Without this the
+            // aerial could ONLY open a reel from inside the aerial sheet — and the
+            // path most people take is the listing's "Make a reel" card, which
+            // lands here, so in the 4,000 sq ft field test the aerial silently
+            // could not be used as a reel intro at all.
+            ReelStudioView(listing: listing, photos: photos,
+                           extraClipURLs: aerialClipURLs)
                 .environmentObject(model)
         }
     }
@@ -2801,37 +3411,104 @@ struct PhotoStudioView: View {
                 .multilineTextAlignment(.center)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
                                 GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                showcaseChip("moon.stars.fill", EditWords.twilight)
-                showcaseChip("cloud.sun.fill", EditWords.sky)
+                showcaseChip("moon.stars.fill", EditWords.twilight, "twilight")
+                showcaseChip("cloud.sun.fill", EditWords.sky, "sky")
                 if space == .realEstate {
-                    showcaseChip("leaf.fill", EditWords.lawn)
+                    showcaseChip("leaf.fill", EditWords.lawn, "lawn")
                 }
-                showcaseChip("sparkles.rectangle.stack.fill", EditWords.declutter)
-                showcaseChip("sofa.fill", EditWords.stage(space))
-                showcaseChip("play.rectangle.on.rectangle.fill", EditWords.animate)
+                showcaseChip("sparkles.rectangle.stack.fill", EditWords.declutter, "declutter",
+                             sub: EditWords.declutterGloss)
+                showcaseChip("sofa.fill", EditWords.stage(space), "stage")
+                showcaseChip("play.rectangle.on.rectangle.fill", EditWords.animate, "animate")
                 if space != .realEstate {
-                    showcaseChip("text.bubble.fill", EditWords.custom)
+                    showcaseChip("text.bubble.fill", EditWords.custom, "custom")
                 }
             }
         }
         .padding(.vertical, 22)
     }
 
-    private func showcaseChip(_ icon: String, _ label: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Theme.accent)
-            Text(label)
-                .font(.rpCaption.weight(.semibold))
-                .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Spacer(minLength: 0)
+    /// One TAPPABLE edit in the empty state.
+    ///
+    /// This was a plain `HStack` — a poster of what the AI could do with no way to
+    /// do any of it. In the 4,000 sq ft field test that row of decorations was the
+    /// first thing under a dominant "Make a reel" card, and nothing in it
+    /// responded to a tap, which is how "AI Photo Studio just opens the
+    /// photo-to-reel feature" became the honest description of the screen.
+    ///
+    /// Now it picks a photo and applies that edit to it. `sub` is the plain-words
+    /// gloss under the feature's real name (see `EditWords.declutter`).
+    private func showcaseChip(_ icon: String, _ label: String, _ edit: String,
+                              sub: String? = nil) -> some View {
+        Button { startShowcaseEdit(edit) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    if let sub {
+                        Text(sub)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.inkDim)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .buttonStyle(ScalePressStyle())
+        .disabled(isProcessing)
+        .accessibilityLabel(Text("\(label). Pick a photo and this change is made to it."))
+    }
+
+    /// A chip was tapped with no photos on screen: open the picker and remember
+    /// the edit, so the photo the agent chooses gets it immediately.
+    ///
+    /// EVERY GATE STAYS WHERE IT WAS. Sign-in is checked here, before the picker
+    /// opens, through the same `requireSignIn()` that `aiEdit`, `animate` and
+    /// `openCustomEdit` call — and it is checked AGAIN by whichever of those
+    /// actually runs. The AI-consent gate (`.aiConsentGate()` on this view's body)
+    /// and the quota/paywall path (`AIFailure.isQuota` → `PaywallRouter`) are
+    /// untouched: this adds a way to reach `aiEdit`, not a way around it.
+    private func startShowcaseEdit(_ edit: String) {
+        guard !isProcessing else { return }
+        guard requireSignIn() else { return }
+        pendingShowcaseEdit = edit
+        showLibrary = true
+        Haptics.selection()
+    }
+
+    /// Run the edit a chip asked for, now that a photo exists. Called from
+    /// `ingest` AFTER `isProcessing` is cleared, so `aiEdit`'s one-job-at-a-time
+    /// guard (F-A-22) lets it through.
+    private func runPendingShowcaseEdit() {
+        guard let edit = pendingShowcaseEdit else { return }
+        pendingShowcaseEdit = nil
+        guard let target = photos.first else { return }
+        switch edit {
+        case "animate":
+            animate(target)
+        case "stage":
+            // Staging needs a style first. Presenting a dialog in the same event
+            // that dismissed the photo picker silently drops it, so chain it off
+            // the run loop exactly the way the wand menu already does.
+            stagePhoto = target
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showStageDialog = true }
+        case "custom":
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { openCustomEdit(target) }
+        default:
+            aiEdit(target, edit)
+        }
     }
 
     // MARK: - Files
@@ -2857,7 +3534,13 @@ struct PhotoStudioView: View {
     }
 
     private func ingest(_ images: [UIImage]) {
-        guard !images.isEmpty else { return }
+        // An empty callback means the picker was cancelled (PHPicker still calls
+        // back with no results). Drop any chip's pending edit rather than firing
+        // it at the next photo the agent adds for some other reason.
+        guard !images.isEmpty else {
+            pendingShowcaseEdit = nil
+            return
+        }
         isProcessing = true
         processingText = "Working on your photo…"
         let targetDir = dir
@@ -2884,6 +3567,8 @@ struct PhotoStudioView: View {
                 // First photos added become the card's cover image automatically.
                 if mainRelPath == nil, let first = photos.first { setMain(first) }
                 isProcessing = false
+                // An empty-state chip may have been waiting on this photo.
+                runPendingShowcaseEdit()
             }
         }
     }
@@ -4268,6 +4953,100 @@ struct AerialIntroSheet: View {
     }
 }
 
+// MARK: - Parked reel clips (already generated, already BILLED)
+
+/// How many finished reels a listing keeps on this phone.
+///
+/// Was 3. A reel costs a round of AI clips, and until the listing screen grew its
+/// FILES section a finished reel was reachable only four navigation levels deep
+/// inside Reel Studio, behind a sign-in gate — so the fourth reel quietly deleted
+/// the first one before the agent had ever laid eyes on it. That is the whole
+/// complaint from the 4,000 sq ft field test: "they all cost credits, I can't be
+/// losing them." Ten is more than any single listing produced in that test and is
+/// a season's worth of posts for one home; at ~10–40 MB a reel the worst case is a
+/// few hundred MB for a listing the agent can delete outright, and every one of the
+/// ten is now visible on the listing screen, so nothing is pruned before it has
+/// been surfaced.
+///
+/// FILE SCOPE on purpose: `pruneReels` is called from inside a detached (and
+/// therefore non-isolated) task, and a `static let` on `ReelStudioView` — a
+/// `View`, and so `@MainActor` — would be main-actor isolated at that call site.
+/// Same defect class the Mac build caught in `GearStore.normalizedASIN`.
+private let reelsKeptPerListing = 10
+
+/// Reel clips that were already generated — and already CHARGED — when a reel run
+/// stopped before the stitch. The mp4s are moved out of the run's temp directory
+/// into `Documents/reels/<listingID>-parked/` and recorded under
+/// `reel.clips.<listingID>`, so reopening Reel Studio can finish the reel from work
+/// the agent has already paid for.
+///
+/// THE DEFECT (the 4,000 sq ft field test). Reel Studio's Close button was
+/// unguarded: Close → `dismiss()` → `.onDisappear` → `workTask?.cancel()` → the
+/// build's `catch`, which ran `removeItem(at: tmpDir)` BEFORE it checked for
+/// cancellation and then `return`ed past every piece of error UI. Six clips could
+/// be generated, billed, and silently erased with nothing on screen to say so.
+/// Clips are the expensive half of a reel; the stitch is free and on-device.
+///
+/// Same shape as `PendingAerialJob` — Codable, one UserDefaults key per listing,
+/// `load`/`save`/`clear`, resumed from `onAppear`, guarded Close — with two
+/// deliberate differences. It holds FILES rather than a remote job handle, so it
+/// stores Documents-RELATIVE paths (the container base moves between launches).
+/// And it has NO `maxAge`: a fal job handle really is stale after two hours, but a
+/// finished mp4 the agent paid for never is, and expiring one on a timer would be
+/// this same bug in a slower form. It is cleared when the clips are stitched into a
+/// reel, when the agent explicitly discards them, or when the listing is deleted
+/// (`FileStore.deleteListingFiles` sweeps `reels/<id>-*`, folders included).
+private struct PendingReelClips: Codable {
+    var listingID: UUID
+    var savedAt: Date
+    /// Documents-relative paths, in the order the clips were generated.
+    var relPaths: [String]
+
+    static func key(_ id: UUID) -> String { "reel.clips.\(id.uuidString)" }
+
+    /// `Documents/reels/<listingID>-parked/`. Inside `reels/` deliberately: the
+    /// `<listingID>-` prefix means `FileStore.deleteListingFiles` already sweeps it,
+    /// and `ReelStudioView.reelFiles` already ignores it (that glob keeps only
+    /// `.mp4` FILES, and this is a directory).
+    static func directory(for id: UUID) -> URL {
+        FileStore.documents
+            .appendingPathComponent("reels", isDirectory: true)
+            .appendingPathComponent("\(id.uuidString)-parked", isDirectory: true)
+    }
+
+    /// Absolute URLs of the parked clips that are still really on disk, in order.
+    var clipURLs: [URL] {
+        relPaths
+            .map { FileStore.url(fromRelativePath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// The parked set, or nil when there is nothing to resume. A record whose
+    /// files have gone (Clear local data, a listing delete) clears itself rather
+    /// than offering a resume that would stitch nothing.
+    static func load(for id: UUID) -> PendingReelClips? {
+        guard let data = UserDefaults.standard.data(forKey: key(id)),
+              let parked = try? JSONDecoder().decode(PendingReelClips.self, from: data) else { return nil }
+        guard !parked.clipURLs.isEmpty else {
+            clear(for: id)
+            return nil
+        }
+        return parked
+    }
+
+    func save() {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        UserDefaults.standard.set(data, forKey: Self.key(listingID))
+    }
+
+    /// Forget the record AND delete the parked mp4s. Only ever called once the
+    /// clips are inside a finished reel, or when the agent said to discard them.
+    static func clear(for id: UUID) {
+        UserDefaults.standard.removeObject(forKey: key(id))
+        try? FileManager.default.removeItem(at: directory(for: id))
+    }
+}
+
 // MARK: - Reel Studio (multi-photo → AI motion clips → one stitched social video)
 // Pick 2–8 listing photos; each becomes a 5 s Seedance motion clip via
 // POST /ai-video/reel-clip (sequential submit → poll → download), then the
@@ -4323,6 +5102,14 @@ struct ReelStudioView: View {
     /// be write-only: the file survived in Documents/reels but the studio always
     /// reopened on an empty setup form, so the last one was unreachable.
     @State private var lastReel: URL?
+    /// Clips from an earlier run of THIS listing's reel that were generated and
+    /// billed but never stitched (the 4,000 sq ft field test). Loaded on open,
+    /// exactly like `AerialIntroSheet` resumes a `PendingAerialJob`.
+    @State private var parkedClips: PendingReelClips?
+    /// Close was tapped while a job was running — ask before cancelling it, the
+    /// way the aerial sheet already does.
+    @State private var showCloseConfirm = false
+    @State private var showDiscardParkedConfirm = false
 
     // MARK: Voiceover step state (optional — see docs/VOICEOVER-CONTRACT.md)
     //
@@ -4354,6 +5141,10 @@ struct ReelStudioView: View {
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
     private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 }
+    /// A job is in flight — AI clips are being generated, or the stitch is
+    /// running. Closing now cancels it, so Close asks first (F-A-05 / the
+    /// 4,000 sq ft field test).
+    private var isWorking: Bool { phase == .generating || phase == .stitching }
 
     /// Title + which home this reel is for. iOS 16 has no `navigationSubtitle`,
     /// so the two lines are a principal toolbar item.
@@ -4398,18 +5189,27 @@ struct ReelStudioView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    // UNGUARDED Close was half of the money bug: one tap ran
+                    // dismiss() → onDisappear → workTask?.cancel(), and the
+                    // build's catch deleted every clip already paid for without
+                    // a word on screen. Ask, exactly like AerialIntroSheet.
+                    Button("Close") {
+                        if isWorking { showCloseConfirm = true } else { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .principal) { reelTitleBar }
             }
         }
-        .interactiveDismissDisabled(phase == .generating || phase == .stitching)
+        .interactiveDismissDisabled(isWorking)
         .onAppear {
             if !seededExtras {
                 selectedExtras = extraClipURLs
                 seededExtras = true
             }
             lastReel = Self.newestReel(for: listing.id)
+            // Pick up clips a previous run generated and was charged for but
+            // never stitched — the reel equivalent of resuming a pending aerial.
+            if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
         }
         .onChange(of: phase) { p in
             let wantHold = (p == .generating || p == .stitching)
@@ -4434,6 +5234,23 @@ struct ReelStudioView: View {
             if idleHeld { IdleTimer.release(); idleHeld = false }
         }
         .sheet(isPresented: $showSignIn) { SignInView.forAI("reels") }
+        .confirmationDialog("Still making your reel", isPresented: $showCloseConfirm,
+                            titleVisibility: .visible) {
+            Button("Close anyway") {
+                workTask?.cancel()
+                dismiss()
+            }
+            Button("Keep waiting", role: .cancel) {}
+        } message: {
+            Text("Every clip you've already paid for is kept on this phone. Reopen Reel Studio and finish the reel from them — you won't be charged for the same clips twice.")
+        }
+        .confirmationDialog("Discard these clips?", isPresented: $showDiscardParkedConfirm,
+                            titleVisibility: .visible) {
+            Button("Discard clips", role: .destructive) { discardParkedClips() }
+            Button("Keep them", role: .cancel) {}
+        } message: {
+            Text("These clips were already generated and already charged. Deleting them means making them again costs another round of AI.")
+        }
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
         // the studio.
@@ -4451,6 +5268,12 @@ struct ReelStudioView: View {
     // `setupSection` stays a short list of identifiers and nothing else.
     @ViewBuilder private var setupSection: some View {
         setupHeader
+
+        // Unfinished, ALREADY-PAID-FOR clips come first, and deliberately NOT
+        // behind the sign-in pane: stitching them is on-device AVFoundation work
+        // with no AI call, so an expired session must never stand between the
+        // agent and the reel he has already bought (the 4,000 sq ft field test).
+        parkedClipsCard
 
         if signedIn {
             lastReelCard
@@ -4637,6 +5460,49 @@ struct ReelStudioView: View {
         .padding(.vertical, 6)
     }
 
+    /// Clips from a run that stopped before the stitch — already generated,
+    /// already charged, and now sitting in `reels/<id>-parked/`. This card offers
+    /// the free half of the job (the on-device stitch) instead of making the
+    /// agent buy the same clips a second time.
+    ///
+    /// The wording says the money part out loud. In the 4,000 sq ft field test
+    /// the clips were deleted with no message at all, and the only signal the
+    /// agent had was his credit balance.
+    /// Parked clips that are really still on disk. A record whose files went away
+    /// (Clear local data) must not put a card on screen offering to stitch them.
+    private var parkedClipCount: Int { parkedClips?.clipURLs.count ?? 0 }
+
+    @ViewBuilder private var parkedClipsCard: some View {
+        if parkedClipCount > 0 {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("UNFINISHED REEL").font(.rpKicker).foregroundStyle(Theme.accent)
+                    Spacer(minLength: 8)
+                    Text("\(parkedClipCount) clip\(parkedClipCount == 1 ? "" : "s")")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Text("You already made \(parkedClipCount) AI clip\(parkedClipCount == 1 ? "" : "s") for this \(space.spaceNoun) and they're saved on this phone. Putting them together into a reel happens right here and costs nothing.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { finishParkedReel() } label: {
+                    Label("Finish that reel", systemImage: "film.stack")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Theme.accent).foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(ScalePressStyle())
+                .accessibilityLabel(Text("Finish that reel from the clips you already paid for"))
+                Button("Discard those clips", role: .destructive) {
+                    showDiscardParkedConfirm = true
+                }
+                .font(.rpCaption)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
     /// The reel this listing already has (F-A-23) — playable, shareable and
     /// savable without spending another round of AI clips. Making a new one
     /// keeps working exactly as before; the old file is only pruned once a new
@@ -4748,6 +5614,14 @@ struct ReelStudioView: View {
             Button("Cancel", role: .destructive) { cancelWork() }
                 .font(.rpBody)
                 .padding(.top, 6)
+            // Say the money part out loud. Cancelling used to delete every clip
+            // already generated and charged for, silently (the 4,000 sq ft field
+            // test); now it keeps them and this line promises so before the tap.
+            Text("Cancelling keeps the clips you've already paid for — you can finish the reel from them later.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -5372,9 +6246,22 @@ struct ReelStudioView: View {
     }
 
     private func cancelWork() {
-        workTask?.cancel()
+        let task = workTask
         workTask = nil
+        task?.cancel()
         resetToSetup()
+        // The cancelled task parks its already-billed clips in its own `catch`,
+        // which has not run yet at this instant — so wait for it before reading
+        // them back. Without this the "Unfinished reel" card would be built one
+        // frame too early and show nothing, and the whole point of cancelling
+        // safely is that the agent SEES the clips he paid for (the 4,000 sq ft
+        // field test).
+        guard !listing.isSample else { return }
+        let listingID = listing.id
+        Task {
+            if let task = task { await task.value }
+            parkedClips = PendingReelClips.load(for: listingID)
+        }
     }
 
     private func resetToSetup() {
@@ -5389,6 +6276,9 @@ struct ReelStudioView: View {
         failedClips = 0
         phase = .setup
         lastReel = Self.newestReel(for: listing.id)   // the one just made is now "your last reel"
+        // A run that failed part-way parked its billed clips — surface them again
+        // rather than letting "Try again" charge for the same clips twice.
+        parkedClips = listing.isSample ? nil : PendingReelClips.load(for: listing.id)
     }
 
     /// Open a reel that already exists on disk — same result screen as a fresh
@@ -5429,7 +6319,12 @@ struct ReelStudioView: View {
     }
 
     /// `Documents/reels/<listingID>-<unix>.mp4`, newest first.
-    nonisolated private static func reelFiles(for listingID: UUID) -> [URL] {
+    ///
+    /// `fileprivate`, not `private`: the listing screen's FILES section lists
+    /// EVERY reel through this same glob rather than growing a second, subtly
+    /// different one (`private` on a member is scoped to the type, so
+    /// `FlythroughDetailView` could not see it).
+    nonisolated fileprivate static func reelFiles(for listingID: UUID) -> [URL] {
         let dir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
         let files = (try? FileManager.default.contentsOfDirectory(
             at: dir, includingPropertiesForKeys: [.creationDateKey])) ?? []
@@ -5522,6 +6417,11 @@ struct ReelStudioView: View {
             .appendingPathComponent("reel-\(UUID().uuidString)", isDirectory: true)
         let isSample = listing.isSample
         workTask = Task {
+            // Hoisted OUT of the `do` so the `catch` can still see them. These are
+            // the clips the account has ALREADY BEEN CHARGED FOR; the catch below
+            // used to delete the directory holding them before it had even looked
+            // at why it was running (the 4,000 sq ft field test).
+            var billedClips: [URL] = []
             do {
                 try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
                 // Anchor every generated clip to the listing so the motion is
@@ -5539,6 +6439,7 @@ struct ReelStudioView: View {
                                                            api: api, listingServerID: reelListingServerID,
                                                            into: tmpDir, index: i)
                         clipURLs.append(clip)
+                        billedClips.append(clip)   // paid for the moment it lands
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch let apiError as APIError where apiError.isQuota || apiError.isUnauthorized {
@@ -5583,17 +6484,152 @@ struct ReelStudioView: View {
                 // half-finished prune would still be consistent, but the user's
                 // result must never wait on it.
                 await Task.detached(priority: .utility) {
-                    ReelStudioView.pruneReels(for: listingID, keeping: 3)
+                    ReelStudioView.pruneReels(for: listingID, keeping: reelsKeptPerListing)
                 }.value
             } catch {
-                try? FileManager.default.removeItem(at: tmpDir)
-                if error is CancellationError || Task.isCancelled { return }
+                // KEEP THE PAID WORK — this is the whole fix. Whichever way this
+                // run ended, the clips already generated cost real money and are
+                // the one thing a retry cannot get back for free, so they are
+                // moved somewhere durable BEFORE the temp directory goes.
+                //
+                // Both exits park, not just cancellation: a quota wall or an
+                // expired session on clip 4 of 6 does not make clips 1–3
+                // worthless, and the old code binned those too.
+                Self.parkClips(billedClips, for: listingID, tmpDir: tmpDir)
+                if error is CancellationError || Task.isCancelled {
+                    // Cancelled means the sheet is already gone (Close, a swipe,
+                    // or the Cancel button) — there is no UI left to talk to. The
+                    // next open reads the parked clips back in `onAppear`, the way
+                    // AerialIntroSheet resumes a PendingAerialJob.
+                    return
+                }
                 await MainActor.run {
+                    parkedClips = PendingReelClips.load(for: listingID)
                     phase = .failed
                     failure = AIFailure(error, title: "Couldn't make the reel")
                 }
             }
         }
+    }
+
+    /// Move clips that were already generated — and already CHARGED — out of the
+    /// run's temp directory into `Documents/reels/<id>-parked/`, record them, and
+    /// then (and only then) delete the temp directory.
+    ///
+    /// ADDS to whatever is already parked rather than replacing it: a second
+    /// abandoned run does not make the first run's clips worthless, and both were
+    /// billed. Names carry the run's timestamp so two runs cannot collide.
+    ///
+    /// `nonisolated` and fully synchronous on purpose. It runs inside the `catch`
+    /// of a CANCELLED task, after the view has already been dismissed, so it must
+    /// not need the main actor and must not `await` anything — an `await` in a
+    /// cancelled task is exactly how this work would get lost a second time.
+    nonisolated private static func parkClips(_ clips: [URL], for listingID: UUID, tmpDir: URL) {
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: tmpDir) }
+        guard !clips.isEmpty else { return }
+        let dir = PendingReelClips.directory(for: listingID)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            return   // nowhere to put them; the defer still clears tmp
+        }
+        // Start from what is already parked, dropping any entry whose file has
+        // since gone so the record can't accumulate dead paths.
+        var relPaths = (PendingReelClips.load(for: listingID)?.clipURLs ?? [])
+            .map { FileStore.relativePath(for: $0) }
+        let stamp = Int(Date().timeIntervalSince1970)
+        for (i, clip) in clips.enumerated() {
+            guard fm.fileExists(atPath: clip.path) else { continue }
+            let dest = dir.appendingPathComponent("clip-\(stamp)-\(i).mp4")
+            try? fm.removeItem(at: dest)
+            do {
+                try fm.moveItem(at: clip, to: dest)
+            } catch {
+                // tmp and Documents are the same volume so a move should not
+                // fail — but a copy is the difference between keeping the agent's
+                // money and losing it, so try that before giving up on this clip.
+                do { try fm.copyItem(at: clip, to: dest) } catch { continue }
+            }
+            relPaths.append(FileStore.relativePath(for: dest))
+        }
+        guard !relPaths.isEmpty else { return }
+        PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).save()
+    }
+
+    /// Stitch the parked clips into a reel. NO AI call, no network, no spend —
+    /// the clips were bought on an earlier run; this is the free half of the job
+    /// the old cancel path threw away.
+    ///
+    /// Any aerial/extra clip still switched on leads the reel, exactly as it does
+    /// in `generate()`. Shape, title card and voiceover come from whatever the
+    /// setup screen currently says, because those are free to change and the
+    /// clips are not.
+    private func finishParkedReel() {
+        guard !isWorking else { return }
+        let clips = (selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) })
+            + (parkedClips?.clipURLs ?? [])
+        guard !clips.isEmpty else {
+            PendingReelClips.clear(for: listing.id)
+            parkedClips = nil
+            return
+        }
+        if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
+        let listingID = listing.id
+        let isPortrait = portrait
+        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
+        let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
+        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        failure = nil
+        failedClips = 0
+        phase = .stitching
+        Haptics.selection()
+        workTask = Task {
+            do {
+                let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
+                                            : CGSize(width: 1920, height: 1080)
+                let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+                try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
+                let stamp = Int(Date().timeIntervalSince1970)
+                let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
+                try await Self.stitch(clips: clips, renderSize: renderSize,
+                                      captions: captions, voiceover: voiceover,
+                                      captionStyle: captionStyle, output: outURL)
+                try Task.checkCancellation()
+                await MainActor.run {
+                    // The clips now live inside a finished reel on disk, so the
+                    // parked copy has done its job and can go. This is the ONLY
+                    // automatic delete of paid clips in the whole flow.
+                    PendingReelClips.clear(for: listingID)
+                    parkedClips = nil
+                    reelURL = outURL
+                    player = AVPlayer(url: outURL)
+                    lastReel = outURL
+                    phase = .done
+                    Haptics.success()
+                    Analytics.track("reel_made", ["ok": "true", "clips": String(clips.count),
+                                                  "resumed": "true"])
+                }
+                await Task.detached(priority: .utility) {
+                    ReelStudioView.pruneReels(for: listingID, keeping: reelsKeptPerListing)
+                }.value
+            } catch {
+                // Cancelled or failed, the clips STAY parked — nothing here ever
+                // deletes them, which is the point of the whole card.
+                if error is CancellationError || Task.isCancelled { return }
+                await MainActor.run {
+                    phase = .failed
+                    failure = AIFailure(error, title: "Couldn't finish that reel")
+                }
+            }
+        }
+    }
+
+    /// Delete the parked clips at the agent's explicit request (confirmed first).
+    private func discardParkedClips() {
+        PendingReelClips.clear(for: listing.id)
+        parkedClips = nil
+        Haptics.selection()
     }
 
     /// One photo → 5 s AI motion clip: downscale ≤1280 → jpeg b64 → submit

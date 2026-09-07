@@ -88,27 +88,79 @@
   #room {
     left: 16px; bottom: calc(96px + env(safe-area-inset-bottom));
     opacity: 0; will-change: transform, opacity;
+    max-width: min(58vw, 420px);
   }
   #room .kicker { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
   #room .name { font-size: 30px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.65); }
 
-  /* Chapter rail */
+  /* Chapter rail — every room named, not just the active one.
+     MIRRORS services/edge/tour-host/src/player.ts (PLAYER_CSS + renderTourPage).
+     The canonical engine lives there; this file is the in-app copy. The labels
+     used to be hidden with opacity:0 and revealed only for .active, which left
+     a tagged tour looking like a column of anonymous dots — the 4,000 sq ft
+     field test was people tapping them one at a time to find out where each one
+     went. Each label now gets the same smoked-glass pill as the #staged chip,
+     which is what keeps a white room name readable over a white kitchen.
+     Active is carried by brightness and the accent dot, deliberately NOT by
+     font-weight: the rail is right-anchored, so a bolder active label would
+     re-measure its pill and twitch the column sideways once per chapter.
+     A long name ellipses; #room spells the current one out in full at 30px. */
   #rail {
     right: 10px; top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; gap: 14px; align-items: flex-end;
+    display: flex; flex-direction: column; gap: 12px; align-items: flex-end;
   }
   #rail button {
     appearance: none; border: 0; background: none; cursor: pointer;
-    display: flex; align-items: center; gap: 8px; padding: 4px;
-    color: var(--ink-dim); font-size: 11px; font-family: inherit;
+    display: flex; align-items: center; gap: 8px; padding: 3px 1px;
+    color: var(--ink-dim); font-size: 11px; font-family: inherit; min-width: 0;
   }
   #rail button .dot {
-    width: 7px; height: 7px; border-radius: 50%;
+    width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
     background: rgba(255,255,255,.35); transition: all .25s ease;
   }
-  #rail button .lbl { opacity: 0; transition: opacity .25s ease; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  #rail button .lbl {
+    max-width: min(38vw, 190px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 4px 9px; border-radius: 999px; color: rgba(242,243,245,.74);
+    background: rgba(11,13,16,.42); border: 1px solid rgba(255,255,255,.13);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    text-shadow: 0 1px 6px rgba(0,0,0,.7);
+    transition: color .25s ease, background-color .25s ease, border-color .25s ease;
+  }
   #rail button.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  #rail button.active .lbl { opacity: 1; color: var(--ink); }
+  #rail button.active .lbl { color: var(--ink); background: rgba(11,13,16,.68); border-color: rgba(255,255,255,.32); }
+  /* DENSITY. The rail is centred and absolutely positioned, so a column taller
+     than the stage does not scroll — it is clipped by #stage's overflow. It
+     therefore has to shrink to fit. Tiers are set from CHAPTERS.length when the
+     rail is built (counting siblings needs :has()). Rough budget per row:
+     default <=8 -> ~292px, .dense 9-14 -> ~413px, .packed 15-22 -> ~546px. */
+  #rail.dense { gap: 7px; }
+  #rail.dense button .lbl { font-size: 10.5px; padding: 3px 8px; max-width: min(32vw, 150px); }
+  #rail.packed { gap: 4px; }
+  #rail.packed button .lbl { font-size: 10px; padding: 2px 7px; max-width: min(28vw, 130px); }
+  /* Past ~22 rooms, or on a landscape phone, no amount of shrinking makes the
+     stack readable — back to dots with only the current room named. #room still
+     spells out where you are. */
+  #rail.dots button:not(.active) .lbl { display: none; }
+  @media (max-height: 560px) { #rail { gap: 6px; } #rail button .lbl { font-size: 10px; padding: 2px 7px; } }
+  @media (max-height: 430px) { #rail button:not(.active) .lbl { display: none; } }
+
+  /* "Still loading" pill — shown when the viewer out-scrolls the download.
+     Same smoked-glass vocabulary as #staged; opacity only, no motion. It takes
+     #hint's slot: the hint is dismissed for good on the first scroll and the
+     pill can only appear after one, so they never coexist — and it clears the
+     14px band where #wm and #staged sit. */
+  #bufwait {
+    left: 50%; transform: translateX(-50%);
+    bottom: calc(34px + env(safe-area-inset-bottom));
+    display: none; align-items: center; gap: 7px;
+    font-size: 11px; letter-spacing: .04em; color: rgba(255,255,255,.72);
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(11,13,16,.55);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap;
+  }
+  #bufwait.on { display: flex; opacity: 1; }
+  #bufwait .n { font-variant-numeric: tabular-nums; color: rgba(255,255,255,.92); }
 
   /* Listing chip */
   #listing {
@@ -245,6 +297,8 @@
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
 
+    <div class="chrome" id="bufwait" role="status">Still loading<span aria-hidden="true"> · <span class="n">0%</span></span></div>
+
     <a class="chrome" id="wm" href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>
 
     <div class="chrome" id="staged">✦ Virtually staged</div>
@@ -295,7 +349,16 @@
     { t: 45.5,label: 'Backyard' },
   ];
   const PX_PER_SEC = 240;            // track height scale — more scroll per second = a slower, more controlled drone glide
-  const BUFFER_GATE = 0.96;          // begin scrubbing at ~96% buffered
+  // START GATE — mirrors src/player.ts (the 4,000 sq ft field test).
+  // This was 0.96: nothing moved until 96% of the clip had buffered. On a
+  // bundled file:// preview that is instant, but the hosted page shares this
+  // engine and its master is all-intra 1280/60 at ~14 Mbps — ~1.75 MB per
+  // second of tour, so 96% of a 137 s walkthrough is ~230 MB and minutes of
+  // staring at a percentage. The gate is now a LEAD TIME with the fraction
+  // kept only as a ceiling, so a short clip is not asked for proportionally
+  // more than a long one: needed = min(duration * BUFFER_GATE, LEAD_S).
+  const BUFFER_GATE = 0.15;          // ceiling: never more than 15% of the clip
+  let   LEAD_S = 6;                  // …and never more than 6 s of head buffer
   // MLS compliance: set true when the render used declutter/restage enhancements
   // (server-injected per share page). Shows the "Virtually staged" disclosure chip.
   const VIRTUALLY_STAGED = false;
@@ -320,6 +383,8 @@
   const roomNm  = roomEl.querySelector('.name');
   const railEl  = document.getElementById('rail');
   const hintEl  = document.getElementById('hint');
+  const waitEl  = document.getElementById('bufwait');
+  const waitPct = waitEl ? waitEl.querySelector('.n') : null;
 
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -335,8 +400,16 @@
   if (window.visualViewport) visualViewport.addEventListener('resize', sizeTrack, { passive: true });
 
   /* ================= Chapter rail ================= */
+  // Density tier from the chapter count — a dozen-plus rooms at the roomy
+  // spacing is taller than the stage, and the rail is centred, so it would run
+  // off both ends behind the listing chip and the watermark. Mirrors the
+  // server-side class in renderTourPage(); see the #rail rules above.
+  if (CHAPTERS.length > 22) railEl.classList.add('packed', 'dots');
+  else if (CHAPTERS.length > 14) railEl.classList.add('packed');
+  else if (CHAPTERS.length > 8) railEl.classList.add('dense');
   const railBtns = CHAPTERS.map((c, i) => {
     const b = document.createElement('button');
+    b.title = c.label;   // desktop hover gets the full name when the pill ellipses it
     b.innerHTML = `<span class="lbl">${c.label}</span><span class="dot"></span>`;
     b.addEventListener('click', () => {
       // Clamp: an injected chapter can sit past the video's end (tag near the
@@ -351,6 +424,10 @@
   /* ================= Core scrub loop (Part 27) ================= */
   let curT = 0, lastSet = -1, started = false, interacted = false;
   let longFrames = 0, lastTick = performance.now();
+  // Buffer-aware scrub state: where the scroll last was, when it went still,
+  // how long we have been held at the buffered edge, and the last % painted
+  // into the waiting pill (so the DOM is touched only when the digits change).
+  let lastWant = -1, stillSince = 0, starveSince = 0, bufPct = -1, waitOn = false;
 
   function updateOverlays(p) {
     progEl.style.transform = `scaleX(${p})`;
@@ -383,16 +460,41 @@
 
     const total = Math.max(1, track.offsetHeight - innerHeight); // duration=0 → no NaN/-∞ scroll math
     const p = clamp(-track.getBoundingClientRect().top / total, 0, 1);
-    const target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
-    curT += (target - curT) * LERP;
+    const span = Math.max(0, (duration || video.duration || 0) - 0.05);
+    const want = p * span;
+
+    // Out-scrolling the download. On a bundled file:// preview the whole clip
+    // is buffered and none of this ever fires — it matters when this engine is
+    // pointed at a remote master, which now starts on ~6 s of head buffer.
+    // MOVING: hold the scrub at the buffered edge and say so, rather than
+    // freezing on a frame or firing a byte-range request every frame.
+    // SETTLED (~0.4 s): let the seek through — the master is all-intra, so one
+    // range request paints the exact frame the viewer stopped on.
+    if (lastWant < 0 || Math.abs(want - lastWant) > 0.05) { lastWant = want; stillSince = now; }
+    const settled = (now - stillSince) > 380;
+    let held = false, goal = want;
+    if (!settled) {
+      const ceil = scrubCeiling(want);
+      if (want > ceil) { held = true; goal = ceil; }
+    }
+    curT += (goal - curT) * LERP;
 
     // ~1 frame @60fps — finer updates now that every frame is a keyframe (all-intra).
     // readyState 0 = no metadata yet → seeking is meaningless (and throws on old WebKit).
-    if (video.readyState > 0 &&
+    // (canShow || settled) is the seek throttle: free inside the buffer (the
+    // old path), one request per stop outside it.
+    const canShow = rangeEndAt(curT) >= 0;
+    if (video.readyState > 0 && (canShow || settled) &&
         Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016) {
       try { video.currentTime = curT; lastSet = curT; } catch (_) {}
     }
-    updateOverlays(p);
+
+    if (held || (video.readyState > 0 && !canShow)) { if (!starveSince) starveSince = now; }
+    else starveSince = 0;
+    setWait(starveSince > 0 && (now - starveSince) > 300);
+
+    // Overlays describe what is ON SCREEN: while held, the clamped position.
+    updateOverlays(held && span ? clamp(goal / span, 0, 1) : p);
     meter(p, now);
     requestAnimationFrame(tick);
   }
@@ -416,23 +518,68 @@
     msgEl.appendChild(b);
     msgEl.appendChild(document.createTextNode(detail || ''));
     hintEl.classList.add('gone');
+    setWait(false);
     railEl.style.display = 'none';
     roomEl.style.opacity = 0;
     sizeTrack();                   // one viewport: the end card sits right below
   }
 
   /* ================= Buffer gate + % loader ================= */
+  // Progressive enhancement: Network Information API where it exists
+  // (undefined in WKWebView, which simply keeps the 6 s default).
+  (() => {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return;
+    const et = String(c.effectiveType || '');
+    if (c.saveData === true || et === 'slow-2g' || et === '2g') LEAD_S = Math.min(LEAD_S, 2);
+    else if (et === '3g') LEAD_S = Math.min(LEAD_S, 3.5);
+  })();
   function buffered() {
     try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; }
     catch (_) { return 0; }
   }
+  // End of the buffered range containing t, or -1 when t sits in a hole. The
+  // 0.25 s of slack absorbs the gap between a range's declared start and the
+  // first frame the decoder will actually paint there.
+  function rangeEndAt(t) {
+    try {
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (t >= video.buffered.start(i) - 0.25 && t <= video.buffered.end(i)) return video.buffered.end(i);
+      }
+    } catch (_) {}
+    return -1;
+  }
+  // How far the scrub may travel this frame. Infinity = no reason to hold.
+  function scrubCeiling(want) {
+    if (video.readyState === 0) return Infinity;   // nothing known yet
+    if (rangeEndAt(want) >= 0) return Infinity;    // already downloaded: go
+    const edge = rangeEndAt(curT);
+    if (edge < 0) return Infinity;                 // a committed seek is in flight
+    return Math.max(0, edge - 0.15);               // hold just inside the frontier
+  }
+  function setWait(on) {
+    if (!waitEl) return;
+    if (on !== waitOn) { waitOn = on; waitEl.classList.toggle('on', on); }
+    if (on && waitPct && bufPct >= 0 && waitPct.textContent !== bufPct + '%') waitPct.textContent = bufPct + '%';
+  }
+  // Seconds of head the loader waits for. See the START GATE note above.
+  function startNeedS() {
+    const dur = duration || video.duration || 0;
+    if (!dur || !isFinite(dur)) return LEAD_S;
+    return Math.max(0.5, Math.min(dur * BUFFER_GATE, LEAD_S));
+  }
   function reportBuffer() {
     if (!video.duration || unavailable) return;
-    const f = clamp(buffered() / video.duration, 0, 1);
-    const pc = Math.round(f * 100);
+    const b = buffered();
+    bufPct = Math.round(clamp(b / video.duration, 0, 1) * 100);
+    // The loader's number is progress TOWARDS STARTING, not percent of file:
+    // at a 6 s gate on a 137 s tour, "4%" is true and useless — it would
+    // vanish at 4% and read as a download that gave up.
+    const pc = Math.round(clamp(b / startNeedS(), 0, 1) * 100);
     pctEl.textContent = pc + '%';
     barEl.style.width = pc + '%';
-    if (f >= BUFFER_GATE) begin();
+    if (waitOn && waitPct) waitPct.textContent = bufPct + '%';
+    if (b >= startNeedS()) begin();
   }
   video.addEventListener('progress', reportBuffer);
   video.addEventListener('loadedmetadata', () => { duration = video.duration; sizeTrack(); reportBuffer(); });
@@ -442,7 +589,7 @@
                     VIDEO_MISSING ? 'The sample clip isn’t in this build. Record a walkthrough to see your own tour here.'
                                   : 'This tour’s video couldn’t be loaded. Re-render or re-import the video and try again.');
   });
-  setTimeout(() => { if (!started && !unavailable && buffered() > 5) begin(); }, 6000);    // never strand the viewer
+  setTimeout(() => { if (!started && !unavailable && buffered() > 3) begin(); }, 6000);    // never strand the viewer
   setTimeout(() => {
     // Absolute last resort (parity with the hosted player): if nothing has
     // loaded by now, say so instead of dropping the viewer onto a black stage.
@@ -456,6 +603,7 @@
   function fallbackLoop() {
     if (fellBack) return; fellBack = true;
     loader.classList.add('done'); // defensive: guaranteed even if a future path reaches here pre-begin()
+    setWait(false); // the autoplay loop plays what it has; nothing is being held
     video.loop = true;
     video.play().catch(() => {});
     const loopTick = () => {

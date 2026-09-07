@@ -804,6 +804,9 @@ struct SettingsView: View {
     ///   Photos/<listingID>/     AI photo studio originals + edits              FlythroughDetailView
     ///   FloorPlans/             <id>.usdz, <id>.json, <id>-upload.*            FlythroughDetailView
     ///   reels/                  <id>-<stamp>.mp4                               FlythroughDetailView
+    ///   reels/<id>-parked/      finished, ALREADY-BILLED reel clips kept when
+    ///                           Reel Studio is closed mid-job                  FlythroughDetailView
+    ///   Voiceovers/             <id>-<stamp>.m4a|mp3 reel voiceovers           Voiceover.persistAudio
     ///   Previews/               generated preview-*.html                       PlayerWebView
     ///   agent-headshot*.jpg     brand photo per business type                  AgentCard
     ///   rendprop-state.json     the model snapshot (+ .corrupt-* quarantines)  PersistentStore

@@ -61,6 +61,20 @@ import {
 const HLS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.20/hls.min.js";
 const HLS_SRI = "sha384-V5ruNBgmYcC3SJRUQeNykAAAgde5gOFq/Hu0CZj7bygDP0yRIhkvX8+w0u/7mRvr";
 
+// The iOS app. `/f/<slug>` is the link the owner actually shares with agents,
+// and until the 4,000 sq ft field test it was the ONE page in the estate with
+// no way to get the app — index/features/pricing/compare all carry the smart
+// banner and an App Store button, the tour did not.
+//
+// BOTH of these are branded chrome and BOTH must stay behind `unbranded`:
+// an MLS unbranded virtual-tour field bans "advertising of any kind, including
+// links to additional content or external sites not related to the specific
+// property", and an App Store link is exactly that. `apps.apple.com` and
+// `apple-itunes-app` are in UNBRANDED_FORBIDDEN at the bottom of this file, so
+// a leak fails the CI check before it can ever fail a page closed in prod.
+const APP_STORE_ID = "6808982413";
+const APP_STORE_URL = `https://apps.apple.com/us/app/id${APP_STORE_ID}`;
+
 // ---------------------------------------------------------------------------
 // Listing state helpers (sold / archived, price, counts)
 // ---------------------------------------------------------------------------
@@ -825,6 +839,26 @@ const PLAYER_CSS = `${TOKENS_CSS}
   #progress { position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 20; background: rgba(255,255,255,.10); }
   #progress i { display: block; height: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
 
+  /* ===== "Still loading" pill =====
+     The page now starts on a few seconds of buffer instead of 96% of a 240 MB
+     all-intra master, so it is possible to out-scroll the download. When that
+     happens the scrub is held at the buffered edge (see the engine) and this
+     says so — a frozen frame with no explanation reads as a broken player,
+     which is exactly the complaint we are fixing. Same smoked-glass vocabulary
+     as #staged; opacity only, so it adds no motion under reduced-motion.
+     It takes #hint's slot: the hint is dismissed for good on the first scroll
+     and the pill can only appear after one, so they never coexist — and it
+     clears the 14px band where #wm and #staged sit, which a centred pill would
+     otherwise collide with on a 375pt phone. */
+  #bufwait { left: 50%; transform: translateX(-50%); bottom: calc(34px + env(safe-area-inset-bottom));
+    display: none; align-items: center; gap: 7px; font-size: 11px; letter-spacing: .04em;
+    color: rgba(255,255,255,.72); padding: 6px 12px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(11,13,16,.55);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap; }
+  #bufwait.on { display: flex; opacity: 1; }
+  #bufwait .n { font-variant-numeric: tabular-nums; color: rgba(255,255,255,.92); }
+
   /* ===== Overlay chrome ===== */
   .chrome { position: absolute; z-index: 10; }
   #brand { top: calc(14px + env(safe-area-inset-top)); left: 16px; font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.6); }
@@ -834,17 +868,64 @@ const PLAYER_CSS = `${TOKENS_CSS}
   #hint svg { opacity: .9; }
 
   /* Room label */
-  #room { left: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); opacity: 0; will-change: transform, opacity; }
+  #room { left: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); opacity: 0; will-change: transform, opacity; max-width: min(58vw, 420px); }
   #room .kicker { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
   #room .name { font-size: 30px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.65); }
 
-  /* Chapter rail */
-  #rail { right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 14px; align-items: flex-end; }
-  #rail button { appearance: none; border: 0; background: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 4px; color: var(--ink-dim); font-size: 11px; font-family: inherit; }
-  #rail button .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.35); transition: all .25s ease; }
-  #rail button .lbl { opacity: 0; transition: opacity .25s ease; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  /* Chapter rail — every room named, not just the one you are standing in.
+     The rail used to render the label AND the dot and then hide the label with
+     opacity:0, revealing it only for .active. On a tagged tour that turns
+     a list of rooms into a column of anonymous dots: the 4,000 sq ft field test
+     was people tapping them one at a time to find out where each one went.
+     So all labels are on, and each one gets the same smoked-glass pill the
+     #staged disclosure chip already uses — that is the page's existing
+     treatment for text sitting over live video, and it is what keeps a white
+     room name readable against a white kitchen.
+
+     ACTIVE vs REST is carried by brightness, pill contrast and the accent dot's
+     glow — deliberately NOT by font-weight or letter-spacing, because the rail
+     is right-anchored: a bolder active label re-measures its own pill and the
+     whole column twitches sideways once per chapter as you scroll.
+
+     TRUNCATION: "Primary bedroom with ensuite" is a real room name and it is
+     wider than the video. Labels are capped and ellipsed; the FULL name of the
+     chapter you are in is already spelled out at 30px by #room, bottom-left, so
+     nothing is actually lost — the rail is an index, #room is the headline. */
+  #rail { right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 12px; align-items: flex-end; }
+  #rail button { appearance: none; border: 0; background: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 3px 1px; color: var(--ink-dim); font-size: 11px; font-family: inherit; min-width: 0; }
+  #rail button .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.35); transition: all .25s ease; flex: 0 0 auto; }
+  #rail button .lbl { max-width: min(38vw, 190px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 4px 9px; border-radius: 999px; color: rgba(242,243,245,.74);
+    background: rgba(11,13,16,.42); border: 1px solid rgba(255,255,255,.13);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    text-shadow: 0 1px 6px rgba(0,0,0,.7);
+    transition: color .25s ease, background-color .25s ease, border-color .25s ease; }
   #rail button.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  #rail button.active .lbl { opacity: 1; color: var(--ink); }
+  #rail button.active .lbl { color: var(--ink); background: rgba(11,13,16,.68); border-color: rgba(255,255,255,.32); }
+  /* DENSITY. The rail is centred and absolutely positioned, so a column taller
+     than the stage does not scroll — it runs off both ends and gets clipped by
+     #stage's overflow, behind the listing chip and the watermark. So the rail
+     has to shrink to fit instead. The tier is set server-side from
+     chapters.length (see renderTourPage) because counting siblings needs
+     :has(), and this page is served to every browser that can open a link.
+
+     Budget per row is roughly (label height + gap):
+       default  <= 8 rooms   26 + 12  ->  ~292px
+       .dense   9-14 rooms   23 +  7  ->  ~413px
+       .packed  15-22 rooms  21 +  4  ->  ~546px   (fits a 568pt SE stage)
+     Height media queries stack on top of all three for landscape. */
+  #rail.dense { gap: 7px; }
+  #rail.dense button .lbl { font-size: 10.5px; padding: 3px 8px; max-width: min(32vw, 150px); }
+  #rail.packed { gap: 4px; }
+  #rail.packed button .lbl { font-size: 10px; padding: 2px 7px; max-width: min(28vw, 130px); }
+  /* Past ~22 rooms no amount of shrinking makes 22 stacked names readable, so
+     the rail goes back to dots with only the current room named. Nothing is
+     lost: #room spells out where you are, and the floor-plan section lists
+     every room by name as a tappable seek chip (.plan-room). Same fallback for
+     a landscape phone, where there is no vertical room to give. */
+  #rail.dots button:not(.active) .lbl { display: none; }
+  @media (max-height: 560px) { #rail { gap: 6px; } #rail button .lbl { font-size: 10px; padding: 2px 7px; } }
+  @media (max-height: 430px) { #rail button:not(.active) .lbl { display: none; } }
 
   /* Listing chip */
   #listing { top: calc(12px + env(safe-area-inset-top)); right: 16px; text-align: right; text-shadow: 0 1px 8px rgba(0,0,0,.6); max-width: 62vw; }
@@ -894,11 +975,49 @@ const ENGINE_CORE_JS = `
   var railEl = document.getElementById('rail');
   var hintEl = document.getElementById('hint');
   var unavailEl = document.getElementById('unavail');
+  var waitEl = document.getElementById('bufwait');
+  var waitPct = waitEl ? waitEl.querySelector('.n') : null;
 
   var CH  = Array.isArray(CFG.chapters) ? CFG.chapters : [];
   var HAS_CH = CH.length > 0;
   var PX_PER_SEC  = CFG.pxPerSec || 240;
-  var BUFFER_GATE = CFG.bufferGate || 0.96;
+
+  /* ---- START GATE (the 4,000 sq ft field test) ----
+     This used to be 0.96: the page would not release the loader until 96% of
+     the scrub master had downloaded. The master is 1280-long-edge 60fps
+     ALL-INTRA H.264 at ~14 Mbps, i.e. ~1.75 MB per second of tour, so a 137 s
+     walkthrough is ~240 MB and 96% of it is ~230 MB. On a phone that is a
+     percentage counter for minutes before anything moves — the "it lags" the
+     owner reported is almost entirely this wait, not the playback.
+
+     The gate is now a LEAD TIME, not a fraction of the file: start once the
+     head of the video is here and keep downloading behind the viewer. The
+     fraction survives only as a ceiling so a very short tour is not asked for
+     proportionally more than a long one.
+
+         needed = min(duration * BUFFER_GATE, LEAD_S)
+
+     For the 137 s tour that is min(20.6 s, 6 s) = 6 s ~ 10.5 MB: a couple of
+     seconds on wifi or LTE instead of minutes.
+
+     What the old gate was really buying was the guarantee that ANY scrub
+     position was already on the device. That guarantee is gone, so the scrub
+     now clamps to what is actually buffered and says so (see tick() and
+     #bufwait) instead of freezing on a frame with no explanation. */
+  var BUFFER_GATE = typeof CFG.bufferGate === 'number' ? CFG.bufferGate : 0.15;
+  var LEAD_S = Number(CFG.bufferLeadS) || 6;
+  /* Progressive enhancement: Network Information API where it exists (Chrome /
+     Android; undefined on iOS Safari, which just keeps the 6 s default). A
+     viewer on Data Saver or a 2G link would sit on the default gate for a
+     minute, so ask for less and let the clamp do more of the work. */
+  (function(){
+    var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return;
+    var et = String(c.effectiveType || '');
+    if (c.saveData === true || et === 'slow-2g' || et === '2g') LEAD_S = Math.min(LEAD_S, 2);
+    else if (et === '3g') LEAD_S = Math.min(LEAD_S, 3.5);
+  })();
+
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var LERP = reduce ? 0.08 : 0.14;
 
@@ -906,6 +1025,10 @@ const ENGINE_CORE_JS = `
 
   /* ---- State ---- */
   var curT = 0, lastSet = -1, started = false, interacted = false, unavailable = false, fellBack = false;
+  // Buffer-aware scrub state: where the scroll last was, when it went still,
+  // how long we have been held at the buffered edge, and the last % painted
+  // into the waiting pill (so we only touch the DOM when the digits change).
+  var lastWant = -1, stillSince = 0, starveSince = 0, bufPct = -1, waitOn = false;
   var longFrames = 0, lastTick = performance.now();
   var usingHls = false, triedHlsFallback = false, hlsJs = null;
   var pollBuf = null;
@@ -991,15 +1114,58 @@ const ENGINE_CORE_JS = `
 
     var total = Math.max(1, track.offsetHeight - innerHeight); // duration=0 → no NaN/-Infinity
     var p = clamp(-track.getBoundingClientRect().top / total, 0, 1);
-    var target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
-    curT += (target - curT) * LERP;
+    var span = Math.max(0, (duration || video.duration || 0) - 0.05);
+    var want = p * span;
+
+    /* ---- Out-scrolling the download (the 4,000 sq ft field test) ----
+       The page now starts on ~6 s of buffer, so the viewer can reach a part of
+       the tour that has not arrived. Two different situations, handled
+       differently on purpose:
+
+       MOVING — the scroll is still travelling. Hold the scrub at the edge of
+       what is actually buffered and show the pill. Letting curT run into a
+       hole would either freeze the picture with no explanation (the frame the
+       decoder is stuck on) or fire a byte-range request per frame, which is
+       slower than waiting. The overlays follow the held position so the room
+       name and the progress bar keep describing the frame on screen.
+
+       SETTLED — the viewer has stopped for ~0.4 s past the buffered edge.
+       Release the clamp and let the seek go through. The master is ALL-INTRA:
+       every frame is a keyframe, so one range request at that byte offset
+       paints the exact frame they stopped on. Waiting for a sequential
+       download to crawl there would be strictly worse.
+
+       On a fast connection everything the scroll can reach is already buffered,
+       held is never true and this is byte-for-byte the old behaviour. */
+    if (lastWant < 0 || Math.abs(want - lastWant) > 0.05){ lastWant = want; stillSince = now; }
+    var settled = (now - stillSince) > 380;
+    var held = false, goal = want;
+    if (!settled){
+      var ceil = scrubCeiling(want);
+      if (want > ceil){ held = true; goal = ceil; }
+    }
+    curT += (goal - curT) * LERP;
+
     // readyState 0 = no metadata yet → seeking is meaningless (and throws on old WebKit).
-    if (video.readyState > 0 &&
+    // The (canShow || settled) guard is the seek throttle: a seek inside the
+    // buffer is free and immediate (the old path), a seek into a hole costs a
+    // range request and only fires once the scroll has actually stopped.
+    var canShow = rangeEndAt(curT) >= 0;
+    if (video.readyState > 0 && (canShow || settled) &&
         Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016){
       try { video.currentTime = curT; lastSet = curT; } catch (e) {}
     }
-    updateOverlays(p);
-    meter(p, now);
+
+    // The pill: held at the edge, or waiting on a committed seek to land.
+    // 300 ms of grace so a momentary stall does not flash it.
+    if (held || (video.readyState > 0 && !canShow)){ if (!starveSince) starveSince = now; }
+    else starveSince = 0;
+    setWait(starveSince > 0 && (now - starveSince) > 300);
+
+    // Overlays describe what is ON SCREEN: while held, that is the clamped
+    // position, not where the scroll has run off to.
+    updateOverlays(held && span ? clamp(goal / span, 0, 1) : p);
+    meter(p, now); // scroll_depth stays honest scroll depth
     if (!viewSent && video.readyState >= 2) reportViewAndDelivery();
     requestAnimationFrame(tick);
   }
@@ -1019,6 +1185,7 @@ const ENGINE_CORE_JS = `
     if (pollBuf) clearInterval(pollBuf);
     if (loader) loader.classList.add('done');
     if (hintEl) hintEl.classList.add('gone');
+    setWait(false);
     if (roomEl) roomEl.style.opacity = 0;
     if (progEl) progEl.style.transform = 'scaleX(0)';
     if (unavailEl) unavailEl.classList.add('on');
@@ -1032,15 +1199,50 @@ const ENGINE_CORE_JS = `
     try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; }
     catch (e) { return 0; }
   }
+  /* End of the buffered range that contains t, or -1 when t sits in a hole.
+     The 0.25 s of slack in front of a range absorbs the difference between the
+     start the browser declares and the first frame it will actually paint. */
+  function rangeEndAt(t){
+    try {
+      for (var i = 0; i < video.buffered.length; i++){
+        if (t >= video.buffered.start(i) - 0.25 && t <= video.buffered.end(i)) return video.buffered.end(i);
+      }
+    } catch (e) {}
+    return -1;
+  }
+  /* How far the scrub may travel this frame. Infinity = no reason to hold. */
+  function scrubCeiling(want){
+    if (video.readyState === 0) return Infinity;   // nothing known yet — don't fight the browser
+    if (rangeEndAt(want) >= 0) return Infinity;    // already downloaded: go
+    var edge = rangeEndAt(curT);
+    if (edge < 0) return Infinity;                 // a committed seek is in flight; let it land
+    return Math.max(0, edge - 0.15);               // hold just inside the frontier
+  }
+  function setWait(on){
+    if (!waitEl) return;
+    if (on !== waitOn){ waitOn = on; waitEl.classList.toggle('on', on); }
+    if (on && waitPct && bufPct >= 0 && waitPct.textContent !== bufPct + '%') waitPct.textContent = bufPct + '%';
+  }
+  /* Seconds of head the loader waits for. See the START GATE note above. */
+  function startNeedS(){
+    var dur = duration || video.duration || 0;
+    if (!dur || !isFinite(dur)) return LEAD_S;
+    return Math.max(0.5, Math.min(dur * BUFFER_GATE, LEAD_S));
+  }
   function reportBuffer(){
     if (unavailable) return;
     var dur = duration || video.duration;
     if (!dur || !isFinite(dur)) return;
-    var f = clamp(buffered() / dur, 0, 1);
-    var pc = Math.round(f * 100);
+    var b = buffered();
+    bufPct = Math.round(clamp(b / dur, 0, 1) * 100);
+    // The loader's number is progress TOWARDS STARTING, not percent of file.
+    // At a 6 s gate on a 137 s tour "4%" would be true and useless — it would
+    // disappear at 4% and read as a download that gave up.
+    var pc = Math.round(clamp(b / startNeedS(), 0, 1) * 100);
     if (pctEl) pctEl.textContent = pc + '%';
     if (barEl) barEl.style.width = pc + '%';
-    if (f >= BUFFER_GATE) begin();
+    if (waitOn && waitPct) waitPct.textContent = bufPct + '%';
+    if (b >= startNeedS()) begin();
   }
   video.addEventListener('progress', reportBuffer);
   video.addEventListener('loadedmetadata', function(){
@@ -1068,6 +1270,7 @@ const ENGINE_CORE_JS = `
   function fallbackLoop(){
     if (fellBack) return; fellBack = true;
     if (loader) loader.classList.add('done');
+    setWait(false); // the autoplay loop plays what it has; nothing is being held
     video.loop = true;
     var pr = video.play(); if (pr && pr.catch) pr.catch(function(){});
     (function loopTick(now){
@@ -1906,6 +2109,54 @@ function renderFooter(prefs: PromoPrefs): string {
   </div></footer>`;
 }
 
+/**
+ * "Get the app" — the 4,000 sq ft field test.
+ *
+ * WHERE, AND WHY HERE. The band sits BETWEEN the end card and the footer.
+ * Every other slot on this page is already spoken for or already crowded:
+ *
+ *  - Over the flythrough: that is the product demo. An install prompt on top
+ *    of the tour is the thing the owner said he did NOT want ("without
+ *    hijacking the tour").
+ *  - Inside the end card: it already carries the agent card, the CTA / lead
+ *    form and Turnstile. That card exists to convert a BUYER into a lead for
+ *    the agent whose listing this is. Putting our own download button next to
+ *    the agent's "Book a showing" competes with the one action the agent is
+ *    paying us for, on their listing.
+ *  - Inside the footer: below the paid partner strip, which is where content
+ *    goes to be ignored.
+ *
+ * Between the two, the reader has just finished the tour AND been offered the
+ * agent's own CTA, so nothing is being intercepted — and it is still above the
+ * paid placements, so the vendor's own ask is not buried under them. On iOS
+ * Safari the `apple-itunes-app` smart banner covers the top of the page for
+ * free, so the two halves bracket the page rather than stacking.
+ *
+ * THE COPY has to work for two readers at once. A buyer is being told why the
+ * page they just scrolled exists (and it is a genuine disclosure — the tour is
+ * a phone render, not a film shoot). An agent is being told they could have
+ * made it. The agent is the one who downloads.
+ *
+ * Labelled like every other house promotion on this page (F-H-17): it is ours,
+ * not the listing agent's, and it says so. Always on for a branded page — this
+ * is the vendor's own product, the same category as the "Made with Rendprop"
+ * attribution, not a paid third-party placement — but an owner who wants it
+ * gone can set `show_app_cta: false` in details / brand_kit.
+ */
+function renderGetAppSection(tour: Tour): string {
+  if (prefFlag(tour, "show_app_cta", "showAppCta") === false) return "";
+  return `<section class="lp-sec" id="getapp"><div class="lp-wrap">
+    <div class="lp-eyebrow">The app behind this page</div>
+    <h2 class="lp-h">This tour was filmed on a phone.</h2>
+    <p class="lp-tag">No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
+    Rendprop renders the flythrough you just scrolled — plus the photos, the floor plan and this link —
+    the same day. If you list property, that is your next shoot done before lunch.</p>
+    <a class="lp-btn" href="${escapeAttr(APP_STORE_URL)}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
+    <p class="lp-fine">Free on iPhone · iOS 16 or later. Rendprop is the software behind this page, not a
+    service offered by the owner of this listing.</p>
+  </div></section>`;
+}
+
 // Editorial CSS — Rendprop purple system layered over the player tokens. The
 // :root override flips the player's default accent (gold) to brand purple; a
 // per-agent accent override (injected after this) still wins when set.
@@ -2028,6 +2279,13 @@ const EDITORIAL_CSS = `
   .disc-orig:hover { text-decoration:underline; }
   .disc-noorig { display:inline-block; margin-top:12px; font-size:12.5px; color:var(--faint); }
 
+  /* "Get the app" band — between the end card and the footer, so it sits
+     OUTSIDE #listing-page and has to repeat that block's stacking context;
+     without it the sticky #stage would show through. Everything else it needs
+     (.lp-sec / .lp-wrap / .lp-eyebrow / .lp-h / .lp-tag / .lp-btn / .lp-fine)
+     is the same vocabulary the financing block already uses. */
+  #getapp { position:relative; z-index:5; background:var(--bg); }
+
   /* Footer + partner strip */
   footer.lp-foot { padding:clamp(48px,7vw,80px) 0 calc(40px + env(safe-area-inset-bottom));
     border-top:1px solid rgba(255,255,255,.07); background:var(--bg); }
@@ -2091,9 +2349,16 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ? `<style>:root{--accent:${agent.accent};}</style>`
     : "";
 
+  // Every chapter now shows its room name (the 4,000 sq ft field test: people
+  // were tapping unlabelled dots to find out where each one went). The density
+  // tier is decided HERE rather than in CSS because counting siblings needs
+  // :has(), and this page is served to every browser that can open a link — see
+  // the #rail rules in PLAYER_CSS. `title` gives desktop hover the full name
+  // when the pill has ellipsed it.
+  const railDensity = chapters.length > 22 ? " packed dots" : chapters.length > 14 ? " packed" : chapters.length > 8 ? " dense" : "";
   const railHtml = hasChapters
-    ? `<div class="chrome" id="rail">${chapters
-        .map((c, i) => `<button type="button" data-i="${i}" data-t="${c.t_ms / 1000}"><span class="lbl">${escapeHtml(c.label)}</span><span class="dot"></span></button>`)
+    ? `<div class="chrome${railDensity}" id="rail">${chapters
+        .map((c, i) => `<button type="button" data-i="${i}" data-t="${c.t_ms / 1000}" title="${escapeAttr(c.label)}"><span class="lbl">${escapeHtml(c.label)}</span><span class="dot"></span></button>`)
         .join("")}</div>`
     : "";
 
@@ -2157,7 +2422,13 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     hlsUrl,
     durationS: tour.duration_s || 0,
     pxPerSec: 240,
-    bufferGate: 0.96,
+    // See the START GATE note in ENGINE_CORE_JS. `bufferGate` is now a CEILING
+    // (a fraction of the tour, so a 9-second clip is not asked for more than a
+    // 3-minute one proportionally) and `bufferLeadS` is the gate that actually
+    // fires: the engine waits for min(durationS * bufferGate, bufferLeadS)
+    // seconds of head buffer, i.e. 6 s on any tour longer than 40 s.
+    bufferGate: 0.15,
+    bufferLeadS: 6,
     hasChapters,
     staged,
     unbranded,
@@ -2183,6 +2454,15 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // footer at all.
   const footerHtml = embed || unbranded ? "" : renderFooter(promoPrefs(tour));
 
+  // "Get the app" — see renderGetAppSection() for the placement argument.
+  // `embed` is excluded as well as `unbranded`: the in-app preview is already
+  // inside the app it would be advertising.
+  const getAppHtml = embed || unbranded ? "" : renderGetAppSection(tour);
+  // iOS Safari's smart banner. Same two guards, same reason. This is the half
+  // of the CTA that lands ABOVE the fold, for free, on the exact device the
+  // download targets — which is why the visible band can afford to sit low.
+  const appBanner = embed || unbranded ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
+
   const isRE = isRealEstate(tour);
   const unavailHtml = `<div id="unavail" role="status">
       ${unbranded ? "" : `<div class="mark">RENDPROP</div>`}
@@ -2200,6 +2480,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 <title>${escapeHtml(header.pageTitle)}</title>
 <meta name="description" content="${escapeAttr(header.ogDesc)}">
 ${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
+${appBanner}
 ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(shareUrl)}">` : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="${escapeAttr(header.ogTitle)}">
@@ -2242,6 +2523,11 @@ ${accentOverride}
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
 
+    <!-- Shown only when the viewer out-scrolls the download. The percentage is
+         decorative for a screen reader (it would otherwise be announced on
+         every progress event); "Still loading" is the part worth hearing. -->
+    <div class="chrome" id="bufwait" role="status">Still loading<span aria-hidden="true"> · <span class="n">0%</span></span></div>
+
     ${unbranded ? "" : `<a class="chrome" id="wm" href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
 
     ${stagedHtml}
@@ -2250,6 +2536,7 @@ ${accentOverride}
 
 ${sectionsHtml}
 ${endcardHtml}
+${getAppHtml}
 ${footerHtml}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
@@ -2332,6 +2619,13 @@ const UNBRANDED_FORBIDDEN: Array<{ id: string; re: RegExp; hosts?: true }> = [
   { id: "tractrealestate.com", re: /tractrealestate\.com/, hosts: true },
   { id: "google.com/maps", re: /google\.com\/maps/ },
   { id: "get-pre-approved", re: /get pre-approved/ },
+  // The app CTA added in the 4,000 sq ft field test. An App Store link is an
+  // external site unrelated to the property and the smart banner is an install
+  // prompt, so both are branded chrome; listing them here means CI catches a
+  // broken `unbranded ? "" :` guard instead of production failing every
+  // unbranded tour closed with a 503.
+  { id: "apps.apple.com", re: /apps\.apple\.com/, hosts: true },
+  { id: "apple-itunes-app", re: /apple-itunes-app/ },
   // --- links to additional content -----------------------------------------
   { id: "terms-link", re: /"\/terms"/ },
   { id: "privacy-link", re: /"\/privacy"/ },
