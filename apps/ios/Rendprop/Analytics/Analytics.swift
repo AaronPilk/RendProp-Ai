@@ -71,6 +71,17 @@ enum Analytics {
         // carries no reason — the server's message is written for a person and
         // can quote the listing's own words, including its address, back.
         "ai_script_written", "ai_prompt_improved",
+        // The reel's EDIT (`ai-copy/shotlist`) — did a shot plan land, and how
+        // many shots. NEVER the motions, the captions or the script: a count, the
+        // space type, and whether it worked. A failure carries no reason for the
+        // same reason `ai_script_written` doesn't — the server's message is
+        // written for a person and can quote the listing's own words back.
+        "reel_planned",
+        // One file saved out of a listing's FILES section (Screens/
+        // FlythroughDetailView.swift). The KIND of file and whether it landed —
+        // never a name, a path or a listing. This is the only measure of whether
+        // the files an agent paid for are actually reaching their camera roll.
+        "file_saved",
     ]
 
     /// Most events the app can generate in one flush.

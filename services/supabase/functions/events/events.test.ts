@@ -154,9 +154,10 @@ Deno.test("vocabulary: exactly the names in the launch contract", () => {
     "aerial_made", "ai_photo_edit", "ai_prompt_improved", "ai_script_written",
     "app_open", "capture_finished", "capture_started",
     "coach_action_tapped", "coach_message_sent", "coach_opened",
-    "crash", "error", "gear_item_tapped", "gear_opened", "guide_completed",
-    "guide_step_tapped", "home_created", "paywall_viewed",
-    "purchase_completed", "purchase_failed", "purchase_started", "reel_made",
+    "crash", "error", "file_saved", "gear_item_tapped", "gear_opened",
+    "guide_completed", "guide_step_tapped", "home_created", "paywall_viewed",
+    "purchase_completed", "purchase_failed", "purchase_started",
+    "reel_made", "reel_planned",
     "render_finished", "restore", "review_prompt_shown", "signin", "signup",
     "tour_published", "voiceover_added",
   ]);

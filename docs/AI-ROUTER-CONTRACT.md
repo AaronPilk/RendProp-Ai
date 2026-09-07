@@ -115,7 +115,7 @@ Adapters: `fal.ts` (exists, refactor to interface), `gemini.ts` (exists), `eleve
 | `copy.reel_script` | text, compliant | anthropic `claude-sonnet-5` effort:low 2.1/call → openai `gpt-5.6-terra` effort:none 2.0 → gemini `gemini-3.8-flash` 0.9 (estimated) — `text.listing_copy`'s chain verbatim, MINUS `vision` (no image is ever sent). Seeded by `0027_copy_routes.sql`; **no `legacy` row** (a new task, like `coach.chat`) |
 | `copy.photo_prompt` | text, compliant | the same three steps as `copy.reel_script`, same prices, same reason |
 | `judge.fair_housing` | classifier | regex (0, always first) → anthropic `claude-haiku-4-5` 0.045 **OR** openai `gpt-5.6-luna` 0.01 (flag if EITHER flags) |
-| `judge.qc_drift` | 4-image verdict | anthropic `claude-haiku-4-5` 0.66 → anthropic `claude-sonnet-5` effort:low 1.3 (escalation) · A/B: openai `gpt-5.6-luna` 0.12 |
+| `judge.qc_drift` | 4-image verdict | anthropic `claude-haiku-4-5` 0.66 → anthropic `claude-sonnet-5` effort:low 1.3 (escalation) · A/B: openai `gpt-5.6-luna` 0.12. Called by `POST /ai-video/drift` (source still + the clip's first/middle/last frames). The two Anthropic rows are TIERS, not a failover pair: step 2 runs when step 1's self-reported confidence is below 0.75, the same rule `services/pipeline/router.py` uses. No `legacy` row, so with the flag off `resolveRoute()` answers `[]` and ai-video substitutes an in-code copy of rows 1 and 2 |
 | `video.chapters` | video-understanding | gemini `gemini-3.6-flash` low-res 1fps ~1.4/2min → gemini `gemini-3.1-flash-lite` ~0.6/2min |
 | `vision.room_label` | single frame | openai `gpt-5.6-luna` detail:low 0.012/frame → anthropic `claude-haiku-4-5` 0.06/frame |
 | `3d.world` | — | worldlabs `marble-1.1` 120/world |

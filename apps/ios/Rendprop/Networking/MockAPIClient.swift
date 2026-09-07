@@ -1030,6 +1030,72 @@ actor MockAPIClient: APIClient {
             model: "mock-copy (offline sample)")
     }
 
+    /// Offline dev: a believable EDIT, so the whole shot-plan path — the varied
+    /// motions, the burned-in shot captions, the varied pacing, the `{address}`
+    /// substitution inside a caption — is exercisable with no backend.
+    ///
+    /// The motions cycle deliberately. Six identical clips is the exact defect
+    /// the shot list exists to fix, so a mock that returned one motion for every
+    /// photo would hide a broken plan until the first live reel.
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList {
+        // Same script, same refusals, same shape — the shot list is a superset of
+        // the script route and must not disagree with it about anything.
+        let script = try await aiCopyScript(
+            AIScriptRequest(listingServerID: request.listingServerID,
+                            spaceType: request.spaceType,
+                            facts: request.facts,
+                            roomTags: request.photos.compactMap { $0.room },
+                            photoCount: request.photos.count,
+                            targetSeconds: request.targetSeconds,
+                            tone: request.tone))
+
+        let sentences = script.script
+            .replacingOccurrences(of: ". ", with: ".\u{1}")
+            .components(separatedBy: "\u{1}")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        // A hero opener that holds, then quicker detail shots — the pacing a
+        // realtor's editor actually uses. The moves come from `REEL_MOTIONS` (the
+        // real vocabulary `/ai-video/reel-clip` renders) and never repeat back to
+        // back, because six identical clips is the exact defect this route
+        // exists to fix.
+        let motions = ["push_in", "orbit_left", "tilt_up", "rack_focus",
+                       "static_parallax", "pull_back"]
+        let count = request.photos.count
+        var shots: [AIShot] = []
+        for (index, photo) in request.photos.enumerated() {
+            let isOpener = index == 0
+            let isCloser = index == count - 1
+            let room = photo.room?.trimmingCharacters(in: .whitespacesAndNewlines)
+            // NEVER `{address}` in a caption — the live route drops one outright
+            // (COPY-ASSIST-CONTRACT §4.4), and a mock that produced one would
+            // teach the client to expect a substitution the server never asks
+            // for. The token belongs in the spoken line, and it is there.
+            let text: String
+            if isOpener {
+                text = "TAKE THE TOUR"
+            } else if isCloser {
+                text = "BOOK YOUR SHOWING"
+            } else if let room, !room.isEmpty {
+                text = room.uppercased()
+            } else {
+                text = ""            // "" is a normal answer — not every shot carries a caption
+            }
+            shots.append(AIShot(photoID: photo.id,
+                                order: index + 1,                 // 1-based, per the contract
+                                motion: motions[index % motions.count],
+                                room: (room?.isEmpty == false) ? room : nil,
+                                onScreenText: text.isEmpty ? nil : text,
+                                seconds: (isOpener || isCloser) ? 6.0 : 4.0,
+                                voiceLine: index < sentences.count ? sentences[index] : nil))
+        }
+        return AIShotList(shots: shots, script: script.script,
+                          characters: script.characters,
+                          estimatedSeconds: script.estimatedSeconds,
+                          model: "mock-copy (offline sample)")
+    }
+
     /// "3 beds, 2 baths, 2,100 square feet, $1,175,000." — spoken units, not
     /// the card's abbreviations, because this is read aloud. Empty when the
     /// listing has none of them (every non-real-estate type).
@@ -1070,6 +1136,7 @@ actor MockAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         Self.mockAIVideoJob(kind: "reel", grounded: true)

@@ -25,13 +25,33 @@
 //       Prompts are built SERVER-SIDE from space_type / motion / time_of_day /
 //       region with anti-hallucination guardrails; the user's `style` hint is
 //       appended (≤200 chars), never a replacement (audit F-A-01 / F-supabase-09).
-//   POST /ai-video/reel-clip  { asset_id? | image_b64? (+mime?), prompt?, seconds?=5, space_type? }
-//       Seedance i2v: animate a listing photo into a motion clip.
+//   POST /ai-video/reel-clip  { asset_id? | image_b64? (+mime?), prompt?, seconds?=5, space_type?,
+//                               room?, motion?, shot_index?, shot_count? }
+//       Seedance i2v: animate a listing photo into a motion clip. The camera
+//       move is SERVER-CHOSEN per shot from ./motion.ts: a `room` hint and a
+//       `shot_index` pick a move that suits the room AND vary it across the
+//       reel, so six photos stop being six identical push-ins. `motion` names
+//       one explicitly and must be in the enum (400 otherwise) — that is the
+//       field a client-side shot list drives. ALL FOUR ABSENT reproduces the
+//       old fixed push-in prompt byte for byte, which is what the shipped app
+//       (build 5) sends. The 202 carries `motion` + `motion_label` so the clip
+//       can be labelled and the provenance row records the move asked for.
 //   GET  /ai-video/status?status_url=...&response_url=...
 //       → { status: "processing", queue_position?, logs_tail? }
-//       → { status: "completed", video_url }
+//       → { status: "completed", video_url, drift: { status:"unchecked", publishable:false, … } }
 //       → { status: "failed", error }
+//       The `drift` block is ADDITIVE and always says "not checked yet" here:
+//       this route is stateless and holds no verdict. See QUALITY GATE below.
+//   POST /ai-video/drift      { request_id, kind:"reel"|"aerial", source_b64, source_mime?,
+//                               frames:[{ at:"first"|"middle"|"last", b64, mime? }],
+//                               seconds?, motion?, room?, space_type?, listing_id?,
+//                               provenance_id?, asset_id?, attempt? }
+//       → { drift: { status:"pass"|"fail"|"unavailable", publishable, action, message,
+//                    scores{…}, confidence, reason, model, … }, charge?, recorded? }
+//       THE QUALITY GATE. Judges the finished clip's frames against the source
+//       still on `judge.qc_drift` and decides whether it may be published.
 //
+
 // Every submit response: { request_id, status_url, response_url, kind, model_id, ... }.
 // Every error: { error, code } (see _shared/http.ts).
 //
@@ -55,6 +75,13 @@
 // Before this, `reel-clip { prompt }` and `declutter { prompt }` REPLACED the
 // guarded prompt outright, so a user string reached the model with no
 // guardrails at all — that hole is closed.
+// The `room` hint on reel-clip is NOT free text and never reaches a model: it is
+// resolved to a closed enum by motion.ts normalizeRoom(), which answers null for
+// anything it does not recognise, and it is the ENUM VALUE that selects a camera
+// move. So there is nothing for the denylist to gate there — an unrecognised or
+// hostile hint degrades to the neutral rotation instead of being refused, since
+// unlike a chapter label (ai-chapters/postprocess.ts, where the same string is
+// PRINTED on a public tour) this one is dropped after it has picked a move.
 // The denylist is scoped by the LISTING's `space_type` (industry review P1-1):
 // the asset's listing row when the route loads one, else the `listing_id` in
 // the body, else the body's `space_type`, else housing. A venue, bar, store or
@@ -109,20 +136,99 @@
 // submission costs the org nothing and leaves no state to unwind. Nothing here
 // writes to cost_ledger, so the ceiling is checked, never double-counted: the
 // one row for an accepted submission is still written after fal accepts it.
+//
+// ── QUALITY GATE — POST /ai-video/drift (2026-09-07) ─────────────────────────
+//
+// THE INCIDENT. The owner sent a screenshot of a generated aerial: smeared,
+// warped roof tiles over invented geometry. "the photo to reel generator is
+// changing how the house looks and that's false advertising — it has AI slop
+// left over." It was not his house. On a real estate listing that is a CA AB
+// 723 / MLS / HUD problem before it is an aesthetic one.
+//
+// WHY THE PROMPT WAS NEVER GOING TO FIX IT. buildReelPrompt() already orders
+// "Do not add, remove, or move any objects; no scene changes, style shifts,
+// warping, or flicker", and AERIAL_GUARDRAILS already orders "no morphing or
+// warping structures". These are image-to-video models animating ONE still: a
+// move that shows a surface the photograph never contained is a REQUEST to
+// invent it, and no sentence outranks the shot you just ordered. So this
+// function now does the thing that actually helps — it judges the output and
+// refuses the bad ones. Three changes, in the order they bite:
+//
+//   1. RESTRICT THE MOVE. A grounded aerial no longer runs `rise_reveal` at
+//      all: motion.ts groundedAerialMotion() substitutes `push_in` and the 202
+//      reports both moves. The grounded aerial prompt also gains a hard clause
+//      naming the exact failure (no roof plane, no unseen elevation, no
+//      invented lot). The UNGROUNDED path is untouched — Veo invents a generic
+//      building by design and there is no real property to contradict.
+//   2. JUDGE THE RESULT. POST /ai-video/drift runs `judge.qc_drift` — seeded in
+//      migration 0018 as a "4-image verdict" and, until now, with ZERO callers
+//      — over the SOURCE still plus the first, middle and last frames of the
+//      finished clip. Five axes (architecture, contents, additions, artifacts,
+//      same_room), thresholds, parser and policy all live in _shared/drift.ts,
+//      which carries the cost arithmetic and the fail-closed reasoning.
+//   3. ACT ON THE VERDICT. pass → publishable. First failure → ONE retry with
+//      the safest move, and the rejected clip's plan allowance is handed BACK
+//      so the retry costs the user nothing (see refundRejectedClipAllowance —
+//      it is deliberately NOT refundGenerateCharge, and says why). Second
+//      failure → refuse, and tell the agent to use the still. A check that
+//      could not run → hold: never a pass, never a paid retry.
+//
+// WHERE THE FRAMES COME FROM, AND THE TRUST BOUNDARY. An edge function cannot
+// decode an mp4 — the repo's two frame-grabbers are ffmpeg in the worker
+// (ffmpeg_render.py _extract_poster) and AVAssetImageGenerator on the device
+// (RendpropApp.swift PosterMaker, which already pulls a poster frame at 0.25 s
+// for every tour). So the client sends the pixels and the SERVER owns
+// everything else: the rubric, the model, the thresholds, the verdict, the
+// retry accounting and the audit row. A client can decline to run the check —
+// and then `publishable` is false and stays false, because the status route
+// reports every unchecked clip as unchecked rather than silently as fine. A
+// client could also send frames that are not from its own clip, which would
+// forge its own compliance evidence; the audit row records the source hash and
+// the frame count so that is visible after the fact.
+//
+// The two ways to close that boundary properly, neither of which is invented
+// here: run the check where ffmpeg already lives (the worker owns the render
+// pipeline and could pull frames from the R2 copy the routed status path
+// already persists), or transform the frames at the CDN edge. Both are real
+// pieces of work in somebody else's file, and both would make the gate
+// server-enforced rather than server-adjudicated. Until then this is the
+// honest shape: the client supplies pixels, the server supplies the verdict,
+// and an unchecked clip is reported as unchecked.
+//
+// THE AUDIT TRAIL (item 4). Every judged clip writes a cost_ledger row with
+// `feature: "qc"` — the vocabulary 0001 already comments and the admin console
+// already labels "QC drift judge" — whose meta carries the verdict, all five
+// scores, the confidence, the model, the frames judged and the provenance id.
+// When the caller passes `provenance_id`, migration 0029's record_media_qc()
+// also stamps the verdict onto the media_provenance row itself, which is the
+// broker-exportable AI audit log behind AB 723 / NorthstarMLS. That RPC is
+// service-role only, on purpose: a tenant must not be able to write a passing
+// verdict about their own listing media.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import {
+  HttpError,
+  assert,
+  json,
+  pathSegments,
+  readJson,
+  readJsonLimited,
+  respondError,
+} from "../_shared/http.ts";
 import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
-import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
+import { entitlementFor, entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
-import { recordProvenance } from "../_shared/provenance.ts";
+import { optionalUuid, recordProvenance } from "../_shared/provenance.ts";
 import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
-import { routerEnabled } from "../_shared/router.ts";
+import { resolveRoute, routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
 import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { ProviderError } from "../_shared/providers/common.ts";
+import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
+import { openaiChat } from "../_shared/providers/openai.ts";
 import { falSubmitEcho } from "../_shared/providers/fal.ts";
 import { persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
@@ -140,6 +246,41 @@ import {
   DRONE_TIERS,
   type DroneEstimate,
 } from "./dronecost.ts";
+import {
+  AERIAL_MOTION_TEXT,
+  AERIAL_MOTIONS,
+  type AerialMotion,
+  buildReelPrompt,
+  chooseReelMotion,
+  groundedAerialMotion,
+  normalizeRoom,
+  parseReelMotion,
+  REEL_MOTION_LABEL,
+  REEL_MOTION_TEXT,
+  REEL_MOTIONS,
+  type ReelMotion,
+} from "./motion.ts";
+import {
+  DRIFT_FALLBACK_CENTS,
+  DRIFT_FRAME_POSITIONS,
+  DRIFT_MAX_FRAMES,
+  DRIFT_PASS_SCORES,
+  DRIFT_SOURCE_LABEL,
+  DRIFT_TASK,
+  type DriftFramePosition,
+  type DriftVerdict,
+  decideDriftAction,
+  driftBlock,
+  driftFramesLabel,
+  driftLineageKey,
+  driftPasses,
+  driftRubric,
+  ESCALATE_BELOW_CONFIDENCE,
+  failedCategories,
+  parseDriftVerdict,
+  unavailableVerdict,
+  uncheckedDriftBlock,
+} from "../_shared/drift.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
 // queue, so cap submissions per burst window AND per rolling month per org,
@@ -294,6 +435,134 @@ async function guardGenerate(
 async function refundGenerateCharge(charge: GenerateCharge): Promise<void> {
   await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
   await refundRateLimit(charge.burstKey, GEN_WINDOW_SECONDS, 1);
+}
+
+// ── The quality gate's own guards (POST /ai-video/drift) ─────────────────────
+
+/**
+ * Burst ceiling on the check itself.
+ *
+ * Shaped like ai-copy's guardAssist() and ai-photo's guardHelper() rather than
+ * like guardGenerate(): a role check and ONE burst key, no monthly meter and
+ * nothing refundable. The check is a 0.66¢ classifier call that PROTECTS a
+ * generation the org has already paid for, so putting it behind a monthly
+ * allowance would mean an org could run out of the ability to verify its own
+ * clips — which is the one thing that must never be rationed.
+ *
+ * 30 per 5 minutes against generation's own 12 per 5 minutes: a clip can cost
+ * at most two checks (the original and its one retry), so 24 is the true
+ * ceiling a legitimate client can reach, and 30 leaves room for a re-check
+ * after a `hold` without inventing a second budget to reason about.
+ */
+const DRIFT_MAX_PER_WINDOW = 30;
+const DRIFT_WINDOW_SECONDS = 300;
+
+/**
+ * How long a source still's ONE retry grant lives (6 hours).
+ *
+ * Long enough that the retry generation, its poll and its own check all happen
+ * inside it — a Seedance clip is minutes, not hours. Short enough that an agent
+ * who reshoots the same room tomorrow, or comes back to a listing next week,
+ * gets a fresh grant instead of inheriting yesterday's refusal. The counter is
+ * keyed on a hash of the source photograph (drift.ts driftLineageKey), so it
+ * follows the PHOTO rather than any id a client controls.
+ */
+const DRIFT_LINEAGE_WINDOW_SECONDS = 6 * 3600;
+
+/**
+ * The most rejected-clip allowance refunds one org can be given in a month.
+ *
+ * Refunding is the right product answer (see refundRejectedClipAllowance) but
+ * it is unbounded generosity if it is not capped: reel generations do not
+ * pre-check the org's monthly COGS ceiling the way /drone does, so every
+ * refunded allowance is another 24¢ of real Seedance spend the meters would
+ * otherwise have stopped. 20 × 24¢ = $4.80 of extra exposure per org per month,
+ * against a plan whose whole monthly AI budget is $82.00 — visible in the
+ * ledger, small next to the budget, and far cheaper than the alternative, which
+ * is billing an agent twice for our model's failure. Past the cap the clip is
+ * still refused; only the goodwill refund stops, and the response says so.
+ */
+const DRIFT_MAX_REFUNDS_PER_MONTH = 20;
+
+/** Role gate + burst limiter for the check. Mirrors ai-copy's guardAssist(). */
+async function guardDriftCheck(userId: string, req: Request): Promise<string> {
+  const orgId = await orgForUser(userId, preferredOrg(req));
+  const { data: mem, error: mErr } = await adminClient()
+    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+  if (mErr) throw new HttpError(500, `Role lookup failed: ${mErr.message}`);
+  if (!mem?.role || mem.role === "marketing") {
+    throw new HttpError(403, "Your role does not permit AI video generation");
+  }
+  if (!(await durableRateLimit(`aidrift:${orgId}`, DRIFT_MAX_PER_WINDOW, DRIFT_WINDOW_SECONDS))) {
+    throw new HttpError(
+      429,
+      "Too many quality checks for now — try again in a few minutes.",
+      "rate_limited",
+    );
+  }
+  return orgId;
+}
+
+/**
+ * Hand back the plan allowance a clip consumed when WE rejected that clip.
+ *
+ * ── Why this is not refundGenerateCharge, and must not be confused with it ───
+ *
+ * refundGenerateCharge exists for a submission that never reached a provider:
+ * "a fal/router submit that THROWS never billed us". Its own comment is
+ * explicit that once a submit RETURNS, the spend is committed and "nothing past
+ * that point is ever refunded, even if the async job later fails". That rule is
+ * about VENDOR MONEY and it still holds here: the rejected clip was generated,
+ * Seedance billed us for it, and its cost_ledger row stands untouched. So does
+ * the retry's. COGS stays honest and GET /admin/spend still sees every cent.
+ *
+ * What this refunds is the ORG'S OWN PLAN ALLOWANCE — the `reelmo:`/`aerialmo:`
+ * counters guardGenerate() charged. Those are our product's promise ("N clips a
+ * month"), not a vendor's invoice, and charging two of them for one usable clip
+ * bills the agent twice for our model's failure. The brief's rule was "never
+ * charge twice for the retry without saying so"; handing the allowance back is
+ * the version of that which does not require an apology, and `charge` in the
+ * response says exactly what happened either way.
+ *
+ * THREE GUARDS, because a refund is money:
+ *   1. IDEMPOTENT PER CLIP. Keyed on the request id, so re-posting the same
+ *      frames cannot mint allowance. Same shape as guardGenerate()'s
+ *      Idempotency-Key dedupe.
+ *   2. CAPPED PER ORG PER MONTH (DRIFT_MAX_REFUNDS_PER_MONTH).
+ *   3. ONLY ON A REAL FAILURE. The caller runs this exclusively for a verdict a
+ *      model actually delivered and that actually failed — never for `hold`,
+ *      never for a check that could not run, and never on a client's say-so:
+ *      the verdict comes from `judge.qc_drift`, not from the request body.
+ *
+ * Best effort and never throws, exactly like refundGenerateCharge: a failed
+ * refund must not turn a delivered verdict into a 500.
+ */
+async function refundRejectedClipAllowance(
+  orgId: string,
+  kind: GenKind,
+  requestId: string,
+): Promise<{ refunded: boolean; reason: string }> {
+  try {
+    if (!(await durableRateLimit(`aidriftref:${orgId}:${requestId}`, 1, MONTH_SECONDS))) {
+      return { refunded: false, reason: "already refunded for this clip" };
+    }
+    if (!(await durableRateLimit(`aidriftrefmo:${orgId}`, DRIFT_MAX_REFUNDS_PER_MONTH, MONTH_SECONDS))) {
+      return {
+        refunded: false,
+        reason:
+          `this workspace has already had ${DRIFT_MAX_REFUNDS_PER_MONTH} clips refunded this month`,
+      };
+    }
+    const monthly = await refundRateLimit(`${meterKeyFor(kind)}:${orgId}`, MONTH_SECONDS, 1);
+    await refundRateLimit(`aivideo:${orgId}`, GEN_WINDOW_SECONDS, 1);
+    return monthly
+      ? { refunded: true, reason: "the clip we rejected was not charged to your plan" }
+      : { refunded: false, reason: "the allowance counter had already rolled over" };
+  } catch (e) {
+    // Key names are org ids and feature slugs — no secrets, no user content.
+    console.error("ai-video: rejected-clip refund failed:", e instanceof Error ? e.message : e);
+    return { refunded: false, reason: "the refund could not be applied" };
+  }
 }
 
 /**
@@ -481,19 +750,14 @@ const DECLUTTER_PROMPT: Record<SpaceType, string> = {
     "keep the space, furniture, and architecture unchanged",
 };
 
-// Anti-hallucination scaffolding: i2v models love to "help" by inventing decor,
-// people, or a different room. Pin the clip to the exact photographed scene and
-// allow only grounded camera motion.
-function reelPrompt(space: SpaceType): string {
-  return (
-    `Photorealistic live continuation of this exact photographed ${SCENE_NOUN[space]} scene. The architecture, ` +
-    "furniture, fixtures, decor, materials, lighting, and exposure stay identical to the source photo. " +
-    "Camera: one slow, subtle, grounded push-in with gentle natural parallax — no cuts, no " +
-    "transitions, and no panning that reveals unseen areas. Do not add, remove, or move any " +
-    "objects; no people, no animals, no text or watermarks; no scene changes, style shifts, " +
-    "warping, or flicker. " + GUARDRAILS
-  );
-}
+// The reel prompt — its anti-hallucination scaffolding, its per-shot camera
+// clause and its GUARDRAILS composition — is ./motion.ts buildReelPrompt(),
+// which this route calls with SCENE_NOUN[space]. It lived here as a single
+// fixed push-in sentence until the shot-motion work; it moved so the vocabulary
+// and the choice could be unit-tested (index.ts calls Deno.serve at module load
+// and can never be imported by a test — same reason dronecost.ts lives apart).
+// buildReelPrompt({ motion: "push_in" }) reproduces the old sentence byte for
+// byte, which is what the shipped app still gets when it sends no hints.
 
 /**
  * Wrap a caller-supplied free-text video prompt so it can never REPLACE the
@@ -511,21 +775,12 @@ function guardedUserPrompt(userText: string, space: SpaceType, verb: string): st
 
 // ── Aerial prompt builder ─────────────────────────────────────────────────────
 
-const AERIAL_MOTIONS = ["rise_reveal", "pull_back", "orbit", "push_in"] as const;
-type AerialMotion = typeof AERIAL_MOTIONS[number];
+// AERIAL_MOTIONS / AERIAL_MOTION_TEXT now live in ./motion.ts, shared with the
+// reel's own vocabulary. The four original ids keep their exact original text
+// and `rise_reveal` is still the default, so an aerial submitted today is the
+// aerial that was submitted yesterday; the module adds directional orbits.
 const AERIAL_TIMES = ["golden_hour", "midday", "twilight", "overcast"] as const;
 type AerialTime = typeof AERIAL_TIMES[number];
-
-const MOTION_TEXT: Record<AerialMotion, string> = {
-  rise_reveal:
-    "the camera starts low, just above the entrance, and rises smoothly and steadily, revealing the roofline, the grounds and the surroundings",
-  pull_back:
-    "the camera starts close on the facade and pulls back and upward in one continuous move, widening to show the whole property in its setting",
-  orbit:
-    "the camera performs one slow, smooth partial orbit around the building at a constant height, keeping it centered in frame",
-  push_in:
-    "the camera starts on a wide establishing view and pushes in slowly and steadily toward the entrance",
-};
 
 const TIME_TEXT: Record<AerialTime, string> = {
   golden_hour: "warm golden-hour sunlight with long soft shadows",
@@ -569,13 +824,31 @@ function buildAerialPrompt(args: {
         "Preserve its architecture, roofline, facade colors, materials, windows, doors, signage and landscaping exactly as photographed — " +
         "it is the same building for the entire shot.",
     );
+    // THE HARD GROUNDED CLAUSE (2026-09-07). The rest of this prompt says what
+    // to preserve; this says what NOT TO DRAW, which is the failure the owner
+    // photographed. A model asked for an aerial over a kerbside photo will
+    // supply a roof plane because an aerial has one — so the shot is told, in
+    // as many words, that running out of photograph is a reason to stop moving
+    // rather than a reason to invent. It sits immediately after the subject
+    // sentence, before the camera clause, so the constraint is read before the
+    // move it constrains. It is grounded-only: the ungrounded path has no real
+    // building to be unfaithful to, and its prompt is unchanged.
+    parts.push(
+      "Never render any surface the reference photograph does not contain: no roof plane, no " +
+        "upper storey, no rear or side elevation, no neighbouring building or lot, and no interior " +
+        "through any window that is not already visible. If the camera move would travel past what " +
+        "the photograph shows, slow and settle instead of inventing what lies beyond it. Roof " +
+        "tiles, shingles, render, brick, siding and every other material keep the exact texture, " +
+        "colour and pattern of the photograph — no painterly, melted, smeared or repeating " +
+        "surfaces.",
+    );
   } else {
     parts.push(
       `Cinematic aerial drone establishing shot of a single, believable ${subject}. ` +
         "One consistent building for the entire shot — the same structure, roofline, lot and street throughout.",
     );
   }
-  parts.push(`Camera: ${MOTION_TEXT[args.motion]}.`);
+  parts.push(`Camera: ${AERIAL_MOTION_TEXT[args.motion]}.`);
   parts.push(`Light: ${TIME_TEXT[args.time]}.`);
   if (args.region) {
     parts.push(`Setting: ${args.region} — regional architecture, vegetation and climate consistent with that area.`);
@@ -631,9 +904,64 @@ interface ReelBody {
   /** ADDITIVE (router): "16:9" | "9:16". The shipped app does not send one, and
    *  without it the clip keeps the source photo's framing exactly as today. */
   aspect?: string;
+  /** ADDITIVE (per-shot motion). What room this photo shows — a RoomPlan tag or
+   *  the agent's own chapter label. Resolved against a CLOSED set (motion.ts);
+   *  anything unrecognised is treated as absent, never passed on. */
+  room?: string;
+  /** ADDITIVE. One of REEL_MOTIONS, naming the camera move explicitly — a 400
+   *  outside the enum, because a shot list that silently degrades to a push-in
+   *  is exactly the bug this exists to fix. Absent = server-chosen. */
+  motion?: string;
+  /** ADDITIVE. 0-based position of this clip in the reel; what makes the move
+   *  VARY shot to shot. Absent = 0 = the first shot's move. */
+  shot_index?: number;
+  /** ADDITIVE. How many clips the reel has. Bounds-checked and echoed for the
+   *  provenance record; it does NOT steer the choice, and deliberately so — the
+   *  four-family cycle already gives a 2- or 3-shot reel two or three different
+   *  families, so there is nothing about a short reel left for it to fix. */
+  shot_count?: number;
   /** Compliance (W2-B3). Defaults to the source asset's listing. */
   listing_id?: string;
   label?: string;
+}
+
+/**
+ * POST /ai-video/drift — the quality gate's request.
+ *
+ * `source_b64` and `frames[]` are the only two REQUIRED fields, because they
+ * are the only two the check cannot do without: the photograph that is the
+ * truth, and the frames that are on trial. Everything else sharpens the rubric
+ * or the audit row, and every one of them is resolved through a closed
+ * vocabulary before it is used.
+ */
+interface DriftBody {
+  /** The completed clip's `request_id` from the 202. The audit key, and what
+   *  makes the judgement and the allowance refund idempotent per clip. */
+  request_id?: string;
+  /** "reel" | "aerial" — anything else reads as "reel", the cheaper default. */
+  kind?: string;
+  /** The SOURCE STILL the clip was generated from, base64, no data: prefix. */
+  source_b64?: string;
+  source_mime?: string;
+  /** Frames pulled from the finished clip: first / middle / last. 1-3 of them. */
+  frames?: unknown;
+  /** Clip length, echoed for the audit row only. */
+  seconds?: number;
+  /** The camera move that was asked for, so the judge knows what motion is
+   *  legitimate in these frames. Resolved against the same enums the generate
+   *  routes use; an unknown value is simply dropped. */
+  motion?: string;
+  /** Space type, for the scene noun in the rubric ("home", "restaurant"). */
+  space_type?: string;
+  /** The media_provenance row this clip's 202 returned. When present, the
+   *  verdict is stamped onto it (migration 0029) — the compliance evidence. */
+  provenance_id?: string;
+  /** The source photo's capture_asset, when the clip was generated from one.
+   *  Recorded for the audit trail; the PIXELS always come from source_b64. */
+  asset_id?: string;
+  /** Client hint: how many clips this photo has already had rejected. It may
+   *  only ever make the answer stricter — see the route. */
+  attempt?: number;
 }
 
 Deno.serve(async (req) => {
@@ -939,7 +1267,30 @@ Deno.serve(async (req) => {
         assetListingId = asset.listing_id;
       }
       const grounded = imageUrl !== null;
-      const prompt = buildAerialPrompt({ grounded, space, motion, time, region, style });
+
+      // ── The move a real photograph can hold (2026-09-07 incident) ─────────
+      // A GROUNDED `rise_reveal` is the screenshot: the shot's whole purpose is
+      // to reveal a roofline the photograph does not contain, so the model
+      // paints one, and it stops being the customer's house. motion.ts
+      // groundedAerialMotion() substitutes the one move that can only ever show
+      // LESS of the photograph. The UNGROUNDED path is returned unchanged, so
+      // text-to-video aerials are byte-identical to what they were.
+      //
+      // A substitution rather than a 400 because the SHIPPED app hardcodes
+      // `motion: "rise_reveal"` as its aerial default (iOS APIClient.swift): a
+      // 400 would delete the feature from every installed copy to fix a defect
+      // the server can fix by itself. Both moves are reported in the 202 and
+      // the substituted one is what the provenance row records, so nothing
+      // about the swap is silent.
+      const aerialMove = groundedAerialMotion(motion, grounded);
+      const prompt = buildAerialPrompt({
+        grounded,
+        space,
+        motion: aerialMove.motion,
+        time,
+        region,
+        style,
+      });
 
       const charge = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
       const { orgId, plan } = charge;
@@ -994,7 +1345,14 @@ Deno.serve(async (req) => {
         feature: "aerial",
         step,
         seconds,
-        meta: { grounded, seconds, aspect, request_id: attempt.value.id },
+        meta: {
+          grounded,
+          seconds,
+          aspect,
+          request_id: attempt.value.id,
+          motion: aerialMove.motion,
+          ...(aerialMove.substituted ? { motion_requested: aerialMove.requested } : {}),
+        },
       });
 
       // COMPLIANCE: an aerial is synthetic camera movement — HousingWire's
@@ -1021,7 +1379,19 @@ Deno.serve(async (req) => {
           seconds,
           aspect,
           space_type: space,
-          motion,
+          // The move the clip was ACTUALLY built with. When the grounded path
+          // substituted one, `motion_requested` carries what the caller asked
+          // for and `motion_substitution` says why in plain language — additive
+          // keys the shipped decoder ignores, so an installed build reads
+          // `motion` exactly as it always did and simply gets a safer shot.
+          motion: aerialMove.motion,
+          ...(aerialMove.substituted
+            ? {
+              motion_requested: aerialMove.requested,
+              motion_substituted: true,
+              motion_substitution: aerialMove.reason,
+            }
+            : {}),
           time_of_day: time,
           region,
           // "Drone-style movement is simulated. No drone footage was captured."
@@ -1068,9 +1438,54 @@ Deno.serve(async (req) => {
         const reelGateSpace = assetSpace ?? (await listingSpaceType(db, body.listing_id)) ?? space;
         assertFairHousing(userMotion, "This clip prompt", reelGateSpace);
       }
+
+      // ── Per-shot camera motion (./motion.ts) ──────────────────────────────
+      // ADDITIVE, and the compatibility line is exact: with `room`, `motion`,
+      // `shot_index` and `shot_count` all absent — which is every request the
+      // shipped app makes — this resolves to `push_in` and buildReelPrompt()
+      // rebuilds the prompt the route has always sent, byte for byte
+      // (motion_test.ts freezes that string). Nothing below is reachable
+      // without a client that opts in.
+      //
+      // The chosen text is SERVER-CHOSEN, so it composes with GUARDRAILS the
+      // same way the old fixed sentence did — a clause inside the built prompt,
+      // never a replacement for it. The room hint cannot inject: normalizeRoom
+      // answers a member of a closed enum or null, and it is that value, not
+      // the caller's string, that picks the move.
+      const room = normalizeRoom(body.room);
+      let shotIndex: number | null = null;
+      if (body.shot_index !== undefined && body.shot_index !== null) {
+        const n = Number(body.shot_index);
+        assert(Number.isInteger(n) && n >= 0 && n <= 999, 400,
+               "shot_index must be a whole number between 0 and 999");
+        shotIndex = n;
+      }
+      let shotCount: number | null = null;
+      if (body.shot_count !== undefined && body.shot_count !== null) {
+        const n = Number(body.shot_count);
+        assert(Number.isInteger(n) && n >= 1 && n <= 999, 400,
+               "shot_count must be a whole number between 1 and 999");
+        shotCount = n;
+      }
+      // A shot index past the planned count is NOT an error: a retry that
+      // appends a clip is a legitimate thing for a client to do, and refusing it
+      // would cost the agent a shot over an off-by-one.
+      let shotMotion: ReelMotion;
+      if (body.motion !== undefined && body.motion !== null) {
+        const named = parseReelMotion(body.motion);
+        assert(named !== null, 400, `motion must be one of ${REEL_MOTIONS.join(", ")}`);
+        shotMotion = named;
+      } else {
+        shotMotion = chooseReelMotion({ room, shotIndex });
+      }
+
       const reelText = userMotion
         ? guardedUserPrompt(userMotion, space, "Animate")
-        : reelPrompt(space);
+        : buildReelPrompt({ sceneNoun: SCENE_NOUN[space], motion: shotMotion });
+      // When the caller supplied free text, the camera move came from THEIR
+      // words on the unchanged guarded-user path — so the 202 and the provenance
+      // row report no motion rather than one we never sent.
+      const chosenMotion: ReelMotion | null = userMotion ? null : shotMotion;
 
       const charge = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
       const { orgId, plan } = charge;
@@ -1120,7 +1535,13 @@ Deno.serve(async (req) => {
         feature: "reel",
         step,
         seconds: secs,
-        meta: { seconds: secs, space_type: space, request_id: attempt.value.id },
+        meta: {
+          seconds: secs,
+          space_type: space,
+          request_id: attempt.value.id,
+          ...(chosenMotion ? { motion: chosenMotion } : {}),
+          ...(room ? { room } : {}),
+        },
       });
 
       const prov = await recordProvenance(req, {
@@ -1129,6 +1550,9 @@ Deno.serve(async (req) => {
         label: body.label ?? null,
         modelId: step.model,
         edit: "reel",
+        // What was actually asked of the model: the move we chose, or nothing
+        // when the agent's own words drove the clip instead.
+        style: chosenMotion,
         promptSummary: userMotion ?? null,
       });
       return json({
@@ -1137,9 +1561,229 @@ Deno.serve(async (req) => {
         model_id: step.model,
         seconds: secs,
         space_type: space,
+        // The move this clip was actually asked for, so the client can label it
+        // in a shot list without shipping its own copy of the enum. null when a
+        // free-text prompt drove the clip instead.
+        motion: chosenMotion,
+        motion_label: chosenMotion ? REEL_MOTION_LABEL[chosenMotion] : null,
+        room,
+        ...(shotIndex !== null ? { shot_index: shotIndex } : {}),
+        ...(shotCount !== null ? { shot_count: shotCount } : {}),
         disclosure: prov.disclosure,
         provenance: { id: prov.id, recorded: prov.recorded, ...(prov.reason ? { reason: prov.reason } : {}) },
       }, 202);
+    }
+
+    // ---- POST /ai-video/drift ----
+    //
+    // THE QUALITY GATE. Everything about why this exists is in the header and
+    // in _shared/drift.ts; what follows is the order of operations, which is
+    // the part that has to be right:
+    //
+    //   1. VALIDATE the body (free) — audit round 4's rule, same as every
+    //      generate route: nothing is charged for a request that was never
+    //      going to work.
+    //   2. ROLE + BURST (guardDriftCheck). No monthly meter: an org must never
+    //      run out of the ability to verify clips it has already paid for.
+    //   3. ONE JUDGEMENT PER CLIP, so a retried POST cannot buy a second
+    //      opinion or a second refund.
+    //   4. JUDGE on `judge.qc_drift`, escalating once on low confidence.
+    //   5. DECIDE — pure, in drift.ts. The retry grant is durable and keyed on
+    //      the SOURCE PHOTOGRAPH, so "exactly once" survives restarts and lies.
+    //   6. REFUND the rejected clip's plan allowance (never the vendor spend).
+    //   7. RECORD: one cost_ledger row per judge call, plus the verdict on the
+    //      media_provenance row when the caller names one.
+    if (req.method === "POST" && seg.length === 1 && seg[0] === "drift") {
+      const body = await readJsonLimited<DriftBody>(req, MAX_DRIFT_BODY_BYTES);
+
+      const requestId = cleanRequestId(body.request_id);
+      const kind: GenKind = body.kind === "aerial" ? "aerial" : "reel";
+      const source = requireDriftImage(body.source_b64, body.source_mime, "source_b64");
+      const frames = cleanDriftFrames(body.frames);
+      const seconds = Number.isFinite(Number(body.seconds))
+        ? Math.min(60, Math.max(1, Math.round(Number(body.seconds))))
+        : null;
+
+      // Context that sharpens the rubric. Every piece of it is resolved through
+      // the SAME closed vocabularies the generate routes use — spaceTypeOf()
+      // and the two motion enums — so nothing a caller types reaches the model
+      // through this route either: what is sent is our own frozen text, chosen
+      // by an enum value. That is why this route runs no fair-housing denylist,
+      // exactly as motion.ts argues for the reel's `room` hint.
+      const space = spaceTypeOf(body.space_type);
+      const motionText = driftMotionText(kind, body.motion);
+      const provenanceId = optionalUuid(body.provenance_id);
+      const sourceAssetId = optionalUuid(body.asset_id);
+
+      const orgId = await guardDriftCheck(user.id, req);
+
+      // ONE JUDGEMENT PER CLIP (step 3). Same 409 shape guardGenerate() uses
+      // for a duplicate Idempotency-Key. Without it, re-posting the frames of a
+      // failed clip would spend the lineage's retry grant twice and could ask
+      // for a second allowance refund; with it, a client that lost the response
+      // is told plainly that a verdict already exists.
+      if (!(await durableRateLimit(`aidriftjob:${orgId}:${requestId}`, 1, DRIFT_LINEAGE_WINDOW_SECONDS))) {
+        throw new HttpError(
+          409,
+          "This clip has already been checked — use the verdict you were given.",
+          "conflict",
+        );
+      }
+
+      const judged = await judgeDrift({
+        plan: await driftRoutingPlan(orgId),
+        subject: { kind: kind === "aerial" ? "aerial" : "reel", sceneNoun: SCENE_NOUN[space], motionText },
+        source,
+        frames,
+      });
+      const verdict = judged.verdict;
+      const passed = driftPasses(verdict);
+
+      // ── The retry grant (step 5) ─────────────────────────────────────────
+      //
+      // A retry is a NEW generation with a new request id and a new provenance
+      // row, so nothing in the job ids ties attempt 2 to attempt 1. The one
+      // thing both attempts share is the PHOTOGRAPH, so the counter is keyed on
+      // a hash of its bytes: a client cannot dodge the limit by renaming
+      // anything, and two agents animating two different photos never collide.
+      //
+      // The client's own `attempt` hint may only ever make this STRICTER. A
+      // caller saying "this is already the retry" is believed (it refuses); a
+      // caller saying "this is the first attempt" is not (the durable counter
+      // decides). Fail closed in the direction that stops publishing.
+      let attempt = 0;
+      let retryGranted = false;
+      if (!passed && !verdict.unavailable && verdict.judgement !== "unknown") {
+        const claimed = Math.max(0, Math.round(Number(body.attempt ?? 0)) || 0);
+        if (claimed >= 1) {
+          attempt = claimed;
+        } else {
+          const lineage = await driftLineageKey(source.b64);
+          retryGranted = await durableRateLimit(
+            `aidriftlin:${orgId}:${lineage}`,
+            1,
+            DRIFT_LINEAGE_WINDOW_SECONDS,
+          );
+          attempt = retryGranted ? 0 : 1;
+        }
+      }
+
+      const decision = decideDriftAction({ verdict, attempt, retryGranted });
+
+      // A HOLD means no verdict was delivered, so this clip has NOT been judged
+      // and the once-per-clip token above must not go on holding the door shut
+      // for six hours — the message we are about to return literally says "try
+      // the check again in a moment". Handing the token back is what makes that
+      // sentence true. Same primitive, same best-effort contract, as every
+      // other refund in this function.
+      if (decision.action === "hold") {
+        await refundRateLimit(`aidriftjob:${orgId}:${requestId}`, DRIFT_LINEAGE_WINDOW_SECONDS, 1);
+      }
+
+      // ── The money (step 6) ───────────────────────────────────────────────
+      //
+      // Only a clip a model actually judged and actually failed. A `hold` (the
+      // check could not run) refunds nothing: we do not know that the clip is
+      // bad, and handing back an allowance for a clip that may be perfectly
+      // good would make an outage in Anthropic's API into free reels.
+      const charge = decision.action === "retry" || decision.action === "refuse"
+        ? await refundRejectedClipAllowance(orgId, kind, requestId)
+        : { refunded: false, reason: "this clip was charged to your plan as usual" };
+
+      // ── The audit trail (step 7) ─────────────────────────────────────────
+      //
+      // ONE cost_ledger row PER JUDGE CALL, so an escalated verdict costs two
+      // rows and reads as two calls — the same shape services/pipeline/
+      // router.py `_record_qc` writes, and the honest alternative to ai-copy's
+      // documented "the retry is invisible in the ledger" under-report. feature
+      // is `qc`: 0001 comments that vocabulary on cost_ledger.feature and
+      // admin/index.ts already labels it "QC drift judge", so this shows up in
+      // the spend console with no admin change at all.
+      //
+      // meta carries the WHOLE verdict. It is a durable, org-scoped row that
+      // every member of the org can read under the ledger RLS policy, so it
+      // holds no photograph, no frame, no prompt and no free text of the
+      // caller's — only bounded numbers, a closed-vocabulary verdict, the
+      // judge's own sentence, and ids. That is the compliance evidence: what
+      // was judged, by which model, and what it scored.
+      let ledgerRows = 0;
+      for (const call of judged.calls) {
+        const res = await recordRoutedAiCost(adminClient(), {
+          orgId,
+          feature: "qc",
+          step: call.step,
+          meta: {
+            kind: "video_drift",
+            clip_kind: kind,
+            request_id: requestId,
+            provenance_id: provenanceId,
+            source_asset_id: sourceAssetId,
+            escalated: call.escalated,
+            frames_judged: frames.length,
+            ...(seconds !== null ? { seconds } : {}),
+            source_sha256: judged.sourceHash,
+            verdict: verdict.judgement,
+            scores: verdict.scores,
+            failed: failedCategories(verdict),
+            confidence: verdict.confidence,
+            reason: verdict.reason,
+            action: decision.action,
+            publishable: decision.publishable,
+            attempt,
+            allowance_refunded: charge.refunded,
+          },
+        });
+        if (res.recorded) ledgerRows++;
+      }
+
+      // The compliance spine (migration 0029). Service-role RPC on purpose: a
+      // tenant must not be able to write a passing verdict about their own
+      // listing media. Best effort — the verdict is already in the ledger and
+      // already in the response, and losing an audit stamp must not lose the
+      // answer the agent is waiting for.
+      const stamped = provenanceId
+        ? await stampProvenanceQc(orgId, provenanceId, {
+          verdict: verdict.judgement,
+          action: decision.action,
+          publishable: decision.publishable,
+          score: verdict.score,
+          scores: verdict.scores,
+          thresholds: DRIFT_PASS_SCORES,
+          failed: failedCategories(verdict),
+          confidence: verdict.confidence,
+          reason: verdict.reason,
+          model: judged.step?.model ?? null,
+          provider: judged.step?.provider ?? null,
+          task: DRIFT_TASK,
+          escalated: judged.escalated,
+          frames_judged: frames.length,
+          request_id: requestId,
+          source_sha256: judged.sourceHash,
+          attempt,
+        })
+        : false;
+
+      return json({
+        drift: driftBlock({
+          decision,
+          verdict,
+          provider: judged.step?.provider ?? "none",
+          model: judged.step?.model ?? "none",
+          escalated: judged.escalated,
+          framesJudged: frames.length,
+          attempt,
+        }),
+        // What this cost the agent, said out loud rather than left to an
+        // invoice — the same reason /drone carries `estimated_cost`.
+        charge: {
+          allowance_refunded: charge.refunded,
+          note: charge.reason,
+          retry_costs_another_clip: decision.action === "retry" ? !charge.refunded : false,
+        },
+        recorded: { ledger: ledgerRows, provenance: stamped },
+        ...(seconds !== null ? { seconds } : {}),
+        kind,
+      });
     }
 
     // ---- GET /ai-video/status ----
@@ -1205,7 +1849,16 @@ Deno.serve(async (req) => {
         if (!videoUrl) {
           throw new HttpError(502, `fal result had no video url: ${JSON.stringify(result).slice(0, 300)}`, "upstream");
         }
-        return json({ status: "completed", video_url: videoUrl });
+        // ADDITIVE (quality gate). A completed clip is not an APPROVED clip.
+        // This route is stateless — it holds no verdict and cannot fetch one
+        // without a per-poll database read on every 2-second poll — so what it
+        // reports is the honest thing it knows: nobody has checked this clip
+        // against the source photo yet, and therefore `publishable` is false.
+        // The block is emitted rather than omitted precisely BECAUSE silence
+        // reads as approval; POST /ai-video/drift answers with the same shape
+        // once a verdict exists. A shipped build decodes the fields it names
+        // and ignores this one entirely.
+        return json({ status: "completed", video_url: videoUrl, drift: uncheckedDriftBlock() });
       }
 
       // FAILED / ERROR / anything unexpected. Log the provider's reason so
@@ -1289,7 +1942,380 @@ async function routedStatus(orgId: string, job: RouterJobToken): Promise<Respons
     model: job.m,
     persisted: assetKey !== null,
     ...(assetKey ? { asset_key: assetKey } : {}),
+    // Same additive quality-gate block as the legacy path above, for the same
+    // reason: persisted is not the same as approved.
+    drift: uncheckedDriftBlock(),
   });
+}
+
+// ── The quality gate: validation, routing, and the judge call ────────────────
+//
+// The pure half of this feature — the rubric, the thresholds, the parser, the
+// decision and the response shape — is _shared/drift.ts, which is where the
+// reasoning and the cost arithmetic live and where the tests point. What is
+// below is the part that touches the network, the router and the database, and
+// therefore cannot be unit-tested in this repo's no-network house style.
+
+/**
+ * Per-image and per-body ceilings.
+ *
+ * The generate routes allow 12,000,000 base64 characters for ONE image because
+ * that image is the product. A judge frame is not: it exists to be looked at by
+ * a vision model that down-samples it anyway, and the app already produces
+ * exactly the right thing — PosterMaker writes a 1280 px JPEG at quality 0.8,
+ * which is around 250 KB, i.e. ~340,000 base64 characters. 2,000,000 characters
+ * is six times that headroom per image and still bounds a four-image body at
+ * roughly 8 MB, which is what MAX_DRIFT_BODY_BYTES leaves room for. Sending
+ * bigger frames buys no better verdict and costs input tokens on every call.
+ */
+const MAX_DRIFT_IMAGE_B64_CHARS = 2_000_000;
+const MAX_DRIFT_BODY_BYTES = 12_000_000;
+
+/** The judge answers one small JSON object. 400 tokens is what the Python
+ *  gate caps its own structured verdict at (QC_MAX_OUTPUT_TOKENS), and output
+ *  tokens on a vision call cost roughly 5× input. */
+const DRIFT_MAX_TOKENS = 400;
+
+/** The clip's provider request id: bounded, printable, and never interpolated
+ *  into anything but a rate-limit key and an audit field. */
+function cleanRequestId(raw: unknown): string {
+  const s = String(raw ?? "").trim();
+  assert(s.length > 0, 400, "request_id is required — send the id the clip's 202 returned");
+  assert(s.length <= 200, 400, "request_id is too long");
+  assert(/^[A-Za-z0-9._:-]+$/.test(s), 400, "request_id has characters that are not part of a job id");
+  return s;
+}
+
+interface DriftImage {
+  b64: string;
+  mime: string;
+}
+
+/** One image out of the body, bounded and MIME-checked exactly as the generate
+ *  routes check their inline photo. */
+function requireDriftImage(b64: unknown, mime: unknown, field: string): DriftImage {
+  assert(typeof b64 === "string" && b64.length > 0, 400, `${field} is required`);
+  const s = b64 as string;
+  assert(
+    s.length <= MAX_DRIFT_IMAGE_B64_CHARS,
+    413,
+    `${field} is too large — send the 1280 px frame the app already makes, not the full-size image`,
+    "payload_too_large",
+  );
+  const m = String(mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
+  assert(ALLOWED_IMAGE_MIMES.includes(m), 400, `${field} mime must be one of ${ALLOWED_IMAGE_MIMES.join(", ")}`);
+  return { b64: s, mime: m };
+}
+
+interface DriftFrame extends DriftImage {
+  at: DriftFramePosition;
+}
+
+/**
+ * The frames to judge, in clip order, de-duplicated by position.
+ *
+ * ORDER IS MEANING here: the judge is told these are the first, middle and last
+ * of the clip, and drift is cumulative, so a shuffled list would tell it the
+ * wrong story about when the invention started. The array is therefore sorted
+ * into DRIFT_FRAME_POSITIONS order rather than trusted as sent.
+ *
+ * A body with none of them is a 400. A body with more than one frame at the
+ * same position keeps the first: it is a client bug, and silently paying for a
+ * fourth and fifth image would be the wrong way to discover it.
+ */
+function cleanDriftFrames(raw: unknown): DriftFrame[] {
+  assert(
+    Array.isArray(raw),
+    400,
+    "frames is required — send the finished clip's " +
+      `${DRIFT_FRAME_POSITIONS.join(", ")} frames as an array of { at, b64 }`,
+  );
+  const rows = raw as Array<Record<string, unknown>>;
+  assert(
+    rows.length > 0 && rows.length <= DRIFT_MAX_FRAMES + 2,
+    400,
+    `frames must hold between 1 and ${DRIFT_MAX_FRAMES} entries (${DRIFT_FRAME_POSITIONS.join(", ")})`,
+  );
+  const byPosition = new Map<DriftFramePosition, DriftFrame>();
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const at = String(row.at ?? "").trim().toLowerCase();
+    if (!(DRIFT_FRAME_POSITIONS as readonly string[]).includes(at)) continue;
+    const position = at as DriftFramePosition;
+    if (byPosition.has(position)) continue;
+    const img = requireDriftImage(row.b64, row.mime, `frames[${position}].b64`);
+    byPosition.set(position, { at: position, ...img });
+  }
+  const ordered = DRIFT_FRAME_POSITIONS.map((p) => byPosition.get(p)).filter((f): f is DriftFrame => !!f);
+  assert(
+    ordered.length > 0,
+    400,
+    `frames needs at least one entry whose \`at\` is one of ${DRIFT_FRAME_POSITIONS.join(", ")}`,
+  );
+  return ordered;
+}
+
+/**
+ * The camera-move sentence for the rubric, resolved through the SAME enums the
+ * generate routes use — so what reaches the model is our own frozen text, never
+ * the caller's string. An unrecognised move answers null and the rubric simply
+ * omits the clause, exactly as normalizeRoom() degrades rather than refusing.
+ */
+function driftMotionText(kind: GenKind, raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const s = raw.trim().toLowerCase();
+  if (kind === "aerial" && (AERIAL_MOTIONS as readonly string[]).includes(s)) {
+    return AERIAL_MOTION_TEXT[s as AerialMotion];
+  }
+  const reel = parseReelMotion(s);
+  return reel ? REEL_MOTION_TEXT[reel] : null;
+}
+
+/**
+ * The org's plan, for the router's RouteContext ONLY — never for access.
+ *
+ * `entitlementFor()` and not `entitlementForCharge()`, for ai-copy's reason
+ * exactly: the -ForCharge variant turns a degraded plan lookup into a 503 to
+ * protect a charge, and there is no charge here worth protecting — the clip is
+ * already generated and already billed. A plan-table blip must not be the
+ * reason a clip goes out unverified. Every judge.qc_drift row is min_plan
+ * 'free', so the plan can only ever pick a POLICY, never access.
+ */
+async function driftRoutingPlan(orgId: string): Promise<string> {
+  try {
+    return (await entitlementFor(orgId)).plan;
+  } catch (e) {
+    console.error("ai-video: plan lookup failed; routing the drift check as free:", e instanceof Error ? e.message : e);
+    return "free";
+  }
+}
+
+/**
+ * The in-code chain, mirroring rows 1 and 2 of `judge.qc_drift` in migration
+ * 0018 verbatim (claude-haiku-4-5 at 0.66¢, claude-sonnet-5 at 1.3¢). Same
+ * shape and same purpose as ai-copy's fallbackStep(): with the router flag off,
+ * resolveRoute() looks for a `note='legacy'` row, this task deliberately has
+ * none (0028's argument — a new task has no prior behaviour to preserve), so
+ * the answer is `[]` and this is what runs.
+ */
+function driftFallbackStep(position: 1 | 2): RouteStep {
+  const primary = position === 1;
+  return {
+    route_id: `qc-drift-fallback-${primary ? "haiku" : "sonnet"}`,
+    task: DRIFT_TASK,
+    provider: "anthropic",
+    model: primary ? "claude-haiku-4-5" : "claude-sonnet-5",
+    unit: "call",
+    unit_cents: primary ? DRIFT_FALLBACK_CENTS.primary : DRIFT_FALLBACK_CENTS.escalation,
+    capabilities: ["classifier", "vision", "multi_image"],
+    max_latency_s: 60,
+    min_plan: "free",
+    same_model_as: null,
+    privacy_tier: "retained_30d",
+    enabled: true,
+  };
+}
+
+/** Today's chain for the drift judge. Used AS RETURNED (contract §4, rule 2). */
+async function driftChain(plan: string): Promise<RouteStep[]> {
+  try {
+    const steps = await resolveRoute(DRIFT_TASK, {
+      plan,
+      // The three capabilities 0018 actually seeds on every judge.qc_drift row.
+      // ctx.needs is a hard AND, so asking for more than the rows advertise
+      // would empty the chain; asking for less would let a text-only step
+      // through and it would fail on the first image block.
+      needs: ["classifier", "vision", "multi_image"],
+      // These are photographs of somebody's home. The router drops
+      // trains_by_default steps outright for media that carries them.
+      carries_customer_media: true,
+    });
+    if (steps.length > 0) return steps;
+  } catch (e) {
+    console.error("ai-video: resolveRoute(judge.qc_drift) threw; using the in-code chain:", e instanceof Error ? e.message : e);
+  }
+  return [driftFallbackStep(1), driftFallbackStep(2)];
+}
+
+/** A text block or an image block, in the order the judge should read them. */
+type DriftPart = { text: string } | { image: DriftImage };
+
+/**
+ * ONE judge call against ONE routing step.
+ *
+ * An unknown provider is error_class "other", NOT "validation", so runChain()
+ * fails over to the next vendor instead of hard-failing the whole check over an
+ * admin-added row this deploy cannot speak — the same choice ai-copy's
+ * callStep() makes and for the same reason. gemini is deliberately not handled:
+ * 0018 seeds no gemini step on this task, and _shared/providers/gemini.ts is an
+ * image-GENERATION adapter, so pretending otherwise would produce a confusing
+ * failure at the first image block rather than a clean failover.
+ */
+async function callJudgeStep(step: RouteStep, rubric: string, parts: DriftPart[]): Promise<string> {
+  if (step.provider === "anthropic") {
+    const content: ContentBlock[] = parts.map((p) =>
+      "text" in p ? { type: "text" as const, text: p.text } : imageBlock(p.image.b64, p.image.mime)
+    );
+    // assertNotCoveredModel() runs inside anthropicMessages: a Covered Model
+    // must never receive a photograph of a customer's home, and these are four
+    // of them.
+    return await anthropicMessages({ model: step.model, system: rubric, content, maxTokens: DRIFT_MAX_TOKENS });
+  }
+  if (step.provider === "openai") {
+    const content = [
+      { type: "input_text", text: rubric },
+      ...parts.map((p) =>
+        "text" in p
+          ? { type: "input_text", text: p.text }
+          : { type: "input_image", image_url: `data:${p.image.mime};base64,${p.image.b64}` }
+      ),
+    ];
+    return await openaiChat(step.model, [{ role: "user", content }], {
+      json: true,
+      maxOutputTokens: DRIFT_MAX_TOKENS,
+    });
+  }
+  throw new ProviderError(
+    step.provider,
+    "other",
+    `${DRIFT_TASK}: no vision adapter for provider "${step.provider}" in this deploy`,
+  );
+}
+
+interface JudgeCall {
+  step: RouteStep;
+  escalated: boolean;
+}
+
+interface JudgeOutcome {
+  verdict: DriftVerdict;
+  /** Every call actually made — one cost_ledger row each. */
+  calls: JudgeCall[];
+  /** The step whose verdict is being returned, or null when none answered. */
+  step: RouteStep | null;
+  escalated: boolean;
+  /** SHA-256 of the source still, for the audit row. */
+  sourceHash: string;
+}
+
+/**
+ * Run the check.
+ *
+ * TWO TIERS, NOT A FAILOVER CHAIN — the same distinction 0018 draws for
+ * judge.fair_housing ("resolveRoute() still returns them in order; the caller
+ * decides"). runChain() drives each tier, so a vendor outage still fails over
+ * and every attempt is still reported to the circuit breaker; but the SECOND
+ * tier is entered on LOW CONFIDENCE, not on failure, which is what 0018's own
+ * note on row 2 ("escalation, and the standing successor") describes and what
+ * services/pipeline/router.py has done for photos since it shipped. The
+ * arithmetic for why escalating beats treating "not sure" as a failure is in
+ * _shared/drift.ts.
+ *
+ * FAILS CLOSED. If the whole chain throws — every provider down, no API key, a
+ * Covered Model refusal, a timeout — this returns unavailableVerdict(), which
+ * routes to "hold": not published, not regenerated, re-checkable. It never
+ * throws, because the caller must always be able to answer the client with a
+ * drift block, and an error the app surfaces as "network problem" is exactly
+ * how an unchecked clip gets published anyway.
+ */
+async function judgeDrift(args: {
+  plan: string;
+  subject: { kind: "reel" | "aerial"; sceneNoun: string; motionText: string | null };
+  source: DriftImage;
+  frames: DriftFrame[];
+}): Promise<JudgeOutcome> {
+  const sourceHash = await driftLineageKey(args.source.b64);
+  const rubric = driftRubric(args.subject);
+  const parts: DriftPart[] = [
+    { text: DRIFT_SOURCE_LABEL },
+    { image: args.source },
+    { text: driftFramesLabel(args.frames.map((f) => f.at)) },
+    ...args.frames.map((f) => ({ image: { b64: f.b64, mime: f.mime } })),
+  ];
+
+  const steps = await driftChain(args.plan);
+
+  let primary: ChainResult<string>;
+  try {
+    primary = await runChain(DRIFT_TASK, steps, (step) => callJudgeStep(step, rubric, parts));
+  } catch (e) {
+    const why = e instanceof Error ? e.message : String(e);
+    console.error("ai-video: the drift judge could not be reached:", why);
+    return {
+      verdict: unavailableVerdict(
+        "The quality check could not reach its model, so this clip has not been verified.",
+      ),
+      calls: [],
+      step: null,
+      escalated: false,
+      sourceHash,
+    };
+  }
+
+  const calls: JudgeCall[] = [{ step: primary.step, escalated: false }];
+  let verdict = parseDriftVerdict(primary.value);
+  let step = primary.step;
+  let escalated = false;
+
+  // The escalation tier: the steps AFTER the one that just answered. An empty
+  // remainder (the cheap judge was already the last step) simply means the
+  // low-confidence verdict stands, which is the pipeline's own behaviour when
+  // it cannot afford to escalate.
+  if (verdict.confidence < ESCALATE_BELOW_CONFIDENCE) {
+    const at = steps.indexOf(primary.step);
+    const rest = at >= 0 ? steps.slice(at + 1) : [];
+    if (rest.length > 0) {
+      try {
+        const second = await runChain(DRIFT_TASK, rest, (s) => callJudgeStep(s, rubric, parts));
+        calls.push({ step: second.step, escalated: true });
+        verdict = parseDriftVerdict(second.value);
+        step = second.step;
+        escalated = true;
+      } catch (e) {
+        // Keep the cheap judge's answer. It is a real verdict from a real
+        // model; the escalation was an upgrade we could not buy, not a reason
+        // to throw away what we already paid for.
+        console.error("ai-video: drift escalation failed; keeping the first verdict:", e instanceof Error ? e.message : e);
+      }
+    }
+  }
+
+  return { verdict, calls, step, escalated, sourceHash };
+}
+
+/**
+ * Stamp the verdict onto the media_provenance row (migration 0029).
+ *
+ * SERVICE ROLE, deliberately. record_provenance() is called as the CALLER
+ * because the agent is the one asserting "I generated this"; a QC verdict is
+ * the opposite — it is evidence ABOUT the agent's media, and a tenant who can
+ * write their own passing score has evidence worth nothing. So 0029 grants
+ * record_media_qc() to service_role only and takes the org id explicitly, and
+ * this passes the org the caller's JWT resolved to, never one from the body.
+ *
+ * Best effort and never throws, exactly like recordProvenance(): the verdict is
+ * already in the response and already in cost_ledger.
+ */
+async function stampProvenanceQc(
+  orgId: string,
+  provenanceId: string,
+  qc: Record<string, unknown>,
+): Promise<boolean> {
+  try {
+    const { error } = await adminClient().rpc("record_media_qc", {
+      p_id: provenanceId,
+      p_org: orgId,
+      p_qc: qc,
+    });
+    if (error) {
+      console.error("ai-video: record_media_qc failed:", error.message);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error("ai-video: record_media_qc threw:", e instanceof Error ? e.message : e);
+    return false;
+  }
 }
 
 // ── fal queue helpers ─────────────────────────────────────────────────────────

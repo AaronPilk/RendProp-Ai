@@ -53,7 +53,7 @@ handlers see clean segments:
 | me | JWT | `GET /` · `PATCH /brand` (+ `handle`, `org_name`) · `POST /apple-code` · `DELETE /` · `POST /sweep-deletions` (service role) |
 | leads | public + JWT | `POST /` (public capture) · `GET /?listing_id=&since=&status=&limit=` · `PATCH /:id {status}` |
 | ai-photo | JWT | `POST /` (`edit`, `space_type`, `style`, `prompt`; `suggest` / `improve_prompt` are not metered) |
-| ai-video | JWT | `POST /drone` · `POST /declutter` · `POST /aerial` · `POST /reel-clip` · `GET /status?status_url=&response_url=` |
+| ai-video | JWT | `POST /drone` · `POST /declutter` · `POST /aerial` · `POST /reel-clip` · `POST /drift` (the generated clip's quality gate — judges the output frames against the source still on `judge.qc_drift` and answers `publishable`) · `GET /status?status_url=&response_url=` (a completed job carries an additive `drift` block that reads `unchecked` until the gate has run) |
 | ai-enhance | service role / JWT | `POST /` |
 | tours | public | `GET /:slug` (404 for deleted listings; carries `status`, `sold_at`) |
 | portfolio | public | `GET /:handle` |

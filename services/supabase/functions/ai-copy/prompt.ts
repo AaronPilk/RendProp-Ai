@@ -225,6 +225,13 @@ const TONE_DIRECTION: Record<Tone, string> = {
     "carry it. No superlatives, no exclamation marks.",
 };
 
+/** The one style direction for a tone. Exported because ai-copy/shotlist.ts
+ *  writes to the same three tones and a second copy of these strings is the
+ *  drift this file exists to prevent. */
+export function toneDirection(tone: Tone): string {
+  return TONE_DIRECTION[tone];
+}
+
 // ── The address placeholder (a privacy rule, not a formatting choice) ────────
 //
 // THE STREET ADDRESS IS NEVER SENT TO THIS FUNCTION. It is not in the request
@@ -569,7 +576,7 @@ export function scriptInstruction(req: ScriptRequest): string {
       `token ${ADDRESS_PLACEHOLDER} — the app replaces that token on the device before the script is ` +
       `spoken. Use it at most once. If the script reads better without naming it at all, leave it out.`,
     "",
-    "STYLE: " + TONE_DIRECTION[req.tone],
+    "STYLE: " + toneDirection(req.tone),
     `Spoken English, plain words, no markdown, no emoji, no hashtags, no stage directions, no ` +
       `speaker labels, no section headings, no quotation marks around the whole script. Write it as ` +
       `one continuous paragraph a person can read aloud.`,
@@ -583,20 +590,34 @@ export function scriptInstruction(req: ScriptRequest): string {
   ].join("\n");
 }
 
+/**
+ * The FACT BLOCK, in the words and the order every route states it in.
+ *
+ * Extracted from `buildScriptTurn()` verbatim so `/ai-copy/shotlist` states the
+ * same facts the same way rather than growing a second dialect of "Beds: 4" —
+ * two prompts describing one listing differently is how two routes start
+ * answering differently about the same house.
+ */
+export function factLines(space: SpaceType, facts: ScriptFacts): string[] {
+  const v = vocabFor(space);
+  const lines: string[] = [];
+  lines.push(`Type of ${v.space}: ${space.replace(/_/g, " ")}`);
+  if (facts.region) lines.push(`Area (city/state only): ${facts.region}`);
+  if (facts.tagline) lines.push(`The owner's own one-liner: ${facts.tagline}`);
+  if (facts.beds !== undefined) lines.push(`Beds: ${facts.beds}`);
+  if (facts.baths !== undefined) lines.push(`Baths: ${facts.baths}`);
+  if (facts.sqft !== undefined) lines.push(`Square feet: ${facts.sqft}`);
+  if (facts.price_label) lines.push(`Price: ${facts.price_label}`);
+  if (facts.details) {
+    for (const [k, val] of Object.entries(facts.details)) lines.push(`${k}: ${val}`);
+  }
+  return lines;
+}
+
 /** The user turn for the script route: the facts, and nothing else. */
 export function buildScriptTurn(req: ScriptRequest): string {
   const v = vocabFor(req.space);
-  const lines: string[] = [];
-  lines.push(`Type of ${v.space}: ${req.space.replace(/_/g, " ")}`);
-  if (req.facts.region) lines.push(`Area (city/state only): ${req.facts.region}`);
-  if (req.facts.tagline) lines.push(`The owner's own one-liner: ${req.facts.tagline}`);
-  if (req.facts.beds !== undefined) lines.push(`Beds: ${req.facts.beds}`);
-  if (req.facts.baths !== undefined) lines.push(`Baths: ${req.facts.baths}`);
-  if (req.facts.sqft !== undefined) lines.push(`Square feet: ${req.facts.sqft}`);
-  if (req.facts.price_label) lines.push(`Price: ${req.facts.price_label}`);
-  if (req.facts.details) {
-    for (const [k, val] of Object.entries(req.facts.details)) lines.push(`${k}: ${val}`);
-  }
+  const lines = factLines(req.space, req.facts);
   lines.push(
     req.roomTags.length > 0
       ? `${v.area[0].toUpperCase()}${v.area.slice(1)}s in walk order: ${req.roomTags.join(", ")}`

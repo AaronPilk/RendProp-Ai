@@ -61,7 +61,7 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   tour_published:     ["space_type", "unbranded", "ok"],
   // AI tools
   ai_photo_edit:      ["task", "provider", "ok", "ms"],
-  reel_made:          ["clips", "duration_s", "ok"],
+  reel_made:          ["clips", "duration_s", "ok", "captions", "transition", "planned"],
   voiceover_added:    ["duration_s", "captions", "ok"],
   aerial_made:        ["provider", "ok", "ms"],
   // Money
@@ -99,6 +99,13 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   // docs/COPY-ASSIST-CONTRACT.md.
   ai_script_written:  ["space_type", "tone", "chars", "target_s", "ok"],
   ai_prompt_improved: ["space_type", "chars", "ok"],
+  // The shot list (POST /ai-copy/shotlist) — the plan behind a reel: which photo
+  // goes where, which camera move, what the burned-in words say. `shots` is a
+  // count, never the plan itself; the captions describe a real address.
+  reel_planned:       ["ok", "space_type", "shots"],
+  // A file the agent saved out of the FILES section to their own camera roll.
+  // `kind` is the closed set of things a listing can hold — never a filename.
+  file_saved:         ["kind", "ok"],
   // Stability (MetricKit summaries — see Analytics/CrashReporter.swift)
   crash:              ["kind", "signal", "exception_type", "termination_reason", "top_frame", "app_version", "os"],
   error:              ["category", "code", "step", "detail", "launch_time_ms", "hang_ms", "app_version", "os"],

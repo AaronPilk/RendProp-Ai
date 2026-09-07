@@ -15,6 +15,10 @@
     --accent: #d9a441;
     --card: rgba(16,19,24,.78);
     --radius: 16px;
+    /* The floor plan's chip palette on the hosted page (EDITORIAL_CSS), in this
+       file's own accent so #roomstrip is the same component here. */
+    --accent-soft: rgba(217,164,65,.12);
+    --accent-3: #e8c98a;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { scroll-behavior: auto; }
@@ -26,14 +30,24 @@
 
   /* ===== Track & sticky stage ===== */
   #track { position: relative; }
+  /* THE BAND. --strip is the height of the room strip's reserved band at the
+     bottom of the stage (0px until the strip is built) and --floor is how far
+     a bottom-anchored overlay has to sit above the stage's bottom edge to
+     clear it. The video is SHORTER by --strip: the room names never cover the
+     frame. MIRRORS services/edge/tour-host/src/player.ts. */
   #stage {
     position: sticky; top: 0;
     height: 100vh; height: 100svh;
     overflow: hidden; background: #000;
+    --strip: 0px; --floor: env(safe-area-inset-bottom);
   }
+  #stage.hasstrip { --strip: calc(44px + env(safe-area-inset-bottom)); --floor: var(--strip); }
+  /* <video> is a REPLACED element: with top and bottom both set it keeps its
+     intrinsic 300x150 and drops the bottom inset, so the band has to come out
+     of an explicit height instead. */
   #scrub {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: calc(100% - var(--strip, 0px));
     object-fit: cover;
     pointer-events: none;
   }
@@ -74,7 +88,7 @@
     text-shadow: 0 1px 8px rgba(0,0,0,.6);
   }
   #hint {
-    left: 50%; bottom: calc(34px + env(safe-area-inset-bottom));
+    left: 50%; bottom: calc(34px + var(--floor, 0px));
     transform: translateX(-50%);
     display: flex; flex-direction: column; align-items: center; gap: 6px;
     font-size: 13px; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.7);
@@ -86,63 +100,97 @@
 
   /* Room label */
   #room {
-    left: 16px; bottom: calc(96px + env(safe-area-inset-bottom));
+    left: 16px; bottom: calc(96px + var(--floor, 0px));
     opacity: 0; will-change: transform, opacity;
     max-width: min(58vw, 420px);
   }
   #room .kicker { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
   #room .name { font-size: 30px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.65); }
 
-  /* Chapter rail — every room named, not just the active one.
+  /* Chapter rail — a POSITION INDICATOR, not a room index.
      MIRRORS services/edge/tour-host/src/player.ts (PLAYER_CSS + renderTourPage).
-     The canonical engine lives there; this file is the in-app copy. The labels
-     used to be hidden with opacity:0 and revealed only for .active, which left
-     a tagged tour looking like a column of anonymous dots — the 4,000 sq ft
-     field test was people tapping them one at a time to find out where each one
-     went. Each label now gets the same smoked-glass pill as the #staged chip,
-     which is what keeps a white room name readable over a white kitchen.
-     Active is carried by brightness and the accent dot, deliberately NOT by
-     font-weight: the rail is right-anchored, so a bolder active label would
-     re-measure its pill and twitch the column sideways once per chapter.
-     A long name ellipses; #room spells the current one out in full at 30px. */
+     The canonical engine lives there; this file is the in-app copy.
+
+     A previous pass named every chapter on the rail in a smoked-glass pill.
+     On a real tour — 17 rooms, which is the normal case for a house — that was
+     a full-height column of pills down the right edge of the video covering
+     the price, the beds/baths line and the address, with the longer names cut
+     mid-word. So the rail is dots again with only the chapter you are IN
+     named, and the room list moved off the frame into #roomstrip below it.
+
+     The active label is absolutely positioned inside its button, so it costs
+     the column no layout: the rail cannot twitch sideways or re-flow as the
+     active chapter changes under a fast scroll.
+
+     HEIGHT. The rail is anchored top AND bottom to the band between the
+     listing chip and the disclosure chip, so it is always inside the stage,
+     and the rows shrink to fit it (flex-basis 20px, flex-shrink 1) instead of
+     running off both ends. No chapter-count density tier is needed. */
   #rail {
-    right: 10px; top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; gap: 12px; align-items: flex-end;
+    right: calc(10px + env(safe-area-inset-right));
+    top: calc(96px + env(safe-area-inset-top));
+    bottom: calc(48px + var(--floor, 0px));
+    display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
   }
   #rail button {
-    appearance: none; border: 0; background: none; cursor: pointer;
-    display: flex; align-items: center; gap: 8px; padding: 3px 1px;
-    color: var(--ink-dim); font-size: 11px; font-family: inherit; min-width: 0;
+    appearance: none; border: 0; background: none; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: flex-end;
+    flex: 0 1 20px; height: 20px; min-height: 3px; width: 34px; padding: 0;
+    color: var(--ink-dim); font-size: 11px; font-family: inherit;
   }
   #rail button .dot {
-    width: 7px; height: 7px; border-radius: 50%; flex: 0 0 auto;
-    background: rgba(255,255,255,.35); transition: all .25s ease;
-  }
-  #rail button .lbl {
-    max-width: min(38vw, 190px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    padding: 4px 9px; border-radius: 999px; color: rgba(242,243,245,.74);
-    background: rgba(11,13,16,.42); border: 1px solid rgba(255,255,255,.13);
-    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-    text-shadow: 0 1px 6px rgba(0,0,0,.7);
-    transition: color .25s ease, background-color .25s ease, border-color .25s ease;
+    width: 7px; height: 7px; max-height: 100%; border-radius: 50%; flex: 0 0 auto;
+    background: rgba(255,255,255,.35);
+    transition: background-color .25s ease, box-shadow .25s ease;
   }
   #rail button.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  #rail button.active .lbl { color: var(--ink); background: rgba(11,13,16,.68); border-color: rgba(255,255,255,.32); }
-  /* DENSITY. The rail is centred and absolutely positioned, so a column taller
-     than the stage does not scroll — it is clipped by #stage's overflow. It
-     therefore has to shrink to fit. Tiers are set from CHAPTERS.length when the
-     rail is built (counting siblings needs :has()). Rough budget per row:
-     default <=8 -> ~292px, .dense 9-14 -> ~413px, .packed 15-22 -> ~546px. */
-  #rail.dense { gap: 7px; }
-  #rail.dense button .lbl { font-size: 10.5px; padding: 3px 8px; max-width: min(32vw, 150px); }
-  #rail.packed { gap: 4px; }
-  #rail.packed button .lbl { font-size: 10px; padding: 2px 7px; max-width: min(28vw, 130px); }
-  /* Past ~22 rooms, or on a landscape phone, no amount of shrinking makes the
-     stack readable — back to dots with only the current room named. #room still
-     spells out where you are. */
-  #rail.dots button:not(.active) .lbl { display: none; }
-  @media (max-height: 560px) { #rail { gap: 6px; } #rail button .lbl { font-size: 10px; padding: 2px 7px; } }
-  @media (max-height: 430px) { #rail button:not(.active) .lbl { display: none; } }
+  /* Only the current chapter is named, and the pill floats free of the column. */
+  #rail button .lbl { display: none; }
+  #rail button.active .lbl {
+    display: block; position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    max-width: min(52vw, 260px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 3px 9px; border-radius: 999px; line-height: 1.35; color: var(--ink);
+    background: rgba(11,13,16,.68); border: 1px solid rgba(255,255,255,.3);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    text-shadow: 0 1px 6px rgba(0,0,0,.7);
+  }
+  /* Landscape: the band is ~250px tall, so the dots are already tight — shrink
+     them and drop the floating label. #room still spells out the room, and
+     #roomstrip still lists every one of them. */
+  @media (max-height: 430px) {
+    #rail button .dot { width: 5px; height: 5px; }
+    #rail button.active .lbl { display: none; }
+  }
+
+  /* ===== Room strip — the room index, UNDER the video =====
+     The replacement for labelling the rail: a horizontal, scrollable row of
+     the same .plan-room seek chips the hosted page's floor-plan section uses,
+     in the --strip band carved out of the bottom of the stage. It never
+     overlaps the frame, and because it scrolls sideways a 17-room house shows
+     every room name in full instead of ellipsing it. */
+  #roomstrip {
+    left: 0; right: 0; bottom: 0; height: var(--strip, 0px); z-index: 12;
+    display: none; align-items: center; padding-bottom: env(safe-area-inset-bottom);
+    background: rgba(9,11,14,.94); border-top: 1px solid rgba(255,255,255,.09);
+  }
+  #stage.hasstrip #roomstrip { display: flex; }
+  #roomstrip .rs-scroll {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    width: 100%; overflow-x: auto; overflow-y: hidden;
+    padding: 0 calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
+    overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  }
+  #roomstrip .rs-scroll::-webkit-scrollbar { display: none; }
+  .plan-room {
+    appearance: none; cursor: pointer; font-family: inherit; border-radius: 999px;
+    background: var(--accent-soft); border: 1px solid rgba(217,164,65,.24);
+    color: var(--accent-3); font-weight: 600;
+  }
+  /* Names never truncate mid-word here: the row scrolls instead. */
+  #roomstrip .plan-room { flex: 0 0 auto; white-space: nowrap; font-size: 12.5px; padding: 6px 12px; }
+  #roomstrip .plan-room.active { background: var(--accent); border-color: var(--accent); color: #14100a; }
 
   /* "Still loading" pill — shown when the viewer out-scrolls the download.
      Same smoked-glass vocabulary as #staged; opacity only, no motion. It takes
@@ -151,7 +199,7 @@
      14px band where #wm and #staged sit. */
   #bufwait {
     left: 50%; transform: translateX(-50%);
-    bottom: calc(34px + env(safe-area-inset-bottom));
+    bottom: calc(34px + var(--floor, 0px));
     display: none; align-items: center; gap: 7px;
     font-size: 11px; letter-spacing: .04em; color: rgba(255,255,255,.72);
     padding: 6px 12px; border-radius: 999px;
@@ -173,7 +221,7 @@
 
   /* Watermark */
   #wm {
-    left: 16px; bottom: calc(14px + env(safe-area-inset-bottom));
+    left: 16px; bottom: calc(14px + var(--floor, 0px));
     font-size: 10.5px; color: rgba(255,255,255,.45); letter-spacing: .06em;
     text-decoration: none;
   }
@@ -181,7 +229,7 @@
 
   /* Virtual-staging disclosure (MLS compliance — shown when AI enhancements applied) */
   #staged {
-    right: 16px; bottom: calc(14px + env(safe-area-inset-bottom));
+    right: 16px; bottom: calc(14px + var(--floor, 0px));
     display: none; align-items: center; gap: 5px;
     font-size: 10.5px; color: rgba(255,255,255,.55); letter-spacing: .04em;
     padding: 5px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px;
@@ -292,6 +340,8 @@
 
     <div class="chrome" id="rail"></div>
 
+    <div class="chrome" id="roomstrip" role="group" aria-label="Rooms in this tour"><div class="rs-scroll"></div></div>
+
     <div class="chrome" id="hint">
       <span>Scroll to fly through</span>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -368,7 +418,8 @@
   // The video file isn't available (bundled demo missing, tour file gone):
   // show an explicit message, never a black stage with a spinning loader.
   const VIDEO_MISSING = false;
-  const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.08 : 0.14;  // a touch more responsive; all-intra video keeps it smooth
+  const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const LERP = REDUCE_MOTION ? 0.08 : 0.14;  // a touch more responsive; all-intra video keeps it smooth
   const SLUG = 'demo';               // share_pages.slug — beacon key
 
   /* ================= Elements ================= */
@@ -382,6 +433,9 @@
   const roomEl  = document.getElementById('room');
   const roomNm  = roomEl.querySelector('.name');
   const railEl  = document.getElementById('rail');
+  const stageEl = document.getElementById('stage');
+  const stripEl = document.getElementById('roomstrip');
+  const stripScroll = stripEl ? stripEl.querySelector('.rs-scroll') : null;
   const hintEl  = document.getElementById('hint');
   const waitEl  = document.getElementById('bufwait');
   const waitPct = waitEl ? waitEl.querySelector('.n') : null;
@@ -399,27 +453,79 @@
   addEventListener('resize', sizeTrack, { passive: true });
   if (window.visualViewport) visualViewport.addEventListener('resize', sizeTrack, { passive: true });
 
-  /* ================= Chapter rail ================= */
-  // Density tier from the chapter count — a dozen-plus rooms at the roomy
-  // spacing is taller than the stage, and the rail is centred, so it would run
-  // off both ends behind the listing chip and the watermark. Mirrors the
-  // server-side class in renderTourPage(); see the #rail rules above.
-  if (CHAPTERS.length > 22) railEl.classList.add('packed', 'dots');
-  else if (CHAPTERS.length > 14) railEl.classList.add('packed');
-  else if (CHAPTERS.length > 8) railEl.classList.add('dense');
-  const railBtns = CHAPTERS.map((c, i) => {
+  /* ================= Chapter seek (rail + room strip) ================= */
+  // Clamp: an injected chapter can sit past the video's end (tagged near the
+  // end of a walk that was trimmed on export). One seek, shared by both the
+  // rail dots and the room chips, exactly as the hosted engine does it.
+  function seekToChapter(t) {
+    const p = duration ? clamp(t / duration, 0, 1) : 0;
+    scrollTo({ top: p * Math.max(0, track.offsetHeight - innerHeight), behavior: 'smooth' });
+  }
+
+  /* ================= Chapter rail — dots ================= */
+  // No density tier any more: the rail is anchored top and bottom and the rows
+  // shrink to fit (see the #rail rules above), so any chapter count stays
+  // inside the stage. Only the active dot is named.
+  const railBtns = CHAPTERS.map((c) => {
     const b = document.createElement('button');
-    b.title = c.label;   // desktop hover gets the full name when the pill ellipses it
+    b.title = c.label;   // a pointer gets the room name for any dot
     b.innerHTML = `<span class="lbl">${c.label}</span><span class="dot"></span>`;
-    b.addEventListener('click', () => {
-      // Clamp: an injected chapter can sit past the video's end (tag near the
-      // end of a walk that was trimmed on export).
-      const p = duration ? clamp(c.t / duration, 0, 1) : 0;
-      scrollTo({ top: p * Math.max(0, track.offsetHeight - innerHeight), behavior: 'smooth' });
-    });
+    b.addEventListener('click', () => seekToChapter(c.t));
     railEl.appendChild(b);
     return b;
   });
+
+  /* ================= Room strip — the room index, under the video =========
+     What replaced naming every dot on the rail. One chip per chapter, the
+     current one highlighted and scrolled into view, tapping seeks — the same
+     component and the same seek as the rail, in a band that costs the video
+     nothing. Two chapters is the minimum: one chip is not a list. */
+  // Word-boundary truncation. "Upstairs bathro…" is the failure this avoids;
+  // an ordinary room name is well inside the budget and comes through whole.
+  function truncWords(raw, max) {
+    const t = String(raw || '').trim();
+    if (t.length <= max) return t;
+    const cut = t.slice(0, max);
+    const sp = cut.lastIndexOf(' ');
+    const head = (sp > 8 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\u2013\u2014-]+$/, '');
+    return (head || cut.trim()) + '\u2026';
+  }
+  const stripBtns = [];
+  if (stripScroll && CHAPTERS.length > 1) {
+    stageEl.classList.add('hasstrip');
+    CHAPTERS.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'plan-room' + (i === 0 ? ' active' : '');
+      if (i === 0) b.setAttribute('aria-current', 'true');
+      b.title = c.label;
+      b.textContent = truncWords(c.label, 34);
+      b.addEventListener('click', () => seekToChapter(c.t));
+      stripScroll.appendChild(b);
+      stripBtns.push(b);
+    });
+  }
+  // Keep the current room's chip in view. NEVER scrollIntoView(): that scrolls
+  // the PAGE vertically, and vertical scroll IS the scrub — one auto-centre
+  // would fly the viewer through the house. Only the strip's own scrollLeft is
+  // touched, and only when the viewer is not dragging the strip themselves.
+  let stripHold = 0;
+  const touchStrip = () => { stripHold = performance.now(); };
+  if (stripScroll) {
+    stripScroll.addEventListener('pointerdown', touchStrip, { passive: true });
+    stripScroll.addEventListener('touchstart', touchStrip, { passive: true });
+    stripScroll.addEventListener('wheel', touchStrip, { passive: true });
+  }
+  function centerChip(i) {
+    const b = stripBtns[i];
+    if (!stripScroll || !b) return;
+    if (performance.now() - stripHold < 1500) return;
+    const max = Math.max(0, stripScroll.scrollWidth - stripScroll.clientWidth);
+    const to = clamp(b.offsetLeft - (stripScroll.clientWidth - b.offsetWidth) / 2, 0, max);
+    if (Math.abs(stripScroll.scrollLeft - to) < 2) return;
+    try { stripScroll.scrollTo({ left: to, behavior: REDUCE_MOTION ? 'auto' : 'smooth' }); }
+    catch (_) { stripScroll.scrollLeft = to; }
+  }
 
   /* ================= Core scrub loop (Part 27) ================= */
   let curT = 0, lastSet = -1, started = false, interacted = false;
@@ -428,6 +534,7 @@
   // how long we have been held at the buffered edge, and the last % painted
   // into the waiting pill (so the DOM is touched only when the digits change).
   let lastWant = -1, stillSince = 0, starveSince = 0, bufPct = -1, waitOn = false;
+  let lastActive = -1;
 
   function updateOverlays(p) {
     progEl.style.transform = `scaleX(${p})`;
@@ -445,7 +552,19 @@
     if (roomNm.textContent !== c.label) roomNm.textContent = c.label;
     roomEl.style.opacity = dNorm;
     roomEl.style.transform = `translateY(${(1 - dNorm) * 14}px)`;
-    railBtns.forEach((b, i) => b.classList.toggle('active', i === active));
+    // Only on a CHANGE: 17 dots plus 17 chips is 34 pointless class writes a
+    // frame otherwise, and the strip must not be re-centred 60x a second while
+    // it is smooth-scrolling to the chip it already centred.
+    if (active !== lastActive) {
+      lastActive = active;
+      railBtns.forEach((b, i) => b.classList.toggle('active', i === active));
+      stripBtns.forEach((b, i) => {
+        const on = i === active;
+        b.classList.toggle('active', on);
+        if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+      });
+      centerChip(active);
+    }
   }
 
   function tick(now) {
@@ -520,6 +639,8 @@
     hintEl.classList.add('gone');
     setWait(false);
     railEl.style.display = 'none';
+    // No video, no rooms to jump to: drop the strip and its reserved band.
+    stageEl.classList.remove('hasstrip');
     roomEl.style.opacity = 0;
     sizeTrack();                   // one viewport: the end card sits right below
   }

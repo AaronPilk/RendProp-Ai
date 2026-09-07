@@ -14,6 +14,11 @@ import WebKit
 /// per-type copy, "Preview — form disabled" marker and the explicit
 /// "video unavailable" state. The raw template (house, Sarah Mitchell, a 404
 /// `demo.mp4`) is never loaded as-is (audit F-B-03).
+///
+/// That template pass, and every byte of file I/O around it, lives in
+/// `PlayerPage` at the bottom of this file and runs OFF the main actor. This
+/// type does nothing but configure a webview and load whatever `PlayerPage`
+/// hands back (build-9 lag report).
 struct PlayerWebView: UIViewRepresentable {
     var remoteURL: URL? = nil
     var localVideoURL: URL? = nil
@@ -39,28 +44,54 @@ struct PlayerWebView: UIViewRepresentable {
         webView.scrollView.contentInsetAdjustmentBehavior = .never
 
         if let remoteURL {
+            // Nothing to prepare — the page is already on the network.
             webView.load(URLRequest(url: remoteURL))
-        } else if let localVideoURL,
-                  let preview = Self.localPreviewHTML(videoURL: localVideoURL, roomTags: roomTags,
-                                                      listing: listing, agent: agent,
-                                                      staged: virtuallyStaged) {
+            return webView
+        }
+
+        // BUILD-9 LAG REPORT. Every other mode renders the bundled template into
+        // a file and loads that file, and all of it used to happen right here,
+        // synchronously, on the main thread: a 38 KB `String(contentsOf:)`, ~40
+        // full-string `replacingOccurrences` passes over it, a
+        // `Documents/Previews/` sweep (a directory listing plus a `fileExists`
+        // per entry plus deletes), a `removeItem` + `linkItem`, and an atomic
+        // write (temp file + rename). Nothing in that chain touches UIKit, and
+        // `.id(playerRefresh)` in FlythroughDetailView tears this view down and
+        // rebuilds it — so the room tagger's dismissal paid the whole bill
+        // again, usually to produce the same bytes that were already on disk.
+        //
+        // It is prepared off the main actor now, and the load is SEQUENCED after
+        // the file exists rather than raced against it: `loadFileURL` is only
+        // ever called with a page `PlayerPage` has finished writing. The webview
+        // is already black, so the frame or two before the page arrives looks
+        // exactly like the frame or two WKWebView spends parsing it anyway.
+        let request = PlayerPageRequest(localVideoURL: localVideoURL,
+                                        roomTags: roomTags,
+                                        listing: listing,
+                                        agent: agent,
+                                        staged: virtuallyStaged)
+        Task { @MainActor in
+            guard let page = await PlayerPage.prepare(request) else {
+                // The template itself couldn't be read or written (bundle damaged,
+                // disk full). Say so — never a blank black card.
+                webView.loadHTMLString(Self.unavailableHTML, baseURL: nil)
+                return
+            }
             // Read grant = the ONE folder holding the HTML + video.
-            webView.loadFileURL(preview.html, allowingReadAccessTo: preview.dir)
-        } else if let demo = Self.demoHTML(listing: listing, agent: agent) {
-            // Sample tours: the bundled demo REWRITTEN for the current business
-            // type — a gym's sample never shows "Living Room" or "Book a showing".
-            // When demo.mp4 isn't in the build the page says so explicitly.
-            webView.loadFileURL(demo.html, allowingReadAccessTo: demo.dir)
-        } else {
-            // The template itself couldn't be read or written (bundle damaged,
-            // disk full). Say so — never a blank black card.
-            webView.loadHTMLString(Self.unavailableHTML, baseURL: nil)
+            webView.loadFileURL(page.html, allowingReadAccessTo: page.dir)
         }
         return webView
     }
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
+    /// Deliberately empty, and it must stay cheap: SwiftUI calls this on every
+    /// update of the parent screen (every scroll of the detail view, every
+    /// `@State` change on it), and this player is 460pt of the screen. The page
+    /// is not rebuilt from here — `FlythroughDetailView` bumps `.id(playerRefresh)`
+    /// when the tour's inputs change, which builds a fresh view and runs
+    /// `makeUIView` again. `PlayerPage` memoises the render, so that rebuild is
+    /// free when nothing the page depends on actually moved.
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
     /// Keeps every link tap OUT of the 460pt player: the webview is the tour,
@@ -107,7 +138,7 @@ struct PlayerWebView: UIViewRepresentable {
         }
     }
 
-    // MARK: - Demo (sample tours / real listings without a video yet)
+    // MARK: - Hosted demo
 
     /// The hosted demo tour — Rendprop's own published sample at
     /// `rendprop.com/f/estate-demo`, the one real tour every install can play
@@ -136,29 +167,128 @@ struct PlayerWebView: UIViewRepresentable {
     /// own name and tagline on the chip, its own area tags as chapters, its
     /// own identity on the card — instead of the hosted home listing. Without
     /// it (a CI build), the hosted demo is the fallback (industry review P1-6).
-    static var bundledDemoAvailable: Bool {
-        Bundle.main.url(forResource: "demo", withExtension: "mp4", subdirectory: "player") != nil
+    ///
+    /// Read from a `body` (Home's sample card, the detail screen's tour
+    /// section), so the bundle probe behind it is done ONCE per process rather
+    /// than per layout pass — the answer is fixed at build time (build-9 lag
+    /// report).
+    static var bundledDemoAvailable: Bool { PlayerPage.bundledDemoVideo != nil }
+
+    /// Shown only when the template can't even be read/written.
+    private static let unavailableHTML = """
+    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>body{margin:0;background:#0b0d10;color:#f2f3f5;font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px}
+    b{display:block;font-size:16px;margin-bottom:6px}p{font-size:14px;line-height:1.45;color:rgba(242,243,245,.62);max-width:300px}</style></head>
+    <body><p><b>Player unavailable</b>The tour page couldn't be prepared on this phone. Check free storage and try again.</p></body></html>
+    """
+}
+
+// MARK: - Page preparation (everything below here is OFF the main actor)
+
+/// One prepared player page: the HTML to load and the folder the webview may
+/// read (both files live in it).
+private struct PreparedPage: Sendable {
+    var html: URL
+    var dir: URL
+    /// The video file the page's `<video src>` points at, when it is a file we
+    /// manage (the hard link in `Previews/`, the demo copy in Caches). Recorded
+    /// so the housekeeping sweep can never delete it under a live player.
+    var video: URL?
+}
+
+/// What `makeUIView` hands the builder. All value types, so the whole request
+/// crosses to a background executor without a data race.
+private struct PlayerPageRequest: Sendable {
+    var localVideoURL: URL?
+    var roomTags: [RoomTag]
+    var listing: Listing?
+    var agent: AgentCard
+    var staged: Bool
+}
+
+/// Everything that turns the bundled template into a page on disk.
+///
+/// A FILE-SCOPE enum, deliberately NOT a member of `PlayerWebView`:
+/// `UIViewRepresentable` is a `@MainActor` protocol, so a type that conforms to
+/// it infers main-actor isolation for its members — statics included. That is
+/// the trap that made `GearStore.normalizedASIN` a compile error only the Mac
+/// build caught. None of this touches UIKit or SwiftUI, so none of it belongs
+/// on the main actor, and putting it in its own non-isolated namespace means no
+/// future edit can quietly drag it back on (build-9 lag report).
+private enum PlayerPage {
+
+    // MARK: Immutable, process-wide
+
+    /// The bundled `player/index.html`, read ONCE per process. It ships inside
+    /// the signed .app and cannot change while the app is running, so re-reading
+    /// 38 KB per player — and again per `playerRefresh` bump — was pure waste.
+    /// `static let` is initialised lazily under `swift_once`; every touch of it
+    /// happens inside the detached task below, so the read never lands on the
+    /// main thread.
+    ///
+    /// A read that fails stays failed for the process. That is the honest
+    /// answer: this is a resource inside the app bundle, so a failure means a
+    /// damaged install, not a condition that clears itself — and the caller
+    /// already has an explicit "Player unavailable" page for it.
+    static let template: String? = {
+        guard let url = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "player") else {
+            return nil
+        }
+        return try? String(contentsOf: url, encoding: .utf8)
+    }()
+
+    /// `player/demo.mp4` — a folder-reference resource, either in this build or
+    /// not, for the life of the process. Probed once instead of per player.
+    static let bundledDemoVideo: URL? =
+        Bundle.main.url(forResource: "demo", withExtension: "mp4", subdirectory: "player")
+
+    // MARK: Entry point
+
+    /// The page for `request`, prepared off the main actor.
+    ///
+    /// `Task.detached` rather than a bare `nonisolated func`: a non-isolated
+    /// `async` function's executor is a moving target across language modes and
+    /// build settings (Swift 6.2's approachable-concurrency default runs one on
+    /// the CALLER's actor), and this work must land on a background thread under
+    /// every one of them. It is also the pattern already shipping in
+    /// `AIImagePrep` and `ListingMediaItem.scan`, so there is one way of getting
+    /// off the main actor in this app, not two.
+    static func prepare(_ request: PlayerPageRequest) async -> PreparedPage? {
+        await Task.detached(priority: .userInitiated) { () -> PreparedPage? in
+            // Exactly build 9's fall-through order. A local video whose page
+            // cannot be prepared still drops to the type-adapted demo; only a
+            // template that can be neither read nor written gives up entirely.
+            if let videoURL = request.localVideoURL,
+               let preview = PlayerPage.localPreviewHTML(videoURL: videoURL,
+                                                         roomTags: request.roomTags,
+                                                         listing: request.listing,
+                                                         agent: request.agent,
+                                                         staged: request.staged) {
+                PlayerPage.scheduleHousekeeping()
+                return preview
+            }
+            // Sample tours: the bundled demo REWRITTEN for the current business
+            // type — a gym's sample never shows "Living Room" or "Book a showing".
+            // When demo.mp4 isn't in the build the page says so explicitly.
+            if let demo = PlayerPage.demoHTML(listing: request.listing, agent: request.agent) {
+                PlayerPage.scheduleHousekeeping()
+                return demo
+            }
+            return nil
+        }.value
     }
+
+    // MARK: - Demo (sample tours / real listings without a video yet)
 
     /// Type-adapted demo: copies the bundled demo video into Caches once, then
     /// rewrites the player HTML around the CURRENT business type — its sample
     /// name/tagline, its area tags as chapters, and its call-to-action. When
     /// `demo.mp4` is not in the build, the page still renders (type-adapted)
     /// with an explicit "Sample video unavailable" stage.
-    static func demoHTML(listing: Listing?, agent: AgentCard = .current) -> (html: URL, dir: URL)? {
+    static func demoHTML(listing: Listing?, agent: AgentCard = .current) -> PreparedPage? {
         let fm = FileManager.default
         let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("player-demo", isDirectory: true)
-        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
-
-        var videoRef: String?
-        if let demoVideo = Bundle.main.url(forResource: "demo", withExtension: "mp4", subdirectory: "player") {
-            let videoCopy = dir.appendingPathComponent("demo.mp4")
-            if !fm.fileExists(atPath: videoCopy.path) {
-                try? fm.copyItem(at: demoVideo, to: videoCopy)
-            }
-            if fm.fileExists(atPath: videoCopy.path) { videoRef = "demo.mp4" }
-        }
 
         let type = SpaceType.current
 
@@ -166,6 +296,35 @@ struct PlayerWebView: UIViewRepresentable {
         let tags = Array(type.quickTags.prefix(6))
         let step = 50.0 / Double(max(1, tags.count))
         let chapters = tags.enumerated().map { i, name in (t: Double(i) * step, label: name) }
+
+        // One file per type AND identity (a real listing over the demo reel must
+        // not overwrite the sample page, or vice versa).
+        let suffix = (listing?.isSample ?? true) ? "" : "-\(listing?.id.uuidString.prefix(8) ?? "listing")"
+        let out = dir.appendingPathComponent("demo-\(type.rawValue)\(suffix).html")
+        let videoCopy = dir.appendingPathComponent("demo.mp4")
+
+        let key = Key(kind: "demo",
+                      videoPath: out.path,
+                      videoStamp: bundledDemoVideo == nil ? "none" : "bundled",
+                      chapters: chapters.map { "\($0.t)|\($0.label)" },
+                      listing: listing,
+                      agentFields: agent.brandFields,
+                      headshotStamp: stamp(AgentCard.headshotURL),
+                      type: type,
+                      identityIsSample: listing?.isSample ?? true,
+                      staged: false,
+                      locale: Locale.current.identifier)
+        if let hit = store.hit(slot: out.path, key: key) { return hit }
+
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+
+        var videoRef: String?
+        if let demoVideo = bundledDemoVideo {
+            if !fm.fileExists(atPath: videoCopy.path) {
+                try? fm.copyItem(at: demoVideo, to: videoCopy)
+            }
+            if fm.fileExists(atPath: videoCopy.path) { videoRef = "demo.mp4" }
+        }
 
         let ctx = TemplateContext(videoRef: videoRef,
                                   chapters: chapters,
@@ -176,16 +335,15 @@ struct PlayerWebView: UIViewRepresentable {
                                   staged: false)
         guard let html = renderTemplate(ctx) else { return nil }
 
-        // One file per type AND identity (a real listing over the demo reel must
-        // not overwrite the sample page, or vice versa).
-        let suffix = (listing?.isSample ?? true) ? "" : "-\(listing?.id.uuidString.prefix(8) ?? "listing")"
-        let out = dir.appendingPathComponent("demo-\(type.rawValue)\(suffix).html")
         do {
             try html.write(to: out, atomically: true, encoding: .utf8)
-            return (out, dir)
         } catch {
             return nil
         }
+        let managedVideo: URL? = videoRef == nil ? nil : videoCopy
+        let page = PreparedPage(html: out, dir: dir, video: managedVideo)
+        store.record(slot: out.path, key: key, page: page)
+        return page
     }
 
     // MARK: - Local preview (the user's own video)
@@ -199,20 +357,48 @@ struct PlayerWebView: UIViewRepresentable {
     /// player reads t_ms).
     /// Returns the HTML URL and the directory the webview may read (both files
     /// live in it). Nil only when the template can't be read/written.
+    ///
+    /// MEMOISED (build-9 lag report). `.id(playerRefresh)` rebuilds the whole
+    /// view, so this ran end to end every time the room tagger closed —
+    /// including the times it closed with nothing changed, which is most of
+    /// them, and including the hard-link dance and the atomic write. `Key`
+    /// carries every input the rendered bytes depend on, so an unchanged bump is
+    /// now a dictionary lookup and a handful of `stat`s: no sweep, no re-link,
+    /// no substitution passes, no write. When something DID change, the full
+    /// render runs — off the main actor, from the already-read template.
     static func localPreviewHTML(videoURL: URL, roomTags: [RoomTag], listing: Listing?,
-                                 agent: AgentCard = .current, staged: Bool = false) -> (html: URL, dir: URL)? {
+                                 agent: AgentCard = .current, staged: Bool = false) -> PreparedPage? {
         let fm = FileManager.default
-        let location = previewLocation(for: videoURL)
-        let videoRef: String? = fm.fileExists(atPath: videoURL.path) ? location.videoRef : nil
+        let type = SpaceType.current
+        // Stat'd once and used for both the key and `videoRef`. Build 9 asked
+        // after `previewLocation`; hard-linking the file cannot change whether
+        // the ORIGINAL exists, so the answer is the same either side of it.
+        let hasVideo = fm.fileExists(atPath: videoURL.path)
 
         let tags = roomTags.sorted { $0.tMs < $1.tMs }
         let chapters = tags.map { (t: $0.tSeconds, label: $0.name) }
+
+        let key = Key(kind: "preview",
+                      videoPath: videoURL.standardizedFileURL.path,
+                      videoStamp: hasVideo ? stamp(videoURL) : "none",
+                      chapters: tags.map { "\($0.tMs)|\($0.name)" },
+                      listing: listing,
+                      agentFields: agent.brandFields,
+                      headshotStamp: stamp(AgentCard.headshotURL),
+                      type: type,
+                      identityIsSample: listing?.isSample ?? false,
+                      staged: staged,
+                      locale: Locale.current.identifier)
+        if let hit = store.hit(slot: key.videoPath, key: key) { return hit }
+
+        let location = previewLocation(for: videoURL)
+        let videoRef: String? = hasVideo ? location.videoRef : nil
 
         let ctx = TemplateContext(videoRef: videoRef,
                                   chapters: chapters,
                                   listing: listing,
                                   agent: agent,
-                                  type: SpaceType.current,
+                                  type: type,
                                   identityIsSample: listing?.isSample ?? false,
                                   staged: staged)
         guard let html = renderTemplate(ctx) else { return nil }
@@ -221,10 +407,14 @@ struct PlayerWebView: UIViewRepresentable {
             .appendingPathComponent("preview-\(videoURL.deletingPathExtension().lastPathComponent).html")
         do {
             try html.write(to: out, atomically: true, encoding: .utf8)
-            return (out, location.dir)
         } catch {
             return nil
         }
+        let page = PreparedPage(html: out,
+                                dir: location.dir,
+                                video: videoRef.map { location.dir.appendingPathComponent($0) })
+        store.record(slot: key.videoPath, key: key, page: page)
+        return page
     }
 
     /// Where the preview page lives and what the `<video src>` points at.
@@ -242,10 +432,14 @@ struct PlayerWebView: UIViewRepresentable {
         }
         let previews = FileStore.documents.appendingPathComponent("Previews", isDirectory: true)
         try? fm.createDirectory(at: previews, withIntermediateDirectories: true)
-        sweepStalePreviewLinks(in: previews)
+        // The stale-link sweep used to run HERE, in the creation path, on the
+        // main thread, before any player could appear. It is housekeeping —
+        // see `scheduleHousekeeping()` (build-9 lag report).
         let link = previews.appendingPathComponent(videoURL.lastPathComponent)
         // Re-link every time: the enhanced file may have been replaced since
-        // (a hard link keeps the OLD bytes alive otherwise).
+        // (a hard link keeps the OLD bytes alive otherwise). The memo above
+        // does not weaken that — a replaced original has a new size/mtime, so
+        // `Key.videoStamp` changes and this runs again.
         try? fm.removeItem(at: link)
         do {
             try fm.linkItem(at: videoURL, to: link)
@@ -255,16 +449,50 @@ struct PlayerWebView: UIViewRepresentable {
         }
     }
 
+    // MARK: - Housekeeping
+
+    /// Sweep the stale preview hard links at most once every `housekeepingGap`,
+    /// at `.utility`, on a background executor — never in the path a player is
+    /// waiting on.
+    ///
+    /// Kicked off after a page has been prepared (so the page about to be shown
+    /// is already recorded as live, below) and never awaited: the load does not
+    /// wait for the bin men. A gap rather than once-per-launch because the links
+    /// are the only thing keeping a deleted listing's video bytes on disk —
+    /// `FileStore.deleteListingFiles` removes the preview page BESIDE the video,
+    /// not the hard link in `Previews/` — so a long session still has to reap.
+    static func scheduleHousekeeping() {
+        guard store.claimHousekeeping(gap: housekeepingGap) else { return }
+        Task.detached(priority: .utility) {
+            let previews = FileStore.documents.appendingPathComponent("Previews", isDirectory: true)
+            guard FileManager.default.fileExists(atPath: previews.path) else { return }
+            PlayerPage.sweepStalePreviewLinks(in: previews, keeping: PlayerPage.store.livePaths)
+        }
+    }
+
     /// Hard links whose original left the Documents root (listing deleted,
     /// enhanced file replaced) would keep multi-hundred-MB files alive — drop
     /// them, and the preview pages that pointed at them.
-    private static func sweepStalePreviewLinks(in dir: URL) {
+    ///
+    /// `keeping` is every page this process has prepared and not superseded. A
+    /// player on screen holds its HTML and its hard-linked video open, and the
+    /// "does the original still exist?" test alone does NOT protect them:
+    /// deleting a listing removes the original while its player is still up, and
+    /// build 9 would then delete both files under it — a black stage and a dead
+    /// scrub bar. Anything we have handed to a webview is off limits.
+    ///
+    /// The price of that, stated plainly: a listing deleted while its page is
+    /// still in the memo keeps its hard link (and so the video's bytes) until
+    /// that entry is evicted — eight more tours — or the app is relaunched.
+    /// Deleting bytes out from under a player on screen is a broken product;
+    /// reaping a few minutes late is a full disk at worst.
+    private static func sweepStalePreviewLinks(in dir: URL, keeping live: Set<String>) {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil, options: []) else { return }
         var liveVideoBases = Set<String>()
         for url in items where !(url.lastPathComponent.hasPrefix("preview-") && url.pathExtension == "html") {
             let original = FileStore.documents.appendingPathComponent(url.lastPathComponent)
-            if fm.fileExists(atPath: original.path) {
+            if fm.fileExists(atPath: original.path) || live.contains(url.standardizedFileURL.path) {
                 liveVideoBases.insert(url.deletingPathExtension().lastPathComponent)
             } else {
                 try? fm.removeItem(at: url)
@@ -272,9 +500,132 @@ struct PlayerWebView: UIViewRepresentable {
         }
         for url in items where url.lastPathComponent.hasPrefix("preview-") && url.pathExtension == "html" {
             let base = String(url.deletingPathExtension().lastPathComponent.dropFirst("preview-".count))
-            if !liveVideoBases.contains(base) { try? fm.removeItem(at: url) }
+            if !liveVideoBases.contains(base), !live.contains(url.standardizedFileURL.path) {
+                try? fm.removeItem(at: url)
+            }
         }
     }
+
+    // MARK: - Memo
+
+    /// Every input the rendered HTML depends on. `renderTemplate` is a pure
+    /// function of the template (fixed for the process) and a `TemplateContext`,
+    /// so equal keys mean byte-identical HTML — that equality is the whole basis
+    /// for reusing the file already on disk.
+    ///
+    /// Two of these fields are not in any struct the caller passes, and the memo
+    /// would be a correctness bug without them:
+    ///  • `videoStamp` — the AI-enhance path REPLACES `enhanced-<id>.mp4` in
+    ///    place, same URL, different bytes (that is why `previewLocation`
+    ///    re-links every time).
+    ///  • `headshotStamp` — `renderTemplate` reads the agent's headshot off disk
+    ///    and base64-embeds it; `AgentCard` itself never mentions the file.
+    /// `locale` is there because `Listing.metaLine` groups digits through
+    /// `Int.formatted()`, which follows the device locale (`Money.formatted` is
+    /// pinned to en_US and does not).
+    struct Key: Hashable {
+        var kind: String
+        var videoPath: String
+        var videoStamp: String
+        var chapters: [String]
+        var listing: Listing?
+        var agentFields: [String: String]
+        var headshotStamp: String
+        var type: SpaceType
+        var identityIsSample: Bool
+        var staged: Bool
+        var locale: String
+    }
+
+    private struct Entry {
+        var key: Key
+        var page: PreparedPage
+    }
+
+    /// "<size>-<mtime>" for a file whose BYTES the page depends on but whose
+    /// identity no struct carries. "none" when it isn't there.
+    static func stamp(_ url: URL) -> String {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: url.path) else { return "none" }
+        let size = (attrs[.size] as? NSNumber)?.int64Value ?? -1
+        let modified = (attrs[.modificationDate] as? Date)?.timeIntervalSince1970 ?? -1
+        return "\(size)-\(modified)"
+    }
+
+    /// Process-wide memo of the pages already written, plus the housekeeping
+    /// latch.
+    ///
+    /// A lock-guarded box rather than an `actor`: every caller is already inside
+    /// `Task.detached`, so an actor would buy nothing but a suspension point per
+    /// player — and `livePaths` has to be readable from the sweep without one.
+    /// Same shape as `RenderEngine.CancelFlag`.
+    private final class Store: @unchecked Sendable {
+        private let lock = NSLock()
+        private var entries: [String: Entry] = [:]
+        /// Insertion order, so a phone with a hundred listings can't grow this
+        /// without bound. Small on purpose: a handful of players are alive at
+        /// once (Home's sample, the detail screen, a sheet), and an evicted
+        /// entry costs one re-render, never a wrong page.
+        private var order: [String] = []
+        private var lastHousekeeping: Date?
+        private let capacity = 8
+
+        /// A hit only when the key matches AND the files are still there:
+        /// `player-demo/` lives in Caches, which iOS evicts whenever it likes,
+        /// and `Previews/` is swept. The file checks are outside the lock —
+        /// they are syscalls, and nothing else needs to wait behind them.
+        func hit(slot: String, key: Key) -> PreparedPage? {
+            lock.lock()
+            let entry = entries[slot]
+            lock.unlock()
+            guard let entry, entry.key == key else { return nil }
+            let fm = FileManager.default
+            guard fm.fileExists(atPath: entry.page.html.path) else { return nil }
+            if let video = entry.page.video, !fm.fileExists(atPath: video.path) { return nil }
+            return entry.page
+        }
+
+        func record(slot: String, key: Key, page: PreparedPage) {
+            lock.lock()
+            if entries[slot] == nil { order.append(slot) }
+            entries[slot] = Entry(key: key, page: page)
+            while order.count > capacity {
+                let oldest = order.removeFirst()
+                entries[oldest] = nil
+            }
+            lock.unlock()
+        }
+
+        /// Every file a prepared page points at — what the sweep must not touch.
+        var livePaths: Set<String> {
+            lock.lock()
+            defer { lock.unlock() }
+            var out = Set<String>()
+            for entry in entries.values {
+                out.insert(entry.page.html.standardizedFileURL.path)
+                if let video = entry.page.video { out.insert(video.standardizedFileURL.path) }
+            }
+            return out
+        }
+
+        /// True at most once per `gap` — the sweep's latch. The first call in a
+        /// launch always wins, so the reaping still happens promptly on a cold
+        /// start; after that it is a background chore on a timer.
+        func claimHousekeeping(gap: TimeInterval) -> Bool {
+            lock.lock()
+            defer { lock.unlock() }
+            let now = Date()
+            if let last = lastHousekeeping, now.timeIntervalSince(last) < gap { return false }
+            lastHousekeeping = now
+            return true
+        }
+    }
+
+    private static let store = Store()
+
+    /// How rarely the stale-link sweep may run. Five minutes: often enough that
+    /// a deleted listing's bytes go back to the user inside one session, rare
+    /// enough that it is nowhere near the path a player is waiting on.
+    private static let housekeepingGap: TimeInterval = 300
 
     // MARK: - Template rendering (shared by demo + local preview)
 
@@ -294,9 +645,13 @@ struct PlayerWebView: UIViewRepresentable {
         var staged: Bool
     }
 
+    /// UNCHANGED from build 9 apart from where the template comes from: the same
+    /// substitutions, in the same order, producing the same bytes. The anchors
+    /// below are a contract with `Resources/player/index.html` and the two have
+    /// drifted before (H-web.md §5), so this is the one part of the file the lag
+    /// work was not allowed to touch.
     private static func renderTemplate(_ ctx: TemplateContext) -> String? {
-        guard let template = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "player"),
-              var html = try? String(contentsOf: template, encoding: .utf8) else { return nil }
+        guard var html = template else { return nil }
 
         // 1. Video source → the file next to the page, or the explicit missing
         //    state. Imports keep the user's original filename ("DJI clip #2.MOV"
@@ -443,14 +798,6 @@ struct PlayerWebView: UIViewRepresentable {
         return html
     }
 
-    /// Shown only when the template can't even be read/written.
-    private static let unavailableHTML = """
-    <!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-    <style>body{margin:0;background:#0b0d10;color:#f2f3f5;font-family:-apple-system,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px}
-    b{display:block;font-size:16px;margin-bottom:6px}p{font-size:14px;line-height:1.45;color:rgba(242,243,245,.62);max-width:300px}</style></head>
-    <body><p><b>Player unavailable</b>The tour page couldn't be prepared on this phone. Check free storage and try again.</p></body></html>
-    """
-
     /// The listing chip's second line, hidden gracefully when unset: real
     /// estate shows only the parts that are > 0 (never "0 bd · 0 ba"), and
     /// non-property types show their tagline instead of beds/baths.
@@ -458,19 +805,46 @@ struct PlayerWebView: UIViewRepresentable {
         listing.spaceType.showsPropertyDetails ? listing.metaLine : (listing.tagline ?? "")
     }
 
+    /// `LeadRow.telURL` / `LeadRow.mailURL`, copied verbatim.
+    ///
+    /// NOT a rewrite and not an improvement — the same digits filter, the same
+    /// leading "+", the same `>= 3` floor, the same query-allowed encoding — so
+    /// the anchors this file renders stay byte-for-byte what build 9 rendered.
+    /// It is a copy only because `LeadRow` is a `View`: conforming to SwiftUI's
+    /// `@MainActor` protocol isolates its statics to the main actor, and this
+    /// render deliberately no longer runs there. `GearStore.normalizedASIN` had
+    /// the identical problem and the identical one-word fix.
+    ///
+    /// THE REAL FIX IS ONE WORD IN SOMEONE ELSE'S FILE: mark both of
+    /// `LeadRow.telURL` / `LeadRow.mailURL` `nonisolated` (they are pure string
+    /// checks with no state, exactly like `normalizedASIN`) and delete this
+    /// pair. Whoever owns `SettingsView.swift` next should do it — two copies of
+    /// a phone-number rule is precisely the drift H-web.md §5 is about.
+    private static func telURL(_ phone: String) -> URL? {
+        var digits = phone.filter { $0.isNumber }
+        if phone.trimmingCharacters(in: .whitespaces).hasPrefix("+") { digits = "+" + digits }
+        guard digits.count >= 3 else { return nil }
+        return URL(string: "tel:\(digits)")
+    }
+
+    private static func mailURL(_ email: String) -> URL? {
+        let allowed = email.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? email
+        return URL(string: "mailto:\(allowed)")
+    }
+
     /// tel:/mailto: anchors for the card's contact row (empty → the row hides).
     private static func contactAnchors(phone: String, email: String) -> String {
         var parts = [String]()
         let p = phone.trimmingCharacters(in: .whitespaces)
         if !p.isEmpty {
-            if let tel = LeadRow.telURL(p) {
+            if let tel = telURL(p) {
                 parts.append("<a href=\"\(htmlEscape(tel.absoluteString))\">\(htmlEscape(p))</a>")
             } else {
                 parts.append("<span>\(htmlEscape(p))</span>")
             }
         }
         let e = email.trimmingCharacters(in: .whitespaces)
-        if !e.isEmpty, let mail = LeadRow.mailURL(e) {
+        if !e.isEmpty, let mail = mailURL(e) {
             parts.append("<a href=\"\(htmlEscape(mail.absoluteString))\">\(htmlEscape(e))</a>")
         }
         return parts.joined()

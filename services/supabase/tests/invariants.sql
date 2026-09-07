@@ -305,9 +305,33 @@ from pg_proc where proname = 'create_render_job';
 
 insert into _inv(name, pass, note)
 select 'media_provenance exists with the disclosure columns',
-       count(*) = 14, format('%s columns', count(*))
+       count(*) = 16, format('%s columns', count(*))
 from information_schema.columns
 where table_schema = 'public' and table_name = 'media_provenance';
+-- 14 at 0012; 16 since 0029 added `qc` + `qc_checked_at` (the AI drift check's
+-- verdict, stored next to the disclosure sentence it qualifies). This count
+-- exists to catch ACCIDENTAL drift in the compliance spine, so a migration that
+-- deliberately grows it updates the number here in the same commit.
+
+-- 0029: the verdict is evidence ABOUT the tenant's media, so the tenant must
+-- never be able to write one. record_media_qc() is service-role only — the same
+-- grant shape as log_job_cost / bump_rate / refund_rate — while the column
+-- stays readable through the existing org-member SELECT policy.
+insert into _inv(name, pass, note)
+select 'media_provenance carries the drift verdict (qc, qc_checked_at)',
+       count(*) = 2, format('%s of 2 found', count(*))
+from information_schema.columns
+where table_schema = 'public' and table_name = 'media_provenance'
+  and column_name in ('qc', 'qc_checked_at');
+
+insert into _inv(name, pass, note)
+select 'record_media_qc is a role-scoped definer no tenant can execute',
+       (select count(*) = 1 from pg_proc
+         where proname = 'record_media_qc' and prosecdef
+           and 'search_path=public' = any(coalesce(proconfig, array[]::text[])))
+       and not has_function_privilege('authenticated', 'public.record_media_qc(uuid,uuid,jsonb)', 'EXECUTE')
+       and not has_function_privilege('anon', 'public.record_media_qc(uuid,uuid,jsonb)', 'EXECUTE')
+       and has_function_privilege('service_role', 'public.record_media_qc(uuid,uuid,jsonb)', 'EXECUTE'), '';
 
 insert into _inv(name, pass, note)
 select 'media_provenance.disclosure is NOT NULL (a row can never be silent)',

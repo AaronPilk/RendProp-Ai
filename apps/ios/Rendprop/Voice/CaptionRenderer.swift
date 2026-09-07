@@ -76,12 +76,7 @@ enum CaptionRenderer {
         let cleaned = sanitize(words, offset: shift)
         guard style.enabled, !cleaned.isEmpty else { return root }
 
-        let scale = renderSize.width / referenceWidth
-        let nominalSize = style.fontSize.isFinite && style.fontSize > 0 ? style.fontSize : 64
-        // Width-proportional per the contract, then capped against HEIGHT so a
-        // landscape 1920x1080 render (scale 1.78) can't produce type taller than
-        // the frame can hold.
-        let fontSize = min(max(nominalSize * scale, 12), renderSize.height * 0.085)
+        let fontSize = scaledFontSize(nominal: style.fontSize, renderSize: renderSize)
         let margin = renderSize.width * sideMarginFraction
         let maxTextWidth = max(renderSize.width - margin * 2, fontSize)
 
@@ -95,6 +90,25 @@ enum CaptionRenderer {
             root.addSublayer(line)
         }
         return root
+    }
+
+    /// Width-proportional per the contract, then capped against HEIGHT so a
+    /// landscape 1920x1080 render (scale 1.78) can't produce type taller than the
+    /// frame can hold.
+    ///
+    /// Shared with `ReelComposer`'s big shot captions so both kinds of burned-in
+    /// text scale off the SAME reference width — two independent scale ladders in
+    /// one export is how a reel ends up with 64 pt spoken captions under 40 pt
+    /// shot captions on one device and the reverse on another.
+    /// `maxHeightFraction` is the only thing the two callers disagree about: shot
+    /// captions are three words and can afford to be bigger.
+    static func scaledFontSize(nominal: CGFloat, renderSize: CGSize,
+                               maxHeightFraction: CGFloat = 0.085) -> CGFloat {
+        let base = (nominal.isFinite && nominal > 0) ? nominal : 64
+        guard renderSize.width.isFinite, renderSize.width > 0,
+              renderSize.height.isFinite, renderSize.height > 0 else { return max(base, 12) }
+        let scale = renderSize.width / referenceWidth
+        return min(max(base * scale, 12), renderSize.height * max(0.02, maxHeightFraction))
     }
 
     // MARK: Words → lines
@@ -209,25 +223,16 @@ enum CaptionRenderer {
                 let width = widths[wordIndex]
                 let frame = CGRect(x: x - pad, y: y, width: width + pad * 2, height: rowHeight)
 
-                // A black copy behind, blurred by its own shadow: a dark halo
-                // that keeps white type legible over bright footage. Cheaper and
-                // more even than a stroke, and it never animates colour.
-                let halo = textLayer(word.text, font: font, size: size, color: .black, frame: frame)
-                halo.shadowColor = UIColor.black.cgColor
-                halo.shadowOpacity = 1
-                halo.shadowRadius = size * 0.16
-                halo.shadowOffset = .zero
-                container.addSublayer(halo)
-
-                let text = textLayer(word.text, font: font, size: size, color: normalColor, frame: frame)
-                text.shadowColor = UIColor.black.cgColor
-                text.shadowOpacity = 0.85
-                text.shadowRadius = max(2, size * 0.10)
-                text.shadowOffset = CGSize(width: 0, height: max(1, size * 0.04))
+                // Halo behind, colour on top — the one shared recipe (see
+                // `haloedText`), so shot captions and spoken captions cannot
+                // drift apart in an export that shows both.
+                let pair = haloedText(word.text, font: font, size: size,
+                                      color: normalColor, frame: frame)
+                if let halo = pair.halo { container.addSublayer(halo) }
                 if highlight, let colorAnimation = highlightAnimation(for: word, window: window) {
-                    text.add(colorAnimation, forKey: "captionWordHighlight")
+                    pair.text.add(colorAnimation, forKey: "captionWordHighlight")
                 }
-                container.addSublayer(text)
+                container.addSublayer(pair.text)
 
                 x += width + space
             }
@@ -237,8 +242,36 @@ enum CaptionRenderer {
         return container
     }
 
-    private static func textLayer(_ string: String, font: UIFont, size: CGFloat,
-                                  color: UIColor, frame: CGRect) -> CATextLayer {
+    /// A word (or a whole short row) drawn TWICE: a black copy behind, blurred by
+    /// its own shadow, and the real colour on top. That dark halo is what keeps
+    /// white type legible over bright footage — cheaper and more even than a
+    /// stroke, and it never animates colour.
+    ///
+    /// `halo: false` is for callers that already own the contrast (a filled
+    /// highlight box behind the row); they get the text layer alone and no
+    /// wasted layer in the tree.
+    static func haloedText(_ string: String, font: UIFont, size: CGFloat,
+                           color: UIColor, frame: CGRect,
+                           halo: Bool = true) -> (halo: CATextLayer?, text: CATextLayer) {
+        var haloLayer: CATextLayer?
+        if halo {
+            let behind = textLayer(string, font: font, size: size, color: .black, frame: frame)
+            behind.shadowColor = UIColor.black.cgColor
+            behind.shadowOpacity = 1
+            behind.shadowRadius = size * 0.16
+            behind.shadowOffset = .zero
+            haloLayer = behind
+        }
+        let text = textLayer(string, font: font, size: size, color: color, frame: frame)
+        text.shadowColor = UIColor.black.cgColor
+        text.shadowOpacity = halo ? 0.85 : 0
+        text.shadowRadius = max(2, size * 0.10)
+        text.shadowOffset = CGSize(width: 0, height: max(1, size * 0.04))
+        return (haloLayer, text)
+    }
+
+    static func textLayer(_ string: String, font: UIFont, size: CGFloat,
+                          color: UIColor, frame: CGRect) -> CATextLayer {
         let layer = CATextLayer()
         layer.string = string
         layer.font = font                 // UIFont is toll-free bridged to CTFont
@@ -253,7 +286,7 @@ enum CaptionRenderer {
     }
 
     /// Fade in, hold, fade out — in the composition's time base.
-    private static func opacityAnimation(_ window: Window) -> CAKeyframeAnimation {
+    static func opacityAnimation(_ window: Window) -> CAKeyframeAnimation {
         let duration = window.duration
         let animation = CAKeyframeAnimation(keyPath: "opacity")
         animation.values = [0.0, 1.0, 1.0, 0.0]
@@ -298,13 +331,30 @@ enum CaptionRenderer {
     private static func wrap(_ words: [CaptionWord], fontSize: CGFloat,
                              maxWidth: CGFloat) -> [[CaptionWord]] {
         let font = UIFont.systemFont(ofSize: fontSize, weight: .heavy)
-        let space = spaceWidth(font: font, size: fontSize)
-        var rows: [[CaptionWord]] = []
-        var row: [CaptionWord] = []
+        let rows = wrapWords(words.map { $0.text }, font: font, maxWidth: maxWidth)
+        // `wrapWords` preserves order and count exactly, so walking the original
+        // array in step re-attaches each row's timings without re-measuring.
+        var out: [[CaptionWord]] = []
+        var index = 0
+        for row in rows {
+            let end = min(index + row.count, words.count)
+            guard index < end else { break }
+            out.append(Array(words[index..<end]))
+            index = end
+        }
+        return out
+    }
+
+    /// The greedy wrap itself, on plain strings, so `ReelComposer`'s shot
+    /// captions measure and break EXACTLY the way the spoken captions do.
+    static func wrapWords(_ words: [String], font: UIFont, maxWidth: CGFloat) -> [[String]] {
+        let space = spaceWidth(font: font, size: font.pointSize)
+        var rows: [[String]] = []
+        var row: [String] = []
         var rowWidth: CGFloat = 0
 
         for word in words {
-            let width = measure(word.text, font: font)
+            let width = measure(word, font: font)
             let candidate = row.isEmpty ? width : rowWidth + space + width
             if !row.isEmpty, candidate > maxWidth {
                 rows.append(row)
@@ -322,11 +372,11 @@ enum CaptionRenderer {
     /// Width of one space. Some text-measuring paths trim whitespace and hand
     /// back 0, which would run every word together — floor it at a sane fraction
     /// of the em instead.
-    private static func spaceWidth(font: UIFont, size: CGFloat) -> CGFloat {
+    static func spaceWidth(font: UIFont, size: CGFloat) -> CGFloat {
         max(measure(" ", font: font), size * 0.26)
     }
 
-    private static func measure(_ string: String, font: UIFont) -> CGFloat {
+    static func measure(_ string: String, font: UIFont) -> CGFloat {
         let width = (string as NSString).size(withAttributes: [.font: font]).width
         return width.isFinite ? ceil(width) : 0
     }

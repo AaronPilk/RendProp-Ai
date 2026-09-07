@@ -1,5 +1,5 @@
 // ai-copy — AI PROMPTING FOR PEOPLE WHO ARE NOT PROMPT ENGINEERS.
-// Owner-authenticated. Two routes on one function, the way ai-voice serves
+// Owner-authenticated. Three routes on one function, the way ai-voice serves
 // /voices and /tts.
 //
 //   POST /ai-copy/script        task `copy.reel_script`
@@ -7,9 +7,28 @@
 //       region,details}, room_tags?[], photo_count, target_seconds, tone? }
 //       -> { script, characters, estimated_seconds, model }
 //
+//   POST /ai-copy/shotlist      task `copy.shotlist`
+//     { listing_id?, space_type, facts{…}, photos[{id,room?,caption_hint?}],
+//       target_seconds?, tone? }
+//       -> { shots[{photo_id,order,motion,room,on_screen_text,seconds,
+//            voice_line}], script, characters, estimated_seconds, model }
+//
 //   POST /ai-copy/edit-prompt   task `copy.photo_prompt`
 //     { listing_id?, space_type, rough (<=300), room_hint? }
 //       -> { prompt, model }
+//
+// ── WHY /shotlist IS ONE CALL AND NOT THREE ─────────────────────────────────
+//
+// A reel today is: tap N photos → each becomes a five-second clip under ONE
+// fixed server prompt ("one slow, subtle, grounded push-in", ai-video
+// `reelPrompt()`) → stitch in tap order → lay a separately-written voiceover
+// over the top. Every clip moves identically, the order is whatever order a
+// thumb moved in, and the script was written without knowing what is on screen
+// when it plays. /shotlist decides the order, the camera move, the hold, the
+// burned-in caption and the narration TOGETHER, because they are one decision:
+// the line for shot 3 can only describe shot 3 if whoever writes it knows what
+// shot 3 is. The SERVER owns the structure (deterministic, renderable) and the
+// MODEL owns the words — see ai-copy/shotlist.ts for the whole argument.
 //
 // Full contract (JSON, the character budget, what the client must do with
 // {address}): docs/COPY-ASSIST-CONTRACT.md
@@ -63,7 +82,7 @@
 // `estimated_seconds` come back so the client can show the fit. See
 // ai-copy/prompt.ts for the arithmetic and prompt_test.ts for the assertions.
 //
-// ── GATES (both routes, fail closed) ────────────────────────────────────────
+// ── GATES (every route, fail closed) ───────────────────────────────────────
 //
 //  1. AUTH + ORG + ROLE. Owner JWT; `marketing` is read-only, the same gate
 //     ai-photo and ai-voice apply.
@@ -98,14 +117,15 @@
 //
 // ── THE ROUTER, WITH THE FLAG OFF ───────────────────────────────────────────
 //
-// `copy.reel_script` and `copy.photo_prompt` are BRAND NEW tasks: like
-// coach.chat and unlike photo.*/video.*, they have no shipped hardcoded
-// behaviour to preserve, so migration 0027 seeds NO `note='legacy'` row. With
+// `copy.reel_script`, `copy.photo_prompt` and `copy.shotlist` are BRAND NEW
+// tasks: like coach.chat and unlike photo.*/video.*, they have no shipped
+// hardcoded behaviour to preserve, so migrations 0027 and 0028 seed NO
+// `note='legacy'` row for any of them. With
 // the flag off (today's default) resolveRoute() finds no legacy row and answers
 // `[]`. Rather than collapse to a single hardcoded step — which would leave a
 // brand-new feature with no cross-provider failover precisely while the master
 // flag is off, i.e. all the time — `chooseChain()` below substitutes its own
-// in-code chain, byte-identical to the rows 0027 seeds. This is copied from
+// in-code chain, byte-identical to the rows 0027 and 0028 seed. This is copied from
 // coach/index.ts, deliberately and for the same reason.
 //
 // Needs ANTHROPIC_API_KEY and OPENAI_API_KEY (both already set); GEMINI_API_KEY
@@ -143,7 +163,21 @@ import {
   toneOf,
   userFreeText,
 } from "./prompt.ts";
-import { assertInputSafe, guardedCopy } from "./guard.ts";
+import {
+  MAX_SHOTS,
+  type ShotlistAnswer,
+  type ShotlistRequest,
+  buildShotlistTurn,
+  cleanPhotos,
+  cleanShotlistTarget,
+  parseShotlist,
+  photoWords,
+  planCharBudget,
+  planSeconds,
+  planShots,
+  shotlistInstruction,
+} from "./shotlist.ts";
+import { EMPTY_REFUSAL, assertInputSafe, guardedCopy } from "./guard.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
 
@@ -158,15 +192,22 @@ const BURST_WINDOW_SECONDS = 300;
  *  stop a runaway generation, not to shape the answer. */
 const MAX_TOKENS = 700;
 
+/** Bound the /shotlist reply, which is one caption plus one line per shot
+ *  rather than one paragraph. Twenty shots at roughly fifty-five tokens of JSON
+ *  each is ~1,100; the rest is slack, for the same reason MAX_TOKENS is
+ *  generous — it stops a runaway generation, it does not shape the answer. */
+const MAX_SHOTLIST_TOKENS = 1600;
+
 /** Reel photo count. 5 s per clip and the app's own reel ceiling put this well
  *  under 20; the cap only exists so a junk body cannot reach the prompt. */
 const MAX_PHOTO_COUNT = 60;
 
-// ── The in-code chain (see the header). MUST match 0027_copy_routes.sql's
-// seeded rows exactly, so the flag-off path and the flag-on path route and
-// price identically. Both tasks are the same shape as text.listing_copy — one
-// bounded text answer, no image in, no image out — so they reuse its three
-// vetted providers/models/prices verbatim rather than inventing new ones. ──
+// ── The in-code chain (see the header). MUST match the rows seeded by
+// 0027_copy_routes.sql and 0028_shotlist_route.sql exactly, so the flag-off path
+// and the flag-on path route and price identically. All three tasks are the same
+// shape as text.listing_copy — one bounded text answer, no image in, no image
+// out — so they reuse its three vetted providers/models/prices verbatim rather
+// than inventing new ones. ──
 
 function fallbackStep(task: string, position: 1 | 2): RouteStep {
   const anthropic = position === 1;
@@ -262,7 +303,7 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
  * for edits — the same scoping duplicate ai-chapters and ai-voice made with
  * `presignGet`, not a second way of doing things.
  */
-async function geminiText(model: string, system: string, turn: string): Promise<string> {
+async function geminiText(model: string, system: string, turn: string, maxTokens: number): Promise<string> {
   const key = Deno.env.get("GEMINI_API_KEY")?.trim();
   if (!key) throw new ProviderError("gemini", "upstream", "GEMINI_API_KEY function secret is not set");
   const data = await fetchJson<Record<string, unknown>>(
@@ -273,7 +314,11 @@ async function geminiText(model: string, system: string, turn: string): Promise<
       headers: { "content-type": "application/json", "x-goog-api-key": key },
       body: JSON.stringify({
         contents: [{ role: "user", parts: [{ text: `${system}\n\n---\n\n${turn}` }] }],
-        generationConfig: { temperature: 0.7, responseMimeType: "application/json" },
+        generationConfig: {
+          temperature: 0.7,
+          responseMimeType: "application/json",
+          maxOutputTokens: maxTokens,
+        },
       }),
     },
     BUDGETS.submitMs,
@@ -291,13 +336,18 @@ async function geminiText(model: string, system: string, turn: string): Promise<
 /** Run ONE step of the chain. An unknown provider is error_class "other" (not
  *  "validation") so runChain() tries the NEXT step rather than hard-failing the
  *  whole request over one admin-added row this deploy cannot speak. */
-async function callStep(step: RouteStep, system: string, turn: string): Promise<string> {
+async function callStep(
+  step: RouteStep,
+  system: string,
+  turn: string,
+  maxTokens: number = MAX_TOKENS,
+): Promise<string> {
   if (step.provider === "anthropic") {
     return await anthropicMessages({
       model: step.model,
       system,
       content: [{ type: "text", text: turn }],
-      maxTokens: MAX_TOKENS,
+      maxTokens,
     });
   }
   if (step.provider === "openai") {
@@ -308,10 +358,10 @@ async function callStep(step: RouteStep, system: string, turn: string): Promise<
     return await openaiChat(
       step.model,
       [{ role: "user", content: [{ type: "input_text", text: `${system}\n\n---\n\n${turn}` }] }],
-      { maxOutputTokens: MAX_TOKENS, json: true },
+      { maxOutputTokens: maxTokens, json: true },
     );
   }
-  if (step.provider === "gemini") return await geminiText(step.model, system, turn);
+  if (step.provider === "gemini") return await geminiText(step.model, system, turn, maxTokens);
   throw new ProviderError(
     step.provider,
     "other",
@@ -339,6 +389,15 @@ interface ScriptBody {
   tone?: unknown;
 }
 
+interface ShotlistBody {
+  listing_id?: string;
+  space_type?: string;
+  facts?: unknown;
+  photos?: unknown;
+  target_seconds?: unknown;
+  tone?: unknown;
+}
+
 interface EditPromptBody {
   listing_id?: string;
   space_type?: string;
@@ -356,10 +415,10 @@ Deno.serve(async (req) => {
     const seg = pathSegments(req, "ai-copy");
     const route = seg.length === 1 ? seg[0] : "";
 
-    if (req.method !== "POST" || (route !== "script" && route !== "edit-prompt")) {
+    if (req.method !== "POST" || (route !== "script" && route !== "shotlist" && route !== "edit-prompt")) {
       throw new HttpError(
         404,
-        "Unknown ai-copy route — use POST /ai-copy/script or POST /ai-copy/edit-prompt",
+        "Unknown ai-copy route — use POST /ai-copy/script, POST /ai-copy/shotlist or POST /ai-copy/edit-prompt",
         "not_found",
       );
     }
@@ -468,6 +527,136 @@ Deno.serve(async (req) => {
         script,
         characters: script.length,
         estimated_seconds: estimatedSecondsFor(script.length),
+        model: lastStep.model,
+      });
+    }
+
+    // ---- POST /ai-copy/shotlist ----
+    if (route === "shotlist") {
+      const body = await readJson<ShotlistBody>(req);
+
+      // VALIDATE FIRST, CHARGE SECOND (audit round 4), exactly as /script does.
+      const facts: ScriptFacts = cleanFacts(body.facts);
+      const tone = toneOf(body.tone);
+
+      // The RAW count is checked before anything is cleaned, so a request with
+      // thirty photos is refused for the reason it is actually wrong — not
+      // quietly reduced to twenty by a dedupe. Refusing beats truncating: the
+      // user picked those photos, and a reel silently missing ten of them is a
+      // worse answer than a sentence telling them the limit.
+      const rawPhotos = Array.isArray(body.photos) ? body.photos : [];
+      assert(
+        rawPhotos.length > 0,
+        400,
+        "`photos` is required — send the photos the user picked, in the order they picked them",
+      );
+      assert(
+        rawPhotos.length <= MAX_SHOTS,
+        400,
+        `A reel is at most ${MAX_SHOTS} shots — you sent ${rawPhotos.length}. Pick fewer photos.`,
+      );
+      const photos = cleanPhotos(rawPhotos);
+      assert(photos.length > 0, 400, "every photo needs its own non-empty `id`");
+
+      // THE PLAN IS PURE AND RUNS BEFORE ANYTHING IS SPENT: the order, the
+      // camera moves and the per-shot seconds are decided here, deterministically
+      // (ai-copy/shotlist.ts). A length no whole number of 2-12 s clips can hit
+      // is CLAMPED here rather than discovered by the provider after the user
+      // has already paid for the words, and `targetSeconds` below is therefore
+      // the reel's REAL length, not the one that was asked for.
+      const plan = planShots(photos, cleanShotlistTarget(body.target_seconds, photos.length));
+      const targetSeconds = planSeconds(plan);
+      const charBudget = planCharBudget(plan);
+
+      // The LISTING wins over the body (gate 4), same as /script.
+      const listingSpace = await listingSpaceType(userClient(req), body.listing_id);
+      const space = spaceTypeOf(listingSpace ?? body.space_type);
+
+      // FAIR HOUSING ON THE INPUT, ahead of everything else. The room labels and
+      // the photographer's notes are the CALLER's own words and they go straight
+      // into the prompt, so they are gated with the facts — `photoWords()` is
+      // what makes them part of the brief the gate reads.
+      const brief = userFreeText(facts, photoWords(photos));
+      assertInputSafe("marketing", brief, "This reel brief", listingSpace);
+
+      const orgId = await guardAssist(user.id, req);
+      const orgPlan = await routingPlan(orgId);
+      const task = "copy.shotlist";
+      const chain = await chooseChain(task, orgPlan);
+
+      const request: ShotlistRequest = { space, tone, facts, plan, charBudget, targetSeconds };
+      const system = shotlistInstruction(request);
+      const turn = buildShotlistTurn(request);
+
+      // THE OUTPUT GATE HAS TO READ MORE THAN THE SCRIPT HERE. `guardedCopy()`
+      // gates ONE string, and this route publishes two kinds of model-authored
+      // copy: the narration AND every caption burned into a clip. So `clean()`
+      // returns the COMPLIANCE SURFACE — the script joined with every
+      // on_screen_text (shotlist.ts `SURFACE_SEPARATOR` explains why the join
+      // cannot manufacture or hide a phrase) — and collects the structured
+      // answer that produced it. Nothing is weakened: a caption that trips the
+      // rules costs the whole attempt, gets the one retry, and is then refused
+      // honestly, exactly as a bad script is.
+      let lastStep: RouteStep = chain[0];
+      const parsed: ShotlistAnswer[] = [];
+      const written = await guardedCopy({
+        gate: "marketing",
+        input: brief,
+        inputWhat: "This reel brief",
+        outputWhat: "This reel",
+        spaceType: listingSpace,
+        clean: (raw) => {
+          const answer = parseShotlist(raw, plan);
+          if (!answer) return ""; // no narration at all: a broken answer, not a refusal
+          parsed.push(answer);
+          return answer.surface;
+        },
+        refusal:
+          "We couldn't write this reel in a way that clears the fair-housing rules — " +
+          "nothing was returned. Try again, or add a line about what to emphasise " +
+          "(the space itself, not who it's for).",
+        attempt: async (isRetry) => {
+          const attempt = await runChain(task, chain, (step) =>
+            callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_SHOTLIST_TOKENS));
+          lastStep = attempt.step;
+          return attempt.value;
+        },
+      });
+
+      // Look the answer up BY THE SURFACE THAT PASSED THE GATE rather than
+      // assuming the last one parsed is the accepted one. It always is — the
+      // loop returns the moment a surface clears — but the shots we hand back
+      // must provably be the shots that were checked, not the shots from an
+      // attempt that was thrown away.
+      const answer = parsed.find((a) => a.surface === written.text);
+      if (!answer) throw new HttpError(502, EMPTY_REFUSAL, "upstream");
+
+      // Same ledger note as /script (units 1, `attempts` in meta). `shots` is a
+      // bounded integer, which is the only kind of thing that belongs in a
+      // durable row every member of the org can read — never a room label,
+      // never a caption, never the script.
+      await recordRoutedAiCost(adminClient(), {
+        orgId,
+        feature: "copy_assist",
+        step: lastStep,
+        meta: {
+          kind: "shotlist",
+          target_seconds: targetSeconds,
+          attempts: written.attempts,
+          shots: answer.shots.length,
+        },
+      });
+
+      // `characters` / `estimated_seconds` mean exactly what they mean on
+      // /script: the length of the SPOKEN script and how long it takes to say.
+      // The reel's own length is the sum of shots[].seconds and equals
+      // `targetSeconds` — the client shows one against the other, and a script
+      // that estimates longer than the video is the frozen last frame again.
+      return json({
+        shots: answer.shots,
+        script: answer.script,
+        characters: answer.script.length,
+        estimated_seconds: estimatedSecondsFor(answer.script.length),
         model: lastStep.model,
       });
     }

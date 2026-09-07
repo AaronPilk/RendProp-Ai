@@ -526,6 +526,123 @@ struct AIScriptResult: Sendable, Hashable {
     static let charactersPerSecond: Double = 11
 }
 
+// MARK: - AI shot list (`POST /ai-copy/shotlist`)
+//
+// The reel's EDIT, written before a cent is spent on clips. Same text-only,
+// no-media, no-street-address contract as `/ai-copy/script` — and it returns the
+// script too, so a caller that wants both makes one call rather than two.
+//
+// WHY THIS EXISTS AT ALL. Every reel this app made sent `prompt: nil` for all six
+// clips, so all six came back with the server's single default move — a slow
+// push-in — and six identical slow push-ins in a row is the loudest possible tell
+// that a video was generated rather than shot. A real reel alternates: push in on
+// the kitchen, pull back on the great room, tilt up the staircase, hold on the
+// view. That variety is one short text call away and it costs nothing.
+
+/// One shot in the plan.
+struct AIShot: Sendable, Hashable, Identifiable {
+    /// Echoed back untouched from the request — the app's own local photo id,
+    /// which is how the plan is matched to the picture it was written for.
+    let photoID: String
+    /// 1-BASED place in the reel (COPY-ASSIST-CONTRACT §1.2). The planner OWNS
+    /// the order — it opens on the best establishing shot and closes on the best
+    /// CTA frame, with the caller's own tap order as the tiebreak inside a rank —
+    /// so a client that keeps tap order gets the right words on the right picture
+    /// and the wrong picture first.
+    let order: Int
+    /// The camera move for THIS photo, as one of `ai-video/motion.ts`
+    /// `REEL_MOTIONS` — `push_in`, `pull_back`, `tilt_up`, `tilt_down`,
+    /// `orbit_left`, `orbit_right`, `rack_focus`, `static_parallax`. nil means
+    /// the server had no opinion, and nil must keep meaning "let the video
+    /// server choose" all the way down — see `APIClient.aiVideoReelClip`.
+    let motion: String?
+    /// The area the photo shows ("Kitchen", "Primary bath"), when the copy model
+    /// could tell. Sent on to the clip route as context, never shown as truth.
+    let room: String?
+    /// Three to five words to burn onto this shot. May contain the literal
+    /// `{address}` placeholder — SUBSTITUTE IT on-device before it is rendered
+    /// or a reel goes out with "{address}" across it.
+    let onScreenText: String?
+    /// How long this shot should be on screen. The composer trims or holds to
+    /// reach it; nothing here changes what the clip costs to generate.
+    let seconds: Double?
+    /// The sentence of the script that belongs to this shot. Also `{address}`-
+    /// bearing. Kept because it is what makes the voice and the pictures land
+    /// together; the app does not have to use it.
+    let voiceLine: String?
+
+    var id: String { "\(order)-\(photoID)" }
+
+    /// The moves `POST /ai-video/reel-clip` will actually render
+    /// (`ai-video/motion.ts` `REEL_MOTIONS`). A motion outside this set is a
+    /// **400** from that route, which would fail a clip the agent is standing
+    /// there waiting for — so an unrecognised move is dropped to nil on the way
+    /// in and the video server picks its own.
+    ///
+    /// The drift cuts one way on purpose. If the server ever adds a ninth move,
+    /// an old build filters it out and gets the server's choice: slightly less
+    /// variety, nothing broken. If instead we passed anything through, the same
+    /// mismatch would be a hard failure on every clip of the reel.
+    static let renderableMotions: Set<String> = [
+        "push_in", "pull_back", "tilt_up", "tilt_down",
+        "orbit_left", "orbit_right", "rack_focus", "static_parallax",
+    ]
+}
+
+/// What comes back from `POST /ai-copy/shotlist`: the plan AND the script it was
+/// written against, so the two can never disagree about the reel's length.
+struct AIShotList: Sendable, Hashable {
+    let shots: [AIShot]
+    /// The words to speak, `{address}`-bearing exactly as `/ai-copy/script`
+    /// returns them.
+    let script: String
+    let characters: Int
+    let estimatedSeconds: Double
+    let model: String
+}
+
+/// What the shot planner is allowed to know. Everything `AIScriptRequest` sends
+/// plus the photos themselves — as IDs and, where the app already knows it, the
+/// area each one shows. NO IMAGES: this is a text route, it does not look at a
+/// single pixel, and it must stay cheap enough to run on every reel.
+///
+/// THE STREET ADDRESS IS NOT IN HERE, for the same reason it is not in
+/// `AIScriptRequest`: `AICopyFacts` cannot express one.
+struct AIShotListRequest: Sendable, Hashable {
+    /// One photo the reel is built from.
+    struct Photo: Sendable, Hashable {
+        /// The app's own local id for the picture. Opaque to the server, echoed
+        /// back as `photo_id`.
+        var id: String
+        /// The area it shows, when the app knows ("Kitchen"). nil is normal.
+        var room: String? = nil
+
+        init(id: String, room: String? = nil) {
+            self.id = id
+            self.room = room
+        }
+    }
+
+    var listingServerID: UUID? = nil
+    /// `SpaceType.rawValue`.
+    var spaceType: String
+    var facts: AICopyFacts = AICopyFacts()
+    /// The reel's photos in the order the agent tapped them. The planner may
+    /// REORDER them and says so in each shot's `order`; tap order is what it
+    /// falls back to where its own rules are indifferent.
+    ///
+    /// There is deliberately no `roomTags` here even though `/ai-copy/script`
+    /// takes one: this route wants the area PER PHOTO (`Photo.room`), and a walk
+    /// order that cannot be attached to a particular picture would only tell the
+    /// planner about rooms it cannot place.
+    var photos: [Photo]
+    /// How long the finished reel runs, in seconds. Clamped to 10…45 on the way
+    /// out, same window as the script route.
+    var targetSeconds: Int
+    /// "warm" | "punchy" | "luxury". nil lets the server choose.
+    var tone: String? = nil
+}
+
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
@@ -742,6 +859,20 @@ protocol APIClient: Sendable {
     /// facts will always be refused.
     func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult
 
+    /// POST /ai-copy/shotlist — plan the reel's EDIT: a camera move, an area, a
+    /// three-to-five-word on-screen line and a length for each photo, plus the
+    /// script those shots were written against.
+    ///
+    /// TEXT-ONLY, no media, NOT charged against a media allowance, and it never
+    /// sees the street address — same contract as `aiCopyScript`, and the same
+    /// fair-housing gate with the same rule: show the server's message, let the
+    /// agent re-word, NEVER auto-retry.
+    ///
+    /// A caller that cannot get a plan must carry on WITHOUT one. Every field of
+    /// every shot is optional and the whole call is optional: no plan means the
+    /// reel is made exactly as it was before this route existed.
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList
+
     // MARK: AI video (ai-video edge function — async fal submit + poll)
 
     /// POST /ai-video/drone — Topaz motion smoothing + upscale of an UPLOADED
@@ -763,7 +894,21 @@ protocol APIClient: Sendable {
     /// clip (Seedance image-to-video). `listingServerID` anchors the clip's
     /// provenance row so the generated motion is disclosed on the tour and in
     /// the broker's audit log.
+    ///
+    /// `prompt` is the agent's own typed instruction and outranks everything;
+    /// `motion` is one move from the shot plan ("slow push in", "tilt up") and is
+    /// what stops six clips in a row being the same slow push-in. `room` is the
+    /// area the photo shows, and `shotIndex`/`shotCount` tell the server where in
+    /// the reel this clip sits so an opener and a closer can be treated
+    /// differently from the middle.
+    ///
+    /// ALL FOUR ARE OPTIONAL AND nil IS LOAD-BEARING. Sending no motion means
+    /// "the server chooses" — its own space-aware anti-hallucination prompt
+    /// (F-A-24) — and a client that invents a sentence to fill the gap both
+    /// skips that stronger default and writes its own words into the listing's
+    /// provenance log as if the agent had typed them.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob
 
@@ -960,18 +1105,35 @@ extension APIClient {
         try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
     }
 
+    /// Source-compatible reel clip with no shot plan — every planning field nil,
+    /// which is exactly "the server chooses", the behaviour every caller had
+    /// before the shot list existed.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         listingServerID: UUID?, label: String?,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
+                                  seconds: seconds, motion: nil, room: nil,
+                                  shotIndex: nil, shotCount: nil,
+                                  listingServerID: listingServerID, label: label,
+                                  idempotencyKey: idempotencyKey)
+    }
+
     /// Source-compatible reel clip with no listing anchor — the generation is
     /// NOT entered in the compliance log. Prefer the listing-aware requirement.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
-                                  seconds: seconds, listingServerID: nil, label: nil,
+                                  seconds: seconds, motion: nil, room: nil,
+                                  shotIndex: nil, shotCount: nil,
+                                  listingServerID: nil, label: nil,
                                   idempotencyKey: idempotencyKey)
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
         try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
-                                  seconds: seconds, listingServerID: nil, label: nil,
+                                  seconds: seconds, motion: nil, room: nil,
+                                  shotIndex: nil, shotCount: nil,
+                                  listingServerID: nil, label: nil,
                                   idempotencyKey: nil)
     }
 

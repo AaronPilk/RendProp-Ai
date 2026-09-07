@@ -726,6 +726,143 @@ final class LiveAPIClient: APIClient {
                               model: clean(r.model) ?? "AI")
     }
 
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+
+        // The photos, in reel order. `photo_id` is opaque to the server and comes
+        // straight back on each shot; that is the whole matching mechanism, so it
+        // is bounded but never rewritten.
+        // The wire key is `id`, and the response's `photo_id` echoes it — that is
+        // the ONLY thing the plan is matched on, so it is bounded but never
+        // rewritten (COPY-ASSIST-CONTRACT §1.2, §4.5). Order is positional: the
+        // array order IS the tap order, which the planner uses as its tiebreak.
+        var photos: [[String: Any]] = []
+        for photo in request.photos.prefix(20) {
+            let id = photo.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else { continue }
+            var entry: [String: Any] = ["id": String(id.prefix(80))]
+            if let room = clean(photo.room) { entry["room"] = String(room.prefix(40)) }
+            photos.append(entry)
+        }
+        guard !photos.isEmpty else {
+            throw APIError.server(status: 400, code: "validation",
+                                  message: "Pick the photos for your reel first — the shot plan is written for them.")
+        }
+
+        // Identical fact packing to `aiCopyScript`, and identically bounded: only
+        // facts that are actually SET go on the wire, because "beds: 0" reads to a
+        // language model as a studio apartment while an absent key reads as
+        // "not applicable".
+        var facts: [String: Any] = [:]
+        if let beds = request.facts.beds, beds > 0 { facts["beds"] = beds }
+        if let baths = request.facts.baths, baths.isFinite, baths > 0 { facts["baths"] = baths }
+        if let sqft = request.facts.sqft, sqft > 0 { facts["sqft"] = sqft }
+        if let price = clean(request.facts.priceLabel) { facts["price_label"] = String(price.prefix(40)) }
+        if let tagline = clean(request.facts.tagline) { facts["tagline"] = String(tagline.prefix(200)) }
+        // City/state only. There is no address key here and there must never be
+        // one — see the header on `AICopyFacts`.
+        if let region = clean(request.facts.region) { facts["region"] = String(region.prefix(120)) }
+
+        var details: [String: String] = [:]
+        for (rawKey, rawValue) in request.facts.details.sorted(by: { $0.key < $1.key }) {
+            guard details.count < 12 else { break }
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            details[String(key.prefix(40))] = String(value.prefix(80))
+        }
+        if !details.isEmpty { facts["details"] = details }
+
+        // Exactly the four documented keys plus the two optional ones. The route
+        // takes no `room_tags` and no `photo_count`, and sending fields a
+        // contract does not list is how a client ends up depending on one.
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "facts": facts,
+            "photos": photos,
+            "target_seconds": min(45, max(10, request.targetSeconds)),
+        ]
+        if let tone = clean(request.tone) { body["tone"] = tone }
+        if let listingID = request.listingServerID { body["listing_id"] = listingID.uuidString }
+
+        let data = try await execute(makeRequest(url: url(["ai-copy", "shotlist"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        // Every field optional and every NUMBER a Double, for the same reason the
+        // script route reads them that way: an integer JSON number decodes into a
+        // Double, a float does too, and a server that starts sending `5.0` for a
+        // count must not fail the whole response over the shape of a convenience
+        // field.
+        struct ShotDTO: Decodable {
+            let photoId: String?
+            let order: Double?
+            let motion: String?
+            let room: String?
+            let onScreenText: String?
+            let seconds: Double?
+            let voiceLine: String?
+        }
+        struct Resp: Decodable {
+            let shots: [ShotDTO]?
+            let script: String?
+            let characters: Double?
+            let estimatedSeconds: Double?
+            let model: String?
+        }
+        let r: Resp = try decode(data)
+        guard let script = clean(r.script) else {
+            throw APIError.decoding   // no words — nothing to put in the field
+        }
+
+        // A shot with no photo_id cannot be matched to a picture, so it is
+        // dropped rather than guessed at: a caption on the wrong room is worse
+        // than no caption. Order falls back to the array position.
+        var shots: [AIShot] = []
+        for (index, dto) in (r.shots ?? []).enumerated() {
+            guard let photoID = clean(dto.photoId) else { continue }
+            // `order` is 1-based on the wire; the array position is the fallback
+            // and is 0-based, so it is shifted to match rather than mixing two
+            // numbering schemes in one sort.
+            var order = index + 1
+            if let o = dto.order, o.isFinite, o >= 0, o < 1_000 { order = Int(o.rounded()) }
+            var seconds: Double? = nil
+            // The composer trims or holds to reach this, so a nonsense value is
+            // worse than none. 2…12 is the Seedance duration enum and therefore
+            // the whole believable range for one shot.
+            if let raw = dto.seconds, raw.isFinite, raw >= 2, raw <= 12 { seconds = raw }
+            // A move this app's video route cannot render is dropped, not passed
+            // on — see `AIShot.renderableMotions` for which way that drift cuts.
+            var motion: String? = nil
+            if let named = clean(dto.motion), AIShot.renderableMotions.contains(named) {
+                motion = named
+            }
+            shots.append(AIShot(photoID: photoID,
+                                order: order,
+                                motion: motion,
+                                room: clean(dto.room).map { String($0.prefix(40)) },
+                                onScreenText: clean(dto.onScreenText).map { String($0.prefix(60)) },
+                                seconds: seconds,
+                                voiceLine: clean(dto.voiceLine).map { String($0.prefix(300)) }))
+        }
+        // Sorted by the PLANNER's order, not the order the photos were tapped in:
+        // it opens on the best establishing shot and closes on the best CTA
+        // frame, and the caller reorders its own clips to match.
+        shots.sort { $0.order < $1.order }
+
+        var characters = script.count
+        // Bounded before the Int conversion: `Int(someHugeDouble)` traps, and a
+        // number this UI only prints is not worth a crash.
+        if let c = r.characters, c.isFinite, c > 0 { characters = Int(min(c, 1_000_000).rounded()) }
+        var estimated = Double(characters) / AIScriptResult.charactersPerSecond
+        if let e = r.estimatedSeconds, e.isFinite, e > 0 { estimated = e }
+        return AIShotList(shots: shots, script: script, characters: characters,
+                          estimatedSeconds: estimated, model: clean(r.model) ?? "AI")
+    }
+
     // MARK: - AI video (ai-video edge function — async fal submit + poll)
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
@@ -773,12 +910,27 @@ final class LiveAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
         if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
             body["prompt"] = prompt
         }
+        // The shot plan's fields. Each one is written ONLY when it has a value:
+        // an absent `motion` is the signal that the server should use its own
+        // space-aware default, and a key present with an empty string is not the
+        // same signal.
+        if let motion = motion?.trimmingCharacters(in: .whitespacesAndNewlines), !motion.isEmpty {
+            body["motion"] = String(motion.prefix(200))
+        }
+        if let room = room?.trimmingCharacters(in: .whitespacesAndNewlines), !room.isEmpty {
+            body["room"] = String(room.prefix(40))
+        }
+        // Bounded on the way out: these are a position in a reel of at most nine
+        // clips, not an arbitrary integer.
+        if let shotIndex, shotIndex >= 0, shotIndex < 100 { body["shot_index"] = shotIndex }
+        if let shotCount, shotCount > 0, shotCount <= 100 { body["shot_count"] = shotCount }
         if let listingServerID { body["listing_id"] = listingServerID.uuidString }
         if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
             body["label"] = String(label.prefix(80))

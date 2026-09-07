@@ -76,8 +76,10 @@ docs/GEAR-STORE.md), `guide_step_tapped`, `guide_completed` (the first-project
 guide on Home), `review_prompt_shown` (the StoreKit review request),
 `coach_opened`, `coach_message_sent`, `coach_action_tapped` (the coach — see
 docs/COACH-CONTRACT.md; never the message text), `ai_script_written`,
-`ai_prompt_improved` (prompt assistance — see docs/COPY-ASSIST-CONTRACT.md;
-never the script or the idea, only its length and whether the call worked),
+`ai_prompt_improved`, `reel_planned` (prompt assistance and the reel shot list —
+see docs/COPY-ASSIST-CONTRACT.md; never the script, the idea or the captions,
+only counts and whether the call worked), `file_saved` (an agent saved one of
+their own files to their camera roll — the kind, never a filename),
 `crash` (MetricKit diagnostic summary, no PII), `error` (non-fatal, category
 only).
 No PII in props, ever. No email, no address, no photo.
