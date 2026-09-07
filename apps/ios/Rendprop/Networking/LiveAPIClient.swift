@@ -860,6 +860,41 @@ final class LiveAPIClient: APIClient {
             provenanceRecorded: dto.provenance?.recorded ?? false)
     }
 
+    // MARK: - Coach (docs/COACH-CONTRACT.md)
+
+    /// Hand-built `[String: Any]` body, same style as every other call in
+    /// this file — `CoachRequest` carries no `Encodable` conformance because
+    /// nothing here goes through `JSONEncoder`. `screen` is added only when
+    /// non-nil (an `Optional` boxed as `Any` inside a JSON body is a known
+    /// `JSONSerialization` foot-gun, so the key is just omitted instead).
+    func coach(_ request: CoachRequest) async throws -> CoachResponse {
+        var context: [String: Any] = [
+            "listings": request.context.listings.map { l -> [String: Any] in
+                [
+                    "id": l.id,
+                    "title": l.title,
+                    "has_video": l.hasVideo,
+                    "room_tags": l.roomTags,
+                    "has_tour": l.hasTour,
+                    "published": l.published,
+                    "photos": l.photos,
+                    "edits": l.edits,
+                    "reels": l.reels,
+                ]
+            },
+            "plan": request.context.plan,
+        ]
+        if let screen = request.context.screen { context["screen"] = screen }
+
+        let body: [String: Any] = [
+            "messages": request.messages.map { ["role": $0.role, "content": $0.content] },
+            "space_type": request.spaceType,
+            "context": context,
+        ]
+        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body))
+        return try decode(data)
+    }
+
     // MARK: - Account / usage / leads
 
     func updateBrand(_ fields: [String: String]) async throws {

@@ -1,0 +1,7 @@
+# Files in ./public that must NOT be uploaded as static assets (gitignore
+# syntax; wrangler reads this file and skips what it names — `_headers` and
+# `_redirects` are already excluded by default).
+#
+# GEAR-README.md sits next to gear.json so the owner finds it, but it is a
+# note to the owner, not a page of the site.
+GEAR-README.md

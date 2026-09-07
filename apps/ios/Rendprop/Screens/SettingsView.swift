@@ -23,6 +23,10 @@ struct SettingsView: View {
     // revocable under "Your data".
     @ObservedObject private var aiConsent = AIConsent.shared
 
+    // "Gear we recommend" (Amazon Associates) — hidden until the remote
+    // catalog says so. See Gear/GearStore.swift and docs/GEAR-STORE.md.
+    @ObservedObject private var gearStore = GearStore.shared
+
     // Live-backend plan/usage (contract: GET /me). Loaded only when signed in.
     @State private var usage: UsageSummary?
     @State private var usageError: String?
@@ -53,6 +57,10 @@ struct SettingsView: View {
     // Honest local-only wipe (never described as an account deletion).
     @State private var showClearDataConfirm = false
     @State private var showDataCleared = false
+
+    /// Entry point 2 of 2 into Coach (the other is Home's sparkles button).
+    /// docs/COACH-CONTRACT.md.
+    @State private var showCoach = false
 
     /// True when a server account exists to sign into / delete. In the offline
     /// (mock) build there is no account — only data on this phone.
@@ -295,9 +303,25 @@ struct SettingsView: View {
             Section {
                 Link("Terms of Service", destination: URL(string: "https://rendprop.com/terms")!)
                 Link("Privacy Policy", destination: URL(string: "https://rendprop.com/privacy")!)
+                Link(destination: URL(string: "https://apps.apple.com/app/id6808982413?action=write-review")!) {
+                    Label("Rate Rendprop", systemImage: "star.fill")
+                }
+                // Off until the owner's Google Business Profile exists — see
+                // ReviewLinks (Support/ReviewPrompter.swift).
+                if let google = ReviewLinks.google {
+                    Link(destination: google) {
+                        Label("Review us on Google", systemImage: "globe")
+                    }
+                }
                 // App Review 1.2 / 4.7.1: published contact information and a
                 // way to report content the AI produced or a tour that
                 // shouldn't be public. mailto opens Mail with the subject set.
+                Button {
+                    showCoach = true
+                } label: {
+                    Label("Coach & help", systemImage: "sparkles")
+                }
+                .accessibilityIdentifier("settings.coachAndHelp")
                 Link(destination: Self.supportMailURL(subject: "Rendprop support")) {
                     Label("Contact support", systemImage: "envelope")
                 }
@@ -308,6 +332,15 @@ struct SettingsView: View {
                 Text("Only record spaces you have the right to record and publish. Reports are reviewed and answered by a person at \(Self.supportEmail).")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+                // Amazon Associates — hidden until the remote catalog carries
+                // `enabled: true`, a tag and at least one ASIN (GearStore).
+                if gearStore.isAvailable {
+                    NavigationLink {
+                        GearView(source: .settings)
+                    } label: {
+                        Label("Gear we recommend", systemImage: "bag")
+                    }
+                }
             } header: {
                 Text("Legal & support")
             }
@@ -325,6 +358,9 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task { await loadUsage() }
         .refreshable { await loadUsage() }
+        .sheet(isPresented: $showCoach) {
+            CoachView(model: model, originScreen: "settings")
+        }
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn {
                 adminProbeDone = false

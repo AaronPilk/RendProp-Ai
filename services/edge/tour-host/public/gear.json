@@ -1,0 +1,169 @@
+{
+  "version": 1,
+  "enabled": false,
+  "associates_tag": "",
+  "disclosure": "As an Amazon Associate, Rendprop earns from qualifying purchases.",
+  "updated": "2026-09-07",
+  "categories": [
+    {
+      "id": "gimbal",
+      "title": "Gimbals",
+      "why": "Rendprop steadies handheld footage in the render, so a gimbal is optional — it mostly smooths the doorway turns and stair climbs that are hardest to keep level by hand."
+    },
+    {
+      "id": "mic",
+      "title": "Microphones",
+      "why": "The tour itself plays silent. A mic is for the voiceover you record on reels and for talking-to-camera intros; a USB-C or Bluetooth mic connected to the phone is used automatically."
+    },
+    {
+      "id": "light",
+      "title": "Lights",
+      "why": "The first tip is still lights on and blinds open. A small battery LED covers the rooms that have no window — bathrooms, closets, basements, back-of-house."
+    },
+    {
+      "id": "tripod",
+      "title": "Tripods",
+      "why": "The walkthrough is filmed walking, so a tripod is for everything else: the still photos you bring into the photo studio and a fixed-frame intro clip for a reel."
+    },
+    {
+      "id": "lens",
+      "title": "Wide-angle lenses",
+      "why": "Rendprop films on the phone's own 0.5× ultra-wide camera, so a clip-on lens is optional — it matters on a phone without an ultra-wide, or for a different look on reels."
+    },
+    {
+      "id": "storage",
+      "title": "Storage",
+      "why": "A 4K walkthrough runs to hundreds of megabytes a minute. Offloading originals to a small SSD keeps room on the phone for the next shoot."
+    }
+  ],
+  "items": [
+    {
+      "id": "dji-osmo-mobile",
+      "category": "gimbal",
+      "name": "DJI Osmo Mobile (phone gimbal)",
+      "blurb": "A folding three-axis phone gimbal. Keeps the phone upright and level through turns and doorways while you walk.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "insta360-flow",
+      "category": "gimbal",
+      "name": "Insta360 Flow (phone gimbal)",
+      "blurb": "A compact phone gimbal with a built-in grip and stand. Same job: a level, steady walk through the space.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "hohem-isteady",
+      "category": "gimbal",
+      "name": "Hohem iSteady (phone gimbal)",
+      "blurb": "A three-axis phone gimbal line for filming on the move. Steadies the phone while you walk the space.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "rode-wireless-go",
+      "category": "mic",
+      "name": "RØDE Wireless GO (wireless microphone)",
+      "blurb": "A clip-on wireless microphone with a receiver that connects to the phone. For recording a voiceover or speaking to camera away from the phone.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "rode-wireless-me",
+      "category": "mic",
+      "name": "RØDE Wireless ME (wireless microphone)",
+      "blurb": "A smaller wireless clip-on microphone kit. Same purpose: clean speech for reel voiceovers and intros.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "dji-mic",
+      "category": "mic",
+      "name": "DJI Mic (wireless microphone)",
+      "blurb": "A wireless microphone kit with a phone receiver. For voiceovers and on-camera speech in your reels.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "aputure-amaran-led",
+      "category": "light",
+      "name": "Aputure amaran (LED light)",
+      "blurb": "Battery-friendly bi-colour LED lights. Lifts a windowless room so it reads the way the rest of the space does.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "lume-cube-panel",
+      "category": "light",
+      "name": "Lume Cube Panel (pocket LED light)",
+      "blurb": "A pocket-sized bi-colour LED panel with a phone mount option. Fill light for a dim corner or a talking-to-camera intro.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "aputure-amaran-mc",
+      "category": "light",
+      "name": "Aputure amaran MC (pocket RGB light)",
+      "blurb": "A palm-sized colour LED. Adds a colour accent behind a bar, a stage or a display for a reel clip.",
+      "asin": "",
+      "for": ["venue", "restaurant", "retail", "fitness", "other"]
+    },
+    {
+      "id": "joby-gorillapod",
+      "category": "tripod",
+      "name": "JOBY GorillaPod (flexible phone tripod)",
+      "blurb": "A flexible tripod that wraps around a rail or stands on a counter. Holds the phone still for photos and fixed-frame clips.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "manfrotto-pixi",
+      "category": "tripod",
+      "name": "Manfrotto PIXI (mini tripod)",
+      "blurb": "A small tabletop tripod with a ball head. Steady stills for the photo studio; doubles as a handgrip.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "peak-design-mobile-tripod",
+      "category": "tripod",
+      "name": "Peak Design Mobile Tripod",
+      "blurb": "A slim folding tripod that lives on the back of the phone. Quick to set up for a photo or a fixed intro shot.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "moment-wide-lens",
+      "category": "lens",
+      "name": "Moment wide lens (phone lens)",
+      "blurb": "A clip-on wide lens for phones, mounted through a case. For a wider frame on a phone without an ultra-wide camera.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "sandmarc-wide-lens",
+      "category": "lens",
+      "name": "SANDMARC wide lens (phone lens)",
+      "blurb": "A clip-on or case-mounted wide lens for iPhone. Same purpose: a wider frame where the phone alone cannot give one.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "samsung-t7-ssd",
+      "category": "storage",
+      "name": "Samsung T7 (portable SSD)",
+      "blurb": "A pocket USB-C SSD. Offload finished walkthrough originals so the phone keeps room for the next shoot.",
+      "asin": "",
+      "for": []
+    },
+    {
+      "id": "sandisk-extreme-portable-ssd",
+      "category": "storage",
+      "name": "SanDisk Extreme Portable SSD",
+      "blurb": "A rugged pocket USB-C SSD. Same job: a home for the 4K originals once a tour is published.",
+      "asin": "",
+      "for": []
+    }
+  ]
+}

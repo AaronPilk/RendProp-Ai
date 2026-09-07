@@ -1110,6 +1110,32 @@ actor MockAPIClient: APIClient {
             provenanceRecorded: false)
     }
 
+    // MARK: - Coach (docs/COACH-CONTRACT.md)
+
+    /// Deterministic canned reply with exactly ONE action, so `-uiTesting`
+    /// (CoachShot.swift) can find a stable chip. Names the caller's own
+    /// first listing when one was sent, so the chip round-trips to a real
+    /// project instead of a dead id; with no listings yet, offers
+    /// `start_project` instead — never a fabricated listing id.
+    func coach(_ request: CoachRequest) async throws -> CoachResponse {
+        try? await Task.sleep(nanoseconds: 500_000_000)   // a beat, like a real reply
+
+        if let first = request.context.listings.first {
+            let name = first.title.isEmpty ? "your project" : first.title
+            return CoachResponse(
+                reply: "Let's finish \(name). Once the walkthrough's in, I can help with photos, "
+                    + "a reel, or an aerial shot next.",
+                actions: [CoachResponse.Action(type: "open_tour", label: "Open the tour", listingID: first.id)],
+                suggestedReplies: ["What does publishing do?", "How do I share to the MLS?"],
+                model: "mock-coach")
+        }
+        return CoachResponse(
+            reply: "Let's start your first project — name it, and I'll take it from there.",
+            actions: [CoachResponse.Action(type: "start_project", label: "Start my first project", listingID: nil)],
+            suggestedReplies: ["How do I share to the MLS?", "What does the AI do to my photos?"],
+            model: "mock-coach")
+    }
+
     /// A DELIBERATELY SMALL offline echo of the server's fair-housing script
     /// gate — the phrases the contract names, nothing more. The server's
     /// `_shared/fairhousing.ts` is the authoritative and complete list; this

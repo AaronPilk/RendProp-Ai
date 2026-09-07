@@ -699,6 +699,16 @@ protocol APIClient: Sendable {
     func aiChapters(listingServerID: UUID, assetID: UUID, maxChapters: Int,
                     idempotencyKey: String) async throws -> AIChaptersResult
 
+    // MARK: Coach (docs/COACH-CONTRACT.md)
+
+    /// POST /coach — owner-auth, same as `aiChapters`. No plan metering and
+    /// no idempotency key: a coach turn is a chat message, not a billed
+    /// generation (coach/index.ts's own header: free on every plan, only a
+    /// per-user rate limit). A signed-out call throws; `CoachModel` answers
+    /// from its own offline knowledge for that, and for any other failure —
+    /// this chat is never dead.
+    func coach(_ request: CoachRequest) async throws -> CoachResponse
+
     // MARK: Admin console (owner/admin only — docs/ADMIN-CONSOLE-CONTRACT.md)
     //
     // Every route is a GET and the ADMIN ROLE IS SERVER-ENFORCED: the function

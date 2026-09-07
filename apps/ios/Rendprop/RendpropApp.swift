@@ -58,6 +58,13 @@ final class AppModel: ObservableObject {
     }
     @Published var uploadedRenderAssets: [UUID: UploadedRenderAsset] = [:] { didSet { persist() } }
 
+    /// Coach (docs/COACH-CONTRACT.md): where a tapped action should land.
+    /// RootTabView and HomeDashboardView each react to this with a small
+    /// `.onChange` — see docs/handoff/coach.md. Deliberately NOT in the
+    /// `didSet { persist() }` group above: a one-shot navigation signal, not
+    /// state a relaunch should ever restore.
+    @Published var coachRoute: CoachRoute?
+
     // Mock by default (offline dev); LiveAPIClient when Config.useLiveBackend.
     let api: APIClient = Config.makeAPIClient()
 
@@ -1514,6 +1521,25 @@ struct RootTabView: View {
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
         }
+        // Coach (docs/COACH-CONTRACT.md): the tab-switch half of acting on a
+        // tapped action. HomeDashboardView's own `.onChange` (same value)
+        // handles the "which sheet/route" half. This one clears the value —
+        // deferred to the next runloop turn, not synchronously — so BOTH
+        // handlers still see the value that triggered them: a same-turn
+        // set-then-clear can coalesce to a no-op change SwiftUI never
+        // delivers to the other view's `.onChange` at all.
+        .onChange(of: model.coachRoute) { route in
+            guard let route else { return }
+            switch route {
+            case .project, .startProject, .home:
+                tab = 0
+            case .planUsage:
+                tab = 3
+            case .support:
+                UIApplication.shared.open(SettingsView.supportMailURL(subject: "Rendprop support"))
+            }
+            DispatchQueue.main.async { model.coachRoute = nil }
+        }
     }
 }
 
@@ -1547,6 +1573,12 @@ struct HomeDashboardView: View {
     /// What the pushed destination shows.
     @State private var route: ProjectRoute?
     @State private var showRoute = false
+    /// Entry point 1 of 2 for Coach (the other is Settings → "Coach & help").
+    /// docs/COACH-CONTRACT.md.
+    @State private var showCoach = false
+    /// A coach action tapped while the coach sheet is still on screen. Acted on
+    /// in that sheet's `onDismiss` — see the `.onChange` below.
+    @State private var queuedCoach: CoachRoute?
 
     private var noun: String { SpaceType.current.spaceNoun }          // home / venue / space …
     private var customer: String { SpaceType.current.customerNoun }   // buyers / guests …
@@ -1597,6 +1629,16 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: 26) {
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
+                if !FirstProjectGuide.isHiddenForever {
+                    FirstProjectCard { action in
+                        switch action {
+                        case .startProject:       open(.tour)
+                        case .open(let route):    go(route.listing, route.feature)
+                        case .share(let listing): go(listing, .tour)
+                        }
+                    }
+                    .modifier(Reveal(index: 0, on: revealed))
+                }
                 homesSection
                     .modifier(Reveal(index: 1, on: revealed))
                 showroomSection
@@ -1614,6 +1656,10 @@ struct HomeDashboardView: View {
                 }
                 partnersSection
                     .modifier(Reveal(index: 6, on: revealed))
+                // Amazon Associates gear list — GearHomeLink renders nothing
+                // until GearStore.isAvailable (Gear/GearView.swift).
+                GearHomeLink()
+                    .modifier(Reveal(index: 7, on: revealed))
             }
             .padding()
             // The whole tab re-themes when the business type changes (top-left menu).
@@ -1622,13 +1668,57 @@ struct HomeDashboardView: View {
         .background(Theme.bg)
         .navigationTitle("Home")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .navigationBarLeading) { businessTypeMenu } }
+        .toolbar {
+            ToolbarItem(placement: .navigationBarLeading) { businessTypeMenu }
+            ToolbarItem(placement: .navigationBarTrailing) { askCoachButton }
+        }
         .navigationDestination(isPresented: $showRoute) { routeDestination }
         .task { await model.load() }        // idempotent — seeds the demo tour for this tab
         .task(id: auth.isSignedIn) { await loadLeadCount() }
         .onAppear { revealed = true }
         .sheet(item: $gate, onDismiss: flushQueuedRoute) { sheet in
             gateSheet(sheet)
+        }
+        .sheet(isPresented: $showCoach, onDismiss: flushCoachRoute) {
+            CoachView(model: model, originScreen: "home")
+        }
+        // Coach (docs/COACH-CONTRACT.md): the "which sheet/route" half of
+        // acting on a tapped action. RootTabView's own `.onChange` (same
+        // value, above) handles the tab-switch half and is what actually
+        // clears `coachRoute` back to nil — this handler only ever READS it,
+        // so firing order between the two views never matters.
+        //
+        // Tapping an action also dismisses the coach, in the same update that
+        // sets the route. Presenting `gate` — a second sheet on this same view
+        // — inside that transaction is the sheet-over-sheet drop the gate flow
+        // already defends against with `queued`/`flushQueuedRoute`, so the
+        // route waits for the coach sheet to finish closing.
+        .onChange(of: model.coachRoute) { route in
+            guard let route else { return }
+            if showCoach {
+                queuedCoach = route
+            } else {
+                applyCoachRoute(route)
+            }
+        }
+    }
+
+    /// Runs after the coach sheet closes, with the action it was carrying.
+    private func flushCoachRoute() {
+        guard let route = queuedCoach else { return }
+        queuedCoach = nil
+        applyCoachRoute(route)
+    }
+
+    private func applyCoachRoute(_ route: CoachRoute) {
+        switch route {
+        case .project(let listingID, let feature):
+            guard let listing = model.listings.first(where: { $0.id == listingID }) else { return }
+            go(listing, feature)
+        case .startProject:
+            gate = .start(.tour)
+        case .planUsage, .support, .home:
+            break   // RootTabView owns these
         }
     }
 
@@ -1659,6 +1749,23 @@ struct HomeDashboardView: View {
             .foregroundStyle(Theme.accent)
         }
         .onChange(of: spaceTypeRaw) { _ in Haptics.selection() }
+    }
+
+    /// Entry point 1 of 2 into Coach (the other is Settings → "Coach &
+    /// help") — docs/COACH-CONTRACT.md.
+    private var askCoachButton: some View {
+        Button {
+            Haptics.selection()
+            showCoach = true
+        } label: {
+            Image(systemName: "sparkles")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(Theme.accent)
+                .padding(8)
+                .background(Theme.accentSoft, in: Circle())
+        }
+        .accessibilityIdentifier("home.askCoach")
+        .accessibilityLabel(Text("Ask the coach"))
     }
 
     private func loadLeadCount() async {
@@ -2333,6 +2440,8 @@ final class AIConsent: ObservableObject {
                   detail: "Gemini edits your listing photos. Veo and Seedance generate aerial intros and reel clips."),
         Processor(name: "Topaz Labs",
                   detail: "Smooths the motion in your walkthrough and upscales it to 4K."),
+        Processor(name: "Anthropic and OpenAI",
+                  detail: "Answer what you type to the coach. Your photos and videos are never sent to them."),
     ]
 
     /// Ask once, then never again on this device. Returns true when the person

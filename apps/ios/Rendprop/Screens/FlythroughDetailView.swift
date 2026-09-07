@@ -1068,6 +1068,7 @@ struct FlythroughDetailView: View {
                     isPublishing = false
                     playerRefresh = UUID()
                     Haptics.success()
+                    ReviewPrompter.shared.tourPublished()
                 }
             } catch {
                 await MainActor.run {
@@ -2392,6 +2393,7 @@ struct PhotoStudioView: View {
                     Haptics.success()
                     compare = newPhoto   // show the before/after (and its disclosure)
                     Analytics.track("ai_photo_edit", ["task": edit, "ok": "true"])
+                    if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
                 }
                 // Publish the "after" against the same provenance row so the
                 // tour can show the pair side by side (NorthstarMLS). Off the

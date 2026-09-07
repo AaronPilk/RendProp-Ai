@@ -73,6 +73,19 @@ enum Config {
             .map { dir.appendingPathComponent($0) }
     }
 
+    /// `-ui.guideState <0-5>` (screenshots only): forces `FirstProjectGuide`'s
+    /// progress to exactly N of 5 steps done, so every card state can be
+    /// captured on demand — the real signals it normally reads (a captured
+    /// video, room tags, a render, a share link) are otherwise slow to set up
+    /// from a clean simulator. nil outside `-uiTesting`, or when the arg is
+    /// missing/unparseable.
+    static var uiTestGuideState: Int? {
+        guard isUITesting else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-ui.guideState"), i + 1 < args.count else { return nil }
+        return Int(args[i + 1])
+    }
+
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
     /// the live client can't be constructed (e.g. no base URL). Single source of
     /// truth so AppModel and UploadManager stay in sync.
@@ -95,6 +108,16 @@ enum Config {
     /// photo edit routinely takes 20–60 s and the edge function itself allows
     /// ~150 s, so the default 60 s URLSession timeout cut real edits off.
     static let aiRequestTimeout: TimeInterval = 120
+
+    /// The "Gear we recommend" catalog (Amazon Associates links) — a static
+    /// JSON file the tour-host Worker serves from `public/gear.json`
+    /// (services/edge/tour-host). Remote so the owner can add ASINs, flip
+    /// `enabled` or pull the section without an app release. `GearStore`
+    /// fetches it, caches it on disk, and hides every Gear entry point until
+    /// the file says `enabled: true` with a tag and at least one ASIN. Under
+    /// `-uiTesting` the store never fetches this; it uses an inline sample.
+    /// See docs/GEAR-STORE.md.
+    static let gearCatalogURL = URL(string: "https://rendprop.com/gear.json")!
 
     /// RETIRED — always nil, on every storefront. Do not revive it.
     ///

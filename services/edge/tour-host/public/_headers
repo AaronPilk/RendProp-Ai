@@ -48,3 +48,12 @@
 /assets/demo-reel.mp4
   ! Cache-Control
   Cache-Control: public, max-age=86400, stale-while-revalidate=604800
+
+# gear.json — the iOS app's "Gear we recommend" catalog (see GEAR-README.md).
+# Not fingerprinted and edited in place (the owner flips `enabled`, adds
+# ASINs), and the app fetches it directly rather than through a page, so it
+# gets an explicit short TTL: five minutes fresh, then stale-while-revalidate
+# for an hour. Without a rule it falls under the static-assets default, which
+# is fine for correctness but leaves the freshness window implicit.
+/gear.json
+  Cache-Control: public, max-age=300, stale-while-revalidate=3600

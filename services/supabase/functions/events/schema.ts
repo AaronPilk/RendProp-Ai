@@ -70,6 +70,25 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   purchase_completed: ["product_id", "plan", "period", "trial"],
   purchase_failed:    ["product_id", "plan", "reason"],
   restore:            ["ok", "plan"],
+  // Gear we recommend (Amazon Associates — see docs/GEAR-STORE.md and
+  // apps/ios/Rendprop/Gear/GearStore.swift). `item` is the catalog's own
+  // slug (e.g. "dji-osmo-mobile"), never a listing id or anything else that
+  // could join back to a person or an address.
+  gear_opened:        ["source"],
+  gear_item_tapped:   ["item"],
+  // First-project guide (apps/ios/Rendprop/Guide/) — `step` is a step number or
+  // "win-<case>", never anything typed by the user.
+  guide_step_tapped:  ["step", "space_type"],
+  guide_completed:    ["space_type"],
+  // StoreKit review prompt (apps/ios/Rendprop/Support/ReviewPrompter.swift).
+  review_prompt_shown: ["publish_count"],
+  // Coach (apps/ios/Rendprop/Coach/) — the chat assistant. The message text
+  // NEVER leaves the device through this path: `length_bucket` is a coarse
+  // bucket, `type` is one of the closed action enum, `screen` is where it was
+  // opened from. See docs/COACH-CONTRACT.md.
+  coach_opened:       ["screen"],
+  coach_message_sent: ["length_bucket"],
+  coach_action_tapped: ["type"],
   // Stability (MetricKit summaries — see Analytics/CrashReporter.swift)
   crash:              ["kind", "signal", "exception_type", "termination_reason", "top_frame", "app_version", "os"],
   error:              ["category", "code", "step", "detail", "launch_time_ms", "hang_ms", "app_version", "os"],

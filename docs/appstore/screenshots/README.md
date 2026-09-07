@@ -222,3 +222,15 @@ rather than editing a frame by hand — the next run would overwrite it.
 
 `apps/ios/project.yml` already excludes `bridge-cmd-*.sh` and `README.md` from the
 `RendpropUITests` sources, so nothing here rides into the test bundle.
+
+## The 6 Sep set (live in App Store Connect, submitted with build 5)
+
+Nine framed frames from `plan.json`, composed with `tools/screenshots/compose.py` and uploaded with
+`asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace`. Two things the walk
+needs that the system photo picker cannot give it: `bridge-cmd-storeshots.sh` exports
+`TEST_RUNNER_STORESHOT_PHOTOS` (a folder of seed photos — put real listing photos in
+`_bridge/in/storeshot-photos/`, they show up in the studio and reel frames), and `StoreShots` launches
+the app with `-ui.sampleLeads` so the Leads frame shows an inbox. Both are read only under
+`-uiTesting`. The hosted page's end card (frame 07) is ~100 swipes down the scroll-scrub page — the
+test scrolls that far and stops at "Book a showing". A version that has been "added for review" is
+locked; `asc.py` takes it out of the draft submission around the replace and puts it back.

@@ -152,9 +152,12 @@ Deno.test("whitelist: no schema key can hold a person, a place or a file", () =>
 Deno.test("vocabulary: exactly the names in the launch contract", () => {
   assertEquals([...ALLOWED_EVENT_NAMES].sort(), [
     "aerial_made", "ai_photo_edit", "app_open", "capture_finished", "capture_started",
-    "crash", "error", "home_created", "paywall_viewed", "purchase_completed",
-    "purchase_failed", "purchase_started", "reel_made", "render_finished", "restore",
-    "signin", "signup", "tour_published", "voiceover_added",
+    "coach_action_tapped", "coach_message_sent", "coach_opened",
+    "crash", "error", "gear_item_tapped", "gear_opened", "guide_completed",
+    "guide_step_tapped", "home_created", "paywall_viewed",
+    "purchase_completed", "purchase_failed", "purchase_started", "reel_made",
+    "render_finished", "restore", "review_prompt_shown", "signin", "signup",
+    "tour_published", "voiceover_added",
   ]);
 });
 

@@ -1,16 +1,37 @@
 //
 //  OnboardingTour.swift
 //  The NARRATED WALKTHROUGH capture — one slow, deliberate pass through the app
-//  for the onboarding video (docs/marketing/onboarding-video-script.md).
+//  for the onboarding video v2 (docs/marketing/onboarding-video-v2/SCRIPT.md).
+//  v1's docs/marketing/onboarding-video-script.md documents the earlier cut
+//  this test used to drive; that script's segment ids/order no longer match
+//  what testOnboardingTour() below produces — v1 stays as a historical record
+//  of its own take, not something this file re-cuts on request.
 //
 //  ONE test — `testOnboardingTour()` — performs the on-screen actions of the
-//  script, segment by segment, in script order, while `bridge-cmd-
-//  onboardingtour.sh` records the simulator's screen with
-//  `xcrun simctl io recordVideo`. Nothing here takes screenshots: the
-//  deliverable is the recording, and this test's job is to make it READ WELL —
-//  every action is followed by a pause of 1.5–4 s so a viewer can see what just
-//  happened, scrolls are slow drags rather than flicks, and sheets are left up
-//  for a beat before they are closed.
+//  script, segment by segment, in SCRIPT.md's order (see that method for the
+//  authoritative v2 call order — segments below are not re-sorted in the
+//  file to match it, only renumbered), while `bridge-cmd-onboardingtour.sh`
+//  records the simulator's screen with `xcrun simctl io recordVideo`. Nothing
+//  here takes screenshots: the deliverable is the recording, and this test's
+//  job is to make it READ WELL — every action is followed by a pause of
+//  1.5–4 s so a viewer can see what just happened, scrolls are slow drags
+//  rather than flicks, and sheets are left up for a beat before they are
+//  closed.
+//
+//  WHAT CHANGED FOR v2: a cold open (segment 00 — "Watch the sample tour",
+//  filmed FIRST, before Home's own hero beat, since the hosted demo tour is
+//  reachable on a cold launch with no home created yet) replaces v1's
+//  mid-tour "07 — The tour" beat; "06 — Share the link" is a new beat split
+//  out of what v1 folded into "11 — Publish, share, leads" (the Leads
+//  banner's own text, read but not tapped); "09/10 — Aerial intro" and
+//  "Floor plan" are now two marks instead of one; and the six-industries
+//  switch (v1's "02") moves to the END of the tour (now "12"), right before
+//  the closing honest line, so the video ends on "and it isn't just for
+//  homes" rather than opening with it. v1's segments 05/06 (tag rooms /
+//  create the tour) needed no code change at all — they were already here
+//  and already correct; they simply had no clip in the simulator's photo
+//  library on the run v1 shipped with. Seed one before recording (see the v2
+//  README's `xcrun simctl addmedia` step) and they film like everything else.
 //
 //  THE MARKS. At the start of every segment the test writes one line
 //
@@ -30,10 +51,11 @@
 //
 //  THINGS THIS TEST NEVER DOES
 //
-//  1. Never taps a purchase button. The paywall is opened, rests on screen and
-//     is closed with its own "Close". The StoreKit test environment (same
-//     recipe as PaywallShot / IndustryWalk) only makes the plan cards render
-//     with prices so the "plans from $49" line has something to point at.
+//  1. Never taps a purchase button. v2's narration never speaks a price (they
+//     come from StoreKit, not the video) and does not visit the paywall at
+//     all, but the StoreKit test environment (same recipe as PaywallShot /
+//     IndustryWalk) is still set up below regardless — inherited, harmless,
+//     and one less thing to change if a future cut adds the paywall back.
 //  2. Never confirms a deletion — no delete flow is even opened.
 //  3. Never runs an AI edit, never generates an aerial or a reel, never records
 //     a voice take, never publishes. `-uiTesting` means `MockAPIClient`; the
@@ -127,6 +149,14 @@ final class OnboardingTour: XCTestCase {
 
     // MARK: - The tour
 
+    /// THE AUTHORITATIVE v2 CALL ORDER. This is the order the segments below
+    /// are written down in `docs/marketing/onboarding-video-v2/SCRIPT.md` —
+    /// NOT the order their private methods sit in this file (those keep
+    /// their v1 file position; a method's name and its mark id are what
+    /// matter, not where it happens to be typed). `seg12Industries()` in
+    /// particular is defined right after `seg01Home()` below (that is where
+    /// v1's own "02 — Six industries" used to sit) but is CALLED last, on
+    /// purpose — see WHAT CHANGED FOR v2 at the top of this file.
     func testOnboardingTour() {
         if !storeKitNote.isEmpty { note(storeKitNote) }
         if let start = recordStart {
@@ -138,27 +168,62 @@ final class OnboardingTour: XCTestCase {
         launchDate = Date()
         app.launch()
 
-        seg01Home()
-        seg02Industries()
-        seg03AddHome()
-        let hasVideo = seg04RecordOrUpload()
+        seg00Hook()                            // 00 — cold open: "Watch the sample tour", filmed first
+        seg01Home()                            // 01 — the hero
+        seg02AddHome()                         // 02 — start with the space
+        let hasVideo = seg03RecordOrUpload()   // 03 — film or upload the walk
         if hasVideo {
-            seg05TagRooms()
-            seg06CreateTour()
+            seg04TagRooms()                    // 04 — tag rooms → chapters
+            seg05CreateTour()                  // 05 — create the tour
         } else {
-            note("SKIPPED 05 + 06: no walkthrough was imported, so there is no Review & Submit to tag or render. "
+            note("SKIPPED 04 + 05: no walkthrough was imported, so there is no Review & Submit to tag or render. "
                  + "Seed a clip with `xcrun simctl addmedia` (bridge-cmd-onboardingtour.sh does).")
             popToRoot()
         }
-        seg07TourPlayer()
-        let inStudio = seg08PhotoStudio()
-        seg09Reel(inStudio: inStudio)
-        seg10AerialAndFloorPlan()
-        seg11Leads()
-        seg12Plans()
-        seg13Close()
+        seg06Share()                           // 06 — share the link (the Leads banner, read not tapped)
+        let inStudio = seg07PhotoStudio()      // 07 — AI Photo Studio
+        seg08Reel(inStudio: inStudio)          // 08 — a reel, in your own voice
+        seg09AerialAndFloorPlan()              // 09 + 10 — aerial intro, then floor plan
+        seg11LeadsInbox()                      // 11 — leads inbox (same banner, now tapped)
+        seg12Industries()                      // 12 — six kinds of space (was v1's "02", moved to the end)
+        seg13Close()                           // 13 — the honest line
         mark("END")
         note("MARKS " + marks.joined(separator: " | "))
+    }
+
+    // MARK: 00 — Cold open ("Watch the sample tour", filmed before anything else)
+
+    /// The hosted demo tour is `demoSection` on Home — reachable on a cold
+    /// launch with no home created yet, for every business type (see
+    /// RendpropApp.swift's `demoOpenLink` / `estateDemoFullURL`) — so this
+    /// runs FIRST, before `seg01Home()`'s own hero beat, rather than mid-tour
+    /// the way v1's `seg07TourPlayer` (this method's ancestor) did. Same
+    /// action, same footage either way; only the timing changed.
+    private func seg00Hook() {
+        activity("00 — Cold open") {
+            guard waitForHome(timeout: screenTimeout) else {
+                note("Home never appeared within \(Int(screenTimeout))s for the cold open — marking anyway.")
+                mark("00")
+                return
+            }
+            scrollToTop()
+            mark("00")
+            guard let link = scrollTo(ids: [], labels: ["Watch the sample tour"], swipes: 8) else {
+                note("SKIPPED: no \"Watch the sample tour\" link on Home for the cold open.")
+                beat(2.0)
+                return
+            }
+            tap(link)
+            guard waitForAny(ids: [], labels: ["Demo listing page", "Sample tour"], timeout: screenTimeout) else {
+                note("SKIPPED: the hosted demo page never opened (it needs network to rendprop.com) — no cold open shot.")
+                popToRoot()
+                return
+            }
+            beat(1.0)                   // let the page draw before the drag
+            scrubPlayer()                // one slow drag: the house flies as you scroll — THE HOOK
+            beat(0.6)
+            popToRoot()
+        }
     }
 
     // MARK: 01 — Home
@@ -181,12 +246,12 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 02 — Six industries
+    // MARK: 12 — Six kinds of space (v1's "02" — CALLED LAST, see testOnboardingTour())
 
-    private func seg02Industries() {
-        activity("02 — Six industries") {
+    private func seg12Industries() {
+        activity("12 — Six kinds of space") {
             scrollToTop()
-            mark("02")
+            mark("12")
             guard let capsule = typeCapsule() else {
                 note("SKIPPED: no business-type capsule in Home's navigation bar.")
                 beat(3.0)
@@ -221,12 +286,12 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 03 — Add a home
+    // MARK: 02 — Start with the space (v1's "03")
 
-    private func seg03AddHome() {
-        activity("03 — Add a home") {
+    private func seg02AddHome() {
+        activity("02 — Start with the space") {
             scrollToTop()
-            mark("03")
+            mark("02")
             guard let add = scrollTo(ids: ["home.addHome"], labels: ["Add a home"], swipes: 4) else {
                 note("SKIPPED: no `home.addHome` and no \"Add a home\" button on Home.")
                 beat(3.0)
@@ -245,13 +310,13 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 04 — Record or upload (the walkthrough comes in from Photos)
+    // MARK: 03 — Film or upload the walk (v1's "04" — the walkthrough comes in from Photos)
 
     /// - Returns: true when the clip imported and Review & Submit is on screen.
-    private func seg04RecordOrUpload() -> Bool {
+    private func seg03RecordOrUpload() -> Bool {
         var imported = false
-        activity("04 — Record or upload") {
-            mark("04")
+        activity("03 — Film or upload the walk") {
+            mark("03")
             guard let upload = scrollTo(ids: [], labels: ["Upload a video"], swipes: 3) else {
                 note("SKIPPED: no \"Upload a video\" button — the address may not have been accepted.")
                 beat(3.0)
@@ -293,11 +358,11 @@ final class OnboardingTour: XCTestCase {
         return imported
     }
 
-    // MARK: 05 — Tag the rooms
+    // MARK: 04 — Tag rooms, get chapters (v1's "05")
 
-    private func seg05TagRooms() {
-        activity("05 — Tag the rooms") {
-            mark("05")
+    private func seg04TagRooms() {
+        activity("04 — Tag rooms, get chapters") {
+            mark("04")
             guard let tagButton = scrollTo(ids: [], labels: ["Tag rooms on the video", "Tag areas on the video"], swipes: 4) else {
                 note("SKIPPED: no \"Tag rooms on the video\" button on Review & Submit.")
                 beat(3.0)
@@ -325,11 +390,11 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 06 — Create the tour
+    // MARK: 05 — Create the tour (v1's "06")
 
-    private func seg06CreateTour() {
-        activity("06 — Create the tour") {
-            mark("06")
+    private func seg05CreateTour() {
+        activity("05 — Create the tour") {
+            mark("05")
             let button = scrollTo(ids: [], labels: ["Create my tour"], swipes: 6)
             if button == nil { note("The \"Create my tour\" button never scrolled into view — resting on Review & Submit as it stands.") }
             beat(3.0)                   // PICK YOUR QUALITY + the button
@@ -347,42 +412,36 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 07 — The tour (the hosted demo page a share link opens)
+    // MARK: 06 — Share the link (split out of v1's "11 — Publish, share, leads";
+    // the OTHER half — actually tapping the banner — is seg11LeadsInbox() below,
+    // filmed much later so the beats between them get their own footage)
 
-    private func seg07TourPlayer() {
-        activity("07 — The tour") {
+    private func seg06Share() {
+        activity("06 — Share the link") {
             popToRoot()
             _ = openHomeTab()
             scrollToTop()
-            mark("07")
-            guard let link = scrollTo(ids: [], labels: ["Watch the sample tour"], swipes: 8) else {
-                note("SKIPPED: no \"Watch the sample tour\" link on Home.")
+            mark("06")
+            guard scrollToLabel(containing: "Opens your leads.", swipes: 6) != nil else {
+                note("SKIPPED: no leads banner on Home for the share beat.")
                 beat(3.0)
                 return
             }
-            tap(link)
-            guard waitForAny(ids: [], labels: ["Demo listing page", "Sample tour"], timeout: screenTimeout) else {
-                note("SKIPPED: the hosted demo page never opened (it needs network to rendprop.com).")
-                popToRoot()
-                return
-            }
-            beat(3.5)                   // a real download — let the page draw
-            scrubPlayer()               // one slow drag: the house flies as you scroll
-            beat(1.0)
+            beat(3.0)                   // "Every tour is one link with a lead form built in." — rest, do not tap yet
             popToRoot()
         }
     }
 
-    // MARK: 08 — AI Photo Studio
+    // MARK: 07 — AI Photo Studio (v1's "08")
 
     /// - Returns: true when the studio is on screen at the end of the segment.
-    private func seg08PhotoStudio() -> Bool {
+    private func seg07PhotoStudio() -> Bool {
         var reached = false
-        activity("08 — AI Photo Studio") {
+        activity("07 — AI Photo Studio") {
             popToRoot()
             _ = openHomeTab()
             scrollToTop()
-            mark("08")
+            mark("07")
             guard let tile = scrollTo(ids: ["home.feature.photos"], labels: ["Take photos"], swipes: 6) else {
                 note("SKIPPED: no \"Take photos\" tile on Home.")
                 beat(3.0)
@@ -403,11 +462,11 @@ final class OnboardingTour: XCTestCase {
         return reached
     }
 
-    // MARK: 09 — Reels with your own voice
+    // MARK: 08 — A reel, in your own voice (v1's "09")
 
-    private func seg09Reel(inStudio: Bool) {
-        activity("09 — Reels with your own voice") {
-            mark("09")
+    private func seg08Reel(inStudio: Bool) {
+        activity("08 — A reel, in your own voice") {
+            mark("08")
             guard inStudio else {
                 note("SKIPPED: the studio was never reached, so its reel card is unreachable too.")
                 beat(3.0)
@@ -441,14 +500,19 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 10 — Aerial intro and floor plan
+    // MARK: 09 + 10 — Aerial intro, then floor plan (v1's single "10")
 
-    private func seg10AerialAndFloorPlan() {
-        activity("10 — Aerial intro and floor plan") {
+    /// Two marks from one method, on purpose: nothing else is filmed between
+    /// them (see testOnboardingTour()'s call order), so there is no need to
+    /// re-open the home's detail screen twice just to give each its own mark.
+    private func seg09AerialAndFloorPlan() {
+        activity("09/10 — open the home") {
             popToRoot()
             _ = openHomeTab()
             scrollToTop()
-            mark("10")
+        }
+        activity("09 — Aerial intro") {
+            mark("09")
             guard let row = scrollTo(ids: ["home.listing.first"], labels: [tourAddress], swipes: 4) else {
                 note("SKIPPED: no `home.listing.first` row on Home — the tour has no home of its own.")
                 beat(3.0)
@@ -472,6 +536,9 @@ final class OnboardingTour: XCTestCase {
             } else {
                 note("SKIPPED aerial: the \"Aerial intro\" tool card is absent or disabled.")
             }
+        }
+        activity("10 — Floor plan") {
+            mark("10")
             beat(0.5)
             if let plan = scrollTo(ids: [], labels: ["Floor plan"], swipes: 8), plan.isEnabled {
                 tap(plan)
@@ -488,20 +555,20 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 11 — Publish, share, leads
+    // MARK: 11 — Leads inbox (the other half of v1's "11" — see seg06Share() above)
 
-    private func seg11Leads() {
-        activity("11 — Publish, share, leads") {
+    private func seg11LeadsInbox() {
+        activity("11 — Leads inbox") {
             popToRoot()
             _ = openHomeTab()
             scrollToTop()
             mark("11")
             guard let banner = scrollToLabel(containing: "Opens your leads.", swipes: 6) else {
-                note("SKIPPED: no leads banner on Home.")
+                note("SKIPPED: no leads banner on Home for the leads-inbox beat.")
                 beat(3.0)
                 return
             }
-            beat(1.5)                   // "Every tour is one link with a lead form built in."
+            beat(0.8)
             tap(banner)
             guard waitForAny(ids: [], labels: ["No leads yet", "Loading leads…", "Leads"], timeout: screenTimeout) else {
                 note("SKIPPED: the Leads screen did not open.")
@@ -513,7 +580,12 @@ final class OnboardingTour: XCTestCase {
         }
     }
 
-    // MARK: 12 — Plans and the free trial
+    // MARK: Plans and the free trial (v1's "12") — UNUSED in v2. No price is
+    // spoken; the trial is the closing CTA card instead (build_onboarding.py
+    // --end-card). Left in place, called from nowhere — the StoreKit
+    // environment it needs is already set up in setUpWithError() regardless.
+    // NOTE: its own mark("12") below is dead code, never written — v2's real
+    // "12" is seg12Industries() above ("Six kinds of space"). Don't call both.
 
     private func seg12Plans() {
         activity("12 — Plans and the free trial") {

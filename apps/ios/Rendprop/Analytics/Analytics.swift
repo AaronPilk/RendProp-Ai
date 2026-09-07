@@ -58,7 +58,13 @@ enum Analytics {
         "capture_finished", "render_finished", "tour_published", "ai_photo_edit",
         "reel_made", "voiceover_added", "aerial_made", "paywall_viewed",
         "purchase_started", "purchase_completed", "purchase_failed", "restore",
+        "gear_opened", "gear_item_tapped",
         "crash", "error",
+        // First-project guide (Guide/) + review prompts (Support/ReviewPrompter.swift).
+        "guide_step_tapped", "guide_completed", "review_prompt_shown",
+        // Coach (Coach/) — the chat assistant. Never the message text: a length
+        // bucket, the action type, and the screen it was opened from.
+        "coach_opened", "coach_message_sent", "coach_action_tapped",
     ]
 
     /// Most events the app can generate in one flush.

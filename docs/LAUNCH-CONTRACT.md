@@ -70,9 +70,21 @@ POST /events        (owner JWT when signed in; anon key + device id when not)
 Event vocabulary (exact strings): `app_open`, `signup`, `signin`, `home_created`,
 `capture_started`, `capture_finished`, `render_finished`, `tour_published`,
 `ai_photo_edit`, `reel_made`, `voiceover_added`, `aerial_made`, `paywall_viewed`,
-`purchase_started`, `purchase_completed`, `purchase_failed`, `restore`, `crash`
-(MetricKit diagnostic summary, no PII), `error` (non-fatal, category only).
+`purchase_started`, `purchase_completed`, `purchase_failed`, `restore`,
+`gear_opened`, `gear_item_tapped` (Gear we recommend / Amazon Associates — see
+docs/GEAR-STORE.md), `guide_step_tapped`, `guide_completed` (the first-project
+guide on Home), `review_prompt_shown` (the StoreKit review request),
+`coach_opened`, `coach_message_sent`, `coach_action_tapped` (the coach — see
+docs/COACH-CONTRACT.md; never the message text), `crash` (MetricKit diagnostic
+summary, no PII), `error` (non-fatal, category only).
 No PII in props, ever. No email, no address, no photo.
+
+**Deploy order for 1.0.1.** The `events` function rejects the WHOLE batch on one
+unknown name and the client re-queues a rejected batch, so a device that sends a
+name the server does not know jams its own analytics queue until the server
+learns it. Therefore: deploy `events` (this vocabulary) BEFORE the 1.0.1 binary
+reaches a single user. The reverse order is not recoverable from the server side
+for events already queued on device.
 
 SKAdNetwork conversion values (iOS 16.1+ `SKAdNetwork.updatePostbackConversionValue`):
 0 = install, 1 = signup, 2 = home_created, 3 = tour_published, 4 = paywall_viewed,
