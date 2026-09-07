@@ -6068,8 +6068,10 @@ struct CameraPicker: UIViewControllerRepresentable {
 }
 
 // MARK: - Floor plan (Apple RoomPlan → USDZ "dollhouse")
-// LiDAR-only (iPhone/iPad Pro). Scans a room into a 3D model, exports USDZ,
-// and previews it with QuickLook. Per-listing file in Documents/FloorPlans/.
+// LiDAR-only (iPhone/iPad Pro). Scans room after room in ONE AR session, merges
+// them with RoomPlan's StructureBuilder (iOS 17+, and it handles rooms on
+// different storeys), exports USDZ, and previews it with QuickLook.
+// Per-listing file in Documents/FloorPlans/.
 
 struct FloorPlanView: View {
     let listing: Listing
@@ -6173,15 +6175,17 @@ struct FloorPlanView: View {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
                             .font(.system(size: 44, weight: .light))
                             .foregroundStyle(Theme.accent)
-                        Text(planExists ? "Room plan ready" : "Scan one room")
+                        Text(planExists ? "Floor plan ready" : "Scan the floor plan")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        // TRUE copy (F-A-17): one RoomPlan session captures a
-                        // single room, and this build keeps one scan per
-                        // listing. Never promise a whole-home floor plan.
+                        // TRUE copy (F-A-17): say what the scanner actually does.
+                        // It now walks room by room in one session and RoomPlan
+                        // merges them — including across storeys — but it is still
+                        // a phone scan, not a survey, and a new scan replaces the
+                        // old one. Never promise more than that.
                         Text(planExists
-                             ? "The room you scanned, as a flat top-down plan or in 3D. Scanning again replaces it."
-                             : "Walk one room slowly with your phone and Rendprop draws it as a plan. One room per scan — scanning another replaces this one.")
+                             ? "What you scanned, as a flat top-down plan or in 3D. Scanning again replaces it."
+                             : "Walk each room slowly with your phone, tap Finish room, then walk to the next one — upstairs too. Rendprop draws them as one plan.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
@@ -6190,18 +6194,18 @@ struct FloorPlanView: View {
 
                     if planExists {
                         if plan2DExists {
-                            primaryButton("View room plan", "map") { showPlan2D = true }
+                            primaryButton("View floor plan", "map") { showPlan2D = true }
                             secondaryButton("View in 3D", "rotate.3d") { showViewer = true }
                         } else {
                             // Older scan: only the 3D model was saved. Re-scan for the flat plan.
                             primaryButton("View in 3D", "rotate.3d") { showViewer = true }
-                            Text("Re-scan to generate the flat 2D plan.")
+                            Text("Scan again to generate the flat 2D plan.")
                                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                                 .multilineTextAlignment(.center)
                         }
                         // Destructive: a successful re-scan overwrites the saved
                         // USDZ + geometry, so confirm first (F-A-17).
-                        secondaryButton("Re-scan room", "arrow.clockwise") { showRescanConfirm = true }
+                        secondaryButton("Scan again", "arrow.clockwise") { showRescanConfirm = true }
                         ShareLink(item: usdzURL) {
                             Label("Share the 3D model", systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
@@ -6211,8 +6215,8 @@ struct FloorPlanView: View {
                         }
                         if plan2DExists {
                             Text(listing.spaceType == .realEstate
-                                 ? "Open the room plan to export it as an image for a listing or a flyer."
-                                 : "Open the room plan to export it as an image for your website or a flyer.")
+                                 ? "Open the floor plan to export each floor as an image for a listing or a flyer."
+                                 : "Open the floor plan to export each floor as an image for your website or a flyer.")
                                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                                 .multilineTextAlignment(.center)
                         }
@@ -6277,7 +6281,7 @@ struct FloorPlanView: View {
         }) {
             NavigationStack {
                 FloorPlan2DView(jsonURL: planJSONURL, address: listing.address)
-                    .navigationTitle("Room plan")
+                    .navigationTitle("Floor plan")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -6294,9 +6298,9 @@ struct FloorPlanView: View {
                     }
             }
         }
-        .confirmationDialog("Re-scan this room?", isPresented: $showRescanConfirm,
+        .confirmationDialog("Scan this place again?", isPresented: $showRescanConfirm,
                             titleVisibility: .visible) {
-            Button("Re-scan", role: .destructive) {
+            Button("Scan again", role: .destructive) {
                 // Present the scanner AFTER this dialog has finished dismissing —
                 // a cover raised inside the dismissing event gets swallowed (the
                 // same reason the wand→staging dialog hops a runloop).
@@ -6304,7 +6308,7 @@ struct FloorPlanView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("A finished re-scan replaces the plan you have now. Export or share the current one first if you want to keep it.")
+            Text("A finished scan replaces the plan you have now, every floor of it. Export or share the current one first if you want to keep it.")
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.pdf, .image],
@@ -6355,7 +6359,65 @@ struct FloorPlanView: View {
     }
 }
 
-/// Hosts RoomPlan's scanning UI + Done/Cancel, exports USDZ on finish.
+// MARK: - What a finished floor-plan scan saves
+
+/// The geometry saved next to the exported USDZ.
+///
+/// A scan used to be one room, stored as a bare `CapturedRoom`. It can now be a
+/// whole building — several rooms across several storeys, captured in one
+/// continuous AR session and merged by RoomPlan's own `StructureBuilder` — so the
+/// on-disk shape is an array. `load` still reads the old single-room files, so a
+/// plan scanned before this build keeps working and never needs re-scanning.
+struct SavedFloorPlan: Codable {
+    var rooms: [CapturedRoom]
+
+    static func load(from url: URL) -> SavedFloorPlan? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let dec = JSONDecoder()
+        if let many = try? dec.decode(SavedFloorPlan.self, from: data) { return many }
+        // Pre-multi-room file: a bare CapturedRoom at the top level.
+        if let one = try? dec.decode(CapturedRoom.self, from: data) { return SavedFloorPlan(rooms: [one]) }
+        return nil
+    }
+
+    /// One entry per storey, lowest first. RoomPlan works out which floor each room
+    /// is on by itself (`CapturedRoom.story`) — we only have to group by it, because
+    /// two floors drawn on one page would print the upstairs on top of the
+    /// downstairs. On iOS 16 there is no `story`, so everything is one floor.
+    var storeys: [Storey] {
+        if #available(iOS 17.0, *) {
+            var byStory: [Int: [CapturedRoom]] = [:]
+            for r in rooms { byStory[r.story, default: []].append(r) }
+            let keys = byStory.keys.sorted()
+            return keys.map { Storey(id: $0, rooms: byStory[$0] ?? [], isOnlyStorey: keys.count == 1) }
+        } else {
+            return rooms.isEmpty ? [] : [Storey(id: 0, rooms: rooms, isOnlyStorey: true)]
+        }
+    }
+
+    struct Storey: Identifiable {
+        let id: Int             // RoomPlan's story number: 0 = the floor you started on
+        let rooms: [CapturedRoom]
+        let isOnlyStorey: Bool
+
+        /// US convention — RoomPlan's story 0 is the floor the scan started on, which
+        /// for a walk-in front door is the 1st floor.
+        var name: String {
+            switch id {
+            case 0:  return "1st floor"
+            case 1:  return "2nd floor"
+            case 2:  return "3rd floor"
+            case -1: return "Basement"
+            case let n where n > 2:  return "\(n + 1)th floor"
+            default: return "Level \(id)"
+            }
+        }
+    }
+}
+
+/// Hosts RoomPlan's scanning UI + Cancel/Finish, and — on iOS 17 and later — lets a
+/// person scan room after room in ONE AR session and merges them into a single
+/// structure before exporting the USDZ.
 struct RoomScanView: UIViewControllerRepresentable {
     let exportURL: URL
     let onFinish: (URL?) -> Void
@@ -6372,8 +6434,29 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
     private let roomCaptureView = RoomCaptureView(frame: .zero)
     private let config = RoomCaptureSession.Configuration()
     private var isScanning = false
+    /// Every room captured so far in THIS session. One entry means the old
+    /// single-room behaviour, exactly as before.
+    private var rooms: [CapturedRoom] = []
+    /// Set while RoomPlan is turning the raw scan into a `CapturedRoom`, so the
+    /// buttons can't be tapped into a bad state mid-processing.
+    private var isProcessing = false
+    private var isFinishing = false
     let exportURL: URL
     var onFinish: ((URL?) -> Void)?
+
+    /// Multi-room merging is `StructureBuilder`, which is iOS 17+. The app still
+    /// deploys to iOS 16, where a scan stays exactly one room.
+    private var supportsMultiRoom: Bool {
+        if #available(iOS 17.0, *) { return true }
+        return false
+    }
+
+    // UI
+    private let cancelButton = UIButton(type: .system)
+    private let secondaryButton = UIButton(type: .system)   // "Scan the next room"
+    private let primaryButton = UIButton(type: .system)     // "Finish room" / "Done"
+    private let statusLabel = UILabel()
+    private let spinner = UIActivityIndicatorView(style: .medium)
 
     init(exportURL: URL) {
         self.exportURL = exportURL
@@ -6388,31 +6471,57 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
         roomCaptureView.delegate = self
         view.addSubview(roomCaptureView)
 
-        let cancel = makeButton("Cancel", filled: false, action: #selector(cancelTapped))
-        let done = makeButton("Done", filled: true, action: #selector(doneTapped))
-        let stack = UIStackView(arrangedSubviews: [cancel, done])
-        stack.axis = .horizontal
-        stack.spacing = 12
-        stack.distribution = .fillEqually
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        style(cancelButton, "Cancel", filled: false, action: #selector(cancelTapped))
+        style(secondaryButton, "Scan the next room", filled: false, action: #selector(nextRoomTapped))
+        style(primaryButton, "Finish room", filled: true, action: #selector(primaryTapped))
+
+        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        statusLabel.textColor = .white
+        statusLabel.textAlignment = .center
+        statusLabel.numberOfLines = 2
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.layer.shadowColor = UIColor.black.cgColor
+        statusLabel.layer.shadowOpacity = 0.7
+        statusLabel.layer.shadowRadius = 3
+        statusLabel.layer.shadowOffset = .zero
+        view.addSubview(statusLabel)
+
+        spinner.color = .white
+        spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(spinner)
+
+        let row = UIStackView(arrangedSubviews: [cancelButton, secondaryButton, primaryButton])
+        row.axis = .horizontal
+        row.spacing = 10
+        row.distribution = .fillEqually
+        row.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(row)
 
         NSLayoutConstraint.activate([
             roomCaptureView.topAnchor.constraint(equalTo: view.topAnchor),
             roomCaptureView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             roomCaptureView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             roomCaptureView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-            stack.heightAnchor.constraint(equalToConstant: 50),
+            row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            row.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            row.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            row.heightAnchor.constraint(equalToConstant: 50),
+            statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            statusLabel.bottomAnchor.constraint(equalTo: row.topAnchor, constant: -12),
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -10),
         ])
+        refreshControls()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        guard !isScanning, rooms.isEmpty else { return }
         roomCaptureView.captureSession.run(configuration: config)
         isScanning = true
+        refreshControls()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -6420,51 +6529,180 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
         if isScanning { roomCaptureView.captureSession.stop(); isScanning = false }
     }
 
-    @objc private func doneTapped() {
-        // Stops scanning and triggers processing; the delegate fires with the result.
-        roomCaptureView.captureSession.stop()
-        isScanning = false
+    // MARK: Buttons
+
+    private func refreshControls() {
+        let n = rooms.count
+        cancelButton.isHidden = isProcessing || isFinishing
+        if isProcessing || isFinishing {
+            secondaryButton.isHidden = true
+            primaryButton.isHidden = true
+            spinner.startAnimating()
+            statusLabel.text = isFinishing
+                ? "Putting the rooms together…"
+                : "Finishing this room…"
+            return
+        }
+        spinner.stopAnimating()
+        if rooms.isEmpty, !isScanning {
+            // viewDidLoad has run but viewWillAppear hasn't started the session yet.
+            secondaryButton.isHidden = true
+            primaryButton.isHidden = true
+            statusLabel.text = "Starting the scanner…"
+            return
+        }
+        if isScanning {
+            secondaryButton.isHidden = true
+            primaryButton.isHidden = false
+            primaryButton.setTitle(n == 0 ? "Finish room" : "Finish room \(n + 1)", for: .normal)
+            statusLabel.text = n == 0
+                ? "Walk the room slowly and point the phone at every wall."
+                : "Room \(n) saved. Walk this one the same way."
+        } else {
+            // A room has just been captured. Offer another, or stop here.
+            secondaryButton.isHidden = !supportsMultiRoom
+            primaryButton.isHidden = false
+            primaryButton.setTitle(n <= 1 ? "Done" : "Done — \(n) rooms", for: .normal)
+            statusLabel.text = supportsMultiRoom
+                ? "\(n) room\(n == 1 ? "" : "s") scanned. To add another, keep the phone up and walk there — including up or down stairs. Don't lock the screen."
+                : "Room scanned."
+        }
+    }
+
+    @objc private func primaryTapped() {
+        if isScanning {
+            // Stop THIS room but keep the AR session alive: RoomPlan can only merge
+            // rooms that share one world coordinate space, and pausing the AR session
+            // is what throws that space away. `stop(pauseARSession:)` is iOS 17+.
+            isScanning = false
+            isProcessing = true
+            refreshControls()
+            if #available(iOS 17.0, *) {
+                roomCaptureView.captureSession.stop(pauseARSession: false)
+            } else {
+                roomCaptureView.captureSession.stop()
+            }
+        } else {
+            finish()
+        }
+    }
+
+    @objc private func nextRoomTapped() {
+        guard supportsMultiRoom, !isScanning, !isProcessing, !isFinishing else { return }
+        roomCaptureView.captureSession.run(configuration: config)
+        isScanning = true
+        refreshControls()
     }
 
     @objc private func cancelTapped() {
-        roomCaptureView.captureSession.stop()
-        isScanning = false
+        if isScanning {
+            roomCaptureView.captureSession.stop()
+            isScanning = false
+        }
         onFinish?(nil)
     }
+
+    // MARK: RoomCaptureViewDelegate
 
     // Let RoomPlan process the scan into a final result.
     func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool { true }
 
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
-        do {
-            try processedResult.export(to: exportURL, exportOptions: .parametric)
-            // Also persist the CapturedRoom as JSON so we can draw a flat 2D
-            // top-down floor plan (apartment-listing style), not just the 3D model.
-            //
-            // On a RE-SCAN the USDZ is replaced but the JSON write can still
-            // fail (encode error, disk full). Drop the previous geometry FIRST,
-            // so the flat plan can never show the OLD room beside the NEW 3D
-            // model; the screen then honestly offers "re-scan for the 2D plan".
-            let jsonURL = exportURL.deletingPathExtension().appendingPathExtension("json")
-            try? FileManager.default.removeItem(at: jsonURL)
-            if let data = try? JSONEncoder().encode(processedResult) {
-                try? data.write(to: jsonURL, options: .atomic)
-            }
-            onFinish?(exportURL)
-        } catch {
-            onFinish?(nil)
+        isProcessing = false
+        rooms.append(processedResult)
+        // One room and no way to add another (iOS 16): behave exactly as before and
+        // finish immediately, so nothing about the old flow changes on old systems.
+        if !supportsMultiRoom {
+            finish()
+            return
+        }
+        refreshControls()
+    }
+
+    // MARK: Finishing
+
+    private func finish() {
+        guard !isFinishing else { return }
+        guard !rooms.isEmpty else { onFinish?(nil); return }
+        isFinishing = true
+        refreshControls()
+
+        let captured = rooms
+        let dest = exportURL
+        Task { @MainActor in
+            let ok = await Self.exportPlan(rooms: captured, to: dest)
+            self.isFinishing = false
+            self.onFinish?(ok ? dest : nil)
         }
     }
 
-    private func makeButton(_ title: String, filled: Bool, action: Selector) -> UIButton {
-        let b = UIButton(type: .system)
+    /// Export the USDZ and save the geometry beside it. Returns false only if the
+    /// USDZ itself could not be written — that is the file the rest of the screen
+    /// keys off.
+    private nonisolated static func exportPlan(rooms: [CapturedRoom], to dest: URL) async -> Bool {
+        // RoomPlan refuses a USD filename whose first character is a digit before
+        // iOS 17.4, and ours is a UUID — which starts with a digit about 40% of the
+        // time. Export to a safe temporary name in the same folder and move it into
+        // place, so the file we keep can still be named after the listing.
+        let tmp = dest.deletingLastPathComponent()
+            .appendingPathComponent("plan-\(UUID().uuidString).usdz")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        var exported = false
+        if #available(iOS 17.0, *), rooms.count > 1 {
+            do {
+                let builder = StructureBuilder(options: [.beautifyObjects])
+                let structure = try await builder.capturedStructure(from: rooms)
+                try structure.export(to: tmp, exportOptions: .parametric)
+                exported = true
+            } catch {
+                // The rooms didn't share a world space (tracking was lost between
+                // them, or the app was backgrounded). Rather than lose the whole
+                // scan, fall through and export the first room on its own.
+                exported = false
+            }
+        }
+        if !exported, let first = rooms.first {
+            do {
+                try first.export(to: tmp, exportOptions: .parametric)
+                exported = true
+            } catch {
+                exported = false
+            }
+        }
+        guard exported else { return false }
+
+        do {
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.moveItem(at: tmp, to: dest)
+        } catch {
+            return false
+        }
+
+        // Persist the rooms so the flat 2D plan can be drawn (and re-drawn per
+        // storey) without re-scanning.
+        //
+        // On a RE-SCAN the USDZ is replaced but the JSON write can still fail
+        // (encode error, disk full). Drop the previous geometry FIRST, so the flat
+        // plan can never show the OLD rooms beside the NEW 3D model; the screen then
+        // honestly offers "re-scan for the 2D plan".
+        let jsonURL = dest.deletingPathExtension().appendingPathExtension("json")
+        try? FileManager.default.removeItem(at: jsonURL)
+        if let data = try? JSONEncoder().encode(SavedFloorPlan(rooms: rooms)) {
+            try? data.write(to: jsonURL, options: .atomic)
+        }
+        return true
+    }
+
+    private func style(_ b: UIButton, _ title: String, filled: Bool, action: Selector) {
         b.setTitle(title, for: .normal)
-        b.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        b.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        b.titleLabel?.adjustsFontSizeToFitWidth = true
+        b.titleLabel?.minimumScaleFactor = 0.75
         b.backgroundColor = filled ? UIColor.systemPurple : UIColor.secondarySystemBackground
         b.setTitleColor(filled ? .white : .systemPurple, for: .normal)
         b.layer.cornerRadius = 12
         b.addTarget(self, action: action, for: .touchUpInside)
-        return b
     }
 }
 
@@ -6491,34 +6729,67 @@ struct USDZQuickLook: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - 2D top-down floor plan (drawn from the RoomPlan CapturedRoom)
+// MARK: - 2D top-down floor plan (drawn from the RoomPlan scan)
 // Renders the scan as a flat blueprint — walls, doors (with swing arcs), windows,
-// and labeled furniture — viewed straight down, like an apartment listing.
-// Reads the CapturedRoom JSON saved next to the USDZ at scan time.
+// room names and furniture — viewed straight down, like an apartment listing.
+// Reads the geometry saved next to the USDZ at scan time; a scan that covers more
+// than one storey gets a floor picker, because two floors drawn on one page would
+// print the upstairs on top of the downstairs.
 
 struct FloorPlan2DView: View {
     let jsonURL: URL
     let address: String
 
-    @State private var room: CapturedRoom?
+    @State private var plan: SavedFloorPlan?
+    @State private var storeys: [SavedFloorPlan.Storey] = []
+    @State private var storeyIndex = 0
     @State private var loadFailed = false
     /// A rendered plan waiting for the export sheet (F-A-17).
     @State private var export: PlanExport?
     @State private var exportError: String?
 
+    /// The storey on screen. A one-floor scan has exactly one, and the picker
+    /// never appears.
+    private var current: SavedFloorPlan.Storey? {
+        guard storeys.indices.contains(storeyIndex) else { return storeys.first }
+        return storeys[storeyIndex]
+    }
+
+    /// The caption the renderer prints beside the area — `nil` for a single-storey
+    /// scan, where "this room" / "scanned area" is the honest scope.
+    private var storyCaption: String? {
+        guard let current, !current.isOnlyStorey else { return nil }
+        return current.name
+    }
+
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            if let room {
-                if room.walls.isEmpty {
+            if let current {
+                if current.rooms.allSatisfy({ $0.walls.isEmpty }) {
                     emptyState("No walls were detected in this scan. Try re-scanning the room slowly.")
                 } else {
                     VStack(spacing: 0) {
+                        if storeys.count > 1 {
+                            Picker("Floor", selection: $storeyIndex) {
+                                ForEach(Array(storeys.enumerated()), id: \.offset) { idx, s in
+                                    Text(s.name).tag(idx)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 10)
+                        }
+
                         Canvas { ctx, size in
-                            FloorPlanRenderer.draw(room: room, in: &ctx, size: size)
+                            FloorPlanRenderer.draw(rooms: current.rooms,
+                                                   storyLabel: storyCaption,
+                                                   in: &ctx, size: size)
                         }
                         .padding(14)
-                        .accessibilityLabel(Text("Room plan of \(address)"))
+                        .accessibilityLabel(Text(storeys.count > 1
+                                                 ? "\(current.name) plan of \(address)"
+                                                 : "Room plan of \(address)"))
 
                         if let exportError {
                             Text(exportError)
@@ -6526,8 +6797,9 @@ struct FloorPlan2DView: View {
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal)
                         }
-                        Button { makeExport(room) } label: {
-                            Label("Export as image", systemImage: "square.and.arrow.up")
+                        Button { makeExport(current) } label: {
+                            Label(storeys.count > 1 ? "Export this floor as an image" : "Export as image",
+                                  systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
                                 .frame(maxWidth: .infinity).padding(.vertical, 13)
                                 .background(Theme.accentSoft).foregroundStyle(Theme.accent)
@@ -6554,16 +6826,22 @@ struct FloorPlan2DView: View {
     /// over-stroking them in `Theme.bg`, so the exported background has to be
     /// the same token — and a plan that goes on a flyer should be ink-on-paper
     /// whatever the phone's appearance setting is.
-    private func makeExport(_ room: CapturedRoom) {
+    private func makeExport(_ storey: SavedFloorPlan.Storey) {
         exportError = nil
         let side: CGFloat = 1400
+        let rooms = storey.rooms
+        let caption = storyCaption
+        let title: String = {
+            let base = address.isEmpty ? "Floor plan" : address
+            return storeys.count > 1 ? "\(base) — \(storey.name)" : base
+        }()
         let content = ZStack {
             Theme.bg
             VStack(spacing: 12) {
                 Canvas { ctx, size in
-                    FloorPlanRenderer.draw(room: room, in: &ctx, size: size)
+                    FloorPlanRenderer.draw(rooms: rooms, storyLabel: caption, in: &ctx, size: size)
                 }
-                Text(address.isEmpty ? "Room plan" : address)
+                Text(title)
                     .font(.system(size: 34, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(2)
@@ -6596,15 +6874,18 @@ struct FloorPlan2DView: View {
     }
 
     private func load() {
-        guard room == nil, !loadFailed else { return }
+        guard plan == nil, !loadFailed else { return }
         let url = jsonURL
         DispatchQueue.global(qos: .userInitiated).async {
-            let decoded: CapturedRoom? = {
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return try? JSONDecoder().decode(CapturedRoom.self, from: data)
-            }()
+            let decoded = SavedFloorPlan.load(from: url)
             DispatchQueue.main.async {
-                if let decoded { self.room = decoded } else { self.loadFailed = true }
+                if let decoded, !decoded.rooms.isEmpty {
+                    self.plan = decoded
+                    self.storeys = decoded.storeys
+                    self.storeyIndex = 0
+                } else {
+                    self.loadFailed = true
+                }
             }
         }
     }
@@ -6708,8 +6989,14 @@ private struct PlanExportSheet: View {
     }
 }
 
-/// Pure drawing of a CapturedRoom as a flat top-down plan. Projects every surface
-/// and object onto the floor (X–Z) plane and draws it with SwiftUI Canvas.
+/// Pure drawing of a scan as a flat top-down plan. Projects every surface and
+/// object onto the floor (X–Z) plane and draws it with SwiftUI Canvas.
+///
+/// Takes an ARRAY of rooms, not one. A structure scan captures each room into its
+/// own `CapturedRoom`, but every room in one scan shares a single ARKit world
+/// coordinate space — that is precisely why the capture flow keeps the AR session
+/// alive between rooms — so all the rooms on one storey can be unioned and drawn
+/// as one plan. A one-room scan is just the array-of-one case.
 enum FloorPlanRenderer {
     private struct Seg { var a: SIMD2<Float>; var b: SIMD2<Float> }
 
@@ -6737,16 +7024,22 @@ enum FloorPlanRenderer {
                 center - xa*hw - za*hd, center - xa*hw + za*hd]
     }
 
+    /// Convenience for the single-room callers that predate structure scans.
     static func draw(room: CapturedRoom, in ctx: inout GraphicsContext, size: CGSize) {
-        let rawWalls = room.walls.map(seg)
+        draw(rooms: [room], storyLabel: nil, in: &ctx, size: size)
+    }
+
+    static func draw(rooms: [CapturedRoom], storyLabel: String?,
+                     in ctx: inout GraphicsContext, size: CGSize) {
+        let rawWalls = rooms.flatMap { $0.walls }.map(seg)
         guard !rawWalls.isEmpty else { return }
 
         // STRAIGHTEN FIRST. RoomPlan hands back ARKit world space, so a plan drawn
         // as-captured sits at whatever compass heading the phone happened to have —
         // it renders as a skewed diamond. Rotating by the dominant wall angle both
         // makes the plan read orthogonal like a real floor plan AND makes the
-        // bounding box we measure the room's true width × depth instead of an
-        // inflated diagonal. Do this before anything else touches coordinates.
+        // bounding box we measure the true width × depth instead of an inflated
+        // diagonal. Do this before anything else touches coordinates.
         let theta = dominantWallAngle(rawWalls)
         let cs = cos(-theta), sn = sin(-theta)
         func rot(_ p: SIMD2<Float>) -> SIMD2<Float> {
@@ -6755,10 +7048,34 @@ enum FloorPlanRenderer {
         func rotSeg(_ s: Seg) -> Seg { Seg(a: rot(s.a), b: rot(s.b)) }
 
         let walls = rawWalls.map(rotSeg)
-        let doors = room.doors.map(seg).map(rotSeg)
-        let windows = room.windows.map(seg).map(rotSeg)
-        let openings = room.openings.map(seg).map(rotSeg)
-        let objs = room.objects.map { (o: $0, pts: corners($0).map(rot)) }
+        let doors = rooms.flatMap { $0.doors }.map(seg).map(rotSeg)
+        let windows = rooms.flatMap { $0.windows }.map(seg).map(rotSeg)
+        let openings = rooms.flatMap { $0.openings }.map(seg).map(rotSeg)
+        let objs = rooms.flatMap { $0.objects }.map { (o: $0, pts: corners($0).map(rot)) }
+
+        // ROOM NAMES — the single biggest thing missing from the plan the 4,000 sq ft
+        // field test produced. RoomPlan already classifies each area it recognises
+        // (kitchen, bedroom, bathroom, dining, living) and hands it back in
+        // `sections`, each with a centre point. We were throwing all of that away
+        // and captioning furniture instead, which is backwards: a listing floor plan
+        // names ROOMS, and draws furniture as unlabelled outlines. iOS 17+ only —
+        // the app still deploys to iOS 16, where the plan simply has no room names.
+        var roomNames: [(name: String, at: SIMD2<Float>)] = []
+        if #available(iOS 17.0, *) {
+            for r in rooms {
+                for s in r.sections {
+                    guard let n = sectionName(s.label) else { continue }
+                    let p = rot(SIMD2<Float>(s.center.x, s.center.z))
+                    // RoomPlan can emit two sections of the same kind almost on top
+                    // of each other in one large open area; two "Kitchen" captions a
+                    // foot apart reads as a bug. Genuinely separate rooms of the same
+                    // kind (three bedrooms down a hall) are metres apart and both keep
+                    // their name.
+                    let dup = roomNames.contains { $0.name == n && simd_length($0.at - p) < 1.2 }
+                    if !dup { roomNames.append((n, p)) }
+                }
+            }
+        }
 
         // Bounds over wall endpoints + object footprints.
         var minX = Float.greatestFiniteMagnitude, minY = Float.greatestFiniteMagnitude
@@ -6770,30 +7087,35 @@ enum FloorPlanRenderer {
         for w in walls { expand(w.a); expand(w.b) }
         for o in objs { for c in o.pts { expand(c) } }
 
-        // Room extent measured from the WALLS only — furniture can overhang a wall
+        // Overall extent measured from the WALLS only — furniture can overhang a wall
         // in a noisy scan, and a sofa sticking through drywall must not inflate the
         // dimension we print on a listing.
         var wMinX = Float.greatestFiniteMagnitude, wMinY = Float.greatestFiniteMagnitude
         var wMaxX = -Float.greatestFiniteMagnitude, wMaxY = -Float.greatestFiniteMagnitude
-        var wallPts: [SIMD2<Float>] = []
         for w in walls {
             for p in [w.a, w.b] {
-                wallPts.append(p)
                 wMinX = min(wMinX, p.x); wMaxX = max(wMaxX, p.x)
                 wMinY = min(wMinY, p.y); wMaxY = max(wMaxY, p.y)
             }
         }
 
-        // Asymmetric padding: the left and bottom gutters hold dimension lines.
+        // Asymmetric padding: the left and bottom gutters hold dimension lines, and
+        // the bottom gutter grows again when there is a legend to sit under them.
+        // The legend row only exists if there is anything recognisable to put in it,
+        // and the bottom gutter has to be sized before the plan is laid out — so this
+        // is a cheap pre-check. What actually goes IN the legend is only known after
+        // the drawing pass below (it lists what could not be captioned in place).
+        let hasIdentifiable = objs.contains { $0.o.confidence != .low && !label($0.o.category).isEmpty }
         let padTop: CGFloat = 30, padRight: CGFloat = 22
-        let padLeft: CGFloat = 44, padBottom: CGFloat = 42
+        let padLeft: CGFloat = 44
+        let padBottom: CGFloat = hasIdentifiable ? 60 : 42
         let spanX = max(CGFloat(maxX - minX), 0.001)
         let spanY = max(CGFloat(maxY - minY), 0.001)
         let availW = max(size.width - padLeft - padRight, 1)
         let availH = max(size.height - padTop - padBottom, 1)
         let scale = min(availW / spanX, availH / spanY)
-        // A degenerate scan (NaN/inf coordinates) would poison every CGPoint
-        // below and trap the Int conversions — draw nothing instead.
+        // A degenerate scan (NaN/inf coordinates) would poison every CGPoint below
+        // and trap the Int conversions — draw nothing instead.
         guard scale.isFinite, scale > 0, spanX.isFinite, spanY.isFinite else { return }
         let drawW = spanX * scale, drawH = spanY * scale
         let ox = padLeft + (availW - drawW) / 2
@@ -6805,11 +7127,21 @@ enum FloorPlanRenderer {
 
         let wallWidth = max(4, 0.10 * scale)   // draw ~10 cm-thick walls
 
-        // Furniture footprints (under the walls). RoomPlan over-guesses uncertain
-        // items as "Storage", which clutters the plan — so skip low-confidence
-        // detections, draw the box for everything confident, and only LABEL
-        // recognizable items (not the generic Storage catch-all) that are big
-        // enough on screen to fit readable text.
+        // Furniture footprints (under the walls). Draw the box for everything the
+        // scanner is confident about, and caption an item only when the caption
+        // genuinely FITS INSIDE its own box.
+        //
+        // This replaces a fixed `min(boxW, boxH) > 26` point threshold, which was
+        // the bug behind "the floor plan can't tell what things are". That number is
+        // in SCREEN POINTS, so whether a label appeared depended on how big the plan
+        // was — not on what was scanned. On a 2,504 sq ft scan squeezed into a phone
+        // canvas the whole plan renders at roughly 23 points per metre, so a two-foot-
+        // deep sofa is 21 points deep and lost its name, while a bed at 37 points kept
+        // one. That is exactly the plan the field test produced: two beds and a bath
+        // labelled, and thirty anonymous grey rectangles. Measuring the text against
+        // the box makes the rule scale-independent, and anything still too small to
+        // caption is counted in the legend instead of silently disappearing.
+        var uncaptioned: [String: Int] = [:]
         for entry in objs {
             let o = entry.o
             if o.confidence == .low { continue }
@@ -6824,17 +7156,32 @@ enum FloorPlanRenderer {
             ctx.stroke(path, with: .color(Theme.inkDim.opacity(0.7)), lineWidth: 1)
 
             let name = label(o.category)
+            guard !name.isEmpty else { continue }
+            // RoomPlan reaches for "Storage" whenever it is unsure, so that one
+            // category has to clear a higher bar before it gets to claim space on
+            // the plan. It still appears in the legend at medium confidence.
+            let captionable = (o.category != .storage) || (o.confidence == .high)
+
             let boxW = hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
             let boxH = hypot(pts[3].x - pts[0].x, pts[3].y - pts[0].y)
-            if !name.isEmpty, o.category != .storage, min(boxW, boxH) > 26 {
-                let cx = (pts[0].x + pts[2].x) / 2
-                let cy = (pts[0].y + pts[2].y) / 2
-                // Explicit ink so labels resolve per light/dark trait (Canvas
-                // text gets no default foreground from the surrounding view).
-                ctx.draw(Text(name).font(.system(size: 9, weight: .medium))
-                            .foregroundColor(Theme.ink),
-                         at: CGPoint(x: cx, y: cy))
+            var placed = false
+            if captionable {
+                // Try progressively smaller type, the way a draughtsman would, and
+                // stop at 6.5 pt — below that it is decoration, not information.
+                for pt in [9.0, 8.0, 7.0, 6.5] as [CGFloat] {
+                    let resolved = ctx.resolve(Text(name)
+                        .font(.system(size: pt, weight: .medium))
+                        .foregroundColor(Theme.ink))
+                    let ts = resolved.measure(in: CGSize(width: 500, height: 100))
+                    guard ts.width + 3 <= boxW, ts.height + 2 <= boxH else { continue }
+                    let cx = (pts[0].x + pts[2].x) / 2
+                    let cy = (pts[0].y + pts[2].y) / 2
+                    ctx.draw(resolved, at: CGPoint(x: cx, y: cy))
+                    placed = true
+                    break
+                }
             }
+            if !placed { uncaptioned[name, default: 0] += 1 }
         }
 
         // Walls (thick dark lines).
@@ -6862,10 +7209,27 @@ enum FloorPlanRenderer {
             drawDoor(a: P(s.a), b: P(s.b), in: &ctx)
         }
 
+        // Room names go on LAST, over the walls and furniture, each on its own small
+        // plate of background colour so it stays readable wherever it lands. This is
+        // the layer an agent actually reads.
+        for rn in roomNames {
+            let resolved = ctx.resolve(Text(rn.name.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.ink))
+            let ts = resolved.measure(in: CGSize(width: 500, height: 100))
+            let at = P(rn.at)
+            let plate = CGRect(x: at.x - ts.width / 2 - 4, y: at.y - ts.height / 2 - 2,
+                               width: ts.width + 8, height: ts.height + 4)
+            guard plate.minX > 2, plate.maxX < size.width - 2,
+                  plate.minY > 2, plate.maxY < size.height - 2 else { continue }
+            ctx.fill(Path(roundedRect: plate, cornerRadius: 4), with: .color(Theme.bg.opacity(0.82)))
+            ctx.draw(resolved, at: at)
+        }
+
         // ---- Dimensions -------------------------------------------------
-        // Width along the bottom, depth up the left side, both in feet and
-        // inches, plus an approximate floor area. This is what makes a scan
-        // read as a floor plan an agent can actually put on a listing.
+        // Width along the bottom, depth up the left side, both in feet and inches,
+        // plus an approximate floor area. This is what makes a scan read as a floor
+        // plan an agent can actually put on a listing.
         guard wMaxX > wMinX, wMaxY > wMinY else { return }
         let topLeft = P(SIMD2<Float>(wMinX, wMaxY))
         let botRight = P(SIMD2<Float>(wMaxX, wMinY))
@@ -6885,26 +7249,76 @@ enum FloorPlanRenderer {
                           vertical: true, in: &ctx)
         }
 
-        // Area is an estimate, and it says so. A phone scan is not a measured
-        // survey, and square footage is a number agents get sued over — the
-        // convex hull of the wall endpoints is far closer than the bounding box
-        // on an angled or L-shaped room, but it is still an approximation.
-        let areaSqFt = footprintArea(wallPts) * 10.763_91
+        // Area is an estimate, and it says so. A phone scan is not a measured survey,
+        // and square footage is a number agents get sued over.
+        //
+        // Summed PER ROOM, never as one hull over the whole storey: the convex hull
+        // of a single room's wall endpoints is close to its true footprint, but one
+        // hull thrown around an entire L-shaped floor bridges straight across the
+        // notch and invents square footage that does not exist.
+        var areaSqM: Float = 0
+        for r in rooms {
+            var pts: [SIMD2<Float>] = []
+            for w in r.walls.map(seg).map(rotSeg) { pts.append(w.a); pts.append(w.b) }
+            areaSqM += footprintArea(pts)
+        }
+        let areaSqFt = areaSqM * 10.763_91
         if areaSqFt.isFinite, areaSqFt >= 1, areaSqFt < 1_000_000 {
-            // "this room" — a bare "≈ N sq ft" beside a plan reads as the whole
-            // property's square footage, which is a number agents get sued over
-            // (F-A-17). One scan is one room, and the label has to say so.
-            ctx.draw(Text("this room ≈ \(Int(areaSqFt.rounded())) sq ft")
+            // A bare "≈ N sq ft" beside a plan reads as the whole property's square
+            // footage, which is a number agents get sued over (F-A-17). The caption
+            // has to say exactly how much of the building this number covers — and
+            // now that a scan can hold several rooms across several storeys, "this
+            // room" is no longer true either.
+            let scope: String
+            if let storyLabel { scope = storyLabel }
+            else if rooms.count > 1 || roomNames.count > 1 { scope = "scanned area" }
+            else { scope = "this room" }
+            ctx.draw(Text("\(scope) ≈ \(Int(areaSqFt.rounded())) sq ft")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Theme.inkDim),
                      at: CGPoint(x: padLeft - 8, y: 16), anchor: .leading)
         }
+
+        // The legend: everything the scanner recognised but could not caption in
+        // place. Without it, a small item on a large plan is an anonymous grey
+        // rectangle and the app looks like it failed to identify anything.
+        if let legend = legendLine(uncaptioned) {
+            ctx.draw(Text(legend)
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundColor(Theme.inkDim),
+                     at: CGPoint(x: padLeft - 8, y: size.height - 14), anchor: .leading)
+        }
+    }
+
+    /// "Also identified: 6 chairs · 3 tables · 2 lamps" — a compact inventory of the
+    /// confidently-recognised items, so nothing the scan understood is thrown away
+    /// just because it was too small to caption on the page.
+    private static func legendLine(_ counts: [String: Int]) -> String? {
+        guard !counts.isEmpty else { return nil }
+        let parts = counts
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(7)
+            .map { "\($0.value) \(plural($0.key, $0.value))" }
+        return "Also identified: " + parts.joined(separator: " · ")
+    }
+
+    /// Lower-cased and pluralised for the legend. A handful of the RoomPlan category
+    /// names are already plural or don't take an "s".
+    private static func plural(_ name: String, _ n: Int) -> String {
+        let lower = name.lowercased()
+        guard n != 1 else { return lower }
+        switch lower {
+        case "stairs", "laundry": return lower
+        case "storage":           return "storage units"
+        case "tv":                return "TVs"
+        default:                  return lower + "s"
+        }
     }
 
     /// Length-weighted dominant wall direction, folded into 0–90° because a room's
-    /// walls form a right-angled grid: mapping each angle to 4× puts that 90°
-    /// period onto a full circle so the directions can be averaged as vectors
-    /// (a plain mean would be wrong across the 0°/90° wrap).
+    /// walls form a right-angled grid: mapping each angle to 4× puts that 90° period
+    /// onto a full circle so the directions can be averaged as vectors (a plain mean
+    /// would be wrong across the 0°/90° wrap).
     private static func dominantWallAngle(_ walls: [Seg]) -> Float {
         var sx: Float = 0, sy: Float = 0
         for w in walls {
@@ -7007,6 +7421,21 @@ enum FloorPlanRenderer {
                    startAngle: .radians(start), endAngle: .radians(end), clockwise: false)
         ctx.stroke(arc, with: .color(Theme.inkDim.opacity(0.55)),
                    style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+    }
+
+    /// RoomPlan's own room-type classification → the caption a floor plan puts on a
+    /// room. `nil` for anything Apple hasn't taught it to recognise, so the plan says
+    /// nothing rather than guessing.
+    @available(iOS 17.0, *)
+    private static func sectionName(_ l: CapturedRoom.Section.Label) -> String? {
+        switch l {
+        case .bathroom:   return "Bathroom"
+        case .bedroom:    return "Bedroom"
+        case .diningRoom: return "Dining"
+        case .kitchen:    return "Kitchen"
+        case .livingRoom: return "Living room"
+        default:          return nil          // .unidentified, and anything added later
+        }
     }
 
     private static func label(_ c: CapturedRoom.Object.Category) -> String {

@@ -742,7 +742,87 @@ final class RenderCoordinator: ObservableObject {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var runs: [UUID: UUID] = [:]
     private var skipRequested: Set<UUID> = []
+    /// Listings whose AI-enhance upload the stall watchdog gave up on. The
+    /// watchdog cancels the upload, so the `await` in `enhance` lands in its
+    /// `catch` as a plain failure — this is how the catch knows the honest note
+    /// has already been written and must not be buried under a generic one.
+    private var uploadStalled: Set<UUID> = []
     private var backgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
+
+    // MARK: Upload progress + stall thresholds (the 4,000 sq ft field test)
+    //
+    // The field test published an AI tier over a 343 MB master on 5G, walking
+    // the house (so almost certainly a Wi-Fi handover mid-upload). Twenty-two
+    // minutes later the screen still read "Uploading for AI enhance…" over a
+    // bare spinner, the asset row still said uploaded=false, and there was no
+    // way out. `UploadManager` was publishing real byte counts the whole time;
+    // nothing read them. These three constants and `startUploadObserver` do.
+
+    /// The AI-enhance stage's slice of the job's progress ring. Before this the
+    /// ring simply sat at 1 for the whole enhance (rendering had already filled
+    /// it), so a full ring hung over a spinner that meant nothing. Rendering
+    /// still owns 0 → 1 on its own; the enhance re-scales itself into this band
+    /// so the upload's real bytes have somewhere to show, and publishing ends
+    /// back at 1.
+    private static let enhanceUploadFractionStart = 0.55
+    private static let enhanceUploadFractionEnd = 0.80
+
+    /// No bytes for this long → say so out loud and keep Skip on screen. This
+    /// is a warning, not a verdict: a 343 MB upload on a weak signal really can
+    /// idle for a minute and then recover.
+    private static let uploadStallWarnSeconds: TimeInterval = 90
+
+    /// No bytes for this long → stop. Five minutes without a single byte is not
+    /// a slow connection, and `UploadManager` has no wall-clock stall concept of
+    /// its own to lean on (it counts RETRIES — per-part and whole-upload — with
+    /// exponential backoff, which is a different thing: a transfer that keeps
+    /// being accepted and then wedged never exhausts a retry budget). Rather
+    /// than add a competing timeout inside the engine, the enhance — the one
+    /// caller that HAS a fallback — gives up on its own and publishes the
+    /// standard tour.
+    private static let uploadStallAbortSeconds: TimeInterval = 5 * 60
+
+    // MARK: The AI-enhance length limit (a MIRROR — the server owns it)
+    //
+    // THE SERVER IS AUTHORITATIVE. The real rule is
+    // `DRONE_MAX_SOURCE_SECONDS` in
+    // services/supabase/functions/ai-video/dronecost.ts, enforced by
+    // `assertDroneWithinLimits` on POST /ai-video/drone (it also refuses on a
+    // per-submission COST ceiling, which is derived from that same 300 s at the
+    // 4K60 rate — so for every tier the app actually sends, LENGTH is the
+    // binding rule and the cost ceiling only catches a pathological
+    // target_fps we never set).
+    //
+    // This number exists for ONE reason: so the refusal arrives BEFORE the
+    // multi-hundred-megabyte upload instead of after it. It is not a second
+    // source of truth and it is not enforcement. If the two ever disagree the
+    // server still wins — its refusal is a 4xx with a human sentence, and
+    // `enhance`'s existing catch already turns any such error into "AI enhance
+    // unavailable (<the server's own sentence>) — publishing your standard tour
+    // instead". Nothing breaks when this drifts; the user just waits out an
+    // upload before hearing no. So: if you change one, change the other, and
+    // when in doubt leave this one ALONE.
+    //
+    // ERR PERMISSIVE, DELIBERATELY. Refusing locally something the server would
+    // have accepted is the bad failure — it silently withholds a feature the
+    // user paid for, with no server sentence to explain it and nothing in any
+    // log. Uploading something the server then refuses merely costs the wait we
+    // are trying to avoid, and still publishes the standard tour. So the local
+    // trigger sits a few seconds ABOVE the server's cap: inside that band we
+    // upload and let the server decide, which is the safe direction. It also
+    // keeps the copy honest — the server compares raw seconds but PRINTS a
+    // rounded figure, so a 300.4 s tour would be refused while reading "5 min",
+    // and the grace band means the app never has to say that.
+
+    /// The server's cap, mirrored. Named in the note ("limited to 5 minutes")
+    /// because it is the real rule — never the grace-adjusted trigger below.
+    private static let droneMaxSourceSeconds: Double = 300
+
+    /// The local trigger. Grace on the PERMISSIVE side (see above): a tour
+    /// between the cap and this uploads and is refused by the server, with the
+    /// server's own wording.
+    private static let dronePreflightRefuseAboveSeconds: Double =
+        RenderCoordinator.droneMaxSourceSeconds + 5
 
     private enum EnhanceOutcome {
         case enhanced
@@ -803,11 +883,42 @@ final class RenderCoordinator: ObservableObject {
     }
 
     /// Stop waiting for the AI enhance and publish the standard tour now.
+    ///
+    /// THE 4,000 SQ FT FIELD TEST — this is the bug the developer actually saw.
+    /// This method used to set `skipRequested` and change the label, and that
+    /// was all. `enhance` only consults `skipRequested` between its awaits, and
+    /// the await it was parked on was a 22-minute upload — so for the entire
+    /// time the button was on screen, pressing it did nothing at all while the
+    /// label claimed "Finishing up…". Skip has to reach the thing that is
+    /// actually blocking, which is the upload: stop it exactly the way
+    /// `cancel(listingID:)` does. The awaited continuation then resolves as a
+    /// failure within milliseconds, `enhance`'s catch recognises the skip and
+    /// takes the clean fallback path (no error note — a user-requested skip is
+    /// not a failure), and publishing starts immediately. Which is what finally
+    /// makes "Finishing up…" an honest label rather than a lie.
     func skipEnhance(listingID id: UUID) {
         guard isRunning(id) else { return }
         skipRequested.insert(id)
         jobs[id]?.canSkipEnhance = false
         jobs[id]?.phase = "Finishing up…"
+        cancelRenderUpload(for: id)
+    }
+
+    /// Stop the in-flight `role=render` upload if — and only if — it is this
+    /// listing's. The predicate is the one `cancel(listingID:)` has always
+    /// used: our render upload (never a capture), not already landed, and
+    /// matching this listing's SERVER id, so one listing's Skip can never kill
+    /// another listing's publish or a walkthrough upload.
+    ///
+    /// Returns whether it actually cancelled anything — the stall watchdog uses
+    /// that to tell "I stopped this upload" from "there was nothing to stop".
+    @discardableResult
+    private func cancelRenderUpload(for id: UUID) -> Bool {
+        guard let model, let sid = model.listings.first(where: { $0.id == id })?.serverID,
+              let s = UploadManager.shared.state, s.role == "render", s.status != .done,
+              s.listingID == sid else { return false }
+        UploadManager.shared.cancel()
+        return true
     }
 
     /// Explicit user cancel. A render in progress → listing back to draft; a
@@ -819,11 +930,9 @@ final class RenderCoordinator: ObservableObject {
         }
         tasks[id]?.cancel()
         // A publish upload that belongs to this listing must stop too (the awaited
-        // continuation then resolves as failed).
-        if let model, let sid = model.listings.first(where: { $0.id == id })?.serverID,
-           let s = UploadManager.shared.state, s.role == "render", s.status != .done, s.listingID == sid {
-            UploadManager.shared.cancel()
-        }
+        // continuation then resolves as failed). Shared with `skipEnhance`, which
+        // needs the identical predicate — see `cancelRenderUpload`.
+        cancelRenderUpload(for: id)
         let hasTour = model?.tours[id] != nil
         jobs[id] = RenderJobState(phase: hasTour ? "Publish cancelled" : "Render cancelled",
                                   fraction: hasTour ? 1 : 0, error: nil, isRunning: false, stage: .cancelled)
@@ -907,6 +1016,20 @@ final class RenderCoordinator: ObservableObject {
             $0.stage = .publishing; $0.phase = "Publishing tour…"
             $0.isRunning = true; $0.canSkipEnhance = false; $0.fraction = 1
         }
+        // `publishTour` uploads the tour itself when there is no asset to reuse
+        // — the same hundreds of megabytes, over the same connection, and it is
+        // where the user LANDS after tapping Skip. Same observer, label only:
+        // no fraction change (the ring is legitimately full by now — the render
+        // is done and the tour plays locally), no stall warning, and no
+        // give-up, because a publish has no fallback. It just stops being a
+        // silent spinner.
+        let observer = startUploadObserver(
+            id: id, run: run,
+            label: "Publishing tour…",
+            fallbackTotalBytes: FileStore.fileSize((model.tours[id] ?? tour).url),
+            fractionFrom: 1, fractionTo: 1,
+            isEnhanceUpload: false)
+        defer { observer.cancel() }
         do {
             guard let live = model.listings.first(where: { $0.id == id }) else { return }
             let current = model.tours[id] ?? tour   // may have been swapped to the enhanced file
@@ -918,6 +1041,7 @@ final class RenderCoordinator: ObservableObject {
                                             enhancements: render.enhancements,
                                             tier: render.tier,
                                             existingAssetID: existingAssetID)
+            observer.cancel()
             model.setStatus(.ready, for: id)
             update(id, run) {
                 $0.stage = .published; $0.phase = "Your tour is ready"
@@ -925,6 +1049,7 @@ final class RenderCoordinator: ObservableObject {
             }
             Haptics.success()
         } catch {
+            observer.cancel()
             if Task.isCancelled || error is CancellationError { return }
             // The LOCAL tour still plays in-app (local-first); only the link is missing.
             model.setStatus(.ready, for: id)
@@ -938,12 +1063,21 @@ final class RenderCoordinator: ObservableObject {
     }
 
     /// The REAL AI stage for the Cinematic / 4K Premium tiers: pre-flight the
-    /// plan (no multi-minute upload when Topaz isn't in it), upload the master
+    /// plan AND the tour's length (no multi-minute upload when Topaz isn't in
+    /// the plan, or when the tour is longer than the enhance will take — the
+    /// server refuses both, but only AFTER the upload), prepare the upload
+    /// source (`EnhanceSource` — a 1080p intermediate when the master is bigger
+    /// than the upscaler needs, otherwise the master itself), upload it
     /// (role=render, public bucket) → POST /ai-video/drone → poll every 6 s
     /// (≤ 20 min, skippable) → download the enhanced mp4 → swap the local tour
     /// to it. ANY failure falls back to the standard tour with an honest note —
-    /// and hands back the master's server asset so the fallback publish doesn't
-    /// upload the same file twice.
+    /// and, when what we uploaded WAS the master, hands back its server asset so
+    /// the fallback publish doesn't upload the same file twice.
+    ///
+    /// Everything the 4,000 sq ft field test hit lives in step b: the upload is
+    /// now observed (real byte counts, real fraction), watched (a stall says so
+    /// and eventually gives up), and interruptible (Skip cancels it instead of
+    /// setting a flag nobody reads until the upload it is blocked on finishes).
     private func enhance(listingID id: UUID, run: UUID,
                          tour: AppModel.RenderedTour, tier: Render.Tier) async -> EnhanceOutcome {
         guard let model else { return .fallback(masterAssetID: nil) }
@@ -963,6 +1097,24 @@ final class RenderCoordinator: ObservableObject {
                 return .fallback(masterAssetID: nil)
             }
         }
+        // a2. Length pre-flight. `/ai-video/drone` refuses a source over
+        //     `DRONE_MAX_SOURCE_SECONDS`, and it refuses it on the POST — which
+        //     happens AFTER the master is uploaded. Without this check a
+        //     five-and-a-half-minute tour would render, sit through the exact
+        //     multi-hundred-megabyte wait this round of work exists to fix, and
+        //     only then be told it was too long. Refusing here costs nothing
+        //     and arrives before a single byte moves.
+        //
+        //     Runs AFTER the entitlement checks on purpose: "your plan doesn't
+        //     include AI enhance" is the truer answer for someone who has no
+        //     enhance to spend, and naming a length limit first would send them
+        //     off trimming a tour that was never going to be enhanced.
+        if tour.durationS > Self.dronePreflightRefuseAboveSeconds {
+            setNote(id, run,
+                    "This tour is \(Self.spokenDuration(tour.durationS)) and AI enhance is limited to "
+                    + "\(Self.spokenDurationLimit(Self.droneMaxSourceSeconds)) — publishing your standard tour at full length instead.")
+            return .fallback(masterAssetID: nil)
+        }
         if skipRequested.contains(id) {
             setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
             return .fallback(masterAssetID: nil)
@@ -975,22 +1127,84 @@ final class RenderCoordinator: ObservableObject {
             }
             let serverID = try await model.ensureServerListing(live)
 
-            // b. Upload the on-device master to the PUBLIC renders bucket so fal
-            //    can fetch it (the drone route 400s on private-bucket assets).
-            update(id, run) { $0.phase = "Uploading for AI enhance…" }
-            let meta = UploadMetadata(durationS: tour.durationS, bytes: FileStore.fileSize(tour.url))
-            let assetID = try await UploadManager.shared.upload(
-                fileURL: tour.url, listingID: serverID, role: "render", metadata: meta)
-            masterAssetID = assetID
-            model.uploadedRenderAssets[id] = AppModel.UploadedRenderAsset(
-                relPath: FileStore.relativePath(for: tour.url), assetID: assetID)
+            // b0. Pick the file fal will actually fetch. `/ai-video/drone` is a
+            //     Topaz UPSCALE, so shipping it the biggest frame we have is
+            //     backwards — see EnhanceSource for the full argument. Above
+            //     1080p this exports a 1080p intermediate; at or below 1080p it
+            //     hands the master straight back and does no work. It NEVER
+            //     fails the enhance: every error path returns the master.
+            update(id, run) {
+                $0.phase = "Preparing for AI enhance…"; $0.fraction = Self.enhanceUploadFractionStart
+            }
+            let source = await EnhanceSource.prepare(master: tour.url, listingID: id)
+            // The temp intermediate must not outlive this attempt — deleted
+            // eagerly the moment the bytes are on the server (below) and again
+            // here on every exit, including a throw. No-op when `source.url` is
+            // the master itself, and safe to call twice.
+            defer { source.cleanUp() }
+            // Skip stays live through the export, and the export is the one
+            // stretch `cancelRenderUpload` can't reach (there is no upload to
+            // cancel yet) — so honour it here before spending the bytes.
+            if skipRequested.contains(id) {
+                setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
+                return .fallback(masterAssetID: nil)
+            }
+
+            // b. Upload it to the PUBLIC renders bucket so fal can fetch it
+            //    (the drone route 400s on private-bucket assets).
+            //
+            //    The dimensions and frame rate go up WITH it now. The server
+            //    derives the Topaz upscale factor from the source's long edge
+            //    and skips frame interpolation when the source already runs at
+            //    the target fps; with neither declared it fell back to a flat
+            //    2× and always interpolated, so "4K Premium" on the app's own
+            //    master resolved to 2560, not 3840.
+            let uploadBytes = FileStore.fileSize(source.url)
+            let meta = UploadMetadata(durationS: tour.durationS,
+                                      fps: source.fps,
+                                      width: source.width,
+                                      height: source.height,
+                                      bytes: uploadBytes)
+            // Real numbers on screen for the whole upload, plus the stall
+            // watchdog — the two halves of "a bare spinner for 22 minutes".
+            // Cancelled the instant the await returns, either way.
+            let observer = startUploadObserver(
+                id: id, run: run,
+                label: "Uploading for AI enhance…",
+                fallbackTotalBytes: uploadBytes,
+                fractionFrom: Self.enhanceUploadFractionStart,
+                fractionTo: Self.enhanceUploadFractionEnd,
+                isEnhanceUpload: true)
+            let assetID: String
+            do {
+                assetID = try await UploadManager.shared.upload(
+                    fileURL: source.url, listingID: serverID, role: "render", metadata: meta)
+            } catch {
+                observer.cancel()
+                throw error
+            }
+            observer.cancel()
+            source.cleanUp()   // the bytes are on the server; give the disk back now
+
+            // Only an upload of the MASTER ITSELF can be reused by a fallback
+            // publish. When we uploaded a downscaled intermediate the server's
+            // asset is a DIFFERENT file, and handing its id back as
+            // `masterAssetID` would publish the 1080p intermediate in place of
+            // the master the user rendered.
+            masterAssetID = source.isIntermediate ? nil : assetID
+            if !source.isIntermediate {
+                model.uploadedRenderAssets[id] = AppModel.UploadedRenderAsset(
+                    relPath: FileStore.relativePath(for: tour.url), assetID: assetID)
+            }
             if skipRequested.contains(id) {
                 setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
                 return .fallback(masterAssetID: masterAssetID)
             }
 
             // c. Submit + poll. 4K Premium → 4k30 @ 30 fps; Cinematic → 4k60 @ 60 fps.
-            update(id, run) { $0.phase = "Enhancing with AI…" }
+            update(id, run) {
+                $0.phase = "Enhancing with AI…"; $0.fraction = Self.enhanceUploadFractionEnd
+            }
             let job = try await model.api.aiVideoDrone(assetID: assetID,
                                                        tier: tier.droneTierParam,
                                                        targetFps: tier.droneTargetFPS,
@@ -1022,7 +1236,10 @@ final class RenderCoordinator: ObservableObject {
             guard let enhancedRemoteURL else { throw EnhanceError.noVideo }
 
             // d. Download promptly (fal result URLs expire) into Recordings.
-            update(id, run) { $0.phase = "Downloading enhanced tour…"; $0.canSkipEnhance = false }
+            update(id, run) {
+                $0.phase = "Downloading enhanced tour…"
+                $0.fraction = 0.92; $0.canSkipEnhance = false
+            }
             let (tmp, resp) = try await URLSession.shared.download(from: enhancedRemoteURL)
             if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw APIError.badResponse(http.statusCode)
@@ -1037,13 +1254,157 @@ final class RenderCoordinator: ObservableObject {
                                                     speedFactor: tour.speedFactor)
             return .enhanced
         } catch {
+            // e. Three kinds of "we didn't enhance", and only one of them is a
+            //    failure the user should read about.
+
+            // USER SKIPPED. Since the 4,000 sq ft field test, `skipEnhance`
+            // cancels the in-flight upload, so a skip arrives HERE as an
+            // ordinary upload failure. Checked first, and deliberately before
+            // the cancellation check: it is a completed user intent, not an
+            // error, and it gets the same clean note the post-await skip paths
+            // above use. Publishing then starts immediately, which is what
+            // makes skipEnhance's "Finishing up…" label true.
+            if skipRequested.contains(id) {
+                setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
+                return .fallback(masterAssetID: masterAssetID)
+            }
+            // WATCHDOG GAVE UP. It already wrote a specific, honest note before
+            // it cancelled the upload — don't bury it under a generic one.
+            if uploadStalled.contains(id) {
+                return .fallback(masterAssetID: masterAssetID)
+            }
             if Task.isCancelled || error is CancellationError {
                 return .fallback(masterAssetID: masterAssetID)
             }
-            // e. Honest fallback, with the server's reason when it gave one.
+            // Honest fallback, with the server's reason when it gave one.
             let reason = AppModel.userMessage(for: error)
             setNote(id, run, "AI enhance unavailable (\(reason)) — publishing your standard tour instead.")
             return .fallback(masterAssetID: masterAssetID)
+        }
+    }
+
+    /// Turn `UploadManager`'s published byte counts into a phase label, a real
+    /// progress fraction, and a stall verdict, once a second, for as long as
+    /// the caller's upload `await` is parked.
+    ///
+    /// THE 4,000 SQ FT FIELD TEST, part two. `UploadManager` has always
+    /// published `state.bytesSent` / `state.bytesTotal` (and per-part state for
+    /// multipart) — a background `URLSession`, retries, network-regain resume,
+    /// the lot. `enhance` set one static string and never looked again, so 343
+    /// MB of real progress rendered as a bare spinner for 22 minutes. This
+    /// reads what is already there; it adds no upload machinery of its own.
+    ///
+    /// Watchdog. `UploadManager` counts RETRIES with exponential backoff, per
+    /// part and per whole upload — it has no wall-clock "these bytes stopped
+    /// moving" concept, and a transfer that is repeatedly accepted and then
+    /// wedged (a 5G → Wi-Fi handover mid-upload, which is exactly what the
+    /// field test looked like) never exhausts a retry budget. Rather than add a
+    /// competing timeout inside the engine, the clock lives here, in the one
+    /// caller that has somewhere to fall back to:
+    ///   • `uploadStallWarnSeconds` of no movement → say so, and make sure Skip
+    ///     is on screen as the escape hatch.
+    ///   • `uploadStallAbortSeconds` → give up: cancel the upload, note why,
+    ///     and let `enhance`'s catch publish the standard tour.
+    /// `isEnhanceUpload` gates every skip-aware behaviour: the warning, the
+    /// give-up, and standing down when a skip is writing its own label. The
+    /// publish upload passes false — it has no fallback (the tour has to reach
+    /// the server for a link to exist), it must not resurrect a Skip button
+    /// whose flag nothing reads by then, and it runs precisely BECAUSE the user
+    /// skipped, so a lingering `skipRequested` must not silence it. For publish
+    /// this is a label-only observer.
+    ///
+    /// Returns the observing `Task`; the caller MUST cancel it the moment its
+    /// await returns, or it will keep overwriting a phase that has moved on.
+    private func startUploadObserver(id: UUID, run: UUID,
+                                     label: String,
+                                     fallbackTotalBytes: Int64,
+                                     fractionFrom: Double,
+                                     fractionTo: Double,
+                                     isEnhanceUpload: Bool) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var lastSeenBytes: Int64 = -1
+            var lastMovedAt = Date()
+            var warned = false
+
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                // A superseded/cancelled run must never write to a newer job.
+                guard self.runs[id] == run else { return }
+                // A skip is already writing its own label ("Finishing up…") —
+                // stop before we flicker over it. It also gets a second swing
+                // at the upload: a skip that landed while `begin()` was still
+                // starting the transfer found nothing to cancel, and that
+                // window is exactly the one the field test sat in.
+                // Enhance only: the publish that FOLLOWS a skip still has the
+                // flag set, and silencing that observer is the whole reason the
+                // user would be staring at a spinner again.
+                if isEnhanceUpload, self.skipRequested.contains(id) {
+                    self.cancelRenderUpload(for: id)
+                    return
+                }
+
+                // Read ONLY this listing's render upload. A capture upload, or
+                // another listing's publish, must never move these numbers.
+                var sent: Int64 = 0
+                var total = fallbackTotalBytes
+                if let sid = self.model?.listings.first(where: { $0.id == id })?.serverID,
+                   let s = UploadManager.shared.state,
+                   s.role == "render", s.status != .done, s.listingID == sid {
+                    sent = max(0, s.bytesSent)
+                    if s.bytesTotal > 0 { total = s.bytesTotal }
+                }
+
+                if sent > lastSeenBytes {
+                    lastSeenBytes = sent
+                    lastMovedAt = Date()
+                    warned = false
+                }
+                let idleSeconds = Date().timeIntervalSince(lastMovedAt)
+
+                if isEnhanceUpload, idleSeconds >= Self.uploadStallAbortSeconds {
+                    // Cancelling resolves the caller's continuation as a
+                    // failure; `uploadStalled` is how its catch knows this note
+                    // is already the honest explanation. Only claim the failure
+                    // if we actually caused it — if there was nothing left to
+                    // cancel, the upload resolved on its own and the flag would
+                    // only mislabel some later, unrelated error.
+                    self.uploadStalled.insert(id)
+                    if self.cancelRenderUpload(for: id) {
+                        self.setNote(id, run,
+                                     "The upload for the AI enhance couldn't finish on this connection — publishing your standard tour instead.")
+                    } else {
+                        self.uploadStalled.remove(id)
+                    }
+                    return
+                }
+
+                if idleSeconds >= Self.uploadStallWarnSeconds {
+                    // Written once per stall, not once a second, so the label
+                    // stops flickering while nothing is happening.
+                    if isEnhanceUpload, !warned {
+                        warned = true
+                        self.update(id, run) {
+                            $0.phase = "Still uploading — your connection looks slow. You can skip and publish the standard tour."
+                            $0.canSkipEnhance = true
+                        }
+                    }
+                    continue   // leave the warning up until bytes actually move
+                }
+
+                // `Formatters.bytes` is the app's ByteCountFormatter wrapper;
+                // before the first byte lands it would read "Zero KB of 343 MB",
+                // so the plain label carries that moment.
+                let text = (sent > 0 && total > 0)
+                    ? "\(label) \(Formatters.bytes(sent)) of \(Formatters.bytes(total))"
+                    : label
+                let ratio = total > 0 ? min(max(Double(sent) / Double(total), 0), 1) : 0
+                self.update(id, run) {
+                    $0.phase = text
+                    $0.fraction = fractionFrom + (fractionTo - fractionFrom) * ratio
+                }
+            }
         }
     }
 
@@ -1055,6 +1416,43 @@ final class RenderCoordinator: ObservableObject {
 
     private func setNote(_ id: UUID, _ run: UUID, _ text: String) {
         update(id, run) { $0.note = text; $0.canSkipEnhance = false }
+    }
+
+    /// "6 min 50 s" / "5 min" / "42 s" — a duration said the way a person says
+    /// it. A deliberate mirror of `formatDuration` in
+    /// services/supabase/functions/ai-video/dronecost.ts, so the length note
+    /// this app writes BEFORE the upload and the one the server writes after it
+    /// read as the same sentence rather than two dialects. `Formatters.duration`
+    /// is not it: "6:50" reads as a timestamp, not as prose in a warning.
+    ///
+    /// `nonisolated`: pure arithmetic on a Double with no state, so it is safe
+    /// from any isolation — a `@MainActor` static reached from somewhere
+    /// non-isolated is exactly the mistake that broke an earlier build.
+    ///
+    /// NaN/±inf/negative are clamped BEFORE the `Int` conversion: `Int(Double.nan)`
+    /// traps, and `durationS` is a persisted, decoded value (`?? 0` on a missing
+    /// key) — it must never be able to crash a publish.
+    nonisolated private static func spokenDuration(_ seconds: Double) -> String {
+        let safe = (seconds.isFinite && seconds > 0) ? min(seconds, 86_400) : 0
+        let total = Int(safe.rounded())
+        if total < 60 { return "\(total) s" }
+        let minutes = total / 60, remainder = total % 60
+        return remainder == 0 ? "\(minutes) min" : "\(minutes) min \(remainder) s"
+    }
+
+    /// The same duration said as a LIMIT ("5 minutes") — how a person reads a
+    /// rule rather than a measurement. Mirrors `formatDurationLimit` in
+    /// dronecost.ts, including its fallback: a cap that is not a whole number of
+    /// minutes is spoken as a plain duration, so the copy stays correct if
+    /// `DRONE_MAX_SOURCE_SECONDS` ever moves off 300.
+    nonisolated private static func spokenDurationLimit(_ seconds: Double) -> String {
+        let safe = (seconds.isFinite && seconds > 0) ? min(seconds, 86_400) : 0
+        let total = Int(safe.rounded())
+        if total >= 60, total % 60 == 0 {
+            let minutes = total / 60
+            return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        }
+        return spokenDuration(seconds)
     }
 
     /// Apply a state change only if `run` is still the listing's current run —
@@ -1069,6 +1467,7 @@ final class RenderCoordinator: ObservableObject {
         let run = UUID()
         runs[id] = run
         skipRequested.remove(id)
+        uploadStalled.remove(id)
         if backgroundTasks[id] == nil {
             let bg = UIApplication.shared.beginBackgroundTask(withName: "rendprop.job.\(id.uuidString)") { [weak self] in
                 Task { @MainActor [weak self] in self?.endBackground(id) }
@@ -1084,6 +1483,7 @@ final class RenderCoordinator: ObservableObject {
         runs[id] = nil
         tasks[id] = nil
         skipRequested.remove(id)
+        uploadStalled.remove(id)
         endBackground(id)
         refreshIdleTimer()
     }

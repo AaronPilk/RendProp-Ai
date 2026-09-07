@@ -10,7 +10,9 @@
 //       Topaz Video AI upscale+interpolation → buttery "drone glide" master.
 //       upscale_factor / target_fps are computed from the ASSET's probed
 //       width/height/fps and the tier (never blindly 2× — a 4K source at "4k30"
-//       used to be sent as 8K, audit F-supabase-17).
+//       used to be sent as 8K, audit F-supabase-17). The most expensive tap in
+//       the product, and the one with hard COST CEILINGS — see COST SAFETY
+//       below and ./dronecost.ts. The 202 carries `estimated_cost`.
 //   POST /ai-video/declutter  { asset_id, prompt?, space_type? }
 //       Bria video eraser (prompt-based object removal). Source must be < 5 s.
 //   POST /ai-video/aerial     { image_b64?, mime?, asset_id?, space_type, region?, time_of_day?, motion?,
@@ -71,6 +73,42 @@
 // it re-times and sharpens footage the agent actually captured, which is the
 // basic-enhancement carve-out in CA AB 723, not synthesis. Revisit if Topaz
 // ever gains a generative mode.
+//
+// ── COST SAFETY on /drone ────────────────────────────────────────────────────
+//
+// The 4,000 sq ft field test: a 410 s 4K60 tour billed ~$48 from one tap, and
+// the route took it without comment — no ceiling, no confirmation, no estimate.
+// Topaz bills per OUTPUT second and the output runs the source's wall-clock, so
+// spend on this route is linear in a number the user picks by walking around a
+// house, on a plan whose whole monthly AI budget is $82.00.
+//
+// The per-generation cap this repo commits to elsewhere ($25.00,
+// MAX_GEN_COST_PER_JOB_CENTS) lives inside log_job_cost(), which raises RP404
+// without a render_job row to lock — and the in-app AI routes have none, so it
+// never applied here and never can. ./dronecost.ts is the pre-flight of the
+// checks that RPC would have made, with a per-submission ceiling DERIVED from
+// the duration cap at the top tier (300 s × 16.0¢ = $48.00) rather than
+// borrowed from a cap that cannot reach this route:
+//
+//   1. a submission with no usable duration_s is REFUSED (409 `conflict`, the
+//      same shape /declutter already uses) — Topaz cannot be priced per second
+//      without one, and a spend we cannot price is a spend we cannot cap;
+//   2. a source longer than DRONE_MAX_SOURCE_SECONDS is refused (400) with the
+//      length said in minutes, so an agent can act on it;
+//   3. the projected cost (duration × tier × output frame rate) over
+//      DRONE_MAX_SUBMISSION_CENTS is refused (400) naming the price and the
+//      length that would fit — in practice this catches a submission whose
+//      PRICE is out of line with its LENGTH (a `4k30` tap asking for 120 fps),
+//      since a full-length tour at the top tier is exactly at the ceiling;
+//   4. the projected cost is then composed with the org's EXISTING per-org
+//      monthly COGS ceiling — org_month_spend_cents() vs the plan's
+//      cogs_ceiling_cents, the same pair log_job_cost() compares — inside
+//      guardGenerate(), BEFORE any meter is consumed (402 `quota_exceeded`).
+//
+// All four run before a meter is charged and before fal is called, so a refused
+// submission costs the org nothing and leaves no state to unwind. Nothing here
+// writes to cost_ledger, so the ceiling is checked, never double-counted: the
+// one row for an accepted submission is still written after fal accepts it.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
@@ -95,6 +133,13 @@ import {
   routerStatusUrl,
   verifyJobToken,
 } from "../_shared/providers/jobtoken.ts";
+import {
+  assertDroneWithinLimits,
+  assertMonthlyHeadroom,
+  DRONE_TIER_CENTS,
+  DRONE_TIERS,
+  type DroneEstimate,
+} from "./dronecost.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
 // queue, so cap submissions per burst window AND per rolling month per org,
@@ -111,6 +156,8 @@ const MONTH_SECONDS = 30 * 86400;
 //           Topaz 90s @4K30 / @4K60 .......... $7.20 / $14.40
 // Topaz is an ADD-ON, not bundled: a single 4K60 tap costs more than a third of
 // a Starter subscription. declutter (Bria) rides the reel meter.
+// The meters bound how MANY drone taps an org gets; they never bounded how much
+// ONE of them could cost — that is ./dronecost.ts (see COST SAFETY above).
 type GenKind = "reel" | "aerial" | "drone" | "declutter";
 
 function capFor(kind: GenKind, ent: { reels_per_month: number; aerials_per_month: number; topaz_per_month: number }): number {
@@ -161,8 +208,20 @@ interface GenerateCharge {
  * The org is resolved with the X-Org-Id header when present: orgForUser()
  * otherwise picks the caller's highest-privilege membership, so a user in two
  * workspaces could have quota charged to the wrong one.
+ *
+ * `projectedCents` — when the caller can price the submission up front (today
+ * only /drone, whose per-output-second rate card makes that exact) — is checked
+ * against the org's EXISTING monthly COGS ceiling BEFORE any meter is consumed,
+ * so a submission that cannot fit the budget burns no allowance on its way to
+ * being refused. See assertMonthlyHeadroom() in ./dronecost.ts for why this is
+ * a pre-flight of log_job_cost()'s own check rather than a second ceiling.
  */
-async function guardGenerate(userId: string, req: Request, kind: GenKind): Promise<GenerateCharge> {
+async function guardGenerate(
+  userId: string,
+  req: Request,
+  kind: GenKind,
+  projectedCents?: number,
+): Promise<GenerateCharge> {
   const orgId = await orgForUser(userId, preferredOrg(req));
   const admin = adminClient();
 
@@ -181,6 +240,20 @@ async function guardGenerate(userId: string, req: Request, kind: GenKind): Promi
   // so the app shows an upgrade prompt instead of "try again later". This is
   // what keeps Topaz (up to $14.40 a tap) off the cheap plans.
   if (monthlyCap <= 0) throw quotaError(labelFor(kind), 0, 0, ent.plan);
+
+  // PROJECTED SPEND vs the org's monthly COGS ceiling. Ordered AFTER the plan
+  // boundary above (a plan that doesn't include the feature must still read as
+  // `plan_required`, not as a budget problem) and BEFORE every meter below, so
+  // a refusal here costs the org nothing to recover from.
+  if (projectedCents != null && projectedCents > 0) {
+    assertMonthlyHeadroom({
+      monthSpentCents: await orgMonthSpendCents(admin, orgId),
+      ceilingCents: ent.cogs_ceiling_cents,
+      projectedCents,
+      plan: ent.plan,
+      feature: labelFor(kind),
+    });
+  }
 
   // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
   // duplicate submit inside 2 minutes is rejected instead of double-billed.
@@ -223,6 +296,39 @@ async function refundGenerateCharge(charge: GenerateCharge): Promise<void> {
   await refundRateLimit(charge.burstKey, GEN_WINDOW_SECONDS, 1);
 }
 
+/**
+ * What this org has already spent this calendar month, in cents.
+ *
+ * The SAME number log_job_cost() measures its ceiling against — literally the
+ * same function, org_month_spend_cents() from migration 0010 §4, called here
+ * instead of re-implementing the sum, so the pre-flight and the enforcement can
+ * never disagree about what "spent this month" means. It counts the app-AI rows
+ * this function writes (org-scoped, job_id IS NULL) as well as every worker
+ * pipeline row, because it sums cost_ledger by org and date, not by job.
+ *
+ * FAILS CLOSED. A spend read we cannot make is a budget we cannot check, and
+ * the whole point of this guard is that the most expensive tap in the product
+ * never runs unpriced — so a lookup failure is a 503 "try again", exactly the
+ * shape entitlementForCharge() already uses for a degraded plan lookup
+ * (F-E-02 / F-supabase-34), never a silent pass.
+ */
+async function orgMonthSpendCents(
+  admin: ReturnType<typeof adminClient>,
+  orgId: string,
+): Promise<number> {
+  const { data, error } = await admin.rpc("org_month_spend_cents", { p_org: orgId });
+  if (error) {
+    console.error("ai-video: org_month_spend_cents lookup failed:", error.message);
+    throw new HttpError(
+      503,
+      "Spend budget lookup is temporarily unavailable — try again in a moment.",
+      "upstream",
+    );
+  }
+  const cents = Number(data ?? 0);
+  return Number.isFinite(cents) ? Math.max(0, cents) : 0;
+}
+
 const FAL_QUEUE_BASE = "https://queue.fal.run";
 const FAL_KEY = Deno.env.get("FAL_KEY");
 
@@ -231,21 +337,10 @@ const MODEL_DECLUTTER = "bria/video/erase/prompt";
 const MODEL_AERIAL_T2V = "fal-ai/veo3.1/fast";
 const MODEL_I2V = "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
 
-// Drone-glide tiers → output target. Topaz bills per output pixel-frame, so the
-// factor is derived from the SOURCE resolution (never > the target, never 8K).
-const DRONE_TIERS: Record<string, { longEdge: number; fps: number }> = {
-  "1080p60": { longEdge: 1920, fps: 60 },
-  "4k30": { longEdge: 3840, fps: 30 },
-  "4k60": { longEdge: 3840, fps: 60 },
-};
-
-// Topaz drone-glide cost per OUTPUT second, by tier (F-E-15). Authoritative
-// numbers live in _shared/ledger.ts APP_AI_UNIT_CENTS (mirrors costs.py + admin).
-const DRONE_TIER_CENTS: Record<string, number> = {
-  "1080p60": APP_AI_UNIT_CENTS.topaz_1080p60_per_s,
-  "4k30": APP_AI_UNIT_CENTS.topaz_4k30_per_s,
-  "4k60": APP_AI_UNIT_CENTS.topaz_4k60_per_s,
-};
+// DRONE_TIERS (output target per tier) and DRONE_TIER_CENTS (the committed
+// per-output-second rate card) now live in ./dronecost.ts next to the ceilings
+// that read them, so the price and the cap it feeds cannot drift apart. Both
+// are imported above; nothing about their values changed.
 
 // Bria hard limit: "duration must be less than 5s" (input schema). We disable
 // auto_trim (never silently cut the user's clip) and pre-flight the duration.
@@ -583,7 +678,31 @@ Deno.serve(async (req) => {
       fps = Math.min(120, Math.max(24, fps));
       const interpolate = asset.fps == null || asset.fps < fps - 0.5;
 
-      const charge = await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
+      // COST SAFETY (the 4,000 sq ft field test: a 410 s 4K60 tour billed ~$48
+      // from one tap). Everything above this line is free; everything below it
+      // spends money. So the duration ceiling, the missing-duration refusal and
+      // the per-submission cost ceiling all run HERE — before guardGenerate()
+      // charges a meter and long before fal is called — and the estimate they
+      // return is the single place this submission's price is computed. Sizing,
+      // arithmetic and the fail-closed reasoning are all in ./dronecost.ts.
+      //
+      // Topaz preserves duration, so the OUTPUT runs at the source's
+      // wall-clock; the output FRAME RATE is the interpolation target when we
+      // ask for one, and otherwise the source's own rate (Topaz does not
+      // re-time what it is not asked to). That distinction is what the estimate
+      // is priced on, so a `4k30` tap that quietly emits 120 fps is costed as
+      // the 120 fps job it is rather than at the 30 fps tier price.
+      const outputFps = interpolate ? fps : (asset.fps ?? fps);
+      const estimate: DroneEstimate = assertDroneWithinLimits({
+        tier,
+        durationS: asset.duration_s,
+        outputFps,
+        assetId: asset.id,
+      });
+
+      // Priced — now compose with the org's existing monthly COGS ceiling
+      // (inside guardGenerate, before any meter is consumed) and charge.
+      const charge = await guardGenerate(user.id, req, "drone", estimate.cents);
       const { orgId, plan } = charge;
 
       // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
@@ -621,28 +740,36 @@ Deno.serve(async (req) => {
       // org-scoped row, job_id = NULL, best effort. Written only after fal ACCEPTED
       // the submit — the spend is committed at that point (E-network.md §1), and a
       // retried Idempotency-Key was already 409'd above, so one render → one row.
-      // The drone route does not require duration_s; without it Topaz cannot be
-      // priced per-second, so we log a warning and record no row rather than a
-      // misleading $0 one (a residual gap — see HANDOFF).
-      if (asset.duration_s && asset.duration_s > 0) {
-        await recordRoutedAiCost(adminClient(), {
-          orgId,
-          feature: "drone_render",
-          step,
-          seconds: asset.duration_s,
-          // ONE route row cannot price Topaz: it bills per OUTPUT pixel-frame,
-          // so 4K60 is twice 4K30 while `video.upscale_4k` is a single row. The
-          // tier price in _shared/ledger.ts stays authoritative for Topaz; any
-          // other provider is billed at its own row price.
-          unitCentsOverride: /topaz/i.test(step.model) ? DRONE_TIER_CENTS[tier] : undefined,
-          meta: { tier, request_id: attempt.value.id, upscale_factor: upscale, target_fps: fps, interpolated: interpolate },
-        });
-      } else {
-        console.warn(
-          `ai-video drone: asset ${body.asset_id} has no probed duration; ` +
-            `Topaz ${tier} spend not recorded to cost_ledger (F-E-15 residual gap)`,
-        );
-      }
+      //
+      // The row is now UNCONDITIONAL: assertDroneWithinLimits() above refuses a
+      // submission with no usable duration_s, so anything that reaches this
+      // point has one. That closes the F-E-15 residual gap the old branch
+      // documented (submit anyway, warn, record nothing) — a spend we could not
+      // price is a spend we now never make, rather than one the ledger, the
+      // per-org monthly ceiling and GET /admin/spend all miss.
+      await recordRoutedAiCost(adminClient(), {
+        orgId,
+        feature: "drone_render",
+        step,
+        seconds: estimate.seconds,
+        // ONE route row cannot price Topaz: it bills per OUTPUT pixel-frame,
+        // so 4K60 is twice 4K30 while `video.upscale_4k` is a single row. The
+        // tier price in _shared/ledger.ts stays authoritative for Topaz; any
+        // other provider is billed at its own row price. NOTE this is the TIER
+        // price, deliberately unscaled by the frame-rate multiplier the
+        // pre-flight estimate applies — the estimate errs high on purpose so a
+        // 120 fps tap cannot slip past the ceiling, but the accounting stays on
+        // the number the three-way rate-card lockstep owns (see dronecost.ts).
+        unitCentsOverride: /topaz/i.test(step.model) ? DRONE_TIER_CENTS[tier] : undefined,
+        meta: {
+          tier,
+          request_id: attempt.value.id,
+          upscale_factor: upscale,
+          target_fps: fps,
+          interpolated: interpolate,
+          estimate_cents: estimate.cents,
+        },
+      });
       return json({
         ...sub,
         kind: "drone",
@@ -652,6 +779,13 @@ Deno.serve(async (req) => {
         upscale_factor: upscale,
         interpolated: interpolate,
         source: { width: asset.width, height: asset.height, fps: asset.fps, duration_s: asset.duration_s },
+        // ADDITIVE (cost safety): what this submission is expected to cost, so
+        // the app can show a number instead of the user finding out on an
+        // invoice. A new key on an existing object — AIVideoJobDTO decodes only
+        // the fields it names and ignores the rest, so an older build is
+        // unaffected. Every refusal above carries the same figures in its error
+        // details, so the client has one shape to read either way.
+        estimated_cost: estimate,
       }, 202);
     }
 
