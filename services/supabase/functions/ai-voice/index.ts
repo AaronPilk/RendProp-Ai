@@ -98,6 +98,36 @@
 //   the retry is refused rather than re-answered. Nothing is persisted
 //   server-side to replay from.
 //
+// ── COST VISIBILITY (added 2026-09-07 — this route used to be invisible) ────
+//
+// Until this change /ai-voice/tts wrote NO cost_ledger row and did not use the
+// router, even though 0018 seeds `tts.captioned` and `tts.plain`. At 22¢ per
+// 1,000 characters a single 400-character voiceover is 8.8¢ of real spend that
+// GET /admin/spend could not see, and that the per-org monthly COGS ceiling
+// never counted — a bigger hole than the sub-1¢ text helpers, and the same
+// class of defect audit F-E-15 opened against ai-photo.
+//
+// So one org-scoped cost_ledger row is now written per successful voiceover,
+// via `recordRoutedAiCost()` with the step `resolveChain()` returned:
+// units = characters ÷ 1000 (the row's `1k_chars` unit), price from the ROW, so
+// a price correction is a row edit rather than a deploy. Best effort and off the
+// critical path, exactly as ai-photo does it — the audio is already generated
+// and already billed by the time it runs, and a ledger blip must not destroy a
+// result the caller has paid for.
+//
+// NOTHING ELSE MOVED. No limit, no gate, no response field, no request field,
+// and — deliberately — no failover. `tts.captioned` has ONE vendor: 0018's own
+// note on that row says ElevenLabs is the only one with per-character alignment,
+// "so a caller must surface the outage rather than silently degrade". Running
+// `runChain()` over a chain that could reach a plain-TTS step would return a
+// voiceover with NO alignment, and the captions would silently stop appearing
+// instead of the request failing. So this function resolves the chain, uses the
+// elevenlabs step it names (for the ledger's provider/model/price) and calls
+// ElevenLabs exactly as before. The route's `model` is the ENDPOINT slug
+// (`with-timestamps`), which is what the ledger records; the actual voice model
+// is still ELEVENLABS_MODEL_ID or the vendor's own default, unpinned — sending
+// the route's model as `model_id` would be a behaviour change and a broken call.
+//
 // Needs the ELEVENLABS_API_KEY function secret plus the shared R2 env.
 
 import { handleOptions } from "../_shared/cors.ts";
@@ -107,6 +137,9 @@ import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertMarketingCopy } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
+import { recordRoutedAiCost } from "../_shared/ledger.ts";
+import type { RouteStep } from "../_shared/router.ts";
+import { resolveChain } from "../_shared/providers/chain.ts";
 import { R2_BUCKET_UPLOADS, presignPut } from "../_shared/r2.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
 
@@ -130,6 +163,68 @@ const ELEVEN_BASE = "https://api.elevenlabs.io";
 const OUTPUT_FORMAT = "mp3_44100_128";
 const OUTPUT_BITRATE = 128_000;
 const OUTPUT_MIME = "audio/mpeg";
+
+/** The routing task this function performs, and the price the ledger falls back
+ *  to. Both mirror migration 0018's `tts.captioned` seed EXACTLY (elevenlabs /
+ *  `with-timestamps` / `1k_chars` / 22.0¢, the Creator-tier credit rate) so the
+ *  flag-off path and the flag-on path price identically. `tts.captioned` has no
+ *  `note='legacy'` row, so with the flag off `resolveRoute()` answers `[]` and
+ *  `resolveChain()` uses this constant — which is why it has to be right. */
+const TTS_TASK = "tts.captioned";
+const TTS_UNIT_CENTS_PER_1K = 22.0;
+
+function legacyTtsStep(): RouteStep {
+  return {
+    route_id: "legacy-local",
+    task: TTS_TASK,
+    provider: "elevenlabs",
+    model: "with-timestamps",
+    unit: "1k_chars",
+    unit_cents: TTS_UNIT_CENTS_PER_1K,
+    capabilities: ["tts", "timestamps", "char_alignment"],
+    max_latency_s: 120,
+    min_plan: "free",
+    same_model_as: null,
+    privacy_tier: "retained_30d",
+    enabled: true,
+  };
+}
+
+/**
+ * The step whose provider/model/price the ledger row carries.
+ *
+ * The chain is read, never RUN (see the header): this function always calls
+ * ElevenLabs, because it is the only vendor that returns the per-character
+ * alignment the captions are built from. So the FIRST elevenlabs step is taken
+ * and any other provider in the chain is ignored rather than failed over to —
+ * a plain-TTS step would produce audio with no alignment and captions that
+ * silently stop rendering, which is exactly what 0018's note on this row warns
+ * against. No elevenlabs step at all (an operator disabled it) falls back to the
+ * legacy constant: refusing to record spend we are about to incur would be the
+ * wrong half of the trade.
+ *
+ * Never throws — `resolveChain()` is documented as failing toward its fallback,
+ * and this is wrapped besides. A routing hiccup must not fail a voiceover.
+ */
+async function ttsStep(plan: string): Promise<RouteStep> {
+  try {
+    const chain = await resolveChain(
+      TTS_TASK,
+      {
+        plan,
+        needs: ["tts", "timestamps", "char_alignment"],
+        // NOT customer media: the script is the agent's own marketing copy,
+        // written to be published aloud — not a photograph of somebody's home.
+        // coach/index.ts makes the same call for the same reason.
+      },
+      legacyTtsStep(),
+    );
+    return chain.find((s) => s.provider === "elevenlabs") ?? legacyTtsStep();
+  } catch (e) {
+    console.error("ai-voice: route lookup failed; pricing from the legacy step:", e instanceof Error ? e.message : String(e));
+    return legacyTtsStep();
+  }
+}
 
 const ELEVENLABS_KEY = Deno.env.get("ELEVENLABS_API_KEY")?.trim() || undefined;
 /** Optional pin. Unset (the default) = ElevenLabs' own current default model. */
@@ -223,6 +318,10 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
 /** What one charged TTS consumed, so a failure can hand every unit back. */
 interface Charge {
   orgId: string;
+  /** The effective plan, for the router's RouteContext. It is the number
+   *  `entitlementForCharge()` just read on the line below, not a second lookup
+   *  — the same thing ai-photo's EditCharge carries, for the same reason. */
+  plan: string;
   monthlyKey: string;
   burstKey: string;
 }
@@ -255,7 +354,7 @@ async function guardTTS(userId: string, req: Request): Promise<Charge> {
   if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
     throw quotaError("AI voiceover", monthlyCap, monthlyCap, ent.plan);
   }
-  return { orgId, monthlyKey, burstKey };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey };
 }
 
 /**
@@ -547,6 +646,13 @@ Deno.serve(async (req) => {
       const charge = await guardTTS(user.id, req);
 
       try {
+        // ── ROUTE ── read-only: which row describes what we are about to run,
+        // and at what price. It does NOT decide the vendor (see the header) —
+        // ElevenLabs is called unconditionally below, exactly as before. Inside
+        // the try so a routing failure still refunds the allowance, though
+        // ttsStep() is written never to throw.
+        const step = await ttsStep(charge.plan);
+
         // Held as an ArrayBuffer (a BodyInit) so the PUT streams the bytes with
         // no extra copy and no view/buffer type juggling.
         let audioBuf: ArrayBuffer;
@@ -640,6 +746,36 @@ Deno.serve(async (req) => {
           durationS = round3(timed.words[timed.words.length - 1].end);
           durationSource = "last_word";
         }
+
+        // ── COST LEDGER ── the voiceover exists and ElevenLabs has already
+        // billed us for it, so record ONE org-scoped cost_ledger row (job_id
+        // NULL — the shape the admin console's app-AI coverage probe keys on).
+        // Units are CHARACTERS ÷ 1000, which is what the route row's `1k_chars`
+        // unit means, so a 400-character script is 0.4 × 22¢ = 8.8¢ instead of
+        // the 0¢ it used to be (see the COST VISIBILITY note in the header).
+        //
+        // Best effort and never throws (see _shared/ledger.ts): `audioUrl` is
+        // already in hand and a ledger blip must not destroy a result the caller
+        // has paid for. Reached only on success, so a failure above — which the
+        // catch below refunds — writes no row and nothing is double-counted.
+        //
+        // `meta` is a durable row every member of the org can read under the
+        // org-ledger RLS policy, so it carries only bounded, closed-vocabulary
+        // values: never the script (that is what promptSummary on the provenance
+        // row is for, where the RPC bounds and strips it), never the audio URL
+        // (it is a signed R2 GET).
+        await recordRoutedAiCost(adminClient(), {
+          orgId: charge.orgId,
+          feature: "voiceover",
+          step,
+          chars: text.length,
+          meta: {
+            voice_id: voiceId, // VOICE_ID_RE-validated above: [A-Za-z0-9_-]{1,64}
+            characters: text.length,
+            duration_s: durationS,
+            duration_source: durationSource,
+          },
+        });
 
         // ── PROVENANCE ── AI-generated audio, so the tour must be able to
         // disclose it. `kind` is "other": migration 0012's check constraint

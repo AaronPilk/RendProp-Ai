@@ -148,6 +148,20 @@ absent, return `words: []` rather than guessing — captions degrade off, they n
 - **Rate limit** — 20 per 5 minutes per org.
 - **Provenance** — write a `media_provenance` row: this is AI-generated audio and the tour has to
   be able to disclose it.
+- **Cost ledger (added 2026-09-07).** Write one org-scoped `cost_ledger` row per successful
+  voiceover — `feature: "voiceover"`, `job_id: NULL`, units = characters ÷ 1000 against the
+  `tts.captioned` route's `1k_chars` unit (22¢/1k), via `recordRoutedAiCost()`. Until this was
+  added the route wrote **no** ledger row at all, so an 8.8¢ voiceover was invisible to
+  `GET /admin/spend` and to the per-org monthly COGS ceiling — the same class of defect audit
+  F-E-15 opened against `ai-photo`. Best effort and never on the critical path: the audio is
+  already generated and already billed by the time it runs.
+  **No failover.** The step is *read* from `resolveChain('tts.captioned', …)` for its
+  provider/model/price and the vendor call is unchanged: `tts.captioned` has one vendor, and
+  0018's own note on that row says a caller "must surface the outage rather than silently
+  degrade" — failing over to a plain-TTS step would return audio with no alignment and captions
+  would silently stop rendering. The route's `model` is the endpoint slug (`with-timestamps`),
+  which is what the ledger records; the spoken model is still `ELEVENLABS_MODEL_ID` or the
+  vendor default. See `docs/COPY-ASSIST-CONTRACT.md` §7.
 
 ### iOS API client (agent B owns these too)
 

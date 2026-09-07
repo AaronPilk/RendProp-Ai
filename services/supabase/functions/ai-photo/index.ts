@@ -29,6 +29,14 @@
 //       guardrails are appended server-side as usual. (The image is not needed
 //       for this mode and is ignored if sent.)
 //
+//       SUPERSEDED BY `POST /ai-copy/edit-prompt` (2026-09-07), which does the
+//       same job with an org burst limiter, a cost_ledger row and the LISTING's
+//       space_type. This mode is kept because SHIPPED APP BUILDS STILL CALL IT
+//       and nothing the client sees may change — but it is now a thin forward:
+//       the words come from the one shared polisher, ai-copy/prompt.ts
+//       `editPromptInstruction()`, so the two cannot drift. New clients should
+//       call /ai-copy/edit-prompt. See docs/COPY-ASSIST-CONTRACT.md.
+//
 // Needs the GEMINI_API_KEY function secret. Returns the edited image inline
 // (base64, with Gemini's ACTUAL mime type) so the app can show a before/after.
 // Errors carry { error, code } — 402 plan_required / 429 quota_exceeded carry
@@ -90,6 +98,13 @@ import {
   routedR2Key,
 } from "../_shared/providers/common.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
+// THE SHARED PROMPT POLISHER. Yes, this reaches into a sibling function's
+// folder — the same mechanism `../_shared/…` uses (both live under functions/
+// and both are followed by the bundler at deploy). ai-copy/prompt.ts imports
+// NOTHING, precisely so it can be pulled in here without dragging ai-copy's
+// handler, its router glue or its Supabase clients into this function's bundle.
+// See ai-copy/prompt.ts's header and improvePrompt() below.
+import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -483,8 +498,11 @@ function provenanceKind(edit: string): ProvenanceKind {
 }
 
 const MAX_CUSTOM_PROMPT = 600;
-const MAX_IMPROVE_INPUT = 300;  // rough idea in
-const MAX_IMPROVE_OUTPUT = 400; // polished instruction out
+// The improve_prompt caps now come from the SHARED polisher module so this
+// function and POST /ai-copy/edit-prompt cannot disagree about them. Same
+// numbers as before (300 in / 400 out) — this is a re-export, not a change.
+const MAX_IMPROVE_INPUT = MAX_PROMPT_INPUT;   // rough idea in
+const MAX_IMPROVE_OUTPUT = MAX_PROMPT_OUTPUT; // polished instruction out
 
 /** Wrap a user's free-text instruction with the guardrails every edit gets. */
 function customPrompt(p: Profile, userText: string): string {
@@ -556,7 +574,7 @@ Deno.serve(async (req) => {
       assertFairHousing(rough, "That idea", await gateSpace());
       const helperCharge = await guardHelper(user.id, req);
       try {
-        return json({ prompt: await improvePrompt(rough, profile), space_type: space });
+        return json({ prompt: await improvePrompt(rough, space), space_type: space });
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -810,23 +828,28 @@ async function suggestEdits(imageB64: string, mime: string, profile: Profile): P
   return out;
 }
 
-function improveInstruction(p: Profile): string {
-  return (
-    `You polish rough photo-edit requests from ${p.audience} into precise instructions ` +
-    `for an AI photo editor working on a real ${p.photo}.\n\n` +
-    "Rewrite the user's idea as ONE clear, imperative edit instruction: concrete about what " +
-    "changes and what stays, photorealistic, plausible for a real place, no camera jargon, " +
-    "no markdown, no quotes, a single paragraph of at most 400 characters. Keep the user's " +
-    "intent exactly — never invent extra changes they did not ask for. Do NOT add boilerplate " +
-    "about preserving architecture; the system appends that separately.\n\n" +
-    'Reply with STRICT JSON only: {"prompt":"<rewritten instruction>"}'
-  );
-}
-
-/** edit:"improve_prompt" — rewrite a rough custom-edit idea into a precise one. */
-async function improvePrompt(rough: string, profile: Profile): Promise<string> {
+/**
+ * edit:"improve_prompt" — rewrite a rough custom-edit idea into a precise one.
+ *
+ * THIN FORWARD TO THE SHARED POLISHER (2026-09-07). The instruction this used
+ * to build locally now lives in ai-copy/prompt.ts `editPromptInstruction()`,
+ * which POST /ai-copy/edit-prompt builds from as well, so there is ONE
+ * prompt-polisher rather than two that drift apart the first time either is
+ * improved. The shared version is also STRONGER: it asks for the same density
+ * of direction a preset carries (what changes / what stays IDENTICAL /
+ * materials, shadows and reflections that match the existing light), which is
+ * the asymmetry this whole feature exists to close — a preset edit got ~60
+ * words of engineered direction while a custom edit got one sentence.
+ *
+ * NOTHING THE CLIENT SEES MOVES. Shipped app builds still call
+ * `edit:"improve_prompt"` on THIS function; the request body, the response
+ * shape ({ prompt, space_type }), the caps (300 in / 400 out), the gate order,
+ * the model (TEXT_MODEL) and the helper limiter are all unchanged. Only the
+ * words inside the prompt changed.
+ */
+async function improvePrompt(rough: string, space: SpaceType): Promise<string> {
   const raw = await geminiText(
-    [{ text: improveInstruction(profile) + "\n\nUser's idea: " + rough }],
+    [{ text: editPromptInstruction(space) + "\n\nUser's idea: " + rough }],
     true,
   );
 

@@ -2561,6 +2561,22 @@ struct PhotoStudioView: View {
         let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
         return live.aerialURL.map { [$0] } ?? []
     }
+    /// This listing's server row, when it already has one. Sent with the prompt
+    /// assist so the server's fair-housing gate is scoped to THIS listing's real
+    /// space type (COPY-ASSIST-CONTRACT §5) — without it the gate falls back to
+    /// the strictest, housing rules, which is right for a home and would refuse
+    /// a restaurant's "family-style patio".
+    ///
+    /// Read straight off the model rather than through
+    /// `serverListingIDForCompliance`: that helper CREATES the server listing
+    /// when there isn't one, and a text-only prompt rewrite is not a reason to
+    /// make a row on the server. An unsynced listing simply gets the strict
+    /// gate, which fails closed.
+    private var listingServerID: UUID? {
+        guard !listing.isSample else { return nil }
+        return (model.listings.first(where: { $0.id == listing.id }) ?? listing).serverID
+    }
+
     private func setMain(_ p: EnhancedPhoto) {
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
@@ -2751,7 +2767,8 @@ struct PhotoStudioView: View {
         }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
         .sheet(item: $customEditPhoto) { p in
-            CustomEditSheet(photo: p, api: model.api) { prompt in
+            CustomEditSheet(photo: p, api: model.api, space: space,
+                            listingServerID: listingServerID) { prompt in
                 aiEdit(p, "custom", prompt: prompt)
             }
         }
@@ -3727,11 +3744,21 @@ struct PhotoCompareView: View {
 struct CustomEditSheet: View {
     let photo: EnhancedPhoto             // the photo this prompt will edit
     let api: APIClient                   // snapshot from the presenting view
+    /// The business type the examples speak in — a gym's starter ideas are not
+    /// a restaurant's. Passed in because this sheet has no listing of its own.
+    let space: SpaceType
+    /// The listing's SERVER id when it has one, so the prompt rewrite is gated
+    /// against this listing's real space type rather than the strictest rules.
+    /// nil is supported and simply fails closed.
+    let listingServerID: UUID?
     let onGenerate: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var prompt = ""
     @State private var isImproving = false       // "Improve my prompt" in flight
     @State private var improveError: String?
+    /// The area named by the starter chip the person tapped, sent as
+    /// `room_hint`. See `StarterChip` for why this is the room signal we have.
+    @State private var pickedArea: String?
 
     private var trimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3753,6 +3780,8 @@ struct CustomEditSheet: View {
                     .font(.rpCaption)
                     .foregroundStyle(prompt.count >= 600 ? Theme.warn : Theme.inkDim)
                     .frame(maxWidth: .infinity, alignment: .trailing)
+
+                starterChipsRow
 
                 // Rough idea in → sharper prompt back (replaces the field text;
                 // still fully editable before Generate).
@@ -3808,15 +3837,179 @@ struct CustomEditSheet: View {
             }
             .onChange(of: prompt) { newValue in
                 if newValue.count > 600 { prompt = String(newValue.prefix(600)) }
+                // An emptied box means the starter chip that named an area is
+                // gone too: whatever gets typed next may be about a different
+                // room, and a stale `room_hint` is worse than none.
+                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pickedArea = nil
+                }
             }
         }
         .presentationDetents([.medium, .large])
     }
 
-    /// Send the rough idea + this photo through `ai-photo` (edit:
-    /// "improve_prompt") and REPLACE the field with the sharper version. The
-    /// user can still edit before Generate; the 600-char cap stays enforced by
-    /// onChange above. The JPEG prep runs off the main actor.
+    // MARK: Starter chips — somewhere to begin when the box is empty
+
+    /// One tappable example instruction.
+    ///
+    /// `area` is the room or area the example is about, and it rides along as
+    /// `room_hint` when the person then asks for a better prompt. It is the
+    /// ONLY room signal this screen has: the photos in the studio are imported
+    /// files with no tag of their own, and the walkthrough's room tags are
+    /// anchored to a TIMELINE (`RoomTag.tMs`) rather than to any still. If a
+    /// photo ever carries its own tag, that becomes the better source and this
+    /// stays as the fallback for a typed idea.
+    struct StarterChip: Identifiable, Hashable {
+        /// What the capsule says. Short — it has to fit on a phone.
+        let label: String
+        /// The area this example is about; nil when it is about the whole shot.
+        let area: String?
+        /// What tapping it puts in the field. A whole, specific instruction —
+        /// the point is to show what "specific" looks like.
+        let text: String
+        var id: String { label }
+    }
+
+    /// Examples in the vocabulary of THIS business type. Drawn from the same
+    /// area names the room tagger offers (`SpaceType.quickTags`) and the detail
+    /// fields the owner already filled in for their industry, so the words are
+    /// ones they use — a gym racks weights, a store faces shelves.
+    ///
+    /// Deliberately NOT the preset edits: twilight, sky, lawn, declutter and
+    /// staging are buttons of their own one screen back. These are the things
+    /// only free text can ask for.
+    ///
+    /// `nonisolated` because it is pure and is read from a view property, not
+    /// from `body`.
+    nonisolated static func starterChips(for space: SpaceType) -> [StarterChip] {
+        switch space {
+        case .realEstate:
+            return [
+                StarterChip(label: "Clear the counters", area: "Kitchen",
+                            text: "Clear everything off the kitchen counters and make the surfaces look freshly wiped. Keep the cabinets, appliances and layout exactly as photographed."),
+                StarterChip(label: "Fresh white walls", area: nil,
+                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window, fixture and piece of furniture exactly where it is."),
+                StarterChip(label: "Warm evening light", area: "Living Room",
+                            text: "Relight the room with warm evening light coming through the windows, keeping the furniture and the architecture exactly as photographed."),
+                StarterChip(label: "Tidy the yard", area: "Backyard",
+                            text: "Tidy the yard: clear the hose, bins and loose items, and make the beds look freshly mulched. Keep the house and the planting exactly as photographed."),
+                StarterChip(label: "Empty the driveway", area: "Exterior",
+                            text: "Remove the cars and the bins from the driveway and the street in front, keeping the house exactly as photographed."),
+            ]
+        case .venue:
+            return [
+                StarterChip(label: "Set it for an event", area: "Main Hall",
+                            text: "Set the room for an evening event: round tables, linens and chairs neatly placed, keeping the room's architecture and fixtures exactly as photographed."),
+                StarterChip(label: "Warm up the lighting", area: "Main Hall",
+                            text: "Relight the room with warm evening lighting and a soft glow on the walls, keeping every fixture exactly as photographed."),
+                StarterChip(label: "Clear the clutter", area: nil,
+                            text: "Remove the stacked chairs, cables and boxes from the shot, keeping the room exactly as photographed."),
+                StarterChip(label: "Dress the patio", area: "Patio",
+                            text: "Dress the patio for a summer evening with string lights and set tables, keeping the building and the planting exactly as photographed."),
+            ]
+        case .restaurant:
+            return [
+                StarterChip(label: "Set the tables", area: "Dining",
+                            text: "Set the dining tables with clean linens, glassware and cutlery, keeping the room's layout and fixtures exactly as photographed."),
+                StarterChip(label: "Warm dinner light", area: "Dining",
+                            text: "Relight the room for dinner service — warm, low light with a glow over each table — keeping every fixture exactly as photographed."),
+                StarterChip(label: "Tidy the bar", area: "Bar",
+                            text: "Clear the bar top and straighten the bottles and glassware behind it, keeping the bar exactly as photographed."),
+                StarterChip(label: "Dress the patio", area: "Patio",
+                            text: "Dress the patio for an evening with string lights and set tables, keeping the building and the planting exactly as photographed."),
+            ]
+        case .retail:
+            return [
+                StarterChip(label: "Face the shelves", area: "Aisles",
+                            text: "Straighten and face every product on the shelves so the aisle looks freshly stocked, keeping the fixtures and the signage exactly as photographed."),
+                StarterChip(label: "Fresh produce", area: "Produce",
+                            text: "Make the produce look freshly stocked and glistening, keeping the display and the store exactly as photographed."),
+                StarterChip(label: "Clear the checkout", area: "Checkout",
+                            text: "Clear the clutter from the checkout counter and tidy the racks beside it, keeping the fixtures exactly as photographed."),
+                StarterChip(label: "Brighter aisles", area: "Aisles",
+                            text: "Brighten the aisle lighting so the shelves read clearly, keeping the colors true and the fixtures exactly as photographed."),
+            ]
+        case .fitness:
+            return [
+                StarterChip(label: "Rack the weights", area: "Weights",
+                            text: "Rack every loose weight and clear the floor, keeping the equipment and the room exactly as photographed."),
+                StarterChip(label: "Wipe it down", area: "Main Floor",
+                            text: "Make the floor and the equipment look freshly cleaned, keeping every machine exactly where it is."),
+                StarterChip(label: "Brighter floor", area: "Main Floor",
+                            text: "Brighten the room so the whole floor reads clearly, keeping the colors true and the equipment exactly as photographed."),
+                StarterChip(label: "Tidy the lockers", area: "Locker Room",
+                            text: "Clear the benches and close the locker doors so the room looks freshly cleaned, keeping the fixtures exactly as photographed."),
+            ]
+        case .other:
+            return [
+                StarterChip(label: "Clear the clutter", area: "Main Area",
+                            text: "Remove the boxes, cables and loose items from the shot, keeping the room exactly as photographed."),
+                StarterChip(label: "Fresh white walls", area: nil,
+                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window and fixture exactly where it is."),
+                StarterChip(label: "Warm evening light", area: "Main Area",
+                            text: "Relight the room with warm evening light, keeping the furniture and the architecture exactly as photographed."),
+                StarterChip(label: "Tidy the entrance", area: "Entrance",
+                            text: "Tidy the entrance: clear the signage clutter and make the glass and the floor look freshly cleaned, keeping the building exactly as photographed."),
+            ]
+        }
+    }
+
+    /// The examples, shown ONLY while the box is empty.
+    ///
+    /// That is the whole problem they solve — "Ask for anything" opened onto a
+    /// blank field and a 600-char counter, which tells a person how much room
+    /// they have and nothing about what to put in it. Once there are words on
+    /// screen the next move is "Improve my prompt", and a row of examples under
+    /// a half-typed sentence is just noise. Hiding them also means a tap can
+    /// only ever fill an EMPTY field, so no chip can destroy something typed.
+    @ViewBuilder private var starterChipsRow: some View {
+        if trimmed.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Not sure what to ask for? Start with one of these and edit it.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.starterChips(for: space)) { chip in
+                            starterChipButton(chip)
+                        }
+                    }
+                    .padding(.vertical, 1)   // so the capsules aren't clipped
+                }
+            }
+        }
+    }
+
+    private func starterChipButton(_ chip: StarterChip) -> some View {
+        Button { fill(with: chip) } label: {
+            Text(chip.label)
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.accentSoft, in: Capsule())
+        }
+        .buttonStyle(ScalePressStyle())
+        .disabled(isImproving)
+        .accessibilityLabel(Text("\(chip.label). Puts an example in the box that you can edit."))
+    }
+
+    private func fill(with chip: StarterChip) {
+        prompt = String(chip.text.prefix(600))
+        pickedArea = chip.area
+        Haptics.selection()
+    }
+
+    /// Send the rough idea through `ai-copy/edit-prompt` and REPLACE the field
+    /// with the sharper version. The user can still edit before Generate; the
+    /// 600-char cap stays enforced by onChange above.
+    ///
+    /// NO PHOTO IS ENCODED. This used to base64 a 1024 px JPEG first and hand
+    /// it over — but `improve_prompt` has been text-only on the server since
+    /// audit F-E-16, and `LiveAPIClient` was already dropping the bytes on the
+    /// floor. That left a multi-megabyte encode running on the main path of the
+    /// one AI call in the app that is meant to feel instant.
     private func improvePrompt() {
         let rough = trimmed
         guard !rough.isEmpty, !isImproving else { return }
@@ -3824,25 +4017,35 @@ struct CustomEditSheet: View {
         improveError = nil
         Haptics.selection()
         let api = self.api
-        let source = photo.enhancedURL
+        let hint = pickedArea            // nil unless a starter chip named an area
+        let serverID = listingServerID
+        let spaceRaw = space.rawValue
         Task {
             do {
-                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1024, quality: 0.8) else {
-                    throw AIImagePrep.error("Couldn't read that photo.")
-                }
-                let improved = try await api.aiImprovePrompt(
-                    imageBase64: b64, mime: "image/jpeg",
-                    prompt: String(rough.prefix(300)))
+                let improved = try await api.aiImprovePrompt(rough: String(rough.prefix(300)),
+                                                             roomHint: hint,
+                                                             listingServerID: serverID)
+                let text = String(improved.prefix(600))
                 await MainActor.run {
-                    prompt = String(improved.prefix(600))
+                    prompt = text
                     isImproving = false
                     Haptics.success()
+                    // No prompt text and no photo id in the props — a length and
+                    // an enum, per Analytics.swift's rule.
+                    Analytics.track("ai_prompt_improved",
+                                    ["space_type": spaceRaw,
+                                     "chars": String(text.count),
+                                     "ok": "true"])
                 }
             } catch {
                 let why = AIFailure(error).fullMessage
                 await MainActor.run {
                     isImproving = false
                     improveError = why
+                    // Deliberately NO reason prop: the server's message is
+                    // written for a person and can quote their own words back.
+                    Analytics.track("ai_prompt_improved",
+                                    ["space_type": spaceRaw, "ok": "false"])
                 }
             }
         }
@@ -5071,6 +5274,25 @@ struct ReelStudioView: View {
     /// reel with no voiceover, exactly as before this feature existed.
     private enum VoiceMode: Hashable { case off, myVoice, aiVoice }
 
+    /// How an AI-written script should sound. The raw values ARE the contract's
+    /// `tone` values — one place, so a rename can't silently send a word the
+    /// server doesn't know.
+    ///
+    /// Kept deliberately unobtrusive in the UI: `defaultTone(for:)` already
+    /// picks the one that suits the space type, so nobody has to touch it, and
+    /// nobody is asked a question before they get their script.
+    private enum ScriptTone: String, CaseIterable, Hashable {
+        case warm, punchy, luxury
+
+        var label: String {
+            switch self {
+            case .warm:   return "Warm"
+            case .punchy: return "Punchy"
+            case .luxury: return "Luxury"
+            }
+        }
+    }
+
     /// Text burned onto the exported reel. Plain Sendable strings — resolved on
     /// the main actor in generate(), rendered as CALayers inside stitch.
     struct ReelCaptions: Sendable {
@@ -5134,6 +5356,15 @@ struct ReelStudioView: View {
     @State private var selectedVoiceID = ""
     @State private var loadingVoices = false
     @State private var ttsInFlight = false            // one TTS call per tap (money)
+    // "Write my script" sub-state.
+    @State private var scriptInFlight = false         // one script call per tap
+    @State private var showScriptReplaceConfirm = false
+    /// How the script should sound. Seeded ONCE in `onAppear` from
+    /// `defaultTone(for:)` so the default follows the space type without this
+    /// view needing an `init`, and never touched again — a tone the agent
+    /// picked survives every mode switch and every re-appearance.
+    @State private var tone: ScriptTone = .warm
+    @State private var seededTone = false
 
     private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
@@ -5206,6 +5437,13 @@ struct ReelStudioView: View {
                 selectedExtras = extraClipURLs
                 seededExtras = true
             }
+            // The tone that suits this trade, picked once. Guarded like
+            // `seededExtras` above: onAppear can fire again, and it must not
+            // undo a choice the agent made.
+            if !seededTone {
+                tone = Self.defaultTone(for: space)
+                seededTone = true
+            }
             lastReel = Self.newestReel(for: listing.id)
             // Pick up clips a previous run generated and was charged for but
             // never stitched — the reel equivalent of resuming a pending aerial.
@@ -5250,6 +5488,17 @@ struct ReelStudioView: View {
             Button("Keep them", role: .cancel) {}
         } message: {
             Text("These clips were already generated and already charged. Deleting them means making them again costs another round of AI.")
+        }
+        // Asked ONLY when there are already words in the box. The likeliest
+        // words are the transcript of a recording the agent made themselves
+        // (carried over when they switch to AI voice), and nothing here is
+        // allowed to throw that away without being told to.
+        .confirmationDialog("Replace what's in the box?", isPresented: $showScriptReplaceConfirm,
+                            titleVisibility: .visible) {
+            Button("Write a new script", role: .destructive) { runScriptWriter() }
+            Button("Keep what I have", role: .cancel) {}
+        } message: {
+            Text("There are already words in the script box. Writing a new one replaces every one of them — including anything carried over from a recording you made.")
         }
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
@@ -5841,24 +6090,126 @@ struct ReelStudioView: View {
 
     // --- AI voice: script + voice → ElevenLabs (spends money; sign-in gated) ---
 
+    // Every body here stays tiny on purpose — see the note above
+    // `stepVoiceCard`. `aiVoicePane` is a list of identifiers and nothing else.
     @ViewBuilder private var aiVoicePane: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Type what the voice should say — e.g. 'Welcome to 12 Oak Lane. Three beds, two baths.'",
-                      text: $aiScript, axis: .vertical)
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-                .disabled(ttsInFlight)
+            scriptAssistRow
+            scriptField
+            scriptLengthRow
+            scriptLengthNote
             aiVoicePicker
-            Button { generateAIVoice() } label: {
-                Label(ttsInFlight ? "Making the voice…" : "Make the voice", systemImage: "waveform")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 16)
-                    .background(aiCanGenerate ? Theme.accent : Theme.fillSubtle)
-                    .foregroundStyle(aiCanGenerate ? Color.white : Theme.inkDim)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .disabled(!aiCanGenerate)
+            makeVoiceButton
         }
+    }
+
+    /// "Write my script" — wearing the same clothes as "✨ Improve my prompt" in
+    /// the photo studio on purpose. They are one feature in two places: the AI
+    /// writes the words, the person edits them. Anyone who has used one should
+    /// recognise the other on sight.
+    @ViewBuilder private var scriptAssistRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { writeScript() } label: {
+                HStack(spacing: 8) {
+                    if scriptInFlight {
+                        ProgressView().tint(Theme.accent)
+                        Text("Writing your script…")
+                    } else {
+                        Text("✨ Write my script")
+                    }
+                }
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .disabled(scriptInFlight || ttsInFlight)
+            .accessibilityIdentifier("reel.script.write")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Uses this \(space.spaceNoun)'s own details. Every word stays editable.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                toneMenu
+            }
+        }
+    }
+
+    /// Tone lives HERE — one small menu beside the explanation line, not a step
+    /// of its own and not a question anybody has to answer. The default already
+    /// suits the space type.
+    private var toneMenu: some View {
+        Picker("Tone", selection: $tone) {
+            ForEach(ScriptTone.allCases, id: \.self) { t in
+                Text(t.label).tag(t)
+            }
+        }
+        .pickerStyle(.menu)
+        .tint(Theme.accent)
+        .font(.rpCaption)
+        .disabled(scriptInFlight)
+        .accessibilityLabel(Text("How the script should sound"))
+    }
+
+    private var scriptField: some View {
+        TextField("Type what the voice should say — e.g. 'Welcome to 12 Oak Lane. Three beds, two baths.'",
+                  text: $aiScript, axis: .vertical)
+            .lineLimit(2...5)
+            .textFieldStyle(.roundedBorder)
+            .disabled(ttsInFlight || scriptInFlight)
+            .accessibilityIdentifier("reel.script.field")
+    }
+
+    /// Live length, in BOTH units that matter: characters against the server's
+    /// hard 1,000-char cap, and seconds against the reel this script has to fit.
+    ///
+    /// Neither was visible before. The cap announced itself as a 400 only after
+    /// somebody had written a paragraph, and the overrun announced itself as a
+    /// finished video that freezes on its last picture — because `stitch()`
+    /// HOLDS the final frame rather than cutting the speaker off. Both are now
+    /// on screen before a cent is spent. Same shape as the 600-char counter in
+    /// `CustomEditSheet`.
+    private var scriptLengthRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(Self.scriptLengthLabel(count: aiScript.count,
+                                        readSeconds: scriptReadSeconds,
+                                        reelSeconds: reelSeconds,
+                                        budget: scriptBudget))
+                .font(.rpCaption)
+                .foregroundStyle(scriptOverrunsReel ? Theme.warn : Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Text("\(aiScript.count)/\(Self.scriptCharacterCap)")
+                .font(.rpCaption)
+                .foregroundStyle(aiScript.count > Self.scriptCharacterCap ? Theme.warn : Theme.inkDim)
+        }
+    }
+
+    /// The plain-words consequence, and only when there IS one. A warning, never
+    /// a block: the script is the agent's, and "this will look like X" is the
+    /// app's job — deciding for them is not.
+    @ViewBuilder private var scriptLengthNote: some View {
+        if aiScript.count > Self.scriptCharacterCap {
+            Text("That's longer than \(Self.scriptCharacterCap) characters, which is the most the AI voice reads in one go. Trim it or making the voice will fail.")
+                .font(.rpCaption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if scriptOverrunsReel {
+            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your reel is \(reelSeconds) seconds long. The video will freeze on its last picture while the voice finishes — add photos, or cut a sentence.")
+                .font(.rpCaption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var makeVoiceButton: some View {
+        Button { generateAIVoice() } label: {
+            Label(ttsInFlight ? "Making the voice…" : "Make the voice", systemImage: "waveform")
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 16)
+                .background(aiCanGenerate ? Theme.accent : Theme.fillSubtle)
+                .foregroundStyle(aiCanGenerate ? Color.white : Theme.inkDim)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .disabled(!aiCanGenerate)
     }
 
     @ViewBuilder private var aiVoicePicker: some View {
@@ -5887,8 +6238,89 @@ struct ReelStudioView: View {
     }
 
     private var aiCanGenerate: Bool {
-        !ttsInFlight && !selectedVoiceID.isEmpty
+        // `!scriptInFlight` is an in-flight guard, not a new gate: spending money
+        // on the voice while the script field is about to be replaced under the
+        // agent would speak the OLD words. Sign-in, consent and quota are all
+        // exactly where they were.
+        !ttsInFlight && !scriptInFlight && !selectedVoiceID.isEmpty
             && aiScript.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
+    }
+
+    // MARK: Script length — the constraint, made visible
+
+    /// The server's hard cap on one TTS call (`aiVoiceTTS`, contract §). Shown,
+    /// never silently enforced: `aiScript` can be seeded with the transcript of
+    /// a recording the agent actually made, and truncating THAT on sight would
+    /// destroy the one thing the app cannot regenerate.
+    private static let scriptCharacterCap = 1_000
+
+    /// How long the finished reel runs, in seconds.
+    ///
+    /// Every AI clip is generated at a FIXED 5 s (`makeClip` submits
+    /// `seconds: 5`), so the reel is 5 s per selected item. The ready-made
+    /// extras — today only the aerial intro — are counted at 5 s too; a real
+    /// aerial is 4–8 s, so this can be a couple of seconds out on a reel that
+    /// has one. That is fine for its only job, which is telling a person
+    /// roughly how many words fit; nothing in the export is laid out on it.
+    private var reelSeconds: Int { 5 * totalSelected }
+
+    /// What the script is written to fit — the reel's length, inside the
+    /// contract's supported 10…45 s window.
+    private var targetSeconds: Int { min(45, max(10, reelSeconds)) }
+
+    /// Roughly how long `aiScript` takes to read aloud.
+    private var scriptReadSeconds: Double {
+        Double(aiScript.count) / AIScriptResult.charactersPerSecond
+    }
+
+    /// The character budget that fits the reel exactly — what to aim for when
+    /// the box is still empty.
+    private var scriptBudget: Int {
+        min(Self.scriptCharacterCap, Int(Double(reelSeconds) * AIScriptResult.charactersPerSecond))
+    }
+
+    /// True when the voice will still be talking after the last picture. The
+    /// half-second of slack keeps a script that lands on the line from flashing
+    /// a warning at every keystroke.
+    private var scriptOverrunsReel: Bool {
+        reelSeconds > 0 && scriptReadSeconds > Double(reelSeconds) + 0.5
+    }
+
+    /// The line above the counter. `nonisolated` and pure — it is called from a
+    /// view property rather than from `body`, so it must not be isolated to the
+    /// main actor by inference (that mismatch has broken this build before).
+    nonisolated private static func scriptLengthLabel(count: Int, readSeconds: Double,
+                                                      reelSeconds: Int, budget: Int) -> String {
+        guard reelSeconds > 0 else {
+            return "Pick your photos first — then this shows how long the script can be."
+        }
+        if count == 0 {
+            return "About \(budget) characters fits your \(reelSeconds)-second reel."
+        }
+        return "About \(wholeSeconds(readSeconds))s to read · your reel is \(reelSeconds)s"
+    }
+
+    nonisolated private static func wholeSeconds(_ seconds: Double) -> Int {
+        // Clamped before the conversion: `Int(someHugeDouble)` traps, and this
+        // number only ever gets printed in a sentence.
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return Int(min(seconds, 86_400).rounded())
+    }
+
+    // MARK: Tone
+
+    /// Which tone suits which trade. A home is a place somebody will live in; a
+    /// store has ten seconds to get a person off a couch; a venue is selling an
+    /// occasion. `nonisolated` and pure — it reads nothing but its argument.
+    nonisolated private static func defaultTone(for space: SpaceType) -> ScriptTone {
+        switch space {
+        case .realEstate: return .warm
+        case .venue:      return .luxury
+        case .restaurant: return .warm
+        case .retail:     return .punchy
+        case .fitness:    return .punchy
+        case .other:      return .warm
+        }
     }
 
     // --- Finished take: playback + caption toggle (maps to CaptionStyle) ---
@@ -6086,6 +6518,216 @@ struct ReelStudioView: View {
                 }
             }
         }
+    }
+
+    // MARK: "Write my script"
+
+    /// Write the reel's script from this listing's own data — no questions
+    /// asked. Everything it needs is already on the listing (beds, baths, sqft,
+    /// price, tagline, the industry detail fields, the city/state) and on the
+    /// reel itself (how many photos, which areas, how long it runs).
+    ///
+    /// NEVER CLOBBERS WORDS THAT ARE ALREADY THERE. The field can be holding
+    /// the transcript of a recording the agent actually made — `onChange(of:
+    /// voiceMode)` seeds `aiScript` from `voiceover?.transcript` when they
+    /// switch to AI voice — and quietly replacing THAT with a machine's version
+    /// throws away the one thing no button can redo. A non-empty field asks.
+    private func writeScript() {
+        guard signedIn else { showSignIn = true; return }
+        guard !scriptInFlight else { return }
+        guard aiScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showScriptReplaceConfirm = true
+            return
+        }
+        runScriptWriter()
+    }
+
+    /// The call itself. Sign-in gated (the AI runs on the account); one call per
+    /// tap; the result lands in the EDITABLE field, never in a modal — the whole
+    /// point is that the agent fixes the two words the model got wrong.
+    private func runScriptWriter() {
+        guard signedIn else { showSignIn = true; return }
+        guard !scriptInFlight else { return }
+        scriptInFlight = true
+        voiceError = nil
+        voiceNote = nil
+        Haptics.selection()
+
+        // Everything the request needs is read HERE, on the main actor, into
+        // plain Sendable values. The Task below never reaches back into the
+        // model or the view for anything.
+        let api = model.api
+        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        let request = Self.scriptRequest(for: live, space: space,
+                                         roomTags: model.assets[listing.id]?.roomTags ?? [],
+                                         photoCount: totalSelected,
+                                         targetSeconds: targetSeconds,
+                                         tone: tone.rawValue)
+        let address = live.address
+        let noun = space.spaceNoun
+        let listingID = listing.id
+        let isSample = listing.isSample
+        let spaceRaw = space.rawValue
+        let toneRaw = tone.rawValue
+        let target = targetSeconds
+
+        Task {
+            do {
+                // Scopes the server's fair-housing gate to THIS listing's real
+                // space type (COPY-ASSIST-CONTRACT §5). Resolved exactly the way
+                // `generateAIVoice` resolves it one tap later in this same
+                // flow, so this adds no side effect the voiceover path doesn't
+                // already have.
+                var req = request
+                // Only ever an UPGRADE on what `scriptRequest` already read off
+                // the listing: a nil answer here (offline, signed out, listing
+                // gone) must not throw away an id we already knew.
+                if !isSample, let resolved = await model.serverListingIDForCompliance(listingID) {
+                    req.listingServerID = resolved
+                }
+                let result = try await api.aiCopyScript(req)
+                let filled = Self.filledAddress(result.script, address: address,
+                                                fallbackNoun: noun)
+                await MainActor.run {
+                    aiScript = filled
+                    scriptInFlight = false
+                    Haptics.success()
+                    // A length, two enums and a count. No script text, no
+                    // address, no listing id — see the header on Analytics.swift.
+                    Analytics.track("ai_script_written",
+                                    ["space_type": spaceRaw, "tone": toneRaw,
+                                     "chars": String(filled.count),
+                                     "target_s": String(target), "ok": "true"])
+                }
+            } catch {
+                // A fair-housing refusal (400 unsupported_edit) fails
+                // identically every time, so this is shown and never retried —
+                // the same rule the TTS call already follows.
+                let message = AIFailure(error).message
+                await MainActor.run {
+                    scriptInFlight = false
+                    voiceError = message
+                    // No reason prop: the server's message is written for a
+                    // person and can quote the listing's own words back.
+                    Analytics.track("ai_script_written",
+                                    ["space_type": spaceRaw, "tone": toneRaw,
+                                     "target_s": String(target), "ok": "false"])
+                }
+            }
+        }
+    }
+
+    /// Build the wire request from the listing.
+    ///
+    /// THE STREET ADDRESS IS NOT IN HERE AND MUST NEVER BE. `AICopyFacts` has
+    /// no field that could carry one — only `region` (city/state), which is
+    /// exactly the line the aerial path already sends for scenery context. The
+    /// model is told it is writing about a three-bed home in Charlotte, NC; it
+    /// is never told which one. The name goes back in on this device, in
+    /// `filledAddress`.
+    ///
+    /// `nonisolated` and pure: it takes value types and returns a value type.
+    nonisolated private static func scriptRequest(for listing: Listing, space: SpaceType,
+                                                  roomTags: [RoomTag], photoCount: Int,
+                                                  targetSeconds: Int, tone: String) -> AIScriptRequest {
+        var facts = AICopyFacts()
+        // Real estate is the only type with beds/baths/sqft/price; the rest are
+        // data-driven from `detailFields` (SpaceType.showsPropertyDetails).
+        if space.showsPropertyDetails {
+            if listing.beds > 0 { facts.beds = listing.beds }
+            if listing.baths > 0 { facts.baths = listing.baths }
+            if listing.sqft > 0 { facts.sqft = listing.sqft }
+            if listing.price.cents > 0 { facts.priceLabel = listing.price.formatted }
+        }
+        if let tagline = listing.tagline?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tagline.isEmpty {
+            facts.tagline = tagline
+        }
+        if let region = listing.regionLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !region.isEmpty {
+            facts.region = region
+        }
+        // The industry fields the owner actually filled in — a venue's capacity,
+        // a restaurant's cuisine, a gym's trial offer. URL fields are skipped:
+        // a booking link is for tapping, not for reading aloud.
+        var details: [String: String] = [:]
+        for field in space.detailFields where !field.isURL {
+            let value = listing.detail(field.key).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            details[field.key] = value
+        }
+        facts.details = details
+
+        // WALK ORDER — the order the areas were tagged during the walkthrough,
+        // which is the order a viewer meets them in. Sorted by timestamp because
+        // a tag added later can be for an earlier moment.
+        let tags = roomTags
+            .sorted { $0.tMs < $1.tMs }
+            .map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return AIScriptRequest(
+            // Attribution only, and only when the listing ALREADY has a server
+            // row: this route writes no provenance (there is no media to
+            // disclose), so it is not worth a round-trip to create one.
+            listingServerID: listing.isSample ? nil : listing.serverID,
+            spaceType: space.rawValue,
+            facts: facts,
+            roomTags: tags,
+            photoCount: photoCount,
+            targetSeconds: targetSeconds,
+            tone: tone)
+    }
+
+    /// THE ONE PLACE the address goes back into a script.
+    ///
+    /// The server writes the literal `{address}` where the property should be
+    /// named and never learns what that is — the request carries `region`
+    /// ("Charlotte, NC") and nothing finer. Substituting here, on the device, is
+    /// what lets the voice say a real address out loud while the address itself
+    /// never reaches a third-party model or its request logs. It lives in one
+    /// function so there is exactly one line to audit.
+    ///
+    /// With no address to substitute the contract's rule is to DROP the sentence
+    /// the token is in rather than speak a placeholder — "Welcome to this one"
+    /// is worse than starting on the second sentence, and leaving "{address}"
+    /// in place makes the voice read three literal words out loud. Only if
+    /// dropping would leave nothing at all does the token collapse into the
+    /// neutral phrase this screen already uses elsewhere ("this home").
+    nonisolated private static func filledAddress(_ script: String, address: String,
+                                                  fallbackNoun: String) -> String {
+        // The exact token the server writes where the property should be named
+        // (COPY-ASSIST-CONTRACT §4). A local constant, so the four places that
+        // look for it can never disagree about what they are looking for.
+        let token = "{address}"
+        guard script.contains(token) else { return script }
+        let name = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty {
+            return script.replacingOccurrences(of: token, with: name)
+        }
+        let kept = sentences(of: script)
+            .filter { !$0.contains(token) }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !kept.isEmpty { return kept }
+        return script.replacingOccurrences(of: token, with: "this \(fallbackNoun)")
+    }
+
+    /// Split a script into sentences.
+    ///
+    /// Deliberately simple. This text was written moments ago by the copy model
+    /// as short marketing sentences — not prose full of abbreviations — and the
+    /// split is only ever used to drop a sentence from a script the agent is
+    /// about to edit by hand anyway. A wrong split costs one sentence too many
+    /// or too few in an editable box, never a wrong address.
+    nonisolated private static func sentences(of text: String) -> [String] {
+        let marked = text
+            .replacingOccurrences(of: ". ", with: ".\u{1}")
+            .replacingOccurrences(of: "! ", with: "!\u{1}")
+            .replacingOccurrences(of: "? ", with: "?\u{1}")
+        return marked.components(separatedBy: "\u{1}")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
     }
 
     /// Speak the script with ElevenLabs, download the audio, build the Voiceover.

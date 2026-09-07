@@ -112,12 +112,16 @@ Adapters: `fal.ts` (exists, refactor to interface), `gemini.ts` (exists), `eleve
 | `stt.captions` | word timestamps | apple on-device (0) → openai `whisper-1` 0.6/min (sunsets 2027-02-26) |
 | `stt.plain` | — | apple on-device → openai `gpt-transcribe` 0.45/min |
 | `text.listing_copy` | vision, compliant | anthropic `claude-sonnet-5` effort:low ~2.1/call → openai `gpt-5.6-terra` effort:none ~2.0 → gemini `gemini-3.8-flash` |
+| `copy.reel_script` | text, compliant | anthropic `claude-sonnet-5` effort:low 2.1/call → openai `gpt-5.6-terra` effort:none 2.0 → gemini `gemini-3.8-flash` 0.9 (estimated) — `text.listing_copy`'s chain verbatim, MINUS `vision` (no image is ever sent). Seeded by `0027_copy_routes.sql`; **no `legacy` row** (a new task, like `coach.chat`) |
+| `copy.photo_prompt` | text, compliant | the same three steps as `copy.reel_script`, same prices, same reason |
 | `judge.fair_housing` | classifier | regex (0, always first) → anthropic `claude-haiku-4-5` 0.045 **OR** openai `gpt-5.6-luna` 0.01 (flag if EITHER flags) |
 | `judge.qc_drift` | 4-image verdict | anthropic `claude-haiku-4-5` 0.66 → anthropic `claude-sonnet-5` effort:low 1.3 (escalation) · A/B: openai `gpt-5.6-luna` 0.12 |
 | `video.chapters` | video-understanding | gemini `gemini-3.6-flash` low-res 1fps ~1.4/2min → gemini `gemini-3.1-flash-lite` ~0.6/2min |
 | `vision.room_label` | single frame | openai `gpt-5.6-luna` detail:low 0.012/frame → anthropic `claude-haiku-4-5` 0.06/frame |
 | `3d.world` | — | worldlabs `marble-1.1` 120/world |
 | `floorplan` | — | apple RoomPlan (0) |
+
+Tasks added after the 2026-09-04 freeze are seeded by their own migration, not by `0018_ai_routes.sql`, and carry **no `note='legacy'` row** because they have no shipped hardcoded behaviour for one to describe: `coach.chat` (`0023_coach_routes.sql`, and see `docs/COACH-CONTRACT.md` §9), `copy.reel_script` + `copy.photo_prompt` (`0027_copy_routes.sql`, `docs/COPY-ASSIST-CONTRACT.md` §8). Their callers therefore substitute their own multi-step fallback when `resolveRoute()` answers `[]` — see rule 2 below: what comes back is still never re-filtered.
 
 Retirements encoded as `enabled=false` + `retire_after`: `gemini-2.5-flash-image` (2026-10-02), `gpt-image-1` (2026-10-23), `sora-2*` (2026-09-24), `claude-haiku-4-5` (watch ≥2026-10-15 — successor row `claude-sonnet-5 effort:low` present), `whisper-1` (2027-02-26).
 

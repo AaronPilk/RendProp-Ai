@@ -89,6 +89,16 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   coach_opened:       ["screen"],
   coach_message_sent: ["length_bucket"],
   coach_action_tapped: ["type"],
+  // Prompt assistance (POST /ai-copy) — "write my script" for a reel voiceover
+  // and "improve my prompt" for a custom photo edit. NEITHER carries the text:
+  // a script is marketing copy about a real address and a rough edit idea is
+  // the user's own words, so only shape travels — `chars` is a count, `ok` is
+  // whether the call succeeded, `target_s` is the reel's own length. A failure
+  // deliberately carries NO reason: the server's message is written for a
+  // person and can quote the listing's own words back. See
+  // docs/COPY-ASSIST-CONTRACT.md.
+  ai_script_written:  ["space_type", "tone", "chars", "target_s", "ok"],
+  ai_prompt_improved: ["space_type", "chars", "ok"],
   // Stability (MetricKit summaries — see Analytics/CrashReporter.swift)
   crash:              ["kind", "signal", "exception_type", "termination_reason", "top_frame", "app_version", "os"],
   error:              ["category", "code", "step", "detail", "launch_time_ms", "hang_ms", "app_version", "os"],

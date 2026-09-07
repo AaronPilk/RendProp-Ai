@@ -428,6 +428,104 @@ struct AIChaptersResult: Sendable, Hashable {
     var hasSuggestions: Bool { !chapters.isEmpty }
 }
 
+// MARK: - AI copy (ai-copy edge function — the two prompt assists)
+//
+// Two TEXT-ONLY routes that write words for the agent, instead of making the
+// agent write words for the AI. Nothing here touches a photo, a video or a byte
+// of media: facts go up, sentences come back — which is why neither call is
+// charged against a media allowance and why both are cheap enough to re-run
+// until the words are right.
+//
+// THE STREET ADDRESS IS NEVER SENT. `AICopyFacts.region` carries the coarse
+// city/state line ("Charlotte, NC"), exactly the line the aerial path already
+// sends and for the same reason: the model needs to know it is writing about a
+// home in the Carolinas, not WHICH home. The server writes the literal
+// placeholder `{address}` where the property should be named and the APP
+// substitutes the real address on-device (`ReelStudioView.filledAddress`), so
+// the address exists only on this phone and in the words the agent reads —
+// never in a third-party model's request logs.
+
+/// What the copy writer is allowed to know about a listing.
+///
+/// Every field is optional because every field is genuinely optional in the
+/// app: a venue has no beds, a draft has no tagline, a listing imported without
+/// a coordinate has no region.
+///
+/// There is deliberately NO `address` field. Adding one would be the only
+/// change needed to leak a street address to a third-party model, so the type
+/// is built so that it cannot express one.
+struct AICopyFacts: Sendable, Hashable {
+    var beds: Int? = nil
+    var baths: Double? = nil
+    var sqft: Int? = nil
+    /// Already formatted for reading aloud ("$1,175,000", "From $3,500") — the
+    /// server never sees raw cents and never has to guess a currency.
+    var priceLabel: String? = nil
+    /// The owner's own one-line pitch, for the types that use one.
+    var tagline: String? = nil
+    /// City/state only ("Charlotte, NC"). NEVER a street address.
+    var region: String? = nil
+    /// The industry fields the owner filled in (`SpaceType.detailFields` key →
+    /// value): cuisine, capacity, hours, amenities. Short strings only.
+    var details: [String: String] = [:]
+
+    /// True when there is nothing here worth sending. The call still works (the
+    /// model can write from the space type alone) — this only says the result
+    /// will be generic.
+    var isEmpty: Bool {
+        beds == nil && baths == nil && sqft == nil && priceLabel == nil
+            && tagline == nil && region == nil && details.isEmpty
+    }
+}
+
+/// `POST /ai-copy/script` — write the reel's voiceover script from the
+/// listing's own data, so the agent never faces an empty box.
+struct AIScriptRequest: Sendable, Hashable {
+    /// SERVER listing id when the listing already has one. Attribution only:
+    /// this route writes no provenance row (there is no media to disclose), so
+    /// a listing that has never synced sends nothing rather than paying for a
+    /// round-trip to create a server row it does not need.
+    var listingServerID: UUID? = nil
+    /// `SpaceType.rawValue`.
+    var spaceType: String
+    var facts: AICopyFacts = AICopyFacts()
+    /// The tagged areas in WALK ORDER, so the script can follow the tour the
+    /// way the buyer will see it.
+    var roomTags: [String] = []
+    /// How many pictures the reel is built from.
+    var photoCount: Int
+    /// How long the finished reel runs, in seconds — the script is written to
+    /// FIT it. Clamped to the server's 10…45 window on the way out.
+    var targetSeconds: Int
+    /// "warm" | "punchy" | "luxury". nil lets the server choose.
+    var tone: String? = nil
+}
+
+/// The finished script from `POST /ai-copy/script`.
+struct AIScriptResult: Sendable, Hashable {
+    /// The words to speak. Contains the literal `{address}` placeholder where
+    /// the property should be named — SUBSTITUTE IT before this is shown to
+    /// anyone or spoken (`ReelStudioView.filledAddress`), or the voice reads
+    /// the placeholder out loud.
+    let script: String
+    /// Characters the server counted, against the voiceover's 1,000-char cap.
+    let characters: Int
+    /// The server's own estimate of how long this takes to read, in seconds.
+    let estimatedSeconds: Double
+    /// The model that wrote it, in whatever words the server used.
+    let model: String
+
+    /// How many characters of script one second of finished video is worth.
+    ///
+    /// The working number from real takes: ElevenLabs' narration voices land
+    /// around 11 characters a second at their default pace. It lives HERE, on
+    /// the shared contract type, because two places need it and they must not
+    /// drift — the client uses it to tell the agent how long their script will
+    /// run before they spend a cent, and to fall back to when a server sends no
+    /// estimate of its own. It is an estimate and the UI says so.
+    static let charactersPerSecond: Double = 11
+}
+
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
@@ -602,13 +700,47 @@ protocol APIClient: Sendable {
     /// charged against the monthly photo-edit allowance (separate burst limit).
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion]
 
-    /// POST /ai-photo with `edit: "improve_prompt"` — rewrites a rough
-    /// custom-edit idea (≤ 300 chars sent) into a sharper, more specific prompt
-    /// (≤ 400 back). TEXT-ONLY: the server never looks at the image for this
-    /// mode, so `imageBase64` is accepted for source compatibility and is NOT
-    /// sent (uploading several MB over cellular for a call that ignores them
-    /// was audit F-E-16). Not charged against the monthly allowance.
-    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String
+    /// POST /ai-copy/edit-prompt — rewrites a rough custom-edit idea
+    /// (≤ 300 chars sent) into a sharper, more specific prompt (≤ 400 back).
+    ///
+    /// TEXT-ONLY, and now honestly so. `improve_prompt` never looked at the
+    /// image (audit F-E-16 stopped the client SENDING one) but the call site
+    /// went on base64-encoding a 1024 px JPEG on the main path for a payload
+    /// that was thrown away, so the photo is gone from the signature too. Not
+    /// charged against the monthly photo-edit allowance.
+    ///
+    /// `roomHint` is the area the photo shows ("Kitchen", "Patio") when the app
+    /// knows it — it is what turns "make it brighter" into an instruction about
+    /// a kitchen. nil is normal and fully supported.
+    ///
+    /// `listingServerID` is what scopes the server's fair-housing gate to THIS
+    /// listing's real space type (contract §5: the LISTING wins over the body's
+    /// claim, so a request cannot loosen its own gate by saying it is a bar).
+    /// Without it the gate falls back to the strictest — housing — rules, which
+    /// is deliberately fail-closed but would refuse a restaurant's
+    /// "family-style patio". Send it whenever the listing already has one.
+    ///
+    /// The old `ai-photo` `edit: "improve_prompt"` route still answers on the
+    /// server, so this is a re-point and not a breaking change; the name and
+    /// the meaning are unchanged.
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String
+
+    /// POST /ai-copy/script — write a reel's voiceover script from the
+    /// listing's own facts, so the agent never faces an empty box.
+    ///
+    /// TEXT-ONLY and NOT charged against a media allowance. The street address
+    /// is never sent (see `AICopyFacts`), and the script names the property
+    /// with the literal `{address}` placeholder for the APP to substitute.
+    ///
+    /// Fair housing is enforced server-side exactly as it is for `aiVoiceTTS`,
+    /// and for the same reason — a script that steers on family status,
+    /// religion, race, disability, sex, or the safety / school / "exclusive"
+    /// proxies is refused as `APIError.server(status: 400, code:
+    /// "unsupported_edit", …)` with a message naming the offending phrase.
+    /// Show that message, let the agent re-word, and NEVER auto-retry: the same
+    /// facts will always be refused.
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult
 
     // MARK: AI video (ai-video edge function — async fal submit + poll)
 

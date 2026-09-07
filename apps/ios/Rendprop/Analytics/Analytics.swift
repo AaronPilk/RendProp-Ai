@@ -65,6 +65,12 @@ enum Analytics {
         // Coach (Coach/) — the chat assistant. Never the message text: a length
         // bucket, the action type, and the screen it was opened from.
         "coach_opened", "coach_message_sent", "coach_action_tapped",
+        // Prompt assistance (the two `ai-copy` routes). NEVER the script, the
+        // prompt or the listing: a character count, the space type, the tone,
+        // the reel length it was written for, and whether it worked. A failure
+        // carries no reason — the server's message is written for a person and
+        // can quote the listing's own words, including its address, back.
+        "ai_script_written", "ai_prompt_improved",
     ]
 
     /// Most events the app can generate in one flush.

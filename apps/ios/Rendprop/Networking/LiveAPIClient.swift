@@ -609,17 +609,28 @@ final class LiveAPIClient: APIClient {
         return Array(mapped.prefix(3))
     }
 
-    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
-        let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        // `improve_prompt` is TEXT-ONLY server-side (ai-photo/index.ts asserts
-        // only `prompt`; `improvePrompt(rough, profile)` never reads an image),
-        // so the photo is deliberately NOT sent — uploading several MB over
-        // cellular for a call that ignores them was audit F-E-16. The parameter
-        // stays in the signature so callers don't have to change.
-        let body: [String: Any] = ["edit": "improve_prompt",
-                                   "prompt": String(rough.prefix(300)),   // contract: rough idea ≤ 300
+    // MARK: - AI copy (ai-copy edge function — the two prompt assists)
+
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String {
+        let idea = rough.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text in, text out — and now nothing else. The photo was already off
+        // the wire (audit F-E-16), but the CALLER went on encoding a 1024 px
+        // JPEG for it on the main path, so both ends of that dead work are gone
+        // and the parameter with them.
+        var body: [String: Any] = ["rough": String(idea.prefix(300)),   // contract: ≤ 300
                                    "space_type": SpaceType.current.rawValue]
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+        // The area the photo shows, when the app knows it. Bounded to the
+        // contract's 60 because it is a label ("Primary bath"), not prose.
+        if let hint = roomHint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
+            body["room_hint"] = String(hint.prefix(60))
+        }
+        // Scopes the fair-housing gate to this listing's REAL space type
+        // (contract §5). Absent = the strictest rules, which is fail-closed and
+        // right for a home but would refuse a restaurant's "family-style patio".
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        let data = try await execute(makeRequest(url: url(["ai-copy", "edit-prompt"]),
+                                                 method: "POST", json: body,
                                                  idempotency: .perAttempt),
                                      session: aiSession)
         struct Resp: Decodable { let prompt: String? }
@@ -629,6 +640,90 @@ final class LiveAPIClient: APIClient {
             throw APIError.decoding   // server didn't return an improved prompt
         }
         return improved
+    }
+
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+
+        // Only facts that are actually SET go on the wire. A venue has no beds,
+        // and "beds: 0" reads to a language model as a studio apartment — an
+        // absent key is unambiguous in a way that a zero never is.
+        var facts: [String: Any] = [:]
+        if let beds = request.facts.beds, beds > 0 { facts["beds"] = beds }
+        if let baths = request.facts.baths, baths.isFinite, baths > 0 { facts["baths"] = baths }
+        if let sqft = request.facts.sqft, sqft > 0 { facts["sqft"] = sqft }
+        if let price = clean(request.facts.priceLabel) { facts["price_label"] = String(price.prefix(40)) }
+        if let tagline = clean(request.facts.tagline) { facts["tagline"] = String(tagline.prefix(200)) }
+        // City/state only. There is no address key here and there must never be
+        // one — see the header on `AICopyFacts`.
+        if let region = clean(request.facts.region) { facts["region"] = String(region.prefix(120)) }
+
+        // Owner-typed free text, so it is bounded on the way out: this is a
+        // prompt, not a database dump, and a pasted essay in one detail field
+        // must not crowd out the rest of the listing.
+        var details: [String: String] = [:]
+        for (rawKey, rawValue) in request.facts.details.sorted(by: { $0.key < $1.key }) {
+            guard details.count < 12 else { break }
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            details[String(key.prefix(40))] = String(value.prefix(80))
+        }
+        if !details.isEmpty { facts["details"] = details }
+
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "facts": facts,
+            "photo_count": max(0, request.photoCount),
+            // The contract's window. Clamped here rather than trusted: a reel
+            // with one clip and a reel with twenty both have to produce a
+            // request the server will answer.
+            "target_seconds": min(45, max(10, request.targetSeconds)),
+        ]
+        let tags: [String] = request.roomTags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(12)
+            .map { String($0.prefix(40)) }
+        if !tags.isEmpty { body["room_tags"] = tags }
+        if let tone = clean(request.tone) { body["tone"] = tone }
+        if let listingID = request.listingServerID { body["listing_id"] = listingID.uuidString }
+
+        let data = try await execute(makeRequest(url: url(["ai-copy", "script"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        // Every field optional and every NUMBER read as a Double: an integer
+        // JSON number decodes into a Double, a float does too, and a server
+        // that starts sending `12.0` for a count must not fail the whole
+        // response over the shape of a convenience field.
+        struct Resp: Decodable {
+            let script: String?
+            let characters: Double?
+            let estimatedSeconds: Double?
+            let model: String?
+        }
+        let r: Resp = try decode(data)
+        guard let script = clean(r.script) else {
+            throw APIError.decoding   // no words — nothing to put in the field
+        }
+        // The counts are conveniences, not truth. A missing or NaN count must
+        // not leave the UI showing "0 characters" over a script that plainly
+        // has some, so both fall back to something computed from the script
+        // itself.
+        var characters = script.count
+        // Bounded before the Int conversion: `Int(someHugeDouble)` traps, and a
+        // number this UI only prints is not worth a crash.
+        if let c = r.characters, c.isFinite, c > 0 { characters = Int(min(c, 1_000_000).rounded()) }
+        var seconds = Double(characters) / AIScriptResult.charactersPerSecond
+        if let s = r.estimatedSeconds, s.isFinite, s > 0 { seconds = s }
+        return AIScriptResult(script: script,
+                              characters: characters,
+                              estimatedSeconds: seconds,
+                              model: clean(r.model) ?? "AI")
     }
 
     // MARK: - AI video (ai-video edge function — async fal submit + poll)

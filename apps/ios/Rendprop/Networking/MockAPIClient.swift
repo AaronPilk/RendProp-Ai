@@ -932,16 +932,130 @@ actor MockAPIClient: APIClient {
         ]
     }
 
-    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
+    // MARK: - AI copy (offline: plausible words, and the same refusals)
+
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String {
+        _ = listingServerID   // offline: nothing to scope a gate against
         // Offline dev: echo the idea back, embellished, so the replace-the-field
         // UX runs end-to-end.
         try? await Task.sleep(nanoseconds: 700_000_000)
-        let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rough.isEmpty else {
-            return "Brighten the room with soft natural light, keeping every surface true to the photo."
+        let idea = rough.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !idea.isEmpty else {
+            throw APIError.server(status: 400, code: "validation", message: "rough is required")
         }
-        return rough + " — with balanced natural light, true-to-life colors, and crisp detail. "
+        // The fair-housing gate lives on the server, so offline CANNOT be the
+        // place an agent learns the rule — the same reasoning as `aiVoiceTTS`
+        // below. A rough idea that steers gets refused here too, rather than
+        // being politely rewritten into a prompt the live backend will bounce.
+        if let offending = Self.offlineFairHousingHit(idea) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This can't be turned into an edit prompt: the phrase \"\(offending)\" describes "
+                    + "who should live in the home or what the neighborhood's people are like, rather than "
+                    + "the space in the photo. Describe what you want CHANGED about the picture. "
+                    + "(Offline check — the server's is the authoritative one.)")
+        }
+        let area = (roomHint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let place = area.isEmpty ? "" : " in the \(area.lowercased())"
+        return idea + place + " — with balanced natural light, true-to-life colors, and crisp detail. "
             + "Keep the layout and architecture exactly as photographed."
+    }
+
+    /// Offline dev: a believable script built from the SAME facts the live
+    /// route gets, so the whole "Write my script" path — button, replace
+    /// confirmation, the character counter, the address substitution — is
+    /// exercisable with no backend.
+    ///
+    /// It returns the literal `{address}` placeholder exactly as the server
+    /// does. That is deliberate: the substitution is the app's job, and a mock
+    /// that helpfully filled it in would hide a broken substitution until the
+    /// first live call.
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult {
+        try? await Task.sleep(nanoseconds: 900_000_000)   // feel like a real write
+
+        // Refuse what the live server refuses. A tagline like "great for
+        // families" would produce a script that reads back fine here and is
+        // then rejected by the TTS gate the moment the agent taps "Make the
+        // voice" — which teaches the rule at the worst possible moment.
+        var seededParts: [String] = Array(request.facts.details.values)
+        if let tagline = request.facts.tagline { seededParts.append(tagline) }
+        let seeded = seededParts.joined(separator: " ")
+        if let offending = Self.offlineFairHousingHit(seeded) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This \(request.spaceType == SpaceType.realEstate.rawValue ? "home" : "listing")'s "
+                    + "own details contain the phrase \"\(offending)\", which describes who should live "
+                    + "there rather than the property itself, so a script can't be written from them. "
+                    + "Fair-housing law applies to a spoken script exactly as it does to a written "
+                    + "listing description. Edit that detail and try again. "
+                    + "(Offline check — the server's is the authoritative one.)")
+        }
+        // Refusals a person can act on — these messages are shown VERBATIM by
+        // `AIFailure`, so they are written for the agent, not for a log.
+        guard request.photoCount > 0 else {
+            throw APIError.server(
+                status: 400, code: "validation",
+                message: "Pick the photos for your reel first — the script is written to fit them.")
+        }
+        // The SERVER's window (5-90), not the client's own 10-45 clamp — this
+        // stands in for the server, so it refuses what the server refuses.
+        guard request.targetSeconds >= 5, request.targetSeconds <= 90 else {
+            throw APIError.server(
+                status: 400, code: "validation",
+                message: "A script can only be written for a reel between 5 and 90 seconds long.")
+        }
+
+        let realEstate = request.spaceType == SpaceType.realEstate.rawValue
+        var parts: [String] = ["Welcome to {address}."]
+        let facts = Self.mockFactsLine(request.facts)
+        if !facts.isEmpty { parts.append(facts) }
+        if let tagline = request.facts.tagline?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tagline.isEmpty {
+            parts.append(tagline.hasSuffix(".") ? tagline : tagline + ".")
+        }
+        let tour = Self.mockTourLine(request.roomTags)
+        if !tour.isEmpty { parts.append(tour) }
+        if let region = request.facts.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !region.isEmpty {
+            parts.append("All of it, right here in \(region).")
+        }
+        parts.append(realEstate ? "Come see it in person." : "Come see it for yourself.")
+
+        let script = parts.joined(separator: " ")
+        return AIScriptResult(
+            script: script,
+            characters: script.count,
+            estimatedSeconds: Double(script.count) / AIScriptResult.charactersPerSecond,
+            model: "mock-copy (offline sample)")
+    }
+
+    /// "3 beds, 2 baths, 2,100 square feet, $1,175,000." — spoken units, not
+    /// the card's abbreviations, because this is read aloud. Empty when the
+    /// listing has none of them (every non-real-estate type).
+    private static func mockFactsLine(_ f: AICopyFacts) -> String {
+        var bits: [String] = []
+        if let beds = f.beds, beds > 0 { bits.append("\(beds) bed\(beds == 1 ? "" : "s")") }
+        if let baths = f.baths, baths > 0 {
+            let whole = baths.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(baths)) : String(baths)
+            bits.append("\(whole) bath\(baths == 1 ? "" : "s")")
+        }
+        if let sqft = f.sqft, sqft > 0 { bits.append("\(sqft.formatted()) square feet") }
+        if let price = f.priceLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !price.isEmpty {
+            bits.append(price)
+        }
+        return bits.isEmpty ? "" : bits.joined(separator: ", ") + "."
+    }
+
+    /// The first few tagged areas, in the walk order the caller sent them in.
+    private static func mockTourLine(_ tags: [String]) -> String {
+        let names = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .prefix(3)
+        guard !names.isEmpty else { return "" }
+        return "We start at the " + names.joined(separator: ", then the ") + "."
     }
 
     // MARK: - AI video (offline stubs — the real flows run only on LiveAPIClient)
