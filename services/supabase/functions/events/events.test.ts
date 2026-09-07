@@ -151,7 +151,8 @@ Deno.test("whitelist: no schema key can hold a person, a place or a file", () =>
 
 Deno.test("vocabulary: exactly the names in the launch contract", () => {
   assertEquals([...ALLOWED_EVENT_NAMES].sort(), [
-    "aerial_made", "ai_photo_edit", "app_open", "capture_finished", "capture_started",
+    "aerial_made", "ai_photo_edit", "ai_prompt_improved", "ai_script_written",
+    "app_open", "capture_finished", "capture_started",
     "coach_action_tapped", "coach_message_sent", "coach_opened",
     "crash", "error", "gear_item_tapped", "gear_opened", "guide_completed",
     "guide_step_tapped", "home_created", "paywall_viewed",
