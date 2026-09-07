@@ -767,7 +767,12 @@ const FORM_CSS = `
   .field { margin-bottom: 12px; }
   .field .lbl { display: block; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-dim); margin: 0 0 6px 2px; }
   .field .lbl .opt { text-transform: none; letter-spacing: 0; opacity: .8; }
-  .field input, .field textarea { width: 100%; padding: 13px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: var(--ink); font-size: 15px; font-family: inherit; outline: none; }
+  .field input, .field textarea { width: 100%; min-width: 0; box-sizing: border-box; -webkit-appearance: none; appearance: none; display: block; padding: 13px 14px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12); background: rgba(255,255,255,.05); color: var(--ink); font-size: 15px; font-family: inherit; outline: none; min-height: 48px; }
+  /* iOS Safari gives a date input an intrinsic width wider than its column and paints it as an
+     inline picker; the rules above plus the two below keep it the same box as the text fields
+     (seen on the 6 Sep store capture: the showing-date field ran past the card's right edge). */
+  .field input[type="date"] { -webkit-min-logical-width: 0; text-align: left; }
+  .field input[type="date"]::-webkit-date-and-time-value { text-align: left; }
   .field textarea { resize: vertical; min-height: 76px; }
   .field input:focus, .field textarea:focus { border-color: var(--accent); }
   .field input[aria-invalid="true"], .field textarea[aria-invalid="true"] { border-color: #ff7a7a; }
