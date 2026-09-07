@@ -61,16 +61,62 @@ export interface RouteStep {
 }
 
 /**
- * A RouteStep plus the two columns the ORDERING needs and the frozen §1
- * interface does not carry. It is a strict superset, so everything typed
- * `RouteStep` accepts one and the contract's interface stays byte-identical —
- * see HANDOFF-DB.md.
+ * A RouteStep plus the columns the ORDERING and the ADAPTERS need and the
+ * frozen §1 interface does not carry. It is a strict superset, so everything
+ * typed `RouteStep` accepts one and the contract's interface stays
+ * byte-identical — see HANDOFF-DB.md §1.
  */
 export interface ChainStep extends RouteStep {
   /** ai_routes.position — the curated "best" order. */
   position: number;
   /** ai_routes.retire_after (YYYY-MM-DD) or null. */
   retire_after: string | null;
+  /**
+   * ai_routes.params — per-step vendor knobs, or null (the overwhelming
+   * majority of rows, which is what makes this additive).
+   *
+   * WHY IT LIVES HERE AND NOT ON RouteStep. Same reason as `position`: §1 of
+   * docs/AI-ROUTER-CONTRACT.md is frozen and three other functions build
+   * against it, so the interface stays byte-identical and the superset carries
+   * what the resolver and the adapters need on top. Read it with paramsOf()
+   * below rather than casting at each call site.
+   *
+   * WHAT IT IS FOR. Two models on the same task do not always want the same
+   * request shape — a reasoning model priced for hard work is crippled by the
+   * `reasoning.effort:"none"` the classifier steps want, and a 1,600-token
+   * answer does not fit a ceiling sized for a 300-token verdict. Before this
+   * column those were CONSTANTS in the adapters, which meant adding a model
+   * with a different shape was a deploy and not a row — the exact thing the
+   * router exists to avoid. Now it is a row.
+   *
+   * WHAT IT IS NOT. Not a passthrough to the vendor. It is operator-supplied
+   * config that reaches a third party's API, so every adapter WHITELISTS the
+   * keys and the values it will act on and treats everything else as absent
+   * (_shared/providers/params.ts). An absent or unreadable blob must always
+   * mean "today's behaviour", never "no ceiling".
+   */
+  params: Record<string, unknown> | null;
+}
+
+/**
+ * The one place a §1-typed `RouteStep` is read for the superset's `params`.
+ *
+ * Callers hold `RouteStep` — that is what resolveRoute() declares — but every
+ * step it actually returns is a `ChainStep`, and so is the in-code fallback a
+ * function builds for the flag-off path (which simply has no params). One
+ * documented widening here beats a cast at every adapter call site, and it is
+ * total: anything that is not a plain JSON object reads as null, so a row whose
+ * `params` an operator set to `[]`, `"low"` or `3` behaves exactly as an empty
+ * one rather than reaching a vendor as a malformed body.
+ */
+export function paramsOf(step: RouteStep | null | undefined): Record<string, unknown> | null {
+  return normalizeParams((step as Partial<ChainStep> | null | undefined)?.params);
+}
+
+/** jsonb → a plain object, or null. Arrays and scalars are NOT objects here. */
+function normalizeParams(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw as Record<string, unknown>;
 }
 
 export interface RouteContext {
@@ -390,8 +436,11 @@ export function pickLedgerProvider(step: RouteStep): { provider: string; model: 
 
 // ── Row plumbing ────────────────────────────────────────────────────────────
 
+// ONE string literal, never a concatenation: supabase-js parses the column list
+// at the TYPE level and a built-up string degrades the row type to
+// GenericStringError[] (the same note admin/index.ts carries on its own copy).
 const SELECT_COLS =
-  "id, task, position, provider, model, unit, unit_cents, capabilities, max_latency_s, min_plan, same_model_as, privacy_tier, enabled, retire_after, note";
+  "id, task, position, provider, model, unit, unit_cents, capabilities, max_latency_s, min_plan, same_model_as, privacy_tier, enabled, retire_after, note, params";
 
 interface RouteRow {
   id: string;
@@ -409,6 +458,7 @@ interface RouteRow {
   enabled: boolean | null;
   retire_after: string | null;
   note: string | null;
+  params: unknown;
 }
 
 const PRIVACY_TIERS = ["no_retention", "retained_30d", "trains_by_default"] as const;
@@ -434,6 +484,11 @@ function toStep(row: RouteRow): ChainStep {
     privacy_tier: tier,
     enabled: row.enabled === true,
     retire_after: row.retire_after ?? null,
+    // Normalised HERE, once, rather than trusted at each adapter: a jsonb
+    // column can legally hold an array, a string or a number, and none of those
+    // is a params blob. Anything that is not a plain object reads as null,
+    // which every adapter already treats as "today's behaviour".
+    params: normalizeParams(row.params),
   };
 }
 

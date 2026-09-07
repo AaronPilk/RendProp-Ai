@@ -2159,7 +2159,11 @@ async function callJudgeStep(step: RouteStep, rubric: string, parts: DriftPart[]
     // assertNotCoveredModel() runs inside anthropicMessages: a Covered Model
     // must never receive a photograph of a customer's home, and these are four
     // of them.
-    return await anthropicMessages({ model: step.model, system: rubric, content, maxTokens: DRIFT_MAX_TOKENS });
+    // The STEP, not step.model, so a row's `params` (0030) reach the request.
+    // No judge.qc_drift row seeds any — the judge runs on every generation and
+    // its whole job is to be cheap enough to always run — so this is
+    // byte-identical today.
+    return await anthropicMessages({ model: step, system: rubric, content, maxTokens: DRIFT_MAX_TOKENS });
   }
   if (step.provider === "openai") {
     const content = [
@@ -2170,7 +2174,7 @@ async function callJudgeStep(step: RouteStep, rubric: string, parts: DriftPart[]
           : { type: "input_image", image_url: `data:${p.image.mime};base64,${p.image.b64}` }
       ),
     ];
-    return await openaiChat(step.model, [{ role: "user", content }], {
+    return await openaiChat(step, [{ role: "user", content }], {
       json: true,
       maxOutputTokens: DRIFT_MAX_TOKENS,
     });

@@ -1311,6 +1311,157 @@ from ai_routes
 where privacy_tier not in ('no_retention','retained_30d','trains_by_default')
    or min_plan not in ('free','trial','starter','solo','pro','team');
 
+-- ── 0030: ai_routes.params ──────────────────────────────────────────────────
+--
+-- The column that turns "this model needs a different request shape" from a
+-- deploy into a row. Pinned here the way 0029 pinned media_provenance.qc: the
+-- adapters read it by name, so a rename or a type change has to fail in CI and
+-- not at 3am against a vendor's 400.
+
+insert into _inv(name, pass, note)
+select 'ai_routes carries the per-step vendor knobs (params jsonb, nullable)',
+       count(*) = 1, format('%s of 1 found', count(*))
+from information_schema.columns
+where table_schema = 'public' and table_name = 'ai_routes'
+  and column_name = 'params' and data_type = 'jsonb' and is_nullable = 'YES';
+
+-- NULL means "whatever the adapter does by default", which is what makes 0030
+-- additive — so it must stay legal, and it must stay the answer for every row
+-- that existed before 0030. Exactly the two seeded gpt-6-astra rows carry a
+-- blob; everything else is untouched.
+insert into _inv(name, pass, note)
+select 'only the rows 0030 seeds carry params; every other row is untouched',
+       count(*) filter (where params is not null) = 2
+   and count(*) filter (where params is not null and model <> 'gpt-6-astra') = 0,
+       format('%s row(s) with params: %s', count(*) filter (where params is not null),
+              coalesce(string_agg(format('%s/%s', task, model), ', ')
+                       filter (where params is not null), 'none'))
+from ai_routes;
+
+-- A params blob is an OBJECT. The adapters read `[]`, `"low"` and `3` as "no
+-- params" and would silently do nothing with them, so the check constraint
+-- refuses them at the door rather than letting a well-meaning row mean nothing.
+insert into _inv(name, pass, note)
+select 'ai_routes.params is constrained to a JSON object (or null)',
+       count(*) = 1, format('%s of 1', count(*))
+from pg_constraint
+where conrelid = 'public.ai_routes'::regclass and conname = 'ai_routes_params_object_check';
+
+insert into _inv(name, pass, note)
+select 'no ai_routes.params is a non-object (the constraint is actually holding)',
+       count(*) = 0,
+       coalesce(string_agg(format('%s/%s=%s', task, model, jsonb_typeof(params)), '; '), 'all objects or null')
+from ai_routes
+where params is not null and jsonb_typeof(params) <> 'object';
+
+-- Every key an adapter will ACT on. A key outside this set is not an error —
+-- _shared/providers/params.ts treats it as absent, deliberately, so a future
+-- knob can be seeded before the deploy that reads it — but a row full of keys
+-- nothing reads is almost always a typo, and it is worth seeing here.
+insert into _inv(name, pass, note)
+select 'every seeded params key is one an adapter actually reads',
+       count(*) = 0,
+       coalesce(string_agg(format('%s/%s has %s', task, model, k), '; '), 'all keys recognised')
+from ai_routes r, lateral jsonb_object_keys(r.params) k
+where r.params is not null and k not in ('effort', 'max_output_tokens');
+
+-- 0030: and it is gated to PAYING plans. min_plan is the only working plan
+-- lever — router.ts's defaultPolicyFor() is dead code, so the cheapest-policy
+-- protection free and trial tiers should get does not exist. Without this,
+-- a free signup reaches a 10c model on a route with no per-call quota.
+select 'both gpt-6-astra rows are gated to a paying plan, not free',
+       count(*) = 2
+from public.ai_routes
+where model = 'gpt-6-astra'
+  and min_plan in ('starter', 'solo', 'pro', 'team');
+
+select 'no gpt-6-astra row is reachable on the free or trial tier',
+       count(*) = 0
+from public.ai_routes
+where model = 'gpt-6-astra' and min_plan in ('free', 'trial');
+
+-- ── 0030: gpt-6-astra takes position 1 on the two writing routes ────────────
+--
+-- THIS IS ALSO THE POSITION-SHIFT IDEMPOTENCY TEST, and it is why CI's
+-- apply → invariants → replay → invariants shape matters: the shift moves
+-- 1,2,3 down to 2,3,4 and a second application that shifted again would leave a
+-- gap at 2 (and Sonnet at 3), which the contiguity assertion below catches.
+insert into _inv(name, pass, note)
+select 'gpt-6-astra is step 1 of both writing routes, with an effort and a ceiling',
+       count(*) = 2, format('%s of 2: %s', count(*),
+                            coalesce(string_agg(format('%s=%sc %s', task, unit_cents, params::text), ', '), 'none'))
+from ai_routes
+where provider = 'openai' and model = 'gpt-6-astra' and position = 1 and enabled
+  and task in ('copy.shotlist', 'copy.reel_script')
+  and params ? 'effort' and params ? 'max_output_tokens';
+
+-- effort:"none" is the adapter default and the exact thing that makes a
+-- reasoning model refuse or answer badly. Seeding it on an astra row would be
+-- paying the premium price for the crippled answer.
+insert into _inv(name, pass, note)
+select 'no gpt-6-astra row is seeded with reasoning effort "none"',
+       count(*) = 0, coalesce(string_agg(task, ', '), 'none')
+from ai_routes
+where model = 'gpt-6-astra' and params ->> 'effort' = 'none';
+
+-- The ceiling has to clear the VISIBLE answer the caller asks for, because a
+-- reasoning model spends reasoning tokens out of the same budget: ai-copy asks
+-- for 1,600 tokens of shot list (MAX_SHOTLIST_TOKENS) and 700 of script
+-- (MAX_TOKENS). It also has to stay under the code clamp in params.ts, or the
+-- row is quietly not what it says.
+insert into _inv(name, pass, note)
+select 'each astra ceiling clears its route''s visible answer and stays under the code clamp',
+       coalesce(bool_and(ceiling > visible and ceiling <= 8000), false),
+       coalesce(string_agg(format('%s ceiling=%s visible=%s', task, ceiling, visible), ', '), '(no rows)')
+from (
+  select task,
+         (params ->> 'max_output_tokens')::int as ceiling,
+         case task when 'copy.shotlist' then 1600 else 700 end as visible
+    from ai_routes
+   where model = 'gpt-6-astra' and params ? 'max_output_tokens'
+) s;
+
+-- The failover Astra is worth having. Position 2 must be a DIFFERENT provider,
+-- so a bad day at OpenAI does not take the route down with it, and it must be
+-- cheap — the whole safety story is "if the expensive first seat refuses our
+-- request shape, the answer still arrives, from the row that was step 1 before".
+insert into _inv(name, pass, note)
+select 'position 2 on both astra routes is a cheaper step from another vendor',
+       count(*) = 2, format('%s of 2: %s', count(*),
+                            coalesce(string_agg(format('%s -> %s/%s %sc', task, provider, model, unit_cents), ', '), 'none'))
+from ai_routes a
+where a.position = 2 and a.enabled and a.task in ('copy.shotlist', 'copy.reel_script')
+  and a.provider <> 'openai'
+  and a.unit_cents < (select unit_cents from ai_routes b
+                       where b.task = a.task and b.position = 1 and b.model = 'gpt-6-astra');
+
+-- Contiguous 1..4 with nothing parked in the shift's staging band (>= 1000).
+-- A double-shifted replay leaves 1,3,4,5; a half-applied one leaves a row at
+-- 1001. Either way this is the assertion that says so.
+insert into _inv(name, pass, note)
+select 'the shifted writing chains are contiguous 1..4 (a replayed shift is not)',
+       count(*) = 2,
+       coalesce(string_agg(format('%s: %s', task, positions), ' | '), 'no rows')
+from (
+  select task, array_agg(position order by position) as positions
+    from ai_routes
+   where task in ('copy.shotlist', 'copy.reel_script')
+   group by task
+  having array_agg(position order by position) = array[1,2,3,4]
+) s;
+
+-- Astra is TEXT-ONLY OUT (OpenAI model docs, 2026-09-07): it cannot generate a
+-- video and cannot return an edited image, so it has no business on any route
+-- that produces media. And it must never displace the judge — that check runs
+-- on EVERY generation, and haiku at 0.66c against astra at ~4.5c is a 7x tax on
+-- the one thing whose job is to be cheap enough to always run.
+insert into _inv(name, pass, note)
+select 'gpt-6-astra is seeded ONLY on the two text-out writing tasks',
+       count(*) = 0,
+       coalesce(string_agg(format('%s (%s)', task, position), ', '), 'text routes only')
+from ai_routes
+where model = 'gpt-6-astra' and task not in ('copy.shotlist', 'copy.reel_script');
+
 -- ── 0018 grants ─────────────────────────────────────────────────────────────
 -- Model ids and list prices are not secret, so `authenticated` READS the two
 -- route tables. Nothing tenant-facing may WRITE any of the four, and `anon`

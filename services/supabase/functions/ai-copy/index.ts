@@ -343,8 +343,11 @@ async function callStep(
   maxTokens: number = MAX_TOKENS,
 ): Promise<string> {
   if (step.provider === "anthropic") {
+    // The STEP, not step.model: that is what carries the row's `params`
+    // (migration 0030) into the request — effort and the answer ceiling for
+    // THIS step. A row without params is byte-identical to the old call.
     return await anthropicMessages({
-      model: step.model,
+      model: step,
       system,
       content: [{ type: "text", text: turn }],
       maxTokens,
@@ -355,8 +358,9 @@ async function callStep(
     // shape openaiJudge() and coach/index.ts already use. `json: true` asks the
     // Responses API for a syntactically valid object; extractJsonObject() still
     // re-validates, because "valid JSON" is not "safe to publish".
+    // The STEP, not step.model — see the anthropic branch above.
     return await openaiChat(
-      step.model,
+      step,
       [{ role: "user", content: [{ type: "input_text", text: `${system}\n\n---\n\n${turn}` }] }],
       { maxOutputTokens: maxTokens, json: true },
     );

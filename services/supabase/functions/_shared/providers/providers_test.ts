@@ -16,6 +16,7 @@ import { geminiImagePayload } from "./gemini.ts";
 import { runChain } from "./chain.ts";
 import { extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
 import { ProviderError, snippet } from "./common.ts";
+import { MAX_PARAM_OUTPUT_TOKENS } from "./params.ts";
 import { HttpError } from "../http.ts";
 
 function step(over: Partial<RouteStep> = {}): RouteStep {
@@ -593,4 +594,276 @@ Deno.test("vendor bodies are redacted before they reach an error or a log", () =
   assertStringIncludes(out, "[redacted-signed-url]");
   // A plain vendor CDN URL is not secret and stays readable.
   assertStringIncludes(snippet({ url: "https://cdn.kie.ai/out.mp4" }), "https://cdn.kie.ai/out.mp4");
+});
+
+// ── 9. ROUTE PARAMS (0030) — the request shape as a ROW, not a constant ──────
+//
+// `ai_routes.params` exists so a reasoning model and a one-shot classifier can
+// sit in the same chain without a second adapter. The promise that makes it
+// safe to apply mid-field-test is NARROW AND ABSOLUTE: a row without params
+// must produce the request this adapter built before 0030, byte for byte. These
+// tests assert that against the literal body, not against a second copy of the
+// constants.
+
+/**
+ * A step carrying `ai_routes.params`. `params` lives on ChainStep — the
+ * superset — which is exactly what resolveRoute() hands a caller who is typed
+ * on the frozen §1 `RouteStep`. `unknown` on the way in is deliberate: half of
+ * what follows is an operator typing the wrong thing into a jsonb column.
+ */
+function paramStep(params: unknown, over: Partial<RouteStep> = {}): RouteStep {
+  return { ...step(over), position: 1, retire_after: null, params } as unknown as RouteStep;
+}
+
+/** Run one openaiChat() against a stubbed fetch and hand back the JSON body. */
+async function openaiChatBody(
+  target: string | RouteStep,
+  opts: { maxOutputTokens?: number; json?: boolean } = {},
+): Promise<Record<string, unknown>> {
+  let sent: Record<string, unknown> = {};
+  Deno.env.set("OPENAI_API_KEY", "test-key-not-a-credential");
+  await withFetch(
+    (_url, init) => {
+      sent = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(JSON.stringify({ output_text: "ok" }), { status: 200 });
+    },
+    async () => {
+      const { openaiChat } = await import("./openai.ts");
+      await openaiChat(target, [{ role: "user", content: "hi" }], opts);
+    },
+  );
+  return sent;
+}
+
+/** The same, for anthropicMessages(). */
+async function anthropicBody(
+  model: string | RouteStep,
+  args: { maxTokens?: number } = {},
+): Promise<Record<string, unknown>> {
+  let sent: Record<string, unknown> = {};
+  Deno.env.set("ANTHROPIC_API_KEY", "test-key-not-a-credential");
+  await withFetch(
+    (_url, init) => {
+      sent = JSON.parse(String(init?.body ?? "{}"));
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), { status: 200 });
+    },
+    async () => {
+      const { anthropicMessages } = await import("./anthropic.ts");
+      await anthropicMessages({ model, content: [{ type: "text", text: "hi" }], ...args });
+    },
+  );
+  return sent;
+}
+
+Deno.test("params ABSENT is today's exact openai body (effort none, 300 tokens)", async () => {
+  // The bare-model call — every caller before 0030.
+  const legacy = await openaiChatBody("gpt-5.6-luna");
+  assertEquals(legacy.reasoning, { effort: "none" });
+  assertEquals(legacy.max_output_tokens, 300);
+
+  // A STEP with no params must be indistinguishable from it. This is the whole
+  // safety argument for applying 0030 to ~70 existing rows.
+  const noParams = await openaiChatBody(step({ provider: "openai", model: "gpt-5.6-luna" }));
+  assertEquals(noParams.reasoning, { effort: "none" });
+  assertEquals(noParams.max_output_tokens, 300);
+
+  // And the caller's own ceiling still wins over the 300 default, as it did.
+  const caller = await openaiChatBody(paramStep(null), { maxOutputTokens: 1600 });
+  assertEquals(caller.reasoning, { effort: "none" });
+  assertEquals(caller.max_output_tokens, 1600);
+});
+
+Deno.test("a params blob sets the reasoning effort and the output ceiling", async () => {
+  // The copy.shotlist gpt-6-astra row, verbatim from 0030.
+  const body = await openaiChatBody(
+    paramStep({ effort: "low", max_output_tokens: 2400 }, { provider: "openai", model: "gpt-6-astra" }),
+    { maxOutputTokens: 1600 }, // ai-copy's own MAX_SHOTLIST_TOKENS…
+  );
+  assertEquals(body.model, "gpt-6-astra");
+  assertEquals(body.reasoning, { effort: "low" });
+  // …which the ROW outranks: reasoning tokens come out of the same budget, so
+  // the caller's visible-answer ceiling would truncate what we paid extra for.
+  assertEquals(body.max_output_tokens, 2400);
+});
+
+Deno.test("an unknown params key is ignored, never forwarded to the vendor", async () => {
+  const body = await openaiChatBody(
+    paramStep({
+      effort: "low",
+      temperature: 1.9, // not whitelisted
+      reasoning: { effort: "high" }, // a plausible spelling, still not whitelisted
+      max_completion_tokens: 9999, // the wrong vendor's name for the ceiling
+    }),
+    { maxOutputTokens: 700 },
+  );
+  assertEquals(body.reasoning, { effort: "low" }); // the one key we DO read
+  assertEquals(body.max_output_tokens, 700); // the misspelt ceiling never landed
+  assertEquals(body.temperature, undefined);
+  assertEquals(body.max_completion_tokens, undefined);
+  // Nothing beyond the four keys this adapter has always sent.
+  assertEquals(Object.keys(body).sort(), ["input", "max_output_tokens", "model", "reasoning"]);
+});
+
+Deno.test("an illegal or malformed params value reads as ABSENT, not as an error", async () => {
+  const cases: unknown[] = [
+    { effort: "extreme" }, // not a vendor value
+    { effort: 3 }, // not even a string
+    { max_output_tokens: 0 }, // a ceiling of nothing is not a ceiling
+    { max_output_tokens: -5 },
+    { max_output_tokens: "not a number" },
+    [{ effort: "low" }], // jsonb array — not a params object
+    "low", // jsonb string
+    7, // jsonb number
+    null,
+  ];
+  for (const params of cases) {
+    const body = await openaiChatBody(paramStep(params), { maxOutputTokens: 700 });
+    assertEquals(body.reasoning, { effort: "none" }, `params ${JSON.stringify(params)} must fall back`);
+    assertEquals(body.max_output_tokens, 700, `params ${JSON.stringify(params)} must fall back`);
+  }
+});
+
+Deno.test("a params ceiling is clamped in code — a row can raise it, never remove it", async () => {
+  // gpt-6-astra's own documented max output is 128,000 tokens, so this is an
+  // entirely plausible paste. At $50/1M output it would be $6.40 per call on a
+  // route that is free to the user.
+  const body = await openaiChatBody(paramStep({ max_output_tokens: 128000 }));
+  assertEquals(body.max_output_tokens, MAX_PARAM_OUTPUT_TOKENS);
+  // Strings are accepted (a console form quotes numbers) and fractions floor.
+  assertEquals((await openaiChatBody(paramStep({ max_output_tokens: "1600" }))).max_output_tokens, 1600);
+  assertEquals((await openaiChatBody(paramStep({ max_output_tokens: 1600.9 }))).max_output_tokens, 1600);
+});
+
+Deno.test("params ABSENT is today's exact anthropic body (sonnet effort low, 400 tokens)", async () => {
+  const legacy = await anthropicBody("claude-sonnet-5");
+  assertEquals(legacy.output_config, { effort: "low" });
+  assertEquals(legacy.max_tokens, 400);
+
+  // Haiku still carries NO output_config at all — "absent" has to mean absent,
+  // not "an empty object", or every judge call changes shape.
+  const haiku = await anthropicBody(step({ provider: "anthropic", model: "claude-haiku-4-5" }));
+  assertEquals(haiku.output_config, undefined);
+  assertEquals(haiku.max_tokens, 400);
+
+  // A step with no params, and the caller's own ceiling, both unchanged.
+  const sonnetStep = await anthropicBody(
+    paramStep(null, { provider: "anthropic", model: "claude-sonnet-5" }),
+    { maxTokens: 1600 },
+  );
+  assertEquals(sonnetStep.output_config, { effort: "low" });
+  assertEquals(sonnetStep.max_tokens, 1600);
+});
+
+Deno.test("anthropic params outrank the model-name effort rule, and a bad one does not", async () => {
+  const raised = await anthropicBody(
+    paramStep({ effort: "medium", max_output_tokens: 1200 }, { provider: "anthropic", model: "claude-sonnet-5" }),
+    { maxTokens: 400 },
+  );
+  assertEquals(raised.output_config, { effort: "medium" });
+  assertEquals(raised.max_tokens, 1200);
+
+  // A model the /sonnet-5/ regex has never heard of can now be given an effort
+  // by a ROW — the case that used to need a deploy.
+  const newModel = await anthropicBody(
+    paramStep({ effort: "high" }, { provider: "anthropic", model: "claude-opus-9" }),
+  );
+  assertEquals(newModel.output_config, { effort: "high" });
+
+  // "none" is OpenAI's vocabulary, not Anthropic's. Copying a params blob
+  // between two steps of one chain must fall back, not build a 400.
+  const copied = await anthropicBody(
+    paramStep({ effort: "none" }, { provider: "anthropic", model: "claude-sonnet-5" }),
+  );
+  assertEquals(copied.output_config, { effort: "low" });
+});
+
+Deno.test("chain: copy.shotlist falls through from astra to sonnet when step 1 throws", async () => {
+  // The seeded chain, in order: 0030's gpt-6-astra, then the claude-sonnet-5
+  // row it displaced. This is the reason the expensive first seat is safe to
+  // take — but note WHICH failures it covers (see the assertion below).
+  const astra = step({
+    route_id: "astra", task: "copy.shotlist", provider: "openai", model: "gpt-6-astra",
+    unit: "call", unit_cents: 10.0, capabilities: ["text", "compliant"],
+  });
+  const sonnet = step({
+    route_id: "sonnet", task: "copy.shotlist", provider: "anthropic", model: "claude-sonnet-5",
+    unit: "call", unit_cents: 2.1, capabilities: ["text", "compliant"],
+  });
+
+  for (const cls of ["upstream", "rate_limit", "timeout", "other"] as const) {
+    const tried: string[] = [];
+    const out = await runChain("copy.shotlist", [astra, sonnet], (s) => {
+      tried.push(s.route_id);
+      if (s.route_id === "astra") throw new ProviderError("openai", cls, `openai ${cls}`);
+      return Promise.resolve("the shot list");
+    });
+    assertEquals(tried, ["astra", "sonnet"], `${cls} must fail over`);
+    // The ledger is attributed to the step that ANSWERED, never the one that
+    // failed: recordRoutedAiCost() bills `attempt.step`, which is this.
+    assertEquals(out.step.route_id, "sonnet");
+    assertEquals(out.step.unit_cents, 2.1);
+    assertEquals(out.value, "the shot list");
+  }
+
+  // ⚠ THE FAILURE THIS DOES *NOT* COVER, asserted so nobody has to rediscover
+  // it. A vendor that REJECTS OUR REQUEST SHAPE answers 400, classifyStatus()
+  // calls that `validation`, and runChain() rethrows a validation failure
+  // instead of failing over — deliberately, because asking a second vendor the
+  // same malformed question bills us twice for the same refusal. So "Astra at
+  // position 1 with Sonnet at 2 fails over if the model rejects our request
+  // shape" is TRUE for an outage, a rate limit and a timeout, and FALSE for a
+  // 400. That is why 0030 makes the request shape a row rather than shipping
+  // Astra against the effort:"none" default and hoping the chain catches it.
+  const tried: string[] = [];
+  const err = await assertRejects(() =>
+    runChain("copy.shotlist", [astra, sonnet], (s) => {
+      tried.push(s.route_id);
+      throw new ProviderError("openai", "validation", "openai HTTP 400: unsupported reasoning.effort");
+    })
+  );
+  assertEquals(tried, ["astra"], "a 400 from step 1 never reaches step 2");
+  assert(err instanceof HttpError);
+  assertEquals((err as HttpError).status, 400);
+});
+
+// ── 10. 0030's POSITION SHIFT, as a shape guard ─────────────────────────────
+//
+// The REAL idempotency test is CI's db-migrations job, which applies every
+// migration, runs tests/invariants.sql, REPLAYS everything from 0009 onward and
+// runs the invariants again — and invariants.sql asserts the shifted chains are
+// contiguous 1..4, which a shift that ran twice is not. That needs a Postgres;
+// this suite has none. So what is checked here is the three properties that
+// make the shift replay-safe, by name, so a "simplification" that removes one
+// fails the fast suite too instead of only the slow one.
+
+Deno.test("0030's position shift is guarded and cannot run twice", async () => {
+  const sql = await Deno.readTextFile(
+    new URL("../../../migrations/0030_route_params.sql", import.meta.url),
+  );
+
+  // 1. THE GUARD. The shift only runs while no astra row exists for the task,
+  //    so a replay finds one and does nothing at all.
+  assertStringIncludes(sql, "if not exists (");
+  assertStringIncludes(sql, "model = 'gpt-6-astra'");
+
+  // 2. THE TWO PASSES. uq_ai_routes_task_position is a plain UNIQUE INDEX and
+  //    can never be deferred, so a single `+ 1` would collide with the
+  //    still-live row it is moving onto. The live chain is parked out of the
+  //    way and brought back one place lower instead. The negative check runs
+  //    against the STATEMENTS only — the header explains the naive shift in
+  //    prose, and a comment is not a bug.
+  assertStringIncludes(sql, "set position = position + 1000");
+  assertStringIncludes(sql, "set position = position - 999");
+  const statements = sql.split("\n").filter((l) => !l.trimStart().startsWith("--")).join("\n");
+  assert(
+    !/set position = position \+ 1(?!\d)/.test(statements),
+    "a single +1 shift both violates the unique index and double-shifts on replay",
+  );
+
+  // 3. THE SEED STILL DECLINES TO OVERWRITE. `do nothing`, like every seed
+  //    since 0018, so an operator's own edit survives a replay.
+  assertStringIncludes(sql, "on conflict (task, position) do nothing");
+
+  // And the column itself is additive: null default, added if-not-exists.
+  assertStringIncludes(sql, "add column if not exists params jsonb");
 });

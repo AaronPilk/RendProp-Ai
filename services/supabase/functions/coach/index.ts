@@ -282,8 +282,11 @@ Deno.serve(async (req) => {
 
     const attempt = await runChain("coach.chat", chain, async (step) => {
       if (step.provider === "anthropic") {
+        // The STEP, not step.model: that is what carries the row's `params`
+        // (migration 0030) into the request. No coach.chat row seeds any, so
+        // this is byte-identical today and stays a row edit tomorrow.
         return await anthropicMessages({
-          model: step.model,
+          model: step,
           system,
           content: [{ type: "text", text: userTurn }],
           maxTokens: MAX_TOKENS,
@@ -296,7 +299,7 @@ Deno.serve(async (req) => {
         // object outright; parseCoachOutput() still re-validates every field,
         // because "valid JSON" is not the same thing as "safe to execute".
         return await openaiChat(
-          step.model,
+          step,
           [{ role: "user", content: [{ type: "input_text", text: `${system}\n\n---\n\n${userTurn}` }] }],
           { maxOutputTokens: MAX_TOKENS, json: true },
         );
