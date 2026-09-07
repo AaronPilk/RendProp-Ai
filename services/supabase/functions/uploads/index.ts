@@ -67,6 +67,33 @@
 //     multipart. Replay covers uploads still IN FLIGHT only (migration 0014's
 //     partial unique index) — a completed asset is /complete's own replay case.
 //
+// Audit fix wave (2026-09-07, P0-2 residual — content-type smuggling + overcharge):
+//   • MIME normalization no longer launders a parameterized type into an
+//     accepted bare one. A CLIENT-declared `content_type` (here and on
+//     /batch) must now be a bare `type/subtype` — `;`, whitespace or a
+//     parameter is a 400 naming the field, never silently truncated. The
+//     file's own comment used to claim `"video/mp4;evil"` "must not launder
+//     into video/mp4" while `mediaType()` did exactly that; see
+//     content_type.ts for the two parsers (client-declared vs.
+//     server-observed) that make the claim true. `/complete`'s comparison is
+//     unchanged in effect — the OBSERVED R2 Content-Type still has its
+//     parameter parsed off before the allowlist + declared-type check — but is
+//     now honest about why: that header is a fact about the object, not a
+//     client-shaped field, and the declared side it's compared against can no
+//     longer carry a parameter itself.
+//   • Upload budget (tickets + MiB) is now REFUNDED when the charge it paid
+//     for produces no usable asset: the DB insert (or, for multipart, the R2
+//     CreateMultipartUpload call) fails after the charge, or this request
+//     loses an Idempotency-Key race and relays a concurrent ticket instead of
+//     minting its own. Previously the charge landed unconditionally before
+//     the insert, so any of those failure modes burned the org's daily
+//     ticket/byte allowance for an asset that was never created (an
+//     overcharge, not a bypass — the allowlist/size checks were never at
+//     risk). `chargeUploadBudget` itself is also now self-correcting: if the
+//     byte-budget charge fails right after the ticket-count charge succeeded,
+//     the ticket charge is handed back too, so a byte-capped org never also
+//     loses a ticket for nothing.
+//
 //   POST /uploads                                     (+ Idempotency-Key header)
 //     { listing_id, filename, bytes, sha256?, kind:"video"|"photo", content_type?, multipart?, role:"capture"|"render"|"original" }
 //     video>64MB (or multipart:true) -> { asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count, content_type }
@@ -83,8 +110,9 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient, assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
+import { baseMediaType, isContentTypeDeclared, requireBareContentType } from "./content_type.ts";
 import {
   abortMultipartUpload,
   choosePartSize,
@@ -173,7 +201,16 @@ const MAX_UPLOAD_MB_PER_ORG_PER_DAY = 204_800; // 200 GB/day
 
 const MB = 1024 * 1024;
 
-/** Charge the org's daily ticket + byte budgets atomically-ish (two counters). */
+/**
+ * Charge the org's daily ticket + byte budgets atomically-ish (two counters).
+ *
+ * If the ticket-count charge succeeds but the byte-budget charge then fails,
+ * the ticket charge is handed back before throwing: without this, a byte-
+ * capped org would ALSO lose a ticket from its daily allowance for a request
+ * that is about to be rejected outright (audit P0-2 residual — the same
+ * "charged for nothing" defect this file's callers now guard against via
+ * `refundUploadBudget`, just one layer down).
+ */
 async function chargeUploadBudget(orgId: string, fileCount: number, totalBytes: number) {
   const tickets = await durableRateLimit(
     `uploads:${orgId}`,
@@ -189,12 +226,29 @@ async function chargeUploadBudget(orgId: string, fileCount: number, totalBytes: 
     86400,
     mb,
   );
-  if (!bytesOk) throw new HttpError(429, "Daily upload data budget reached for this workspace", "rate_limited");
+  if (!bytesOk) {
+    await refundRateLimit(`uploads:${orgId}`, 86400, fileCount);
+    throw new HttpError(429, "Daily upload data budget reached for this workspace", "rate_limited");
+  }
 }
 
-/** Media type only (no parameters), lower-cased; "" when absent. */
-function mediaType(raw: unknown): string {
-  return String(raw ?? "").split(";")[0].trim().toLowerCase();
+/**
+ * Hand back what `chargeUploadBudget` charged, for a ticket whose DB insert
+ * (or, for multipart, the R2 CreateMultipartUpload call) FAILED after the
+ * charge — or that lost an Idempotency-Key race to a concurrent identical
+ * ticket and is relaying THAT ticket's response instead of minting its own.
+ * Either way this call produced no new asset, so the allowance must not stick
+ * (audit P0-2 residual: budget was charged before the asset insert, so a
+ * later DB/R2 failure consumed the org's ticket/byte allowance for nothing).
+ *
+ * Best-effort and never throws — `refundRateLimit` itself never throws, and a
+ * failed refund must not turn "the asset failed" into a 500 instead of the
+ * real reason.
+ */
+async function refundUploadBudget(orgId: string, fileCount: number, totalBytes: number): Promise<void> {
+  const mb = Math.max(1, Math.ceil(totalBytes / MB));
+  await refundRateLimit(`uploads:${orgId}`, 86400, fileCount);
+  await refundRateLimit(`uploadmb:${orgId}`, 86400, mb);
 }
 
 /** Bound + validate one file's claimed size/type for its kind. */
@@ -308,13 +362,17 @@ Deno.serve(async (req) => {
       await requireWriteRole(admin, user.id, listing.org_id);
       await assertNotDeleting(user.id); // no new media once deletion starts
 
-      // Validate every file BEFORE charging or creating anything.
+      // Validate every file BEFORE charging or creating anything. A CLIENT-
+      // declared content_type must be a bare type/subtype (audit P0-2
+      // residual) — requireBareContentType 400s naming the exact field on
+      // anything else, it never launders a parameter away.
       let totalBytes = 0;
       const metas: Array<{ contentType: string; declared: boolean }> = [];
       for (let i = 0; i < files.length; i++) {
         const f = files[i];
-        const declared = typeof f.content_type === "string" && mediaType(f.content_type) !== "";
-        const ct = declared ? mediaType(f.content_type) : "image/jpeg";
+        const field = `files[${i}].content_type`;
+        const declared = isContentTypeDeclared(f.content_type);
+        const ct = declared ? requireBareContentType(f.content_type as string, field) : "image/jpeg";
         validateFileMeta(kind, f.bytes, ct, ` (files[${i}])`);
         totalBytes += f.bytes ?? 0;
         metas.push({ contentType: ct, declared });
@@ -323,34 +381,46 @@ Deno.serve(async (req) => {
       // Per-file + per-byte budget (audit P0-2: was one unit per batch).
       await chargeUploadBudget(listing.org_id, files.length, totalBytes);
 
+      // Everything from here on can still fail (DB insert) after the charge
+      // above — refund it on any failure so a partial/failed batch never costs
+      // the org an allowance for assets it never got (audit P0-2 residual:
+      // "budget charged before the asset insert" overcharge). The batch is
+      // all-or-nothing on the RESPONSE already (one file's insert failure
+      // throws before any assets[] is returned), so refunding the FULL
+      // charged amount on any failure matches what the client actually got.
       const assets = [];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        const assetId = crypto.randomUUID();
-        const ext = extFromFilename(f.filename, kind);
-        const { contentType, declared } = metas[i];
-        const storageKey = `uploads/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
-        const { error } = await admin.from("capture_assets").insert({
-          id: assetId,
-          listing_id: listing.id,
-          kind,
-          storage_key: storageKey,
-          sha256: f.sha256 ?? null,
-          bytes: f.bytes ?? null,
-          content_type: contentType,
-          content_type_declared: declared,
-          uploaded: false,
-        });
-        if (error) throw new HttpError(400, `Asset create failed (#${i}): ${error.message}`);
-        // PUT targets the STAGING key; /complete verifies then copies to the
-        // final key. (contentType is advisory — /complete's HEAD check enforces.)
-        const putUrl = await presignPut({
-          bucket: R2_BUCKET_UPLOADS,
-          key: stagingKey(storageKey),
-          expiresIn: STAGING_PUT_TTL_SECONDS,
-          contentType,
-        });
-        assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey, content_type: contentType });
+      try {
+        for (let i = 0; i < files.length; i++) {
+          const f = files[i];
+          const assetId = crypto.randomUUID();
+          const ext = extFromFilename(f.filename, kind);
+          const { contentType, declared } = metas[i];
+          const storageKey = `uploads/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
+          const { error } = await admin.from("capture_assets").insert({
+            id: assetId,
+            listing_id: listing.id,
+            kind,
+            storage_key: storageKey,
+            sha256: f.sha256 ?? null,
+            bytes: f.bytes ?? null,
+            content_type: contentType,
+            content_type_declared: declared,
+            uploaded: false,
+          });
+          if (error) throw new HttpError(400, `Asset create failed (#${i}): ${error.message}`);
+          // PUT targets the STAGING key; /complete verifies then copies to the
+          // final key. (contentType is advisory — /complete's HEAD check enforces.)
+          const putUrl = await presignPut({
+            bucket: R2_BUCKET_UPLOADS,
+            key: stagingKey(storageKey),
+            expiresIn: STAGING_PUT_TTL_SECONDS,
+            contentType,
+          });
+          assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey, content_type: contentType });
+        }
+      } catch (e) {
+        await refundUploadBudget(listing.org_id, files.length, totalBytes);
+        throw e;
       }
       return json({ assets }, 201);
     }
@@ -499,14 +569,26 @@ Deno.serve(async (req) => {
         head.bytes === claimedBytes;
       const allowed = isRendersPhoto ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
       const whatIsIt = isOriginal ? "original" : isPoster ? "poster" : kind;
-      // Take only the media type before any parameter, then require an EXACT
-      // allowlist match — "video/mp4;evil" must not launder into "video/mp4".
+      // `declaredType` is always already clean: the ticket's content_type was
+      // refused at creation unless it was a bare type/subtype
+      // (requireBareContentType, content_type.ts) — audit P0-2 residual, the
+      // client's OWN declaration can no longer launder a parameter into an
+      // accepted bare type ("video/mp4;evil" is now a 400 at creation, full
+      // stop). `observedType` is a different kind of value: it is the REAL
+      // Content-Type header the uploader's PUT set on the object, which the
+      // presigned URL never binds (r2.ts — aws4fetch's signQuery signs only
+      // `host`) and which a genuine HTTP client can legitimately suffix with a
+      // parameter (e.g. "; charset=…"). There is no client-supplied field to
+      // reject here, only a fact about the object to interpret, so its
+      // parameter is parsed off (baseMediaType) and the base type is what has
+      // to EXACTLY match the allowlist and the (already-clean) declared type —
+      // this can only narrow what's accepted, never launder a disallowed type in.
       // Agreement with the ticket's type is required only when the CLIENT
       // declared it: a server-defaulted type is a guess, and rejecting a
       // perfectly valid mp4 for arriving as video/quicktime deleted every
       // sub-64 MB tour the app tried to publish (audit F-E-01).
-      const observedType = mediaType(head.contentType);
-      const declaredType = mediaType(asset.content_type);
+      const observedType = baseMediaType(head.contentType);
+      const declaredType = baseMediaType(asset.content_type);
       const declaredByClient = asset.content_type_declared === true;
       const allowedOk = allowed.includes(observedType);
       const matchOk = !declaredByClient || declaredType === "" || observedType === declaredType;
@@ -616,11 +698,13 @@ Deno.serve(async (req) => {
       await requireWriteRole(admin, user.id, listing.org_id);
       await assertNotDeleting(user.id); // no new media once deletion starts
 
-      // Content type: the client's declaration when given (allow-listed below),
-      // otherwise a server default that /complete treats as a guess.
-      const declaredByClient = typeof body.content_type === "string" && mediaType(body.content_type) !== "";
+      // Content type: the client's declaration when given — a bare
+      // type/subtype ONLY, or the ticket is refused (audit P0-2 residual; see
+      // content_type.ts) — otherwise a server default that /complete treats
+      // as a guess.
+      const declaredByClient = isContentTypeDeclared(body.content_type);
       const contentType = declaredByClient
-        ? mediaType(body.content_type)
+        ? requireBareContentType(body.content_type as string, "content_type")
         : isPoster || isOriginal
         ? "image/jpeg"
         : role === "render"
@@ -648,27 +732,81 @@ Deno.serve(async (req) => {
 
       await chargeUploadBudget(listing.org_id, 1, body.bytes ?? 0);
 
-      const assetId = crypto.randomUUID();
-      const ext = isPoster || isOriginal
-        ? (POSTER_EXT[contentType] ?? "jpg")
-        : role === "render"
-        ? "mp4"
-        : extFromFilename(body.filename, kind);
-      // The `original-` prefix is how /complete (and provenance) tell an
-      // original apart from a poster: capture_assets has no role column, so the
-      // distinction has to be SERVER-DERIVED from the key we mint here.
-      const basename = isOriginal ? `original-${assetId}` : assetId;
-      const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${basename}.${ext}`;
+      // From here down, ANY failure (DB insert, or the R2 CreateMultipartUpload
+      // call below) must hand the just-taken charge back — audit P0-2 residual:
+      // budget used to be spent unconditionally before the insert, so a later
+      // DB/R2 failure consumed the org's ticket/byte allowance for an asset
+      // that never came to exist. Losing an Idempotency-Key race and relaying
+      // the WINNING request's ticket instead (the two `replay` branches below)
+      // is refunded the same way: this call still produced no asset of its own.
+      try {
+        const assetId = crypto.randomUUID();
+        const ext = isPoster || isOriginal
+          ? (POSTER_EXT[contentType] ?? "jpg")
+          : role === "render"
+          ? "mp4"
+          : extFromFilename(body.filename, kind);
+        // The `original-` prefix is how /complete (and provenance) tell an
+        // original apart from a poster: capture_assets has no role column, so
+        // the distinction has to be SERVER-DERIVED from the key we mint here.
+        const basename = isOriginal ? `original-${assetId}` : assetId;
+        const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${basename}.${ext}`;
 
-      const useMultipart =
-        kind === "video" && (body.multipart === true || (body.bytes ?? 0) > MULTIPART_THRESHOLD);
+        const useMultipart =
+          kind === "video" && (body.multipart === true || (body.bytes ?? 0) > MULTIPART_THRESHOLD);
 
-      if (useMultipart) {
-        assert(body.bytes && body.bytes > 0, 400, "bytes is required for a multipart upload");
-        const partSize = choosePartSize(body.bytes!);
-        const partCount = Math.ceil(body.bytes! / partSize);
-        const uploadId = await createMultipartUpload({ bucket: r2Bucket, key: storageKey, contentType });
+        if (useMultipart) {
+          assert(body.bytes && body.bytes > 0, 400, "bytes is required for a multipart upload");
+          const partSize = choosePartSize(body.bytes!);
+          const partCount = Math.ceil(body.bytes! / partSize);
+          const uploadId = await createMultipartUpload({ bucket: r2Bucket, key: storageKey, contentType });
 
+          const { data: asset, error } = await admin
+            .from("capture_assets")
+            .insert({
+              id: assetId,
+              listing_id: listing.id,
+              kind,
+              bucket: bucketTag,
+              storage_key: storageKey,
+              sha256: body.sha256 ?? null,
+              bytes: body.bytes ?? null,
+              content_type: contentType,
+              content_type_declared: declaredByClient,
+              upload_id: uploadId,
+              part_size: partSize,
+              parts_total: partCount,
+              uploaded: false,
+              idem_key: idem,
+            })
+            .select()
+            .single();
+          if (error) {
+            // Lost a race to a concurrent ticket with the SAME key (unique index
+            // uq_capture_assets_idem): that request owns the session — replay it
+            // and tear down the multipart we just opened, or it leaks in R2.
+            await abortMultipartUpload({ bucket: r2Bucket, key: storageKey, uploadId }).catch(() => {});
+            if (idem) {
+              const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
+              if (replay) {
+                await refundUploadBudget(listing.org_id, 1, body.bytes ?? 0);
+                return json(replay, 200);
+              }
+            }
+            throw new HttpError(400, `Asset create failed: ${error.message}`);
+          }
+          return json({
+            asset_id: asset.id,
+            mode: "multipart",
+            upload_id: uploadId,
+            storage_key: storageKey,
+            part_size: partSize,
+            part_count: partCount,
+            content_type: contentType,
+          }, 201);
+        }
+
+        // Single PUT (photos, posters + small video/render).
         const { data: asset, error } = await admin
           .from("capture_assets")
           .insert({
@@ -681,78 +819,42 @@ Deno.serve(async (req) => {
             bytes: body.bytes ?? null,
             content_type: contentType,
             content_type_declared: declaredByClient,
-            upload_id: uploadId,
-            part_size: partSize,
-            parts_total: partCount,
             uploaded: false,
             idem_key: idem,
           })
           .select()
           .single();
         if (error) {
-          // Lost a race to a concurrent ticket with the SAME key (unique index
-          // uq_capture_assets_idem): that request owns the session — replay it
-          // and tear down the multipart we just opened, or it leaks in R2.
-          await abortMultipartUpload({ bucket: r2Bucket, key: storageKey, uploadId }).catch(() => {});
+          // Concurrent ticket with the same key won the unique index — replay it.
           if (idem) {
             const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
-            if (replay) return json(replay, 200);
+            if (replay) {
+              await refundUploadBudget(listing.org_id, 1, body.bytes ?? 0);
+              return json(replay, 200);
+            }
           }
           throw new HttpError(400, `Asset create failed: ${error.message}`);
         }
+
+        // PUT targets the STAGING key; /complete verifies then copies to the
+        // final key (which never gets a PUT URL — closes the TOCTOU).
+        const putUrl = await presignPut({
+          bucket: r2Bucket,
+          key: stagingKey(storageKey),
+          expiresIn: STAGING_PUT_TTL_SECONDS,
+          contentType,
+        });
         return json({
           asset_id: asset.id,
-          mode: "multipart",
-          upload_id: uploadId,
+          mode: "single",
+          put_url: putUrl,
           storage_key: storageKey,
-          part_size: partSize,
-          part_count: partCount,
           content_type: contentType,
         }, 201);
+      } catch (e) {
+        await refundUploadBudget(listing.org_id, 1, body.bytes ?? 0);
+        throw e;
       }
-
-      // Single PUT (photos, posters + small video/render).
-      const { data: asset, error } = await admin
-        .from("capture_assets")
-        .insert({
-          id: assetId,
-          listing_id: listing.id,
-          kind,
-          bucket: bucketTag,
-          storage_key: storageKey,
-          sha256: body.sha256 ?? null,
-          bytes: body.bytes ?? null,
-          content_type: contentType,
-          content_type_declared: declaredByClient,
-          uploaded: false,
-          idem_key: idem,
-        })
-        .select()
-        .single();
-      if (error) {
-        // Concurrent ticket with the same key won the unique index — replay it.
-        if (idem) {
-          const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
-          if (replay) return json(replay, 200);
-        }
-        throw new HttpError(400, `Asset create failed: ${error.message}`);
-      }
-
-      // PUT targets the STAGING key; /complete verifies then copies to the
-      // final key (which never gets a PUT URL — closes the TOCTOU).
-      const putUrl = await presignPut({
-        bucket: r2Bucket,
-        key: stagingKey(storageKey),
-        expiresIn: STAGING_PUT_TTL_SECONDS,
-        contentType,
-      });
-      return json({
-        asset_id: asset.id,
-        mode: "single",
-        put_url: putUrl,
-        storage_key: storageKey,
-        content_type: contentType,
-      }, 201);
     }
 
     throw new HttpError(405, `Method ${req.method} not allowed on this path`);
@@ -818,7 +920,11 @@ function ticketMatches(
   if (priorBytes == null || want.bytes == null || priorBytes !== Number(want.bytes)) return false;
   if ((prior.kind ?? "video") !== want.kind) return false;
   if ((prior.bucket ?? "uploads") !== want.bucketTag) return false;
-  if (mediaType(prior.content_type) !== want.contentType) return false;
+  // prior.content_type was itself stored only after requireBareContentType
+  // accepted it (or is a server default), so it is already clean — this is
+  // just a defensive, honest re-parse of a stored value, not a re-launder of
+  // client input (see content_type.ts's header).
+  if (baseMediaType(prior.content_type) !== want.contentType) return false;
   return true;
 }
 

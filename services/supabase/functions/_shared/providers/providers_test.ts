@@ -14,7 +14,7 @@ import { imageSizeFor, mapWhisperWords } from "./openai.ts";
 import { assertNotCoveredModel, outputConfigFor } from "./anthropic.ts";
 import { geminiImagePayload } from "./gemini.ts";
 import { runChain } from "./chain.ts";
-import { routerJobFrom, routerStatusUrl } from "./jobtoken.ts";
+import { extractJobToken, routerStatusUrl, verifyJobToken } from "./jobtoken.ts";
 import { ProviderError, snippet } from "./common.ts";
 import { HttpError } from "../http.ts";
 
@@ -475,7 +475,8 @@ Deno.test("chain: a chain of ONE surfaces the provider's own error (flag-off sha
 
 // ── 8. THE ROUTED-JOB TOKEN (what ai-video puts in status_url) ───────────────
 
-Deno.test("job token round-trips and carries no credential", () => {
+Deno.test("job token round-trips end to end (sign -> extract -> verify), is bound to its owner, and carries no vendor credential", async () => {
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "test-signing-secret-for-providers-test");
   const ref = {
     provider: "kie",
     model: "bytedance/v1-pro-fast-image-to-video",
@@ -483,34 +484,104 @@ Deno.test("job token round-trips and carries no credential", () => {
     poll_url: "https://api.kie.ai/api/v1/jobs/recordInfo?taskId=task-123",
     submitted_at: "2026-09-04T12:00:00.000Z",
   };
+  const owner = { orgId: "org-abc", userId: "user-xyz" };
   const req = new Request("https://proj.supabase.co/functions/v1/ai-video/reel-clip", { method: "POST" });
-  const url = routerStatusUrl(req, "ai-video", "video.reel_clip", ref);
+  const url = await routerStatusUrl(req, "ai-video", "video.reel_clip", ref, owner);
   assertStringIncludes(url, "https://proj.supabase.co/functions/v1/ai-video/status?job=");
 
   const params = new URL(url).searchParams;
-  const job = routerJobFrom(params);
+  const raw = extractJobToken(params);
+  assert(raw);
+  const job = await verifyJobToken(raw, owner);
   assert(job);
   assertEquals(job.p, "kie");
   assertEquals(job.i, "task-123");
   assertEquals(job.k, "video.reel_clip");
   assertEquals(job.u, ref.poll_url);
-  // Nothing secret rides along: no org, no key, no signature.
-  const decoded = atob(new URL(url).searchParams.get("job")!.replace(/-/g, "+").replace(/_/g, "/"));
-  for (const forbidden of ["org", "key", "secret", "X-Amz", "Authorization"]) {
-    assert(!decoded.includes(forbidden), `token must not carry ${forbidden}`);
+  // The whole point of the fix: the token is bound to who minted it.
+  assertEquals(job.o, owner.orgId);
+  assertEquals(job.usr, owner.userId);
+
+  // No vendor credential rides along in the (signed, owned) payload.
+  const payloadB64 = raw.split(".")[0];
+  const decoded = atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/"));
+  for (const forbidden of ["key", "secret", "X-Amz", "Authorization"]) {
+    assert(!decoded.includes(forbidden), `token payload must not carry ${forbidden}`);
   }
+
+  // A caller from a different org can decode it but never verifies as theirs.
+  assertEquals(await verifyJobToken(raw, { orgId: "someone-elses-org", userId: owner.userId }), null);
+  // Same org, different user: also rejected (bound to the creating user too).
+  assertEquals(await verifyJobToken(raw, { orgId: owner.orgId, userId: "someone-else" }), null);
 });
 
-Deno.test("a legacy fal status request is NOT treated as a routed job", () => {
-  const params = new URLSearchParams({
+Deno.test("a legacy fal status request carries no job token; garbage in the job slot fails verification, never a throw", async () => {
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "test-signing-secret-for-providers-test");
+  const legacyParams = new URLSearchParams({
     status_url: "https://queue.fal.run/fal-ai/veo3.1/fast/requests/abc/status",
     response_url: "https://queue.fal.run/fal-ai/veo3.1/fast/requests/abc",
   });
-  assertEquals(routerJobFrom(params), null);
-  assertEquals(routerJobFrom(new URLSearchParams()), null);
-  // Garbage in the job slot is null, never a throw.
-  assertEquals(routerJobFrom(new URLSearchParams({ job: "!!!not-base64!!!" })), null);
-  assertEquals(routerJobFrom(new URLSearchParams({ job: btoa('{"nope":1}') })), null);
+  assertEquals(extractJobToken(legacyParams), null);
+  assertEquals(extractJobToken(new URLSearchParams()), null);
+
+  const owner = { orgId: "org-abc", userId: "user-xyz" };
+  // Garbage in the job slot is extracted (it was attempted) but never verifies, and never throws.
+  assertEquals(extractJobToken(new URLSearchParams({ job: "!!!not-base64!!!" })), "!!!not-base64!!!");
+  assertEquals(await verifyJobToken("!!!not-base64!!!", owner), null);
+  assertEquals(await verifyJobToken(btoa('{"nope":1}'), owner), null);
+});
+
+Deno.test("a tampered job token payload and a forged signature both fail verification", async () => {
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "test-signing-secret-for-providers-test");
+  const ref = {
+    provider: "kie",
+    model: "bytedance/v1-pro-fast-image-to-video",
+    id: "task-123",
+    poll_url: "https://api.kie.ai/api/v1/jobs/recordInfo?taskId=task-123",
+    submitted_at: "2026-09-04T12:00:00.000Z",
+  };
+  const owner = { orgId: "org-abc", userId: "user-xyz" };
+  const req = new Request("https://proj.supabase.co/functions/v1/ai-video/reel-clip", { method: "POST" });
+  const url = await routerStatusUrl(req, "ai-video", "video.reel_clip", ref, owner);
+  const raw = extractJobToken(new URL(url).searchParams);
+  assert(raw);
+  const [payloadB64, sigB64] = raw.split(".");
+
+  // Tampered payload (swap the org id in), original signature: must fail.
+  const decoded = JSON.parse(atob(payloadB64.replace(/-/g, "+").replace(/_/g, "/")));
+  const tamperedPayload = { ...decoded, o: "attacker-org" };
+  const tamperedB64 = btoa(JSON.stringify(tamperedPayload)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  assertEquals(await verifyJobToken(`${tamperedB64}.${sigB64}`, { orgId: "attacker-org", userId: owner.userId }), null);
+
+  // Forged signature on an otherwise-untouched payload: must fail.
+  const forgedSig = sigB64.slice(0, -2) + (sigB64.slice(-2) === "AA" ? "BB" : "AA");
+  assertEquals(await verifyJobToken(`${payloadB64}.${forgedSig}`, owner), null);
+
+  // Malformed token shapes (missing the "." separator, or extra segments): never a throw.
+  assertEquals(await verifyJobToken(payloadB64, owner), null);
+  assertEquals(await verifyJobToken(`${payloadB64}.${sigB64}.extra`, owner), null);
+});
+
+Deno.test("an expired job token fails verification even with a valid signature and matching owner", async () => {
+  Deno.env.set("JOB_TOKEN_SIGNING_SECRET", "test-signing-secret-for-providers-test");
+  const ref = {
+    provider: "kie",
+    model: "bytedance/v1-pro-fast-image-to-video",
+    id: "task-123",
+    poll_url: "https://api.kie.ai/api/v1/jobs/recordInfo?taskId=task-123",
+    submitted_at: "2026-09-04T12:00:00.000Z",
+  };
+  const owner = { orgId: "org-abc", userId: "user-xyz" };
+  const req = new Request("https://proj.supabase.co/functions/v1/ai-video/reel-clip", { method: "POST" });
+  const url = await routerStatusUrl(req, "ai-video", "video.reel_clip", ref, owner);
+  const raw = extractJobToken(new URL(url).searchParams);
+  assert(raw);
+
+  // Freshly minted: verifies now.
+  assert(await verifyJobToken(raw, owner));
+  // Same token, evaluated far enough in the future to be past its expiry: rejected.
+  const farFuture = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  assertEquals(await verifyJobToken(raw, owner, farFuture), null);
 });
 
 Deno.test("vendor bodies are redacted before they reach an error or a log", () => {

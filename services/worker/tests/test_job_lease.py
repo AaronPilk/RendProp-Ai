@@ -48,13 +48,20 @@ def fresh_db(**kw) -> fake_postgrest.FakeDB:
     return db
 
 
-def load_db_module(base_url: str):
-    """Import services/worker/db.py fresh against a given Supabase URL."""
+def load_db_module(base_url: str, *, worker_id: str = "test-worker"):
+    """Import services/worker/db.py fresh against a given Supabase URL.
+
+    `worker_id` lets a test simulate TWO INDEPENDENT workers against the same
+    fake backend: two calls with different `worker_id`s each re-execute the
+    module fresh (module-level WORKER_ID is bound at import time), returning
+    two distinct module objects that never share Python-level state — only the
+    fake HTTP server's table rows, exactly like two real worker processes.
+    """
     for mod in ("db", "settings"):
         sys.modules.pop(mod, None)
     os.environ["SUPABASE_URL"] = base_url
     os.environ["SUPABASE_SERVICE_ROLE_KEY"] = "test-key"
-    os.environ["WORKER_ID"] = "test-worker"
+    os.environ["WORKER_ID"] = worker_id
     os.environ["WORKER_LEASE_S"] = "600"
     os.environ["WORKER_MAX_ATTEMPTS"] = "3"
     import db as db_module  # noqa: WPS433
@@ -192,9 +199,13 @@ def test_claim_scope_and_fail_guard() -> None:
               db.claim_next_job() is None)
 
         # fail_job must never overwrite a tour that another actor published.
+        # worker_id="test-worker" matches this test's `db` module (see
+        # load_db_module) — a REAL job would have this set from claim_next_job;
+        # test_stale_worker_cannot_mutate_reclaimed_job below covers the case
+        # where it does NOT match.
         fdb.tables["render_jobs"] = [
             {"id": "R1", "listing_id": "L1", "capture_asset_id": "asset-ok",
-             "status": "ready", "source": "worker", "attempts": 1,
+             "status": "ready", "source": "worker", "attempts": 1, "worker_id": "test-worker",
              "created_at": "2026-01-01T00:00:00Z"},
         ]
         db.fail_job("R1", {"message": "download 404", "step": "download"})
@@ -253,11 +264,243 @@ def test_enhancement_result_optional() -> None:
         server.shutdown()
 
 
+# ── 5. Fix 2: a stale worker must not be able to mutate a reclaimed job ─────
+#      another worker reclaimed out from under it.
+
+def test_stale_worker_cannot_mutate_reclaimed_job() -> None:
+    print("\n5. a stale worker cannot finish/progress/fail/release a job "
+          "reclaimed by another worker (external release audit — Fix 2)")
+    fdb = fresh_db(lease_columns=True)
+    server, url = fake_postgrest.start(fdb)
+    try:
+        fdb.tables["render_jobs"] = [
+            {"id": "J5", "listing_id": "L1", "capture_asset_id": "asset-ok",
+             "status": "queued", "source": "worker", "attempts": 0,
+             "created_at": "2026-01-01T00:00:00Z"},
+        ]
+        row = fdb.tables["render_jobs"][0]
+
+        worker_a = load_db_module(url, worker_id="worker-a")
+        job = worker_a.claim_next_job()
+        check("worker A claims the job", job is not None and job.get("id") == "J5")
+        check("worker A is recorded as the owner", row.get("worker_id") == "worker-a")
+
+        # Worker A's lease expires; worker B reclaims it. A fresh db module with
+        # a different WORKER_ID, same fake backend — exactly like two separate
+        # worker processes/hosts sharing one Supabase project.
+        row["lease_expires_at"] = iso(-60)
+        worker_b = load_db_module(url, worker_id="worker-b")
+        reclaimed = worker_b.claim_next_job()
+        check("worker B reclaims the expired lease", reclaimed is not None and reclaimed.get("id") == "J5")
+        check("worker B is now the owner", row.get("worker_id") == "worker-b")
+        b_lease = row.get("lease_expires_at")
+        b_attempts = row.get("attempts")
+
+        # Worker A — unaware its lease is gone — keeps trying to work the job.
+        # Every ownership-scoped mutation must refuse, and the two that are
+        # "must-stop" checkpoints (set_progress, finish_job) must RAISE
+        # JobNotOwned rather than silently doing nothing.
+        try:
+            worker_a.set_progress("J5", 0.5, "encoding")
+            check("set_progress raises JobNotOwned for the stale owner", False, "did not raise")
+        except worker_a.JobNotOwned:
+            check("set_progress raises JobNotOwned for the stale owner", True)
+        check("worker B's current_step untouched by A's set_progress",
+              row.get("current_step") != "encoding", str(row.get("current_step")))
+
+        try:
+            worker_a.finish_job("J5")
+            check("finish_job raises JobNotOwned for the stale owner", False, "did not raise")
+        except worker_a.JobNotOwned:
+            check("finish_job raises JobNotOwned for the stale owner", True)
+        check("worker B's job is still 'processing' — NOT stomped to 'ready' by A",
+              row["status"] == "processing", str(row["status"]))
+        check("worker B's lease is untouched by A's finish_job attempt",
+              row.get("lease_expires_at") == b_lease)
+        check("finished_at was NOT stamped by A", row.get("finished_at") in (None,))
+
+        # fail_job and release_job are terminal/cleanup calls: they log and
+        # return quietly on a lost claim rather than raising, but they must
+        # STILL never touch worker B's row.
+        worker_a.fail_job("J5", {"message": "boom", "step": "encode"})
+        check("fail_job left worker B's row alone", row["status"] == "processing", str(row["status"]))
+        check("fail_job did not stamp worker B's row with an error",
+              row.get("error") is None, str(row.get("error")))
+
+        worker_a.release_job("J5", "worker A thinks it should requeue")
+        check("release_job did NOT requeue worker B's live job out from under it",
+              row["status"] == "processing", str(row["status"]))
+        check("release_job did not clear worker B's lease",
+              row.get("worker_id") == "worker-b" and row.get("lease_expires_at") == b_lease)
+        check("release_job did not touch attempts", row.get("attempts") == b_attempts)
+
+        # Worker B, the ACTUAL owner, can still do every one of these normally.
+        worker_b.set_progress("J5", 0.9, "uploading")
+        check("worker B's own set_progress works", row.get("current_step") == "uploading")
+        worker_b.finish_job("J5")
+        check("worker B's own finish_job succeeds", row["status"] == "ready")
+        check("worker B's finish_job stamped finished_at", row.get("finished_at") is not None)
+    finally:
+        server.shutdown()
+
+
+# ── 6. audit P0-8: claiming a SPECIFIC job (webhook path) is the same ────────
+#      CAS-plus-lease claim as the poll loop, not a second weaker one.
+
+def test_claim_by_job_id() -> None:
+    print("\n6. db.claim_next_job(job_id=...) — the webhook claim path — is "
+          "lease-safe and scope-safe (external release audit P0-8)")
+    fdb = fresh_db(lease_columns=True)
+    server, url = fake_postgrest.start(fdb)
+    try:
+        db = load_db_module(url)
+
+        # (a) normal case: claims exactly that job, with a real lease.
+        fdb.tables["render_jobs"] = [
+            {"id": "J6", "listing_id": "L1", "capture_asset_id": "asset-ok",
+             "status": "queued", "source": "worker", "attempts": 0,
+             "created_at": "2026-01-01T00:00:00Z"},
+        ]
+        claimed = db.claim_next_job(job_id="J6")
+        check("claims the named job", claimed is not None and claimed["id"] == "J6")
+        row = fdb.tables["render_jobs"][0]
+        check("sets status=processing", row["status"] == "processing")
+        check("stamps worker_id (was never set by the OLD process_specific claim)",
+              row.get("worker_id") == "test-worker")
+        check("sets a real lease (was never set by the OLD process_specific claim)",
+              bool(row.get("lease_expires_at")))
+        check("increments attempts (was never set by the OLD process_specific claim)",
+              row.get("attempts") == 1)
+
+        # (b) a job_id whose asset makes it ineligible (app-published bucket) is
+        # refused, matching the poll loop's own _CLAIM_FILTERS — a job_id handed
+        # straight in does not bypass the eligibility filters.
+        fdb.tables["render_jobs"] = [
+            {"id": "J7", "listing_id": "L1", "capture_asset_id": "asset-app",
+             "status": "queued", "source": "worker", "attempts": 0,
+             "created_at": "2026-01-01T00:00:00Z"},
+        ]
+        check("refuses a job_id whose asset lives in the renders bucket",
+              db.claim_next_job(job_id="J7") is None)
+        check("did not mutate the refused job",
+              fdb.tables["render_jobs"][0]["status"] == "queued")
+
+        # (c) a job_id already claimed (live lease, different worker) is refused —
+        # the CAS still loses cleanly rather than stealing a live job.
+        fdb.tables["render_jobs"] = [
+            {"id": "J8", "listing_id": "L1", "capture_asset_id": "asset-ok",
+             "status": "processing", "source": "worker", "attempts": 1,
+             "worker_id": "someone-else", "lease_expires_at": iso(600),
+             "created_at": "2026-01-01T00:00:00Z"},
+        ]
+        check("refuses a job_id another worker already owns (live lease)",
+              db.claim_next_job(job_id="J8") is None)
+        check("did not steal the live job",
+              fdb.tables["render_jobs"][0]["worker_id"] == "someone-else")
+
+        # (d) a job_id with an expired lease IS reclaimable by job_id, same as
+        # the poll loop's reclaim path.
+        fdb.tables["render_jobs"][0].update(lease_expires_at=iso(-60))
+        reclaimed = db.claim_next_job(job_id="J8")
+        check("reclaims a job_id with an expired lease", reclaimed is not None and reclaimed["id"] == "J8")
+        check("reclaim stamps the new owner", fdb.tables["render_jobs"][0]["worker_id"] == "test-worker")
+    finally:
+        server.shutdown()
+
+
+# ── 7. audit finding 6: cost_ledger idempotency (worker side) ────────────────
+
+def test_record_cost_idempotency() -> None:
+    print("\n7. record_cost() carries a stable idempotency_key; a duplicate-key "
+          "response is treated as success, not failure (external release audit finding 6)")
+    fdb = fresh_db(lease_columns=True)
+    server, url = fake_postgrest.start(fdb)
+    try:
+        db = load_db_module(url)
+
+        # _insert_cost_row: a genuine duplicate-key error must NOT raise —
+        # otherwise a row that already landed gets endlessly re-spooled and
+        # wedges cost_spool.flush() behind it forever.
+        seen: list[dict] = []
+
+        def fake_insert_dup(table, row, prefer="return=minimal"):
+            seen.append(row)
+            raise db.DBError(
+                'PostgREST HTTP 409 POST cost_ledger: {"code":"23505","message":'
+                '"duplicate key value violates unique constraint '
+                '\\"uq_cost_ledger_idempotency\\""}'
+            )
+
+        orig_insert = db.insert
+        db.insert = fake_insert_dup
+        try:
+            db._insert_cost_row({"idempotency_key": "dup-1", "total_cents": 1.0})
+            check("a duplicate-key error from insert() does not raise", True)
+        except db.DBError:
+            check("a duplicate-key error from insert() does not raise", False, "raised")
+        finally:
+            db.insert = orig_insert
+        check("insert() was actually called with the row", len(seen) == 1)
+
+        # A DIFFERENT failure (not a duplicate key) must still raise normally —
+        # this is not a blanket "swallow all errors" change.
+        def fake_insert_other(table, row, prefer="return=minimal"):
+            raise db.DBError("PostgREST HTTP 500 POST cost_ledger: internal error")
+
+        db.insert = fake_insert_other
+        try:
+            db._insert_cost_row({"idempotency_key": "x", "total_cents": 1.0})
+            check("a non-duplicate error still raises", False, "did not raise")
+        except db.DBError:
+            check("a non-duplicate error still raises", True)
+        finally:
+            db.insert = orig_insert
+
+        # record_cost(): the row it builds carries a real, non-empty
+        # idempotency_key, generated before any attempt.
+        captured: list[dict] = []
+
+        def capture_insert(table, row, prefer="return=minimal"):
+            captured.append(dict(row))
+            return []
+
+        db.insert = capture_insert
+        try:
+            ok = db.record_cost(feature="render", provider="modal", model=None,
+                                units=1.0, unit_cost_cents=0.5, total_cents=0.5,
+                                job_id=None, org_id=None)
+        finally:
+            db.insert = orig_insert
+        check("record_cost reports success", ok is True)
+        check("exactly one insert attempt (first one succeeded)", len(captured) == 1)
+        key = captured[0].get("idempotency_key") if captured else None
+        check("the row carries a non-empty idempotency_key", bool(key), str(key))
+
+        # Two separate record_cost() calls (two distinct logical charges) get
+        # DIFFERENT keys — this is not a constant/shared value.
+        captured2: list[dict] = []
+        db.insert = lambda table, row, prefer="return=minimal": (captured2.append(dict(row)) or [])
+        try:
+            db.record_cost(feature="stream_store", provider="cloudflare", model=None,
+                           units=1.0, unit_cost_cents=0.5, total_cents=0.5,
+                           job_id=None, org_id=None)
+        finally:
+            db.insert = orig_insert
+        check("a second, separate charge gets a DIFFERENT idempotency_key",
+              captured2 and captured2[0].get("idempotency_key") != key,
+              f"{captured2[0].get('idempotency_key') if captured2 else None} vs {key}")
+    finally:
+        server.shutdown()
+
+
 if __name__ == "__main__":
     test_with_lease()
     test_without_lease()
     test_claim_scope_and_fail_guard()
     test_enhancement_result_optional()
+    test_stale_worker_cannot_mutate_reclaimed_job()
+    test_claim_by_job_id()
+    test_record_cost_idempotency()
     print()
     if FAILURES:
         print(f"✗ {len(FAILURES)} failure(s): {FAILURES}")

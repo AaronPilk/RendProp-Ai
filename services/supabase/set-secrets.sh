@@ -4,7 +4,10 @@
 #
 # Every secret the functions read (grep "Deno.env.get" functions/) is listed;
 # the ones marked OPTIONAL may stay blank and the feature degrades honestly
-# (Stream deletion queues, Turnstile is a no-op, Apple revocation is queued).
+# (Stream deletion queues, Apple revocation is queued). TURNSTILE_SECRET_KEY is
+# the one exception: leave it blank and POST /leads REJECTS every public lead
+# submission (fails closed, audit fix) — paste a real key, or set
+# TURNSTILE_OPTIONAL=1 below to knowingly launch without bot protection.
 set -euo pipefail
 REF="ymgqpbnjpztwjsyvceld"   # dedicated RendProp project
 
@@ -22,6 +25,7 @@ supabase secrets set --project-ref "$REF" \
   GEMINI_IMAGE_MODEL="gemini-2.5-flash-image" \
   GEMINI_TEXT_MODEL="gemini-2.5-flash" \
   FAL_KEY="PASTE_FAL_KEY" \
+  JOB_TOKEN_SIGNING_SECRET="PASTE_RANDOM_SECRET_e.g._openssl_rand_-hex_32" \
   ELEVENLABS_API_KEY="PASTE_ELEVENLABS_KEY" \
   ELEVENLABS_MODEL_ID="OPTIONAL_BLANK" \
   ANTHROPIC_API_KEY="PASTE_ANTHROPIC_KEY" \
@@ -34,7 +38,8 @@ supabase secrets set --project-ref "$REF" \
   HIGGSFIELD_API_KEY_SECRET="OPTIONAL_BLANK" \
   GHL_API_KEY="OPTIONAL_BLANK" \
   GHL_LOCATION_ID="OPTIONAL_BLANK" \
-  TURNSTILE_SECRET_KEY="OPTIONAL_BLANK" \
+  TURNSTILE_SECRET_KEY="PASTE_TURNSTILE_SECRET_KEY" \
+  TURNSTILE_OPTIONAL="OPTIONAL_BLANK" \
   APPLE_TEAM_ID="PASTE_APPLE_TEAM_ID" \
   APPLE_CLIENT_ID="com.rendprop.app" \
   APPLE_KEY_ID="PASTE_SIGN_IN_WITH_APPLE_KEY_ID" \
@@ -59,6 +64,24 @@ supabase secrets set --project-ref "$REF" \
 # stay blank: unset means the function sends no model_id and ElevenLabs uses its
 # own current default, which cannot be retired out from under us the way a
 # hardcoded model id can (that is exactly how GEMINI_TEXT_MODEL broke).
+#
+# JOB_TOKEN_SIGNING_SECRET signs the opaque async-job status token ai-video
+# mints at submit and verifies at GET /ai-video/status (_shared/providers/jobtoken.ts,
+# audit item 4 — see docs/handoff/audit-fixes.md). A random secret dedicated to
+# this ONE purpose — generate with `openssl rand -hex 32`, never reuse a vendor
+# key or the service-role key. Unset means every routed job's status check is
+# rejected as unverifiable (loud, not a silent fallback to unsigned tokens).
+# Rotating it invalidates any token minted under the old value within
+# TOKEN_TTL_SECONDS (2h) — acceptable churn, not a data-loss risk (the
+# underlying vendor job is unaffected; a caller just has to re-poll and would
+# see the same terminal state on any surviving legacy path).
+#
+# TURNSTILE_SECRET_KEY: Cloudflare dashboard -> Turnstile -> your widget -> Secret
+# Key. Required — POST /leads (public lead capture) now FAILS CLOSED and rejects
+# every submission when this is blank, instead of the old silent no-op. Leave it
+# blank ONLY if you also set TURNSTILE_OPTIONAL=1 right below it, which is a
+# knowing opt-out (a warning is still logged on every request either way). See
+# services/supabase/functions/leads/README.md.
 #
 # TOUR_PUBLIC_BASE_URL must match the tour host's routed domain (wrangler.toml routes
 # rendprop.com/f/* and /a/*; every code default is rendprop.com). It used to say

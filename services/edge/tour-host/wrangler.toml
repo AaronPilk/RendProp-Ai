@@ -1,6 +1,13 @@
 name = "rendprop-tour-host"
 main = "src/index.ts"
-compatibility_date = "2024-09-23"
+# Bumped from the stale 2024-09-23 (release-audit finding, 2026-09-07) — no
+# compatibility_flags are set, so this date alone controls every default
+# runtime behaviour. Verified as a no-op for this Worker: `npm test` (892
+# assertions) passes unchanged at both dates, and a local `wrangler dev` at
+# each date against the same requests (/, static assets, /f/*, /a/*, /terms)
+# returned byte-identical status codes, headers and ETags. Re-verify the same
+# way (or on a preview deploy) before pushing this date further.
+compatibility_date = "2026-09-07"
 # No *.workers.dev hostname in prod (duplicate content + un-branded URL) — the
 # apex route below is the only public entry.
 workers_dev = false

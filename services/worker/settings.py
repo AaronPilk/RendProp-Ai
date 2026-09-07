@@ -201,6 +201,15 @@ class Settings:
     r2_bucket_renders: str = "rendprop-renders"
     r2_endpoint: str = ""            # derived from account id if blank
     r2_presign_expiry_s: int = 3600  # lifetime of the GET url handed to Stream
+    # boto3/botocore default to a 60s connect + 60s read timeout when unset, but
+    # that default is IMPLICIT — nothing here declared it, and a hung R2 socket
+    # (a stalled TCP handshake, a connection that accepts but never sends data)
+    # could previously wedge a download/upload for whatever botocore's build
+    # default happened to be, with no worker-level knob to shorten or lengthen
+    # it (external release audit finding 4). Both are now explicit and
+    # configurable via env.
+    r2_connect_timeout_s: float = 10.0
+    r2_read_timeout_s: float = 60.0
 
     # ── Cloudflare Stream ──
     cloudflare_stream_token: str = ""
@@ -265,6 +274,8 @@ class Settings:
             r2_bucket_renders=os.environ.get("R2_BUCKET_RENDERS", "rendprop-renders"),
             r2_endpoint=endpoint,
             r2_presign_expiry_s=_int("R2_PRESIGN_EXPIRY_S", 3600, lo=60, hi=604800),
+            r2_connect_timeout_s=_float("R2_CONNECT_TIMEOUT_S", 10.0, lo=1.0, hi=300.0),
+            r2_read_timeout_s=_float("R2_READ_TIMEOUT_S", 60.0, lo=1.0, hi=3600.0),
             cloudflare_stream_token=os.environ.get("CLOUDFLARE_STREAM_TOKEN", ""),
             stream_poll_interval_s=_float("STREAM_POLL_INTERVAL_S", 4.0, lo=0.5, hi=60),
             stream_timeout_s=_int("STREAM_TIMEOUT_S", 900, lo=10, hi=7200),

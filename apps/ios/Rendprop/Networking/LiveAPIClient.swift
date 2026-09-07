@@ -1,9 +1,21 @@
 import Foundation
 
-/// Round a coordinate to 3 decimal places (~110 m). Only a coarse fix ever
-/// leaves the device or lands in the listing model — the privacy manifest
-/// declares CoarseLocation, not precise (2026-08 audit P0-6). The street
-/// address stays exact; it's the product.
+/// Round a coordinate to 3 decimal places (~110 m). This is a
+/// data-minimization step, NOT a privacy-label reclassification: per
+/// Apple's own definition (quoted in full in PrivacyInfo.xcprivacy), a
+/// latitude/longitude at three or more decimal places is still Precise
+/// Location, so the manifest correctly declares
+/// NSPrivacyCollectedDataTypePreciseLocation either way — rounding here
+/// does NOT make this Coarse, and no comment or doc should claim it does.
+/// What it does do is cap every coordinate at that resolution instead of
+/// storing or sending a raw GPS/geocode fix that is far more precise than
+/// the product needs. Every write site routes through this — the outbound
+/// API body below, NewListingView's location capture, and
+/// FlythroughDetailView's forward-geocode result — and the Maps deep-link
+/// fallback in `mapsURL` does the same (2026-08 audit P0-6; the
+/// geocode-result and Maps-export gaps that stored/exported full precision
+/// were found and closed 2026-09). The street address stays exact — it's
+/// the product — and Maps is opened by address, never by a precise `ll=`.
 func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 
 /// Live client against the Supabase Edge Functions API

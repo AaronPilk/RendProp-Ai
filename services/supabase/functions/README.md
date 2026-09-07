@@ -106,9 +106,11 @@ rest with `../set-secrets.sh` (edit it first). Reference:
 | `MAX_GEN_COST_PER_JOB_CENTS` | ledger, ai-enhance | hard per-job cap (cents), default 2500 |
 | `GEMINI_API_KEY`, `GEMINI_IMAGE_MODEL`, `GEMINI_TEXT_MODEL` | ai-photo | image edits (default `gemini-2.5-flash-image`) and the suggest/improve helpers (default `gemini-2.5-flash`) |
 | `FAL_KEY` | ai-video | Topaz / Bria / Veo / Seedance queue |
+| `JOB_TOKEN_SIGNING_SECRET` | ai-video | HMAC-SHA256 key for the opaque async-job status token (`_shared/providers/jobtoken.ts`, audit item 4) — signs + verifies the org/user-bound, expiring token `GET /ai-video/status` accepts; a dedicated secret, never a vendor key, so rotating it can't also rotate a vendor credential. Unset means every routed job token is rejected as unverifiable (loud failure, not silent unsigned acceptance) |
 | `ANTHROPIC_API_KEY`, `KIE_API_KEY` | pipeline (via ai-enhance / worker) | provider keys — never shipped to the app |
-| `GHL_API_KEY`, `GHL_LOCATION_ID` | leads, me | optional; leads upsert to GoHighLevel (tagged `rendprop_org:<id>`), deletion removes them |
-| `TURNSTILE_SECRET_KEY` | leads | optional; when set, the end-card form must carry a valid Turnstile token |
+| `GHL_API_KEY`, `GHL_LOCATION_ID` | leads, me | optional; ONE shared location for every tenant. `leads` upserts and tags each contact `rendprop_org:<id>` (`_shared/ghl.ts`); deletion deletes a contact ONLY when this tenant's tag is the only one present, strips just this tag when another tenant's is also there, and never touches a contact whose tag it cannot confirm |
+| `TURNSTILE_SECRET_KEY` | leads | **required** — `POST /leads` FAILS CLOSED (rejects the submission) when unset, and logs a warning naming this var every time. When set, the end-card form must carry a valid Turnstile token. See `leads/README.md`. |
+| `TURNSTILE_OPTIONAL` | leads | optional escape hatch — set to `"1"` to knowingly accept NO bot protection while `TURNSTILE_SECRET_KEY` is unset (local dev, or a deliberately-unprotected launch). Still logs a warning every time. |
 | `APPLE_TEAM_ID`, `APPLE_CLIENT_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY_P8` | me | **all four required** for Sign in with Apple token exchange + revocation (TN3194); otherwise `/me/apple-code` answers `stored:false` |
 
 ## 3. Deploy
@@ -145,9 +147,11 @@ against the old schema.
 ## 4. Scheduled work
 
 `POST /me/sweep-deletions` (service-role bearer) drains deletion tombstones —
-R2 objects, Stream videos, CRM contacts, Apple revocations that failed or
-exceeded the inline caps — until each payload is empty. Nothing calls it on its
-own. Schedule it every 15 minutes with Supabase cron (`pg_cron` + `pg_net`):
+R2 objects, Stream videos, CRM contacts (tag-scoped per tenant — see
+`me/logic.ts`'s `decideGhlTagAction`), Apple revocations, the analytics-forget
+update and the profile row, any of which failed or exceeded the inline caps —
+until each payload is empty. Nothing calls it on its own. Schedule it every 15
+minutes with Supabase cron (`pg_cron` + `pg_net`):
 
 ```sql
 -- Dashboard → Database → Extensions: enable pg_cron and pg_net, then:

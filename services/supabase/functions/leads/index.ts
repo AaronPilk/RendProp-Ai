@@ -14,12 +14,20 @@
 // for the public POST, so getUser() validates the token itself). Email alerts
 // are a later step (needs an email provider) — the app copy says so.
 //
+// Bot protection on the public POST (audit — "Turnstile fails open when
+// unconfigured"): Cloudflare Turnstile now FAILS CLOSED when
+// TURNSTILE_SECRET_KEY is not set, instead of silently accepting every
+// submission. See turnstile.ts, README.md and services/supabase/DEPLOYMENT.md
+// for the opt-out (TURNSTILE_OPTIONAL=1) and where it's documented.
+//
 // Errors carry { error, code } (see _shared/http.ts).
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
+import { ghlOrgTag } from "../_shared/ghl.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { verifyTurnstile } from "./turnstile.ts";
 
 interface LeadBody {
   slug: string;
@@ -35,34 +43,6 @@ const LEAD_STATUSES = ["new", "contacted", "won", "lost"];
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_LIST = 500;
 
-/**
- * Verify a Cloudflare Turnstile token. Returns true when the token is valid, OR
- * when Turnstile isn't configured yet (no TURNSTILE_SECRET_KEY) — so the widget
- * can be rolled out gradually: set the secret + the worker's site key and it
- * activates. Fail-closed only when a secret IS set and the token is missing/bad.
- */
-async function verifyTurnstile(token: string | undefined, ip: string): Promise<boolean> {
-  const secret = Deno.env.get("TURNSTILE_SECRET_KEY");
-  if (!secret) return true; // not configured → don't block
-  if (!token) return false;
-  try {
-    const form = new URLSearchParams();
-    form.set("secret", secret);
-    form.set("response", token);
-    if (ip && ip !== "unknown") form.set("remoteip", ip);
-    const res = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: form.toString(),
-    });
-    const data = await res.json().catch(() => ({ success: false }));
-    return data?.success === true;
-  } catch (e) {
-    console.error("Turnstile verify error:", e);
-    return false; // a configured verifier that errors should not let bots through
-  }
-}
-
 /** Upsert the lead to GoHighLevel. Returns true on success; never throws. */
 async function pushToGHL(
   lead: { name?: string; email?: string; phone?: string },
@@ -74,9 +54,12 @@ async function pushToGHL(
   try {
     const [firstName, ...rest] = (lead.name ?? "").trim().split(/\s+/);
     // Tag the contact with the tenant/listing so a shared CRM location can be
-    // attributed (and deletion can target only this org's contacts — F-supabase-23).
+    // attributed (and deletion can target only this org's contacts —
+    // F-supabase-23 / external release audit P0). The org tag is built by
+    // ghlOrgTag() — functions/me/index.ts reads contacts back through the same
+    // helper, so a deletion can never drift from what this write actually set.
     const tags = ["rendprop", "tour", `rendprop_slug:${attribution.slug}`];
-    if (attribution.org_id) tags.push(`rendprop_org:${attribution.org_id}`);
+    if (attribution.org_id) tags.push(ghlOrgTag(attribution.org_id));
     if (attribution.listing_id) tags.push(`rendprop_listing:${attribution.listing_id}`);
     const resp = await fetch("https://services.leadconnectorhq.com/contacts/upsert", {
       method: "POST",
@@ -214,7 +197,9 @@ Deno.serve(async (req) => {
     // Honeypot: pretend success so bots don't learn anything.
     if (body._hp) return json({ ok: true });
 
-    // Bot protection: Cloudflare Turnstile (no-op until TURNSTILE_SECRET_KEY is set).
+    // Bot protection: Cloudflare Turnstile. FAILS CLOSED when
+    // TURNSTILE_SECRET_KEY is unset — see turnstile.ts — unless
+    // TURNSTILE_OPTIONAL=1 is set as a deliberate opt-out.
     if (!(await verifyTurnstile(body.turnstile_token, clientIp(req)))) {
       throw new HttpError(403, "Bot check failed — please retry the form.");
     }

@@ -104,7 +104,8 @@ def _kill_group(proc) -> None:
 ProgressCB = Callable[[float], None]
 
 
-# ── resource limits (audit round 4) ──────────────────────────────────────────
+# ── resource limits (audit round 4; expanded by the external release audit,
+#    finding 4) ────────────────────────────────────────────────────────────
 # ffmpeg/ffprobe consume ATTACKER-CONTROLLED media: uploads are capped at 12 GB,
 # and a crafted file can pin CPU or fill disk indefinitely. Every invocation now
 # has a wall-clock timeout and is killed on breach, and sources longer than
@@ -112,14 +113,66 @@ ProgressCB = Callable[[float], None]
 PROBE_TIMEOUT_S = int(os.environ.get("FFPROBE_TIMEOUT_S", "60"))
 RENDER_TIMEOUT_S = int(os.environ.get("FFMPEG_TIMEOUT_S", str(90 * 60)))  # 90 min
 POSTER_TIMEOUT_S = int(os.environ.get("FFMPEG_POSTER_TIMEOUT_S", "120"))
+
+
+def _env_flag(name: str) -> bool:
+    return (os.environ.get(name) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _stall_timeout_from_env(default: int = 300) -> int:
+    """Resolve FFMPEG_STALL_TIMEOUT_S. A non-positive value means "use the
+    default", NOT "disabled" (finding 4): the old `int(os.environ.get(...))`
+    took FFMPEG_STALL_TIMEOUT_S=0 (or a stray negative) completely at face
+    value and silently ran the stall monitor's `STALL_TIMEOUT_S <= 0` bypass
+    for the rest of the process — a wedged ffmpeg would then run for the FULL
+    RENDER_TIMEOUT_S ceiling (90 min by default) instead of being caught in
+    minutes, on nothing more than a config typo. To actually turn stall
+    detection off, set FFMPEG_STALL_DISABLED=1 explicitly.
+    """
+    if _env_flag("FFMPEG_STALL_DISABLED"):
+        print(f"    ⚠ FFMPEG_STALL_DISABLED=1 — stall detection is OFF; a wedged "
+              f"ffmpeg will run for the full {RENDER_TIMEOUT_S}s render ceiling "
+              f"before anything notices.")
+        return 0
+    raw = os.environ.get("FFMPEG_STALL_TIMEOUT_S")
+    if raw is None or raw.strip() == "":
+        return default
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        print(f"    ⚠ FFMPEG_STALL_TIMEOUT_S={raw!r} is not an integer — using the "
+              f"default {default}s")
+        return default
+    if value <= 0:
+        print(f"    ⚠ FFMPEG_STALL_TIMEOUT_S={value} (<=0) no longer disables stall "
+              f"detection — using the default {default}s instead. Set "
+              f"FFMPEG_STALL_DISABLED=1 to actually disable it.")
+        return default
+    return value
+
+
 # NO-PROGRESS ceiling: how long ffmpeg may emit nothing at all while it should
-# still be encoding, before we treat it as wedged. 0 disables (not recommended).
-STALL_TIMEOUT_S = int(os.environ.get("FFMPEG_STALL_TIMEOUT_S", "300"))
+# still be encoding, before we treat it as wedged. See _stall_timeout_from_env:
+# 0 here means FFMPEG_STALL_DISABLED=1 was set explicitly, never a bare "0".
+STALL_TIMEOUT_S = _stall_timeout_from_env(300)
 # Must match what the rest of the stack ACCEPTS, or a customer burns their monthly
 # entitlement on a 90-minute upload that the worker then refuses (audit F-G-18):
 # services/supabase/functions/uploads/index.ts:158 and 0006_p0_rpcs.sql:208 both
 # allow 7200 s. Lower it here only if create_render_job rejects long sources too.
 MAX_SOURCE_SECONDS = float(os.environ.get("MAX_SOURCE_SECONDS", "7200"))  # 2 h
+# PIXEL-COUNT ceiling, checked from the ffprobe METADATA before any decode
+# starts (a crafted container can claim enormous dimensions cheaply — the
+# decoder is what actually pays for them in memory and CPU). Default ~67 MP
+# (8192x8192) comfortably covers real 8K footage (33.2 MP) with headroom.
+MAX_SOURCE_PIXELS = int(os.environ.get("MAX_SOURCE_PIXELS", str(8192 * 8192)))
+# OUTPUT byte-size ceiling, checked against the ACTUAL encoded file — the disk
+# preflight (worker.py: _check_free_space) only ESTIMATES source_bytes x a
+# factor before the encode starts; this is the real cap on what the encode
+# actually produced, enforced before it is ever uploaded. All-intra at ~14 Mbps
+# over the 7200s/2x-speed worst case tops out around 6-10 GB, so 8 GiB leaves
+# headroom for legitimate long sources while still bounding a pathological one.
+MAX_OUTPUT_MB = float(os.environ.get("MAX_OUTPUT_MB", "8192"))
+MAX_OUTPUT_BYTES = MAX_OUTPUT_MB * 1024 * 1024
 
 
 # ── probing ───────────────────────────────────────────────────────────────────
@@ -182,6 +235,24 @@ def _run_ffprobe(path: str, args: list[str]) -> str:
     return out.stdout
 
 
+def _check_pixel_limit(width: int, height: int) -> None:
+    """Refuse absurd dimensions BEFORE any decode starts (finding 4).
+
+    ffprobe reads container/stream metadata only — no frame is decoded to
+    answer "how big is this?" — so this check is cheap and happens strictly
+    before `_run_with_progress` hands the file to the real decoder. A pure
+    function (no subprocess) so it is unit-testable without ffprobe installed.
+    0x0 (dimensions ffprobe could not determine) is not flagged here; the
+    encode itself will fail naturally on truly unreadable video.
+    """
+    if width > 0 and height > 0 and width * height > MAX_SOURCE_PIXELS:
+        raise RenderError(
+            f"source is {width}x{height} ({width * height / 1e6:.1f} MP), above the "
+            f"{MAX_SOURCE_PIXELS / 1e6:.1f} MP decode limit (MAX_SOURCE_PIXELS) — "
+            f"refusing before ffmpeg decodes a single frame"
+        )
+
+
 def probe_source(path: str, *, enforce_limit: bool = True) -> SourceInfo:
     """Duration + colour metadata of the first video stream. Raises RenderError."""
     raw = _run_ffprobe(path, [
@@ -217,8 +288,12 @@ def probe_source(path: str, *, enforce_limit: bool = True) -> SourceInfo:
         except (TypeError, ValueError):
             return 0
 
+    width, height = _i("width"), _i("height")
+    if enforce_limit:
+        _check_pixel_limit(width, height)
+
     return SourceInfo(
-        duration_s=seconds, width=_i("width"), height=_i("height"), pix_fmt=_s("pix_fmt"),
+        duration_s=seconds, width=width, height=height, pix_fmt=_s("pix_fmt"),
         color_transfer=_s("color_transfer"), color_primaries=_s("color_primaries"),
         color_space=_s("color_space"),
     )
@@ -450,6 +525,14 @@ def _run_with_progress(cmd: list[str], expected_out_s: float, progress: Progress
                 proc.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 pass
+    except BaseException:
+        # An exception we did not originate here (e.g. the `progress` callback
+        # raising `db.JobNotOwned` to signal this worker has lost the job —
+        # release audit, Fix 2) must not leave ffmpeg running as an orphaned,
+        # untracked child burning CPU after the caller has already decided to
+        # give up on this encode.
+        _kill_group(proc)
+        raise
     finally:
         timer.cancel()
         done.set()
@@ -533,8 +616,21 @@ def render(
 
     _run_with_progress(_encode_cmd(input_path, output_path, speed, info), expected_out_s, progress)
 
-    if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
+    if not os.path.exists(output_path):
         raise RenderError("ffmpeg produced no output file")
+    out_bytes = os.path.getsize(output_path)
+    if out_bytes == 0:
+        raise RenderError("ffmpeg produced no output file")
+    # Real cap on what was actually produced (finding 4) — the disk preflight
+    # (worker.py: _check_free_space) only ESTIMATES source_bytes x a factor
+    # before the encode starts; this checks the ACTUAL file before it is ever
+    # uploaded or billed for Stream storage.
+    if out_bytes > MAX_OUTPUT_BYTES:
+        raise RenderError(
+            f"encoded output is {out_bytes / 1e9:.2f} GB, above the "
+            f"{MAX_OUTPUT_BYTES / 1e9:.2f} GB cap (MAX_OUTPUT_MB) — refusing to "
+            f"upload it"
+        )
 
     out_duration = probe_source(output_path, enforce_limit=False).duration_s
     _extract_poster(output_path, poster_path, out_duration)

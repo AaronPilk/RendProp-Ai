@@ -62,6 +62,11 @@ final class AuthStore: ObservableObject {
         static let userID       = "auth.supabase.userID"       // JWT sub (non-secret)
         static let userName     = "auth.userName"              // display name (Apple fullName / profile)
         static let orgName      = "auth.orgName"
+        /// The Apple authorizationCode awaiting POST /me/apple-code, kept only
+        /// between submitting it and the server confirming receipt (audit
+        /// finding 8 / TN3194). Not a session credential — see
+        /// `submitAppleAuthorizationCode`.
+        static let pendingAppleAuthCode = "auth.pendingAppleAuthCode"
     }
 
     // MARK: - Keychain-backed secret storage
@@ -484,19 +489,45 @@ final class AuthStore: ObservableObject {
 
     /// TN3194: POST the Apple authorizationCode to the backend, which exchanges
     /// it for a refresh token stored for later revocation (account deletion).
-    /// Fire-and-forget: any failure is silent — the sweeper reports unrevoked
-    /// grants server-side, and sign-in must never block on this.
-    static func submitAppleAuthorizationCode(_ code: String) async {
+    /// Sign-in must never block on this, so failure is still silent to the
+    /// caller — but it is no longer LOST (audit finding 8): the code is
+    /// persisted to the Keychain before the request goes out and cleared only
+    /// once the server confirms receipt, so a crash mid-flight, a timeout, or
+    /// any other transient failure leaves it for
+    /// `retryPendingAppleAuthorizationCodeIfNeeded()` to try again exactly
+    /// once, at the next launch. `isRetry` marks that second attempt: it
+    /// clears the pending record regardless of outcome, because Apple's code
+    /// is single-use and short-lived — a third attempt on a later launch
+    /// would just keep re-submitting an already-expired code forever.
+    static func submitAppleAuthorizationCode(_ code: String, isRetry: Bool = false) async {
+        SecureStore.set(Keys.pendingAppleAuthCode, code)
         guard Config.useLiveBackend,
               let url = Config.apiBaseURL?.appendingPathComponent("me/apple-code"),
-              let token = await AuthStore.validAccessToken() else { return }
+              let token = await AuthStore.validAccessToken() else {
+            if isRetry { SecureStore.remove(Keys.pendingAppleAuthCode) }
+            return
+        }
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.httpBody = try? JSONSerialization.data(withJSONObject: ["authorization_code": code])
-        _ = try? await URLSession.shared.data(for: req)
+        if let (_, resp) = try? await URLSession.shared.data(for: req),
+           let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode) {
+            SecureStore.remove(Keys.pendingAppleAuthCode)   // confirmed — safe to forget
+        } else if isRetry {
+            SecureStore.remove(Keys.pendingAppleAuthCode)   // one retry spent either way
+        }
+    }
+
+    /// Called once at app launch (see `RendpropApp`). Picks up a code left
+    /// behind by an interrupted `submitAppleAuthorizationCode` call and gives
+    /// it exactly one more attempt — see that function's doc comment for why
+    /// only one. A no-op when nothing is pending, which is the common case.
+    static func retryPendingAppleAuthorizationCodeIfNeeded() async {
+        guard let code = SecureStore.get(Keys.pendingAppleAuthCode) else { return }
+        await submitAppleAuthorizationCode(code, isRetry: true)
     }
 
     /// Exchange an Apple identity token for a Supabase session, then persist it.

@@ -17,7 +17,7 @@ the remaining gaps.*
 | 9 | **Secure session cookies** | ✅ N/A | No auth cookies — the app uses bearer JWTs (Keychain), and the public tour site sets no session cookie. Nothing to harden. |
 | 10 | **Hash passwords** | ✅ N/A | No passwords stored — auth is **Sign in with Apple** → Supabase. There is no password to hash. |
 | 11 | **Rate limit login** | ✅ Done (managed) | Sign-in is handled by Supabase Auth, which rate-limits token endpoints. Our own public endpoints have a **durable Postgres limiter** (migration 0004). |
-| 12 | **Add bot protection** | ⚠️ Mostly | Honeypot field + durable per-IP rate limit on `leads`/`beacon`. **Turnstile/CAPTCHA is the one remaining add** before heavy public traffic (documented follow-up). |
+| 12 | **Add bot protection** | ✅ **Fixed 2026-09-07** | Honeypot field + durable per-IP rate limit on `leads`/`beacon`. Turnstile is wired in AND now fails **closed**: `POST /leads` rejects every submission (and logs a warning naming `TURNSTILE_SECRET_KEY`) if the secret isn't set — it no longer silently accepts traffic when unconfigured. **Action before launch: set `TURNSTILE_SECRET_KEY`** (see `services/supabase/functions/leads/README.md`), or explicitly set `TURNSTILE_OPTIONAL=1` if you are choosing to launch without bot protection. `beacon`'s `view_start` also gets a cheap per-IP-per-slug replay guard (see `docs/ADMIN-CONSOLE-CONTRACT.md` for the caveat on those counts). |
 | 13 | **Parameterize queries** | ✅ Done | All DB access goes through the Supabase client / PostgREST (parameterized). No raw SQL string concatenation anywhere. |
 | 14 | **Validate all input** | ✅ **Fixed this pass** | `leads` now validates email + phone format, caps name/email/phone lengths, and bounds `extra` to 4 KB. Owner routes already assert required fields + allow-list `tier`/`aspect`/`edit`/`style`. |
 | 15 | **Escape user content** | ✅ Done | XSS audit confirmed `escapeHtml`/`escapeAttr`/`jsonForScript` on every interpolation in the tour player + portfolio; hex-allowlisted `--accent`. |
@@ -35,7 +35,12 @@ cd ~/"Rendprop AI/repo/services/supabase" && ./deploy-functions.sh
 (or the three via the Supabase dashboard). Everything else is already live from the audit.
 
 ## The only genuine open item
-**#12 — Turnstile/CAPTCHA on the public lead form** before you drive real traffic. The honeypot + durable rate limit hold for launch; add Turnstile when volume justifies it. Tracked in `RELEASE-GATE-AUDIT.md`.
+**#12 — set `TURNSTILE_SECRET_KEY`** before you drive real traffic. The code now
+refuses to fail open: with the secret unset, `POST /leads` rejects every
+public submission rather than silently accepting it, which is safe by default
+but means the lead form is DOWN for real visitors until the secret is set (or
+`TURNSTILE_OPTIONAL=1` is set to knowingly launch without it). Tracked in
+`RELEASE-GATE-AUDIT.md`; the fix itself is `docs/handoff/audit-fixes.md`.
 
 ## Still your manual step (from the audit)
 `cd ~/"Rendprop AI/repo/apps/ios" && xcodegen generate` — regenerates the Xcode project without the deleted secret files. Then rotate the 4 previously-bundled provider keys.

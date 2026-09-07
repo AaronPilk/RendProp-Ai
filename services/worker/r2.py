@@ -49,7 +49,15 @@ def _client():
         aws_access_key_id=SETTINGS.r2_access_key_id,
         aws_secret_access_key=SETTINGS.r2_secret_access_key,
         region_name="auto",
-        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+        # connect_timeout/read_timeout are explicit (external release audit
+        # finding 4): without them a hung R2 socket relies purely on
+        # botocore's own default, which is neither documented here nor
+        # operator-configurable. Both apply to every call this client makes —
+        # download_file, upload_file, delete_object, generate_presigned_url's
+        # (no-network) call included, harmlessly.
+        config=Config(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"},
+                      connect_timeout=SETTINGS.r2_connect_timeout_s,
+                      read_timeout=SETTINGS.r2_read_timeout_s),
     )
 
 

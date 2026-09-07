@@ -72,7 +72,7 @@
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { assertFairHousing, guardrailsFor } from "../_shared/fairhousing.ts";
 import { type ProvenanceKind, recordProvenance } from "../_shared/provenance.ts";
@@ -80,7 +80,7 @@ import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
-import { resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import {
   BUDGETS,
   ProviderError,
@@ -114,44 +114,82 @@ async function requireEditorRole(userId: string, req: Request, what: string): Pr
   return orgId;
 }
 
+/** What guardEdit() actually charged (audit item 2 / F-E-16: refundEditCharge
+ *  hands it all back when the edit that follows produces no output). */
+interface EditCharge {
+  orgId: string;
+  plan: string;
+  monthlyKey: string;
+  burstKey: string;
+}
+
 /**
  * Charge the paid-generation quotas. MUST be called only AFTER the request body
  * and its parameters are known-good: charging first meant a caller could burn
  * an org's burst + monthly quota with `{}` bodies that never reached Gemini
  * (audit round 4).
  */
-async function guardEdit(userId: string, req: Request): Promise<{ orgId: string; plan: string }> {
+async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
   const orgId = await requireEditorRole(userId, req, "AI photo edits");
   // A degraded plan lookup is a 503 here, never a 402 (audit F-E-02).
   const ent = await entitlementForCharge(orgId);
   const monthlyCap = ent.photo_edits_per_month;
   if (monthlyCap <= 0) throw quotaError("AI photo edit", 0, 0, ent.plan);
 
+  // Idempotency soft-dedupe: NOT refunded on failure, deliberately (mirrors
+  // ai-chapters/index.ts guardChapters) — it is a short dedupe guard, not spend.
   const idem = req.headers.get("idempotency-key")?.trim();
   if (idem && idem.length <= 128) {
     if (!(await durableRateLimit(`aipidem:${orgId}:${idem}`, 1, 120))) {
       throw new HttpError(409, "Duplicate submission — this edit was already started.", "conflict");
     }
   }
-  if (!(await durableRateLimit(`aiphoto:${orgId}`, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
+  const burstKey = `aiphoto:${orgId}`;
+  const monthlyKey = `aiphotomo:${orgId}`;
+  if (!(await durableRateLimit(burstKey, EDIT_MAX_PER_WINDOW, EDIT_WINDOW_SECONDS))) {
     throw new HttpError(429, "AI photo edit limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  if (!(await durableRateLimit(`aiphotomo:${orgId}`, monthlyCap, MONTH_SECONDS))) {
+  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
     throw quotaError("AI photo edit", monthlyCap, monthlyCap, ent.plan);
   }
   // Return the org the quota was charged to, so the handler can attribute the
-  // cost_ledger row (F-E-15) — and, once F-E-16 lands, refund the same key.
+  // cost_ledger row (F-E-15) and refund the same keys on failure (F-E-16).
   // The effective plan rides along for the router's RouteContext: it is the
   // number entitlementForCharge() just read, not a second lookup.
-  return { orgId, plan: ent.plan };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+}
+
+/**
+ * Hand back everything a FAILED edit charged (audit item 2 / F-E-16, mirrors
+ * ai-chapters/index.ts refundCharge exactly). Call ONLY when the provider
+ * chain threw — once runChain returns a value the provider ran and billed,
+ * and the ledger write right after it is what records that; nothing past that
+ * point is ever refunded. Best effort and never throws — see refundRateLimit().
+ */
+async function refundEditCharge(charge: EditCharge): Promise<void> {
+  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
+  await refundRateLimit(charge.burstKey, EDIT_WINDOW_SECONDS, 1);
+}
+
+/** What guardHelper() charged — burst only, never the monthly meter. */
+interface HelperCharge {
+  orgId: string;
+  burstKey: string;
 }
 
 /** Helper modes: role gate + burst limiter only. Never touches the monthly meter. */
-async function guardHelper(userId: string, req: Request): Promise<void> {
+async function guardHelper(userId: string, req: Request): Promise<HelperCharge> {
   const orgId = await requireEditorRole(userId, req, "AI photo suggestions");
-  if (!(await durableRateLimit(`aiphotohelp:${orgId}`, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS))) {
+  const burstKey = `aiphotohelp:${orgId}`;
+  if (!(await durableRateLimit(burstKey, HELP_MAX_PER_WINDOW, HELP_WINDOW_SECONDS))) {
     throw new HttpError(429, "Too many suggestion requests for now — try again in a few minutes.", "rate_limited");
   }
+  return { orgId, burstKey };
+}
+
+/** Hand back a helper-mode burst charge on failure (audit item 2). Never throws. */
+async function refundHelperCharge(charge: HelperCharge): Promise<void> {
+  await refundRateLimit(charge.burstKey, HELP_WINDOW_SECONDS, 1);
 }
 
 // Bound the inline base64 image so a caller can't push unbounded memory
@@ -501,8 +539,13 @@ Deno.serve(async (req) => {
     // Helper modes: text/vision analysis only — no image generation, no monthly charge.
     if (edit === "suggest") {
       assert(body.image_b64, 400, "image_b64 is required");
-      await guardHelper(user.id, req);
-      return json({ suggestions: await suggestEdits(body.image_b64, mime, profile), space_type: space });
+      const helperCharge = await guardHelper(user.id, req);
+      try {
+        return json({ suggestions: await suggestEdits(body.image_b64, mime, profile), space_type: space });
+      } catch (e) {
+        await refundHelperCharge(helperCharge);
+        throw e;
+      }
     }
     if (edit === "improve_prompt") {
       const rough = (body.prompt ?? "").trim();
@@ -511,8 +554,13 @@ Deno.serve(async (req) => {
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
       // Refuse before spending tokens polishing something we would never run.
       assertFairHousing(rough, "That idea", await gateSpace());
-      await guardHelper(user.id, req);
-      return json({ prompt: await improvePrompt(rough, profile), space_type: space });
+      const helperCharge = await guardHelper(user.id, req);
+      try {
+        return json({ prompt: await improvePrompt(rough, profile), space_type: space });
+      } catch (e) {
+        await refundHelperCharge(helperCharge);
+        throw e;
+      }
     }
 
     assert(body.image_b64, 400, "image_b64 is required");
@@ -545,7 +593,8 @@ Deno.serve(async (req) => {
     // Everything validated — NOW charge the quota, immediately before the
     // billable provider call. Keep the org it charged for the cost_ledger row,
     // and the plan for the router's RouteContext.
-    const { orgId, plan } = await guardEdit(user.id, req);
+    const charge = await guardEdit(user.id, req);
+    const { orgId, plan } = charge;
 
     // ── ROUTER (flag-gated, additive) ────────────────────────────────────────
     // The fair-housing gate above has already run — contract §4 puts it BEFORE
@@ -592,35 +641,46 @@ Deno.serve(async (req) => {
       s.provider === "gemini" && s.model === "gemini-2.5-flash-image" && MODEL !== s.model ? { ...s, model: MODEL } : s
     );
 
-    const attempt = await runChain(task, chain, async (step) => {
-      const adapter = adapterFor(step.provider);
-      const ref = await adapter.submit(step, genInput);
-      const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
-      // One download, reused for both the inline answer and the R2 copy.
-      const local = await inlineImageResult(step.provider, done);
-      const b64 = inlineBase64(local);
-      if (!b64) throw new ProviderError(step.provider, "upstream", `${step.provider} returned no image bytes`);
+    // The chain throwing means every step failed (or a validation/nsfw refusal
+    // fired) — no image was produced, so hand the quota back (audit item 2 /
+    // F-E-16). Once runChain RETURNS, a provider ran and produced bytes; the
+    // ledger write just below is what records that, and nothing past this
+    // point is ever refunded.
+    let attempt: ChainResult<{ b64: string; mime: string; assetKey: string | null }>;
+    try {
+      attempt = await runChain(task, chain, async (step) => {
+        const adapter = adapterFor(step.provider);
+        const ref = await adapter.submit(step, genInput);
+        const done = await awaitJob(adapter, ref, BUDGETS.totalImageMs);
+        // One download, reused for both the inline answer and the R2 copy.
+        const local = await inlineImageResult(step.provider, done);
+        const b64 = inlineBase64(local);
+        if (!b64) throw new ProviderError(step.provider, "upstream", `${step.provider} returned no image bytes`);
 
-      // persist(): the canonical asset is ours (contract §4).
-      //
-      // Only while the router is ON — with the flag off this function stores
-      // nothing today, and a no-op deploy must not start writing objects (or
-      // spending the latency) behind an operator's back.
-      //
-      // BEST EFFORT even then, and only here: unlike a video, the edited photo
-      // is returned inline in this very response, so the caller already has the
-      // bytes and a storage hiccup must not destroy an edit they paid for.
-      let assetKey: string | null = null;
-      if (routerOn) {
-        try {
-          const stored = await adapter.persist(local, routedR2Key(orgId, task, local.mime));
-          assetKey = stored.key;
-        } catch (e) {
-          console.error("ai-photo: persist to R2 failed (edit still returned):", e instanceof Error ? e.message : e);
+        // persist(): the canonical asset is ours (contract §4).
+        //
+        // Only while the router is ON — with the flag off this function stores
+        // nothing today, and a no-op deploy must not start writing objects (or
+        // spending the latency) behind an operator's back.
+        //
+        // BEST EFFORT even then, and only here: unlike a video, the edited photo
+        // is returned inline in this very response, so the caller already has the
+        // bytes and a storage hiccup must not destroy an edit they paid for.
+        let assetKey: string | null = null;
+        if (routerOn) {
+          try {
+            const stored = await adapter.persist(local, routedR2Key(orgId, task, local.mime));
+            assetKey = stored.key;
+          } catch (e) {
+            console.error("ai-photo: persist to R2 failed (edit still returned):", e instanceof Error ? e.message : e);
+          }
         }
-      }
-      return { b64, mime: local.mime, assetKey };
-    });
+        return { b64, mime: local.mime, assetKey };
+      });
+    } catch (e) {
+      await refundEditCharge(charge);
+      throw e;
+    }
     const step = attempt.step;
     const outB64 = attempt.value.b64;
     const outMime = attempt.value.mime;

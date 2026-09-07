@@ -252,7 +252,11 @@ final class GearStore: ObservableObject {
 
     /// Exactly 10 ASCII letters/digits, uppercased — what a `/dp/<ASIN>` path
     /// carries. Anything else (blank, a pasted URL, a typo) is nil.
-    static func normalizedASIN(_ raw: String) -> String? {
+    /// `nonisolated`: a pure string check with no state, called from
+    /// `GearItem.validASIN` — a plain struct property that is not on the main
+    /// actor. Without this the class's own `@MainActor` isolation makes that
+    /// call a compile error.
+    nonisolated static func normalizedASIN(_ raw: String) -> String? {
         let s = raw.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
         guard s.count == 10, s.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
         return s

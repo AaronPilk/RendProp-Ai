@@ -117,6 +117,18 @@ render `coverage.headline` next to the total whenever `complete` is `false`.
 | `app_ai_video` | **no** | `ai-video/index.ts` makes billable fal calls (aerial $0.80, Topaz up to $14.40) and writes no ledger row |
 | `stream_delivery` | **no** | views are metered in `metering` (watched minutes) but never priced into the ledger |
 
+**`metering` (views, watch_ms, streamed_minutes) is public, unauthenticated
+telemetry — never billing truth, never a guaranteed/exact figure.**
+`POST /beacon` (`services/supabase/functions/beacon/index.ts`) has no session
+nonce, device id, or login behind it: a per-IP rate limit and a per-IP-per-slug
+view-dedupe window make casual inflation cheap to block, but neither survives
+a motivated caller (IP rotation, or just waiting out the dedupe window), and
+several genuine viewers behind one IP within that window undercount to one.
+If a screen in this console ever surfaces `metering` numbers, it must present
+them the same way `total_cents` is presented above — as a best-effort figure,
+not a reconciled one — and must never feed a charge or a plan decision. See
+the file header on `beacon/index.ts` for the exact mitigation in place.
+
 The two app-AI gaps are `docs/handoff/E-network.md` §2, finding **F-E-15**. That
 consumption *is* metered — as the monthly feature counters `GET /admin/usage`
 reports — but it never becomes money in this ledger, and it never reaches the

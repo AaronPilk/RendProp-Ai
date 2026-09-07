@@ -22,8 +22,8 @@ jobs:
       run:
         working-directory: services/edge/tour-host
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
           cache: npm
@@ -55,13 +55,15 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
   edge-functions:
-    name: Supabase edge functions (deno check)
+    name: Supabase edge functions (deno check + tests)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: denoland/setup-deno@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
         with:
-          deno-version: v2.x
+          # Exact pin (was the floating v2.x) — 2.9.6 is the latest 2.x release
+          # and is what every edge-function test below was verified against.
+          deno-version: "2.9.6"
 
       # Every function must typecheck. `me` once failed here on a WebCrypto
       # signature — exactly the class of bug this catches before deploy.
@@ -82,6 +84,20 @@ jobs:
           done
           exit $fail
 
+      # 216 hermetic unit tests across all 11 *.test.ts / *_test.ts files:
+      # router policy, provider redaction/circuit-breaker, fair-housing +
+      # chapter postprocessing, Apple JWS/notification verdicts, coach output
+      # sanitization, event scrubbing/whitelisting, admin probe/funnel SQL
+      # shaping. No Supabase project, no live provider keys, no DB, no network
+      # beyond Deno's own fetch-and-cache of the std@0.224.0 / jsr:@std/assert
+      # imports every file uses — verified with a throwaway DENO_DIR (forcing
+      # that fetch from a cold cache) and still 216 passed / 0 failed.
+      # --node-modules-dir=auto (a flag, not a committed deno.json) is enough
+      # for the couple of source files with type-only `npm:` specifiers.
+      - name: Run edge function tests
+        working-directory: services/supabase/functions
+        run: deno test --allow-all --node-modules-dir=auto .
+
   db-migrations:
     name: Supabase migrations (fresh replay + invariants)
     runs-on: ubuntu-latest
@@ -90,7 +106,15 @@ jobs:
     # auth.uid(), Supabase's default privileges). No credentials, no Docker-in-Docker.
     services:
       postgres:
-        image: postgres:16
+        # Digest-pinned (audit supply-chain finding — a bare `postgres:16` tag
+        # is mutable). Resolved 2026-09-07 from the live registry, and it is
+        # the multi-arch index (covers linux/amd64, what ubuntu-latest runs):
+        #   TOKEN=$(curl -sS 'https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/postgres:pull' | python3 -c "import json,sys;print(json.load(sys.stdin)['token'])")
+        #   curl -sS -D - -o /dev/null -H "Authorization: Bearer $TOKEN" \
+        #     -H 'Accept: application/vnd.oci.image.index.v1+json' \
+        #     https://registry-1.docker.io/v2/library/postgres/manifests/16
+        #   # -> docker-content-digest: sha256:...
+        image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -109,7 +133,7 @@ jobs:
       PGPASSWORD: postgres
       PGDATABASE: rendprop
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: psql client
         run: |
@@ -157,8 +181,8 @@ jobs:
     name: Render worker (python)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
 
@@ -176,11 +200,44 @@ jobs:
           fi
           echo "all worker requirements are pinned"
 
+      # ffmpeg is what tests/test_hdr_tonemap.py actually exercises (needs
+      # libzimg's zscale+tonemap) — installed explicitly rather than trusting
+      # whatever the runner image happens to preinstall; Ubuntu's package
+      # includes libzimg.
+      - name: Install worker deps (pinned) + ffmpeg
+        run: |
+          pip install --disable-pip-version-check -r services/worker/requirements.txt
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
+
+      # Both hermetic: no live Supabase, no real R2, no network beyond
+      # localhost. test_job_lease.py runs a stdlib-only fake PostgREST on
+      # 127.0.0.1 (tests/fake_postgrest.py) to exercise claim/lease/heartbeat/
+      # reap. test_hdr_tonemap.py synthesises its own fixtures with local
+      # ffmpeg and measures the real encode path; if the runner's ffmpeg build
+      # ever lacks zscale/tonemap it SKIPS — but LOUDLY (a ::warning::
+      # annotation naming exactly the missing filter, not a silent no-op —
+      # see skip() in that file) — so a green run here can never hide the
+      # fact this test never executed a single assertion.
+      #
+      # Run as plain scripts, NOT via pytest: their `check()` helper only
+      # appends to a list and never raises, so pytest would happily report a
+      # false "N passed" even if every internal check failed — only an
+      # unhandled exception fails a pytest run. Trust each file's own exit
+      # code instead (0 = all checks passed, 1 = at least one failed).
+      #
+      # services/pipeline has no tests/ directory yet (stdlib-only glue code,
+      # exercised today through its own cli.py cost-test path) — nothing to
+      # wire up there until one exists.
+      - name: Run worker tests (job lease + HDR tonemap)
+        run: |
+          python3 services/worker/tests/test_job_lease.py
+          python3 services/worker/tests/test_hdr_tonemap.py
+
   ios-static:
     name: iOS static gates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # App Review Guideline 3.1: with StoreKit disabled, no digital-goods price
       # may exist in the app — including data the UI never renders (P0-5 shipped
@@ -247,10 +304,10 @@ jobs:
     name: Secret scan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

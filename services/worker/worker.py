@@ -125,8 +125,17 @@ class _Heartbeat:
             raise LeaseLost(f"lease on job {self.job_id} was taken over by another worker")
 
 
-class LeaseLost(RuntimeError):
-    """We no longer own this job — stop without failing it."""
+class LeaseLost(db.JobNotOwned):
+    """We no longer own this job — stop without failing it.
+
+    Raised by the heartbeat thread's out-of-band check (`hb.check()`, polled
+    between pipeline steps). `db.JobNotOwned` itself is raised INLINE by the
+    ownership-scoped mutations (`db.set_progress`, `db.finish_job`) the instant
+    they observe zero rows matched — the tighter checkpoint that closes the
+    gap between heartbeats (release audit, Fix 2). Same underlying condition
+    — "another worker owns this job now" — two detection points; `except
+    db.JobNotOwned` in `_process_job_inner` handles both identically.
+    """
 
 
 # ── enhancement persistence ───────────────────────────────────────────────────
@@ -500,8 +509,12 @@ def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancement
         db.finish_job(job_id)
         print(f"=== job {job_id} READY → /f/{slug} ===")
 
-    except LeaseLost as e:
-        # Another worker owns the job now. Touch NOTHING — not even to fail it.
+    except db.JobNotOwned as e:
+        # Another worker owns the job now (LeaseLost from the heartbeat thread,
+        # or db.JobNotOwned raised inline by set_progress/finish_job — audit
+        # Fix 2). Touch NOTHING further — not even to fail it: fail_job()
+        # is itself ownership-scoped and would just no-op, and calling it is
+        # pointless ceremony for a row we no longer own.
         print(f"    ↩ job {job_id} abandoned at step '{step}': {e}")
         # Do NOT roll back: the worker that owns the job now may be using or
         # about to reference these very objects.
@@ -596,20 +609,40 @@ def process_one() -> bool:
 def process_specific(job_id: str) -> None:
     """Process a specific job by id (webhook trigger).
 
-    The claim is a COMPARE-AND-SET, matching claim_next_job(). The previous
-    read-then-write let two simultaneous webhook invocations both observe
-    `queued` and both proceed to render, upload, publish and charge the same job
-    (audit round 4). The status filter is part of the UPDATE, so exactly one
-    caller can win; a zero-row result means someone else already owns it.
+    Claims through the EXACT SAME CAS-plus-lease path as the poll loop
+    (`db.claim_next_job(job_id=...)`) instead of a second, weaker claim that
+    used to PATCH status only (audit P0-8). That old claim never set
+    `worker_id`/`lease_expires_at`/`attempts`, so the job lost ownership at its
+    very first heartbeat (`db.heartbeat` filters on worker_id) — and if the
+    process died before that first heartbeat, the job was never reclaimable by
+    anyone, since a lease that was never set can never look "expired".
+
+    The claim is still a COMPARE-AND-SET: the status filter is part of the
+    UPDATE, so exactly one caller wins if two webhook invocations race on the
+    same job (audit round 4), and a zero-row result means refuse — someone
+    else already owns it, or it isn't eligible.
     """
     rows = db.select("render_jobs", {"id": f"eq.{job_id}", "select": "*"})
     if not rows:
         sys.exit(f"job {job_id} not found")
     job = rows[0]
 
-    # Don't even claim a job whose asset isn't ours to render (app-published
-    # `renders`-bucket asset, unfinished upload) — claiming would flip an app
-    # job's status underneath /renders/publish-app.
+    # This worker only ever renders source='worker' jobs — app-published jobs
+    # (source='app') are the phone's own on-device render, already published by
+    # /renders/publish-app. claim_next_job()'s own candidate filters enforce
+    # this too (belt-and-braces), but a job_id handed straight in on the
+    # command line skips the "was it ever a worker candidate?" question those
+    # filters answer for the poll loop, so it must be asked explicitly here
+    # (audit P0-8: "the path also does not require source='worker'").
+    if job.get("source") != "worker":
+        print(f"job {job_id}: source={job.get('source')!r}, not 'worker' — "
+              f"nothing for this worker to claim")
+        return
+
+    # Don't even attempt the claim when the asset isn't ours to render
+    # (app-published `renders`-bucket asset, unfinished upload) — purely for a
+    # precise message; claim_next_job()'s own _CLAIM_FILTERS would refuse the
+    # same job anyway (belt-and-braces, same reasoning as the source check).
     if job.get("capture_asset_id"):
         asset = db.fetch_asset(job["capture_asset_id"])
         skip = _skip_reason(asset) if asset else None
@@ -617,18 +650,18 @@ def process_specific(job_id: str) -> None:
             print(f"job {job_id}: {skip} — nothing to do")
             return
 
-    statuses = ",".join(SETTINGS.claim_statuses)
-    claimed = db.patch(
-        "render_jobs",
-        {"id": f"eq.{job_id}", "status": f"in.({statuses})"},
-        {"status": "processing", "started_at": db.now_iso(),
-         "current_step": "claimed", "progress": 0.02, "error": None},
-        prefer="return=representation",
-    )
+    claimed = db.claim_next_job(job_id=job_id)
     if not claimed:
-        print(f"job {job_id} is already claimed or finished (status={job.get('status')}) — nothing to do")
+        # Refuse to proceed: something else owns this job, or it is no longer
+        # eligible. Never fall through to processing without a real claim.
+        current = db.select("render_jobs",
+                            {"id": f"eq.{job_id}", "select": "status,worker_id"})
+        state = current[0] if current else {}
+        print(f"job {job_id} could not be claimed (status={state.get('status')}, "
+              f"worker_id={state.get('worker_id')}) — already claimed by another "
+              f"worker or no longer eligible — nothing to do")
         return
-    process_job(claimed[0])
+    process_job(claimed)
 
 
 REAP_INTERVAL_S = max(30.0, float(os.environ.get("REAP_INTERVAL_S", "120") or 120))

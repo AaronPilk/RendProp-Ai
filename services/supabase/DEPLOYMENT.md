@@ -97,9 +97,9 @@ No `xcodegen` needed — no new source files were added to the target this round
 
 ### 9. Schedule the deletion sweeper (required for honest account deletion)
 `POST /me/sweep-deletions` (service-role bearer) drains `deletion_requests` tombstones —
-R2 objects, Stream videos, CRM contacts and Apple revocations that failed or exceeded the
-inline caps. Nothing calls it by itself. Enable `pg_cron` + `pg_net` (Dashboard → Database →
-Extensions) and run once in the SQL editor:
+R2 objects, Stream videos, CRM contacts, Apple revocations, the analytics-forget update and
+the profile row, any of which failed or exceeded the inline caps. Nothing calls it by itself.
+Enable `pg_cron` + `pg_net` (Dashboard → Database → Extensions) and run once in the SQL editor:
 ```sql
 alter database postgres set app.service_role_key = '<service role key>';
 select cron.schedule('sweep-deletions', '*/15 * * * *', $$
@@ -113,9 +113,46 @@ select cron.schedule('sweep-deletions', '*/15 * * * *', $$
 POST.) Check: `select * from deletion_requests where status <> 'completed';` should be empty
 within one interval of any deletion.
 
+### 10. Scheduling the app_events purge (pg_cron is a manual gate)
+`app_events` (0020) is only kept honest by `purge_app_events(interval)`, which
+deletes rows older than the retention window (default 180 days). That function
+is created **unconditionally** — it always exists and can be called by hand or
+from an external scheduler — but migration `0022_app_events_purge_schedule.sql`
+can only put **pg_cron** in charge of calling it nightly (04:17 UTC), and
+pg_cron is a `shared_preload_libraries` extension that is NOT enabled on a
+fresh Supabase project (or a plain Postgres) by default.
+
+0022 detects this and degrades on purpose: if `pg_cron` isn't available (or is
+available but fails to actually schedule for any other reason — e.g. pg_cron
+pins its objects to a single `cron.database_name` cluster-wide, so it can be
+"available" yet still refuse to install in the wrong database) it logs a loud
+`raise notice` naming what happened and skips the schedule, rather than
+erroring out or silently doing nothing. **This means scheduling the purge is a
+manual step in production, separate from applying the migration:**
+1. Dashboard → Database → Extensions → enable **pg_cron**.
+2. Re-run `migrations/0022_app_events_purge_schedule.sql` (safe — idempotent).
+3. Confirm: `select * from cron.job where jobname = 'purge-app-events';` returns
+   one row scheduled `17 4 * * *`.
+4. If step 2's log instead shows `0022: pg_cron setup did not finish (...)`,
+   read the `SQLSTATE`/message it prints — that's the actual blocker (e.g. a
+   `cron.database_name` mismatch) on THIS server, not a missing extension.
+
+Until that is done, `app_events` grows without bound — check the migration's
+own log output for the `0022:` notice to see which state you're in. (This is
+the same shape as the deletion-sweeper gate in §9, and can be combined with it
+in one pg_cron enablement pass.)
+
 ## Cost-test WITHOUT the full backend (fastest)
 `cd services/pipeline && cp .env.example .env` (paste the 3 provider keys) → `python cli.py run --image room.jpg --feature restage --style modern`. Real cost per call, logged to the ledger. See `docs/AI-COST-MODEL.md`.
 
 ## Secrets reference (set via set-secrets.sh)
-`CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_UPLOADS=rendprop-uploads, R2_BUCKET_RENDERS=rendprop-renders, R2_BUCKET_PUBLIC=rendprop-public, R2_PUBLIC_BASE_URL, CLOUDFLARE_STREAM_TOKEN, CLOUDFLARE_STREAM_CUSTOMER_CODE, GEMINI_API_KEY, GEMINI_IMAGE_MODEL, GEMINI_TEXT_MODEL, FAL_KEY, ANTHROPIC_API_KEY, KIE_API_KEY(optional), GHL_API_KEY(optional), GHL_LOCATION_ID(optional), TURNSTILE_SECRET_KEY(optional), APPLE_TEAM_ID, APPLE_CLIENT_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8 (all four required for Sign in with Apple revocation), QC_PASS_SCORE=85, QC_MAX_RETRIES=2, MAX_GEN_COST_PER_JOB_CENTS=2500, TOUR_PUBLIC_BASE_URL=https://rendprop.com` (the routed domain — never rendprop.app).
+`CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_UPLOADS=rendprop-uploads, R2_BUCKET_RENDERS=rendprop-renders, R2_BUCKET_PUBLIC=rendprop-public, R2_PUBLIC_BASE_URL, CLOUDFLARE_STREAM_TOKEN, CLOUDFLARE_STREAM_CUSTOMER_CODE, GEMINI_API_KEY, GEMINI_IMAGE_MODEL, GEMINI_TEXT_MODEL, FAL_KEY, JOB_TOKEN_SIGNING_SECRET (signs the ai-video async-job status token — audit item 4, a dedicated secret, never reuse a vendor key), ANTHROPIC_API_KEY, KIE_API_KEY(optional), GHL_API_KEY(optional), GHL_LOCATION_ID(optional), TURNSTILE_SECRET_KEY (required — leads/index.ts now FAILS CLOSED on POST /leads when this is unset; set TURNSTILE_OPTIONAL=1 instead if you are knowingly launching without bot protection), APPLE_TEAM_ID, APPLE_CLIENT_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8 (all four required for Sign in with Apple revocation), QC_PASS_SCORE=85, QC_MAX_RETRIES=2, MAX_GEN_COST_PER_JOB_CENTS=2500, TOUR_PUBLIC_BASE_URL=https://rendprop.com` (the routed domain — never rendprop.app).
 (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are auto-injected into functions — no need to set.)
+
+**`TURNSTILE_SECRET_KEY` changed behavior (2026-09-07 audit fix):** it used to
+be optional — unset meant "not configured yet, don't block." `POST /leads` now
+FAILS CLOSED instead: with the secret unset, every public lead submission is
+rejected (and a warning naming the var is logged). Set the secret before
+driving real traffic to the tour end-card, or set `TURNSTILE_OPTIONAL=1` if
+you are knowingly deploying without bot protection (a warning is still logged
+either way). See `services/supabase/functions/leads/README.md`.

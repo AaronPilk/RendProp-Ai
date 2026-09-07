@@ -162,6 +162,24 @@ private enum PurchasesRequest {
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
+
+        // Mirrors LiveAPIClient.execute's retry-once-on-401 (audit finding 8):
+        // the pre-flight refresh above can still leave a stale token (a race,
+        // or a refresh that silently no-oped), and this POST carries a
+        // signed Apple transaction — worth one retry with a forced-fresh
+        // token before giving up. The Idempotency-Key was derived from the
+        // body alone, so the retry replays server-side rather than risking a
+        // second entitlement write.
+        if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+            let refreshed = await AuthStore.shared.forceRefresh()
+            if refreshed, let fresh = AuthStore.storedAccessToken() {
+                req.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                let (data2, resp2) = try await URLSession.shared.data(for: req)
+                guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+                if (200..<300).contains(http2.statusCode) { return data2 }
+                throw LiveAPIClient.serverError(status: http2.statusCode, data: data2)
+            }
+        }
         throw LiveAPIClient.serverError(status: http.statusCode, data: data)
     }
 }

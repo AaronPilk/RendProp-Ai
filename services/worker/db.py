@@ -26,6 +26,7 @@ cleanly — no double-processing without needing SELECT … FOR UPDATE.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import os
 import socket
@@ -40,6 +41,20 @@ from slugs import new_slug
 
 class DBError(RuntimeError):
     """Any Supabase/PostgREST failure (HTTP status or network transport)."""
+
+
+class JobNotOwned(RuntimeError):
+    """This worker no longer owns the job it just tried to mutate (release audit, Fix 2).
+
+    Raised when an ownership-scoped render_jobs UPDATE (see `_owned_patch`)
+    matches zero rows: another worker reclaimed the job (its lease expired) or
+    something else already moved it to a non-'processing' state. Deliberately
+    NOT a DBError subclass — callers that treat DBError as advisory-and-continue
+    (a blip must not kill a render) must never swallow this: continuing after
+    losing ownership means racing whoever owns the job now, which is exactly
+    the corruption the audit reproduced (worker A finishes a job worker B
+    reclaimed and overwrites B's state).
+    """
 
 
 def now_iso() -> str:
@@ -164,6 +179,17 @@ def _looks_like_missing_column(err: Exception) -> bool:
             or "pgrst100" in m or "pgrst204" in m)
 
 
+def _looks_like_duplicate_key(err: Exception) -> bool:
+    """True for a unique-constraint violation (PostgREST 409 / SQLSTATE 23505).
+
+    Shared by `insert_render` (slug / uq_renders_job) and `_insert_cost_row`
+    (the new `uq_cost_ledger_idempotency`, migration 0025) — same shape of
+    error, same detection.
+    """
+    m = str(err).lower()
+    return "409" in m or "duplicate key" in m or "23505" in m
+
+
 def lease_supported() -> bool:
     """Probe ONCE whether migration 0015's lease columns exist.
 
@@ -206,17 +232,27 @@ def _claim_values(attempts: int | None) -> dict:
     return values
 
 
-def claim_next_job(max_attempts: int = 3) -> dict | None:
+def claim_next_job(max_attempts: int = 3, *, job_id: str | None = None) -> dict | None:
     """Grab one claimable job and flip it to `processing`. Returns it, or None.
 
     Two candidate sources, in order:
       1. fresh work — status in (created, queued);
       2. RECLAIM — status='processing' whose lease has expired and whose
          `attempts` is still under the ceiling (its worker died).
+
+    `job_id`: restrict to that one job instead of polling for the oldest
+    eligible one — the webhook path (`worker.process_specific`, audit P0-8).
+    It goes through the EXACT SAME CAS-plus-lease UPDATE and the same
+    source='worker' / uploads-bucket eligibility filters (`_CLAIM_FILTERS`) as
+    the poll loop: a webhook claim is not a second, weaker claim path. Before
+    this fix `process_specific` PATCHed status only — no worker_id, no lease,
+    no attempts — so the job lost ownership at its very first heartbeat
+    (`heartbeat()` filters on worker_id) and, if the process died before that
+    heartbeat, was never reclaimable by anyone.
     """
     statuses = ",".join(SETTINGS.claim_statuses)
     for _ in range(max_attempts):
-        job = _next_candidate(statuses)
+        job = _next_candidate(statuses, job_id=job_id)
         if not job:
             return None
         # The condition is part of the UPDATE, so exactly one worker wins.
@@ -240,15 +276,18 @@ def claim_next_job(max_attempts: int = 3) -> dict | None:
                       f"(attempt {claimed[0].get('attempts')}/{MAX_JOB_ATTEMPTS}) — "
                       f"its previous worker ({job.get('worker_id')}) died mid-render")
             return claimed[0]
-        # else: contended — another worker took it; try the next candidate.
+        # else: contended — another worker took it; try the next candidate
+        # (or, for a job_id-scoped call, _next_candidate will simply come back
+        # empty next time round since that one job no longer matches).
     return None
 
 
-def _next_candidate(statuses: str) -> dict | None:
+def _next_candidate(statuses: str, *, job_id: str | None = None) -> dict | None:
+    id_filter = {"id": f"eq.{job_id}"} if job_id else {}
     fresh = select(
         "render_jobs",
         {"status": f"in.({statuses})", "order": "created_at.asc",
-         "select": _CLAIM_SELECT, **_CLAIM_FILTERS},
+         "select": _CLAIM_SELECT, **_CLAIM_FILTERS, **id_filter},
         limit=1,
     )
     if fresh:
@@ -259,6 +298,7 @@ def _next_candidate(statuses: str) -> dict | None:
         "render_jobs",
         {"status": "eq.processing", "lease_expires_at": f"lt.{now_iso()}",
          "attempts": f"lt.{MAX_JOB_ATTEMPTS}", "order": "created_at.asc",
+         **id_filter,
          "select": _CLAIM_SELECT, **_CLAIM_FILTERS},
         limit=1,
     )
@@ -326,15 +366,53 @@ def reap_stale_jobs(limit: int = 20) -> int:
     return reaped
 
 
+def _owned_filters(job_id: str) -> dict:
+    """Filters that scope a render_jobs mutation to a job THIS worker still owns.
+
+    ALWAYS requires status='processing': a job another actor already moved on
+    (reclaimed-then-finished, or `/renders/publish-app` publishing an app job)
+    must never be overwritten (audit F-G-13). When migration 0015's lease
+    columns exist, ALSO requires worker_id = this worker — id+status alone is
+    not enough once a lease can change hands: after a reclaim the NEW owner is
+    ALSO 'processing', so an id+status filter lets a stale worker's write land
+    on the new owner's row. This is Fix 2 from the release audit, reproduced as:
+    worker A claims a job (e.g. via --job-id), A's lease expires, worker B
+    reclaims it, A's finish_job()/set_progress() would silently overwrite B's
+    state (and re-publish/re-bill) without the worker_id half of this filter.
+    """
+    filters = {"id": f"eq.{job_id}", "status": "eq.processing"}
+    if lease_supported():
+        filters["worker_id"] = f"eq.{WORKER_ID}"
+    return filters
+
+
+def _owned_patch(job_id: str, values: dict) -> list:
+    """PATCH render_jobs scoped to a job this worker still owns.
+
+    Returns the representation rows PostgREST reports as updated — empty means
+    zero rows matched, i.e. this worker no longer owns the job. Raises DBError
+    on a transport/HTTP failure exactly like `patch()` (callers decide whether
+    that is advisory or fatal; ownership loss is a separate, always-fatal
+    condition callers must check for explicitly).
+    """
+    return patch("render_jobs", _owned_filters(job_id), values,
+                 prefer="return=representation")
+
+
 def release_job(job_id: str, note: str) -> None:
     """Hand a claimed job back (status → queued) WITHOUT failing it.
 
     Used when the worker discovers the job isn't its to render (asset in the
     renders bucket, upload unfinished) AND on graceful shutdown, so a SIGTERM
     mid-encode re-queues the job instead of orphaning it in `processing`
-    (audit F-G-05). Conditional on `processing` so a job another actor already
-    finished is never touched. The note goes in `current_step` (visible to ops);
-    `error` stays null — this is not a failure.
+    (audit F-G-05). Ownership-scoped (see `_owned_filters`): without the
+    worker_id half, a worker whose lease already expired and was reclaimed by
+    someone else — the shutdown path can be delayed by up to a full encode —
+    would reset the NEW owner's live claim back to 'queued' out from under it,
+    inviting a THIRD worker to claim a job that is still actively being
+    rendered. Zero matched rows is logged, not an error: there is nothing left
+    to release, and cleanup of this attempt's own (uuid-keyed, so never shared
+    with another worker's attempt) uploaded objects still needs to happen.
     """
     values = {"status": "queued", "started_at": None, "progress": 0,
               "current_step": f"skipped: {note}"[:200], "error": None}
@@ -343,43 +421,76 @@ def release_job(job_id: str, note: str) -> None:
         values["lease_expires_at"] = None
         values["worker_id"] = None
     try:
-        patch("render_jobs", {"id": f"eq.{job_id}", "status": "eq.processing"}, values)
+        rows = _owned_patch(job_id, values)
+        if not rows:
+            print(f"    · job {job_id} was no longer ours to release (status changed "
+                  f"or reclaimed by another worker) — left its row alone")
     except DBError as e:
         print(f"    ⚠ could not release job {job_id}: {e}")
 
 
 def set_progress(job_id: str, progress: float, step: str | None = None) -> None:
+    """Advisory progress ping — EXCEPT losing ownership, which is never advisory.
+
+    A transient DBError is swallowed: a blipped progress PATCH must never kill
+    a render (unchanged behaviour). A clean zero-rows result is different — it
+    means another worker now owns this job (or it left 'processing' some other
+    way) — so it raises `JobNotOwned` instead of returning quietly. This is
+    called on every progress tick (`worker._make_progress`'s callback, wired
+    into the ffmpeg progress stream), so it is the tightest, most frequent
+    checkpoint for "do I still own this job?" — closing the residual race the
+    heartbeat thread's own check can miss between its polls (release audit, Fix 2).
+    """
     values: dict = {"progress": round(max(0.0, min(1.0, progress)), 3)}
     if step:
         values["current_step"] = step
     try:
-        patch("render_jobs", {"id": f"eq.{job_id}"}, values)
+        rows = _owned_patch(job_id, values)
     except DBError as e:
-        # Progress is advisory — never let it kill a render.
+        # Progress is advisory — never let a blip kill a render.
         print(f"    ⚠ progress update failed (continuing): {e}")
+        return
+    if not rows:
+        raise JobNotOwned(f"job {job_id} is no longer owned by this worker "
+                          f"({WORKER_ID}) — lease lost or job reclaimed; aborting "
+                          f"rather than continuing to render/upload for a job we "
+                          f"don't own")
 
 
 def finish_job(job_id: str) -> None:
-    patch("render_jobs", {"id": f"eq.{job_id}"},
-          {"status": "ready", "progress": 1.0, "current_step": "ready",
-           "finished_at": now_iso(), "error": None})
+    """Flip a job to 'ready' — but ONLY while THIS worker still owns it.
+
+    Zero matched rows means someone else owns the job now (release audit, Fix 2:
+    without this check a stale worker's finish_job() would silently overwrite
+    whatever the new owner had already written — a different render, a
+    different status, an in-progress lease). Raises JobNotOwned rather than
+    returning quietly so the caller never treats a lost claim as a successful
+    publish.
+    """
+    rows = _owned_patch(job_id, {"status": "ready", "progress": 1.0,
+                                 "current_step": "ready", "finished_at": now_iso(),
+                                 "error": None})
+    if not rows:
+        raise JobNotOwned(f"job {job_id} could not be finished — this worker "
+                          f"({WORKER_ID}) no longer owns it (reclaimed, or already "
+                          f"moved on)")
 
 
 def fail_job(job_id: str, error: dict) -> None:
-    """Mark the job failed — but ONLY while it is still `processing`.
+    """Mark the job failed — but ONLY while it is still `processing` UNDER US.
 
     The filter is part of the UPDATE so a job that another actor already moved
-    on (e.g. `/renders/publish-app` published it → `ready`) is never overwritten
-    with `failed` (audit F-G-13). Zero matched rows is logged, not an error.
+    on (e.g. `/renders/publish-app` published it → `ready`, or another worker
+    reclaimed it after our lease expired — release audit, Fix 2) is never
+    overwritten with `failed`. Zero matched rows is logged, not an error: this
+    is already a terminal/cleanup call with nothing further to abort.
     """
     try:
-        rows = patch("render_jobs",
-                     {"id": f"eq.{job_id}", "status": "eq.processing"},
-                     {"status": "failed", "current_step": "failed",
-                      "error": error, "finished_at": now_iso()},
-                     prefer="return=representation")
+        rows = _owned_patch(job_id, {"status": "failed", "current_step": "failed",
+                                     "error": error, "finished_at": now_iso()})
         if not rows:
-            print(f"    · job {job_id} was no longer 'processing' — left its status untouched")
+            print(f"    · job {job_id} was no longer 'processing' under this worker "
+                  f"({WORKER_ID}) — left its status untouched")
     except DBError as e:
         print(f"    ⚠ could not mark job failed: {e}")
 
@@ -473,8 +584,7 @@ def insert_render(row: dict, *, slug_retries: int = 5, extra: dict | None = None
                     print(f"    ⚠ renders has no {sorted(extra)} column(s) (migration 0016 "
                           f"not applied) — publishing without them. See HANDOFF.md.")
                 _RENDER_EXTRA_SUPPORTED = False
-            elif not ("409" in str(e).lower() or "duplicate key" in str(e).lower()
-                      or "23505" in str(e)):
+            elif not _looks_like_duplicate_key(e):
                 raise
             # duplicate → fall through to the normal retry/replace path below
 
@@ -486,8 +596,7 @@ def insert_render(row: dict, *, slug_retries: int = 5, extra: dict | None = None
             raise DBError("insert renders returned no row")
         except DBError as e:
             msg = str(e).lower()
-            is_dup = "409" in msg or "duplicate key" in msg or "23505" in msg
-            if not is_dup:
+            if not _looks_like_duplicate_key(e):
                 raise
             if "uq_renders_job" in msg or ("job_id" in msg and "slug" not in msg):
                 existing = _replace_render_for_job(row)
@@ -567,7 +676,30 @@ _SPOOL = _load_cost_spool()
 
 
 def _insert_cost_row(row: dict) -> None:
-    insert("cost_ledger", row, prefer="return=minimal")
+    """POST one cost_ledger row. A duplicate-key response is treated as SUCCESS.
+
+    `row["idempotency_key"]` (generated once when the row is first built — see
+    `record_cost`) is unique across every retry and every spool/flush replay of
+    that SAME charge (migration 0025, `uq_cost_ledger_idempotency`). So a 409
+    here means this exact charge already landed — most likely our own earlier
+    attempt succeeded server-side but its response was lost, or a concurrent
+    flusher (another thread on this host, or another host entirely — a local
+    file lock cannot coordinate across hosts) already resubmitted the same
+    spooled row a moment ago. Either way the row is recorded exactly once;
+    raising here would spool (or re-spool) an entry that can never succeed any
+    other way, permanently wedging `cost_spool.flush()` behind it (audit
+    finding 6 — this is the piece that makes the idempotency key actually
+    PREVENT a double-counted charge, not just make one detectable after the fact).
+    """
+    try:
+        insert("cost_ledger", row, prefer="return=minimal")
+    except DBError as e:
+        if _looks_like_duplicate_key(e):
+            print(f"    · cost_ledger row already recorded "
+                  f"(idempotency_key={row.get('idempotency_key')}) — treating the "
+                  f"duplicate submit as success")
+            return
+        raise
 
 
 def record_cost(*, feature: str, provider: str, model: str | None, units: float,
@@ -584,6 +716,11 @@ def record_cost(*, feature: str, provider: str, model: str | None, units: float,
         "model": model, "units": round(float(units), 4),
         "unit_cost_cents": round(float(unit_cost_cents), 6),
         "total_cents": round(float(total_cents), 4), "meta": meta or {},
+        # Generated ONCE, here, before any attempt — every retry in the loop
+        # below and every later spool/flush of this exact row carries the SAME
+        # key, so a duplicate submission 409s instead of double-counting spend
+        # (audit finding 6; migration 0025_cost_ledger_idempotency.sql).
+        "idempotency_key": str(uuid4()),
     }
     last: Exception | None = None
     for attempt in range(LEDGER_RETRY_ATTEMPTS):

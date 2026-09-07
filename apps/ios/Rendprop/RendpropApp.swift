@@ -1471,6 +1471,11 @@ struct RendpropApp: App {
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
             .task { Analytics.start(api: model.api as? AnalyticsAPI) }
+            // A previous launch's Apple authorizationCode submission may have
+            // been interrupted (killed mid-flight, offline, timeout) — give it
+            // exactly one more try now that the app is back up (audit finding
+            // 8 / TN3194). No-op when nothing was left pending.
+            .task { await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded() }
             // Backgrounding is the one moment we KNOW the person is done, so it
             // is the most valuable flush there is.
             .onChange(of: scenePhase) { phase in Analytics.sceneChanged(phase) }

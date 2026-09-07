@@ -121,6 +121,26 @@ export const APP_AI_UNIT_CENTS = {
   topaz_1080p60_per_s: 4.0,
   topaz_4k30_per_s: 8.0,
   topaz_4k60_per_s: 16.0,
+  /**
+   * Bria video eraser (POST /ai-video/declutter) — NOT a vendor-confirmed
+   * price (audit item 3). No committed Bria price exists anywhere in this
+   * repo: admin/index.ts's own bria row lists `unit_cost_cents: null`, and
+   * HANDOFF-DB.md's "Known gap: bria/video/erase/prompt" documents why §3 of
+   * the router contract never seeded one either. Before this fix the route
+   * wrote NO cost_ledger row at all, so real Bria spend was invisible to the
+   * per-org monthly COGS total and to GET /admin/spend.
+   *
+   * Rather than invent a new number, this points at the existing, already-
+   * committed ESTIMATED_UNIT_COST_CENTS.declutter figure (Flux Fill/Kontext
+   * masked inpaint, ~$0.04/image) as an order-of-magnitude placeholder — the
+   * closest already-in-repo "declutter" estimate — so the ledger row exists
+   * and is auditable instead of silently missing. Every row written with it
+   * carries `meta.price_estimated: true`. Replace with Bria's real per-clip
+   * price the moment one is obtained, and move admin/index.ts's bria row +
+   * HANDOFF-DB.md off `unit_cost_cents: null` in the same commit — see
+   * docs/handoff/audit-fixes.md.
+   */
+  bria_declutter_per_clip_estimated: ESTIMATED_UNIT_COST_CENTS.declutter,
 } as const;
 
 export interface AppAiCostArgs {

@@ -58,11 +58,41 @@
       <key>NSPrivacyCollectedDataTypePurposes</key>
       <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
     </dict>
+    <!-- Voiceover audio submitted for caption transcription
+         (Voice/SpeechTranscriber.swift). requiresOnDeviceRecognition is set
+         to SFSpeechRecognizer.supportsOnDeviceRecognition, so recognition is
+         NOT forced on-device: a device/locale without an on-device model
+         gets requiresOnDeviceRecognition = false immediately, and even a
+         device that DOES support on-device recognition falls back to
+         requiresOnDeviceRecognition = false on a recogniser-side failure
+         (retry-once-on-server). Per Apple's own documentation for that
+         property ("Set this property to true to prevent ... sending audio
+         over the network"), requiresOnDeviceRecognition = false means the
+         recorded voiceover is sent to Apple's speech-recognition servers —
+         which is exactly what NSSpeechRecognitionUsageDescription in
+         Info.plist already tells the user happens. Found undeclared in the
+         2026-09 audit; see docs/handoff/audit-fixes.md.
+         Rendprop's OWN backend never receives audio through this path —
+         only the resulting transcript text comes back into the app. (The
+         same recording, once muxed into a PUBLISHED reel, does reach our
+         backend as part of the video file — that flow is already covered by
+         NSPrivacyCollectedDataTypePhotosorVideos above, so it is not
+         declared twice here.) -->
+    <dict>
+      <key>NSPrivacyCollectedDataType</key>
+      <string>NSPrivacyCollectedDataTypeAudioData</string>
+      <key>NSPrivacyCollectedDataTypeLinked</key><true/>
+      <key>NSPrivacyCollectedDataTypeTracking</key><false/>
+      <key>NSPrivacyCollectedDataTypePurposes</key>
+      <array><string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string></array>
+    </dict>
     <!-- Location of the LISTING, used to place its map pin and to derive the
-         city/state region label. Two sources, both stored on the listing and
-         uploaded with it: (a) a one-shot Core Location fix requested at
-         kCLLocationAccuracyHundredMeters and rounded to 3 decimals, and (b) a
-         forward geocode of the street address the user typed.
+         city/state region label. Two sources, both rounded to 3 decimals
+         before they are stored on the listing or uploaded with it: (a) a
+         one-shot Core Location fix requested at kCLLocationAccuracyHundredMeters,
+         and (b) a forward geocode of the street address the user typed (fixed
+         2026-09 — this path previously stored the unrounded geocode result;
+         see docs/handoff/audit-fixes.md).
          MUST BE DECLARED PRECISE, NOT COARSE: Apple defines Precise Location as
          "the same or greater resolution as a latitude and longitude with three
          or more decimal places", and both sources land at or above that. The

@@ -184,8 +184,23 @@ extension LiveAPIClient: AdminFunnelAPI {
         }
         request.timeoutInterval = 30
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        var (data, response) = try await URLSession.shared.data(for: request)
+        guard var http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+
+        // Mirrors LiveAPIClient.execute's retry-once-on-401 (audit finding 8):
+        // the pre-flight refresh above can still leave a stale token. A GET
+        // is always safe to repeat, so retry once with a forced-fresh token
+        // before reporting failure.
+        if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+            let refreshed = await AuthStore.shared.forceRefresh()
+            if refreshed, let fresh = AuthStore.storedAccessToken() {
+                request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
+                (data, response) = try await URLSession.shared.data(for: request)
+                guard let http2 = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+                http = http2
+            }
+        }
+
         guard (200..<300).contains(http.statusCode) else {
             throw LiveAPIClient.serverError(status: http.statusCode, data: data)
         }

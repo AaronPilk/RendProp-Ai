@@ -8,11 +8,31 @@
 // the old read-modify-write (audit: lost updates under concurrency, and these
 // public numbers must never feed billing — they are engagement telemetry).
 // Uses the service-role client; no public RLS policy exists on `metering`.
+//
+// ── Honest caveat (audit: "public beacon metrics are replayable") ───────────
+// This route is PUBLIC and UNAUTHENTICATED: there is no session nonce, device
+// id, or login behind a beacon, so `views`/`watch_ms`/`streamed_minutes` are
+// best-effort engagement telemetry, NEVER ground truth. Two things bound (but
+// do not eliminate) inflation:
+//   • the per-IP 120/60s limiter below bounds raw request volume;
+//   • `view_start:true` — the player's claim that this is the first beacon of
+//     a session — additionally only counts once per (IP, slug) per
+//     VIEW_DEDUPE_WINDOW_SECONDS (see shouldCountView in logic.ts), so simply
+//     replaying the same beacon in a tight loop no longer inflates `views`
+//     without bound.
+// Neither survives a motivated attacker: IP rotation, or just waiting out the
+// dedupe window, still inflates the count, and several genuine viewers behind
+// one IP (an office, a NAT) within the window undercount to one. These are
+// accepted tradeoffs of a public, unauthenticated endpoint with no viewer
+// identity to key on. This number must never be used as billing truth, and
+// must never be presented as a guaranteed/exact figure — see
+// docs/ADMIN-CONSOLE-CONTRACT.md.
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient } from "../_shared/supabase.ts";
+import { shouldCountView } from "./logic.ts";
 
 interface BeaconBody {
   slug?: string;
@@ -32,6 +52,14 @@ const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 const MAX_WATCH_MS_PER_CALL = 5 * 60 * 1000;
 const MAX_STREAMED_MIN_PER_CALL = 60;
 const clampN = (v: unknown, max: number) => Math.min(max, Math.max(0, num(v)));
+
+// Replay resistance for `view_start` (audit — see the file header). One
+// counted view per (IP, slug) per window: long enough to absorb a genuine
+// duplicate (a page reload right after load fires a second `view_start` for
+// the SAME real session), short enough that a real return visit later the
+// same day still counts as a new view. Not a strong guarantee — see the
+// header — just cheap enough to be worth doing.
+const VIEW_DEDUPE_WINDOW_SECONDS = 5 * 60;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
@@ -70,10 +98,17 @@ Deno.serve(async (req) => {
       .eq("id", render.listing_id)
       .maybeSingle();
 
+    // Replay resistance (audit): view_start only actually counts once per
+    // (IP, slug) per window — see the file header and shouldCountView.
+    const countView = await shouldCountView(
+      body.view_start,
+      () => durableRateLimit(`beaconview:${clientIp(req)}:${render.id}`, 1, VIEW_DEDUPE_WINDOW_SECONDS),
+    );
+
     const { error: mErr } = await admin.rpc("bump_metering", {
       p_render: render.id,
       p_org: listing?.org_id ?? null,
-      p_views: body.view_start ? 1 : 0,
+      p_views: countView ? 1 : 0,
       p_watch_ms: Math.round(clampN(body.watch_ms, MAX_WATCH_MS_PER_CALL)),
       p_streamed: Number(clampN(body.streamed_minutes, MAX_STREAMED_MIN_PER_CALL).toFixed(2)),
       p_scroll: Math.min(1, Math.max(0, num(body.scroll_depth))),

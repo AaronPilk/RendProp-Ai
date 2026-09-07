@@ -75,20 +75,26 @@
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { adminClient, getUser, listingSpaceType, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
-import { durableRateLimit } from "../_shared/ratelimit.ts";
+import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { entitlementForCharge, quotaError } from "../_shared/entitlements.ts";
 import { publicR2Url } from "../_shared/r2.ts";
 import { assertFairHousing, FAIR_HOUSING_LOCK, GUARDRAILS } from "../_shared/fairhousing.ts";
 import { recordProvenance } from "../_shared/provenance.ts";
-import { APP_AI_UNIT_CENTS, recordRoutedAiCost } from "../_shared/ledger.ts";
+import { APP_AI_UNIT_CENTS, recordAppAiCost, recordRoutedAiCost } from "../_shared/ledger.ts";
 import type { RouteStep } from "../_shared/router.ts";
 import { routerEnabled } from "../_shared/router.ts";
 import { adapterFor } from "../_shared/providers/index.ts";
-import { resolveChain, runChain } from "../_shared/providers/chain.ts";
+import { type ChainResult, resolveChain, runChain } from "../_shared/providers/chain.ts";
 import { falSubmitEcho } from "../_shared/providers/fal.ts";
 import { persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
-import { type RouterJobToken, routerJobFrom, routerStatusUrl } from "../_shared/providers/jobtoken.ts";
+import {
+  extractJobToken,
+  type JobTokenOwner,
+  type RouterJobToken,
+  routerStatusUrl,
+  verifyJobToken,
+} from "../_shared/providers/jobtoken.ts";
 
 // Denial-of-wallet guards (audit P1-3): every generate route hits a paid GPU
 // queue, so cap submissions per burst window AND per rolling month per org,
@@ -133,6 +139,18 @@ const MAX_IMAGE_B64_CHARS = 12_000_000;
 const ALLOWED_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
 
 /**
+ * What guardGenerate() actually charged, so a submission that never reaches
+ * the provider can hand it all back (see refundGenerateCharge, audit item 2 /
+ * F-E-16).
+ */
+interface GenerateCharge {
+  orgId: string;
+  plan: string;
+  monthlyKey: string;
+  burstKey: string;
+}
+
+/**
  * Charge the paid-generation quotas + enforce the role gate.
  *
  * MUST be called only AFTER the request body and its referenced asset are
@@ -144,7 +162,7 @@ const ALLOWED_IMAGE_MIMES = ["image/jpeg", "image/png", "image/webp"];
  * otherwise picks the caller's highest-privilege membership, so a user in two
  * workspaces could have quota charged to the wrong one.
  */
-async function guardGenerate(userId: string, req: Request, kind: GenKind): Promise<{ orgId: string; plan: string }> {
+async function guardGenerate(userId: string, req: Request, kind: GenKind): Promise<GenerateCharge> {
   const orgId = await orgForUser(userId, preferredOrg(req));
   const admin = adminClient();
 
@@ -166,21 +184,43 @@ async function guardGenerate(userId: string, req: Request, kind: GenKind): Promi
 
   // Idempotency soft-dedupe: when the client sends an Idempotency-Key, a
   // duplicate submit inside 2 minutes is rejected instead of double-billed.
+  // NOT refunded on failure, deliberately (mirrors ai-chapters/index.ts
+  // guardChapters): it is a short dedupe guard, not spend.
   const idem = req.headers.get("idempotency-key")?.trim();
   if (idem && idem.length <= 128) {
     if (!(await durableRateLimit(`aividem:${orgId}:${idem}`, 1, 120))) {
       throw new HttpError(409, "Duplicate submission — this job was already started.", "conflict");
     }
   }
-  if (!(await durableRateLimit(`aivideo:${orgId}`, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
+  const burstKey = `aivideo:${orgId}`;
+  const monthlyKey = `${meterKeyFor(kind)}:${orgId}`;
+  if (!(await durableRateLimit(burstKey, GEN_MAX_PER_WINDOW, GEN_WINDOW_SECONDS))) {
     throw new HttpError(429, "AI video generation limit reached for now — try again in a few minutes.", "rate_limited");
   }
-  if (!(await durableRateLimit(`${meterKeyFor(kind)}:${orgId}`, monthlyCap, MONTH_SECONDS))) {
+  if (!(await durableRateLimit(monthlyKey, monthlyCap, MONTH_SECONDS))) {
     throw quotaError(labelFor(kind), monthlyCap, monthlyCap, ent.plan);
   }
   // The effective plan rides along for the router's RouteContext — it is the
   // number entitlementForCharge() just read, not a second lookup.
-  return { orgId, plan: ent.plan };
+  return { orgId, plan: ent.plan, monthlyKey, burstKey };
+}
+
+/**
+ * Hand back everything a submission that never reached the provider charged
+ * (audit item 2 / F-E-16, mirrors ai-chapters/index.ts refundCharge exactly).
+ *
+ * Call ONLY when the provider submit itself threw — a fal/router submit that
+ * THROWS never billed us, so nothing was produced for the quota it consumed.
+ * Once a submit call RETURNS, the provider has ACCEPTED the job and the spend
+ * is committed (see the COST LEDGER comments below); nothing past that point
+ * is ever refunded, even if the async job later fails — that failure surfaces
+ * from GET /ai-video/status, which never charged anything to begin with.
+ *
+ * Best effort and never throws — see refundRateLimit().
+ */
+async function refundGenerateCharge(charge: GenerateCharge): Promise<void> {
+  await refundRateLimit(charge.monthlyKey, MONTH_SECONDS, 1);
+  await refundRateLimit(charge.burstKey, GEN_WINDOW_SECONDS, 1);
 }
 
 const FAL_QUEUE_BASE = "https://queue.fal.run";
@@ -276,19 +316,21 @@ function legacyVideoStep(
  * The three fields every 202 carries.
  *
  * Flag OFF + fal → fal's own ids, verbatim (today's contract, unchanged).
- * Otherwise      → our opaque token in all three fields.
+ * Otherwise      → our opaque, SIGNED token (audit item 4) in all three
+ * fields, bound to `owner` — the org + user that submitted the job.
  */
-function submitEnvelope(
+async function submitEnvelope(
   req: Request,
   routerOn: boolean,
   task: string,
   ref: JobRef,
-): { request_id: string; status_url: string; response_url: string } {
+  owner: JobTokenOwner,
+): Promise<{ request_id: string; status_url: string; response_url: string }> {
   if (!routerOn && ref.provider === "fal") {
     const echo = falSubmitEcho(ref.id);
     if (echo) return echo;
   }
-  const url = routerStatusUrl(req, "ai-video", task, ref);
+  const url = await routerStatusUrl(req, "ai-video", task, ref, owner);
   return { request_id: ref.id, status_url: url, response_url: url };
 }
 
@@ -541,7 +583,8 @@ Deno.serve(async (req) => {
       fps = Math.min(120, Math.max(24, fps));
       const interpolate = asset.fps == null || asset.fps < fps - 0.5;
 
-      const { orgId, plan } = await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
+      const charge = await guardGenerate(user.id, req, "drone"); // validated — charge, then submit
+      const { orgId, plan } = charge;
 
       // ROUTER (flag-gated): 4K tiers and the 1080p60 tier are separate tasks
       // because they are separately priced. Topaz is v2v; nothing else in the
@@ -561,9 +604,17 @@ Deno.serve(async (req) => {
           ...(interpolate ? { target_fps: fps } : {}),
         },
       };
-      const attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      // The submit itself failing means no provider ever accepted the job —
+      // hand the charge back (audit item 2). See refundGenerateCharge.
+      let attempt: ChainResult<JobRef>;
+      try {
+        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      } catch (e) {
+        await refundGenerateCharge(charge);
+        throw e;
+      }
       const step = attempt.step;
-      const sub = submitEnvelope(req, routerOn, task, attempt.value);
+      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
 
       // COST LEDGER (F-E-15): Topaz bills per OUTPUT second, and the output runs
       // the same wall-clock as the source, so units = the source duration. One
@@ -634,23 +685,62 @@ Deno.serve(async (req) => {
         ? guardedUserPrompt(userErase, space, "Erase objects from")
         : `${DECLUTTER_PROMPT[space]}. ${GUARDRAILS}`;
 
-      // NOT ROUTED, deliberately: §3 defines no video-declutter task and the repo
-      // has no committed price for Bria (admin lists unit_cost_cents: null and no
-      // ledger row is written), so a route row would invent a price. This path
-      // stays exactly as it shipped until a price lands.
-      await guardGenerate(user.id, req, "declutter"); // validated — charge, then submit
-      const sub = await falSubmit(MODEL_DECLUTTER, {
-        video_url: asset.url,
-        prompt: erasePrompt,
-        auto_trim: false, // never silently cut the video — process the full clip
-        preserve_audio: true,
-        output_container_and_codec: "mp4_h264",
+      // NOT ROUTED, deliberately: §3 defines no video-declutter task, so a route
+      // row would invent a chain the router's contract doesn't actually seed.
+      // This path stays hardcoded to Bria — see the COST LEDGER note below for
+      // pricing (audit item 3 changed that half of the "stays as shipped" story;
+      // the ROUTING half is unchanged).
+      const charge = await guardGenerate(user.id, req, "declutter"); // validated — charge, then submit
+      let sub: Awaited<ReturnType<typeof falSubmit>>;
+      try {
+        sub = await falSubmit(MODEL_DECLUTTER, {
+          video_url: asset.url,
+          prompt: erasePrompt,
+          auto_trim: false, // never silently cut the video — process the full clip
+          preserve_audio: true,
+          output_container_and_codec: "mp4_h264",
+        });
+      } catch (e) {
+        // The submit itself failed — fal never accepted the job, so hand the
+        // reel-allowance charge back (audit item 2). See refundGenerateCharge.
+        await refundGenerateCharge(charge);
+        throw e;
+      }
+
+      // COST LEDGER (audit item 3): this route consumed the shared reel quota
+      // and called a real provider, then wrote NOTHING to cost_ledger — so a
+      // heavy user of this route could spend real Bria money that never showed
+      // up in the org's monthly COGS total or GET /admin/spend. No unit price
+      // for Bria is committed ANYWHERE in this repo (confirmed against
+      // admin/index.ts's own bria row, unit_cost_cents: null, and
+      // HANDOFF-DB.md's "Known gap: bria/video/erase/prompt" — §3 of the router
+      // contract never defined a video-declutter task either). Rather than
+      // inventing a number, this reuses APP_AI_UNIT_CENTS
+      // .bria_declutter_per_clip_estimated — itself a pointer to the existing,
+      // already-committed ESTIMATED_UNIT_COST_CENTS.declutter figure (Flux
+      // Fill/Kontext masked inpaint, ~$0.04/image) — as an explicitly-marked
+      // placeholder so the row exists and is auditable instead of silently
+      // absent. meta.price_estimated flags it for every consumer of this table.
+      // Replace with Bria's real per-clip price the moment one is obtained, and
+      // mirror the change into admin/index.ts's bria row + HANDOFF-DB.md in the
+      // same commit (see docs/handoff/audit-fixes.md).
+      await recordAppAiCost(adminClient(), {
+        orgId: charge.orgId,
+        provider: "fal",
+        feature: "video_declutter",
+        model: MODEL_DECLUTTER,
+        units: 1,
+        unitCents: APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated,
+        meta: {
+          space_type: space,
+          request_id: sub.request_id,
+          price_estimated: true,
+          price_basis:
+            "No committed Bria price exists in the repo; reusing ESTIMATED_UNIT_COST_CENTS.declutter " +
+            "as an order-of-magnitude stand-in — see HANDOFF-DB.md 'Known gap: bria/video/erase/prompt'.",
+        },
       });
-      // COST LEDGER (F-E-15): Bria video erase has NO committed unit price in the
-      // repo (functions/admin/index.ts lists it as unit_cost_cents: null) and it
-      // rides the reel allowance, so no cost_ledger row is written here on
-      // purpose. Give it a real per-clip price in APP_AI_UNIT_CENTS + the admin
-      // inventory first, then log it like the others (see HANDOFF).
+
       const prov = await recordProvenance(req, {
         listingId: body.listing_id ?? asset.listing_id,
         kind: "declutter",
@@ -717,7 +807,8 @@ Deno.serve(async (req) => {
       const grounded = imageUrl !== null;
       const prompt = buildAerialPrompt({ grounded, space, motion, time, region, style });
 
-      const { orgId, plan } = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
+      const charge = await guardGenerate(user.id, req, "aerial"); // validated — charge, then submit
+      const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). GROUNDED is an image-to-video task carrying the
       // customer's own photo; UNGROUNDED is text-to-video and carries none —
@@ -745,10 +836,18 @@ Deno.serve(async (req) => {
         aspect,
         resolution: "1080p",
       };
-      const attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      // The submit itself failing means no provider ever accepted the job —
+      // hand the charge back (audit item 2). See refundGenerateCharge.
+      let attempt: ChainResult<JobRef>;
+      try {
+        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      } catch (e) {
+        await refundGenerateCharge(charge);
+        throw e;
+      }
       const step = attempt.step;
       const modelId = step.model;
-      const sub = submitEnvelope(req, routerOn, task, attempt.value);
+      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
 
       // COST LEDGER (F-E-15): a GROUNDED aerial is Seedance i2v (billed per output
       // second); an UNGROUNDED one is Veo 3.1 Fast (a flat per-clip price — the
@@ -839,7 +938,8 @@ Deno.serve(async (req) => {
         ? guardedUserPrompt(userMotion, space, "Animate")
         : reelPrompt(space);
 
-      const { orgId, plan } = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
+      const charge = await guardGenerate(user.id, req, "reel"); // validated — charge, then submit
+      const { orgId, plan } = charge;
 
       // ROUTER (flag-gated). With the flag off this resolves to the one legacy
       // step — fal Seedance — and the adapter rebuilds the payload below byte
@@ -866,9 +966,17 @@ Deno.serve(async (req) => {
         resolution: "1080p",
         ...(reelAspect ? { aspect: reelAspect } : {}),
       };
-      const attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      // The submit itself failing means no provider ever accepted the job —
+      // hand the charge back (audit item 2). See refundGenerateCharge.
+      let attempt: ChainResult<JobRef>;
+      try {
+        attempt = await runChain(task, steps, (step) => adapterFor(step.provider).submit(step, genInput));
+      } catch (e) {
+        await refundGenerateCharge(charge);
+        throw e;
+      }
       const step = attempt.step;
-      const sub = submitEnvelope(req, routerOn, task, attempt.value);
+      const sub = await submitEnvelope(req, routerOn, task, attempt.value, { orgId, userId: user.id });
 
       // COST LEDGER (F-E-15): i2v bills per output second. One org-scoped row,
       // job_id = NULL, best effort, only after the provider ACCEPTED the submit,
@@ -911,8 +1019,26 @@ Deno.serve(async (req) => {
       // media (fal 24 h by our own lifecycle header, Higgsfield 7 d, Kie 14 d),
       // so the canonical asset has to become ours here. The legacy fal path
       // below is untouched and still runs for every flag-off submit.
-      const routed = routerJobFrom(params);
-      if (routed) return await routedStatus(user.id, req, routed);
+      //
+      // SECURITY (audit item 4): verifyJobToken() checks signature, shape,
+      // expiry AND that the token's org+user match the CALLER's own JWT —
+      // never the reverse — BEFORE anything here polls a vendor with our
+      // credentials. A `job` value that is present but fails any of those
+      // checks is a 403, never a silent fall-through to the legacy path below
+      // (which expects status_url/response_url, not job, and would otherwise
+      // answer a confusing 400).
+      const rawJobToken = extractJobToken(params);
+      if (rawJobToken !== null) {
+        const callerOrgId = await orgForUser(user.id, preferredOrg(req));
+        const routed = await verifyJobToken(rawJobToken, { orgId: callerOrgId, userId: user.id });
+        if (!routed) {
+          throw new HttpError(
+            403,
+            "This job status link is invalid, expired, or does not belong to your workspace.",
+          );
+        }
+        return await routedStatus(callerOrgId, routed);
+      }
 
       const statusUrl = requireFalUrl(params.get("status_url"), "status_url");
       const responseUrl = requireFalUrl(params.get("response_url"), "response_url");
@@ -969,8 +1095,13 @@ Deno.serve(async (req) => {
  * Same three states the app already decodes — processing / completed / failed —
  * with `video_url` pointing at OUR R2 copy once the result has been persisted.
  * Extra fields are additive; the shipped decoder ignores them.
+ *
+ * `orgId` is the CALLER's own org, already verified by verifyJobToken() to
+ * match the token's owner before this function is ever reached (audit item 4)
+ * — it is what the finished asset is persisted under, never re-derived from
+ * the token itself.
  */
-async function routedStatus(userId: string, req: Request, job: RouterJobToken): Promise<Response> {
+async function routedStatus(orgId: string, job: RouterJobToken): Promise<Response> {
   const adapter = adapterFor(job.p);
   const ref: JobRef = {
     provider: job.p,
@@ -992,7 +1123,6 @@ async function routedStatus(userId: string, req: Request, job: RouterJobToken): 
   }
 
   // COMPLETED → persist before we call it a success (contract §4).
-  const orgId = await orgForUser(userId, preferredOrg(req));
   let assetKey: string | null = null;
   let videoUrl: string | null = null;
   try {

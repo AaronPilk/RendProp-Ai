@@ -29,10 +29,11 @@ Every row: **Not used for tracking**. See §3.
 | User Content → **Other User Content** | Linked | App Functionality | Listing details and story text (taglines, room notes, business details). |
 | Identifiers → **User ID** | Linked | App Functionality | The Supabase auth user id every listing, tour, and lead hangs off. |
 | Identifiers → **Device ID** | Linked | **Analytics**, App Functionality, **Developer's Advertising or Marketing** | A UUID this app generates on first launch and keeps in its own Keychain item, sent with every analytics batch so the funnel counts people rather than taps. **Not the IDFA** (never requested) and not the IDFV. |
-| Location → **Precise Location** | Linked | App Functionality | The listing's map pin. Two sources — a one-shot Core Location fix rounded to 3 decimals, and a forward geocode of the typed address. Three decimals is at Apple's Precise threshold, so **declare Precise, not Coarse.** |
+| Location → **Precise Location** | Linked | App Functionality | The listing's map pin. Two sources, both rounded to 3 decimals before they are stored or sent anywhere — a one-shot Core Location fix, and a forward geocode of the typed address (fixed 2026-09: this path previously stored the unrounded geocode result — see `docs/handoff/audit-fixes.md`). Three decimals is at Apple's Precise threshold, so **declare Precise, not Coarse** — rounding to 3 decimals is data minimization, not a lower privacy-label tier. The in-app "Open in Maps" link opens by the typed address itself; it falls back to this same rounded fix only when the listing has no address, and never sends a raw, unrounded coordinate. |
 | Usage Data → **Product Interaction** | **Linked** | App Functionality, **Analytics**, **Developer's Advertising or Marketing** | First-party funnel (`POST /events`): a fixed 19-word event vocabulary plus a few enum/count props. The server attaches the account id when signed in, which is what makes it Linked. Also the tour-page view counter. |
 | Diagnostics → **Crash Data** | Linked | App Functionality, Analytics | MetricKit crash summaries only — kind, signal/exception number, a termination reason clipped to 120 chars with path-shaped tokens removed, and one frame name. Never a full call stack. No third-party crash SDK. |
 | Diagnostics → **Performance Data** | Linked | App Functionality, Analytics | MetricKit hang / CPU / disk-write exceptions and a median launch time, one small number or category each. |
+| Audio Data | Linked | App Functionality | The voiceover recording, submitted to `SFSpeechRecognizer` for captions (`Voice/SpeechTranscriber.swift`). `requiresOnDeviceRecognition` is **not** forced true — it tracks `supportsOnDeviceRecognition`, and even an on-device attempt that fails retries once with it set to `false` — so on a device/locale without an on-device model, or after that retry, the recording is sent to **Apple's** speech-recognition servers over the network (Apple's own docs: `requiresOnDeviceRecognition = true` is what "prevent[s] ... sending audio over the network" — false is the alternative). `NSSpeechRecognitionUsageDescription` in `Info.plist` already tells the user this can happen. Added 2026-09 — previously undeclared; see §6. |
 | Purchases → **Purchase History** | Linked | App Functionality | StoreKit 2. The app posts Apple's signed transaction (JWS) to our server, which stores **Apple's transaction id, original transaction id, product id, environment, and expiry** in `apple_subscriptions` in order to unlock the plan. We never see or store card details, and we do not use purchase data for advertising. |
 
 ## 2. Data types to answer NO to — and the reason, if asked
@@ -43,7 +44,7 @@ Every row: **Not used for tracking**. See §3.
 | Contacts | The app never reads the address book. |
 | Browsing History, Search History | Neither exists in the app. |
 | Health, Fitness, Sensitive Info | Never touched. The "gym" mode describes a *venue*, not a person's fitness. |
-| Audio Data | The voiceover recording stays on the device. It is muxed into the reel locally; only if the user publishes that reel does the audio leave, and it leaves as part of a video already declared under **Photos or Videos**. Transcription uses Apple's `SFSpeechRecognizer`, on-device where the device supports it — where it does not, the audio goes to **Apple**, not to us. |
+| ~~Audio Data~~ | **Moved to §1, 2026-09.** Previously answered No here on the reasoning that the recording only leaves as part of an already-declared video. That covers the publish path, but misses that transcription itself can send the raw recording to **Apple's** servers (§6) — which is collection, just not collection *by us*. See §6 for the full reasoning. |
 | Coarse Location | We store a coordinate at Precise resolution, so it is declared as Precise instead. Declaring both is wrong. |
 | Advertising Data | No ad SDK, no ad inventory, no IDFA. |
 | Other Diagnostic Data | Everything MetricKit gives us is already declared as Crash or Performance Data. |
@@ -108,3 +109,44 @@ is owned by the iOS agent, not by this document):
 ```
 
 Everything else in the manifest already matches the answers above.
+
+## 6. Audio Data was undeclared (2026-09 audit finding, now fixed)
+
+**The manifest now declares `NSPrivacyCollectedDataTypeAudioData`** (Linked, Not used for
+tracking, App Functionality). The App Store Connect answer must change to match: **Audio Data
+→ Yes / Linked / Not tracking / App Functionality.**
+
+The evidence, so this isn't taken on faith:
+
+* `Voice/SpeechTranscriber.swift` sets `request.requiresOnDeviceRecognition = onDevice`, where
+  `onDevice = recognizer.supportsOnDeviceRecognition` — it does **not** force on-device
+  recognition. A device or locale without an on-device model gets `false` immediately, and a
+  device that *does* support on-device recognition still retries once with `false` if the
+  on-device attempt fails outright (see the `catch` in `transcribe(_:)`).
+* Apple's own documentation for `requiresOnDeviceRecognition` says: "Set this property to
+  `true` to prevent an `SFSpeechRecognitionRequest` from sending audio over the network." The
+  converse is stated plainly: `false` sends audio over the network.
+* `Info.plist`'s own `NSSpeechRecognitionUsageDescription` — shown to the user in the
+  permission prompt — already says this out loud: *"Transcription runs on this iPhone when the
+  device supports it; otherwise the recording is sent to Apple's speech recognition service to
+  be turned into text."*
+* Rendprop's own backend is not part of this path. `SpeechTranscriber` only calls into Apple's
+  `Speech` framework; no `LiveAPIClient`/network call to our own domain carries the audio. Only
+  the transcript text comes back into the app.
+
+The previous "No" answer reasoned that the recording only leaves the device as part of an
+already-declared, published video (still true, and still covered under **Photos or Videos** —
+not double-declared here). What it missed is that *transcription itself* — which runs whether
+or not the reel is ever published — can send the raw recording off-device to a third party
+(Apple). "Not collected by us" is not the same as "not collected" for this questionnaire: the
+data still leaves the device, off to a service Rendprop's own feature code invoked.
+
+One open judgment call for the app owner, not resolvable from the code alone: this entry is
+declared **Linked**, matching every other row in this manifest (there is currently no
+`Linked: false` row at all) and on the reasoning that the recording is a specific signed-in
+user's own voice, captured against their own listing. Apple's Speech framework may or may not
+tie the recognition request itself to the user's Apple ID on Apple's end — that is Apple's
+practice, not something this app's code controls or can inspect, and it does not change what
+*this app* should declare about data its own feature caused to be collected. If the app owner's
+own reading of Apple's guidance differs, this is the row to revisit — not whether Audio Data
+should be declared at all.

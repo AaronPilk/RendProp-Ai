@@ -1041,12 +1041,25 @@ struct FlythroughDetailView: View {
         }
     }
 
+    /// Apple's Maps URL scheme treats `address` as a standalone parameter
+    /// that displays a location without a coordinate — and `ll`, if present,
+    /// takes precedence over it — so sending both would defeat the point.
+    /// We send the address alone whenever we have one: the user already
+    /// typed it, Maps geocodes it on Apple's end, and no coordinate (coarse
+    /// or otherwise) needs to leave the device. Only a listing with no
+    /// address at all falls back to `ll=`, and even then only the coarsened
+    /// fix — never the precise on-device coordinate (2026-09 audit P0-6
+    /// follow-up).
     private func mapsURL(_ c: CLLocationCoordinate2D) -> URL? {
         var comps = URLComponents(string: "https://maps.apple.com/")
-        comps?.queryItems = [
-            URLQueryItem(name: "ll", value: "\(c.latitude),\(c.longitude)"),
-            URLQueryItem(name: "q", value: currentListing.address),
-        ]
+        let address = currentListing.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !address.isEmpty {
+            comps?.queryItems = [URLQueryItem(name: "address", value: address)]
+        } else {
+            comps?.queryItems = [
+                URLQueryItem(name: "ll", value: "\(coarseCoordinate(c.latitude)),\(coarseCoordinate(c.longitude))"),
+            ]
+        }
         return comps?.url
     }
 
@@ -1324,7 +1337,10 @@ struct FlythroughDetailView: View {
             let state = Self.stateCode(from: mark)
             DispatchQueue.main.async {
                 if let c = coord, c.latitude.isFinite, c.longitude.isFinite {
-                    model.setCoordinate(lat: c.latitude, lon: c.longitude, for: id)
+                    // Coarsen before it ever touches the model — the same
+                    // precision the API accepts (2026-09 audit P0-6 follow-up).
+                    model.setCoordinate(lat: coarseCoordinate(c.latitude),
+                                        lon: coarseCoordinate(c.longitude), for: id)
                 }
                 if let region { model.setRegion(region, stateCode: state, for: id) }
             }

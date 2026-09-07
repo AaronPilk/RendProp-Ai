@@ -39,6 +39,7 @@ service-role key. Never ship this key to the app (see BACKEND-ARCHITECTURE §4).
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 
 import cost_spool
@@ -53,6 +54,17 @@ class LedgerError(ProviderError):
     treats it like any other segment failure (ship the original) rather than
     unwinding the whole job.
     """
+
+
+def _is_duplicate_key_error(err: Exception) -> bool:
+    """True for a unique-constraint violation (PostgREST 409 / SQLSTATE 23505).
+
+    Mirrors services/worker/db._looks_like_duplicate_key — same shape of
+    error (request_json's ProviderError wraps the raw PostgREST body exactly
+    like db.DBError does), same detection.
+    """
+    m = str(err).lower()
+    return "409" in m or "duplicate key" in m or "23505" in m
 
 
 # Bounded retry — no unbounded loops anywhere near a money path.
@@ -120,6 +132,12 @@ class CostLedger:
             "unit_cost_cents": round(float(unit_cost_cents), 6),
             "total_cents": round(float(total_cents), 4),
             "meta": meta or {},
+            # Generated ONCE, here, before any attempt — every retry in
+            # `_insert_with_retry` and every later `flush_spool()` replay of
+            # this exact row carries the SAME key, so a resubmission 409s
+            # instead of double-counting REAL provider spend (audit finding 6;
+            # migration 0025_cost_ledger_idempotency.sql).
+            "idempotency_key": str(uuid.uuid4()),
         }
         self.rows.append(row)
         self.running_cents = round(self.running_cents + row["total_cents"], 4)
@@ -170,11 +188,31 @@ class CostLedger:
 
     # ── internal ──────────────────────────────────────────────────────────────
     def _insert_once(self, row: dict) -> None:
-        request_json(
-            f"{self.supabase_url}/rest/v1/cost_ledger",
-            method="POST", payload=row, headers=self._headers("return=minimal"),
-            timeout=30,
-        )
+        """POST one cost_ledger row. A duplicate-key response is SUCCESS.
+
+        `row["idempotency_key"]` is stable across every retry/replay of this
+        SAME charge (see `record`), so a 409/23505 here means the charge
+        already landed — our own earlier attempt succeeded server-side but its
+        response was lost, or `flush_spool()` is re-submitting an already-sent
+        spooled row. Raising in that case would spool (or re-spool) an entry
+        that can never succeed any other way, permanently wedging
+        `cost_spool.flush()`'s "first failure stops the pass" loop behind it —
+        this is the piece that makes the idempotency key actually PREVENT a
+        double-counted charge rather than merely making one detectable later.
+        """
+        try:
+            request_json(
+                f"{self.supabase_url}/rest/v1/cost_ledger",
+                method="POST", payload=row, headers=self._headers("return=minimal"),
+                timeout=30,
+            )
+        except ProviderError as e:
+            if _is_duplicate_key_error(e):
+                print(f"    · cost_ledger row already recorded "
+                      f"(idempotency_key={row.get('idempotency_key')}) — treating "
+                      f"the duplicate submit as success")
+                return
+            raise
 
     def _insert_with_retry(self, row: dict) -> None:
         last: ProviderError | None = None

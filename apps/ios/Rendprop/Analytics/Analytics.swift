@@ -247,6 +247,23 @@ enum Analytics {
     /// with it, since MetricKit hands them over a launch or more after the fact.
     static var currentSessionID: String { sessionID }
 
+    /// Wipe this device's analytics identity and mint a fresh one. Called from
+    /// `SettingsView.wipeLocalData()` (account deletion / "clear this phone",
+    /// audit P0-4): without this, the Keychain item and its UserDefaults
+    /// fallback both survive the wipe, so the SAME persistent device id kept
+    /// flowing under whichever account signed in next on this phone —
+    /// exactly the cross-account linkage the wipe is supposed to prevent.
+    ///
+    /// Updates the in-memory cache too, not just the on-disk stores: `start`
+    /// only loads `deviceID` once per process (it is idempotent past the
+    /// first call), so a sign-out/sign-in-as-someone-else that never
+    /// relaunches the process would otherwise keep sending the old id in
+    /// every event until the app happened to restart. Safe to call whether
+    /// or not `start` has run yet.
+    static func resetDeviceIdentity() {
+        deviceID = DeviceIdentity.reset()
+    }
+
     /// "1.0 (1)" — marketing version + build, exactly what the contract's
     /// `app_version` field expects.
     static var appVersion: String {
@@ -395,6 +412,16 @@ enum Analytics {
             return fresh
         }
 
+        /// Delete any existing id (Keychain + UserDefaults fallback) and mint
+        /// a brand-new one, persisted the same way `load()` persists a
+        /// first-launch id. Used when local data is wiped so the next account
+        /// signed into on this device gets its own identifier.
+        static func reset() -> String {
+            keychainDelete()
+            UserDefaults.standard.removeObject(forKey: defaultsKey)
+            return load()
+        }
+
         private static func query() -> [String: Any] {
             [
                 kSecClass as String: kSecClassGenericPassword,
@@ -426,6 +453,12 @@ enum Analytics {
                 status = SecItemAdd(insert as CFDictionary, nil)
             }
             return status == errSecSuccess
+        }
+
+        /// `errSecItemNotFound` is expected and fine — there is nothing to
+        /// remove on a device that never wrote an id, or a second reset.
+        private static func keychainDelete() {
+            _ = SecItemDelete(query() as CFDictionary)
         }
     }
 }

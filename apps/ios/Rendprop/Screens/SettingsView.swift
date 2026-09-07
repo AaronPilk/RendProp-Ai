@@ -719,7 +719,13 @@ struct SettingsView: View {
               decoded.ok else {
             throw AccountDeleteError(status: status)
         }
-        return decoded.cleanupComplete ?? true
+        // Fail CLOSED (audit P0-4): a server response that omits
+        // `cleanup_complete` must NOT be read as "cleanup finished". Treat an
+        // absent value as "still pending" so the UI shows the honest
+        // background-cleanup message instead of falsely declaring everything
+        // removed. The deletion itself is already gated above by `decoded.ok`
+        // and the 2xx check — this only governs the cleanup-status message.
+        return decoded.cleanupComplete ?? false
     }
 
     /// "Delete account" tapped. A signed-out user on the live backend is NOT
@@ -812,7 +818,9 @@ struct SettingsView: View {
     /// WKWebsiteDataStore        cookies/localStorage from hosted tour pages     (step 4)
     /// UserDefaults              agent cards, brand bookkeeping, aerial job records,
     ///                           AI-processing consent (step 5)
-    /// Keychain                  auth tokens — cleared by AuthStore.signOut() before this runs
+    /// Keychain                  auth tokens — cleared by AuthStore.signOut() before this runs;
+    ///                           analytics device id — Analytics.resetDeviceIdentity() (step 6)
+    /// UserDefaults              analytics device id fallback — same call, step 6
     /// ──────────────────────────────────────────────────────────────────────────────
     @MainActor
     private func wipeLocalData() {
@@ -892,7 +900,14 @@ struct SettingsView: View {
             d.removeObject(forKey: key)
         }
 
-        // 6. Fresh samples for the current business type.
+        // 6. Analytics device id — Keychain item + UserDefaults fallback
+        //    (audit P0-4): this identifier must not survive into whichever
+        //    account signs in next on this phone. Mints a fresh one too, so
+        //    events tracked later in THIS process (no relaunch required)
+        //    already carry the new id rather than the departing user's.
+        Analytics.resetDeviceIdentity()
+
+        // 7. Fresh samples for the current business type.
         model.reseedSamples()
     }
 }

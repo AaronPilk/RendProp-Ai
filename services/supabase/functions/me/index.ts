@@ -33,17 +33,26 @@
 //   POST   /me/sweep-deletions  -> { ok, processed }   (service-role only; retry queue)
 //
 // Account deletion (audit P0-4) is DURABLE now:
-//   1. Every external cleanup target (R2 objects, Stream UIDs, CRM lead emails,
-//      the Apple refresh token) is collected and written to a
+//   1. Every cleanup target — R2 objects, Stream UIDs, CRM lead contacts (each
+//      paired with the org whose TAG it must carry, never deleted by email
+//      alone — see cleanupGhlContactForTenant), the Apple refresh token, and
+//      this user's app_events/profile rows — is collected and written to a
 //      deletion_requests tombstone BEFORE anything is destroyed.
 //   2. Share links are revoked immediately (renders unpublished → tours 404).
-//   3. DB rows are purged, then external cleanup is attempted inline.
+//   3. DB rows are purged, then EVERY item above (including analytics-forget
+//      and the profile row) is attempted inline through the same
+//      processPayload() the sweeper reuses.
 //   4. Whatever fails or exceeds inline caps STAYS in the tombstone and is
 //      retried by /me/sweep-deletions (wire it to a schedule — see runbook)
-//      until the payload is empty; the response reports the honest state via
-//      `cleanup_complete` + `pending` counts instead of a blanket ok.
+//      until the payload is empty. `cleanup_complete` is computed AFTER every
+//      one of those steps has actually run, from their real outcome — never
+//      before — so it cannot be true while something is still queued.
 //   5. The auth record is deleted last; if THAT fails the request stays
-//      pending and the response is a 500, not a false success.
+//      pending and the response is a 500, not a false success. `ok` is true
+//      once the auth record is gone regardless of `cleanup_complete`: the
+//      account itself is deleted either way, which is what Apple's
+//      requirement is actually about — but a caller that only checks `ok`
+//      instead of `cleanup_complete` will miss real, queued leftover work.
 
 import { handleOptions } from "../_shared/cors.ts";
 import {
@@ -85,6 +94,14 @@ import {
   preferredOrg,
   userClient,
 } from "../_shared/supabase.ts";
+import {
+  chunk,
+  dbEmpty,
+  decideGhlTagAction,
+  type DeletionPayload,
+  type GhlCleanupTarget,
+  payloadEmpty,
+} from "./logic.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 // The bundle id every Apple-signed transaction must carry. NAME only — this is
@@ -658,6 +675,17 @@ async function handleAppleCode(req: Request, userId: string): Promise<Response> 
 //                    check is a race two concurrent claims both win (S1 review:
 //                    before 0021 the loser's org kept its plan AND the winner
 //                    got one, so a single purchase entitled two workspaces).
+//                    0021's guard reads `found`, from a SELECT … FOR UPDATE run
+//                    BEFORE the insert — which cannot see a row that doesn't
+//                    exist yet, so it covers a SECOND claim against an already-
+//                    linked subscription but not two claims racing to make the
+//                    FIRST link (exactly the unbound-JWS scenario this route
+//                    exists for). Migration 0024 closes that: the upsert keeps
+//                    whichever org's write actually persisted first instead of
+//                    letting a losing INSERT's own values win the ON CONFLICT,
+//                    and a post-write re-check raises the same RP409 for the
+//                    loser — reproduced end-to-end on a scratch Postgres before
+//                    and after (see 0024's header for the exact repro).
 //
 // The plan write itself goes through apply_apple_entitlement() (migration 0019),
 // a SECURITY DEFINER RPC only the service role may call, which is also what
@@ -929,32 +957,13 @@ async function replayPendingNotifications(
 // ── DELETE /me ────────────────────────────────────────────────────────────────
 
 const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, agent: 2, marketing: 3 };
-const ID_CHUNK = 200;
 const INLINE_R2_CAP = 5000;
 const INLINE_STREAM_CAP = 50;
 const INLINE_CRM_CAP = 50;
 
-interface DeletionPayload {
-  r2: R2Object[];
-  stream_uids: string[];
-  ghl_emails: string[];
-  apple_refresh_token: string | null;
-  /** Row deletions that FAILED and must be retried. Previously these were
-   * warnings only, so a failed row delete (or share-link revocation) was never
-   * retried while the response still said ok:true — data retained, nobody
-   * chasing it (audit round 4). */
-  db?: {
-    org_ids?: string[];
-    listing_ids?: string[];
-    render_ids?: string[];
-    job_ids?: string[];
-    asset_ids?: string[];
-  };
-}
-
-const dbEmpty = (d: DeletionPayload["db"]) =>
-  !d || (!d.org_ids?.length && !d.listing_ids?.length && !d.render_ids?.length &&
-         !d.job_ids?.length && !d.asset_ids?.length);
+// DeletionPayload, dbEmpty, payloadEmpty, chunk and decideGhlTagAction live in
+// ./logic.ts (imported above) so they can be unit-tested without pulling in
+// Deno.serve — see logic.ts's own header for what each one is responsible for.
 
 /**
  * Re-run the row deletions + share revocation for a tombstone. Idempotent:
@@ -1015,12 +1024,6 @@ async function retryDbCleanup(admin: any, db: NonNullable<DeletionPayload["db"]>
   return notes;
 }
 
-function chunk<T>(items: T[], size = ID_CHUNK): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
-  return out;
-}
-
 // deno-lint-ignore no-explicit-any
 async function collectIds(admin: any, table: string, column: string, filterColumn: string, filterIds: string[]): Promise<string[]> {
   const out: string[] = [];
@@ -1035,8 +1038,37 @@ async function collectIds(admin: any, table: string, column: string, filterColum
   return out;
 }
 
-/** Delete GHL contacts matching an exact email. Throws on API failure. */
-async function deleteGhlContactsByEmail(email: string): Promise<number> {
+/**
+ * Reach every GHL contact matching an exact email, and do to EACH ONE only
+ * what its tags say belongs to THIS org.
+ *
+ * GHL_LOCATION_ID is one shared CRM location for every tenant (leads/index.ts)
+ * — a contact is never in "this tenant's location", only ever "this tenant's
+ * TAG" (`rendprop_org:<org_id>`, _shared/ghl.ts). Deleting by email alone, as
+ * this used to, means two tenants whose leads share an email (a property
+ * manager, a common vendor, a family member on two listings) have ONE shared
+ * contact — and deleting account A's copy deletes tenant B's contact outright
+ * (external release audit). decideGhlTagAction() is the entire policy:
+ *
+ *   only this tenant's org tag         -> delete the contact
+ *   this tenant's tag + another's too  -> strip only this tenant's tag
+ *   this tenant's tag missing/unreadable -> touch NOTHING; stays queued
+ *
+ * The search endpoint is not guaranteed to return tags on its summary rows, so
+ * each match is re-fetched by id before any decision is made — a contact this
+ * tenant cannot positively confirm ownership of is never guessed at.
+ *
+ * Throws only on a transport/API failure (search, tag GET, delete or untag),
+ * which the caller treats as "retry this email later". `leftover` counts
+ * contacts that were reached but deliberately left untouched — those are
+ * requeued too (same as a retryable failure): retrying costs nothing, and if
+ * the contact is ever re-tagged for this tenant a later pass will finish it,
+ * while nothing here ever deletes on a guess.
+ */
+async function cleanupGhlContactForTenant(
+  email: string,
+  orgId: string,
+): Promise<{ removed: number; untagged: number; leftover: number }> {
   const key = Deno.env.get("GHL_API_KEY");
   const locationId = Deno.env.get("GHL_LOCATION_ID");
   if (!key || !locationId) throw new Error("GHL not configured");
@@ -1045,16 +1077,43 @@ async function deleteGhlContactsByEmail(email: string): Promise<number> {
     Version: "2021-07-28",
     Accept: "application/json",
   };
-  const url = new URL("https://services.leadconnectorhq.com/contacts/");
-  url.searchParams.set("locationId", locationId);
-  url.searchParams.set("query", email);
-  const res = await fetch(url, { headers });
+  const searchUrl = new URL("https://services.leadconnectorhq.com/contacts/");
+  searchUrl.searchParams.set("locationId", locationId);
+  searchUrl.searchParams.set("query", email);
+  const res = await fetch(searchUrl, { headers });
   if (!res.ok) throw new Error(`GHL search ${res.status}`);
   const data = await res.json().catch(() => ({}));
   const contacts = (data?.contacts ?? []) as Array<{ id?: string; email?: string }>;
+
   let removed = 0;
+  let untagged = 0;
+  let leftover = 0;
+
   for (const c of contacts) {
     if (!c.id || (c.email ?? "").toLowerCase() !== email.toLowerCase()) continue;
+
+    // Re-fetch the full record: the search result is not a contract that it
+    // carries tags, and a tag we cannot positively read is not a tag we act on.
+    const getRes = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}`, { headers });
+    if (!getRes.ok) throw new Error(`GHL contact fetch ${c.id} -> ${getRes.status}`);
+    const full = await getRes.json().catch(() => null) as { contact?: { tags?: unknown } } | null;
+    const decision = decideGhlTagAction(full?.contact?.tags, orgId);
+
+    if (decision.action === "leftover") {
+      leftover++;
+      continue;
+    }
+    if (decision.action === "untag") {
+      const untagRes = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}/tags`, {
+        method: "DELETE",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ tags: [decision.tag] }),
+      });
+      if (!untagRes.ok) throw new Error(`GHL untag ${c.id} -> ${untagRes.status}`);
+      untagged++;
+      continue;
+    }
+    // decision.action === "delete": only this tenant's org tag is present.
     const del = await fetch(`https://services.leadconnectorhq.com/contacts/${c.id}`, {
       method: "DELETE",
       headers,
@@ -1062,7 +1121,7 @@ async function deleteGhlContactsByEmail(email: string): Promise<number> {
     if (del.ok || del.status === 404) removed++;
     else throw new Error(`GHL delete ${c.id} -> ${del.status}`);
   }
-  return removed;
+  return { removed, untagged, leftover };
 }
 
 /** Attempt the external cleanup in a payload. Returns what REMAINS + notes. */
@@ -1071,8 +1130,10 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
   const remaining: DeletionPayload = {
     r2: [],
     stream_uids: [],
-    ghl_emails: [],
+    ghl_targets: [],
     apple_refresh_token: payload.apple_refresh_token ?? null,
+    analytics_user_id: payload.analytics_user_id ?? null,
+    profile_id: payload.profile_id ?? null,
   };
 
   // Row deletions / share revocation that failed on an earlier pass.
@@ -1124,23 +1185,62 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
     }
   }
 
-  // CRM (GoHighLevel) — the org's captured lead contacts.
-  const crmTodo = payload.ghl_emails ?? [];
+  // CRM (GoHighLevel) — the org's captured lead contacts, tag-scoped so a
+  // shared CRM location never loses another tenant's contact to this deletion
+  // (see cleanupGhlContactForTenant's own header for the full policy).
+  const crmTodo = payload.ghl_targets ?? [];
   if (crmTodo.length) {
     const ghlConfigured = Boolean(Deno.env.get("GHL_API_KEY") && Deno.env.get("GHL_LOCATION_ID"));
     if (!ghlConfigured) {
       notes.push("crm: GHL not configured — queued");
-      remaining.ghl_emails.push(...crmTodo);
+      remaining.ghl_targets.push(...crmTodo);
     } else {
       for (let i = 0; i < crmTodo.length; i++) {
-        if (i >= INLINE_CRM_CAP) { remaining.ghl_emails.push(crmTodo[i]); continue; }
+        if (i >= INLINE_CRM_CAP) { remaining.ghl_targets.push(crmTodo[i]); continue; }
+        const target = crmTodo[i];
         try {
-          await deleteGhlContactsByEmail(crmTodo[i]);
+          const outcome = await cleanupGhlContactForTenant(target.email, target.org_id);
+          if (outcome.leftover > 0) {
+            // Never guessed at — this tenant's own tag could not be confirmed
+            // on the match, so nothing was touched. Stays queued (same as a
+            // retryable failure) rather than being dropped or force-deleted.
+            notes.push(`crm ${target.email}: ${outcome.leftover} contact(s) left for manual review — tenant tag unconfirmed`);
+            remaining.ghl_targets.push(target);
+          }
         } catch (e) {
-          notes.push(`crm ${crmTodo[i]}: ${e instanceof Error ? e.message : String(e)}`);
-          remaining.ghl_emails.push(crmTodo[i]);
+          notes.push(`crm ${target.email}: ${e instanceof Error ? e.message : String(e)}`);
+          remaining.ghl_targets.push(target);
         }
       }
+    }
+  }
+
+  // Analytics — forget this person in app_events (0020 keeps no FK on user_id
+  // / org_id on purpose, so this is a plain UPDATE that cannot fail on a
+  // missing referenced row, before OR after the auth user is gone).
+  if (payload.analytics_user_id) {
+    try {
+      const { error } = await adminClient()
+        .from("app_events")
+        .update({ user_id: null, org_id: null })
+        .eq("user_id", payload.analytics_user_id);
+      if (error) notes.push(`analytics: ${error.message}`);
+      else remaining.analytics_user_id = null;
+    } catch (e) {
+      notes.push(`analytics: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  // Profile row. `profiles.id references auth.users(id) on delete cascade`
+  // (0001), so once the auth user is gone this is a harmless no-op retry —
+  // never a reason to leave the tombstone pending forever.
+  if (payload.profile_id) {
+    try {
+      const { error } = await adminClient().from("profiles").delete().eq("id", payload.profile_id);
+      if (error) notes.push(`profile: ${error.message}`);
+      else remaining.profile_id = null;
+    } catch (e) {
+      notes.push(`profile: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1160,11 +1260,6 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
   }
 
   return { remaining, notes };
-}
-
-function payloadEmpty(p: DeletionPayload): boolean {
-  return p.r2.length === 0 && p.stream_uids.length === 0 &&
-    p.ghl_emails.length === 0 && !p.apple_refresh_token && dbEmpty(p.db);
 }
 
 async function handleDelete(userId: string, userEmail: string | null): Promise<Response> {
@@ -1201,7 +1296,7 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
   }
 
   // ── Phase 1: collect EVERY cleanup target before destroying anything.
-  const payload: DeletionPayload = { r2: [], stream_uids: [], ghl_emails: [], apple_refresh_token: null };
+  const payload: DeletionPayload = { r2: [], stream_uids: [], ghl_targets: [], apple_refresh_token: null };
   const allListingIds: string[] = [];
   const allJobIds: string[] = [];
   const allRenderIds: string[] = [];
@@ -1246,15 +1341,28 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
       }
     }
 
-    // CRM cleanup targets: the org's captured lead emails (pushed to GHL).
+    // CRM cleanup targets: the org's captured lead emails (pushed to GHL),
+    // paired with the org so cleanup can check THIS org's tag on the contact
+    // rather than deleting by email alone (cross-tenant deletion, audit).
     const { data: leadRows, error: lErr } = await admin
       .from("leads").select("email").eq("org_id", orgId).not("email", "is", null);
     if (lErr) throw new HttpError(500, `Deletion aborted — lead enumeration failed: ${lErr.message}`);
     for (const row of (leadRows ?? []) as { email: string | null }[]) {
-      if (row.email) payload.ghl_emails.push(row.email);
+      if (row.email) payload.ghl_targets.push({ email: row.email, org_id: orgId });
     }
   }
-  payload.ghl_emails = [...new Set(payload.ghl_emails)];
+  // Dedupe by (org, email): the same lead can appear more than once for one
+  // org, but the same email across TWO of this user's own orgs still needs a
+  // cleanup pass each, since each carries its own tag on the shared contact.
+  {
+    const seen = new Set<string>();
+    payload.ghl_targets = payload.ghl_targets.filter((t) => {
+      const k = `${t.org_id}|${t.email.toLowerCase()}`;
+      if (seen.has(k)) return false;
+      seen.add(k);
+      return true;
+    });
+  }
 
   // Profile read failure is NOT ignorable: silently losing the Apple refresh
   // token means the grant is never revoked and nothing records that (audit).
@@ -1264,6 +1372,15 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
     throw new HttpError(500, `Deletion aborted — profile lookup failed: ${profErr.message}`);
   }
   payload.apple_refresh_token = (profile?.apple_refresh_token as string | null) ?? null;
+
+  // These two run through processPayload alongside R2/Stream/CRM/Apple (Phase
+  // 6) so `cleanup_complete` — computed AFTER that phase — is honest about
+  // them too. Before this fix both ran later, unconditionally, with a failure
+  // recorded as a warning only; the tombstone had already been marked
+  // `completed` and the response could already say `cleanup_complete: true`
+  // by the time either one even ran (P0-4).
+  payload.analytics_user_id = userId;
+  payload.profile_id = userId;
 
   // ── Phase 2: tombstone FIRST. If this fails, nothing has been destroyed.
   const { data: tombstone, error: tErr } = await admin
@@ -1341,6 +1458,14 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
     };
   }
 
+  // `cleanup_complete` is computed from the ACTUAL outcome of every
+  // destructive step, including analytics-forget and the profile row —
+  // both of which just ran inside processPayload() above, not after this
+  // point. Before this fix they ran later and unconditionally, past the
+  // tombstone write below: a failure there was recorded as a warning only,
+  // while the tombstone was already `completed` and the response could
+  // already say `cleanup_complete: true` (P0-4 — Apple requires that a
+  // reported deletion actually finished).
   const cleanupComplete = payloadEmpty(remaining) && warnings.length === 0;
   await step("update deletion request", () =>
     admin.from("deletion_requests").update({
@@ -1350,25 +1475,12 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
       completed_at: cleanupComplete ? new Date().toISOString() : null,
     }).eq("id", requestId));
 
-  // ── Phase 6b: forget this person in the analytics table.
-  //
-  // `app_events` has no foreign key on user_id or org_id — deliberately, so a
-  // deletion can never fail on it or silently rewrite historical counts
-  // (migration 0020 §1). But that also means nothing was clearing them: 0020's
-  // own comment says "the purge and DELETE /me are what remove the rows" and
-  // DELETE /me did not touch the table, so a deleted account's id sat in it for
-  // the rest of the 180-day retention window (S1 review). Nulling the two
-  // identifiers keeps every funnel number exactly as it was — a row is still a
-  // row and device_id is still device_id — and leaves nothing in the table
-  // pointing at a person who asked to be forgotten. `device_id` stays because
-  // once user_id and org_id are gone it is a random install UUID with nothing
-  // left to join it to, and dropping it would silently rewrite every distinct-
-  // device count 0020 went out of its way to protect.
-  await step("forget analytics identifiers", () =>
-    admin.from("app_events").update({ user_id: null, org_id: null }).eq("user_id", userId));
-
-  // ── Phase 7: profile + auth record. Auth deletion MUST succeed.
-  await step("delete profile", () => admin.from("profiles").delete().eq("id", userId));
+  // ── Phase 7: the auth record. This MUST succeed — the account is not
+  // "deleted" while its sign-in record still exists, whatever else is still
+  // draining in the background. Deliberately unconditional: analytics/profile/
+  // R2/Stream/CRM/Apple leftovers stay queued for the sweeper (reported above
+  // and in `pending` below) rather than blocking the one step Apple's account-
+  // deletion requirement is actually about.
   const { error: authErr } = await admin.auth.admin.deleteUser(userId);
   if (authErr) {
     return json({
@@ -1384,12 +1496,18 @@ async function handleDelete(userId: string, userEmail: string | null): Promise<R
     deletion_request_id: requestId,
     deleted_orgs: soloOrgs.length,
     left_orgs: sharedOrgs.length,
+    // Honest per P0-4: true only when payloadEmpty(remaining) — every
+    // destructive step, analytics and profile included, actually finished.
+    // `ok` stays true above regardless: the auth record — the account itself
+    // — is gone either way, which is what Apple's requirement is about.
     cleanup_complete: cleanupComplete,
     pending: {
       r2_objects: remaining.r2.length,
       stream_videos: remaining.stream_uids.length,
-      crm_contacts: remaining.ghl_emails.length,
+      crm_contacts: remaining.ghl_targets.length,
       apple_revocation: Boolean(remaining.apple_refresh_token),
+      analytics_cleanup: Boolean(remaining.analytics_user_id),
+      profile_row: Boolean(remaining.profile_id),
     },
     ...(warnings.length ? { warnings } : {}),
   });
@@ -1418,11 +1536,18 @@ async function sweepDeletions(): Promise<Response> {
   let processed = 0;
   for (const row of rows ?? []) {
     const raw = (row.payload ?? {}) as Record<string, unknown>;
+    const rawGhlTargets = Array.isArray(raw.ghl_targets) ? raw.ghl_targets as unknown[] : [];
     const payload: DeletionPayload = {
       r2: Array.isArray(raw.r2) ? raw.r2 as R2Object[] : [],
       stream_uids: Array.isArray(raw.stream_uids) ? raw.stream_uids as string[] : [],
-      ghl_emails: Array.isArray(raw.ghl_emails) ? raw.ghl_emails as string[] : [],
+      ghl_targets: rawGhlTargets.filter((t): t is GhlCleanupTarget =>
+        Boolean(t) && typeof t === "object" &&
+        typeof (t as Record<string, unknown>).email === "string" &&
+        typeof (t as Record<string, unknown>).org_id === "string"
+      ),
       apple_refresh_token: (raw.apple_refresh_token as string | null) ?? null,
+      analytics_user_id: (raw.analytics_user_id as string | null) ?? null,
+      profile_id: (raw.profile_id as string | null) ?? null,
       db: (raw.db as DeletionPayload["db"]) ?? undefined,
     };
     const { remaining, notes } = await processPayload(payload);

@@ -245,13 +245,13 @@ actor MockAPIClient: APIClient {
                         label: "Seedance 1.0 Pro Fast — image-to-video",
                         unit: "second of generated clip", unitCostCents: 4.8,
                         trigger: "POST /ai-video/reel-clip (Reel clip); POST /ai-video/aerial (grounded); worker hero clip",
-                        source: "docs/AI-COST-MODEL.md §1 — ~$0.24 / 5s clip"),
+                        source: "docs/AI-COST-MODEL.md §1"),
                     AdminProviderModel(
                         sku: "fal-ai/flux-pro/v1/fill",
                         label: "Flux Fill — masked inpaint",
                         unit: "image", unitCostCents: 4.0,
                         trigger: "Worker auto-declutter (masked region only)",
-                        source: "docs/AI-COST-MODEL.md §1 — ~$0.04/img"),
+                        source: "docs/AI-COST-MODEL.md §1"),
                 ]),
             AdminProvider(
                 key: "anthropic", name: "Anthropic", kind: "ai", billable: true,
@@ -263,7 +263,7 @@ actor MockAPIClient: APIClient {
                         label: "Claude Haiku 4.5 — QC drift judge",
                         unit: "4-image QC call", unitCostCents: 0.9,
                         trigger: "Worker QC after each enhanced segment; escalates to Sonnet on low confidence",
-                        source: "docs/AI-COST-MODEL.md §3 — $1/$5 per 1M tokens, cached"),
+                        source: "docs/AI-COST-MODEL.md §3"),
                 ]),
             AdminProvider(
                 key: "kie", name: "KIE.ai (fallback route)", kind: "ai", billable: true,
@@ -275,7 +275,7 @@ actor MockAPIClient: APIClient {
                         label: "Nano Banana via KIE",
                         unit: "image", unitCostCents: 9.0,
                         trigger: "Only when the Google direct route fails",
-                        source: "docs/AI-COST-MODEL.md §1 — ~$0.09/img via KIE"),
+                        source: "docs/AI-COST-MODEL.md §1 — via KIE"),
                 ]),
             AdminProvider(
                 key: "cloudflare", name: "Cloudflare (R2 + Stream)", kind: "infra", billable: true,
@@ -288,7 +288,7 @@ actor MockAPIClient: APIClient {
                         label: "Stream delivery",
                         unit: "minute watched", unitCostCents: 0.1,
                         trigger: "Every hosted tour view",
-                        source: "docs/AI-COST-MODEL.md §3 — $0.001/min watched"),
+                        source: "docs/AI-COST-MODEL.md §3"),
                 ]),
             AdminProvider(
                 key: "topaz", name: "Topaz Labs", kind: "ai", billable: true,
@@ -648,7 +648,7 @@ actor MockAPIClient: APIClient {
                         unit: "image", unitCents: 4.1,
                         capabilities: ["prompt-edit", "fidelity", "mask"], maxLatencyS: 120,
                         privacyTier: "retained_30d", enabled: true,
-                        note: "4.1c is the medium-quality 1024 floor — higher quality costs more",
+                        note: "This is the medium-quality 1024 floor — higher quality costs more",
                         health: routingHealth(now: now, okAgo: 6 * 86_400, failures: 0, p95: 9_100),
                         spendCents: 0, spendRows: 0),
             // Retirement tombstone: never routed, kept so the retirement is a
@@ -765,7 +765,7 @@ actor MockAPIClient: APIClient {
                         unit: "world", unitCents: 120.0,
                         capabilities: ["3d", "world", "image_to_world"], maxLatencyS: 1_800,
                         minPlan: "pro", privacyTier: "retained_30d", enabled: true,
-                        note: "$1.20 a world is a COGS hole on an unpaid tier. No adapter exists yet, "
+                        note: "This is a COGS hole on an unpaid tier. No adapter exists yet, "
                             + "and WorldLabs retention/training terms are UNVERIFIED — confirm them "
                             + "before this carries customer media.",
                         health: nil, spendCents: 0, spendRows: 0),
