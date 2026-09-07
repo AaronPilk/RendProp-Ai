@@ -66,7 +66,7 @@ TOUR_CACHE_TTL = "60"
 # SECRET on the Supabase leads function:
 #   npx supabase secrets set TURNSTILE_SECRET_KEY=<secret>   (or the dashboard)
 # Both must be set to activate bot protection; until then it's a no-op.
-# TURNSTILE_SITE_KEY = "0x4AAAAAAA..."
+TURNSTILE_SITE_KEY = "0x4AAAAAAErjjtep0GvXjQxs"
 
 [observability]
 enabled = true
