@@ -1268,42 +1268,7 @@ const ENGINE_CORE_JS = `
     requestAnimationFrame(tick);
   }
 
-    /* ---- The second tap ----------------------------------------------------
-     Apple has no deferred deep linking: a link tapped BEFORE an install cannot
-     carry the person to this tour afterwards, and the workaround the industry
-     uses (matching the device by IP and headers) is fingerprinting, which
-     Apple's rules exist to stop and which iCloud Private Relay breaks anyway.
-
-     So: remember that this browser went to the App Store from THIS tour, and
-     when it comes back, offer to open the tour in the app. The custom scheme
-     is deliberate — iOS will not hand an https link to an app when the browser
-     is already on that same domain, which is exactly this case. If the app is
-     not installed the tap does nothing visible and the App Store button is
-     still sitting next to it, so the failure mode is a no-op rather than an
-     error page.
-
-     localStorage only, no cookie, nothing sent anywhere: this is one string in
-     one browser and it never leaves the device. */
-  (function(){
-    var storeBtn = document.getElementById('getapp-store');
-    var openBtn  = document.getElementById('getapp-open');
-    if (!storeBtn && !openBtn) return;
-    var slug = (CFG && CFG.slug) ? String(CFG.slug) : '';
-    var kind = (CFG && CFG.unbranded) ? 'u' : 'f';
-    if (!slug) return;
-    var KEY = 'rp_wanted_tour';
-    function remember(){ try { localStorage.setItem(KEY, kind + '/' + slug); } catch (e) {} }
-    if (storeBtn) storeBtn.addEventListener('click', remember, { passive: true });
-    var wanted = null;
-    try { wanted = localStorage.getItem(KEY); } catch (e) {}
-    if (openBtn && wanted === kind + '/' + slug){
-      openBtn.hidden = false;
-      openBtn.addEventListener('click', function(ev){
-        ev.preventDefault();
-        location.href = 'rendprop://' + kind + '/' + encodeURIComponent(slug);
-      });
-    }
-  })();
+    /*__APPLINK__*/
 
 /* ---- Unavailable: the video can't be delivered. Say so; count nothing. ---- */
   function showUnavailable(){
@@ -1652,13 +1617,57 @@ const ENGINE_LEADFORM_JS = `
 /** Where ENGINE_LEADFORM_JS is spliced into ENGINE_CORE_JS. */
 const LEADFORM_SLOT = "/*__LEADFORM__*/";
 
-/** The client engine. `unbranded` drops the lead-form half. */
+/**
+ * BRANDED PAGES ONLY. Spliced through `APPLINK_SLOT` for the same reason the
+ * lead form is: it names the vendor (`rendprop://`), and `UNBRANDED_FORBIDDEN`
+ * rejects vendor branding on an MLS-facing page. Putting it in the shared core
+ * failed every /u/ tour closed with a 503 — which is the gate working, and the
+ * reason this splice exists rather than a comment asking someone to remember.
+ *
+ * WHAT IT DOES. Apple has no deferred deep linking: a link tapped BEFORE an
+ * install cannot carry the person to this tour afterwards, and the workaround
+ * the industry uses (matching the device by IP and headers) is fingerprinting,
+ * which Apple's rules exist to stop and which iCloud Private Relay breaks
+ * anyway. So: remember that this browser went to the App Store from THIS tour,
+ * and when it comes back, offer to open the tour in the app. The custom scheme
+ * is deliberate — iOS will not hand an https link to an app when the browser is
+ * already on that same domain, which is exactly this case. Not installed, the
+ * tap is a no-op with the App Store button still beside it.
+ *
+ * localStorage only, no cookie, nothing sent anywhere: one string in one
+ * browser, and it never leaves the device.
+ */
+const APPLINK_SLOT = "/*__APPLINK__*/";
+const ENGINE_APPLINK_JS = `
+  (function(){
+    var storeBtn = document.getElementById('getapp-store');
+    var openBtn  = document.getElementById('getapp-open');
+    if (!storeBtn && !openBtn) return;
+    var slug = (CFG && CFG.slug) ? String(CFG.slug) : '';
+    if (!slug) return;
+    var KEY = 'rp_wanted_tour';
+    function remember(){ try { localStorage.setItem(KEY, 'f/' + slug); } catch (e) {} }
+    if (storeBtn) storeBtn.addEventListener('click', remember, { passive: true });
+    var wanted = null;
+    try { wanted = localStorage.getItem(KEY); } catch (e) {}
+    if (openBtn && wanted === 'f/' + slug){
+      openBtn.hidden = false;
+      openBtn.addEventListener('click', function(ev){
+        ev.preventDefault();
+        location.href = 'rendprop:' + '//f/' + encodeURIComponent(slug);
+      });
+    }
+  })();
+`;
+
+/** The client engine. `unbranded` drops the lead-form AND the app-link halves. */
 function engineJs(unbranded: boolean): string {
   // ENGINE_CORE_JS opens with `(function(){` and the tail closes it, so the
   // lead-form block is spliced in at the marker inside the same IIFE.
   return unbranded
-    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "")
-    : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS);
+    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
+    : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
+        .replace(APPLINK_SLOT, ENGINE_APPLINK_JS);
 }
 
 // ===========================================================================
