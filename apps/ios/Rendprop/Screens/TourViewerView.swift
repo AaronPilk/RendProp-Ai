@@ -32,8 +32,6 @@ struct TourViewerView: View {
 
     @EnvironmentObject private var model: AppModel
     @Environment(\.dismiss) private var dismiss
-    @State private var showContact = false
-    @State private var showShare = false
 
     var body: some View {
         NavigationStack {
@@ -46,6 +44,7 @@ struct TourViewerView: View {
                 }
                 if link.leadSlug != nil { contactBar }
             }
+            .id(link.id)
             .background(Theme.bg)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
@@ -60,13 +59,17 @@ struct TourViewerView: View {
                 }
             }
         }
-        .sheet(isPresented: $showContact) {
-            if let slug = link.leadSlug { TourLeadSheet(slug: slug) }
-        }
         .onAppear {
             Analytics.track("tour_viewer_opened",
                             ["kind": link.leadSlug == nil ? "portfolio" : "tour"])
         }
+    }
+
+    /// Scroll the hosted page to its end card (agent card + lead form).
+    /// Posted as a notification because `PlayerWebView` is a
+    /// `UIViewRepresentable` and this view holds no reference to the WKWebView.
+    private func jumpToEndCard() {
+        NotificationCenter.default.post(name: PlayerWebView.scrollToEndCard, object: nil)
     }
 
     private var title: String {
@@ -90,12 +93,21 @@ struct TourViewerView: View {
     }
 
     /// The one thing the app can do that the web page cannot: put a real
-    /// button in front of the buyer without an email form, floating over the
-    /// tour rather than waiting at the bottom of a long scroll.
+    /// button in front of the buyer, floating over the tour rather than waiting
+    /// at the bottom of a long scroll.
+    ///
+    /// IT SCROLLS TO THE PAGE'S OWN FORM. It briefly did not — it opened a
+    /// native sheet posting straight to `POST /leads`, which could never have
+    /// worked: that route verifies Cloudflare Turnstile and FAILS CLOSED, and
+    /// an iOS app cannot run a Turnstile widget, so every send would have been
+    /// refused. Rather than invent a second, weaker bot-protection story for
+    /// the same route, the button takes the buyer to the form that already has
+    /// the right one. One lead path, one inbox, and the button is still in
+    /// front of them instead of a thousand points down the page.
     private var contactBar: some View {
         HStack(spacing: 10) {
             Button {
-                showContact = true
+                jumpToEndCard()
                 Haptics.selection()
             } label: {
                 Label("Message the agent", systemImage: "bubble.left.and.text.bubble.right.fill")
@@ -109,99 +121,5 @@ struct TourViewerView: View {
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 10)
-    }
-}
-
-/// Name, phone, and a note. The same three fields the hosted end-card asks for
-/// and the same `POST /leads` behind them, so the agent has one inbox rather
-/// than "leads from the site" and "leads from the app".
-///
-/// PUBLIC BY DESIGN: no sign-in. A buyer who has to make an account to ask
-/// about a house does not ask about the house, and the agent is the one who
-/// pays for that. The route is rate-limited and Turnstile-gated server-side;
-/// the app carries no bot-check of its own and must not pretend to.
-private struct TourLeadSheet: View {
-    let slug: String
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var name = ""
-    @State private var phone = ""
-    @State private var email = ""
-    @State private var note = ""
-    @State private var sending = false
-    @State private var sent = false
-    @State private var failure: String?
-
-    private var canSend: Bool {
-        !sending && name.trimmingCharacters(in: .whitespaces).count >= 2 &&
-        phone.trimmingCharacters(in: .whitespaces).count >= 7
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                if sent {
-                    Section {
-                        Label("Sent — they'll be in touch.", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(Theme.good)
-                    }
-                } else {
-                    Section("Who should they call?") {
-                        TextField("Your name", text: $name).textContentType(.name)
-                        TextField("Phone", text: $phone)
-                            .textContentType(.telephoneNumber).keyboardType(.phonePad)
-                        TextField("Email (optional)", text: $email)
-                            .textContentType(.emailAddress).keyboardType(.emailAddress)
-                            .textInputAutocapitalization(.never)
-                    }
-                    Section("Anything you want to ask?") {
-                        TextField("Is it still available?", text: $note, axis: .vertical)
-                            .lineLimit(2...5)
-                    }
-                    if let failure {
-                        Section { Text(failure).font(.rpCaption).foregroundStyle(Theme.warn) }
-                    }
-                }
-            }
-            .navigationTitle("Message the agent")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button(sent ? "Done" : "Cancel") { dismiss() }
-                }
-                if !sent {
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("Send") { send() }.disabled(!canSend)
-                    }
-                }
-            }
-        }
-    }
-
-    private func send() {
-        guard canSend else { return }
-        sending = true
-        failure = nil
-        let payload = LeadSubmission(
-            slug: slug,
-            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
-            phone: phone.trimmingCharacters(in: .whitespacesAndNewlines),
-            email: email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? nil : email.trimmingCharacters(in: .whitespacesAndNewlines),
-            note: note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? nil : note.trimmingCharacters(in: .whitespacesAndNewlines))
-        Task { @MainActor in
-            do {
-                try await model.api.submitLead(payload)
-                sending = false
-                sent = true
-                Haptics.success()
-                Analytics.track("lead_submitted", ["source": "app_viewer"])
-            } catch {
-                sending = false
-                failure = "That didn't send. Check the phone number and try again."
-            }
-        }
     }
 }

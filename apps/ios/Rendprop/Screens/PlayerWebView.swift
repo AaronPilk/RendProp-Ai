@@ -83,6 +83,19 @@ struct PlayerWebView: UIViewRepresentable {
         return webView
     }
 
+    /// "Take me to the agent's card and the message form."
+    ///
+    /// The in-app tour viewer floats a button over the tour that has to reach
+    /// INSIDE this webview, and a `UIViewRepresentable` gives its caller no
+    /// handle on the WKWebView. A notification is the smallest thing that
+    /// crosses that boundary; the coordinator holds the only reference and
+    /// unsubscribes with the view.
+    ///
+    /// It scrolls rather than posting a lead because the page's own end card
+    /// carries the Turnstile-protected form, and `POST /leads` fails closed
+    /// without a token — which an iOS app cannot mint.
+    static let scrollToEndCard = Notification.Name("rendprop.player.scrollToEndCard")
+
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     /// Deliberately empty, and it must stay cheap: SwiftUI calls this on every
@@ -92,7 +105,9 @@ struct PlayerWebView: UIViewRepresentable {
     /// when the tour's inputs change, which builds a fresh view and runs
     /// `makeUIView` again. `PlayerPage` memoises the render, so that rebuild is
     /// free when nothing the page depends on actually moved.
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        context.coordinator.attach(webView)
+    }
 
     /// Keeps every link tap OUT of the 460pt player: the webview is the tour,
     /// nothing else. Tapped http(s) links (watermark, agent socials, Zillow,
@@ -101,6 +116,35 @@ struct PlayerWebView: UIViewRepresentable {
     /// UIDelegate → no window) and a plain link would hijack the player into
     /// browsing inside the card.
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+        private weak var webView: WKWebView?
+        private var endCardObserver: NSObjectProtocol?
+
+        /// Idempotent — `updateUIView` runs on every SwiftUI update and must
+        /// not stack observers.
+        func attach(_ webView: WKWebView) {
+            self.webView = webView
+            guard endCardObserver == nil else { return }
+            endCardObserver = NotificationCenter.default.addObserver(
+                forName: PlayerWebView.scrollToEndCard, object: nil, queue: .main
+            ) { [weak self] _ in
+                self?.scrollToEndCard()
+            }
+        }
+
+        /// `#endcard` is the section id the hosted page has always used
+        /// (services/edge/tour-host/src/player.ts). A page without one — the
+        /// unbranded twin, or an embed — simply does nothing, which is the
+        /// correct outcome for both.
+        private func scrollToEndCard() {
+            let js = "(function(){var e=document.getElementById('endcard');"
+                   + "if(e){e.scrollIntoView({behavior:'smooth',block:'start'});return 1}return 0})()"
+            webView?.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        deinit {
+            if let endCardObserver { NotificationCenter.default.removeObserver(endCardObserver) }
+        }
+
         func webView(_ webView: WKWebView,
                      decidePolicyFor navigationAction: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {

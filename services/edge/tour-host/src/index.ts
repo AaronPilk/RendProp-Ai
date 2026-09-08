@@ -178,8 +178,13 @@ const AASA = JSON.stringify({
         appIDs: ["5F5C5G25Y6.com.rendprop.app"],
         components: [
           { "/": "/f/*", comment: "a published tour" },
-          { "/": "/u/*", comment: "the MLS-unbranded twin of a tour" },
           { "/": "/a/*", comment: "an agent's portfolio" },
+          // /u/* is EXCLUDED, deliberately. It is the URL an agent puts in an
+          // MLS field because the MLS forbids agent branding and contact
+          // capture on it; opening it in the app wrapped a compliant page in
+          // branded chrome. An unbranded link stays a plain web page.
+          { "/": "/u/*", exclude: true,
+            comment: "MLS-unbranded — never open in the app" },
         ],
       },
     ],

@@ -779,15 +779,12 @@ protocol APIClient: Sendable {
     /// (RLS-scoped), newest first. `listingServerID` filters to one listing.
     func leads(listingServerID: UUID?) async throws -> [Lead]
 
-    /// POST /leads — PUBLIC lead capture. The buyer's "message the agent" in
-    /// the in-app tour viewer, posting the SAME shape the hosted end-card
-    /// posts, so an agent has one inbox and not two.
-    ///
-    /// Unauthenticated by design (the route is deployed --no-verify-jwt for
-    /// exactly this): a buyer who has to make an account before asking about a
-    /// house does not ask about the house. Rate limiting and Turnstile live
-    /// server-side; the client carries no bot check and must not imply one.
-    func submitLead(_ lead: LeadSubmission) async throws
+    // `submitLead` is deliberately NOT here. A native lead form was written
+    // and removed within the hour: `POST /leads` verifies Cloudflare Turnstile
+    // and FAILS CLOSED, an iOS app cannot run a Turnstile widget, and the
+    // answer to that is not a second, weaker bot-protection story for the same
+    // route. The in-app viewer scrolls the hosted page to its own end card,
+    // which already has the form and the right protection.
 
     /// PATCH /me/brand — push the agent/business card into the org's brand kit
     /// so it renders on every HOSTED tour page (the public tours/portfolio

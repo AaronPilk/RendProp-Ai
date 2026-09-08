@@ -103,6 +103,13 @@ export interface AgentCard {
 }
 
 export interface Tour {
+  /** The listing's own photos, from `role:"gallery"` uploads, as
+   *  `{ url, label }` objects (a bare string url is also accepted). Top level
+   *  on the payload; `listing.details.gallery` is the older freeform shape the
+   *  demo and editorial pages use, and `galleryItems()` reads both — top level
+   *  first. `unknown[]` because the reader already probes every shape
+   *  defensively, and this file is transpiled type-stripped by build-src.mjs. */
+  gallery?: unknown[] | null;
   slug: string;
   share_url?: string;
   /** `${TOUR_BASE}/u/<slug>` — the MLS-safe link (W2-B). The Worker derives the

@@ -25,23 +25,24 @@ import Foundation
 //   https://rendprop.com/u/<slug>   the MLS-unbranded twin of the same tour
 //   https://rendprop.com/a/<handle> an agent's portfolio
 //
-// `/u/` deliberately resolves to the SAME viewer as `/f/`. The unbranded twin
-// exists because an MLS forbids agent branding ON THE PAGE; it is not a
-// different tour, and a buyer who taps one inside the app is not in an MLS
-// context. The viewer loads whichever URL it was handed, so an unbranded link
-// renders unbranded — the gate stays exactly where it was, on the page.
+// `/u/` IS NOT HANDLED AT ALL. It briefly was, resolving to the same viewer,
+// on the reasoning that the unbranded twin is the same tour and the page it
+// loads is still the unbranded one. That reasoning was wrong by one layer: the
+// page stayed compliant and the app chrome around it — a Rendprop nav bar, a
+// share button, a contact bar — did not. An MLS-unbranded link is supposed to
+// behave like a plain web page every time it is tapped. See `parse`.
 
 /// `Identifiable` so the root scene can present it with
 /// `fullScreenCover(item:)`. The id is the link itself in string form: two
 /// taps on the SAME link are the same presentation, two taps on different
 /// links re-present.
 enum DeepLink: Equatable, Identifiable {
-    case tour(slug: String, unbranded: Bool)
+    case tour(slug: String)
     case portfolio(handle: String)
 
     var id: String {
         switch self {
-        case .tour(let slug, let unbranded): return "\(unbranded ? "u" : "f"):\(slug)"
+        case .tour(let slug):        return "f:\(slug)"
         case .portfolio(let handle):         return "a:\(handle)"
         }
     }
@@ -72,9 +73,18 @@ enum DeepLink: Equatable, Identifiable {
         let value = parts[1].trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty, value.count <= 128 else { return nil }
         switch kind {
-        case "f": return .tour(slug: value, unbranded: false)
-        case "u": return .tour(slug: value, unbranded: true)
+        case "f": return .tour(slug: value)
         case "a": return .portfolio(handle: value)
+        // "u" IS DELIBERATELY NOT HERE, and this is not an omission.
+        //
+        // /u/<slug> is the URL an agent puts in an MLS field precisely because
+        // the MLS forbids agent branding and contact capture on it. Handing it
+        // to the app wrapped it in a Rendprop nav bar, a share button and a
+        // "Message the agent" bar: the PAGE stayed compliant and the frame
+        // around it did not. An unbranded link behaving like a plain web page
+        // every single time it is tapped is not a limitation, it is the whole
+        // feature. Returning nil hands the URL back to the system, which opens
+        // Safari — exactly right.
         default:  return nil
         }
     }
@@ -84,8 +94,8 @@ enum DeepLink: Equatable, Identifiable {
     /// a `www.` host or a trailing slash still loads one canonical page.
     var pageURL: URL? {
         switch self {
-        case .tour(let slug, let unbranded):
-            return URL(string: "https://rendprop.com/\(unbranded ? "u" : "f")/\(escaped(slug))")
+        case .tour(let slug):
+            return URL(string: "https://rendprop.com/f/\(escaped(slug))")
         case .portfolio(let handle):
             return URL(string: "https://rendprop.com/a/\(escaped(handle))")
         }
@@ -94,7 +104,7 @@ enum DeepLink: Equatable, Identifiable {
     /// The slug a lead is posted against (`POST /leads {slug,…}`), or nil for a
     /// portfolio, which is not one listing and cannot take a lead.
     var leadSlug: String? {
-        if case .tour(let slug, _) = self { return slug }
+        if case .tour(let slug) = self { return slug }
         return nil
     }
 

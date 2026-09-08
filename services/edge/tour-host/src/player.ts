@@ -1878,7 +1878,20 @@ function overviewTiles(tour: Tour): Array<{ v: string; k: string }> {
 }
 
 function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
-  const g = det(tour, "gallery", "photos");
+  // TWO SHAPES, and for a while only one of them was read.
+  //
+  //  * TOP LEVEL (`tour.gallery`) — what `GET /tours/:slug` now returns, built
+  //    from the listing's `role:"gallery"` uploads. This is every real agent's
+  //    photos.
+  //  * `listing.details.gallery` — the freeform bag the demo tour and any
+  //    editorially authored page use.
+  //
+  // `det()` only ever looked in `details`, so when the API started sending the
+  // top-level field nothing read it and the gallery stayed empty on every real
+  // listing while the demo kept working — which is exactly how a broken wire
+  // survives a spot-check. Top level wins; details is the fallback.
+  const top = (tour as unknown as Record<string, unknown>).gallery;
+  const g = (Array.isArray(top) && top.length) ? top : det(tour, "gallery", "photos");
   const out: Array<{ url: string; label: string }> = [];
   if (Array.isArray(g)) {
     for (const it of g) {

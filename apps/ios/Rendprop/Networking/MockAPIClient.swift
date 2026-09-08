@@ -136,12 +136,6 @@ actor MockAPIClient: APIClient {
                      isAdmin: true, role: "owner")
     }
 
-    func submitLead(_ lead: LeadSubmission) async throws {
-        // Offline dev: accept it. The viewer's success state is what is being
-        // exercised here, not the network.
-        _ = lead
-    }
-
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         // Offline: leads only exist once a tour is hosted — none to show.
         try? await Task.sleep(nanoseconds: 250_000_000)
