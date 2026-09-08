@@ -356,6 +356,7 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.settings)
         .task { await loadUsage() }
         .refreshable { await loadUsage() }
         .sheet(isPresented: $showCoach) {
@@ -1579,6 +1580,7 @@ struct AgentCardEditorView: View {
         }
         .navigationTitle(editingType.profileCardName)
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.agentCard)
         .onAppear { headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: editingType).path) }
         .onDisappear {
             // Sync the card to the org's brand kit so it renders on every

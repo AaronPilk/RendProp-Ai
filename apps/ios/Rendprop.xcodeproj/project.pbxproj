@@ -47,6 +47,7 @@
 		7D6E20EDE65922F3078128D2 /* Rendprop.storekit in Resources */ = {isa = PBXBuildFile; fileRef = 940C8220D43BFD22629B6B08 /* Rendprop.storekit */; };
 		8D827D4D42BBDCFD1534BCBC /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 018491D467DE946745CF3D0F /* Theme.swift */; };
 		900239439C3FF1B9C934F76D /* UploadStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = ADC1C4552BDC87F2784B2524 /* UploadStore.swift */; };
+		93DF77CE8069E6547398C3CE /* AskAIButton.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38DBEA52E6A2912885C3A15C /* AskAIButton.swift */; };
 		950A7098FE3FAD991195CB09 /* CaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C668F17153B23B136BF59CD2 /* CaptureView.swift */; };
 		975A5B03FE71859367E2BA8C /* LiveAPIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 203C76D7B86766C1A45DC3A8 /* LiveAPIClient.swift */; };
 		980049DB3C28984CE973EF56 /* IndustryWalk.swift in Sources */ = {isa = PBXBuildFile; fileRef = E7520835A92DA623D2F1A5CB /* IndustryWalk.swift */; };
@@ -61,6 +62,7 @@
 		B9A6F7F75A8F754430AF3596 /* AdminProbeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */; };
 		B9E457FC5C1CEC72EE934651 /* Attribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4555C52A9520EAD2225DF8 /* Attribution.swift */; };
 		BB26F6B8B89FEC985937CAC3 /* NewListingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F07519FDA41A8A1043CDA0 /* NewListingView.swift */; };
+		BB3DBCA1519E5749BE14EA2E /* ia_split.py in Resources */ = {isa = PBXBuildFile; fileRef = 5976ED26A8C3B49AC916BC3F /* ia_split.py */; };
 		CACAB30497633B51EA176D55 /* FirstProjectGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F816F304AD1C7DF8F43C824 /* FirstProjectGuide.swift */; };
 		D0653B4BDA1E453140DBE7BA /* OnboardingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4EFAB60A262F81770E76534E /* OnboardingView.swift */; };
 		D0A434539DA674F9FE2C3D73 /* ReviewPrompter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2296848CBE319882226D1C /* ReviewPrompter.swift */; };
@@ -111,6 +113,7 @@
 		316485AB70E423CF1DF80718 /* RoomTag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomTag.swift; sourceTree = "<group>"; };
 		3231FC8BA993B604957BA2A9 /* GuidanceOverlays.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuidanceOverlays.swift; sourceTree = "<group>"; };
 		34F0E27823CF4F0E6D18CD04 /* Rendprop.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Rendprop.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		38DBEA52E6A2912885C3A15C /* AskAIButton.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AskAIButton.swift; sourceTree = "<group>"; };
 		3FBCB5707EABFE49CFFFB45F /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		403AF389A944AF0B9F4700B1 /* FileStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileStore.swift; sourceTree = "<group>"; };
 		4801EBFCC788B0BADF6B9B10 /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -122,6 +125,7 @@
 		54BAD1E704C7727945DD4F73 /* RenderStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderStatusView.swift; sourceTree = "<group>"; };
 		5544A6806716A76F8327A02F /* CoachShot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachShot.swift; sourceTree = "<group>"; };
 		57A1816864B52BA95F584EB5 /* PurchaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseManager.swift; sourceTree = "<group>"; };
+		5976ED26A8C3B49AC916BC3F /* ia_split.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = ia_split.py; sourceTree = "<group>"; };
 		5ED4FB348EEDA03CD0E8C941 /* CoachAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachAPI.swift; sourceTree = "<group>"; };
 		61AD972518DD362511944597 /* DirectUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectUploader.swift; sourceTree = "<group>"; };
 		64F504BEA07223F8D2919C7C /* MockAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockAPIClient.swift; sourceTree = "<group>"; };
@@ -339,6 +343,7 @@
 		ACC7CBDD6D310BB2D13A932B /* Coach */ = {
 			isa = PBXGroup;
 			children = (
+				38DBEA52E6A2912885C3A15C /* AskAIButton.swift */,
 				5ED4FB348EEDA03CD0E8C941 /* CoachAPI.swift */,
 				C6011DBB53E6DB5DBFF66BCD /* CoachModel.swift */,
 				F902EC3FAE3CB781FA5E5A0F /* CoachView.swift */,
@@ -393,6 +398,7 @@
 				EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */,
 				159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */,
 				4DB70E1D3371927DB43F686D /* HomeListingsView.swift */,
+				5976ED26A8C3B49AC916BC3F /* ia_split.py */,
 				A3F07519FDA41A8A1043CDA0 /* NewListingView.swift */,
 				4EFAB60A262F81770E76534E /* OnboardingView.swift */,
 				7F31D014BAD4F175BA1951C3 /* PlayerWebView.swift */,
@@ -509,6 +515,7 @@
 			files = (
 				FB7EB9BFCB4BCF6B59E4B78C /* Assets.xcassets in Resources */,
 				489E5980C2D0848331D853B8 /* PrivacyInfo.xcprivacy in Resources */,
+				BB3DBCA1519E5749BE14EA2E /* ia_split.py in Resources */,
 				A2D5B60401411E19E6F32D53 /* player in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -549,6 +556,7 @@
 				B9A6F7F75A8F754430AF3596 /* AdminProbeAPI.swift in Sources */,
 				7C62E6C46EA9E5FC05B27D70 /* Analytics.swift in Sources */,
 				746869BBFBC1762BAFEC0795 /* AnalyticsAPI.swift in Sources */,
+				93DF77CE8069E6547398C3CE /* AskAIButton.swift in Sources */,
 				B9E457FC5C1CEC72EE934651 /* Attribution.swift in Sources */,
 				B31C7C4605D0DDFD6A64112F /* AuthStore.swift in Sources */,
 				37D554C3AC6570078EBC9896 /* CameraManager.swift in Sources */,

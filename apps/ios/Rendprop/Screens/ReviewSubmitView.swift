@@ -472,6 +472,7 @@ struct RoomTaggerView: View {
             .background(Theme.bg)
             .navigationTitle("Tag \(areaNounPlural)")
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.roomTagger)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     // Discard BEFORE `dismiss()`, not only in `onDisappear`:

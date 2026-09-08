@@ -398,7 +398,10 @@
     { t: 36.5,label: 'Bath' },
     { t: 45.5,label: 'Backyard' },
   ];
-  const PX_PER_SEC = 240;            // track height scale — more scroll per second = a slower, more controlled drone glide
+  const PX_PER_SEC = 420;            // track height scale — more scroll per second = a slower, more controlled drone glide.
+                                     // 240 let one iOS flick (2-3k px of momentum) throw the viewer 8-12 s down the house;
+                                     // at 420 a plain drag moves under a second and a hard flick lands about one room on.
+                                     // MUST match services/edge/tour-host/src/player.ts — same feel on the shared link.
   // START GATE — mirrors src/player.ts (the 4,000 sq ft field test).
   // This was 0.96: nothing moved until 96% of the clip had buffered. On a
   // bundled file:// preview that is instant, but the hosted page shares this

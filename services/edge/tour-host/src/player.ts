@@ -1029,7 +1029,7 @@ const ENGINE_CORE_JS = `
 
   var CH  = Array.isArray(CFG.chapters) ? CFG.chapters : [];
   var HAS_CH = CH.length > 0;
-  var PX_PER_SEC  = CFG.pxPerSec || 240;
+  var PX_PER_SEC  = CFG.pxPerSec || 420;   /* was 240: one flick crossed three rooms */
 
   /* ---- START GATE (the 4,000 sq ft field test) ----
      This used to be 0.96: the page would not release the loader until 96% of
@@ -2531,7 +2531,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     scrubUrl,
     hlsUrl,
     durationS: tour.duration_s || 0,
-    pxPerSec: 240,
+    pxPerSec: 420,
     // See the START GATE note in ENGINE_CORE_JS. `bufferGate` is now a CEILING
     // (a fraction of the tour, so a 9-second clip is not asked for more than a
     // 3-minute one proportionally) and `bufferLeadS` is the gate that actually

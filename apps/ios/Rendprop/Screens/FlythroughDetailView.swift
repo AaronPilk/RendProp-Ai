@@ -278,6 +278,7 @@ struct FlythroughDetailView: View {
         .background(Theme.bg)
         .navigationTitle(currentListing.address)
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.listing)
         .disabled(isDeleting)
         .onAppear {
             // Seed the Zillow field ONCE — re-seeding on every appearance wiped
@@ -697,13 +698,32 @@ struct FlythroughDetailView: View {
         // the main thread, and it is the same answer: it only lists an aerial
         // whose file is really there.
         let aerialSub = mediaItems.contains { $0.kind == .aerial } ? "Aerial ready" : "AI opening shot"
+        // Same rule as `aerialSub`: read the count off the scan that already
+        // ran, never off a fresh filesystem walk in a computed property `body`
+        // touches (the build-9 lag report).
+        let photoCount = mediaItems.filter { $0.kind == .photo }.count
+        let photosTileSub = photoCount == 0
+            ? "Add and brighten"
+            : "\(photoCount) photo\(photoCount == 1 ? "" : "s") \u{00B7} add more"
         return VStack(alignment: .leading, spacing: 10) {
             Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 .frame(maxWidth: .infinity, alignment: .leading)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
                                 GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                NavigationLink { PhotoStudioView(listing: currentListing) } label: {
-                    toolCard("AI Photo Studio", sample ? createFirst : "Sky · tidy · furniture",
+                // TWO TILES. Getting photos in is one job; changing them with
+                // AI is a different job with a different cost, and putting both
+                // behind one door is what made "AI Photo Studio" open on a wall
+                // of thumbnails instead of on the list of what the AI can do.
+                NavigationLink { PhotoStudioView(listing: currentListing, entry: .photos) } label: {
+                    toolCard("Photos", sample ? createFirst : photosTileSub,
+                             "photo.stack", RPGradient.photo, dimmed: sample)
+                }
+                .buttonStyle(ScalePressStyle())
+                .disabled(sample)
+                .accessibilityIdentifier("detail.photos")
+
+                NavigationLink { PhotoStudioView(listing: currentListing, entry: .studio) } label: {
+                    toolCard("AI Photo Studio", sample ? createFirst : "Declutter · staging · sky",
                              "wand.and.stars", RPGradient.photo, ai: true, dimmed: sample)
                 }
                 .buttonStyle(ScalePressStyle())
@@ -2950,6 +2970,7 @@ private struct ListingFilePreview: View {
             .background(Theme.bg)
             .navigationTitle(item.title)
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.files)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Done") {
@@ -3161,6 +3182,28 @@ private struct BatchRun: Equatable {
 }
 
 struct PhotoStudioView: View {
+    /// WHICH OF THE TWO SCREENS THIS IS.
+    ///
+    /// One view, one set of state, one photo directory - two entry points, and
+    /// they are genuinely two screens, not one screen with a flag on it.
+    ///
+    /// THE DEFECT this fixes is the one the owner reported more times than any
+    /// other: uploading photos and changing photos were the same screen. That
+    /// is why "AI Photo Studio" opened on a wall of thumbnails instead of a
+    /// menu of what the AI can do - the screen had to be a photo manager
+    /// first, so the AI was whatever was left over. Renaming the buttons on it
+    /// (twice) never had a chance, because the problem was never a word.
+    ///
+    ///  * `.photos` - YOUR PHOTOS. Add them, see them, pick the cover, share,
+    ///    delete. Every photo is brightened and sharpened on the way in
+    ///    (`ingest` -> `PhotoEnhancer.enhance`), free and on-device. No AI menu.
+    ///    It is a library.
+    ///  * `.studio` - AI PHOTO STUDIO. Opens on the MODES, full stop. Declutter,
+    ///    Staging (four styles on the surface), Twilight, Sky, Lawn, Ask for
+    ///    anything, Turn it into video. Pick one, and THEN the photos already
+    ///    uploaded appear to be ticked. Mode first, photos second.
+    enum Entry { case photos, studio }
+
     // `enum Intent { case photos, reel }` and `var intent` are GONE, together
     // with the reel card they existed to ring. The "Make a reel" tile on the
     // listing screen (and the app's `.reel` deep-link route) opens
@@ -3259,6 +3302,7 @@ struct PhotoStudioView: View {
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
+    let entry: Entry
 
     private var mainRelPath: String? {
         model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
@@ -3404,77 +3448,18 @@ struct PhotoStudioView: View {
     // "unable to type-check this expression in reasonable time").
     private var studioCore: some View {
         ScrollView {
-            VStack(spacing: Theme.spacing) {
-                HStack(spacing: 10) {
-                    addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
-                    addButton("Take a photo", "camera", filled: false) {
-                        if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
-                    }
+            Group {
+                switch entry {
+                case .photos: photosBody
+                case .studio: studioBody
                 }
-
-                // THE EDIT BAR IS ALWAYS HERE. Not "when the grid is empty" —
-                // ALWAYS, whatever the photo count.
-                //
-                // THE DEFECT, and it took three attempts to see it: the edits
-                // were never gone. `showWandDialog` on every thumb has offered
-                // Suggest, twilight, sky, lawn, DECLUTTER, staging (with all four
-                // styles behind it), a custom prompt and animate the whole time,
-                // one tap away. What was gone were the NAMES. The only place the
-                // words "Declutter" and staging appeared as visible affordances
-                // was `emptyShowcase`, and `emptyShowcase` was rendered behind
-                // `if photos.isEmpty` — so every agent who had actually done the
-                // work and imported photos saw a grid of thumbnails, a pink badge
-                // on each one, and no feature names anywhere. The owner reported
-                // Declutter missing TWICE; the names were behind `photos.isEmpty`.
-                // The previous fix made those chips into real Buttons and left
-                // them behind the same gate, which is why he searched again and
-                // still found nothing.
-                //
-                // The wand stays exactly as it was. It is a good shortcut. It
-                // just cannot be the only surface.
-                studioEditSection
-
-                if photos.isEmpty && !isProcessing {
-                    emptyShowcase
-                }
-
-                // The single-edit spinner. A BATCH has its own card with counts
-                // in it (`batchProgressCard`), so the two never stack up.
-                if isProcessing && batchRun == nil {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text(processingText).foregroundStyle(Theme.inkDim)
-                    }
-                    .padding(.vertical, 8)
-                }
-
-                if !photos.isEmpty {
-                    studioGridHint
-                }
-
-                photoGrid
-
-                if !photos.isEmpty && batchEdit == nil {
-                    ShareLink(items: photos.map { $0.enhancedURL }) {
-                        Label("Share all photos", systemImage: "square.and.arrow.up")
-                            .font(.rpBody.weight(.semibold))
-                            .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(Theme.accent).foregroundStyle(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                }
-
-                // `reelCard` is GONE from this screen. It only ever lived here
-                // because the listing's "Make a reel" tile routed THROUGH this
-                // screen (`intent: .reel`) and needed a door at the far end. The
-                // tile opens Reel Studio directly now, so the door is the tile.
-                clipsCard
             }
             .padding()
         }
         .background(Theme.bg)
-        .navigationTitle("AI Photo Studio")
+        .navigationTitle(entry == .photos ? "Photos" : "AI Photo Studio")
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(entry == .photos ? .photos : .photoStudio)
         .toolbar {
             ToolbarItem(placement: .principal) { studioTitleBar }
         }
@@ -3488,6 +3473,231 @@ struct PhotoStudioView: View {
             if !isPresentingOverlay { animateTask?.cancel() }
             releaseIdleHold()   // re-taken by onAppear when the work is still running
         }
+    }
+
+
+    // MARK: - Screen one: YOUR PHOTOS
+    //
+    // Upload, enhance, keep. This screen never shows an AI menu. The one AI
+    // affordance on it is the wand in a thumbnail's corner, which is a
+    // per-photo shortcut and has always been one. Everything that costs money
+    // and needs a decision lives on the other screen.
+
+    private var photosBody: some View {
+        VStack(spacing: Theme.spacing) {
+            HStack(spacing: 10) {
+                addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
+                addButton("Take a photo", "camera", filled: false) {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                }
+            }
+
+            if photos.isEmpty && !isProcessing {
+                photosEmptyState
+            }
+
+            if isProcessing && batchRun == nil {
+                studioSpinnerRow
+            }
+
+            if !photos.isEmpty {
+                photosGridHint
+            }
+
+            photoGrid
+
+            if !photos.isEmpty {
+                openStudioCard
+                shareAllButton
+            }
+
+            clipsCard
+        }
+    }
+
+    private var studioSpinnerRow: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text(processingText).foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 8)
+    }
+
+    private var shareAllButton: some View {
+        ShareLink(items: photos.map { $0.enhancedURL }) {
+            Label("Share all photos", systemImage: "square.and.arrow.up")
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                .background(Theme.accent).foregroundStyle(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    /// The empty library. It says what happens to a photo when it lands,
+    /// because "it gets brightened automatically, free" is the reason to put
+    /// them here first.
+    private var photosEmptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 30, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white)
+                .frame(width: 60, height: 60)
+                .background(RPGradient.photo,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Add your photos")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+            Text("Every photo is brightened and sharpened the moment it lands \u{2014} free, on this phone, no waiting. Then AI Photo Studio can change any of them.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 18)
+    }
+
+    /// The line above the library grid. Three verbs, all of them free.
+    private var photosGridHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tap a photo to see before and after. Tap the star to make it the cover. Tap the wand to change just that one.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Label("Already brightened and sharpened on this phone \u{2014} that part costs nothing.",
+                  systemImage: "sparkles")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.good)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The door from the library to the studio, on the library screen, named.
+    /// The two are siblings in the toolbox; this is the shortcut for someone
+    /// already standing in front of their photos.
+    private var openStudioCard: some View {
+        NavigationLink { PhotoStudioView(listing: listing, entry: .studio) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 40, height: 40)
+                    .background(RPGradient.photo,
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Change these with AI")
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    Text("Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+            }
+            .padding(10)
+            .background(Theme.fillSubtle,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityIdentifier("photos.openStudio")
+    }
+
+    // MARK: - Screen two: AI PHOTO STUDIO
+    //
+    // MODE FIRST. The screen opens on what the AI can do, in words, with
+    // nothing else competing for the first screenful. The photos already
+    // uploaded appear only once a mode is chosen - which is the whole point:
+    // "pick Declutter, then tick the photos" instead of "here are your photos,
+    // now go hunting for the verb".
+
+    private var studioBody: some View {
+        VStack(spacing: Theme.spacing) {
+            if photos.isEmpty && !isProcessing {
+                studioNeedsPhotos
+            } else {
+                studioReadyStrip
+            }
+
+            studioEditSection
+
+            if isProcessing && batchRun == nil {
+                studioSpinnerRow
+            }
+
+            // THE GRID IS ONLY HERE ONCE A MODE IS CHOSEN. An AI screen that
+            // opens on a wall of thumbnails is the screen he kept reporting.
+            if batchEdit != nil {
+                studioPickHint
+                photoGrid
+            }
+        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: batchEdit != nil)
+    }
+
+    /// No photos yet. The studio does not pretend it can do anything, and it
+    /// names the screen that comes first rather than opening a picker and
+    /// hoping.
+    private var studioNeedsPhotos: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 30, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white)
+                .frame(width: 60, height: 60)
+                .background(RPGradient.photo,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Add photos first")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Photos live in this home\u{2019}s Photos section \u{2014} they get brightened on the way in. Add them, then pick a change here.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+    }
+
+    /// One strip at the top of the studio: your photos are here, this is how
+    /// many, this is what happens next. It replaces the grid that used to open
+    /// this screen.
+    private var studioReadyStrip: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.good)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(studioReadyTitle)
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                Text("Pick a change below, then tick the ones to change.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .lineLimit(2).minimumScaleFactor(0.85)
+            }
+            Spacer(minLength: 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var studioReadyTitle: String {
+        "\(photos.count) photo\(photos.count == 1 ? "" : "s") ready"
+    }
+
+    /// The line above the grid, in the studio, where the grid means one thing
+    /// only: tick the photos this change applies to.
+    private var studioPickHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tap the photos you want changed \u{2014} they get a tick. Each one is a separate change, saved beside its original.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
+                  systemImage: "checkmark.shield.fill")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.good)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var studioSheets: some View {
@@ -5716,6 +5926,7 @@ struct AerialIntroSheet: View {
             .background(Theme.bg)
             .navigationTitle("Aerial intro")
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.aerial)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
@@ -6697,6 +6908,7 @@ struct ReelStudioView: View {
             .background(Theme.bg)
             .navigationTitle("Reel Studio")
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.reelStudio)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     // UNGUARDED Close was half of the money bug: one tap ran
@@ -9192,6 +9404,7 @@ struct FloorPlanView: View {
         .background(Theme.bg)
         .navigationTitle("Floor plan")
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.floorPlan)
         .onAppear { refreshState() }
         .fullScreenCover(isPresented: $showScanner) {
             RoomScanView(exportURL: usdzURL) { url in

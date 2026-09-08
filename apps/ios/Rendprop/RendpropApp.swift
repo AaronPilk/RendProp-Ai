@@ -2085,7 +2085,8 @@ struct HomeDashboardView: View {
             gateSheet(sheet)
         }
         .sheet(isPresented: $showCoach, onDismiss: flushCoachRoute) {
-            CoachView(model: model, originScreen: "home")
+            CoachView(model: model, originScreen: AskAIScreen.home.rawValue,
+                      starters: AskAIScreen.home.starters)
         }
         // Coach (docs/COACH-CONTRACT.md): the "which sheet/route" half of
         // acting on a tapped action. RootTabView's own `.onChange` (same
@@ -2158,19 +2159,21 @@ struct HomeDashboardView: View {
 
     /// Entry point 1 of 2 into Coach (the other is Settings → "Coach &
     /// help") — docs/COACH-CONTRACT.md.
+    /// Home's Ask AI. Same control the rest of the app now wears
+    /// (`AskAIButton`), so it is recognisable as the same thing in the same
+    /// place everywhere - and it says the words, which the bare sparkle in a
+    /// circle it replaces did not.
+    ///
+    /// Home keeps its own `showCoach` + sheet rather than taking `.askAI(.home)`
+    /// because its `onDismiss: flushCoachRoute` is what routes a tapped coach
+    /// action ("Open the tour") after the sheet closes. The modifier owns a
+    /// plain sheet; this one has a job on the way out.
     private var askCoachButton: some View {
-        Button {
+        AskAIButton {
             Haptics.selection()
             showCoach = true
-        } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.accent)
-                .padding(8)
-                .background(Theme.accentSoft, in: Circle())
         }
         .accessibilityIdentifier("home.askCoach")
-        .accessibilityLabel(Text("Ask the coach"))
     }
 
     private func loadLeadCount() async {
@@ -2253,7 +2256,9 @@ struct HomeDashboardView: View {
         if let route {
             switch route.feature {
             case .photos:
-                PhotoStudioView(listing: route.listing)
+                PhotoStudioView(listing: route.listing, entry: .photos)
+            case .photoStudio:
+                PhotoStudioView(listing: route.listing, entry: .studio)
             case .reel:
                 // Unreachable: go() sends .reel to the gate sheet above, because
                 // Reel Studio owns its own NavigationStack and pushing it would
@@ -2429,6 +2434,7 @@ struct HomeDashboardView: View {
                             GridItem(.flexible(), spacing: 12)], spacing: 12) {
             featureButton(.tour)
             featureButton(.photos)
+            featureButton(.photoStudio)
             featureButton(.reel)
             featureButton(.floorPlan)
             featureButton(.aerial)
@@ -3105,7 +3111,12 @@ extension View {
 
 /// A feature a Home tile can open — once we know which home it is for.
 enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
-    case tour, photos, reel, floorPlan, aerial
+    /// `.photos` is the LIBRARY - add photos, they get brightened on the way
+    /// in, they live in the home. `.photoStudio` is the AI. They were one case
+    /// (and one screen) and that conflation is the defect the owner reported
+    /// across five sessions: the AI menu could not be the first thing you saw,
+    /// because the screen had to be a photo manager first.
+    case tour, photos, photoStudio, reel, floorPlan, aerial
 
     var id: String { rawValue }
 
@@ -3113,7 +3124,8 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var actionTitle: String {
         switch self {
         case .tour:      return "Make a tour"
-        case .photos:    return "Take photos"
+        case .photos:    return "Add photos"
+        case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
         case .floorPlan: return "Make a floor plan"
         case .aerial:    return "Make an aerial shot"
@@ -3125,8 +3137,10 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var promise: String {
         switch self {
         case .tour:      return "Walk it once — glide forever"
-        case .photos:    return SpaceType.current == .realEstate
-            ? "Twilight · blue sky · staging" : "Twilight · blue sky · furnish it"
+        case .photos:    return "Brightened automatically \u{2014} free"
+        case .photoStudio: return SpaceType.current == .realEstate
+            ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
+            : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
         case .reel:      return "Photos → one social video"
         case .floorPlan: return "Scan in 3D or upload"
         case .aerial:    return "A cinematic opening shot"
@@ -3136,7 +3150,8 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var systemImage: String {
         switch self {
         case .tour:      return "video.fill"
-        case .photos:    return "wand.and.stars"
+        case .photos:    return "photo.stack"
+        case .photoStudio: return "wand.and.stars"
         case .reel:      return "film.stack"
         case .floorPlan: return "cube.transparent"
         case .aerial:    return "airplane.departure"
@@ -3147,6 +3162,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         switch self {
         case .tour:      return RPGradient.drone
         case .photos:    return RPGradient.photo
+        case .photoStudio: return RPGradient.photo
         case .reel:      return RPGradient.reel
         case .floorPlan: return RPGradient.plan
         case .aerial:    return RPGradient.aerial
@@ -3156,8 +3172,12 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     /// AI does the work here (shows the AI pill).
     var usesAI: Bool {
         switch self {
-        case .tour, .photos, .reel, .aerial: return true
-        case .floorPlan:                     return false
+        // `.photos` is DELIBERATELY not an AI tile any more. Importing a
+        // photo runs `PhotoEnhancer` on this phone: no network, no model, no
+        // charge. Wearing the AI pill there implied a cost that isn't real and
+        // hid the free win the owner actually likes.
+        case .tour, .photoStudio, .reel, .aerial: return true
+        case .photos, .floorPlan:                 return false
         }
     }
 }

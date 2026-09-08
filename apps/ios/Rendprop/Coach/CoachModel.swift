@@ -45,7 +45,14 @@ final class CoachModel: ObservableObject {
     @Published private(set) var messages: [CoachMessage]
     @Published private(set) var isSending = false
 
-    let starterChips = [
+    /// The four questions offered before the first reply. SCREEN-SPECIFIC
+    /// now: `AskAIScreen.starters` supplies them, so "Ask AI" on the floor-plan
+    /// screen opens on floor-plan questions instead of "Start my first tour".
+    /// The array below is the fallback for a caller that names no screen —
+    /// which is Home, where these four were written for.
+    let starterChips: [String]
+
+    static let defaultStarters = [
         "Start my first tour",
         "How do I share to the MLS?",
         "What does the AI do to my photos?",
@@ -58,7 +65,8 @@ final class CoachModel: ObservableObject {
     /// `CoachRequest.Context.screen`.
     private let originScreen: String?
 
-    init(model: AppModel, originScreen: String? = nil) {
+    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil) {
+        self.starterChips = (starters?.isEmpty == false ? starters! : Self.defaultStarters)
         self.model = model
         self.space = SpaceType.current
         self.originScreen = originScreen
