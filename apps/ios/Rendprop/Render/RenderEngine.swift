@@ -107,13 +107,46 @@ enum RenderEngine {
     private static let outputFPS: Int32 = 60
     private static let encodeLongEdge: CGFloat = 1280
     private static let analyzeLongEdge: CGFloat = 384      // registration runs here — fast
-    private static let smoothingSigmaFrames = 18.0         // ~0.3s @ 60fps low-pass
-    private static let stabStrength: CGFloat = 0.9         // apply 90% of correction (avoid overshoot)
-    private static let maxCropZoom: CGFloat = 1.12         // never crop more than 12%
     private static let maxRegistrationFailRatio = 0.4      // above this → skip stabilization
-    /// A registration offset larger than this fraction of the frame is a scene
-    /// cut / whip pan, not jitter — count it as a failure (audit F-D-32).
-    private static let maxPlausibleShiftFraction: CGFloat = 0.08
+
+    /// How hard to stabilize, and how much frame it may spend doing it.
+    ///
+    /// ONE PROFILE PER KIND OF FOOTAGE, because "stabilize it" means two
+    /// different things. A hand shakes fast and small and there is plenty of
+    /// frame to give up. A gimbal has already removed the big motion, so what
+    /// is left is slow wobble on a shot whose framing is the whole point.
+    struct StabProfile: Sendable {
+        /// Low-pass window over the content path, in frames at 60 fps.
+        let sigmaFrames: Double
+        /// Fraction of the measured correction actually applied. Below 1 to
+        /// avoid overshooting into a rubbery, over-corrected look.
+        let strength: CGFloat
+        /// Hard ceiling on the crop. This is the cost of stabilization and the
+        /// number a person actually notices.
+        let maxCropZoom: CGFloat
+        /// A registration offset larger than this fraction of the frame is a
+        /// cut or a deliberate whip pan, not jitter — counted as a failure
+        /// rather than chased (audit F-D-32).
+        let maxPlausibleShiftFraction: CGFloat
+
+        /// Handheld: the values this engine has always used.
+        static let handheld = StabProfile(sigmaFrames: 18.0, strength: 0.9,
+                                          maxCropZoom: 1.12, maxPlausibleShiftFraction: 0.08)
+
+        /// Drone. Until now this was "off" — `if !asset.isDrone` skipped pass 1
+        /// entirely, and `MediaImporter` sets `isDrone` automatically from DJI /
+        /// Autel / Skydio / Parrot metadata, so importing a drone file turned
+        /// the stabilizer off without anyone choosing that.
+        ///
+        /// Gentler on every axis: a longer window because a gimbal's residual is
+        /// slower than a hand's and the intended motion is a long arc; less
+        /// strength because the hardware already did most of the work; a 5% crop
+        /// ceiling because a drone shot's framing and resolution are what make it
+        /// worth flying; and a tighter plausible-shift ceiling so a deliberate
+        /// whip pan reads as intent instead of being fought.
+        static let drone = StabProfile(sigmaFrames: 30.0, strength: 0.6,
+                                       maxCropZoom: 1.05, maxPlausibleShiftFraction: 0.05)
+    }
     /// Sources longer than this are refused with a clear error (kept in step
     /// with MediaImporter.maxDurationSeconds and the capture cap).
     static let maxSourceSeconds: Double = MediaImporter.maxDurationSeconds
@@ -171,12 +204,19 @@ enum RenderEngine {
             throw RenderError.badDimensions
         }
 
-        // ── Pass 1: analyze camera jitter (skipped for drone clips) ──────────
+        // ── Pass 1: analyze camera jitter ────────────────────────────────────
+        // RUNS FOR DRONE CLIPS TOO. It used to be wrapped in `if !asset.isDrone`,
+        // which meant importing a DJI file (the importer sets `isDrone` off the
+        // metadata by itself) silently turned the stabilizer off — the owner's
+        // "the drone is not stabilized", one early-return deep. A gimbal is not
+        // the same as stabilized: wind, a fast yaw and rolling-shutter wobble all
+        // survive it. What changes for a drone is the PROFILE, not whether it runs.
         var corrections = [CGPoint](repeating: .zero, count: frameCount)
         var cropZoom: CGFloat = 1.0
         var stabilized = false
+        let profile: StabProfile = asset.isDrone ? .drone : .handheld
 
-        if !asset.isDrone {
+        do {
             progress(0.05, "Smoothing the motion…")
             let analyze = geometry(naturalSize: naturalSize, transform: transform, longEdge: analyzeLongEdge)
             let analyzeProgress = ProgressThrottle { p in progress(0.05 + 0.38 * p, "Smoothing the motion…") }
@@ -185,7 +225,8 @@ enum RenderEngine {
                 result = try await analyzeJitter(source: source, srcTrack: srcTrack,
                                                  duration: duration, outDuration: outDuration,
                                                  speed: speed, frameCount: frameCount,
-                                                 geo: analyze, queue: queue, cancelFlag: cancelFlag,
+                                                 geo: analyze, profile: profile,
+                                                 queue: queue, cancelFlag: cancelFlag,
                                                  progress: { p in analyzeProgress.send(p) })
             } catch RenderError.cancelled {
                 throw RenderError.cancelled
@@ -203,6 +244,7 @@ enum RenderEngine {
                 let s = encode.renderSize.width / analyze.renderSize.width
                 corrections = clampCorrections(result.corrections.map { CGPoint(x: $0.x * s, y: $0.y * s) },
                                                renderSize: encode.renderSize,
+                                               profile: profile,
                                                zoom: &cropZoom)
                 stabilized = cropZoom > 1.0001
             }
@@ -337,6 +379,7 @@ enum RenderEngine {
     private static func analyzeJitter(source: AVAsset, srcTrack: AVAssetTrack,
                                       duration: CMTime, outDuration: CMTime,
                                       speed: Double, frameCount: Int, geo: Geometry,
+                                      profile: StabProfile,
                                       queue: DispatchQueue, cancelFlag: CancelFlag,
                                       progress: @escaping @Sendable (Double) -> Void) async throws -> AnalyzeResult? {
         let (composition, compTrack) = try retimeComposition(source: source, srcTrack: srcTrack,
@@ -364,8 +407,8 @@ enum RenderEngine {
         reader.add(output)
         guard reader.startReading() else { throw reader.error ?? RenderError.cannotBuild }
 
-        let maxShiftX = geo.renderSize.width * maxPlausibleShiftFraction
-        let maxShiftY = geo.renderSize.height * maxPlausibleShiftFraction
+        let maxShiftX = geo.renderSize.width * profile.maxPlausibleShiftFraction
+        let maxShiftY = geo.renderSize.height * profile.maxPlausibleShiftFraction
 
         return try await runOnQueue(queue) { () throws -> AnalyzeResult? in
             var raw = [CGPoint]()                 // cumulative CONTENT path (top-left coords)
@@ -420,9 +463,9 @@ enum RenderEngine {
 
             // Smooth the content path; correction = smoothed − raw moves the
             // content toward the smoothed path. Apply strength.
-            let smoothed = gaussianSmooth(raw, sigma: smoothingSigmaFrames)
+            let smoothed = gaussianSmooth(raw, sigma: profile.sigmaFrames)
             var corrections = zip(smoothed, raw).map { s, r in
-                CGPoint(x: (s.x - r.x) * stabStrength, y: (s.y - r.y) * stabStrength)
+                CGPoint(x: (s.x - r.x) * profile.strength, y: (s.y - r.y) * profile.strength)
             }
             // Pad/trim to exactly frameCount so indices line up with the encode pass.
             if corrections.count < frameCount, let last = corrections.last {
@@ -601,10 +644,11 @@ enum RenderEngine {
     /// (Margins are in on-screen pixels; stabilizeTransform divides by the zoom
     /// so the applied shift is exactly the clamped value.)
     private static func clampCorrections(_ corrections: [CGPoint], renderSize: CGSize,
+                                         profile: StabProfile,
                                          zoom: inout CGFloat) -> [CGPoint] {
         let W = max(1, renderSize.width), H = max(1, renderSize.height)
         let maxFrac = corrections.map { max(abs($0.x) / W, abs($0.y) / H) }.max() ?? 0
-        zoom = min(maxCropZoom, max(1.0, 1.0 + 2.0 * maxFrac + 0.02))
+        zoom = min(profile.maxCropZoom, max(1.0, 1.0 + 2.0 * maxFrac + 0.02))
         guard zoom > 1.0001 else { return [CGPoint](repeating: .zero, count: corrections.count) }
         let marginX = (zoom - 1) / zoom * (W / 2) * 0.98
         let marginY = (zoom - 1) / zoom * (H / 2) * 0.98
