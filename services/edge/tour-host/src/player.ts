@@ -1365,7 +1365,19 @@ const ENGINE_CORE_JS = `
   video.addEventListener('canplaythrough', function(){ setTimeout(begin, 1200); });
   video.addEventListener('loadeddata', function(){ if (usingHls) setTimeout(begin, 700); });
   pollBuf = setInterval(function(){ reportBuffer(); if (started || unavailable) clearInterval(pollBuf); }, 250);
-  setTimeout(function(){ if (!started && !unavailable && buffered() > 3) begin(); }, 6000);
+  /* Start ladder. The gate above waits for min(duration * BUFFER_GATE,
+     LEAD_S) seconds of head, and the ONLY escape used to be at six seconds and
+     also demanded 3 s already buffered — so a viewer on a middling connection
+     watched a loader for six seconds before the house existed. That is the
+     "keeps loading", and it happened before a single frame was shown.
+
+     Starting early is cheap here, because running past the buffer is already
+     handled properly: the scrub holds at the frontier, the overlays keep
+     describing the held frame, and the pill explains the wait. Watching a
+     house within two and a half seconds and occasionally pausing at the
+     frontier beats six seconds of spinner. */
+  setTimeout(function(){ if (!started && !unavailable && buffered() > 1.5) begin(); }, 2500);
+  setTimeout(function(){ if (!started && !unavailable && buffered() > 0.8) begin(); }, 5000);
   // Last resort at 12s. Metadata present → start anyway (partial buffer is
   // fine). No metadata → the source is dead (error/no-source) or crawling: a
   // dead one is declared unavailable now, a crawling one gets 12 more seconds.

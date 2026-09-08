@@ -556,7 +556,18 @@ enum RenderEngine {
                 // exactly and instantly → buttery, drone-smooth scrubbing (no
                 // stepping between sparse keyframes). Costs more bitrate/size, worth
                 // it for the scroll-scrub feel. Higher bitrate keeps it crisp.
-                AVVideoAverageBitRateKey: 14_000_000,
+                // 9 Mbps, down from 14. ALL-INTRA at a 1280 long edge and 60 fps is
+                // visually near-identical at the two, because every frame is a
+                // keyframe and 720p intra is past diminishing returns well before 9 —
+                // but 14 made a 2-minute tour ~210 MB, which on LTE means the viewer
+                // downloads at about the speed they scroll. That is what "it lowers
+                // the quality and keeps loading" on the shared link actually was: a
+                // stalled mp4 falls back to adaptive HLS, which IS lower quality.
+                // The file drops ~36% and the start gate, the scroll-ahead margin,
+                // the storage bill and the upload off the phone all drop with it.
+                // Resolution, frame rate and the all-intra GOP are untouched — the
+                // thing that makes the scrub feel right was never the expensive part.
+                AVVideoAverageBitRateKey: 9_000_000,
                 AVVideoMaxKeyFrameIntervalKey: 1,          // keyframe every frame (all-intra)
                 AVVideoAllowFrameReorderingKey: false,     // no B-frames → every frame independent
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
