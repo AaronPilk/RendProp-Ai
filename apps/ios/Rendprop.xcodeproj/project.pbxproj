@@ -71,6 +71,7 @@
 		D7AA4A7D3D530D12227D6528 /* CoachAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED4FB348EEDA03CD0E8C941 /* CoachAPI.swift */; };
 		E0C8BE09B5E9106CD1CF9563 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = E618350433BB18EC88AC7415 /* DeepLink.swift */; };
 		E3DCCDEB5D91AFCE68687A57 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19CC9E2E694D65DC5116B84C /* Formatters.swift */; };
+		E5E417CA45968713D8FA55A7 /* DriftCheck.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EE1EF518D6CC2469EC540D9 /* DriftCheck.swift */; };
 		E5FF488407A77D1CAC7E9AF5 /* PurchaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A1816864B52BA95F584EB5 /* PurchaseManager.swift */; };
 		E6CA545180045304CB1CF06E /* FlythroughDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */; };
 		EA740C162A2261CB015DC6D2 /* SpeechTranscriber.swift in Sources */ = {isa = PBXBuildFile; fileRef = 065A50CE2C895DBB3B281865 /* SpeechTranscriber.swift */; };
@@ -105,6 +106,7 @@
 		141DACD219FBED854B0C48E2 /* SignInView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SignInView.swift; sourceTree = "<group>"; };
 		159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FlythroughDetailView.swift; sourceTree = "<group>"; };
 		19CC9E2E694D65DC5116B84C /* Formatters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Formatters.swift; sourceTree = "<group>"; };
+		1EE1EF518D6CC2469EC540D9 /* DriftCheck.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DriftCheck.swift; sourceTree = "<group>"; };
 		1F816F304AD1C7DF8F43C824 /* FirstProjectGuide.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FirstProjectGuide.swift; sourceTree = "<group>"; };
 		1F9C834E078530F4D64C049E /* ReviewerWalk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewerWalk.swift; sourceTree = "<group>"; };
 		203C76D7B86766C1A45DC3A8 /* LiveAPIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveAPIClient.swift; sourceTree = "<group>"; };
@@ -310,6 +312,7 @@
 		79F18C2E4733AD5FFE2F7F36 /* Render */ = {
 			isa = PBXGroup;
 			children = (
+				1EE1EF518D6CC2469EC540D9 /* DriftCheck.swift */,
 				7377E9EE07D558CED9A5731F /* EnhanceSource.swift */,
 				8C47DEE16BD416E9B71887B8 /* ReelComposer.swift */,
 				EE7E18BAB47DE227E3FC1A48 /* RenderEngine.swift */,
@@ -585,6 +588,7 @@
 				1C731645EC18370529018560 /* CrashReporter.swift in Sources */,
 				E0C8BE09B5E9106CD1CF9563 /* DeepLink.swift in Sources */,
 				F4A33EE7FCDDEA87E548A7C5 /* DirectUploader.swift in Sources */,
+				E5E417CA45968713D8FA55A7 /* DriftCheck.swift in Sources */,
 				264766723CAD4BBED4F258BD /* EnhanceSource.swift in Sources */,
 				F34ECB50446CA79CC60B2901 /* FileStore.swift in Sources */,
 				3AFA52B6A3EAE858A8AC2592 /* FirstProjectCard.swift in Sources */,

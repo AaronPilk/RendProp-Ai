@@ -1142,6 +1142,15 @@ actor MockAPIClient: APIClient {
         Self.mockAIVideoJob(kind: "reel", grounded: true)
     }
 
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
+        // Offline dev + the UI walk: pass, so the screenshot run is not gated
+        // on a judge that has no network. The LIVE client is the one under
+        // test for this behaviour.
+        _ = request
+        return DriftVerdict(status: .pass, publishable: true, action: "publish",
+                            message: "", reason: nil)
+    }
+
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {
         // Offline dev: fail HONESTLY after a short beat. The old stub "completed"
         // with a text file named .mp4, which AVPlayer and Photos then choked on.

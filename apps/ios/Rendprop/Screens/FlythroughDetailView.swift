@@ -4169,6 +4169,10 @@ struct PhotoStudioView: View {
         let listingLocalID = listing.id
         let isSample = listing.isSample
         let tapKey = UUID().uuidString
+        // Snapshot on the main actor: `space` reads the listing, and the drift
+        // rubric is scoped by trade (a gym's "equipment appeared" is not a
+        // home's).
+        let spaceRawForDrift = space.rawValue
         animateTask = Task {
             do {
                 guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
@@ -4211,6 +4215,43 @@ struct PhotoStudioView: View {
                 if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                     throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)). Try again.")
                 }
+
+                // ── THE QUALITY GATE ────────────────────────────────────────
+                // Judge the clip before the agent ever sees it. `POST
+                // /ai-video/drift` compares the first, middle and last frames
+                // against the source still on five axes and answers whether it
+                // may be published; until this call existed the route had no
+                // callers at all and every clip was reported `unchecked,
+                // publishable: false` while the app used it anyway.
+                //
+                // FAIL CLOSED: a throw, an unknown status or `.unavailable`
+                // all hold, because "we could not tell whether the AI changed
+                // the house" is not "the AI did not change the house". The
+                // downloaded temp file is dropped on the floor rather than
+                // saved — a clip on disk that must not be published is a trap
+                // the agent finds a week later, next to their listing.
+                await MainActor.run { processingText = "Checking it against your photo…" }
+                let verdict: DriftVerdict
+                do {
+                    verdict = try await api.aiVideoDrift(DriftCheckRequest(
+                        requestID: job.requestId,
+                        kind: "reel",
+                        sourceBase64: b64,
+                        frames: await ClipFrames.extract(from: tmp),
+                        seconds: 5,
+                        spaceType: spaceRawForDrift,
+                        listingServerID: serverListingID))
+                } catch {
+                    verdict = DriftVerdict(status: .unavailable, publishable: false,
+                                           action: "hold", message: "", reason: nil)
+                }
+                guard verdict.mayUse else {
+                    try? FileManager.default.removeItem(at: tmp)
+                    Analytics.track("ai_clip_rejected",
+                                    ["kind": "animate", "status": verdict.status.rawValue])
+                    throw AIImagePrep.error(verdict.refusal)
+                }
+
                 let dest = targetDir.appendingPathComponent(
                     "clip-\(photoID)-\(UUID().uuidString.prefix(4)).mp4")
                 try? FileManager.default.removeItem(at: dest)

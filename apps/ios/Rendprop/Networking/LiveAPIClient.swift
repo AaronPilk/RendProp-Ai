@@ -992,6 +992,51 @@ final class LiveAPIClient: APIClient {
         }
     }
 
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
+        var body: [String: Any] = [
+            "request_id": String(request.requestID.prefix(200)),
+            "kind": request.kind,
+            "source_b64": request.sourceBase64,
+            "source_mime": request.sourceMime,
+            "frames": request.frames.map { f in
+                ["at": f.at,
+                 "b64": f.jpeg.base64EncodedString(),
+                 "mime": "image/jpeg"] as [String: Any]
+            },
+            "attempt": max(1, min(3, request.attempt)),
+        ]
+        if let s = request.seconds { body["seconds"] = s }
+        if let m = request.motion, !m.isEmpty { body["motion"] = m }
+        if let r = request.room, !r.isEmpty { body["room"] = String(r.prefix(40)) }
+        if let s = request.spaceType, !s.isEmpty { body["space_type"] = s }
+        if let id = request.listingServerID { body["listing_id"] = id.uuidString }
+        if let p = request.provenanceID, !p.isEmpty { body["provenance_id"] = p }
+
+        let data = try await execute(makeRequest(url: url(["ai-video", "drift"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .key("drift:\(request.requestID):\(request.attempt)")),
+                                     session: aiSession)
+        // Tolerant on purpose, and tolerant TOWARDS HOLDING: an unknown or
+        // missing status decodes to `.unavailable`, never to a pass. The
+        // server owns `publishable`; nothing here derives it from the scores.
+        struct DriftBlockDTO: Decodable {
+            let status: String?
+            let publishable: Bool?
+            let action: String?
+            let message: String?
+            let reason: String?
+        }
+        struct DriftDTO: Decodable { let drift: DriftBlockDTO? }
+        let dto: DriftDTO = try decode(data)
+        let b = dto.drift
+        let status = DriftVerdict.Status(rawValue: (b?.status ?? "").lowercased()) ?? .unavailable
+        return DriftVerdict(status: status,
+                            publishable: (b?.publishable ?? false) && status == .pass,
+                            action: b?.action ?? "hold",
+                            message: b?.message ?? "",
+                            reason: b?.reason)
+    }
+
     // MARK: - AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
 
     func aiVoices() async throws -> [AIVoice] {

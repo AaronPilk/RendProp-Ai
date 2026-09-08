@@ -934,6 +934,18 @@ protocol APIClient: Sendable {
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
 
+    /// POST /ai-video/drift — THE QUALITY GATE.
+    ///
+    /// Judges a finished clip's first/middle/last frames against the source
+    /// still and answers whether it may be published. The rubric, the model,
+    /// the thresholds, the retry accounting and the audit row are all
+    /// server-side, because a tenant must not be able to write a passing
+    /// verdict about their own listing media.
+    ///
+    /// Throwing is NOT a pass. Every caller treats a throw the same way it
+    /// treats `.unavailable`: hold the clip.
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict
+
     // MARK: AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
 
     /// GET /ai-voice/voices — the ElevenLabs voice catalogue for the picker,
