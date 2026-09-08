@@ -35,6 +35,16 @@ struct FlythroughDetailView: View {
     @State private var chapterSyncNote: String?
     @State private var playerRefresh = UUID()
     @State private var showAerialIntro = false
+    /// The toolbox's "Make a reel" tile presents Reel Studio DIRECTLY now.
+    ///
+    /// It used to be `NavigationLink { PhotoStudioView(listing:, intent: .reel) }`
+    /// — the reel tile routed THROUGH the photo studio and relied on a "Make a
+    /// reel" card at the bottom of that screen to finish the journey. That is
+    /// the whole reason the reel card lived in AI Photo Studio, and it is why
+    /// the owner's read after the 4,000 sq ft field test was that the photo
+    /// studio "just opens the photo-to-reel feature". Reel Studio is its own
+    /// screen; the tile goes there.
+    @State private var showReelStudio = false
     @State private var showEdit = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
@@ -287,6 +297,27 @@ struct FlythroughDetailView: View {
         }
         .fullScreenCover(item: $openedFile) { item in
             ListingFileViewer(item: item)
+        }
+        // "Make a reel" opens REEL STUDIO, with this listing's photos and its
+        // aerial intro — the same two things `PhotoStudioView` used to hand it
+        // one screen further along.
+        //
+        // `extraClipURLs` is the aerial-as-intro fix and MUST NOT regress: the
+        // path most people take is this tile, and before that fix the aerial
+        // could only be used as a reel intro from inside the aerial sheet.
+        // `photos:` is read at presentation time (a fullScreenCover builds its
+        // content when it is presented), so a photo added since this screen
+        // appeared is included — the same live read `PhotoStudioView` did with
+        // its own `photos` state.
+        //
+        // `force: true` on dismiss for the same reason the aerial sheet uses it:
+        // a finished reel is a new file in this listing's folder, written while
+        // this screen stayed put, so the FILES scan cannot trust its stamp.
+        .fullScreenCover(isPresented: $showReelStudio, onDismiss: { loadFiles(force: true) }) {
+            ReelStudioView(listing: currentListing,
+                           photos: EnhancedPhoto.loadAll(listingID: currentListing.id),
+                           extraClipURLs: currentListing.aerialURL.map { [$0] } ?? [])
+                .environmentObject(model)
         }
         .task { await loadCompliance() }
         .onChange(of: spaceTypeRaw) { _ in
@@ -679,7 +710,10 @@ struct FlythroughDetailView: View {
                 .disabled(sample)
                 .accessibilityIdentifier("detail.photoStudio")
 
-                NavigationLink { PhotoStudioView(listing: currentListing, intent: .reel) } label: {
+                // STRAIGHT to Reel Studio — not through AI Photo Studio.
+                // `detail.reelStudio` stays on this tile (RendpropUITests taps
+                // it by that identifier); what changed is where it lands.
+                Button { showReelStudio = true } label: {
                     toolCard("Make a reel", sample ? createFirst : "Video + your voice",
                              "film.stack", RPGradient.reel, ai: true, dimmed: sample)
                 }
@@ -1891,6 +1925,21 @@ private struct AIFailure: Identifiable {
         isRateLimited = false
     }
 
+    /// Re-word a failure WITHOUT losing what class of failure it is.
+    ///
+    /// A batch of seventeen declutters that stops on a 402 has to say "9 of 17
+    /// changed" AND still offer Upgrade plan — `init(message:)` would drop
+    /// `isQuota` and leave the alert with an OK button and no way forward, which
+    /// is the worst of both. Copies the three flags verbatim; only the words
+    /// change.
+    init(_ other: AIFailure, title: String? = nil, message: String) {
+        self.title = title ?? other.title
+        self.message = message
+        isQuota = other.isQuota
+        isUnauthorized = other.isUnauthorized
+        isRateLimited = other.isRateLimited
+    }
+
     /// Transport failures that mean "no network", not "the server said no".
     static func isOffline(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
@@ -3043,12 +3092,83 @@ extension EnhancedPhoto {
     }
 }
 
-struct PhotoStudioView: View {
-    /// Why the studio was opened — `.reel` rings the "Make a reel" card so the
-    /// deep link lands on the thing the agent tapped for.
-    enum Intent { case photos, reel }
+/// One virtual-staging style, exactly as the staging dialog has always offered
+/// them and in the same order.
+///
+/// FILE SCOPE and `Identifiable` so `ForEach` can take the array straight. `id`
+/// is the exact string `aiEdit(_:_:style:)` / `performEdit` send as `style`, so
+/// the row on the surface cannot drift from what the server is asked for.
+///
+/// The wand's own "Pick a style" dialog and the long-press menu still spell the
+/// four out by hand. That is deliberate for now: the brief was to leave the wand
+/// exactly as it is, and those two lists are already correct. When one of them
+/// is next touched it should be pointed at `StagingStyle.all` instead.
+private struct StagingStyle: Identifiable, Hashable {
+    let id: String
+    let label: String
 
-    /// One place for the words on every edit button, so the empty-state chip,
+    /// Modern / Rustic / Minimalist / Scandinavian. `let` on a file-scope
+    /// `private` type: no actor, no isolation question, readable from anywhere.
+    static let all: [StagingStyle] = [
+        StagingStyle(id: "modern", label: "Modern"),
+        StagingStyle(id: "rustic", label: "Rustic"),
+        StagingStyle(id: "minimalist", label: "Minimalist"),
+        StagingStyle(id: "scandinavian", label: "Scandinavian"),
+    ]
+}
+
+/// One edit the agent picked off the studio's edit bar, waiting for them to say
+/// which photos it applies to.
+///
+/// FILE SCOPE, not nested in `PhotoStudioView`, and deliberately so. A `View` is
+/// `@MainActor`, so a type nested inside one inherits that isolation and every
+/// touch of it from a non-isolated context is an argument the compiler wins —
+/// the Mac build has already caught one call of exactly that shape
+/// (`normalizedASIN`, commit 78c4610). This is plain data with no statics; it
+/// has no reason to be isolated to anything.
+private struct PendingBatchEdit: Identifiable, Equatable {
+    /// The `edit` string `aiEdit`/`performEdit` take — twilight | sky | lawn |
+    /// declutter | stage | custom | animate. Never a new vocabulary.
+    let edit: String
+    /// Staging style, when the edit is `stage`. nil everywhere else.
+    let style: String?
+    /// The words the bar showed, reused verbatim in the selection bar and the
+    /// progress line so the agent never has to match a label to a job.
+    let title: String
+    /// False for edits that must not fan out — "Turn it into video" is a
+    /// ~1-minute poll and a separate charge PER PHOTO, so the grid lets exactly
+    /// one photo be ticked for it.
+    let multiple: Bool
+
+    var id: String { style.map { "\(edit).\($0)" } ?? edit }
+}
+
+/// The one-line verdict left on screen after a batch. `ok` is false when any
+/// photo failed, so the card can stop claiming success it did not have.
+private struct BatchNote: Equatable {
+    let text: String
+    let ok: Bool
+}
+
+/// Live counters for a running batch. `current` is 1-based and is the photo
+/// being worked on right now, so the card reads "photo 3 of 17".
+private struct BatchRun: Equatable {
+    let title: String
+    let total: Int
+    var current: Int = 1
+    var done: Int = 0
+    var failed: Int = 0
+}
+
+struct PhotoStudioView: View {
+    // `enum Intent { case photos, reel }` and `var intent` are GONE, together
+    // with the reel card they existed to ring. The "Make a reel" tile on the
+    // listing screen (and the app's `.reel` deep-link route) opens
+    // `ReelStudioView` directly now, so there is no longer such a thing as
+    // "the photo studio, opened for a reel". Nothing here reads an intent, so
+    // nothing here carries one.
+
+    /// One place for the words on every edit button, so the always-on edit bar,
     /// the wand menu and the long-press menu can never drift apart. Plain words,
     /// no jargon — EXCEPT where the plain word would hide the feature's actual
     /// name, which is what happened to Declutter (below). The COMPLIANCE wording
@@ -3072,6 +3192,34 @@ struct PhotoStudioView: View {
         static func stage(_ space: SpaceType) -> String {
             space == .realEstate ? "Add furniture" : "Furnish it"
         }
+
+        /// THE FEATURE'S NAME, on the surface, for the same reason `declutter`
+        /// is: the owner calls it staging, the industry calls it staging, and
+        /// `stage(_:)` above returns "Add furniture" on real estate — so the
+        /// word *staging* appeared nowhere an agent could see it. He reported it
+        /// missing alongside Declutter, twice.
+        ///
+        /// `stage(_:)` is NOT replaced: it is still the wand menu's and the
+        /// long-press menu's wording, and it is the plain-words gloss under this
+        /// heading. Word on top, gloss underneath — never the gloss instead of
+        /// the word (see `declutter`).
+        ///
+        /// Off real estate there is no industry term for furnishing a gym, so
+        /// the plain word IS the name; `stagingLabel` still carries the exact
+        /// wording ("Virtual staging" / "Furnish & style") into the disclosure.
+        static func staging(_ space: SpaceType) -> String {
+            space == .realEstate ? "Staging" : "Furnish it"
+        }
+
+        /// The sentence under the staging heading. On real estate it opens with
+        /// the literal words `stage(.realEstate)` used to say, so nothing an
+        /// agent already learned to look for disappeared off the screen.
+        static func stagingGloss(_ space: SpaceType) -> String {
+            space == .realEstate
+                ? "Add furniture in the style you pick — walls and windows stay as they are."
+                : "Puts in sofas, tables and art in the style you pick — walls and windows stay as they are."
+        }
+
     }
 
     /// A photo→motion clip already on disk for this listing
@@ -3111,7 +3259,6 @@ struct PhotoStudioView: View {
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
-    var intent: Intent = .photos
 
     private var mainRelPath: String? {
         model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
@@ -3120,14 +3267,11 @@ struct PhotoStudioView: View {
         mainRelPath == FileStore.relativePath(for: p.enhancedURL)
     }
 
-    /// This listing's finished aerial clip, if it has one — read LIVE from the
-    /// model, because `listing` is a value snapshot taken when this screen was
-    /// pushed and the aerial may have been generated since. `Listing.aerialURL`
-    /// already returns nil when the file is gone.
-    private var aerialClipURLs: [URL] {
-        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
-        return live.aerialURL.map { [$0] } ?? []
-    }
+    // `aerialClipURLs` moved OUT of this screen with the reel card. The aerial
+    // intro still rides into Reel Studio as `extraClipURLs` — it is handed over
+    // by `FlythroughDetailView`'s "Make a reel" cover now, which is the screen
+    // that owns the tile the agent actually taps.
+
     /// This listing's server row, when it already has one. Sent with the prompt
     /// assist so the server's fair-housing gate is scoped to THIS listing's real
     /// space type (COPY-ASSIST-CONTRACT §5) — without it the gate falls back to
@@ -3165,7 +3309,6 @@ struct PhotoStudioView: View {
     @State private var aiFailure: AIFailure?
     @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
     @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
-    @State private var showReelStudio = false            // multi-photo → stitched social reel
     @State private var animateTask: Task<Void, Never>?   // photo→clip poll; cancelled when the studio is left
     @State private var wandPhoto: EnhancedPhoto?         // photo under the visible wand button
     @State private var showWandDialog = false            // wand → change-this-photo chooser
@@ -3173,10 +3316,30 @@ struct PhotoStudioView: View {
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
     @State private var showSignIn = false                // AI edits run on the user's account
-    /// The edit an EMPTY-STATE CHIP asked for while there were no photos yet. The
+    /// The edit an EDIT-BAR CHIP asked for while there were no photos yet. The
     /// chips used to be decoration; now one picks a photo and this remembers what
     /// to do with it the moment the import lands. Cleared on a cancelled picker.
     @State private var pendingShowcaseEdit: String?
+    /// The staging style that chip carried, when it was a style button. Without
+    /// it, tapping "Rustic" on an empty studio picked a photo and then asked
+    /// which style — a question the agent had already answered.
+    @State private var pendingShowcaseStyle: String?
+    /// The edit chosen from the always-on edit bar and now waiting for the agent
+    /// to say WHICH photos it applies to. Non-nil == the grid is in selection
+    /// mode. With 17 photos on a listing, "tap the wand, pick Declutter"
+    /// seventeen times is the workflow this replaces.
+    @State private var batchEdit: PendingBatchEdit?
+    /// Photo ids ticked in the grid while `batchEdit` is live.
+    @State private var batchSelection: Set<String> = []
+    /// The batch currently running, for the progress card. nil when idle.
+    @State private var batchRun: BatchRun?
+    /// What the last batch did, in one line, kept on screen until the agent
+    /// starts something else. A batch that half-worked has to SAY so.
+    @State private var batchNote: BatchNote?
+    /// Photos a "Ask for anything" batch is waiting to apply its prompt to.
+    /// `CustomEditSheet` edits one photo's worth of prompt; the prompt it
+    /// returns is applied to every photo in here.
+    @State private var customBatchTargets: [EnhancedPhoto] = []
     /// The disclosure sentence the server recorded for each AI edit made this
     /// session, keyed by photo id — shown verbatim in the before/after view
     /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
@@ -3211,7 +3374,7 @@ struct PhotoStudioView: View {
     /// left the grid stuck on "Animating photo…" forever (F-A-12).
     private var isPresentingOverlay: Bool {
         compare != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
-            || showReelStudio || showLibrary || showCamera || showSignIn
+            || showLibrary || showCamera || showSignIn
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
             || showClipDeleteConfirm
     }
@@ -3249,19 +3412,35 @@ struct PhotoStudioView: View {
                     }
                 }
 
-                // AI PHOTO STUDIO LEADS WITH PHOTO EDITING. The reel card used to
-                // sit here, at the top, above everything — so opening this screen
-                // with no photos showed a dominant "Make a reel" poster and a row
-                // of inert chips, and the owner's read after the 4,000 sq ft field
-                // test was that the photo editing (declutter in particular) had
-                // been removed and the button just opened photo-to-reel. The reel
-                // card is still ALWAYS on screen and still names the voiceover —
-                // it is simply below the photos now, where it belongs.
+                // THE EDIT BAR IS ALWAYS HERE. Not "when the grid is empty" —
+                // ALWAYS, whatever the photo count.
+                //
+                // THE DEFECT, and it took three attempts to see it: the edits
+                // were never gone. `showWandDialog` on every thumb has offered
+                // Suggest, twilight, sky, lawn, DECLUTTER, staging (with all four
+                // styles behind it), a custom prompt and animate the whole time,
+                // one tap away. What was gone were the NAMES. The only place the
+                // words "Declutter" and staging appeared as visible affordances
+                // was `emptyShowcase`, and `emptyShowcase` was rendered behind
+                // `if photos.isEmpty` — so every agent who had actually done the
+                // work and imported photos saw a grid of thumbnails, a pink badge
+                // on each one, and no feature names anywhere. The owner reported
+                // Declutter missing TWICE; the names were behind `photos.isEmpty`.
+                // The previous fix made those chips into real Buttons and left
+                // them behind the same gate, which is why he searched again and
+                // still found nothing.
+                //
+                // The wand stays exactly as it was. It is a good shortcut. It
+                // just cannot be the only surface.
+                studioEditSection
+
                 if photos.isEmpty && !isProcessing {
                     emptyShowcase
                 }
 
-                if isProcessing {
+                // The single-edit spinner. A BATCH has its own card with counts
+                // in it (`batchProgressCard`), so the two never stack up.
+                if isProcessing && batchRun == nil {
                     HStack(spacing: 8) {
                         ProgressView()
                         Text(processingText).foregroundStyle(Theme.inkDim)
@@ -3270,23 +3449,12 @@ struct PhotoStudioView: View {
                 }
 
                 if !photos.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Tap a photo to see before and after. Tap the wand on a photo to change it.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        // W2-C4: the agent learns this BEFORE they tap, not after
-                        // a broker asks. Disclosure is automatic, not optional.
-                        Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
-                              systemImage: "checkmark.shield.fill")
-                            .font(.rpCaption.weight(.semibold))
-                            .foregroundStyle(Theme.good)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    studioGridHint
                 }
 
                 photoGrid
 
-                if !photos.isEmpty {
+                if !photos.isEmpty && batchEdit == nil {
                     ShareLink(items: photos.map { $0.enhancedURL }) {
                         Label("Share all photos", systemImage: "square.and.arrow.up")
                             .font(.rpBody.weight(.semibold))
@@ -3296,8 +3464,10 @@ struct PhotoStudioView: View {
                     }
                 }
 
-                reelCard
-
+                // `reelCard` is GONE from this screen. It only ever lived here
+                // because the listing's "Make a reel" tile routed THROUGH this
+                // screen (`intent: .reel`) and needed a door at the far end. The
+                // tile opens Reel Studio directly now, so the door is the tile.
                 clipsCard
             }
             .padding()
@@ -3333,10 +3503,24 @@ struct PhotoStudioView: View {
             PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
         }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
-        .sheet(item: $customEditPhoto) { p in
+        .sheet(item: $customEditPhoto, onDismiss: { customBatchTargets = [] }) { p in
             CustomEditSheet(photo: p, api: model.api, space: space,
                             listingServerID: listingServerID) { prompt in
-                aiEdit(p, "custom", prompt: prompt)
+                // ONE prompt, one or many photos. `customBatchTargets` is set
+                // only by the edit bar's "Ask for anything" → pick photos → Apply
+                // path; the wand and the long-press menu leave it empty and get
+                // the single-photo behaviour they always had, compare sheet and
+                // all. Same endpoint, same `aiEdit`/`performEdit` body, one
+                // charge per photo either way.
+                let targets = customBatchTargets.isEmpty ? [p] : customBatchTargets
+                customBatchTargets = []
+                if targets.count == 1 {
+                    aiEdit(targets[0], "custom", prompt: prompt)
+                } else {
+                    runBatch(PendingBatchEdit(edit: "custom", style: nil,
+                                              title: EditWords.custom, multiple: true),
+                             targets: targets, prompt: prompt)
+                }
             }
         }
         .sheet(item: $suggestResult) { r in
@@ -3346,17 +3530,11 @@ struct PhotoStudioView: View {
                 else { aiEdit(r.photo, edit) }
             }
         }
-        .fullScreenCover(isPresented: $showReelStudio) {
-            // The listing's aerial intro rides along as a ready-made lead clip,
-            // the same way `AerialIntroSheet` passes its own. Without this the
-            // aerial could ONLY open a reel from inside the aerial sheet — and the
-            // path most people take is the listing's "Make a reel" card, which
-            // lands here, so in the 4,000 sq ft field test the aerial silently
-            // could not be used as a reel intro at all.
-            ReelStudioView(listing: listing, photos: photos,
-                           extraClipURLs: aerialClipURLs)
-                .environmentObject(model)
-        }
+        // NO reel cover here any more. Reel Studio is presented by the LISTING
+        // screen's "Make a reel" tile, which is where the aerial intro is handed
+        // over as `extraClipURLs` — that fix (the aerial could otherwise only be
+        // used as a reel intro from inside the aerial sheet) has moved with it,
+        // not been dropped.
     }
 
     var body: some View {
@@ -3448,21 +3626,61 @@ struct PhotoStudioView: View {
 
     private var photoGrid: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(photos) { p in
-                // Wand overlay is a SIBLING of the thumb button (a Button
-                // inside another Button's label never gets the tap).
-                ZStack(alignment: .bottomTrailing) {
-                    Button { compare = p } label: { thumb(p) }
-                        .buttonStyle(ScalePressStyle())
-                        .accessibilityLabel(Text("Photo — opens before-and-after compare"))
-                        .contextMenu { photoMenu(p) }
-                    wandButton(p)
-                }
-            }
+            ForEach(photos) { p in photoCell(p) }
         }
         // New AI edits and deletions settle into the grid instead of
         // popping — keyed on count so only inserts/removes animate.
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: photos.count)
+    }
+
+    /// One thumb, in whichever of the grid's TWO modes is live.
+    ///
+    /// Normal: tap opens before/after, long-press opens the menu, and the wand
+    /// sits in the corner — all exactly as before, because the wand is a good
+    /// shortcut and nothing about it needed fixing.
+    ///
+    /// Selection: an edit from the bar is waiting for its targets, so a tap
+    /// ticks the photo instead. The wand is not drawn — a tap that changes one
+    /// photo while the screen is asking which photos to change is a trap.
+    @ViewBuilder private func photoCell(_ p: EnhancedPhoto) -> some View {
+        // Wand overlay is a SIBLING of the thumb button (a Button
+        // inside another Button's label never gets the tap).
+        ZStack(alignment: .bottomTrailing) {
+            if batchEdit == nil {
+                Button { compare = p } label: { thumb(p) }
+                    .buttonStyle(ScalePressStyle())
+                    .accessibilityLabel(Text("Photo — opens before-and-after compare"))
+                    .contextMenu { photoMenu(p) }
+                wandButton(p)
+            } else {
+                Button { toggleBatchSelection(p) } label: {
+                    thumb(p).overlay { selectionOverlay(p) }
+                }
+                .buttonStyle(ScalePressStyle())
+                .disabled(isProcessing)
+                .accessibilityLabel(Text(batchSelection.contains(p.id)
+                                         ? "Photo, selected. Tap to leave it out."
+                                         : "Photo, not selected. Tap to include it."))
+            }
+        }
+    }
+
+    /// The tick (and the dimming) on a photo while an edit picks its targets.
+    private func selectionOverlay(_ p: EnhancedPhoto) -> some View {
+        let selected = batchSelection.contains(p.id)
+        return RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.black.opacity(selected ? 0 : 0.35))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 3)
+            )
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Color.white, selected ? Theme.accent : Color.black.opacity(0.35))
+                    .padding(8)
+            }
     }
 
     @ViewBuilder private func photoMenu(_ p: EnhancedPhoto) -> some View {
@@ -3513,10 +3731,50 @@ struct PhotoStudioView: View {
     }
 
     /// AI edit (twilight | sky | lawn | declutter | stage | custom) via the
-    /// `ai-photo` edge function. `style` rides along for stage, `prompt` for
-    /// custom. Saves the result as a NEW photo (keeps the original) and opens
-    /// the before/after. One job at a time (re-entrancy guard, F-A-22); the
-    /// JPEG work runs off the main actor.
+    /// `ai-photo` edge function, for ONE photo, opening the before/after when it
+    /// lands. `style` rides along for stage, `prompt` for custom. One job at a
+    /// time (re-entrancy guard, F-A-22).
+    ///
+    /// This is now a thin shell around `performEdit`, which is the same body it
+    /// always had. The split exists so the edit bar's "apply to these photos"
+    /// path can run the IDENTICAL code once per photo instead of inventing a
+    /// batch endpoint or a second billing path. Nothing about a single edit
+    /// changed: the guard, the sign-in check, the spinner text, the success
+    /// haptic and the compare sheet are all still here, in this order.
+    private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
+                        style: String? = nil, prompt: String? = nil) {
+        guard !isProcessing else { return }
+        guard requireSignIn() else { return }
+        isProcessing = true
+        batchNote = nil
+        processingText = "Working on your photo…"
+        Task { @MainActor in
+            do {
+                let newPhoto = try await performEdit(p, edit, style: style, prompt: prompt)
+                isProcessing = false
+                Haptics.success()
+                compare = newPhoto   // show the before/after (and its disclosure)
+            } catch {
+                isProcessing = false
+                // The fair-housing denylist speaks for itself — show its
+                // wording, let the user re-word, never retry automatically.
+                let title = (error as? APIError)?.code == "unsupported_edit"
+                    ? "That change isn't allowed" : "That change didn't work"
+                aiFailure = AIFailure(error, title: title)
+            }
+        }
+    }
+
+    /// ONE AI edit, start to finish: prep the JPEG, anchor the listing, publish
+    /// the untouched original for disclosure, call `/ai-photo`, write the result
+    /// beside its "before", insert it into the grid, meter it. Returns the new
+    /// photo. Throws whatever the call threw — the CALLER decides whether that
+    /// is an alert (single edit) or a counted failure (a batch that keeps going).
+    ///
+    /// EXTRACTED VERBATIM from `aiEdit`'s task body, deliberately unchanged in
+    /// every respect that costs money or touches compliance. It does not present
+    /// anything and it does not clear `isProcessing`: a batch owns the spinner
+    /// for its whole run, and only the single-photo path opens the compare view.
     ///
     /// COMPLIANCE (W2-C3). Before the edit runs we publish the UNTOUCHED
     /// original with `role:"original"` and send its asset id as
@@ -3528,12 +3786,15 @@ struct PhotoStudioView: View {
     ///
     /// A `400 unsupported_edit` from the fair-housing denylist surfaces the
     /// server's own wording and is NEVER auto-retried — the user re-words it.
-    private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
-                        style: String? = nil, prompt: String? = nil) {
-        guard !isProcessing else { return }
-        guard requireSignIn() else { return }
-        isProcessing = true
-        processingText = "Working on your photo…"
+    ///
+    /// `@MainActor` is spelled out rather than inherited from `View`. Everything
+    /// in here reads `AppModel`, `@State` or `Analytics`, all three of which are
+    /// main-actor, and this file has already lost one build to an isolation
+    /// guess (commit 78c4610). The long-running work — JPEG encode, upload, the
+    /// model call — is `await`ed and hops off on its own, exactly as before.
+    @MainActor
+    private func performEdit(_ p: EnhancedPhoto, _ edit: String,
+                             style: String?, prompt: String?) async throws -> EnhancedPhoto {
         let api = model.api          // snapshot on the main actor
         let targetDir = dir
         let source = p.enhancedURL
@@ -3550,80 +3811,77 @@ struct PhotoStudioView: View {
         let isSample = listing.isSample
         let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
         let spaceRaw = space.rawValue    // THIS listing's type, not the selected one (P2-5)
-        let tapKey = UUID().uuidString   // one idempotency key per user tap
-        Task {
-            do {
-                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
-                    throw AIImagePrep.error("Couldn't read that photo.")
-                }
-                // Anchor + "before", both best effort.
-                var serverListingID: UUID? = nil
-                var originalAssetID: String? = nil
-                if !isSample {
-                    serverListingID = await model.serverListingIDForCompliance(listingLocalID)
-                    if let sid = serverListingID, let unaltered {
-                        await MainActor.run { processingText = "Saving the original for disclosure…" }
-                        originalAssetID = await model.publishOriginalForDisclosure(
-                            listingServerID: sid, fileURL: unaltered)
-                        await MainActor.run { processingText = "Working on your photo…" }
-                    }
-                }
+        let tapKey = UUID().uuidString   // one idempotency key per photo, per run
 
-                var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
-                request.style = style
-                request.prompt = prompt
-                request.spaceType = spaceRaw
-                request.listingServerID = serverListingID
-                request.label = disclosureLabel
-                request.originalAssetID = originalAssetID
-                request.idempotencyKey = tapKey
-                let result = try await api.aiPhotoEdit(request)
-                // Save with the same enh-/orig- convention as ingested photos: a
-                // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
-                // on relaunch. Timestamp id sorts newest-first alongside ingests;
-                // the copied "before" keeps the compare working after relaunch.
-                let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
-                    + "-" + String(UUID().uuidString.prefix(4))
-                let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
-                guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
-                    throw AIImagePrep.error("The AI didn't return an image. Try again.")
-                }
-                let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
-                try? FileManager.default.copyItem(at: source, to: beforeURL)
-                // Never point originalURL at another photo's live file — delete()
-                // removes it, so fall back to self, not the source, if the copy fails.
-                let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
-                    ? beforeURL : outURL
-                let disclosure = result.disclosure
-                await MainActor.run {
-                    let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
-                    photos.insert(newPhoto, at: 0)
-                    if let disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
-                    isProcessing = false
-                    Haptics.success()
-                    compare = newPhoto   // show the before/after (and its disclosure)
-                    Analytics.track("ai_photo_edit", ["task": edit, "ok": "true"])
-                    if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
-                }
-                // Publish the "after" against the same provenance row so the
-                // tour can show the pair side by side (NorthstarMLS). Off the
-                // critical path — the edit is already on screen, and a failure
-                // costs nothing: the original alone satisfies AB 723.
-                if let provenanceID = result.provenanceID, let sid = serverListingID {
-                    await model.attachAlteredPhotoForDisclosure(
-                        provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
-                }
-            } catch {
-                await MainActor.run {
-                    isProcessing = false
-                    // The fair-housing denylist speaks for itself — show its
-                    // wording, let the user re-word, never retry automatically.
-                    let title = (error as? APIError)?.code == "unsupported_edit"
-                        ? "That change isn't allowed" : "That change didn't work"
-                    aiFailure = AIFailure(error, title: title)
-                }
+        guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
+            throw AIImagePrep.error("Couldn't read that photo.")
+        }
+        // Anchor + "before", both best effort.
+        var serverListingID: UUID? = nil
+        var originalAssetID: String? = nil
+        if !isSample {
+            serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+            if let sid = serverListingID, let unaltered {
+                // Put the step on screen and put back whatever line was there —
+                // a batch's line counts photos and must survive this detour.
+                let resume = processingText
+                processingText = "Saving the original for disclosure…"
+                originalAssetID = await model.publishOriginalForDisclosure(
+                    listingServerID: sid, fileURL: unaltered)
+                processingText = resume
             }
         }
+
+        var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
+        request.style = style
+        request.prompt = prompt
+        request.spaceType = spaceRaw
+        request.listingServerID = serverListingID
+        request.label = disclosureLabel
+        request.originalAssetID = originalAssetID
+        request.idempotencyKey = tapKey
+        let result = try await api.aiPhotoEdit(request)
+        // Save with the same enh-/orig- convention as ingested photos: a
+        // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
+        // on relaunch. Timestamp id sorts newest-first alongside ingests;
+        // the copied "before" keeps the compare working after relaunch.
+        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
+            + "-" + String(UUID().uuidString.prefix(4))
+        let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
+        guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
+            throw AIImagePrep.error("The AI didn't return an image. Try again.")
+        }
+        let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
+        try? FileManager.default.copyItem(at: source, to: beforeURL)
+        // Never point originalURL at another photo's live file — delete()
+        // removes it, so fall back to self, not the source, if the copy fails.
+        let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
+            ? beforeURL : outURL
+
+        let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
+        photos.insert(newPhoto, at: 0)
+        if let disclosure = result.disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
+        // METERED PER PHOTO, because it is charged per photo. `batch` says how
+        // it was reached; the event, and everything else about it, is the one
+        // `ai_photo_edit` a single wand tap has always sent.
+        Analytics.track("ai_photo_edit",
+                        ["task": edit, "ok": "true", "batch": batchRun == nil ? "false" : "true"])
+        if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
+
+        // Publish the "after" against the same provenance row so the
+        // tour can show the pair side by side (NorthstarMLS). Off the
+        // critical path — the edit is already on screen, and a failure
+        // costs nothing: the original alone satisfies AB 723. Detached from
+        // the caller so photo 4 of 17 is not waiting on photo 3's audit row.
+        if let provenanceID = result.provenanceID, let sid = serverListingID {
+            let appModel = model     // snapshot: an @EnvironmentObject read is a
+                                     // view-graph read, and this outlives the call
+            Task { @MainActor in
+                await appModel.attachAlteredPhotoForDisclosure(
+                    provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
+            }
+        }
+        return newPhoto
     }
 
     /// The label the public disclosure line carries for a studio edit. Studio
@@ -3818,79 +4076,22 @@ struct PhotoStudioView: View {
         return address.isEmpty ? "This \(space.spaceNoun)" : address
     }
 
-    /// Photos need at least two frames before there is anything to stitch.
-    private var canMakeReel: Bool { photos.count >= 2 }
-
-    /// The reel maker — ALWAYS visible, from zero photos, so the feature (and
-    /// the voice + captions inside it) is named before anyone taps anything.
-    /// Disabled until two photos exist, with the reason said plainly.
-    @ViewBuilder private var reelCard: some View {
-        Button { showReelStudio = true } label: { reelCardFace }
-            .buttonStyle(ScalePressStyle())
-            .disabled(!canMakeReel)
-            .accessibilityIdentifier("detail.reelStudio")
-            .accessibilityLabel(Text(canMakeReel
-                                     ? "Make a reel. Your photos become a video with your voice and captions."
-                                     : "Make a reel. Add 2 photos to start."))
-    }
-
-    private var reelCardFace: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            reelCardHeader
-            reelVoiceCallout
-            Text(canMakeReel ? "Ready — \(photos.count) photos" : "Add 2 photos to start")
-                .font(.rpCaption.weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.95))
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RPGradient.reel)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        // Arrived by tapping "Make a reel" on the listing? Ring the card the
-        // deep link was aiming at, so it is unmistakably the thing to tap.
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                .strokeBorder(Color.white.opacity(intent == .reel ? 0.85 : 0), lineWidth: 2)
-        )
-        .opacity(canMakeReel ? 1 : 0.55)
-    }
-
-    private var reelCardHeader: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "film.stack")
-                .font(.system(size: 22, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Color.white)
-                .frame(width: 48, height: 48)
-                .background(Color.white.opacity(0.18),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text("Make a reel").font(.rpHeadline).foregroundStyle(Color.white)
-                    AIPill()
-                }
-                Text("Your photos become a video — add your voice and captions.")
-                    .font(.rpCaption).foregroundStyle(Color.white.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-            }
-            Spacer(minLength: 8)
-            if canMakeReel {
-                Image(systemName: "chevron.right")
-                    .font(.rpCaption.weight(.bold)).foregroundStyle(Color.white.opacity(0.9))
-            }
-        }
-    }
-
-    /// Names the voiceover where the agent actually stands. Before this, the
-    /// word "voice" appeared nowhere until two photos and a tap later.
-    private var reelVoiceCallout: some View {
-        Text("🎙 Voice + captions")
-            .font(.rpCaption.weight(.semibold))
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Color.white.opacity(0.18), in: Capsule())
-    }
+    // `canMakeReel`, `reelCard`, `reelCardFace`, `reelCardHeader` and
+    // `reelVoiceCallout` were all deleted from here.
+    //
+    // They existed for ONE reason: the listing screen's "Make a reel" tile was
+    // `NavigationLink { PhotoStudioView(listing:, intent: .reel) }`, so the reel
+    // journey ran through AI Photo Studio and needed a door at the far end —
+    // and the highlight ring on that door (`intent == .reel`) was there to tell
+    // the agent that the screen they had landed on was not the screen they
+    // asked for. The tile presents `ReelStudioView` itself now, so the door,
+    // the ring and the intent that drove it are all gone. Reels are not a photo
+    // editing feature and they no longer take up room on the photo editing
+    // screen.
+    //
+    // The reel's own copy is NOT lost — "Make a reel", "Video + your voice" and
+    // the voice/captions promise live on the listing tile and inside Reel
+    // Studio's own steps.
 
     /// Motion clips already generated for this listing (F-A-23). Before this,
     /// an "Animate" result was reachable exactly once — the file stayed on the
@@ -3974,57 +4175,164 @@ struct PhotoStudioView: View {
         .accessibilityLabel(Text("Change this photo with AI"))
     }
 
-    /// Empty state = a menu of what the AI can do for THIS kind of space, not a
-    /// blank box (a gym never sees "green lawn").
+    /// The empty state, now that the edit bar above it carries the names. It is
+    /// a prompt to add a photo and nothing else — the menu of what the AI can do
+    /// moved OUT of here, permanently, because being reachable only from here is
+    /// exactly the defect (see `studioEditSection`).
     private var emptyShowcase: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 32, weight: .medium))
+        VStack(spacing: 10) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 30, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Color.white)
-                .frame(width: 64, height: 64)
+                .frame(width: 60, height: 60)
                 .background(RPGradient.photo,
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             Text("Add a photo")
                 .font(.rpHeadline).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
-            Text(space == .realEstate
-                 ? "Then tap one button to fix the sky, clean the room, or stage it."
-                 : "Then tap one button to fix the sky, tidy the space, or furnish it.")
+            Text("Every change above works the moment you have one. Tap a change now and it picks the photo first.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
-                                GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                showcaseChip("moon.stars.fill", EditWords.twilight, "twilight")
-                showcaseChip("cloud.sun.fill", EditWords.sky, "sky")
-                if space == .realEstate {
-                    showcaseChip("leaf.fill", EditWords.lawn, "lawn")
-                }
-                showcaseChip("sparkles.rectangle.stack.fill", EditWords.declutter, "declutter",
-                             sub: EditWords.declutterGloss)
-                showcaseChip("sofa.fill", EditWords.stage(space), "stage")
-                showcaseChip("play.rectangle.on.rectangle.fill", EditWords.animate, "animate")
-                if space != .realEstate {
-                    showcaseChip("text.bubble.fill", EditWords.custom, "custom")
-                }
-            }
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, 22)
+        .padding(.vertical, 18)
     }
 
-    /// One TAPPABLE edit in the empty state.
+    // MARK: - The always-on edit bar
+    //
+    // Every piece below is its own small sub-view. This file has hit the
+    // type-checker's expression budget before ("unable to type-check this
+    // expression in reasonable time") and `studioCore` must stay a short list of
+    // identifiers, so nothing here nests more than it has to.
+
+    /// Everything the AI can do to a photo, NAMED, above the grid, at every
+    /// photo count. Plus the selection bar and progress card the batch path
+    /// needs — bundled into one `studioCore` child on purpose (its VStack is
+    /// already close to `ViewBuilder`'s ten-child limit).
+    @ViewBuilder private var studioEditSection: some View {
+        VStack(spacing: 10) {
+            editBarCard
+            stagingCard
+            if let pending = batchEdit {
+                batchSelectionBar(pending)
+            }
+            if let run = batchRun {
+                batchProgressCard(run)
+            }
+            if let note = batchNote, batchRun == nil {
+                batchNoteCard(note)
+            }
+        }
+    }
+
+    /// The named edits. One tap each — with photos on screen it asks WHICH
+    /// photos; with an empty studio it opens the picker and applies the edit to
+    /// the photo that lands (`startShowcaseEdit`).
+    private var editBarCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("CHANGE YOUR PHOTOS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Spacer(minLength: 8)
+                if !photos.isEmpty {
+                    Text("\(photos.count) photo\(photos.count == 1 ? "" : "s")")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+            }
+            editChipGrid
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// The chips themselves. `lawn` is real-estate only — a gym never sees
+    /// "green lawn" (P2-4) — and everything else is offered to every trade,
+    /// INCLUDING "Ask for anything", which used to be hidden from real estate
+    /// for no reason an agent with an odd request would accept.
+    private var editChipGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                            GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            editChip("sparkles.rectangle.stack.fill", EditWords.declutter, "declutter",
+                     sub: EditWords.declutterGloss)
+            editChip("moon.stars.fill", EditWords.twilight, "twilight")
+            editChip("cloud.sun.fill", EditWords.sky, "sky")
+            if space == .realEstate {
+                editChip("leaf.fill", EditWords.lawn, "lawn")
+            }
+            editChip("text.bubble.fill", EditWords.custom, "custom")
+            editChip("play.rectangle.on.rectangle.fill", EditWords.animate, "animate",
+                     multiple: false)
+        }
+    }
+
+    /// STAGING, by its own name, with all four styles on the surface.
     ///
-    /// This was a plain `HStack` — a poster of what the AI could do with no way to
-    /// do any of it. In the 4,000 sq ft field test that row of decorations was the
-    /// first thing under a dominant "Make a reel" card, and nothing in it
-    /// responded to a tap, which is how "AI Photo Studio just opens the
-    /// photo-to-reel feature" became the honest description of the screen.
+    /// Before this the word "staging" appeared nowhere an agent could see:
+    /// `EditWords.stage(.realEstate)` returns "Add furniture", and Modern /
+    /// Rustic / Minimalist / Scandinavian lived one confirmation dialog behind
+    /// another one. Two nested dialogs is not discoverable — the owner reported
+    /// virtual staging missing right beside Declutter. The heading is the
+    /// industry word, the line under it is the plain-words gloss (never instead
+    /// of the word), and the styles are buttons you can read without tapping
+    /// anything.
+    private var stagingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "sofa.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.accent)
+                Text(EditWords.staging(space).uppercased())
+                    .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Spacer(minLength: 8)
+            }
+            Text(EditWords.stagingGloss(space))
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            stagingStyleGrid
+            Text("\(stagingLabel) is disclosed on your tour.")
+                .font(.caption2).foregroundStyle(Theme.inkDim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private var stagingStyleGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                            GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(StagingStyle.all) { style in
+                stagingStyleChip(style)
+            }
+        }
+    }
+
+    private func stagingStyleChip(_ style: StagingStyle) -> some View {
+        Button { startEdit("stage", style: style.id, title: "\(EditWords.staging(space)) · \(style.label)") } label: {
+            Text(style.label)
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.ink)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Theme.accentSoft,
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+        .disabled(isProcessing)
+        .accessibilityLabel(Text("\(style.label) — pick the photos and the furniture is added to each one."))
+    }
+
+    /// One named edit.
     ///
-    /// Now it picks a photo and applies that edit to it. `sub` is the plain-words
-    /// gloss under the feature's real name (see `EditWords.declutter`).
-    private func showcaseChip(_ icon: String, _ label: String, _ edit: String,
-                              sub: String? = nil) -> some View {
-        Button { startShowcaseEdit(edit) } label: {
+    /// This was `showcaseChip`, and the previous fix already made it a real
+    /// `Button` instead of a decoration. That was necessary and not sufficient:
+    /// it stayed inside `emptyShowcase`, behind `if photos.isEmpty`, so an agent
+    /// with 17 photos on the listing still saw none of these words. `sub` is the
+    /// plain-words gloss UNDER the feature's real name, never instead of it
+    /// (see `EditWords.declutter`).
+    private func editChip(_ icon: String, _ label: String, _ edit: String,
+                          sub: String? = nil, multiple: Bool = true) -> some View {
+        Button { startEdit(edit, style: nil, title: label, multiple: multiple) } label: {
             HStack(spacing: 8) {
                 Image(systemName: icon)
                     .font(.system(size: 14, weight: .semibold))
@@ -4052,22 +4360,178 @@ struct PhotoStudioView: View {
         }
         .buttonStyle(ScalePressStyle())
         .disabled(isProcessing)
-        .accessibilityLabel(Text("\(label). Pick a photo and this change is made to it."))
+        .accessibilityLabel(Text(photos.isEmpty
+                                 ? "\(label). Pick a photo and this change is made to it."
+                                 : "\(label). Pick the photos and this change is made to each one."))
+    }
+
+    // MARK: - Choosing which photos an edit applies to
+
+    /// The bar that appears once an edit is chosen and there are photos to
+    /// choose from. Tap thumbs in the grid, then Apply.
+    private func batchSelectionBar(_ pending: PendingBatchEdit) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(pending.multiple
+                 ? "Tap the photos to change, then apply."
+                 : "Tap the photo to use.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            HStack(spacing: 8) {
+                Text(pending.title)
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Spacer(minLength: 8)
+                Text("\(batchSelection.count) selected")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(batchSelection.isEmpty ? Theme.inkDim : Theme.accent)
+            }
+            batchSelectionButtons(pending)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func batchSelectionButtons(_ pending: PendingBatchEdit) -> some View {
+        HStack(spacing: 8) {
+            if pending.multiple {
+                // `label:` form rather than `Button(<ternary of literals>)`:
+                // `Button(_:action:)` has both a LocalizedStringKey and a
+                // StringProtocol overload, and handing it a ternary is a
+                // needless overload-resolution puzzle in a file that has run
+                // the type-checker out of budget before.
+                Button {
+                    batchSelection = batchSelection.count == photos.count
+                        ? Set<String>() : Set(photos.map(\.id))
+                    Haptics.selection()
+                } label: {
+                    Text(batchSelection.count == photos.count ? "Clear" : "Select all")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            Button { cancelBatchSelection() } label: {
+                Text("Cancel")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 4)
+            Button { applyBatchSelection(pending) } label: {
+                Text(batchSelection.isEmpty
+                     ? "Apply"
+                     : "Apply to \(batchSelection.count) photo\(batchSelection.count == 1 ? "" : "s")")
+                    .font(.rpCaption.weight(.bold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(Theme.accent, in: Capsule())
+            }
+            .buttonStyle(ScalePressStyle())
+            .disabled(batchSelection.isEmpty || isProcessing)
+            .opacity(batchSelection.isEmpty || isProcessing ? 0.5 : 1)
+            .accessibilityIdentifier("studio.batchApply")
+        }
+    }
+
+    /// A running batch, with counts. A batch is minutes of work and money per
+    /// photo, so it says which photo it is on and how many have failed WHILE it
+    /// runs, not only at the end.
+    private func batchProgressCard(_ run: BatchRun) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("\(run.title) — photo \(min(run.current, run.total)) of \(run.total)")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+            }
+            ProgressView(value: Double(run.done + run.failed), total: Double(max(run.total, 1)))
+                .tint(Theme.accent)
+            Text(run.failed == 0
+                 ? "\(run.done) done. Each photo is a separate change, saved beside its original."
+                 : "\(run.done) done, \(run.failed) failed. The rest keep going.")
+                .font(.rpCaption)
+                .foregroundStyle(run.failed == 0 ? Theme.inkDim : Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// What the last batch actually did. Stays until the agent starts something
+    /// else — a run where 14 of 17 landed has to say so plainly, and must not
+    /// wear a green tick while it says it.
+    private func batchNoteCard(_ note: BatchNote) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: note.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(note.ok ? Theme.good : Theme.warn)
+            Text(note.text)
+                .font(.rpCaption).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button { batchNote = nil } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkDim)
+            }
+            .accessibilityLabel(Text("Dismiss"))
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// The line above the grid. It has to explain the grid's TWO modes now.
+    private var studioGridHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(batchEdit == nil
+                 ? "Tap a photo to see before and after. Tap the wand on a photo to change just that one."
+                 : "Tap the photos you want changed — they get a tick.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            // W2-C4: the agent learns this BEFORE they tap, not after
+            // a broker asks. Disclosure is automatic, not optional.
+            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
+                  systemImage: "checkmark.shield.fill")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.good)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// An edit-bar chip was tapped. Two roads out of here, and neither of them
+    /// is a new way to spend money:
+    ///
+    ///  * NO PHOTOS YET → open the picker, remember the edit (and the staging
+    ///    style, if it was a style button), and run it on the photo that lands.
+    ///  * PHOTOS ON SCREEN → put the grid into selection mode and let the agent
+    ///    say which ones. With 17 photos on a listing, "tap the wand, pick
+    ///    Declutter" seventeen times is the workflow this exists to kill.
+    ///
+    /// EVERY GATE STAYS WHERE IT WAS. Sign-in is checked here, before anything
+    /// opens, through the same `requireSignIn()` that `aiEdit`, `animate` and
+    /// `openCustomEdit` call — and it is checked AGAIN by whichever of those
+    /// actually runs. The AI-consent gate (`.aiConsentGate()` on this view's
+    /// body) and the quota/paywall path (`AIFailure.isQuota` → `PaywallRouter`)
+    /// are untouched. This adds ways to REACH `aiEdit`, never a way around it.
+    private func startEdit(_ edit: String, style: String?, title: String,
+                           multiple: Bool = true) {
+        guard !isProcessing else { return }
+        guard requireSignIn() else { return }
+        batchNote = nil
+        guard !photos.isEmpty else {
+            startShowcaseEdit(edit, style: style)
+            return
+        }
+        batchEdit = PendingBatchEdit(edit: edit, style: style, title: title, multiple: multiple)
+        // Pre-tick the whole listing for the fan-out edits: with 17 photos the
+        // answer is almost always "all of them", and un-ticking three is less
+        // work than ticking fourteen. Never for the one-at-a-time edits.
+        batchSelection = multiple ? Set(photos.map(\.id)) : Set<String>()
+        Haptics.selection()
     }
 
     /// A chip was tapped with no photos on screen: open the picker and remember
     /// the edit, so the photo the agent chooses gets it immediately.
-    ///
-    /// EVERY GATE STAYS WHERE IT WAS. Sign-in is checked here, before the picker
-    /// opens, through the same `requireSignIn()` that `aiEdit`, `animate` and
-    /// `openCustomEdit` call — and it is checked AGAIN by whichever of those
-    /// actually runs. The AI-consent gate (`.aiConsentGate()` on this view's body)
-    /// and the quota/paywall path (`AIFailure.isQuota` → `PaywallRouter`) are
-    /// untouched: this adds a way to reach `aiEdit`, not a way around it.
-    private func startShowcaseEdit(_ edit: String) {
-        guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+    private func startShowcaseEdit(_ edit: String, style: String? = nil) {
         pendingShowcaseEdit = edit
+        pendingShowcaseStyle = style
         showLibrary = true
         Haptics.selection()
     }
@@ -4077,12 +4541,19 @@ struct PhotoStudioView: View {
     /// guard (F-A-22) lets it through.
     private func runPendingShowcaseEdit() {
         guard let edit = pendingShowcaseEdit else { return }
+        let style = pendingShowcaseStyle
         pendingShowcaseEdit = nil
+        pendingShowcaseStyle = nil
         guard let target = photos.first else { return }
         switch edit {
         case "animate":
             animate(target)
         case "stage":
+            // A style button already answered "which style?" — do not ask again.
+            if let style {
+                aiEdit(target, "stage", style: style)
+                return
+            }
             // Staging needs a style first. Presenting a dialog in the same event
             // that dismissed the photo picker silently drops it, so chain it off
             // the run loop exactly the way the wand menu already does.
@@ -4092,6 +4563,152 @@ struct PhotoStudioView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { openCustomEdit(target) }
         default:
             aiEdit(target, edit)
+        }
+    }
+
+    /// Tick / untick one photo while an edit is waiting for its targets. The
+    /// one-at-a-time edits (animate) replace the selection instead of adding to
+    /// it — a minute of polling and a separate charge per photo is not something
+    /// to fan out by accident.
+    private func toggleBatchSelection(_ p: EnhancedPhoto) {
+        guard let pending = batchEdit else { return }
+        if !pending.multiple {
+            batchSelection = batchSelection.contains(p.id) ? Set<String>() : Set([p.id])
+        } else if batchSelection.contains(p.id) {
+            batchSelection.remove(p.id)
+        } else {
+            batchSelection.insert(p.id)
+        }
+        Haptics.selection()
+    }
+
+    private func cancelBatchSelection() {
+        batchEdit = nil
+        batchSelection = []
+    }
+
+    /// Apply: turn the ticked ids back into photos, in GRID ORDER (the set has
+    /// no order of its own and the progress line has to match what the agent is
+    /// looking at), then hand them to the right runner.
+    private func applyBatchSelection(_ pending: PendingBatchEdit) {
+        let targets = photos.filter { batchSelection.contains($0.id) }
+        guard !targets.isEmpty else { return }
+        cancelBatchSelection()
+        switch pending.edit {
+        case "animate":
+            // Never batched. `animate` is its own endpoint, its own poll and its
+            // own charge; the chip is `multiple: false` so this is one photo.
+            if let first = targets.first { animate(first) }
+        case "custom":
+            // The prompt comes first, from the sheet, and then goes to every
+            // photo the agent ticked. The sheet previews the first of them.
+            //
+            // Sign-in is checked BEFORE the targets are parked. `openCustomEdit`
+            // checks it too and would simply not present — which would leave
+            // `customBatchTargets` set, and the NEXT single custom edit from the
+            // wand would silently fan out across photos the agent never picked.
+            guard let first = targets.first, requireSignIn() else { return }
+            customBatchTargets = targets
+            openCustomEdit(first)
+        default:
+            runBatch(pending, targets: targets)
+        }
+    }
+
+    /// Run ONE edit over MANY photos, in sequence, on the user's own account.
+    ///
+    /// There is no batch endpoint and no second billing path: this loops
+    /// `performEdit`, which is the exact body `aiEdit` runs for a single photo —
+    /// same `/ai-photo` call, same idempotency key per photo, same original
+    /// published for disclosure per photo, same `ai_photo_edit` event per photo.
+    /// Seventeen photos is seventeen edits, charged and metered as seventeen
+    /// edits, because that is what it is.
+    ///
+    /// FAILURE IS REPORTED HONESTLY. One photo failing does not stop the other
+    /// sixteen — except when the server says the allowance is gone (402) or the
+    /// session expired (401), where continuing would burn fourteen more calls
+    /// that cannot succeed. Those stop the run and surface the SAME alert a
+    /// single edit shows, keeping its Upgrade plan / Sign in buttons, with a
+    /// line saying how many landed first.
+    private func runBatch(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
+                          prompt: String? = nil) {
+        guard !isProcessing else { return }
+        guard requireSignIn() else { return }
+        guard !targets.isEmpty else { return }
+        isProcessing = true
+        batchNote = nil
+        batchRun = BatchRun(title: pending.title, total: targets.count)
+        processingText = "\(pending.title) — photo 1 of \(targets.count)…"
+        Haptics.selection()
+        // `@MainActor in` explicitly rather than relying on inheritance: every
+        // line in here touches `@State`, `AppModel` or `Analytics`, all three of
+        // which are main-actor, and this file has already lost one build to an
+        // isolation guess (commit 78c4610).
+        Task { @MainActor in
+            var done = 0
+            var failedCount = 0
+            var firstFailure: AIFailure?
+            var stoppedEarly = false
+
+            for (index, photo) in targets.enumerated() {
+                batchRun?.current = index + 1
+                processingText = "\(pending.title) — photo \(index + 1) of \(targets.count)…"
+                do {
+                    _ = try await performEdit(photo, pending.edit,
+                                              style: pending.style, prompt: prompt)
+                    done += 1
+                    batchRun?.done = done
+                } catch {
+                    // The fair-housing denylist speaks for itself — its wording
+                    // is the message, and it is NEVER auto-retried.
+                    let title = (error as? APIError)?.code == "unsupported_edit"
+                        ? "That change isn't allowed" : "That change didn't work"
+                    let failure = AIFailure(error, title: title)
+                    failedCount += 1
+                    batchRun?.failed = failedCount
+                    if firstFailure == nil { firstFailure = failure }
+                    if failure.isQuota || failure.isUnauthorized {
+                        stoppedEarly = true
+                        break
+                    }
+                }
+            }
+
+            isProcessing = false
+            batchRun = nil
+            finishBatch(pending, total: targets.count, done: done,
+                        failed: failedCount, firstFailure: firstFailure,
+                        stoppedEarly: stoppedEarly)
+        }
+    }
+
+    /// What the agent is told when a batch ends. Split out of `runBatch` so the
+    /// task body stays readable and the wording lives in one place.
+    private func finishBatch(_ pending: PendingBatchEdit, total: Int, done: Int,
+                             failed: Int, firstFailure: AIFailure?, stoppedEarly: Bool) {
+        let photoWord = done == 1 ? "photo" : "photos"
+        if failed == 0 {
+            batchNote = BatchNote(
+                text: "\(pending.title) — \(done) \(photoWord) changed. Each one saved beside its original.",
+                ok: true)
+            Haptics.success()
+            return
+        }
+        Haptics.warning()
+        let skipped = stoppedEarly ? total - done - failed : 0
+        var lines = ["\(done) of \(total) photos changed. \(failed) failed."]
+        if skipped > 0 { lines.append("\(skipped) were not attempted.") }
+        if let firstFailure { lines.append("The first failure said: \(firstFailure.message)") }
+        // Keep the failure's CLASS so a 402 still offers the in-app paywall and
+        // a 401 still offers Sign in — the message changes, the buttons do not.
+        if let firstFailure {
+            aiFailure = AIFailure(firstFailure,
+                                  title: done > 0 ? "Some photos didn't change" : firstFailure.title,
+                                  message: lines.joined(separator: "\n\n"))
+        }
+        if done > 0 {
+            batchNote = BatchNote(text: "\(pending.title) — \(done) of \(total) photos changed, \(failed) failed.",
+                                  ok: false)
         }
     }
 
@@ -4123,6 +4740,7 @@ struct PhotoStudioView: View {
         // it at the next photo the agent adds for some other reason.
         guard !images.isEmpty else {
             pendingShowcaseEdit = nil
+            pendingShowcaseStyle = nil
             return
         }
         isProcessing = true

@@ -2202,6 +2202,9 @@ struct HomeDashboardView: View {
     private func go(_ listing: Listing, _ feature: ProjectFeature) {
         if feature == .aerial {
             gate = .aerial(listing)
+        } else if feature == .reel {
+            // Presented, not pushed — see ProjectGateSheet.reel.
+            gate = .reel(listing)
         } else {
             route = ProjectRoute(listing: listing, feature: feature)
             showRoute = true
@@ -2234,6 +2237,13 @@ struct HomeDashboardView: View {
             // The aerial is grounded on a REAL home's exterior photo.
             AerialIntroSheet(listing: listing)
                 .environmentObject(model)
+        case .reel(let listing):
+            // Same two inputs the listing screen's tile passes: the listing's
+            // own edited photos, and its aerial as an optional opening clip.
+            ReelStudioView(listing: listing,
+                           photos: EnhancedPhoto.loadAll(listingID: listing.id),
+                           extraClipURLs: listing.aerialURL.map { [$0] } ?? [])
+                .environmentObject(model)
         }
     }
 
@@ -2245,7 +2255,11 @@ struct HomeDashboardView: View {
             case .photos:
                 PhotoStudioView(listing: route.listing)
             case .reel:
-                PhotoStudioView(listing: route.listing, intent: .reel)
+                // Unreachable: go() sends .reel to the gate sheet above, because
+                // Reel Studio owns its own NavigationStack and pushing it would
+                // nest two. The home itself is the honest fallback if a future
+                // caller ever pushes this case.
+                FlythroughDetailView(listing: route.listing)
             case .floorPlan:
                 FloorPlanView(listing: route.listing)
             case .tour:
@@ -3161,12 +3175,20 @@ enum ProjectGateSheet: Identifiable {
     case start(ProjectFeature)      // no homes yet — name one
     case pick(ProjectFeature)       // 2+ homes — which one?
     case aerial(Listing)            // the aerial tool is itself a sheet
+    // Reel Studio is its own full-screen world with its own NavigationStack and
+    // its own Close — the same shape as the aerial, and the reason it is a
+    // presentation and not a push. It used to be reached by opening PHOTO STUDIO
+    // with `intent: .reel` and tapping a card at the bottom, which is exactly
+    // why the owner kept finding "Make a reel" inside AI Photo Studio and told
+    // us twice it did not belong there. The reel has its own door now.
+    case reel(Listing)
 
     var id: String {
         switch self {
         case .start(let f):  return "start-\(f.rawValue)"
         case .pick(let f):   return "pick-\(f.rawValue)"
         case .aerial(let l): return "aerial-\(l.id.uuidString)"
+        case .reel(let l):   return "reel-\(l.id.uuidString)"
         }
     }
 }
