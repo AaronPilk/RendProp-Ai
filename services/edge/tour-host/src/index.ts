@@ -27,7 +27,7 @@
 // viewer must never see Cloudflare's raw "Worker threw exception" page.
 
 import type { Env, Portfolio, Tour } from "./types";
-import { buildDemoTour, demoSpaceFrom, isDemoSlug } from "./demo";
+import { buildDemoPortfolio, buildDemoTour, demoSpaceFrom, isDemoHandle, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
@@ -348,6 +348,16 @@ async function handleTour(
 
 async function handlePortfolio(handle: string, req: Request, url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404);
+
+  // The demo agent is fictional, so no org answers for the handle. Served
+  // from here for the same reason the demo TOUR is, and before the cache
+  // lookup so it never depends on an upstream that cannot know about it.
+  if (isDemoHandle(handle)) {
+    const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio()), 200, {
+      "Cache-Control": "public, max-age=300",
+    });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
 
   const cache = caches.default;
   const key = cacheKeyFor(url, `/a/${handle}`);
