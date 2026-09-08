@@ -846,6 +846,7 @@ const PLAYER_CSS = `${TOKENS_CSS}
   /* <video> is a REPLACED element: with top/bottom both set it keeps its
      intrinsic 300x150 and drops the bottom inset, so the band has to come out
      of an explicit height instead. */
+  .lp-btn-ghost { background: transparent; border: 1px solid currentColor; margin-left: 8px; }
   #scrub { position: absolute; top: 0; left: 0; width: 100%; height: calc(100% - var(--strip, 0px)); object-fit: cover; pointer-events: none; }
 
   /* ===== Loader ===== */
@@ -1267,7 +1268,44 @@ const ENGINE_CORE_JS = `
     requestAnimationFrame(tick);
   }
 
-  /* ---- Unavailable: the video can't be delivered. Say so; count nothing. ---- */
+    /* ---- The second tap ----------------------------------------------------
+     Apple has no deferred deep linking: a link tapped BEFORE an install cannot
+     carry the person to this tour afterwards, and the workaround the industry
+     uses (matching the device by IP and headers) is fingerprinting, which
+     Apple's rules exist to stop and which iCloud Private Relay breaks anyway.
+
+     So: remember that this browser went to the App Store from THIS tour, and
+     when it comes back, offer to open the tour in the app. The custom scheme
+     is deliberate — iOS will not hand an https link to an app when the browser
+     is already on that same domain, which is exactly this case. If the app is
+     not installed the tap does nothing visible and the App Store button is
+     still sitting next to it, so the failure mode is a no-op rather than an
+     error page.
+
+     localStorage only, no cookie, nothing sent anywhere: this is one string in
+     one browser and it never leaves the device. */
+  (function(){
+    var storeBtn = document.getElementById('getapp-store');
+    var openBtn  = document.getElementById('getapp-open');
+    if (!storeBtn && !openBtn) return;
+    var slug = (CFG && CFG.slug) ? String(CFG.slug) : '';
+    var kind = (CFG && CFG.unbranded) ? 'u' : 'f';
+    if (!slug) return;
+    var KEY = 'rp_wanted_tour';
+    function remember(){ try { localStorage.setItem(KEY, kind + '/' + slug); } catch (e) {} }
+    if (storeBtn) storeBtn.addEventListener('click', remember, { passive: true });
+    var wanted = null;
+    try { wanted = localStorage.getItem(KEY); } catch (e) {}
+    if (openBtn && wanted === kind + '/' + slug){
+      openBtn.hidden = false;
+      openBtn.addEventListener('click', function(ev){
+        ev.preventDefault();
+        location.href = 'rendprop://' + kind + '/' + encodeURIComponent(slug);
+      });
+    }
+  })();
+
+/* ---- Unavailable: the video can't be delivered. Say so; count nothing. ---- */
   function showUnavailable(){
     if (started || unavailable) return;
     unavailable = true;
@@ -2242,7 +2280,8 @@ function renderGetAppSection(tour: Tour): string {
     <p class="lp-tag">No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
     Rendprop renders the flythrough you just scrolled — plus the photos, the floor plan and this link —
     the same day. If you list property, that is your next shoot done before lunch.</p>
-    <a class="lp-btn" href="${escapeAttr(APP_STORE_URL)}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
+    <a class="lp-btn" id="getapp-store" href="${escapeAttr(APP_STORE_URL)}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
+    <a class="lp-btn lp-btn-ghost" id="getapp-open" hidden>Open this tour in the app</a>
     <p class="lp-fine">Free on iPhone · iOS 16 or later. Rendprop is the software behind this page, not a
     service offered by the owner of this listing.</p>
   </div></section>`;

@@ -1220,6 +1220,19 @@ final class LiveAPIClient: APIClient {
         return summary
     }
 
+    func submitLead(_ lead: LeadSubmission) async throws {
+        var body: [String: Any] = [
+            "slug": String(lead.slug.prefix(128)),
+            "name": String(lead.name.prefix(80)),
+            "phone": String(lead.phone.prefix(40)),
+        ]
+        if let email = lead.email, !email.isEmpty { body["email"] = String(email.prefix(160)) }
+        if let note = lead.note, !note.isEmpty { body["extra"] = ["note": String(note.prefix(500))] }
+        // No idempotency key: a buyer who taps Send twice meant to, and a
+        // second message from the same person is a signal the agent wants.
+        _ = try await execute(makeRequest(url: url(["leads"]), method: "POST", json: body))
+    }
+
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         var query: [URLQueryItem] = []
         if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }

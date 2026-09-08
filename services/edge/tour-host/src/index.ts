@@ -150,6 +150,54 @@ const APEX_HOST = "rendprop.com";
  * ("Always Use HTTPS" + a www→apex Redirect Rule) are still required; this is
  * the Worker's half of the fix and a safety net if a setting is ever toggled off.
  */
+/**
+ * apple-app-site-association — what makes a rendprop.com link open the iOS app
+ * instead of Safari.
+ *
+ * Apple fetches this over HTTPS PER HOST in the app's entitlement, does NOT
+ * follow redirects, and requires `application/json`. Both of those shape the
+ * routing below: it is answered before `canonicalRedirect`, so the www host
+ * serves its own copy rather than 301-ing to the apex, and it is served at the
+ * legacy root path as well as `/.well-known/` because older iOS versions only
+ * look at the root.
+ *
+ * `components` rather than the deprecated `paths` array (TN3155). `/u/*` is in
+ * here on purpose: the MLS-unbranded twin is the same tour, and a buyer who
+ * taps one inside the app is not in an MLS context - the page it loads is
+ * still the unbranded one, so the gate does not move.
+ *
+ * The appID is <TeamID>.<bundle id>. If either ever changes, this and
+ * apps/ios/Rendprop/Rendprop.entitlements change together or links silently
+ * stop opening the app - silently, because a failed AASA fetch looks exactly
+ * like a link that was never meant for an app.
+ */
+const AASA = JSON.stringify({
+  applinks: {
+    details: [
+      {
+        appIDs: ["5F5C5G25Y6.com.rendprop.app"],
+        components: [
+          { "/": "/f/*", comment: "a published tour" },
+          { "/": "/u/*", comment: "the MLS-unbranded twin of a tour" },
+          { "/": "/a/*", comment: "an agent's portfolio" },
+        ],
+      },
+    ],
+  },
+});
+
+function aasaResponse(): Response {
+  return new Response(AASA, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      // Short enough that a bundle-id or team-id change propagates the same
+      // day, long enough that it is not fetched on every cold start.
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+}
+
 function canonicalRedirect(url: URL): Response | null {
   const host = url.hostname.toLowerCase();
   const isApex = host === APEX_HOST;
@@ -337,10 +385,20 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
 
   const url = new URL(req.url);
+  // BEFORE the canonical redirect: Apple does not follow redirects when it
+  // fetches the association file, and it fetches one per host, so www must
+  // answer for itself.
+  const rawPath = url.pathname.replace(/\/+$/, "") || "/";
+  if (rawPath === "/.well-known/apple-app-site-association" ||
+      rawPath === "/apple-app-site-association") {
+    const resp = aasaResponse();
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
+
   const canonical = canonicalRedirect(url);
   if (canonical) return canonical;
 
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const path = rawPath;
 
   const fMatch = path.match(/^\/f\/([^/]+)$/);
   if (fMatch) {

@@ -2,6 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!-- Universal Links. MUST match the appIDs and hosts in the AASA the
+	     Worker serves (services/edge/tour-host/src/index.ts) - a host listed
+	     here whose AASA does not name this app is a link that opens nothing,
+	     and the failure is silent. -->
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:rendprop.com</string>
+		<string>applinks:www.rendprop.com</string>
+	</array>
 	<key>com.apple.developer.applesignin</key>
 	<array>
 		<string>Default</string>

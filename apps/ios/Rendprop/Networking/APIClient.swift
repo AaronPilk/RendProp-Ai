@@ -677,6 +677,17 @@ struct ChapterInput: Codable, Hashable, Sendable {
 /// `"ticket:<sha256|path-hash>:<bytes>"`, and the AI generate calls take a
 /// caller-supplied key — one UUID per user TAP (so a retry of the same tap
 /// replays instead of billing twice, and a second tap is a new job).
+/// The body of `POST /leads`. Field names mirror the contract in
+/// services/supabase/functions/leads/index.ts exactly; `note` rides in `extra`
+/// because that is the free-form slot the route already accepts.
+struct LeadSubmission: Sendable, Equatable {
+    var slug: String
+    var name: String
+    var phone: String
+    var email: String?
+    var note: String?
+}
+
 protocol APIClient: Sendable {
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
@@ -767,6 +778,16 @@ protocol APIClient: Sendable {
     /// GET /leads[?listing_id=] — every lead captured on the org's hosted tours
     /// (RLS-scoped), newest first. `listingServerID` filters to one listing.
     func leads(listingServerID: UUID?) async throws -> [Lead]
+
+    /// POST /leads — PUBLIC lead capture. The buyer's "message the agent" in
+    /// the in-app tour viewer, posting the SAME shape the hosted end-card
+    /// posts, so an agent has one inbox and not two.
+    ///
+    /// Unauthenticated by design (the route is deployed --no-verify-jwt for
+    /// exactly this): a buyer who has to make an account before asking about a
+    /// house does not ask about the house. Rate limiting and Turnstile live
+    /// server-side; the client carries no bot check and must not imply one.
+    func submitLead(_ lead: LeadSubmission) async throws
 
     /// PATCH /me/brand — push the agent/business card into the org's brand kit
     /// so it renders on every HOSTED tour page (the public tours/portfolio

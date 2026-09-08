@@ -1878,6 +1878,12 @@ enum Appearance: String, CaseIterable, Identifiable {
 
 @main
 struct RendpropApp: App {
+    /// The Universal Link this launch (or this tap) arrived on, if any.
+    /// Presented as a full-screen cover OVER whatever the app was doing:
+    /// a buyer who tapped a house link wants the house, not the agent tool,
+    /// and an agent who tapped their own link is checking what a buyer sees.
+    /// Either way it is a visit, not a mode - Done puts the app back.
+    @State private var incomingLink: DeepLink?
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = AppModel()
     @StateObject private var uploads = UploadManager.shared
@@ -1924,6 +1930,24 @@ struct RendpropApp: App {
             // Backgrounding is the one moment we KNOW the person is done, so it
             // is the most valuable flush there is.
             .onChange(of: scenePhase) { phase in Analytics.sceneChanged(phase) }
+            // Universal Links. `onContinueUserActivity` is the https path (a
+            // tap in Messages, Mail, Safari); `onOpenURL` catches the
+            // rendprop:// custom scheme. A URL this app has no screen for
+            // returns nil from `DeepLink.parse` and is left alone rather than
+            // swallowed - opening the app to nothing is worse than not opening
+            // it.
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                guard let url = activity.webpageURL, let link = DeepLink.parse(url) else { return }
+                incomingLink = link
+            }
+            .onOpenURL { url in
+                guard let link = DeepLink.parse(url) else { return }
+                incomingLink = link
+            }
+            .fullScreenCover(item: $incomingLink) { link in
+                TourViewerView(link: link)
+                    .environmentObject(model)
+            }
             .onChange(of: analyticsAuth.isSignedIn) { signedIn in Analytics.authChanged(signedIn) }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.

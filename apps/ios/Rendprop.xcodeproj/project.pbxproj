@@ -57,6 +57,7 @@
 		A2D5B60401411E19E6F32D53 /* player in Resources */ = {isa = PBXBuildFile; fileRef = C124EFC4DE2D3F67A382CE79 /* player */; };
 		A7A29F5867000B7897A7AB72 /* RenderStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 54BAD1E704C7727945DD4F73 /* RenderStatusView.swift */; };
 		A8A20F4BD3F0A6D439240B5B /* CoachModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C6011DBB53E6DB5DBFF66BCD /* CoachModel.swift */; };
+		AC20895DB57A492231B1916D /* TourViewerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBB16E9EFA69532C385BC0DF /* TourViewerView.swift */; };
 		AF848F32B73F1EB5F45E8103 /* GearStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3EBDB92F1D84163B1D372F0 /* GearStore.swift */; };
 		B31C7C4605D0DDFD6A64112F /* AuthStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6E840EECFE99535BBB90390 /* AuthStore.swift */; };
 		B9A6F7F75A8F754430AF3596 /* AdminProbeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */; };
@@ -68,6 +69,7 @@
 		D0A434539DA674F9FE2C3D73 /* ReviewPrompter.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB2296848CBE319882226D1C /* ReviewPrompter.swift */; };
 		D747EDCEF62AC9B9B4C853D4 /* StoreShots.swift in Sources */ = {isa = PBXBuildFile; fileRef = A75E823CB294986BAAAFEE29 /* StoreShots.swift */; };
 		D7AA4A7D3D530D12227D6528 /* CoachAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5ED4FB348EEDA03CD0E8C941 /* CoachAPI.swift */; };
+		E0C8BE09B5E9106CD1CF9563 /* DeepLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = E618350433BB18EC88AC7415 /* DeepLink.swift */; };
 		E3DCCDEB5D91AFCE68687A57 /* Formatters.swift in Sources */ = {isa = PBXBuildFile; fileRef = 19CC9E2E694D65DC5116B84C /* Formatters.swift */; };
 		E5FF488407A77D1CAC7E9AF5 /* PurchaseManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57A1816864B52BA95F584EB5 /* PurchaseManager.swift */; };
 		E6CA545180045304CB1CF06E /* FlythroughDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */; };
@@ -156,6 +158,7 @@
 		B334615711A0590CE40AA4C9 /* RoomTagBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RoomTagBar.swift; sourceTree = "<group>"; };
 		B7D1D9FEB458ADF38605A25B /* ReviewSubmitView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewSubmitView.swift; sourceTree = "<group>"; };
 		B94375D670695480CE3E4617 /* Analytics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Analytics.swift; sourceTree = "<group>"; };
+		BBB16E9EFA69532C385BC0DF /* TourViewerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TourViewerView.swift; sourceTree = "<group>"; };
 		BF98C33A6621790D95D9D12A /* Render.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Render.swift; sourceTree = "<group>"; };
 		C124EFC4DE2D3F67A382CE79 /* player */ = {isa = PBXFileReference; lastKnownFileType = folder; name = player; path = Rendprop/Resources/player; sourceTree = SOURCE_ROOT; };
 		C6011DBB53E6DB5DBFF66BCD /* CoachModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachModel.swift; sourceTree = "<group>"; };
@@ -169,6 +172,7 @@
 		D6E840EECFE99535BBB90390 /* AuthStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AuthStore.swift; sourceTree = "<group>"; };
 		D746633FD7B0C96F45695CBF /* CameraManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraManager.swift; sourceTree = "<group>"; };
 		E4FB4606C39486BBD3D62359 /* PaywallHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaywallHost.swift; sourceTree = "<group>"; };
+		E618350433BB18EC88AC7415 /* DeepLink.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeepLink.swift; sourceTree = "<group>"; };
 		E7520835A92DA623D2F1A5CB /* IndustryWalk.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IndustryWalk.swift; sourceTree = "<group>"; };
 		E78B2A8D3A09BDA9A38AA6CB /* OnboardingTour.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OnboardingTour.swift; sourceTree = "<group>"; };
 		EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AdminProbeAPI.swift; sourceTree = "<group>"; };
@@ -285,6 +289,7 @@
 				D96340DB7781146005EEA9A6 /* Auth */,
 				5BDD63390664CAC6B618C304 /* Capture */,
 				ACC7CBDD6D310BB2D13A932B /* Coach */,
+				B32DB4E8D3FC60C9C43F1462 /* DeepLink */,
 				BA294DD207C09540838285C4 /* DesignSystem */,
 				B67776D1E5DD6B581DAC5187 /* Gear */,
 				9E54D15F70491A41B0ACDE06 /* Guide */,
@@ -351,6 +356,14 @@
 			path = Coach;
 			sourceTree = "<group>";
 		};
+		B32DB4E8D3FC60C9C43F1462 /* DeepLink */ = {
+			isa = PBXGroup;
+			children = (
+				E618350433BB18EC88AC7415 /* DeepLink.swift */,
+			);
+			path = DeepLink;
+			sourceTree = "<group>";
+		};
 		B63CFDC890322A76057A6DFA /* Support */ = {
 			isa = PBXGroup;
 			children = (
@@ -405,6 +418,7 @@
 				54BAD1E704C7727945DD4F73 /* RenderStatusView.swift */,
 				B7D1D9FEB458ADF38605A25B /* ReviewSubmitView.swift */,
 				9FBACFE1B0540B32F3BD4EAB /* SettingsView.swift */,
+				BBB16E9EFA69532C385BC0DF /* TourViewerView.swift */,
 			);
 			path = Screens;
 			sourceTree = "<group>";
@@ -569,6 +583,7 @@
 				9F0F9FB36CE676B73AD1134D /* Components.swift in Sources */,
 				2F41893E5E026B023E5CF32A /* Config.swift in Sources */,
 				1C731645EC18370529018560 /* CrashReporter.swift in Sources */,
+				E0C8BE09B5E9106CD1CF9563 /* DeepLink.swift in Sources */,
 				F4A33EE7FCDDEA87E548A7C5 /* DirectUploader.swift in Sources */,
 				264766723CAD4BBED4F258BD /* EnhanceSource.swift in Sources */,
 				F34ECB50446CA79CC60B2901 /* FileStore.swift in Sources */,
@@ -609,6 +624,7 @@
 				0410280645FC16F4C0E519BF /* SignInView.swift in Sources */,
 				EA740C162A2261CB015DC6D2 /* SpeechTranscriber.swift in Sources */,
 				8D827D4D42BBDCFD1534BCBC /* Theme.swift in Sources */,
+				AC20895DB57A492231B1916D /* TourViewerView.swift in Sources */,
 				FBC7F7530EE3641AF6FCC985 /* Typography.swift in Sources */,
 				53CC0E62674B1169C4677F54 /* UploadManager.swift in Sources */,
 				900239439C3FF1B9C934F76D /* UploadStore.swift in Sources */,
