@@ -480,12 +480,28 @@ function renderAgentCard(a: AgentModel, tour: Tour): string {
     ? `<div class="social">${socialLinks}${emailLink}</div>`
     : "";
 
+  // "See all their homes" — the one link to /a/:handle.
+  //
+  // The portfolio page has existed since portfolio.ts was written, with an edge
+  // function behind it and `agent_card.handle` on this very payload, and
+  // NOTHING pointed at it. A buyer who likes this house and wants to see what
+  // else this agent has had no way to ask, and the agent's best cross-sell sat
+  // dark. It is a relative path so it works on workers.dev and on a preview
+  // deploy, exactly like the portfolio's own tour cards.
+  //
+  // Branded pages only by construction: this card is rendered inside the end
+  // card, and the end card is not built at all on /u/.
+  const more = a.handle
+    ? `<a class="more" href="/a/${encodeURIComponent(a.handle)}">See all their homes</a>`
+    : "";
+
   return `<div class="agent">
       ${avatar}
       <div class="who">
         ${name ? `<div class="nm">${escapeHtml(name)}</div>` : ""}
         ${sub}
         ${social}
+        ${more}
       </div>
     </div>`;
 }
@@ -787,6 +803,8 @@ const FORM_CSS = `
   .agent { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
   .agent .avatar { width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #33404f, #1c242e); display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 18px; color: var(--accent); overflow: hidden; flex: 0 0 auto; }
   .agent .avatar.photo { background: none; }
+  .agent .more { display: inline-block; margin-top: 8px; font-weight: 650; font-size: 14px;
+    text-decoration: none; border-bottom: 1px solid currentColor; padding-bottom: 1px; }
   .agent .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .agent .who .nm { font-weight: 650; font-size: 16px; }
   .agent .who .bk { font-size: 12.5px; color: var(--ink-dim); margin-top: 2px; }

@@ -3863,6 +3863,13 @@ struct PhotoStudioView: View {
                     .accessibilityLabel(Text("Photo — opens before-and-after compare"))
                     .contextMenu { photoMenu(p) }
                 wandButton(p)
+                // THE COVER, on the surface. It was a long-press and nothing
+                // else — an invisible gesture for the one picture that
+                // represents the whole home everywhere it is shared. Only on
+                // the library screen: in the studio a tap means "include this
+                // photo in the change", and a second meaning on the same
+                // thumbnail is a trap.
+                if entry == .photos { coverButton(p) }
             } else {
                 Button { toggleBatchSelection(p) } label: {
                     thumb(p).overlay { selectionOverlay(p) }
@@ -4362,6 +4369,36 @@ struct PhotoStudioView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .card()
+        }
+    }
+
+    /// Make this photo the cover, from the grid, in one tap. Filled star on
+    /// the one that already is — so the control is also the indicator, and a
+    /// glance at the grid answers "which one is the cover?" without counting
+    /// badges.
+    private func coverButton(_ p: EnhancedPhoto) -> some View {
+        let isCover = isMain(p)
+        return VStack {
+            Spacer(minLength: 0)
+            HStack {
+                Button {
+                    guard !isCover else { return }
+                    setMain(p)
+                } label: {
+                    Image(systemName: isCover ? "star.fill" : "star")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isCover ? Color.white : Color.white.opacity(0.9))
+                        .frame(width: 32, height: 32)
+                        .background(isCover ? Theme.accent : Color.black.opacity(0.42), in: Circle())
+                        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 2)
+                }
+                .buttonStyle(ScalePressStyle())
+                .padding(8)
+                .disabled(isProcessing || isCover)
+                .accessibilityLabel(Text(isCover ? "This is the cover photo"
+                                                 : "Make this the cover photo"))
+                Spacer(minLength: 0)
+            }
         }
     }
 
