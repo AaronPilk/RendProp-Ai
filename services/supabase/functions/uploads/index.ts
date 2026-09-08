@@ -310,7 +310,7 @@ interface CreateBody {
    *  an AI-altered photo → public renders bucket, key `original-<asset>.<ext>`
    *  (always kind photo; CA AB 723 access-to-the-original). default "capture" =
    *  raw walkthrough/photo → private uploads bucket. */
-  role?: "capture" | "render" | "original";
+  role?: "capture" | "render" | "original" | "gallery";
 }
 
 interface BatchBody {
@@ -682,16 +682,35 @@ Deno.serve(async (req) => {
     if (req.method === "POST" && seg.length === 0) {
       const body = await readJson<CreateBody>(req);
       assert(body.listing_id, 400, "listing_id is required");
-      const role: "capture" | "render" | "original" =
-        body.role === "render" ? "render" : body.role === "original" ? "original" : "capture";
-      // An `original` is by definition the untouched PHOTO behind an AI edit.
+      const role: "capture" | "render" | "original" | "gallery" =
+        body.role === "render"
+          ? "render"
+          : body.role === "original"
+          ? "original"
+          : body.role === "gallery"
+          ? "gallery"
+          : "capture";
+      // An `original` is by definition the untouched PHOTO behind an AI edit,
+      // and so is a `gallery` photo — one of the listing's own pictures, sent
+      // so the shared tour page can show them.
       const kind: "video" | "photo" =
-        role === "original" ? "photo" : body.kind === "photo" ? "photo" : "video";
+        role === "original" || role === "gallery"
+          ? "photo"
+          : body.kind === "photo"
+          ? "photo"
+          : "video";
       const isOriginal = role === "original";
-      const isPoster = role === "render" && kind === "photo";
+      const isGallery = role === "gallery";
+      // Browser-served public photo. `gallery` rides the POSTER lane on
+      // purpose: same renders bucket, same jpeg|png|webp allowlist, same 10 MB
+      // ceiling — which is what /complete will independently derive for it,
+      // because every renders-bucket photo that is not an `original-` is a
+      // poster to that route. Ticket and completion agree without /complete
+      // learning a third case.
+      const isPoster = (role === "render" && kind === "photo") || isGallery;
       // Both public roles land in the renders bucket — that bucket is the only
       // one with a public base URL, and "access to the original" must be a link.
-      const bucketTag = role === "capture" ? "uploads" : "renders";
+      const bucketTag = role === "capture" ? "uploads" : "renders";   // gallery is public by definition
       const r2Bucket = r2BucketFor(bucketTag);
 
       const listing = await requireListing(db, body.listing_id);
@@ -705,7 +724,7 @@ Deno.serve(async (req) => {
       const declaredByClient = isContentTypeDeclared(body.content_type);
       const contentType = declaredByClient
         ? requireBareContentType(body.content_type as string, "content_type")
-        : isPoster || isOriginal
+        : isPoster || isOriginal || isGallery
         ? "image/jpeg"
         : role === "render"
         ? "video/mp4"
@@ -741,7 +760,7 @@ Deno.serve(async (req) => {
       // is refunded the same way: this call still produced no asset of its own.
       try {
         const assetId = crypto.randomUUID();
-        const ext = isPoster || isOriginal
+        const ext = isPoster || isOriginal || isGallery
           ? (POSTER_EXT[contentType] ?? "jpg")
           : role === "render"
           ? "mp4"
@@ -749,7 +768,14 @@ Deno.serve(async (req) => {
         // The `original-` prefix is how /complete (and provenance) tell an
         // original apart from a poster: capture_assets has no role column, so
         // the distinction has to be SERVER-DERIVED from the key we mint here.
-        const basename = isOriginal ? `original-${assetId}` : assetId;
+        // The prefix IS the role, for the same reason `original-` is: there is
+        // no role column, so /complete and /tours both have to read it off the
+        // key. `gallery-` is what `GET /tours/:slug` selects on.
+        const basename = isOriginal
+          ? `original-${assetId}`
+          : isGallery
+          ? `gallery-${assetId}`
+          : assetId;
         const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${basename}.${ext}`;
 
         const useMultipart =

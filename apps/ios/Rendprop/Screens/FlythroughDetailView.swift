@@ -3467,6 +3467,7 @@ struct PhotoStudioView: View {
             loadExisting()
             syncIdleHold()      // a dismissed cover re-appears mid-animate
             seedPhotosForUIWalk()
+            syncGalleryIfPublished()
         }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
         .onDisappear {
@@ -4927,6 +4928,18 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
+    }
+
+    /// Photos added AFTER a tour was published still belong on its page.
+    /// `syncGalleryPhotos` memoises what it has already sent, so this is a
+    /// no-op on every visit but the first one after a change. Only for a
+    /// listing that HAS a public page — there is nothing to add to otherwise.
+    private func syncGalleryIfPublished() {
+        guard entry == .photos, !listing.isSample, !photos.isEmpty else { return }
+        let current = model.listings.first(where: { $0.id == listing.id })
+        guard current?.serverShareURL != nil, let serverID = current?.serverID else { return }
+        let localID = listing.id
+        Task { await model.syncGalleryPhotos(listingLocalID: localID, listingServerID: serverID) }
     }
 
     /// UI walk only (`-uiTesting -ui.seedPhotosDir`): the store screenshots need

@@ -115,6 +115,7 @@ final class AppModel: ObservableObject {
         pendingPublish.removeAll()
         // Published compliance originals belong to the previous account's org.
         publishedOriginalAssets.removeAll()
+        publishedGalleryAssets.removeAll()
     }
 
     func load() async {
@@ -474,6 +475,43 @@ final class AppModel: ObservableObject {
                                              alteredAssetID: assetID)
     }
 
+    /// Every gallery photo already uploaded, memoised by
+    /// `<relative path>|<bytes>` the same way `publishedOriginalAssets` is. An
+    /// edit rewrites the file (new path, new size), so a changed photo misses
+    /// the memo and re-uploads, which is the behaviour we want.
+    private var publishedGalleryAssets: [String: String] = [:]
+
+    /// Put this listing's photos on its public tour page.
+    ///
+    /// THE DEFECT, in the owner's words: "It doesn't show any of the pictures."
+    /// The tour host renders `tour.gallery` (player.ts `galleryItems`), the
+    /// server now emits it from `role:"gallery"` uploads — and this is the only
+    /// thing that ever creates one. Without this call the gallery is an empty
+    /// array on every tour ever published.
+    ///
+    /// BEST EFFORT AND SILENT. A publish must not fail because a photo did not
+    /// upload, and an agent must not get an error about a feature they did not
+    /// ask for. Bounded to the newest 40 and to photos under the ceiling.
+    /// Sequential on purpose: seventeen concurrent multi-megabyte PUTs from a
+    /// phone on cellular is how you turn a working publish into a stall.
+    func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
+        guard Config.useLiveBackend else { return }
+        guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
+        guard let l = listings.first(where: { $0.id == listingLocalID }), !l.isSample else { return }
+        let photos = EnhancedPhoto.loadAll(listingID: listingLocalID).prefix(40)
+        for photo in photos {
+            if Task.isCancelled { return }
+            let url = photo.enhancedURL
+            let bytes = FileStore.fileSize(url)
+            guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { continue }
+            let memo = "\(FileStore.relativePath(for: url))|\(bytes)"
+            if publishedGalleryAssets[memo] != nil { continue }
+            guard let assetID = try? await UploadManager.shared.uploadGalleryPhoto(
+                fileURL: url, listingID: listingServerID) else { continue }
+            publishedGalleryAssets[memo] = assetID
+        }
+    }
+
     /// Room tags → tap-to-jump chapters, sorted by time. Room tags are timed
     /// against the ORIGINAL capture, but the published mp4 is retimed by
     /// `speedFactor` (a 2× walk halves timestamps). Rescale to the RENDERED
@@ -566,6 +604,13 @@ final class AppModel: ObservableObject {
                 listings[i] = l   // persists via didSet
             }
             Analytics.track("tour_published", ["space_type": SpaceType.current.rawValue, "ok": "true"])
+            // The photos, onto the page that has never had any. Detached: the
+            // publish is DONE and the agent is looking at their link — waiting
+            // on seventeen uploads before handing it over would make a working
+            // feature feel broken.
+            Task { [weak self] in
+                await self?.syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
+            }
             pendingPublish.removeAll { $0 == id }
             uploadedRenderAssets.removeValue(forKey: id)
             if let posterFile { try? FileManager.default.removeItem(at: posterFile) }

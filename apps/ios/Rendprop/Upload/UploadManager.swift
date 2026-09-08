@@ -405,6 +405,27 @@ final class UploadManager: NSObject, ObservableObject {
                                             keyPrefix: "original")
     }
 
+    /// Upload ONE of the listing's own photos for the public tour page's
+    /// gallery (`role:"gallery"`, public renders bucket, key `gallery-<uuid>`).
+    ///
+    /// The tour host has rendered a gallery since day one and `GET /tours/:slug`
+    /// had nothing to put in it, because no photo a listing owns was ever
+    /// uploaded anywhere public unless an AI edit forced it (AB 723). This is
+    /// that path, for the ordinary photos.
+    ///
+    /// Server-side this rides the POSTER lane: same bucket, same jpeg|png|webp
+    /// allowlist, same 10 MB ceiling. The caller enforces the ceiling first so a
+    /// too-big photo is skipped rather than charged for and rejected.
+    func uploadGalleryPhoto(fileURL: URL, listingID: UUID) async throws -> String {
+        let contentType = DirectUploader.uploadContentType(for: fileURL, kind: "photo")
+        guard ["image/jpeg", "image/png", "image/webp"].contains(contentType) else {
+            throw UploadError.server("A gallery photo has to be a JPEG, PNG or WebP to show on the page.")
+        }
+        return try await uploadBrowserPhoto(fileURL: fileURL, listingID: listingID,
+                                            role: "gallery", contentType: contentType,
+                                            keyPrefix: "gallery")
+    }
+
     /// Upload the PUBLISHED ALTERED photo behind an AI edit (`role:"render"`,
     /// `kind:"photo"` → the public renders bucket, same path the tour poster
     /// takes). Its asset id goes to `PATCH /me/compliance/:id

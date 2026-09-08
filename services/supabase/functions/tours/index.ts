@@ -99,6 +99,49 @@ async function alteredMediaFor(admin: any, listingId: string): Promise<AlteredMe
   }));
 }
 
+/** How many gallery photos a tour page will carry. A listing with more than
+ * this many is not a gallery, it is a contact sheet. */
+const MAX_GALLERY = 40;
+
+/**
+ * The listing's own photos, for the gallery on the tour page.
+ *
+ * Selected off the key prefix `/uploads` mints for `role:"gallery"`, because
+ * `capture_assets` has no role column and the poster / original / gallery
+ * distinction is server-derived from the key everywhere else too. `uploaded`
+ * is the completion flag: a ticket writes its row BEFORE the bytes land, so
+ * without it a cancelled upload would publish a 404 into the gallery.
+ *
+ * PROPERTY INFORMATION, NOT BRANDING — so this rides to the unbranded `/u/`
+ * twin as well, on exactly the reasoning `floorplan_url` already carries. A
+ * photo of the kitchen says nothing about which brokerage listed it.
+ *
+ * Never fatal: a gallery lookup must not take the tour down.
+ */
+// deno-lint-ignore no-explicit-any
+async function galleryFor(admin: any, listingId: string): Promise<Array<{ url: string }>> {
+  const { data, error } = await admin
+    .from("capture_assets")
+    .select("storage_key, created_at")
+    .eq("listing_id", listingId)
+    .eq("kind", "photo")
+    .eq("bucket", "renders")
+    .eq("uploaded", true)
+    .like("storage_key", "%/gallery-%")
+    .order("created_at", { ascending: true })
+    .limit(MAX_GALLERY);
+  if (error) {
+    console.error("gallery lookup failed:", error.message);
+    return [];
+  }
+  const out: Array<{ url: string }> = [];
+  for (const r of data ?? []) {
+    const url = publicR2Url((r as Record<string, unknown>).storage_key as string | null);
+    if (url) out.push({ url });
+  }
+  return out;
+}
+
 /**
  * The floor-plan image, wherever the listing keeps it. `details` is free-form
  * JSON written by the app, so accept the shapes the tour host already reads:
@@ -305,6 +348,7 @@ Deno.serve(async (req) => {
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const altered_media = await alteredMediaFor(admin, listing.id as string);
+    const gallery = await galleryFor(admin, listing.id as string);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: Array<{ label: string; t_ms: number; sort: number }> = [];
@@ -384,6 +428,9 @@ Deno.serve(async (req) => {
       // Floor plan, promoted out of details so the host can render it above the
       // gallery on BOTH pages (it is property information, not branding).
       floorplan_url: floorplanUrl(listing.details),
+      // The listing's photos. Same reasoning as floorplan_url: property
+      // information, so it goes to the unbranded twin too.
+      gallery,
       staged,
       staged_disclosure: staged ? STAGED_DISCLOSURE : null,
       // The staged chip is unchanged; a tour with AI media but no staging now
