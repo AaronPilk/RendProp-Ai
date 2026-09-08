@@ -197,10 +197,12 @@ final class CoachModel: ObservableObject {
     // MARK: - Context (counts and booleans ONLY — see file header)
 
     static func contextListings(from model: AppModel) -> [CoachRequest.ListingContext] {
-        model.realProjects.prefix(25).map { listing in
+        let listings = Array(model.realProjects.prefix(25))
+        let labels = Self.redactedLabels(for: listings)
+        return listings.enumerated().map { idx, listing in
             CoachRequest.ListingContext(
                 id: listing.id.uuidString,
-                title: listing.address,
+                title: labels[idx],
                 hasVideo: model.assets[listing.id] != nil,
                 roomTags: model.assets[listing.id]?.roomTags.count ?? 0,
                 hasTour: model.tours[listing.id] != nil,
@@ -210,6 +212,64 @@ final class CoachModel: ObservableObject {
                 reels: reelCount(for: listing.id)
             )
         }
+    }
+
+    /// The label a listing travels to the LLM under — the STREET, never the
+    /// address.
+    ///
+    /// THE DEFECT: `title` was `listing.address`, so up to 25 exact street
+    /// addresses left the phone on every coach message, while the type's own
+    /// contract comment said "counts and booleans ONLY". The comment was a
+    /// hope, not a guard. It got worse the day Ask AI moved from two screens
+    /// to eleven.
+    ///
+    /// WHY NOT AN ORDINAL. The coach's answers name the home back to the agent
+    /// — "your tour for Crestline Ridge is ready to share" — and "home 3" makes
+    /// that useless. The street name is what an agent actually recognises, and
+    /// a street without a number is not a mailing address. Homes that share a
+    /// street get a numeric suffix so the coach can still tell them apart.
+    ///
+    /// REDACTED HERE, ON THE PHONE, before the bytes exist. Not server-side:
+    /// the server is what this protects against, and a scrub that runs after
+    /// the network hop protects nobody.
+    static func redactedLabels(for listings: [Listing]) -> [String] {
+        var seen: [String: Int] = [:]
+        return listings.enumerated().map { idx, listing in
+            let base = redactedStreet(listing.address) ?? "Home \(idx + 1)"
+            let n = (seen[base] ?? 0) + 1
+            seen[base] = n
+            return n == 1 ? base : "\(base) (\(n))"
+        }
+    }
+
+    /// "1180 Crestline Ridge, Apt 4B, Naples FL" -> "Crestline Ridge".
+    ///
+    /// Everything from the first comma is dropped (city, state, ZIP, unit), a
+    /// leading house number or number-range is dropped, and so is a leading
+    /// unit token, which is how a real address string tends to lead. nil when
+    /// nothing recognisable is left, so the caller falls back to an ordinal
+    /// rather than sending a fragment it has not reasoned about.
+    static func redactedStreet(_ address: String) -> String? {
+        let head = address.split(separator: ",", maxSplits: 1,
+                                 omittingEmptySubsequences: false)
+            .first.map(String.init) ?? address
+        var parts = head.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        // Leading house number ("1180", "1180A", "12-14") — and only leading:
+        // "Route 66" keeps its number because it is not in front.
+        while let f = parts.first, f.rangeOfCharacter(from: .decimalDigits) != nil,
+              f.first?.isNumber == true {
+            parts.removeFirst()
+        }
+        // A unit token that survived the comma split ("Apt 4B", "#3", "Unit 2").
+        if let f = parts.first?.lowercased(),
+           ["apt", "apt.", "unit", "ste", "ste.", "suite", "#"].contains(f) || f.hasPrefix("#") {
+            parts.removeFirst()
+            if let n = parts.first, n.rangeOfCharacter(from: .decimalDigits) != nil { parts.removeFirst() }
+        }
+        let street = parts.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard street.count >= 2, street.rangeOfCharacter(from: .letters) != nil else { return nil }
+        return String(street.prefix(48))
     }
 
     /// `EnhancedPhoto` (FlythroughDetailView.swift) is the only place this
