@@ -37,7 +37,7 @@
 //     adopted, which is `ok` and not an error. Sign-in retries are normal.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, readJson, respondError } from "../_shared/http.ts";
+import { HttpError, assert, json, readJson, respondError, throwRpc } from "../_shared/http.ts";
 import { adminClient, getUser } from "../_shared/supabase.ts";
 
 /** Tables whose presence means "this org has real work in it".
@@ -123,39 +123,44 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, adopted: false, reason: "nothing to move", org_id: null });
     }
 
-    // The signed-in user's own org, minted moments ago by the same trigger.
-    const { data: mineRows, error: mineErr } = await admin
-      .from("memberships").select("org_id, role").eq("user_id", user.id);
-    if (mineErr) throw new HttpError(500, `Membership lookup failed: ${mineErr.message}`);
-    const mine = (mineRows ?? []).map((r) => r.org_id as string);
-
-    if (mine.length > 1) {
-      throw new HttpError(409, "This account already belongs to more than one workspace — nothing was changed.");
-    }
-    if (mine.length === 1) {
-      if (mine[0] === anonOrg) return json({ ok: true, adopted: true, org_id: anonOrg });
-      if (!(await orgIsEmpty(admin, mine[0]))) {
-        // Deliberately a refusal rather than a merge. Two populated workspaces
-        // is a person's decision, not a side effect of tapping Sign in.
-        throw new HttpError(409,
-          "This Apple account already has work in Rendprop, so the work made before signing in was left where it is. Contact support and we'll merge them.");
-      }
-      // Their brand-new empty org goes away, so `orgForUser` stays unambiguous.
-      await admin.from("memberships").delete().eq("user_id", user.id).eq("org_id", mine[0]);
-      await admin.from("orgs").delete().eq("id", mine[0]);
+    // The route's own header documents that the caller must be identified, and
+    // never checked it (Astra F06). An anonymous session adopting another
+    // anonymous session is not a flow that exists.
+    if ((user as { is_anonymous?: boolean }).is_anonymous) {
+      throw new HttpError(403, "Sign in with Apple before adopting a workspace.", "forbidden");
     }
 
-    // THE TRANSFER. One row: every listing, render, published tour, provenance
-    // row and ledger entry hangs off `org_id`, so none of them move at all.
-    const { error: moveErr } = await admin
-      .from("memberships").update({ user_id: user.id }).eq("user_id", anonId).eq("org_id", anonOrg);
-    if (moveErr) throw new HttpError(500, `Could not move the workspace: ${moveErr.message}`);
+    // ONE TRANSACTION (migration 0033), and it DELETES NOTHING.
+    //
+    // What used to be here selected `org_id, role` and then threw the role
+    // away, so any member of an org that merely counted zero listings and zero
+    // leads — a marketing user, not just its owner — could hard-delete it by
+    // calling this route with an anonymous token. Empty is not disposable:
+    // 0019 detaches subscriptions with ON DELETE SET NULL, so a paid, empty
+    // brokerage could be destroyed and its subscription orphaned. The identical
+    // bug was caught in team/accept and never back-ported to here, which is the
+    // file that pattern was copied from.
+    //
+    // adopt_anonymous_org transfers the one membership row, re-points
+    // `listings.agent_id` off the profile that is about to be deleted, and
+    // makes the adopted workspace active. The caller's own workspace is left
+    // exactly where it is.
+    const { data, error } = await adminClient().rpc("adopt_anonymous_org", {
+      p_user: user.id,
+      p_anon_user: anonId,
+      p_anon_org: anonOrg,
+    });
+    if (error) throwRpc(error.message);
 
-    // The anonymous user is gone, so its token cannot be replayed against this
-    // route or any other.
-    await admin.auth.admin.deleteUser(anonId).catch(() => {});
+    // Best effort, and now honest about it: the anonymous user is deleted so
+    // its token cannot be replayed, but a failure here is reported rather than
+    // swallowed, because the workspace has already moved.
+    const del = await admin.auth.admin.deleteUser(anonId).catch((e: unknown) => ({ error: e }));
+    const cleanupFailed = Boolean((del as { error?: unknown } | undefined)?.error);
 
-    return json({ ok: true, adopted: true, org_id: anonOrg });
+    const r = (data ?? {}) as { org_id?: string };
+    return json({ ok: true, adopted: true, org_id: r.org_id ?? anonOrg,
+                  source_cleanup_pending: cleanupFailed });
   } catch (err) {
     return respondError(err);
   }

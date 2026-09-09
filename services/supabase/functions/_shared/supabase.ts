@@ -95,6 +95,17 @@ export async function orgForUser(userId: string, preferredOrgId?: string): Promi
     return preferredOrgId;
   }
 
+  // The active workspace first (migration 0033). Joining a team no longer
+  // deletes the joiner's personal workspace, so a person can hold two
+  // memberships — and role rank alone would send an agent back to their own
+  // owner-role personal org instead of the team they just joined.
+  // active_org_for_user re-checks that the recorded choice is still a real
+  // membership in a live org, and falls back to highest privilege, which is
+  // also what makes a REMOVED member land somewhere instead of nowhere.
+  const { data: active, error: activeErr } = await admin
+    .rpc("active_org_for_user", { p_user: userId });
+  if (!activeErr && typeof active === "string" && active) return active;
+
   const { data, error } = await admin
     .from("memberships")
     .select("org_id, role")

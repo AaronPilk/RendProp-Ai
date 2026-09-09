@@ -56,6 +56,7 @@ import {
   pathSegments,
   readJson,
   respondError,
+  throwRpc,
 } from "../_shared/http.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg } from "../_shared/supabase.ts";
@@ -146,100 +147,27 @@ Deno.serve(async (req) => {
       const code = normalizeCode(body.code);
       // A malformed code and a wrong code answer identically: this route must
       // not tell anyone whether their guess had the right shape.
-      const invalid = () =>
-        new HttpError(404, "That invite code isn't valid, or it has expired.", "not_found");
-      if (!code) throw invalid();
-
-      const admin = adminClient();
-      const { data: invite, error } = await admin
-        .from("org_invites")
-        .select("id, org_id, role, expires_at, accepted_at, accepted_by, revoked_at")
-        .eq("token_hash", await hashCode(code))
-        .maybeSingle();
-      if (error) throw new HttpError(500, `Invite lookup failed: ${error.message}`);
-      if (!invite) throw invalid();
-
-      // Already accepted BY THIS USER is success, not an error — a retried tap
-      // or a second device must not read as a failure.
-      if (invite.accepted_at) {
-        if (invite.accepted_by === user.id) {
-          const { data: org } = await admin
-            .from("orgs").select("name").eq("id", invite.org_id).maybeSingle();
-          return json({ ok: true, org_id: invite.org_id, org_name: org?.name ?? null, role: invite.role });
-        }
-        throw invalid();
-      }
-      if (invite.revoked_at) throw invalid();
-      if (new Date(invite.expires_at).getTime() <= Date.now()) throw invalid();
-
-      // Already a member of this org: bind the invite to them and stop.
-      const existing = await roleInOrg(admin, user.id, invite.org_id);
-      if (existing) {
-        await admin.from("org_invites")
-          .update({ accepted_at: new Date().toISOString(), accepted_by: user.id })
-          .eq("id", invite.id).is("accepted_at", null);
-        const { data: org } = await admin
-          .from("orgs").select("name").eq("id", invite.org_id).maybeSingle();
-        return json({ ok: true, org_id: invite.org_id, org_name: org?.name ?? null, role: existing });
+      if (!code) {
+        throw new HttpError(404, "That invite code isn't valid, or it has expired.", "not_found");
       }
 
-      // The cap is re-checked HERE, not only at invite time: an invite made when
-      // there was room must not open a seat that the plan no longer has.
-      const seats = await seatCounts(admin, invite.org_id);
-      // This invite is itself counted in `used` while pending, so the test is
-      // `used > allowed`, not `used >= allowed`.
-      if (seats.used > seats.allowed) {
-        throw new HttpError(
-          402,
-          `This team is full — it has ${seats.allowed} seat${seats.allowed === 1 ? "" : "s"} and they are all taken. Ask the owner to add a seat.`,
-          "quota_exceeded",
-          { seats_used: seats.used, seats_allowed: seats.allowed },
-        );
-      }
-
-      // The joiner's OWN org — the one the signup trigger gave them. Discarded
-      // only when it is empty; otherwise this refuses, because merging two
-      // populated orgs is a person's decision.
-      const { data: mine, error: mineErr } = await admin
-        .from("memberships").select("org_id, role").eq("user_id", user.id);
-      if (mineErr) throw new HttpError(500, `Membership lookup failed: ${mineErr.message}`);
-      // ONLY orgs they OWN are candidates for discarding. A membership in
-      // somebody else's team is not theirs to delete — an earlier draft of this
-      // soft-deleted every org the joiner belonged to, which would have wiped a
-      // brokerage because one of its agents accepted a second invite.
-      const ownOrgs = (mine ?? [])
-        .filter((m) => m.role === "owner")
-        .map((m) => m.org_id as string);
-      for (const orgId of ownOrgs) {
-        if (!(await orgIsEmpty(admin, orgId))) {
-          throw new HttpError(
-            409,
-            "You already have homes and tours in your own workspace. Joining this team would leave them behind, so an owner needs to move them across first.",
-            "conflict",
-          );
-        }
-      }
-
-      // Join, THEN clean up: a failure between the two leaves the person with
-      // both, which is recoverable. The reverse leaves them with neither.
-      const { error: joinErr } = await admin
-        .from("memberships").insert({ user_id: user.id, org_id: invite.org_id, role: invite.role });
-      if (joinErr) throw new HttpError(500, `Could not join the team: ${joinErr.message}`);
-
-      for (const orgId of ownOrgs) {
-        await admin.from("memberships").delete().eq("user_id", user.id).eq("org_id", orgId);
-        await admin.from("orgs").update({ deleted_at: new Date().toISOString() }).eq("id", orgId);
-      }
-
-      // Bind the invite last, and only if still unaccepted, so two devices
-      // racing the same code cannot both consume it.
-      await admin.from("org_invites")
-        .update({ accepted_at: new Date().toISOString(), accepted_by: user.id })
-        .eq("id", invite.id).is("accepted_at", null);
-
-      const { data: org } = await admin
-        .from("orgs").select("name").eq("id", invite.org_id).maybeSingle();
-      return json({ ok: true, org_id: invite.org_id, org_name: org?.name ?? null, role: invite.role });
+      // ONE TRANSACTION, in the database (migration 0033). The TypeScript that
+      // used to live here read the invite, counted seats, INSERTED THE
+      // MEMBERSHIP, and only then tried to consume the invite — ignoring how
+      // many rows that update touched. Two people submitting one code both
+      // passed the count and both got in; the comment claiming the ordering
+      // prevented it was wrong, because the membership grants access, not the
+      // invite row. Astra reproduced it by executing this handler offline.
+      //
+      // accept_org_invite locks the profile, then the org row, then the invite,
+      // rechecks revocation, expiry and the seat cap inside that lock, and
+      // admits at most one person. Proven with two concurrent transactions:
+      // one ok, one RP404, one membership, one consumption.
+      const { data, error } = await adminClient()
+        .rpc("accept_org_invite", { p_user: user.id, p_token_hash: await hashCode(code) });
+      if (error) throwRpc(error.message);
+      const r = (data ?? {}) as { org_id?: string; org_name?: string | null; role?: string };
+      return json({ ok: true, org_id: r.org_id ?? null, org_name: r.org_name ?? null, role: r.role ?? null });
     }
 
     // ── Everything below acts on the CALLER'S org ────────────────────────────
@@ -314,50 +242,42 @@ Deno.serve(async (req) => {
           "forbidden",
         );
       }
-      await assertNotDeleting(user.id);
       if (!(await durableRateLimit(`team:invite:${orgId}`, INVITE_MAX_PER_HOUR, HOUR_SECONDS))) {
         throw new HttpError(429, "Too many invites at once — try again later.", "rate_limited");
       }
 
+      // Edge-side shape checks stay: they give a better message than a raised
+      // exception, and they keep junk out of the transaction. The RPC re-checks
+      // all of it authoritatively under the org lock.
       const body = await readJson<{ email?: unknown; role?: unknown }>(req);
       const role = typeof body.role === "string" ? body.role.trim().toLowerCase() : "agent";
       assert(INVITABLE_ROLES.has(role), 400, "Role must be admin, agent or marketing");
-      const email = body.email === undefined || body.email === null || body.email === ""
-        ? null
-        : normalizeEmail(body.email);
-      assert(body.email === undefined || body.email === null || body.email === "" || email !== null,
-             400, "That doesn't look like an email address");
-
-      const seats = await seatCounts(admin, orgId);
-      if (seats.used >= seats.allowed) {
-        throw new HttpError(
-          402,
-          `Your plan includes ${seats.allowed} seat${seats.allowed === 1 ? "" : "s"} and ${seats.used} ${seats.used === 1 ? "is" : "are"} taken (a pending invite holds one). Add seats to invite anyone else.`,
-          "quota_exceeded",
-          { seats_used: seats.used, seats_allowed: seats.allowed },
-        );
-      }
+      const emailGiven = body.email !== undefined && body.email !== null && body.email !== "";
+      const email = emailGiven ? normalizeEmail(body.email) : null;
+      assert(!emailGiven || email !== null, 400, "That doesn't look like an email address");
 
       const code = generateCode();
-      const { data: created, error } = await admin.from("org_invites").insert({
-        org_id: orgId,
-        email,
-        role,
-        token_hash: await hashCode(code.replace(/-/g, "")),
-        invited_by: user.id,
-      }).select("id, email, role, created_at, expires_at").single();
-
+      // The count and the insert used to be two statements, so two managers
+      // inviting at once could over-reserve the plan's seats. create_org_invite
+      // takes the org row lock before it counts anything.
+      const { data, error } = await adminClient().rpc("create_org_invite", {
+        p_user: user.id,
+        p_org: orgId,
+        p_email: email,
+        p_role: role,
+        p_token_hash: await hashCode(code.replace(/-/g, "")),
+      });
       if (error) {
-        // The partial unique index: one LIVE invite per address per org.
         if (/duplicate key|unique/i.test(error.message)) {
           throw new HttpError(409, "That person already has an invite waiting. Revoke it first to send a new code.", "conflict");
         }
-        throw new HttpError(500, `Could not create the invite: ${error.message}`);
+        throwRpc(error.message);
       }
 
-      // The ONLY time the plaintext code exists. It is not stored and cannot be
-      // read back — a lost code is revoked and reissued.
-      return json({ ...created, code }, 201);
+      // The RPC returns jsonb with only the safe columns — `org_invites` carries
+      // `token_hash`, which is a credential and never leaves the database. The
+      // plaintext code exists here and nowhere else, ever.
+      return json({ ...(data as Record<string, unknown>), code }, 201);
     }
 
     // ── DELETE /team/invites/<id> ────────────────────────────────────────────
