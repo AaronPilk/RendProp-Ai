@@ -529,11 +529,34 @@ struct SignInView: View {
     var dismissNote: String = "Not now keeps the tour on your phone — you can publish it later from the \(SpaceType.current.spaceNoun)."
 
     /// Ready-made copy for the AI tools (photo edits, aerials, reels).
+    ///
+    /// THIS IS NO LONGER A WALL, and the words had to change with the mechanism.
+    /// App Review rejected 1.0 under Guideline 5.1.1(v) — an app may not require
+    /// registration before someone can use features or buy an IAP that is not
+    /// account-based — and this sheet was the wall. Every launch now carries an
+    /// anonymous session, so the AI tools run without it; this can only appear
+    /// when there is NO session at all, which means the network was down when
+    /// the app started. So it says that, instead of asking somebody to register
+    /// to use a feature they may already have paid for.
     static func forAI(_ what: String, onSignedIn: @escaping () -> Void = {}) -> SignInView {
         SignInView(onSignedIn: onSignedIn,
-                   title: "Sign in to use \(what)",
-                   subtitle: "The AI runs on your account, so it needs a free sign-in. Nothing is charged — your plan's allowance covers it.",
+                   title: "Couldn't reach your account",
+                   subtitle: "\(what) runs on Rendprop's servers and this phone hasn't been able to connect. Check your connection and try again — or sign in with Apple, which also gets you connected.",
                    dismissNote: "Not now closes this — everything you set up stays here, and nothing is generated.")
+    }
+
+    /// The OPTIONAL upgrade, offered rather than demanded.
+    ///
+    /// Apple's own words in the rejection: "You may explain to the user that
+    /// registering will enable them to access the purchased content from any of
+    /// their supported devices and provide them a way to register at any time."
+    /// That is what this is for, and it is why nothing in the app presents it as
+    /// a requirement.
+    static func optionalUpgrade(onSignedIn: @escaping () -> Void = {}) -> SignInView {
+        SignInView(onSignedIn: onSignedIn,
+                   title: "Use Rendprop on your other devices",
+                   subtitle: "Everything works without signing in. Sign in with Apple and your plan, your homes and your tours follow you to a new phone or an iPad — and you can do it any time.",
+                   dismissNote: "Not now changes nothing. Your work stays on this phone and every feature keeps working.")
     }
 
     @Environment(\.dismiss) private var dismiss

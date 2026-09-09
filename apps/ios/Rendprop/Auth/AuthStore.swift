@@ -26,7 +26,24 @@ import os
 final class AuthStore: ObservableObject {
     static let shared = AuthStore()
 
+    /// TRUE WHEN THERE IS A SESSION OF ANY KIND, including an anonymous one.
+    /// From first launch onward this is true, which is the point: it is what
+    /// every "can I call the server" check reads, and after Guideline 5.1.1(v)
+    /// none of those may require a registration.
     @Published var isSignedIn: Bool
+
+    /// TRUE ONLY WITH A REAL APPLE IDENTITY on the session.
+    ///
+    /// The distinction exists because Apple rejected 1.0 for conflating them.
+    /// Ask `isIdentified` ONLY for things genuinely bound to a person across
+    /// devices — restoring a subscription onto a second phone, deleting the
+    /// account. NEVER to gate content, a feature, or a purchase; that is the
+    /// rejection, restated.
+    @Published var isIdentified: Bool = false
+
+    /// Guards the launch bootstrap so two callers cannot mint two anonymous
+    /// users for one device.
+    private var anonymousBootstrap: Task<Void, Never>?
     /// The person's name (from Apple's one-time `fullName`, or the server's
     /// profile name). Empty when unknown — the UI shows "Signed in with Apple".
     @Published var displayName: String
@@ -158,6 +175,12 @@ final class AuthStore: ObservableObject {
         // otherwise the walk photographs an empty screen. A launch argument can
         // only come from Xcode / `xcodebuild test`, never from a shipped build.
         self.isSignedIn = Config.isUITesting ? true : (Config.enableAuth ? hasToken : true)
+        // Read straight off the stored JWT rather than a remembered flag: the
+        // token IS the truth about which kind of session this is, and a
+        // remembered bool can outlive it.
+        self.isIdentified = Config.isUITesting
+            ? true
+            : (Config.enableAuth ? Self.tokenIsIdentified(Self.storedAccessToken()) : true)
         let storedName = UserDefaults.standard.string(forKey: Keys.userName) ?? ""
         // The pre-audit placeholder "Dev Agent" must never surface as a name.
         let name = storedName == "Dev Agent" ? "" : storedName
@@ -262,6 +285,7 @@ final class AuthStore: ObservableObject {
         }
         Self.persistTokens(access: accessToken, refresh: refreshToken, expiresAt: expiresAt)
         isSignedIn = true
+        isIdentified = Self.tokenIsIdentified(accessToken)
         scheduleAutoRefresh()   // re-arm for the new expiry
     }
 
@@ -280,6 +304,7 @@ final class AuthStore: ObservableObject {
         autoRefreshTask = nil
         Self.clearTokens()
         isSignedIn = Config.enableAuth ? false : true
+        isIdentified = Config.enableAuth ? false : true
     }
 
     /// Remember the person's name (Apple returns `fullName` ONLY on the first
@@ -562,9 +587,117 @@ final class AuthStore: ObservableObject {
         guard let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) else {
             throw APIError.decoding
         }
+        // Grab the anonymous token BEFORE the new session overwrites it.
+        let priorAnonymous = Self.anonymousTokenForAdoption()
         await applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
+        if let priorAnonymous {
+            // Best effort: the sign-in itself has already succeeded, and a
+            // failed adoption must not read to the agent as a failed sign-in.
+            // `POST /adopt` is idempotent, so a retry next sign-in costs
+            // nothing.
+            await Self.adoptAnonymousWork(anonymousToken: priorAnonymous)
+        }
+    }
+
+    // MARK: - Anonymous sessions (Guideline 5.1.1(v))
+
+    /// Does this JWT belong to a REAL identity rather than an anonymous one?
+    ///
+    /// Supabase stamps `is_anonymous` into the access token's claims, so the
+    /// answer is in the token and needs no round trip. A token we cannot parse
+    /// is treated as NOT identified, which is the safe direction: the worst
+    /// case is offering somebody an optional sign-in they have already done.
+    nonisolated static func tokenIsIdentified(_ jwt: String?) -> Bool {
+        guard let jwt else { return false }
+        let parts = jwt.split(separator: ".")
+        guard parts.count >= 2 else { return false }
+        var b64 = String(parts[1]).replacingOccurrences(of: "-", with: "+")
+                                  .replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        // Absent means a token minted before anonymous sessions existed — those
+        // are all real identities.
+        return (obj["is_anonymous"] as? Bool) != true
+    }
+
+    /// The anonymous session, minted at launch when there is none.
+    ///
+    /// `POST /auth/v1/signup` with an EMPTY BODY is GoTrue's anonymous sign-up:
+    /// no email, no phone, no password, no personal information of any kind. It
+    /// creates a real `auth.users` row, and `handle_new_user` gives it an org,
+    /// so every metered route works from the first launch without anybody
+    /// registering anything.
+    ///
+    /// Silent, best effort, and never blocking: a device that cannot reach the
+    /// network simply has no session yet and tries again on the next
+    /// foreground.
+    func signInAnonymouslyIfNeeded() {
+        guard Config.enableAuth, !Config.isUITesting else { return }
+        guard !isSignedIn, anonymousBootstrap == nil else { return }
+        anonymousBootstrap = Task { [weak self] in
+            await self?.performAnonymousSignIn()
+            await MainActor.run { self?.anonymousBootstrap = nil }
+        }
+    }
+
+    private func performAnonymousSignIn() async {
+        guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
+              !Config.supabaseAnonKey.isEmpty else { return }
+        var req = URLRequest(url: authBase.appendingPathComponent("signup"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.httpBody = Data("{}".utf8)
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let session = try? JSONDecoder().decode(SupabaseSession.self, from: data)
+        else { return }
+        await applySession(accessToken: session.accessToken,
+                           refreshToken: session.refreshToken,
+                           expiresAt: session.expiryDate)
+        await MainActor.run { Analytics.track("anonymous_session_started") }
+    }
+
+    /// The anonymous token, read BEFORE Sign in with Apple replaces the session.
+    ///
+    /// Native Apple sign-in through `grant_type=id_token` mints a NEW user and
+    /// does not link to the anonymous one — `linkIdentity` is a browser
+    /// redirect flow that does not cover this path. Without the hand-off, an
+    /// agent who published a tour and THEN signed in would lose the link to
+    /// their own published tour.
+    nonisolated static func anonymousTokenForAdoption() -> String? {
+        guard let token = storedAccessToken(), !tokenIsIdentified(token) else { return nil }
+        return token
+    }
+
+    /// Hand the anonymous session's workspace to the account that just signed
+    /// in. Everything hangs off `org_id`, so the server moves one membership row
+    /// and every listing, tour and disclosure comes with it.
+    private static func adoptAnonymousWork(anonymousToken: String) async {
+        guard let base = Config.apiBaseURL,
+              let token = await validAccessToken() else { return }
+        var req = URLRequest(url: base.appendingPathComponent("adopt"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.httpBody = try? JSONSerialization.data(withJSONObject: ["anonymous_token": anonymousToken])
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse else {
+            await MainActor.run { Analytics.track("anonymous_adopt", ["ok": "false"]) }
+            return
+        }
+        struct AdoptDTO: Decodable { let ok: Bool?; let adopted: Bool? }
+        let dto = try? JSONDecoder().decode(AdoptDTO.self, from: data)
+        let ok = (200..<300).contains(http.statusCode) && (dto?.ok ?? false)
+        let adopted = (dto?.adopted ?? false) ? "true" : "false"
+        await MainActor.run {
+            Analytics.track("anonymous_adopt", ["ok": ok ? "true" : "false", "adopted": adopted])
+        }
     }
 
     /// GoTrue error bodies vary (`{error, error_description}`, `{msg}`,

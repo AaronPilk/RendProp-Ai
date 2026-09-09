@@ -1922,6 +1922,11 @@ struct RendpropApp: App {
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
             .task { Analytics.start(api: model.api as? AnalyticsAPI) }
+            // GUIDELINE 5.1.1(v). A session with NO personal information, minted
+            // silently at launch, is what lets every feature and the paywall
+            // work without anybody registering. Idempotent, and a no-op when a
+            // session already exists — including a real Apple one.
+            .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
             // A previous launch's Apple authorizationCode submission may have
             // been interrupted (killed mid-flight, offline, timeout) — give it
             // exactly one more try now that the app is back up (audit finding
@@ -1929,7 +1934,12 @@ struct RendpropApp: App {
             .task { await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded() }
             // Backgrounding is the one moment we KNOW the person is done, so it
             // is the most valuable flush there is.
-            .onChange(of: scenePhase) { phase in Analytics.sceneChanged(phase) }
+            .onChange(of: scenePhase) { phase in
+                Analytics.sceneChanged(phase)
+                // A launch with no network leaves the device sessionless.
+                // Retry on the way back rather than stranding it.
+                if phase == .active { AuthStore.shared.signInAnonymouslyIfNeeded() }
+            }
             // Universal Links. `onContinueUserActivity` is the https path (a
             // tap in Messages, Mail, Safari); `onOpenURL` catches the
             // rendprop:// custom scheme. A URL this app has no screen for
