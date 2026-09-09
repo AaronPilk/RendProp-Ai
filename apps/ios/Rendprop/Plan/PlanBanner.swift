@@ -1,4 +1,6 @@
 import SwiftUI
+import Combine
+import UIKit
 
 // The one line on Home that says which plan you are on.
 //
@@ -56,25 +58,45 @@ struct PlanBanner: View {
     @MainActor
     final class Loader: ObservableObject {
         @Published var state: PlanState?
-        private var started = false
+        private var bag = Set<AnyCancellable>()
+        private var foreground: NSObjectProtocol?
+        private var inFlight = false
 
-        init() { start() }
+        init() {
+            // AuthStore's own publisher, which fires IMMEDIATELY with the
+            // current value and again every time the session changes — the
+            // anonymous bootstrap landing, a Sign in with Apple, a sign-out.
+            // That is what the first version got wrong: it loaded once, at the
+            // moment Home first rendered, which on a cold launch is before the
+            // anonymous session exists. There was no token, it returned, and it
+            // never looked again. Settings showed the plan because its `.task`
+            // runs later; Home showed nothing, for the rest of the session.
+            AuthStore.shared.$isSignedIn
+                .removeDuplicates()
+                .receive(on: DispatchQueue.main)
+                .sink { [weak self] _ in Task { @MainActor in await self?.refresh() } }
+                .store(in: &bag)
 
-        func start() {
-            guard !started else { return }
-            started = true
-            Task { [weak self] in await self?.load() }
+            // A plan can change while the app is backgrounded — a purchase on
+            // another device, a trial expiring overnight.
+            foreground = NotificationCenter.default.addObserver(
+                forName: UIApplication.didBecomeActiveNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in Task { @MainActor in await self?.refresh() } }
+        }
+
+        deinit {
+            if let foreground { NotificationCenter.default.removeObserver(foreground) }
+        }
+
+        func refresh() async {
+            guard !inFlight else { return }
+            inFlight = true
+            defer { inFlight = false }
+            await load()
         }
 
         private func load() async {
-            // A launch argument can only come from Xcode or `xcodebuild test`,
-            // and Config.uiTestPlanBanner is nil unless -uiTesting is present
-            // too — the same fence every other override in Config.swift uses.
-            //
-            // NOT behind `#if DEBUG`: this project defines
-            // SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG in exactly one build
-            // configuration, so a #if DEBUG block here compiled out of the very
-            // build the UI walk runs.
             if let forced = Config.uiTestPlanBanner {
                 let day: TimeInterval = 86_400
                 let iso = ISO8601DateFormatter()
@@ -87,22 +109,30 @@ struct PlanBanner: View {
                 }
                 return
             }
+            guard Config.useLiveBackend, let base = Config.apiBaseURL else { return }
 
-            guard Config.useLiveBackend, let base = Config.apiBaseURL,
-                  let token = await AuthStore.validAccessToken() else { return }
-            var req = URLRequest(url: base.appendingPathComponent("me"))
-            req.timeoutInterval = 20
-            req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-            guard let (data, resp) = try? await URLSession.shared.data(for: req),
-                  let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
-            else { return }                      // stay silent rather than guess
-            let d = JSONDecoder()
-            // convertFromSnakeCase and explicit CodingKeys are mutually
-            // exclusive — MeSlice declares none, so `trial_ends_at` maps.
-            d.keyDecodingStrategy = .convertFromSnakeCase
-            guard let me = try? d.decode(MeSlice.self, from: data) else { return }
-            state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt, now: Date())
+            // A session can exist a beat before its token is usable, so give it
+            // a few tries rather than going quiet for the rest of the launch.
+            for delay in [0.0, 0.8, 2.0, 4.0] {
+                if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+                guard let token = await AuthStore.validAccessToken() else { continue }
+                var req = URLRequest(url: base.appendingPathComponent("me"))
+                req.timeoutInterval = 20
+                req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+                req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+                guard let (data, resp) = try? await URLSession.shared.data(for: req),
+                      let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode)
+                else { continue }
+                let d = JSONDecoder()
+                // convertFromSnakeCase and explicit CodingKeys are mutually
+                // exclusive — MeSlice declares none, so `trial_ends_at` maps.
+                d.keyDecodingStrategy = .convertFromSnakeCase
+                guard let me = try? d.decode(MeSlice.self, from: data) else { return }
+                state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt, now: Date())
+                return
+            }
+            // Every attempt failed: say nothing rather than guess at somebody's
+            // money. The next foreground tries again.
         }
     }
 
