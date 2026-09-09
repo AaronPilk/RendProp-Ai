@@ -253,6 +253,10 @@ enum ReelComposer {
         }
 
         let prepared = await prepare(shots, renderSize: renderSize)
+        // AVAssetTrack.asset is weak. The asynchronous prepare pass must keep
+        // every source asset alive through insertion AND export; retaining the
+        // track alone leaves a valid downloaded clip with no readable owner.
+        defer { withExtendedLifetime(prepared) {} }
         guard !prepared.isEmpty else { throw ComposeError.noClips }
 
         // A/B layout first when transitions were asked for; hard cuts otherwise,
@@ -305,7 +309,18 @@ enum ReelComposer {
 
         if let overlay = buildOverlay(options: options, captions: layout.captions,
                                       renderSize: renderSize, hasAudio: audio.inserted) {
-            videoComposition.animationTool = overlay
+            // Render the overlay as a distinct input, not a post-processing
+            // video layer. The latter crashes in Core Animation's IOSurface
+            // transport on Simulator. Every time segment must include this
+            // unused track ID, above its existing video/transition layers.
+            let overlayTrackID = composition.unusedTrackID()
+            for case let instruction as AVMutableVideoCompositionInstruction in instructions {
+                let overlayInstruction = AVMutableVideoCompositionLayerInstruction()
+                overlayInstruction.trackID = overlayTrackID
+                instruction.layerInstructions.insert(overlayInstruction, at: 0)
+            }
+            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
+                additionalLayer: overlay, asTrackID: overlayTrackID)
         }
 
         try await export(composition: composition, videoComposition: videoComposition, to: output)
@@ -316,6 +331,7 @@ enum ReelComposer {
     /// One clip, read and resolved. Non-isolated value work plus AVFoundation
     /// loads; no UI, no main actor.
     private struct Prepared {
+        let asset: AVAsset
         let track: AVAssetTrack
         /// The slice of the SOURCE we insert.
         let srcRange: CMTimeRange
@@ -368,7 +384,7 @@ enum ReelComposer {
                 guard onScreen > .zero else { continue }
 
                 let caption = shot.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
-                out.append(Prepared(track: src,
+                out.append(Prepared(asset: asset, track: src,
                                     srcRange: CMTimeRange(start: full.start, duration: srcDuration),
                                     onScreen: onScreen,
                                     speed: speed,
@@ -673,20 +689,18 @@ enum ReelComposer {
     ///   3. the word-by-word spoken captions from the voiceover
     ///      (`CaptionRenderer`), which need audio, words, and an enabled style.
     ///
-    /// The tool wants a video layer + a parent layer (video below, overlay
-    /// above), every frame equal to the render rect. It applies on EXPORT ONLY
-    /// (never AVPlayer playback) — and this path only exports.
+    /// A standalone layer tree, supplied as an additional composition track
+    /// above the video in every instruction. It applies on EXPORT ONLY (never
+    /// AVPlayer playback) — and this path only exports.
     private static func buildOverlay(options: Options, captions: [ShotCaption],
                                      renderSize: CGSize,
-                                     hasAudio: Bool) -> AVVideoCompositionCoreAnimationTool? {
+                                     hasAudio: Bool) -> CALayer? {
         let wantsWordCaptions = hasAudio && options.captionStyle.enabled
             && !(options.voiceover?.words.isEmpty ?? true)
         let shotCaptions = options.shotCaptionStyle.isOn ? captions : []
         guard options.titleCard != nil || wantsWordCaptions || !shotCaptions.isEmpty else { return nil }
 
         let renderRect = CGRect(origin: .zero, size: renderSize)
-        let videoLayer = CALayer()
-        videoLayer.frame = renderRect
         let overlayLayer = CALayer()
         overlayLayer.frame = renderRect
         overlayLayer.masksToBounds = true
@@ -725,10 +739,8 @@ enum ReelComposer {
         // the whole tree read top-left (UIKit-style) so the text renders upright
         // and our y-from-top layout math is literal.
         parentLayer.isGeometryFlipped = true
-        parentLayer.addSublayer(videoLayer)
         parentLayer.addSublayer(overlayLayer)
-        return AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer,
-                                                   in: parentLayer)
+        return parentLayer
     }
 
     // MARK: Big shot captions

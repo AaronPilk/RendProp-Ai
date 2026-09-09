@@ -763,7 +763,7 @@ struct RenderJobState: Equatable {
     enum Stage: String, Equatable {
         case rendering, enhancing, publishing          // running
         case rendered                                   // encoded; publish not attempted yet
-        case awaitingSignIn                             // parked: publishing needs sign-in
+        case awaitingConnection                         // local tour is safe; connection retries
         case published, publishFailed, failed, cancelled
     }
     var phase: String
@@ -1029,20 +1029,27 @@ final class RenderCoordinator: ObservableObject {
             Haptics.success()
             return
         }
-        if Config.enableAuth && !AuthStore.shared.isSignedIn {
-            // Publishing needs an account. Park it: the tour is viewable now and
-            // the listing detail (or this screen after sign-in) publishes it.
-            model.setStatus(.ready, for: id)
-            model.addPendingPublish(id)
-            update(id, run) { $0.stage = .awaitingSignIn; $0.phase = "Sign in to publish"; $0.isRunning = false }
-            Haptics.success()
-            return
-        }
         await runPublish(listingID: id, run: run, allowEnhance: true)
     }
 
     private func runPublish(listingID id: UUID, run: UUID, allowEnhance: Bool) async {
         guard let model, let tour = model.tours[id] else { return }
+        model.addPendingPublish(id)
+        if Config.enableAuth && !AuthStore.shared.isSignedIn {
+            model.setStatus(.ready, for: id)
+            update(id, run) {
+                $0.stage = .awaitingConnection; $0.phase = "Waiting for connection"
+                $0.isRunning = true; $0.fraction = 1
+            }
+        }
+        guard await AuthStore.shared.ensureSession(), !Task.isCancelled, runs[id] == run else {
+            // Explicit cancel owns its final state. An identity transition may
+            // also interrupt connection; keep the durable publish for retry.
+            update(id, run) {
+                $0.stage = .rendered; $0.phase = "Saved on your phone"; $0.isRunning = false
+            }
+            return
+        }
         let render = model.renders[id] ?? Render(listingID: id, tier: .smooth, durationS: tour.durationS)
 
         var existingAssetID: String? = nil
@@ -1903,11 +1910,21 @@ struct RendpropApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
+#if DEBUG
+                if Config.isSessionNetworkTesting {
+                    PhaseOneFixtureRoot()
+                } else if hasOnboarded {
+                    RootTabView()
+                } else {
+                    OnboardingView()
+                }
+#else
                 if hasOnboarded {
                     RootTabView()
                 } else {
                     OnboardingView()
                 }
+#endif
             }
             .environmentObject(model)
             .environmentObject(uploads)

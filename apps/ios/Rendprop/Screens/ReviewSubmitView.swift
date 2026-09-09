@@ -22,8 +22,8 @@ struct ReviewSubmitView: View {
     @State private var render: Render?
     @State private var entitlements: Entitlements?
     @State private var entitlementsChecked = false
-    @State private var showSignIn = false
     @State private var showRerenderConfirm = false
+    @State private var entitlementTask: Task<Void, Never>?
 
     /// Explicit footage type (decision A8). Prefilled by a metadata heuristic,
     /// always correctable — it decides stabilization + the retime factor.
@@ -73,9 +73,6 @@ struct ReviewSubmitView: View {
         .sheet(isPresented: $showRoomTagger) {
             RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
         }
-        .sheet(isPresented: $showSignIn) {
-            SignInView.forAI("AI render tiers")
-        }
         .navigationDestination(isPresented: $goToStatus) {
             if let render {
                 RenderStatusView(listing: listing, render: render)
@@ -88,7 +85,9 @@ struct ReviewSubmitView: View {
         } message: {
             Text("This replaces the current tour with a new render using these settings. A published link keeps working until the new tour is published.")
         }
-        .task(id: auth.isSignedIn) { await loadEntitlements() }
+        .task { await loadEntitlements() }
+        .onDisappear { entitlementTask?.cancel(); entitlementTask = nil }
+        .sessionConnectionNotice()
         .onAppear(perform: detectSourceIfNeeded)
         .aiConsentGate()
     }
@@ -198,7 +197,7 @@ struct ReviewSubmitView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if Config.enableAuth && !auth.isSignedIn {
                         Spacer(minLength: 4)
-                        Button("Sign in") { showSignIn = true }
+                        Button("Retry connection") { auth.retrySessionConnection() }
                             .font(.rpCaption.weight(.semibold))
                             .foregroundStyle(Theme.accent)
                     }
@@ -213,7 +212,19 @@ struct ReviewSubmitView: View {
         let locked = t.usesServerAI && aiTiersLocked
         let selected = tier == t
         return Button {
-            guard !locked else { return }
+            if locked {
+                guard entitlements == nil, entitlementTask == nil else { return }
+                // Remember the selected tier while connection/plan lookup
+                // is pending. Never ask for an identity to resolve an outage.
+                entitlementTask = Task { @MainActor in
+                    defer { entitlementTask = nil }
+                    await loadEntitlements()
+                    guard !Task.isCancelled, !aiTiersLocked,
+                          await AIConsent.shared.ensureGranted() else { return }
+                    tier = t
+                }
+                return
+            }
             // Guideline 5.1.2(i): the AI tiers upload the finished master and
             // hand it to Topaz Labs for motion smoothing + upscale. Picking one
             // is the moment to ask; Smooth (on-device) never leaves the phone.
@@ -266,7 +277,7 @@ struct ReviewSubmitView: View {
             .opacity(locked ? 0.55 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(locked)
+        .disabled(locked && entitlements != nil)
         .accessibilityLabel(Text(locked ? "\(t.displayName). Team plan." : t.displayName))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
@@ -310,7 +321,7 @@ struct ReviewSubmitView: View {
         } else {
             VStack(spacing: 10) {
                 PrimaryButton(title: "Create my tour", systemImage: "sparkles") { start() }
-                Text("Renders right on your phone. Publishing the share link needs a free sign-in.")
+                Text("Renders right on your phone. The share link publishes when connected — no registration needed.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
@@ -323,7 +334,7 @@ struct ReviewSubmitView: View {
     private func loadEntitlements() async {
         guard Config.useLiveBackend else { return }
         entitlementsChecked = false
-        guard !Config.enableAuth || auth.isSignedIn else {
+        guard await auth.ensureSession(), !Task.isCancelled else {
             entitlements = nil
             entitlementsChecked = true
             if tier != .smooth { tier = .smooth }

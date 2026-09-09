@@ -3,6 +3,35 @@ import Foundation
 /// Central app configuration + feature flags.
 /// Phase 2 features are stubbed behind flags — see docs/MASTER-BUILD-PROMPT.md.
 enum Config {
+    /// Real-network regression tests use a disposable simulator and localhost.
+    /// These switches do not exist in Release and cannot point at a remote host.
+    static var isSessionNetworkTesting: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-sessionNetworkTesting")
+#else
+        false
+#endif
+    }
+
+    static var sessionTestRun: String {
+#if DEBUG
+        ProcessInfo.processInfo.environment["RENDP_TEST_RUN"] ?? "isolated"
+#else
+        ""
+#endif
+    }
+
+    static var sessionTestURL: URL? {
+#if DEBUG
+        guard isSessionNetworkTesting,
+              let raw = ProcessInfo.processInfo.environment["RENDP_TEST_URL"],
+              let url = URL(string: raw), url.scheme == "http",
+              url.host == "127.0.0.1", url.user == nil, url.password == nil else { return nil }
+        return url
+#else
+        return nil
+#endif
+    }
     // MARK: - Backend (Supabase + Cloudflare) — see docs/BACKEND-ARCHITECTURE.md §2
 
     /// Supabase project root, e.g. https://<project-ref>.supabase.co
@@ -10,6 +39,7 @@ enum Config {
     /// Reads Info.plist key `RENDPROP_SUPABASE_URL` (inject via a build setting /
     /// xcconfig) if present, otherwise the constant below.
     static let supabaseURL: URL? = {
+        if isSessionNetworkTesting { return sessionTestURL }
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_URL") as? String,
            !s.isEmpty, let u = URL(string: s) { return u }
         return URL(string: "https://ymgqpbnjpztwjsyvceld.supabase.co")   // dedicated RendProp project (Pro)
@@ -25,6 +55,7 @@ enum Config {
     /// service-role key (that stays server-side only — architecture §4).
     /// Reads Info.plist `RENDPROP_SUPABASE_ANON_KEY` if present, else the constant.
     static let supabaseAnonKey: String = {
+        if isSessionNetworkTesting { return "local-fixture-public-key" }
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_ANON_KEY") as? String,
            !s.isEmpty { return s }
         // Supabase anon key (public by design; RLS enforces access).
@@ -102,6 +133,7 @@ enum Config {
     /// the live client can't be constructed (e.g. no base URL). Single source of
     /// truth so AppModel and UploadManager stay in sync.
     static func makeAPIClient() -> APIClient {
+        if isSessionNetworkTesting, let live = LiveAPIClient() { return live }
         // The UI walk is checked BEFORE the live client: `-uiTesting` always
         // means the offline mock, whatever `useLiveBackend` says.
         if isUITesting { return MockAPIClient() }

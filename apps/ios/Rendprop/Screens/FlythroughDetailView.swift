@@ -14,6 +14,38 @@ import UniformTypeIdentifiers
 import AVFoundation   // Reel Studio: composition + stitch + export
 import AVKit          // Reel Studio / Aerial intro: VideoPlayer preview
 
+/// Retains one feature tap while anonymous session creation reconnects. A
+/// second tap cannot enqueue the same paid action twice, and leaving the
+/// feature cancels only this waiter, not another screen's shared signup.
+@MainActor
+private final class FeatureSessionAction: ObservableObject {
+    @Published private(set) var isWaiting = false
+    private var task: Task<Void, Never>?
+    private var generation = UUID()
+
+    func run(_ action: @escaping @MainActor () -> Void) {
+        guard task == nil else { return }
+        let attempt = UUID()
+        generation = attempt
+        isWaiting = true
+        task = Task { [weak self] in
+            let connected = await AuthStore.shared.ensureSession()
+            guard let self, self.generation == attempt else { return }
+            self.task = nil
+            self.isWaiting = false
+            guard connected, !Task.isCancelled else { return }
+            action()
+        }
+    }
+
+    func cancel() {
+        generation = UUID()
+        task?.cancel()
+        task = nil
+        isWaiting = false
+    }
+}
+
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
@@ -50,7 +82,7 @@ struct FlythroughDetailView: View {
     @State private var isDeleting = false
     /// Which of the two links a QR sheet is being shown for (nil = none).
     @State private var qrTarget: QRTarget?
-    @State private var showSignIn = false
+    @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
 
@@ -251,8 +283,6 @@ struct FlythroughDetailView: View {
         currentListing.serverShareURL
     }
 
-    private var needsSignIn: Bool { Config.enableAuth && !auth.isSignedIn }
-
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
@@ -279,7 +309,9 @@ struct FlythroughDetailView: View {
         .navigationTitle(currentListing.address)
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.listing)
-        .disabled(isDeleting)
+        .disabled(isDeleting || connection.isWaiting)
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
+        .onDisappear { connection.cancel() }
         .onAppear {
             // Seed the Zillow field ONCE — re-seeding on every appearance wiped
             // an in-progress paste when a sheet closed (F-A-26).
@@ -352,9 +384,6 @@ struct FlythroughDetailView: View {
         }
         .sheet(item: $auditExport) { export in
             ShareSheet(items: [export.url])
-        }
-        .sheet(isPresented: $showSignIn) {
-            SignInView(onSignedIn: { publishNow() })
         }
         .confirmationDialog("Delete this \(space.spaceNoun)?", isPresented: $showDeleteConfirm,
                             titleVisibility: .visible) {
@@ -612,7 +641,7 @@ struct FlythroughDetailView: View {
                 AIFailureCard(failure: failure,
                               retryHint: "Tap Publish tour to try again.",
                               quotaFeature: "renders",
-                              onSignIn: { showSignIn = true })
+                              onReconnect: { publishNow() })
             }
             if isPublishing {
                 HStack(spacing: 10) {
@@ -627,10 +656,7 @@ struct FlythroughDetailView: View {
                     nextStepLabel(hasPublishProblem ? "Retry publish" : "Publish tour", "icloud.and.arrow.up")
                 }
                 .buttonStyle(ScalePressStyle())
-                if needsSignIn {
-                    Text("Publishing needs a free account — you'll be asked to sign in with Apple.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                }
+                .accessibilityIdentifier("phase1.publish")
             }
         }
         .padding(14)
@@ -1538,11 +1564,15 @@ struct FlythroughDetailView: View {
 
     // MARK: - Actions
 
-    /// Publish the EXISTING local render (no re-render) — decision A2. Sign-in
-    /// gate first; progress + the server's real error inline.
+    /// Publish the EXISTING local render (no re-render). Retain this tap while
+    /// the anonymous connection is recovered; registration is never required.
     private func publishNow() {
         guard !isPublishing, tour != nil, !currentListing.isSample else { return }
-        if needsSignIn { showSignIn = true; return }
+        connection.run { publishWithSession() }
+    }
+
+    private func publishWithSession() {
+        guard !isPublishing, tour != nil, !currentListing.isSample else { return }
         isPublishing = true
         publishFailure = nil
         Haptics.selection()
@@ -1899,7 +1929,7 @@ struct MapPin: Identifiable {
 
 /// A failure the AI/publish sheets can act on (decision A12): the server's own
 /// message when there is one, plus the status class so the UI can offer the
-/// right next step — "Upgrade plan" on 402, "Sign in" on 401, "try again in a
+/// right next step — "Upgrade plan" on 402, "Retry connection" on 401, "try again in a
 /// few minutes" on 429.
 private struct AIFailure: Identifiable {
     let id = UUID()
@@ -1919,7 +1949,9 @@ private struct AIFailure: Identifiable {
             if case .server(_, _, let m) = api { text = m.trimmingCharacters(in: .whitespacesAndNewlines) }
             if text.isEmpty { text = (api.errorDescription ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
             if text.isEmpty { text = "Something went wrong. Please try again." }
-            message = AIFailure.humanReadable(text)
+            message = api.isUnauthorized
+                ? "The connection to your workspace needs to be restored. Your work is still here."
+                : AIFailure.humanReadable(text)
             isQuota = api.isQuota
             isUnauthorized = api.isUnauthorized
             isRateLimited = api.isRateLimited
@@ -2001,7 +2033,7 @@ private struct AIFailure: Identifiable {
     /// One-line next step for the status class (empty when there is none).
     var actionHint: String {
         if isQuota { return "This month's allowance for this feature is used up." }
-        if isUnauthorized { return "Your session expired — sign in to continue." }
+        if isUnauthorized { return "The connection to your workspace needs to be restored. Your work is still here." }
         if isRateLimited { return "Try again in a few minutes." }
         return ""
     }
@@ -2013,8 +2045,8 @@ private struct AIFailure: Identifiable {
 }
 
 /// Loud, unmissable failure card with the right next step: the server's message,
-/// Upgrade plan on 402 (opens the pricing page — no prices in-app), Sign in on
-/// 401, wait on 429, otherwise the caller's retry hint.
+/// Upgrade plan on 402, reconnect on 401, wait on 429, otherwise the caller's
+/// retry hint. A failed connection never opens Apple registration.
 private struct AIFailureCard: View {
     let failure: AIFailure
     var retryHint: String = "Adjust the settings and try again."
@@ -2022,7 +2054,7 @@ private struct AIFailureCard: View {
     /// A `plan_entitlements` key — renders | photo_edits | reels | aerials |
     /// drone. Empty = the generic "monthly allowance" wording.
     var quotaFeature: String = ""
-    var onSignIn: () -> Void = {}
+    var onReconnect: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2054,8 +2086,8 @@ private struct AIFailureCard: View {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
-                Button { onSignIn() } label: {
-                    Label("Sign in", systemImage: "person.crop.circle")
+                Button { onReconnect() } label: {
+                    Label("Retry connection", systemImage: "arrow.clockwise")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 12)
                         .background(Theme.accentSoft).foregroundStyle(Theme.accent)
@@ -3394,7 +3426,7 @@ struct PhotoStudioView: View {
     @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
-    @State private var showSignIn = false                // AI edits run on the user's account
+    @StateObject private var connection = FeatureSessionAction()
     /// The edit an EDIT-BAR CHIP asked for while there were no photos yet. The
     /// chips used to be decoration; now one picks a photo and this remembers what
     /// to do with it the moment the import lands. Cleared on a cancelled picker.
@@ -3453,7 +3485,7 @@ struct PhotoStudioView: View {
     /// left the grid stuck on "Animating photo…" forever (F-A-12).
     private var isPresentingOverlay: Bool {
         compare != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
-            || showLibrary || showCamera || showSignIn
+            || showLibrary || showCamera
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
             || showClipDeleteConfirm
     }
@@ -3741,13 +3773,14 @@ struct PhotoStudioView: View {
 
     private var studioSheets: some View {
         studioCore
+        .disabled(connection.isWaiting)
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .sheet(isPresented: $showLibrary) {
             LibraryImagePicker { imgs in ingest(imgs) }.ignoresSafeArea()
         }
         .sheet(isPresented: $showCamera) {
             CameraPicker { img in ingest([img]) }.ignoresSafeArea()
         }
-        .sheet(isPresented: $showSignIn) { SignInView.forAI("AI photo edits") }
         .fullScreenCover(item: $compare) { p in
             PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
         }
@@ -3857,7 +3890,10 @@ struct PhotoStudioView: View {
                 }
             }
             if f.isUnauthorized {
-                Button("Sign in") { showSignIn = true }
+                Button("Retry connection") {
+                    aiFailure = nil
+                    connection.run {}
+                }
             }
             Button("OK", role: .cancel) { aiFailure = nil }
         } message: { f in
@@ -3868,6 +3904,9 @@ struct PhotoStudioView: View {
         // the disclosure has to be agreed BEFORE the screen can be used. Asked
         // once per device; declining backs out of the studio.
         .aiConsentGate()
+        .onDisappear {
+            if !isPresentingOverlay { connection.cancel() }
+        }
         .task {
             if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
@@ -4026,25 +4065,15 @@ struct PhotoStudioView: View {
         }
     }
 
-    // MARK: - AI calls (all gated on sign-in; every call runs on the user's account)
+    // MARK: - AI calls (await an anonymous or identified workspace session)
 
-    /// Present the sign-in sheet instead of letting the call 401 (F-A-13).
-    private func requireSignIn() -> Bool {
-        if Config.enableAuth && !auth.isSignedIn {
-            // Every launch opens a session by itself, so landing here means the
-            // network refused it — not that this person owes us a registration.
-            // Ask for one again before falling back to the sheet, whose AI copy
-            // ("Couldn't reach your account") says the same thing.
-            auth.signInAnonymouslyIfNeeded()
-            showSignIn = true
-            return false
+    private func openCustomEdit(_ p: EnhancedPhoto, batchTargets: [EnhancedPhoto] = []) {
+        connection.run {
+            // Park the batch only after connection succeeds. Cancelling the
+            // wait cannot leak these targets into the next single-photo edit.
+            customBatchTargets = batchTargets
+            customEditPhoto = p
         }
-        return true
-    }
-
-    private func openCustomEdit(_ p: EnhancedPhoto) {
-        guard requireSignIn() else { return }
-        customEditPhoto = p
     }
 
     /// AI edit (twilight | sky | lawn | declutter | stage | custom) via the
@@ -4056,12 +4085,17 @@ struct PhotoStudioView: View {
     /// always had. The split exists so the edit bar's "apply to these photos"
     /// path can run the IDENTICAL code once per photo instead of inventing a
     /// batch endpoint or a second billing path. Nothing about a single edit
-    /// changed: the guard, the sign-in check, the spinner text, the success
+    /// changed: the guard, the session check, the spinner text, the success
     /// haptic and the compare sheet are all still here, in this order.
     private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
                         style: String? = nil, prompt: String? = nil) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+        connection.run { aiEditWithSession(p, edit, style: style, prompt: prompt) }
+    }
+
+    private func aiEditWithSession(_ p: EnhancedPhoto, _ edit: String,
+                                   style: String?, prompt: String?) {
+        guard !isProcessing else { return }
         isProcessing = true
         batchNote = nil
         processingText = "Working on your photo…"
@@ -4231,7 +4265,11 @@ struct PhotoStudioView: View {
     /// tapping one runs the normal aiEdit path.
     private func suggestEdits(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+        connection.run { suggestEditsWithSession(p) }
+    }
+
+    private func suggestEditsWithSession(_ p: EnhancedPhoto) {
+        guard !isProcessing else { return }
         isProcessing = true
         processingText = "Looking at your photo…"
         Haptics.selection()
@@ -4263,7 +4301,11 @@ struct PhotoStudioView: View {
     /// fal result URLs expire, so the download happens immediately on completion.
     private func animate(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+        connection.run { animateWithSession(p) }
+    }
+
+    private func animateWithSession(_ p: EnhancedPhoto) {
+        guard !isProcessing else { return }
         isProcessing = true
         processingText = "Making your video — about a minute…"
         Haptics.selection()
@@ -4759,6 +4801,7 @@ struct PhotoStudioView: View {
         .accessibilityLabel(Text(photos.isEmpty
                                  ? "\(label). Pick a photo and this change is made to it."
                                  : "\(label). Pick the photos and this change is made to each one."))
+        .accessibilityIdentifier("studio.edit.\(edit)")
     }
 
     // MARK: - Choosing which photos an edit applies to
@@ -4900,16 +4943,13 @@ struct PhotoStudioView: View {
     ///    say which ones. With 17 photos on a listing, "tap the wand, pick
     ///    Declutter" seventeen times is the workflow this exists to kill.
     ///
-    /// EVERY GATE STAYS WHERE IT WAS. Sign-in is checked here, before anything
-    /// opens, through the same `requireSignIn()` that `aiEdit`, `animate` and
-    /// `openCustomEdit` call — and it is checked AGAIN by whichever of those
-    /// actually runs. The AI-consent gate (`.aiConsentGate()` on this view's
-    /// body) and the quota/paywall path (`AIFailure.isQuota` → `PaywallRouter`)
-    /// are untouched. This adds ways to REACH `aiEdit`, never a way around it.
+    /// Selecting a change and its photos is local work and stays available
+    /// offline. The actual edit runners await the shared anonymous session
+    /// without losing the selected photos or prompt. Consent and quota checks
+    /// remain unchanged.
     private func startEdit(_ edit: String, style: String?, title: String,
                            multiple: Bool = true) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
         batchNote = nil
         guard !photos.isEmpty else {
             startShowcaseEdit(edit, style: style)
@@ -4999,13 +5039,10 @@ struct PhotoStudioView: View {
             // The prompt comes first, from the sheet, and then goes to every
             // photo the agent ticked. The sheet previews the first of them.
             //
-            // Sign-in is checked BEFORE the targets are parked. `openCustomEdit`
-            // checks it too and would simply not present — which would leave
-            // `customBatchTargets` set, and the NEXT single custom edit from the
-            // wand would silently fan out across photos the agent never picked.
-            guard let first = targets.first, requireSignIn() else { return }
-            customBatchTargets = targets
-            openCustomEdit(first)
+            // The retained action owns its targets while reconnecting. They
+            // become view state only when the prompt can actually open.
+            guard let first = targets.first else { return }
+            openCustomEdit(first, batchTargets: targets)
         default:
             runBatch(pending, targets: targets)
         }
@@ -5024,12 +5061,17 @@ struct PhotoStudioView: View {
     /// sixteen — except when the server says the allowance is gone (402) or the
     /// session expired (401), where continuing would burn fourteen more calls
     /// that cannot succeed. Those stop the run and surface the SAME alert a
-    /// single edit shows, keeping its Upgrade plan / Sign in buttons, with a
+    /// single edit shows, keeping its Upgrade plan / Retry connection buttons, with a
     /// line saying how many landed first.
     private func runBatch(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
                           prompt: String? = nil) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+        connection.run { runBatchWithSession(pending, targets: targets, prompt: prompt) }
+    }
+
+    private func runBatchWithSession(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
+                                     prompt: String?) {
+        guard !isProcessing else { return }
         guard !targets.isEmpty else { return }
         isProcessing = true
         batchNote = nil
@@ -5096,7 +5138,7 @@ struct PhotoStudioView: View {
         if skipped > 0 { lines.append("\(skipped) were not attempted.") }
         if let firstFailure { lines.append("The first failure said: \(firstFailure.message)") }
         // Keep the failure's CLASS so a 402 still offers the in-app paywall and
-        // a 401 still offers Sign in — the message changes, the buttons do not.
+        // a 401 still offers Retry connection — the message changes, the buttons do not.
         if let firstFailure {
             aiFailure = AIFailure(firstFailure,
                                   title: done > 0 ? "Some photos didn't change" : firstFailure.title,
@@ -5347,6 +5389,7 @@ struct CustomEditSheet: View {
     let onGenerate: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var prompt = ""
+    @StateObject private var connection = FeatureSessionAction()
     @State private var isImproving = false       // "Improve my prompt" in flight
     @State private var improveError: String?
     /// The area named by the starter chip the person tapped, sent as
@@ -5420,6 +5463,7 @@ struct CustomEditSheet: View {
                 Spacer()
             }
             .padding()
+            .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Custom AI edit")
             .navigationBarTitleDisplayMode(.inline)
@@ -5438,6 +5482,8 @@ struct CustomEditSheet: View {
                 }
             }
         }
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
+        .onDisappear { connection.cancel() }
         .presentationDetents([.medium, .large])
     }
 
@@ -5604,6 +5650,11 @@ struct CustomEditSheet: View {
     /// floor. That left a multi-megabyte encode running on the main path of the
     /// one AI call in the app that is meant to feel instant.
     private func improvePrompt() {
+        guard !trimmed.isEmpty, !isImproving else { return }
+        connection.run { improvePromptWithSession() }
+    }
+
+    private func improvePromptWithSession() {
         let rough = trimmed
         guard !rough.isEmpty, !isImproving else { return }
         isImproving = true
@@ -6028,14 +6079,13 @@ struct AerialIntroSheet: View {
     @State private var isSaving = false
     @State private var saveError: String?
     // Presentation
-    @State private var showSignIn = false
+    @StateObject private var connection = FeatureSessionAction()
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var showCloseConfirm = false
     @State private var showReelStudio = false
     @State private var geocoder = CLGeocoder()
 
-    private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
     private var isGenerating: Bool { phase == .generating }
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     private var noun: String { space.spaceNoun }
@@ -6116,11 +6166,12 @@ struct AerialIntroSheet: View {
                         AIFailureCard(failure: failure,
                                       retryHint: "Adjust the settings above and generate again.",
                                       quotaFeature: "aerials",
-                                      onSignIn: { showSignIn = true })
+                                      onReconnect: { generate() })
                     }
                 }
                 .padding()
             }
+            .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Aerial intro")
             .navigationBarTitleDisplayMode(.inline)
@@ -6133,9 +6184,11 @@ struct AerialIntroSheet: View {
                 }
             }
         }
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .interactiveDismissDisabled(isGenerating)
         .onAppear(perform: seedIfNeeded)
         .onDisappear {
+            connection.cancel()
             workTask?.cancel()          // the persisted job resumes on the next open
             player?.pause()
             if idleHeld { IdleTimer.release(); idleHeld = false }
@@ -6151,7 +6204,6 @@ struct AerialIntroSheet: View {
         .onChange(of: region) { v in
             if v.count > 80 { region = String(v.prefix(80)) }
         }
-        .sheet(isPresented: $showSignIn) { SignInView.forAI("aerial intros") }
         .sheet(isPresented: $showLibrary) {
             LibraryImagePicker(selectionLimit: 1) { imgs in
                 if let img = imgs.first { saveExterior(img) }
@@ -6238,10 +6290,8 @@ struct AerialIntroSheet: View {
 
     // MARK: - Form
 
-    // The form is ALWAYS visible for a real listing — an agent must be able to
-    // pick the exterior photo and set the shot up before being asked to sign in
-    // (a sign-in wall in front of the whole form hides the one thing that makes
-    // the aerial actually depict THIS property). Only the action is gated.
+    // Setup is available offline. Generate retains its original tap and waits
+    // for an anonymous connection; there is no registration gate.
     @ViewBuilder private var formSection: some View {
         if listing.isSample {
             sampleNotice
@@ -6249,11 +6299,7 @@ struct AerialIntroSheet: View {
             propertyCard
             lookCard
             formatCard
-            if signedIn {
-                generateButton
-            } else {
-                signInBlock
-            }
+            generateButton
             if clipURL != nil {
                 Button("Back to your aerial") { phase = .result }
                     .font(.rpBody)
@@ -6271,24 +6317,6 @@ struct AerialIntroSheet: View {
                 .multilineTextAlignment(.center)
         }
         .padding(.vertical, 12)
-    }
-
-    private var signInBlock: some View {
-        VStack(spacing: 10) {
-            Label("Set the shot up above, then sign in to generate — the AI runs on your account.",
-                  systemImage: "person.crop.circle.badge.exclamationmark")
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-            Button { showSignIn = true } label: {
-                Text("Sign in")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-        }
-        .padding(.vertical, 6)
     }
 
     private var propertyCard: some View {
@@ -6452,6 +6480,7 @@ struct AerialIntroSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .disabled(isSavingPhoto)
+        .accessibilityIdentifier("phase1.aerialGenerate")
     }
 
     // MARK: - Progress
@@ -6631,7 +6660,12 @@ struct AerialIntroSheet: View {
     // MARK: - Generate (submit → poll → download; fal URLs expire, so download now)
 
     private func generate() {
-        guard signedIn, phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        connection.run { generateWithSession() }
+    }
+
+    private func generateWithSession() {
+        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
         failure = nil
         statusText = hasPhoto ? "Preparing your photo…" : "Submitting…"
         phase = .generating
@@ -6699,6 +6733,11 @@ struct AerialIntroSheet: View {
     /// Pick up a job that was submitted earlier (the sheet was closed or the app
     /// switched away while it generated).
     private func resume(_ pending: PendingAerialJob) {
+        guard phase != .generating else { return }
+        connection.run { resumeWithSession(pending) }
+    }
+
+    private func resumeWithSession(_ pending: PendingAerialJob) {
         guard phase != .generating else { return }
         phase = .generating
         statusText = "Picking up your aerial…"
@@ -7006,7 +7045,7 @@ struct ReelStudioView: View {
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var failure: AIFailure?
-    @State private var showSignIn = false
+    @StateObject private var connection = FeatureSessionAction()
     @State private var workTask: Task<Void, Never>?
     /// The newest reel already on disk for this listing (F-A-23). Reels used to
     /// be write-only: the file survived in Documents/reels but the studio always
@@ -7054,7 +7093,6 @@ struct ReelStudioView: View {
     @State private var tone: ScriptTone = .warm
     @State private var seededTone = false
 
-    private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
@@ -7103,6 +7141,7 @@ struct ReelStudioView: View {
                 }
                 .padding()
             }
+            .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Reel Studio")
             .navigationBarTitleDisplayMode(.inline)
@@ -7120,6 +7159,7 @@ struct ReelStudioView: View {
                 ToolbarItem(placement: .principal) { reelTitleBar }
             }
         }
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .interactiveDismissDisabled(isWorking)
         .onAppear {
             if !seededExtras {
@@ -7154,13 +7194,13 @@ struct ReelStudioView: View {
             }
         }
         .onDisappear {
+            connection.cancel()
             workTask?.cancel()
             player?.pause()
             voPlayer?.pause()
             if recorder.isRecording { recorder.cancel() }
             if idleHeld { IdleTimer.release(); idleHeld = false }
         }
-        .sheet(isPresented: $showSignIn) { SignInView.forAI("reels") }
         .confirmationDialog("Still making your reel", isPresented: $showCloseConfirm,
                             titleVisibility: .visible) {
             Button("Close anyway") {
@@ -7220,14 +7260,10 @@ struct ReelStudioView: View {
         // the same rule the listing screen's FILES section follows.
         lastReelCard
 
-        if signedIn {
-            if !extraClipURLs.isEmpty { clipsCard }
-            stepPhotosCard
-            stepVoiceCard
-            stepMakeCard
-        } else {
-            signInPane
-        }
+        if !extraClipURLs.isEmpty { clipsCard }
+        stepPhotosCard
+        stepVoiceCard
+        stepMakeCard
     }
 
     private var setupHeader: some View {
@@ -7426,6 +7462,7 @@ struct ReelStudioView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .disabled(!canGenerate)
+        .accessibilityIdentifier("phase1.reelGenerate")
     }
 
     private var aiDisclosureLine: some View {
@@ -7433,24 +7470,6 @@ struct ReelStudioView: View {
             .font(.rpCaption)
             .foregroundStyle(Theme.inkDim)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private var signInPane: some View {
-        VStack(spacing: 10) {
-            Label("Sign in to make reels — the AI runs on your account.",
-                  systemImage: "person.crop.circle.badge.exclamationmark")
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-            Button { showSignIn = true } label: {
-                Text("Sign in")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-        }
-        .padding(.vertical, 6)
     }
 
     /// Clips from a run that stopped before the stitch — already generated,
@@ -7696,7 +7715,7 @@ struct ReelStudioView: View {
                 AIFailureCard(failure: failure,
                               retryHint: "Check your photos and try again.",
                               quotaFeature: "reels",
-                              onSignIn: { showSignIn = true })
+                              onReconnect: { connection.run { resetToSetup() } })
             } else {
                 Label("Couldn't make the reel", systemImage: "exclamationmark.triangle")
                     .font(.rpHeadline)
@@ -7832,7 +7851,7 @@ struct ReelStudioView: View {
         .animation(.linear(duration: 0.05), value: level)
     }
 
-    // --- AI voice: script + voice → ElevenLabs (spends money; sign-in gated) ---
+    // --- AI voice: script + voice → ElevenLabs (spends money; session awaited) ---
 
     // Every body here stays tiny on purpose — see the note above
     // `stepVoiceCard`. `aiVoicePane` is a list of identifiers and nothing else.
@@ -8239,9 +8258,13 @@ struct ReelStudioView: View {
 
     /// Load the ElevenLabs voice catalogue. A 503 (no key configured) surfaces
     /// the server's "needs setting up" message rather than an empty picker.
-    /// Sign-in gated — the AI runs on the account.
+    /// Waits for an anonymous session; network recovery never asks to register.
     private func loadVoices() {
-        guard signedIn else { showSignIn = true; return }
+        guard !loadingVoices, aiVoices.isEmpty else { return }
+        connection.run { loadVoicesWithSession() }
+    }
+
+    private func loadVoicesWithSession() {
         guard !loadingVoices, aiVoices.isEmpty else { return }
         loadingVoices = true
         voiceError = nil
@@ -8277,7 +8300,6 @@ struct ReelStudioView: View {
     /// switch to AI voice — and quietly replacing THAT with a machine's version
     /// throws away the one thing no button can redo. A non-empty field asks.
     private func writeScript() {
-        guard signedIn else { showSignIn = true; return }
         guard !scriptInFlight else { return }
         guard aiScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             showScriptReplaceConfirm = true
@@ -8286,11 +8308,15 @@ struct ReelStudioView: View {
         runScriptWriter()
     }
 
-    /// The call itself. Sign-in gated (the AI runs on the account); one call per
+    /// The call itself waits for an anonymous session; one call per
     /// tap; the result lands in the EDITABLE field, never in a modal — the whole
     /// point is that the agent fixes the two words the model got wrong.
     private func runScriptWriter() {
-        guard signedIn else { showSignIn = true; return }
+        guard !scriptInFlight else { return }
+        connection.run { runScriptWriterWithSession() }
+    }
+
+    private func runScriptWriterWithSession() {
         guard !scriptInFlight else { return }
         scriptInFlight = true
         voiceError = nil
@@ -8475,11 +8501,15 @@ struct ReelStudioView: View {
     }
 
     /// Speak the script with ElevenLabs, download the audio, build the Voiceover.
-    /// Spends money, so: sign-in gated, one call per tap (`ttsInFlight`), one
+    /// Spends money, so: session awaited, one call per tap (`ttsInFlight`), one
     /// idempotency key per tap, NEVER auto-retried — a fair-housing refusal (400)
     /// would fail identically, so the server's message is shown to re-word.
     private func generateAIVoice() {
-        guard signedIn else { showSignIn = true; return }
+        guard !ttsInFlight else { return }
+        connection.run { generateAIVoiceWithSession() }
+    }
+
+    private func generateAIVoiceWithSession() {
         guard !ttsInFlight else { return }
         let script = aiScript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard script.count >= 2 else { voiceError = "Type a short script first."; return }
@@ -8620,6 +8650,7 @@ struct ReelStudioView: View {
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text(order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
+        .accessibilityIdentifier("reel.photo.\(p.id)")
     }
 
     private func toggle(_ p: EnhancedPhoto) {
@@ -8776,7 +8807,12 @@ struct ReelStudioView: View {
     // MARK: Generate (sequential clips → on-device stitch)
 
     private func generate() {
-        guard signedIn, phase == .setup, canGenerate else { return }
+        guard phase == .setup, canGenerate else { return }
+        connection.run { generateWithSession() }
+    }
+
+    private func generateWithSession() {
+        guard phase == .setup, canGenerate else { return }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let chosen = selected.compactMap { id in photos.first(where: { $0.id == id }) }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }

@@ -11,10 +11,9 @@ import AuthenticationServices
 /// Live backend: a successful on-device render is PUBLISHED to the cloud
 /// (upload role=render → /renders/publish-app) so it gets a real shareable
 /// slug; the in-app tour works either way (local-first, contract §4). The AI
-/// tiers add the server Topaz pass first (skippable). Publishing needs Sign in
-/// with Apple: "Not now" parks the tour as "publish later" — the listing
-/// detail's "Publish tour" (or this screen after signing in) finishes it, no
-/// re-render.
+/// tiers add the server Topaz pass first (skippable). Publishing establishes an
+/// anonymous session when needed. A connection outage preserves the local tour
+/// and the pending publish, then resumes automatically — never an Apple gate.
 struct RenderStatusView: View {
     @EnvironmentObject var model: AppModel
 
@@ -36,9 +35,6 @@ private struct RenderStatusContent: View {
     let listing: Listing
     let render: Render
 
-    @State private var showSignIn = false
-    @State private var didPromptSignIn = false
-    @State private var declinedSignIn = false
     @State private var showCancelConfirm = false
     /// The encode is CPU-bound for minutes; on a hot phone iOS throttles it and
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
@@ -56,16 +52,19 @@ private struct RenderStatusContent: View {
     /// re-label a house as a venue (industry review P2-5). Samples never render.
     private var noun: String { currentListing.spaceType.spaceNoun }
 
-    private enum Mode { case working, ready, failed, needsSignIn, publishLater, idle }
+    private enum Mode { case working, ready, failed, awaitingConnection, idle }
 
     private var mode: Mode {
         if let job {
+            // Waiting still owns a coordinator task so another tap cannot
+            // duplicate it. Keep the completed LOCAL tour usable meanwhile.
+            if job.stage == .awaitingConnection { return .awaitingConnection }
             if job.isRunning { return .working }
             switch job.stage {
             case .failed:
                 return .failed
-            case .awaitingSignIn:
-                return declinedSignIn ? .publishLater : .needsSignIn
+            case .awaitingConnection:
+                return .awaitingConnection
             case .published, .publishFailed, .rendered:
                 return .ready
             case .cancelled:
@@ -120,10 +119,8 @@ private struct RenderStatusContent: View {
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(isWorking)
         .onAppear {
-            syncSignInPrompt()
             isThrottled = Self.thermallyThrottled
         }
-        .onChange(of: job?.stage) { _ in syncSignInPrompt() }
         // `.receive(on:)` is not optional here: the thermal notification is
         // posted on an arbitrary queue, and touching @State off the main thread
         // is a SwiftUI violation.
@@ -132,9 +129,7 @@ private struct RenderStatusContent: View {
                     .receive(on: DispatchQueue.main)) { _ in
             isThrottled = Self.thermallyThrottled
         }
-        .sheet(isPresented: $showSignIn, onDismiss: onSignInSheetDismissed) {
-            SignInView()
-        }
+        .sessionConnectionNotice(isActive: job?.isRunning == true, onCancel: { cancelNow() })
         .confirmationDialog(tour == nil ? "Cancel this render?" : "Cancel publishing?",
                             isPresented: $showCancelConfirm, titleVisibility: .visible) {
             Button(tour == nil ? "Cancel render" : "Stop publishing", role: .destructive) { cancelNow() }
@@ -160,7 +155,7 @@ private struct RenderStatusContent: View {
                 .rotationEffect(.degrees(-90))
                 .animation(.easeInOut(duration: 0.3), value: fraction)
             switch mode {
-            case .ready, .needsSignIn, .publishLater:
+            case .ready, .awaitingConnection:
                 Image(systemName: "checkmark")
                     .font(.system(size: 40, weight: .semibold))
                     .foregroundStyle(Theme.good)
@@ -199,7 +194,7 @@ private struct RenderStatusContent: View {
     private var title: String {
         switch mode {
         case .working:       return job?.phase ?? "Working…"
-        case .ready, .needsSignIn, .publishLater:
+        case .ready, .awaitingConnection:
             return "Your tour is ready"
         case .failed:        return job?.error ?? "The render didn't finish"
         case .idle:          return "Ready to render"
@@ -210,7 +205,7 @@ private struct RenderStatusContent: View {
         switch mode {
         case .working, .idle:
             return "\(render.tier.displayName) · \(Formatters.duration(render.durationS)) walkthrough"
-        case .ready, .needsSignIn, .publishLater:
+        case .ready, .awaitingConnection:
             return "Smooth, fast, and ready to fly through."
         case .failed:
             return "Nothing was lost — your video is still on this \(noun)."
@@ -245,16 +240,12 @@ private struct RenderStatusContent: View {
                         .foregroundStyle(Theme.warn)
                         .multilineTextAlignment(.center)
                 }
-            case .publishLater:
-                Text("Saved on your phone. Sign in and tap Publish on the \(noun) whenever you're ready — no re-render needed.")
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.warn)
-                    .multilineTextAlignment(.center)
-            case .needsSignIn:
-                Text("Sign in with Apple to publish it and get a shareable link.")
+            case .awaitingConnection:
+                Text("Saved on your phone. Publishing will continue automatically when the connection returns — no sign-in or re-render needed.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
+                    .accessibilityIdentifier("render.awaitingConnection")
             case .ready:
                 if cellularParked {
                     Text("Your tour is saved on this phone. The share link finishes uploading on its own as soon as you're on Wi-Fi.")
@@ -386,7 +377,7 @@ private struct RenderStatusContent: View {
                     SecondaryButton(title: "Back", systemImage: "chevron.left") { dismiss() }
                 }
 
-            case .ready, .needsSignIn, .publishLater:
+            case .ready, .awaitingConnection:
                 viewTourButton
                 if let shareURL {
                     ShareLink(item: shareURL,
@@ -403,12 +394,11 @@ private struct RenderStatusContent: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
                     mlsLinkRow
-                } else if mode == .publishLater || mode == .needsSignIn {
-                    SecondaryButton(title: "Sign in & publish", systemImage: "link") {
-                        declinedSignIn = false
-                        didPromptSignIn = true
-                        showSignIn = true
+                } else if mode == .awaitingConnection {
+                    SecondaryButton(title: "Cancel publishing", systemImage: "xmark") {
+                        showCancelConfirm = true
                     }
+                    .accessibilityIdentifier("render.cancelPendingPublish")
                 } else if cellularParked {
                     // The parked upload finishes the publish by itself through
                     // UploadManager.didCompleteNotification, so this only has to
@@ -417,26 +407,16 @@ private struct RenderStatusContent: View {
                         uploads.confirmCellularAndStart()   // SecondaryButton taps the haptic itself
                     }
                 } else if publishFailed {
-                    if job?.errorStatus == 401 {
-                        SecondaryButton(title: "Sign in to publish", systemImage: "link") {
-                            didPromptSignIn = true
-                            showSignIn = true
-                        }
-                    } else {
-                        SecondaryButton(title: "Retry publish", systemImage: "arrow.clockwise") {
-                            coordinator.publish(listingID: listing.id)
-                        }
+                    SecondaryButton(title: "Retry publish", systemImage: "arrow.clockwise") {
+                        coordinator.publish(listingID: listing.id)
                     }
+                    .accessibilityIdentifier("render.retryPublish")
                 } else if Config.useLiveBackend, tour != nil {
                     // Rendered but never published (e.g. publish cancelled).
                     SecondaryButton(title: "Publish tour", systemImage: "link") {
-                        if Config.enableAuth && !AuthStore.shared.isSignedIn {
-                            didPromptSignIn = true
-                            showSignIn = true
-                        } else {
-                            coordinator.publish(listingID: listing.id, allowEnhance: true)
-                        }
+                        coordinator.publish(listingID: listing.id, allowEnhance: true)
                     }
+                    .accessibilityIdentifier("render.publish")
                 }
             }
         }
@@ -462,30 +442,6 @@ private struct RenderStatusContent: View {
 
     // MARK: - Actions
 
-    /// Show the sign-in sheet exactly once when the pipeline parks for it.
-    private func syncSignInPrompt() {
-        guard job?.stage == .awaitingSignIn, !didPromptSignIn, !declinedSignIn else { return }
-        didPromptSignIn = true
-        showSignIn = true
-    }
-
-    /// After the Sign in with Apple sheet closes: signed in → publish now (the
-    /// coordinator owns the task, so leaving this screen can't cancel it);
-    /// backed out → "publish later" — the local tour stays viewable and the
-    /// listing detail's Publish button (pendingPublish) finishes it any time.
-    private func onSignInSheetDismissed() {
-        if !Config.enableAuth || AuthStore.shared.isSignedIn {
-            declinedSignIn = false
-            if tour != nil, shareURL == nil, !coordinator.isRunning(listing.id) {
-                coordinator.publish(listingID: listing.id, allowEnhance: true)
-            }
-        } else {
-            declinedSignIn = true
-            model.setStatus(.ready, for: listing.id)
-            model.addPendingPublish(listing.id)
-        }
-    }
-
     /// No haptic here: both callers are `PrimaryButton`, which taps one itself —
     /// firing a second made "Try again" buzz twice (audit F-D-25's rule).
     private func tryAgain() {
@@ -504,29 +460,23 @@ private struct RenderStatusContent: View {
     }
 }
 
-// MARK: - Sign in with Apple (publish gate)
+// MARK: - Optional Sign in with Apple (Settings)
 // Lives here (not a standalone file) so it's always in the Xcode target without
 // re-running xcodegen — see the repo's new-file-not-in-target rule.
 
-/// Publish-time Sign in with Apple gate. Shown only when the user attempts to
-/// PUBLISH while `Config.enableAuth && !AuthStore.shared.isSignedIn` — capture
-/// and on-device render stay fully usable offline (local-first, contract §4).
+/// Explicit account upgrade. Feature actions use ensureSession(), not this
+/// sheet; capture and on-device render remain usable offline.
 ///
 /// Uses the native `SignInWithAppleButton`: generate a fresh nonce, send its
 /// SHA256 as the request `nonce`, then exchange the returned identity token with
 /// Supabase using the RAW nonce (`AuthStore.exchangeAppleIdentityToken`).
 struct SignInView: View {
-    /// Called once the Supabase session is established (publish can proceed).
+    /// Called once the optional account upgrade succeeds.
     var onSignedIn: () -> Void = {}
-    /// Why we're asking. Defaults to the publish story (the original caller);
-    /// the AI tools pass their own so the sheet never promises a share link to
-    /// someone who just tapped "Twilight sky".
-    var title: String = "Sign in to publish"
-    var subtitle: String = "Your tour is ready on this phone. Sign in with Apple to publish it and get a shareable link."
+    var title: String = "Use Rendprop on your other devices"
+    var subtitle: String = "Everything works without signing in. Choose Sign in with Apple to connect your work to an account."
 
-    /// What "Not now" costs the user. Publish parks the tour; an AI tool simply
-    /// doesn't run, so promising "publish it later" there would be nonsense.
-    var dismissNote: String = "Not now keeps the tour on your phone — you can publish it later from the \(SpaceType.current.spaceNoun)."
+    var dismissNote: String = "Not now changes nothing. Your work stays on this phone and every feature keeps working."
 
     /// Ready-made copy for the AI tools (photo edits, aerials, reels).
     ///

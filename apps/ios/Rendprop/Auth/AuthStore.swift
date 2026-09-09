@@ -43,7 +43,14 @@ final class AuthStore: ObservableObject {
 
     /// Guards the launch bootstrap so two callers cannot mint two anonymous
     /// users for one device.
-    private var anonymousBootstrap: Task<Void, Never>?
+    @MainActor private var anonymousBootstrap: Task<Void, Never>?
+    @Published private(set) var sessionConnectionState: SessionConnection.State = .idle
+    /// Every asynchronous session commit must still belong to this generation.
+    @MainActor private var sessionEpoch: UInt64 = 0
+    @MainActor private lazy var connection = SessionConnection(
+        attempt: { [weak self] in await self?.establishSession() ?? false },
+        stateChanged: { [weak self] in self?.sessionConnectionState = $0 }
+    )
     /// The person's name (from Apple's one-time `fullName`, or the server's
     /// profile name). Empty when unknown — the UI shows "Signed in with Apple".
     @Published var displayName: String
@@ -95,7 +102,11 @@ final class AuthStore: ObservableObject {
     /// the previous rotated refresh token in place, which then 400'd on the
     /// next refresh and forced a sign-out.
     private enum SecureStore {
-        private static let service = "com.rendprop.app.auth"
+        private static var service: String {
+            Config.isSessionNetworkTesting
+                ? "com.rendprop.app.auth.phase1.\(Config.sessionTestRun)"
+                : "com.rendprop.app.auth"
+        }
 
         private static func baseQuery(_ key: String) -> [String: Any] {
             [kSecClass as String: kSecClassGenericPassword,
@@ -154,6 +165,7 @@ final class AuthStore: ObservableObject {
     /// UserDefaults slot so pre-Keychain sessions survive the update.
     private static func secret(_ key: String) -> String? {
         if let v = SecureStore.get(key) { return v }
+        if Config.isSessionNetworkTesting { return nil } // never migrate a real credential into fixtures
         if let legacy = UserDefaults.standard.string(forKey: key) {
             if SecureStore.set(key, legacy) {
                 UserDefaults.standard.removeObject(forKey: key)
@@ -174,11 +186,11 @@ final class AuthStore: ObservableObject {
         // a session so Settings draws Plan & usage and the owner-console rows —
         // otherwise the walk photographs an empty screen. A launch argument can
         // only come from Xcode / `xcodebuild test`, never from a shipped build.
-        self.isSignedIn = Config.isUITesting ? true : (Config.enableAuth ? hasToken : true)
+        self.isSignedIn = (Config.isUITesting && !Config.isSessionNetworkTesting) ? true : (Config.enableAuth ? hasToken : true)
         // Read straight off the stored JWT rather than a remembered flag: the
         // token IS the truth about which kind of session this is, and a
         // remembered bool can outlive it.
-        self.isIdentified = Config.isUITesting
+        self.isIdentified = Config.isUITesting && !Config.isSessionNetworkTesting
             ? true
             : (Config.enableAuth ? Self.tokenIsIdentified(Self.storedAccessToken()) : true)
         let storedName = UserDefaults.standard.string(forKey: Keys.userName) ?? ""
@@ -264,6 +276,7 @@ final class AuthStore: ObservableObject {
 
     @MainActor
     private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?) {
+        sessionEpoch &+= 1
         // Account-switch detection BEFORE persisting: the JWT `sub` identifies
         // the Supabase user. A different `sub` than the last one on this device
         // means the cached serverID/shareSlug/shareURL on listings belong to a
@@ -298,6 +311,10 @@ final class AuthStore: ObservableObject {
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
         // after sign-out would call applySession and re-persist tokens, silently
         // signing the user back in (audit 2026-08-26).
+        sessionEpoch &+= 1
+        anonymousBootstrap?.cancel()
+        anonymousBootstrap = nil
+        connection.cancelAll()
         refreshInFlight?.cancel()
         refreshInFlight = nil
         autoRefreshTask?.cancel()
@@ -405,7 +422,9 @@ final class AuthStore: ObservableObject {
     /// tokens (Supabase rotates the refresh token on every use). A definitive
     /// 4xx (revoked/expired refresh token) signs the user out so the publish
     /// gate re-prompts; network errors keep the session for a later retry.
+    @MainActor
     private func performRefresh() async -> Bool {
+        let epoch = sessionEpoch
         guard let refreshToken = Self.storedRefreshToken(),
               let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty,
@@ -423,16 +442,16 @@ final class AuthStore: ObservableObject {
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { return false }
-            if Task.isCancelled { return false }   // signed out while refreshing — never resurrect
+            guard !Task.isCancelled, sessionEpoch == epoch else { return false }
             if (200..<300).contains(http.statusCode),
                let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) {
-                await applySession(accessToken: session.accessToken,
+                applySession(accessToken: session.accessToken,
                                    refreshToken: session.refreshToken ?? refreshToken,
                                    expiresAt: session.expiryDate)
                 return true
             }
             if [400, 401, 403].contains(http.statusCode) {
-                await signOut()   // refresh token revoked/expired — session is dead
+                signOut()   // only this generation's revoked token can sign it out
             }
             return false
         } catch {
@@ -559,7 +578,16 @@ final class AuthStore: ObservableObject {
     /// `nonce` is the RAW nonce whose SHA256 was put on the Apple request —
     /// GoTrue re-hashes and compares it to the token's `nonce` claim. Throws
     /// `APIError.server` with GoTrue's own message on a rejected exchange.
+    @MainActor
     func exchangeAppleIdentityToken(idToken: String, nonce: String? = nil) async throws {
+        // A late anonymous/refresh response cannot replace the chosen identity.
+        sessionEpoch &+= 1
+        let epoch = sessionEpoch
+        anonymousBootstrap?.cancel()
+        anonymousBootstrap = nil
+        connection.cancelAll()
+        refreshInFlight?.cancel()
+        refreshInFlight = nil
         guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty else {
             throw APIError.notConfigured
@@ -580,6 +608,7 @@ final class AuthStore: ObservableObject {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, resp) = try await URLSession.shared.data(for: req)
+        guard !Task.isCancelled, sessionEpoch == epoch else { throw CancellationError() }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
             throw Self.authError(status: http.statusCode, data: data)
@@ -589,7 +618,7 @@ final class AuthStore: ObservableObject {
         }
         // Grab the anonymous token BEFORE the new session overwrites it.
         let priorAnonymous = Self.anonymousTokenForAdoption()
-        await applySession(accessToken: session.accessToken,
+        applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
         if let priorAnonymous {
@@ -632,49 +661,49 @@ final class AuthStore: ObservableObject {
     /// so every metered route works from the first launch without anybody
     /// registering anything.
     ///
-    /// Silent, best effort, and never blocking: a device that cannot reach the
-    /// network simply has no session yet and tries again on the next
-    /// foreground.
+    /// The launch and feature callers share the same retry loop. Feature
+    /// callers await ensureSession instead of interpreting "not yet" as a
+    /// reason to ask for an Apple identity.
+    @MainActor
     func signInAnonymouslyIfNeeded() {
-        guard Config.enableAuth, !Config.isUITesting else { return }
+        guard Config.enableAuth, !Config.isUITesting || Config.isSessionNetworkTesting else { return }
         guard !isSignedIn, anonymousBootstrap == nil else { return }
-        anonymousBootstrap = Task { [weak self] in
-            await self?.performAnonymousSignIn()
-            await MainActor.run { self?.anonymousBootstrap = nil }
+        let task = Task { [weak self] in
+            _ = await self?.ensureSession()
+        }
+        anonymousBootstrap = task
+        Task { [weak self] in
+            await task.value
+            if self?.anonymousBootstrap == task { self?.anonymousBootstrap = nil }
         }
     }
 
-    /// When to make each attempt, in seconds from the one before.
-    ///
-    /// A single failed POST used to leave the app with NO session until the next
-    /// foreground — and with no session, every AI tool, every publish and every
-    /// plan row falls back to the Sign in with Apple sheet. That fallback IS the
-    /// wall App Review rejected under 5.1.1(v), so one bad minute on a
-    /// reviewer's network must not be able to recreate it.
-    private static let anonymousRetryDelays: [TimeInterval] = [0, 1, 3, 8, 20]
+    /// Suspends this action until connected, without requiring registration.
+    /// Each caller may cancel independently. A transient failure keeps the
+    /// original action waiting and exposes connection retry in the UI.
+    @MainActor
+    func ensureSession() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if !Config.enableAuth || (Config.isUITesting && !Config.isSessionNetworkTesting) { return true }
+        if isSignedIn, let expiry = Self.tokenExpiresAt,
+           expiry.timeIntervalSinceNow > 60 { return true }
+        return await connection.connect()
+    }
 
-    private func performAnonymousSignIn() async {
-        guard Config.supabaseURL != nil, !Config.supabaseAnonKey.isEmpty else { return }
-        for (index, delay) in Self.anonymousRetryDelays.enumerated() {
-            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
-            if Task.isCancelled { return }
-            // Sign in with Apple may have landed a real session while we waited.
-            if await MainActor.run(body: { self.isSignedIn }) { return }
-            if await attemptAnonymousSignIn() {
-                await MainActor.run {
-                    Analytics.track("anonymous_session_started", ["attempt": "\(index + 1)"])
-                }
-                return
-            }
-        }
-        await MainActor.run {
-            Analytics.track("anonymous_session_failed",
-                            ["attempts": "\(Self.anonymousRetryDelays.count)"])
-        }
+    @MainActor
+    func retrySessionConnection() { connection.retryNow() }
+
+    @MainActor
+    private func establishSession() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if isSignedIn { return await refreshIfNeeded() && isSignedIn }
+        return await attemptAnonymousSignIn()
     }
 
     /// One signup POST. `true` when a session landed.
+    @MainActor
     private func attemptAnonymousSignIn() async -> Bool {
+        let epoch = sessionEpoch
         guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty else { return false }
         var req = URLRequest(url: authBase.appendingPathComponent("signup"))
@@ -687,7 +716,8 @@ final class AuthStore: ObservableObject {
               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let session = try? JSONDecoder().decode(SupabaseSession.self, from: data)
         else { return false }
-        await applySession(accessToken: session.accessToken,
+        guard !Task.isCancelled, sessionEpoch == epoch else { return false }
+        applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
         return true
