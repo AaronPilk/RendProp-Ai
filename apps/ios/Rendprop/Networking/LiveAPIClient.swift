@@ -1297,6 +1297,50 @@ final class LiveAPIClient: APIClient {
         return summary
     }
 
+    func propertyLookup(address: String) async throws -> PropertyLookup {
+        let target = url(["property"], query: [URLQueryItem(name: "address", value: address)])
+        // `aiSession`: a third-party record lookup is a network hop behind our
+        // own, and the default 60 s is the timeout that already threw away a
+        // paid coach reply once.
+        let data = try await execute(makeRequest(url: target), session: aiSession)
+        struct FactsDTO: Decodable {
+            let matchedAddress: String?
+            let beds: Double?
+            let baths: Double?
+            let sqft: Double?
+            let lotSqft: Double?
+            let yearBuilt: Double?
+            let propertyType: String?
+            let lastSalePriceCents: Double?
+            let lastSaleDate: String?
+        }
+        struct DTO: Decodable {
+            let configured: Bool?
+            let cached: Bool?
+            let source: String?
+            let facts: FactsDTO?
+        }
+        // Every number decodes as Double for the reason the shotlist route does:
+        // an integer JSON number decodes into a Double and a float does too, so
+        // a provider that starts sending `3.0` for a bedroom count must not fail
+        // the whole lookup over the shape of a convenience field.
+        let dto: DTO = try decode(data)
+        guard dto.configured == true else { return PropertyLookup(configured: false) }
+        let f = dto.facts.map { d in
+            PropertyFacts(matchedAddress: d.matchedAddress,
+                          beds: d.beds.map { Int($0.rounded()) },
+                          baths: d.baths,
+                          sqft: d.sqft.map { Int($0.rounded()) },
+                          lotSqft: d.lotSqft.map { Int($0.rounded()) },
+                          yearBuilt: d.yearBuilt.map { Int($0.rounded()) },
+                          propertyType: d.propertyType,
+                          lastSalePriceCents: d.lastSalePriceCents.map { Int($0.rounded()) },
+                          lastSaleDate: d.lastSaleDate)
+        }
+        return PropertyLookup(configured: true, cached: dto.cached ?? false,
+                              source: dto.source, facts: f)
+    }
+
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         var query: [URLQueryItem] = []
         if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }

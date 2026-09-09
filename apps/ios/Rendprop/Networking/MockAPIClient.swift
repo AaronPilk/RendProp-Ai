@@ -136,6 +136,18 @@ actor MockAPIClient: APIClient {
                      isAdmin: true, role: "owner")
     }
 
+    func propertyLookup(address: String) async throws -> PropertyLookup {
+        // Offline dev and the UI walk: a plausible record, so the screenshot run
+        // exercises the filled state rather than the empty one. Never a live
+        // call — the real one is metered.
+        _ = address
+        return PropertyLookup(
+            configured: true, cached: true, source: "mock",
+            facts: PropertyFacts(matchedAddress: nil, beds: 4, baths: 3, sqft: 2480,
+                                 lotSqft: 8712, yearBuilt: 1998, propertyType: "Single Family",
+                                 lastSalePriceCents: 61_500_000, lastSaleDate: "2021-06-14"))
+    }
+
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         // Offline: leads only exist once a tour is hosted — none to show.
         try? await Task.sleep(nanoseconds: 250_000_000)

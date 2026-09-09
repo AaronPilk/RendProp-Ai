@@ -688,6 +688,40 @@ struct LeadSubmission: Sendable, Equatable {
     var note: String?
 }
 
+/// What the public record says about an address (`GET /property`).
+///
+/// NO PHOTOS, and there is no field for them: no vendor licenses a listing's
+/// photographs, because they belong to the photographer or the MLS rather than
+/// to the portal or the agent. An agent's own listing photos come from the
+/// agent, which for their own listing is the real source anyway.
+struct PropertyFacts: Sendable, Equatable {
+    /// What the provider actually matched. Shown to the agent, because a lookup
+    /// that resolved a DIFFERENT house has to be visible rather than silent.
+    var matchedAddress: String?
+    var beds: Int?
+    /// 2.5 is a real number of bathrooms, not a rounding error.
+    var baths: Double?
+    var sqft: Int?
+    var lotSqft: Int?
+    var yearBuilt: Int?
+    var propertyType: String?
+    /// What it LAST SOLD FOR — never the asking price. Shown, never auto-filled.
+    var lastSalePriceCents: Int?
+    var lastSaleDate: String?
+}
+
+/// The whole answer, including the two "nothing to show" cases, which are
+/// different and must not be collapsed: no provider credential on this deploy,
+/// versus a provider that has no record of that address.
+struct PropertyLookup: Sendable, Equatable {
+    /// False when the deploy has no provider key. The button hides — an agent
+    /// must not be shown a failure for something they did not do wrong.
+    var configured: Bool
+    var cached: Bool = false
+    var source: String?
+    var facts: PropertyFacts?
+}
+
 protocol APIClient: Sendable {
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
@@ -778,6 +812,19 @@ protocol APIClient: Sendable {
     /// GET /leads[?listing_id=] — every lead captured on the org's hosted tours
     /// (RLS-scoped), newest first. `listingServerID` filters to one listing.
     func leads(listingServerID: UUID?) async throws -> [Lead]
+
+    /// GET /property?address= — beds, baths, size, year, lot and last sale from
+    /// the public record, via a licensed data provider.
+    ///
+    /// Not Zillow: Zillow retired its public API in 2021 and what is left is
+    /// MLS-gated, and scraping a portal would put the copyright and terms-of-use
+    /// exposure on us rather than on the agent. The facts themselves are county
+    /// public record and licensed vendors sell them nationwide.
+    ///
+    /// Costs real money per call, so the SERVER caches by normalised address,
+    /// rate-limits per org and writes a ledger row. The client asks once per tap
+    /// and never retries on its own.
+    func propertyLookup(address: String) async throws -> PropertyLookup
 
     // `submitLead` is deliberately NOT here. A native lead form was written
     // and removed within the hour: `POST /leads` verifies Cloudflare Turnstile

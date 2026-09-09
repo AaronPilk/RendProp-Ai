@@ -96,6 +96,17 @@ struct ListingFieldsForm<Middle: View>: View {
     @State private var linkResult: ListingLink?
     @State private var linkFailed = false
 
+    @EnvironmentObject private var model: AppModel
+    /// The public-record lookup for whatever is in the address field.
+    @State private var lookingUp = false
+    @State private var lookupFacts: PropertyFacts?
+    @State private var lookupFilled = 0
+    @State private var lookupNote: String?
+    /// nil until the first lookup answers. False means this deploy has no
+    /// provider credential, and the whole control hides rather than offering
+    /// something that cannot work.
+    @State private var lookupAvailable: Bool?
+
     var body: some View {
         VStack(spacing: Theme.spacing) {
             // FIRST, above the address field, for real homes. Typing a full
@@ -207,6 +218,10 @@ struct ListingFieldsForm<Middle: View>: View {
                 .padding(14)
                 .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
 
+            if space.showsPropertyDetails, lookupAvailable != false {
+                propertyLookupRow
+            }
+
             if let locationAction {
                 Button {
                     locationAction()
@@ -224,6 +239,102 @@ struct ListingFieldsForm<Middle: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    /// "Fill the rest from public records."
+    ///
+    /// Beds, baths, size, year built and lot size are county public record, and
+    /// a licensed vendor has them nationwide — no MLS membership, no scraping a
+    /// portal. One tap on whatever address is in the field above.
+    ///
+    /// IT ONLY FILLS WHAT IS EMPTY. Overwriting a number the agent typed would
+    /// be the worst kind of helpful: they typed it because they know the house
+    /// and the county record is a year behind, or wrong. So anything already
+    /// filled is left exactly alone, and the result line says HOW MANY fields
+    /// it filled — "0 of 4" has to be visible, not look like nothing happened.
+    @ViewBuilder private var propertyLookupRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button {
+                Task { await runPropertyLookup() }
+            } label: {
+                HStack(spacing: 8) {
+                    if lookingUp { ProgressView() }
+                    else { Image(systemName: "doc.text.magnifyingglass") }
+                    Text(lookingUp ? "Checking the records\u{2026}" : "Fill the rest from public records")
+                }
+                .font(.rpBody.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+            }
+            .disabled(lookingUp || form.address.trimmingCharacters(in: .whitespaces).count < 6)
+            .accessibilityIdentifier("newListing.propertyLookup")
+
+            if let f = lookupFacts {
+                VStack(alignment: .leading, spacing: 3) {
+                    Label(lookupFilled > 0
+                          ? "Filled \(lookupFilled) field\(lookupFilled == 1 ? "" : "s") from the record."
+                          : "Found the record \u{2014} everything was already filled in.",
+                          systemImage: "checkmark.circle.fill")
+                        .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.good)
+                    if let matched = f.matchedAddress, !matched.isEmpty {
+                        Text("Matched: \(matched)")
+                            .font(.caption2).foregroundStyle(Theme.inkDim)
+                            .lineLimit(2)
+                    }
+                    if let cents = f.lastSalePriceCents, cents > 0 {
+                        // SHOWN, never auto-filled. This is what the house last
+                        // SOLD for, which is not what it is listed at, and a
+                        // 2019 sale price quietly sitting in the price field of
+                        // a live listing is a wrong number on a public page.
+                        Text("Last sold for \(Money.dollars(cents))\(f.lastSaleDate.map { " (\($0.prefix(4)))" } ?? "") \u{2014} not the asking price.")
+                            .font(.caption2).foregroundStyle(Theme.inkDim)
+                    }
+                    Text("Photos aren\u{2019}t part of any records feed \u{2014} add your own below.")
+                        .font(.caption2).foregroundStyle(Theme.inkDim)
+                }
+            } else if let note = lookupNote {
+                Text(note)
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// Ask once per tap, fill only the blanks, and never retry on its own —
+    /// every call is metered on the server and a retry is a second charge.
+    @MainActor
+    private func runPropertyLookup() async {
+        let address = form.address.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard address.count >= 6, !lookingUp else { return }
+        lookingUp = true
+        lookupNote = nil
+        defer { lookingUp = false }
+        do {
+            let result = try await model.api.propertyLookup(address: address)
+            lookupAvailable = result.configured
+            guard result.configured else { return }
+            guard let f = result.facts else {
+                lookupFacts = nil
+                lookupNote = "No public record came back for that address. Type what you know below \u{2014} it works the same."
+                return
+            }
+            var filled = 0
+            if form.beds == 0, let b = f.beds, b > 0 { form.beds = b; filled += 1 }
+            if form.baths == 0, let b = f.baths, b > 0 { form.baths = b; filled += 1 }
+            if form.sqft.isEmpty, let s = f.sqft, s > 0 { form.sqft = String(s); filled += 1 }
+            if let y = f.yearBuilt, y > 1700,
+               (form.details["yearBuilt"] ?? "").isEmpty {
+                form.details["yearBuilt"] = String(y); filled += 1
+            }
+            lookupFilled = filled
+            lookupFacts = f
+            Haptics.success()
+            Analytics.track("property_lookup", ["ok": "true", "filled": String(filled),
+                                                "cached": result.cached ? "true" : "false"])
+        } catch {
+            lookupFacts = nil
+            lookupNote = "Couldn\u{2019}t reach the records service. Type what you know below."
+            Analytics.track("property_lookup", ["ok": "false"])
+        }
     }
 
     private var propertyDetailsCard: some View {
