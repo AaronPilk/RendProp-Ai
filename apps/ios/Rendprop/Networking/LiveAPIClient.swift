@@ -242,6 +242,29 @@ final class LiveAPIClient: APIClient {
     // Decoder built per call (JSONDecoder isn't Sendable — no shared static).
     // Decode failures surface as `APIError.decoding` (a readable message) rather
     // than the raw DecodingError text.
+    /// Decode a type that declares its OWN `CodingKeys`, with no key
+    /// conversion.
+    ///
+    /// `decode(_:)` below applies `.convertFromSnakeCase`, which converts each
+    /// JSON key to camelCase and THEN matches it against the CodingKey's
+    /// `stringValue`. A type that spells its keys out in snake_case therefore
+    /// never matches: `suggested_replies` becomes `suggestedReplies`, gets
+    /// compared to the literal `"suggested_replies"`, and the decode fails with
+    /// `keyNotFound`. The two mechanisms are mutually exclusive and the failure
+    /// is silent — `CoachResponse` had it, and every coach reply was thrown
+    /// away and replaced by the offline answer AFTER the server had already
+    /// called the model and billed for it.
+    ///
+    /// So: types with explicit keys come through here, types that rely on the
+    /// conversion come through `decode`. Never both.
+    private func decodeExact<T: Decodable>(_ data: Data) throws -> T {
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding
+        }
+    }
+
     private func decode<T: Decodable>(_ data: Data) throws -> T {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
@@ -1195,8 +1218,17 @@ final class LiveAPIClient: APIClient {
             "space_type": request.spaceType,
             "context": context,
         ]
-        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body))
-        return try decode(data)
+        // `aiSession`, not the default one: this asks Claude a question with a
+        // system prompt and up to 25 listings of context behind it, and every
+        // other model-backed route on this client already uses the longer
+        // timeout. The default 60 s was one slow answer away from throwing away
+        // a reply the server had already paid for.
+        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body),
+                                     session: aiSession)
+        // decodeExact, NOT decode: `CoachResponse` spells its own CodingKeys in
+        // snake_case, which `.convertFromSnakeCase` cannot match. See the note
+        // on `decodeExact`.
+        return try decodeExact(data)
     }
 
     // MARK: - Account / usage / leads

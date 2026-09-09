@@ -1919,7 +1919,7 @@ private struct AIFailure: Identifiable {
             if case .server(_, _, let m) = api { text = m.trimmingCharacters(in: .whitespacesAndNewlines) }
             if text.isEmpty { text = (api.errorDescription ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
             if text.isEmpty { text = "Something went wrong. Please try again." }
-            message = text
+            message = AIFailure.humanReadable(text)
             isQuota = api.isQuota
             isUnauthorized = api.isUnauthorized
             isRateLimited = api.isRateLimited
@@ -1958,6 +1958,34 @@ private struct AIFailure: Identifiable {
         isQuota = other.isQuota
         isUnauthorized = other.isUnauthorized
         isRateLimited = other.isRateLimited
+    }
+
+    /// Server messages are written for a person and are shown verbatim —
+    /// unless the server forwarded a PROVIDER'S message, which is not.
+    ///
+    /// An agent was shown this, in an alert, on top of their listing:
+    ///
+    ///     fal HTTP 422: {"detail":[{"type":"missing","loc":["body","mask_url"],
+    ///     "msg":"Field required","input":{"prompt":"Remove all clutter...
+    ///
+    /// The route behind it is fixed, but the leak is the general problem: any
+    /// provider, any day, can hand us a stack trace and this alert will print
+    /// it. So anything that reads as machine output is replaced here with plain
+    /// words. The original still reaches the log, where it belongs — this
+    /// changes what the AGENT sees, never what we can debug from.
+    ///
+    /// Deliberately conservative: it only fires on shapes no human sentence
+    /// has (a JSON body, a bracketed key path, an "HTTP <code>:" prefix), so a
+    /// real server sentence — "Pick the photos for your reel first" — is
+    /// untouched.
+    static func humanReadable(_ text: String) -> String {
+        let looksMachine =
+            text.contains("{\"") || text.contains("[{") ||
+            text.range(of: #"HTTP \d{3}"#, options: .regularExpression) != nil ||
+            text.contains("\"detail\"") || text.contains("Traceback")
+        guard looksMachine else { return text }
+        return "The AI service refused that request. Nothing was charged for it \u{2014} try again, "
+             + "and if it keeps happening tell us which change you picked."
     }
 
     /// Transport failures that mean "no network", not "the server said no".
@@ -3345,6 +3373,13 @@ struct PhotoStudioView: View {
     private var stagingLabel: String { space == .realEstate ? "Virtual staging" : "Furnish & style" }
 
     @State private var photos: [EnhancedPhoto] = []
+    /// The photos with AI work in flight right now, so each THUMBNAIL can say
+    /// so. `isProcessing` is one bool for the whole screen and its spinner
+    /// renders once, at the top of the scroll view — on a seventeen-photo grid
+    /// that is a thousand points above the photo you just tapped, which is how
+    /// the owner ended up tapping Declutter and having "no idea if it was
+    /// working or not until I got that message".
+    @State private var busyPhotoIDs: Set<String> = []
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var isProcessing = false
@@ -3456,6 +3491,9 @@ struct PhotoStudioView: View {
             }
             .padding()
         }
+        .overlay(alignment: .bottom) { workingPill }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isProcessing)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: busyPhotoIDs)
         .background(Theme.bg)
         .navigationTitle(entry == .photos ? "Photos" : "AI Photo Studio")
         .navigationBarTitleDisplayMode(.inline)
@@ -3858,11 +3896,13 @@ struct PhotoStudioView: View {
         // inside another Button's label never gets the tap).
         ZStack(alignment: .bottomTrailing) {
             if batchEdit == nil {
-                Button { compare = p } label: { thumb(p) }
+                Button { compare = p } label: { thumb(p).overlay { busyOverlay(p) } }
                     .buttonStyle(ScalePressStyle())
-                    .accessibilityLabel(Text("Photo — opens before-and-after compare"))
+                    .accessibilityLabel(Text(busyPhotoIDs.contains(p.id)
+                                             ? "Photo — the AI is working on this one"
+                                             : "Photo — opens before-and-after compare"))
                     .contextMenu { photoMenu(p) }
-                wandButton(p)
+                if !busyPhotoIDs.contains(p.id) { wandButton(p) }
                 // THE COVER, on the surface. It was a long-press and nothing
                 // else — an invisible gesture for the one picture that
                 // represents the whole home everywhere it is shared. Only on
@@ -3881,6 +3921,60 @@ struct PhotoStudioView: View {
                                          : "Photo, not selected. Tap to include it."))
             }
         }
+    }
+
+    /// "This one, right now." Drawn ON the photo because that is where the
+    /// agent is looking after they tap the wand on it.
+    @ViewBuilder private func busyOverlay(_ p: EnhancedPhoto) -> some View {
+        if busyPhotoIDs.contains(p.id) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.45))
+                .overlay {
+                    VStack(spacing: 6) {
+                        ProgressView().tint(Color.white)
+                        Text("Working…")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.white)
+                    }
+                }
+                .transition(.opacity)
+        }
+    }
+
+    /// "Is it doing anything at all?" — answerable without scrolling.
+    ///
+    /// Floats over the grid at the bottom of the screen, so it is visible
+    /// wherever the agent happens to be. This and `busyOverlay` answer
+    /// different questions and both are worth their space: one says WHICH
+    /// photo, this one says WHETHER, and the top-of-scroll spinner answered
+    /// neither once you had scrolled past it.
+    @ViewBuilder private var workingPill: some View {
+        if isProcessing || batchRun != nil {
+            HStack(spacing: 8) {
+                ProgressView().tint(Color.white)
+                Text(pillText)
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(Color.black.opacity(0.82), in: Capsule())
+            .shadow(color: Color.black.opacity(0.3), radius: 10, y: 4)
+            .padding(.bottom, 14)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .allowsHitTesting(false)
+            .accessibilityLabel(Text(pillText))
+        }
+    }
+
+    /// A batch says which photo of how many; a single edit says what it is
+    /// doing. Never a bare "Loading" — the agent is paying per photo and is
+    /// owed a count.
+    private var pillText: String {
+        if let run = batchRun {
+            return "\(run.title) — \(min(run.current, run.total)) of \(run.total)"
+        }
+        return processingText
     }
 
     /// The tick (and the dimming) on a photo while an edit picks its targets.
@@ -4031,6 +4125,12 @@ struct PhotoStudioView: View {
         let spaceRaw = space.rawValue    // THIS listing's type, not the selected one (P2-5)
         let tapKey = UUID().uuidString   // one idempotency key per photo, per run
 
+        // THIS photo is busy, and its thumbnail says so for as long as it is.
+        // `defer` rather than a clear at the end: the throws below are the
+        // whole point — a photo that failed must not be left spinning.
+        busyPhotoIDs.insert(p.id)
+        defer { busyPhotoIDs.remove(p.id) }
+
         guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
             throw AIImagePrep.error("Couldn't read that photo.")
         }
@@ -4173,7 +4273,9 @@ struct PhotoStudioView: View {
         // rubric is scoped by trade (a gym's "equipment appeared" is not a
         // home's).
         let spaceRawForDrift = space.rawValue
+        busyPhotoIDs.insert(photoID)
         animateTask = Task {
+            defer { busyPhotoIDs.remove(photoID) }
             do {
                 guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
                     throw AIImagePrep.error("Couldn't read that photo.")
