@@ -89,8 +89,19 @@ struct ListingFieldsForm<Middle: View>: View {
 
     private var space: SpaceType { form.spaceType }
 
+    /// What the agent pasted, and what came out of it. Local to this card:
+    /// nothing about a link is persisted, because the ADDRESS is the outcome
+    /// and the link was only ever the way to type it quickly.
+    @State private var pastedLink = ""
+    @State private var linkResult: ListingLink?
+    @State private var linkFailed = false
+
     var body: some View {
         VStack(spacing: Theme.spacing) {
+            // FIRST, above the address field, for real homes. Typing a full
+            // street address on a phone while standing in a driveway is the
+            // friction; "4 beds" is not.
+            if space.showsPropertyDetails { listingLinkCard }
             addressCard
             middle()
             if space.showsPropertyDetails {
@@ -100,6 +111,84 @@ struct ListingFieldsForm<Middle: View>: View {
                 businessDetailsCard
             }
         }
+    }
+
+    /// Paste a Zillow / Redfin / Realtor.com link and the address fills itself.
+    ///
+    /// NOTHING IS FETCHED. `ListingLink.parse` reads the address out of the URL
+    /// STRING — a listing URL carries it in its own path — and no request ever
+    /// reaches those sites. That is deliberate and it is the difference between
+    /// a convenience and a lawsuit: Zillow's terms prohibit automated queries,
+    /// and listing photos belong to the photographer or the MLS rather than to
+    /// the portal or the agent. These tours republish publicly, so an automated
+    /// pull would land the exposure on this company.
+    ///
+    /// The rest of the fields therefore stay empty, and this card says so
+    /// rather than leaving four blanks after a button labelled "pull the data".
+    private var listingLinkCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Paste a listing link", systemImage: "link")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Zillow, Redfin or Realtor.com. The address fills itself in \u{2014} no typing.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 8) {
+                TextField("zillow.com/homedetails/\u{2026}", text: $pastedLink)
+                    .textContentType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                    .submitLabel(.done)
+                    .onSubmit { applyPastedLink() }
+                    .font(.body)
+                    .padding(14)
+                    .background(Theme.fillSubtle,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                Button("Use") { applyPastedLink() }
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 16).padding(.vertical, 14)
+                    .background(Theme.accent, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .buttonStyle(ScalePressStyle())
+                    .disabled(pastedLink.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .accessibilityIdentifier("newListing.useLink")
+            }
+
+            if let linkResult {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Address filled from the \(linkResult.source.label) link.",
+                          systemImage: "checkmark.circle.fill")
+                        .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.good)
+                    Text("Beds, baths, size, price and photos aren\u{2019}t pulled \u{2014} those come from your MLS feed once it\u{2019}s connected. Add what you want below.")
+                        .font(.caption2).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else if linkFailed {
+                Text("That doesn\u{2019}t look like a Zillow, Redfin or Realtor.com listing link. Type the address below instead \u{2014} it works exactly the same.")
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// Read the link, fill the address, say which it was. A failed parse is a
+    /// dead end by design — the manual field is directly below and guessing a
+    /// wrong address onto a real listing is worse than typing the right one.
+    private func applyPastedLink() {
+        guard let parsed = ListingLink.parse(pastedLink) else {
+            linkResult = nil
+            linkFailed = true
+            Haptics.warning()
+            return
+        }
+        form.address = parsed.formatted
+        linkResult = parsed
+        linkFailed = false
+        Haptics.success()
+        Analytics.track("listing_link_used", ["source": parsed.source.rawValue])
     }
 
     private var addressCard: some View {
