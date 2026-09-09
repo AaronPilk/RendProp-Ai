@@ -221,6 +221,18 @@ struct SettingsView: View {
                         }
                     }
                 }
+                if serverAccountsEnabled {
+                    // Seats. Opening this screen requires nothing; holding a
+                    // seat requires Sign in with Apple, and that is the ONE
+                    // place in the app where sign-in is genuinely required
+                    // (App Store 5.1.1(v) allows it precisely because a team
+                    // seat is an account-based feature). Team/TeamView.swift.
+                    NavigationLink {
+                        TeamView()
+                    } label: {
+                        Label("Team", systemImage: "person.2")
+                    }
+                }
                 Button {
                     if uploads.state?.status == .uploading {
                         showIntroConfirm = true

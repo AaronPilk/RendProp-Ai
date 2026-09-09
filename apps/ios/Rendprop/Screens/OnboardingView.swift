@@ -150,6 +150,26 @@ struct OnboardingView: View {
                 .padding()
             }
 
+            // Nothing in the app had ever mentioned the free week, so nobody
+            // knew they were on one — and until migration 0032 there was
+            // nothing to mention, because `trial` and `free` carried identical
+            // entitlements. Deliberately NOT called a "7-day free trial": the
+            // paywall's StoreKit introductory offer is called that, and two
+            // different things under one name is how a 3.1.2 problem starts.
+            VStack(spacing: 3) {
+                Text("Your first week is on us")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Text("3 tours, 60 photo edits and 4 reel clips, free. No card, no account.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 30)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+
             PrimaryButton(title: "Get started", systemImage: "arrow.right") {
                 hasOnboarded = true
             }

@@ -86,6 +86,18 @@ enum Config {
         return Int(args[i + 1])
     }
 
+    /// `-ui.planBanner <trial|ending|ended|paid>` (screenshots only): forces
+    /// Home's plan banner into one state. The banner otherwise draws only from
+    /// a live `/me`, which the mock cannot answer — so without this it can
+    /// never be photographed, and a thing nobody has looked at is a thing
+    /// nobody has checked. nil outside `-uiTesting` or when the arg is missing.
+    static var uiTestPlanBanner: String? {
+        guard isUITesting else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-ui.planBanner"), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }
+
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
     /// the live client can't be constructed (e.g. no base URL). Single source of
     /// truth so AppModel and UploadManager stay in sync.

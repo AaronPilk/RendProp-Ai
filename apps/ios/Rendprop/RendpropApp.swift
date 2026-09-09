@@ -2113,6 +2113,13 @@ struct HomeDashboardView: View {
             VStack(alignment: .leading, spacing: 26) {
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
+                // Which plan you are on, said where somebody will actually read
+                // it. Draws nothing until /me answers and nothing at all if it
+                // fails — an empty space beats a wrong claim about their money.
+                // Asks for an upgrade only in the last two days of the free week
+                // and after it ends. Plan/PlanBanner.swift.
+                PlanBanner()
+                    .modifier(Reveal(index: 0, on: revealed))
                 if !FirstProjectGuide.isHiddenForever {
                     FirstProjectCard { action in
                         switch action {
