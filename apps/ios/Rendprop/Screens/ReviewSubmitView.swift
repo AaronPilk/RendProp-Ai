@@ -49,7 +49,7 @@ struct ReviewSubmitView: View {
     }
 
     private var lockReason: String {
-        if Config.enableAuth && !auth.isSignedIn { return "Sign in to see which tiers your plan includes." }
+        if Config.enableAuth && !auth.isSignedIn { return "Not connected yet — Smooth is always included." }
         if entitlements == nil {
             return entitlementsChecked ? "Couldn't check your plan right now — Smooth is always included."
                                        : "Checking your plan…"
@@ -74,7 +74,7 @@ struct ReviewSubmitView: View {
             RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
         }
         .sheet(isPresented: $showSignIn) {
-            SignInView()
+            SignInView.forAI("AI render tiers")
         }
         .navigationDestination(isPresented: $goToStatus) {
             if let render {

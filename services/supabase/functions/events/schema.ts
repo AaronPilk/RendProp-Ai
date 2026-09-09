@@ -53,6 +53,12 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   app_open:           ["cold", "source", "session_n"],
   signup:             ["method"],
   signin:             ["method"],
+  // Anonymous sessions (App Store 5.1.1(v)): every launch opens one, and these
+  // three say whether that is working in the field. Without them the batch that
+  // carries one is refused entirely.
+  anonymous_session_started: ["attempt"],
+  anonymous_session_failed:  ["attempts"],
+  anonymous_adopt:           ["ok", "adopted"],
   // Core creation funnel
   home_created:       ["space_type", "source"],
   capture_started:    ["space_type", "mode"],

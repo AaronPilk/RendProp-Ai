@@ -211,7 +211,7 @@ struct SettingsView: View {
             Section {
                 LabeledContent("Account", value: accountStatusLabel)
                 if serverAccountsEnabled {
-                    if auth.isSignedIn {
+                    if auth.isIdentified {
                         Button("Sign out", role: .destructive) { showSignOutConfirm = true }
                     } else {
                         Button {
@@ -374,9 +374,12 @@ struct SettingsView: View {
             }
         }
         .sheet(isPresented: $showSignIn) {
-            SignInView {
-                Task { await loadUsage() }
-            }
+            // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
+            // the user that registering will enable them to access the purchased
+            // content from any of their supported devices and provide them a way
+            // to register at any time." That is what this sheet is for, and it
+            // is why nothing here presents it as a requirement.
+            SignInView.optionalUpgrade { Task { await loadUsage() } }
         }
         .confirmationDialog("Sign out?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
@@ -430,7 +433,7 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
-                 ? "Removes every \(localItemNoun), video, tour and card stored on this phone and signs you out — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
+                 ? "Removes every \(localItemNoun), video, tour and card stored on this phone\(auth.isIdentified ? " and signs you out" : "") — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
                  : "Removes every \(localItemNoun), video, tour and card stored on this phone — including this phone's copies of the untouched originals behind your AI-edited photos.")
         }
         .alert("Data cleared", isPresented: $showDataCleared) {
@@ -475,9 +478,9 @@ struct SettingsView: View {
         guard serverAccountsEnabled else {
             return "Offline build — capture and on-device rendering work without an account."
         }
-        return auth.isSignedIn
+        return auth.isIdentified
             ? "Signed in with Apple. Publishing, leads and AI tools use this account."
-            : "Capture and on-device rendering work without an account. Sign in to publish tours, see leads and use AI tools."
+            : "Everything works without signing in — your homes, tours, leads and plan live in a workspace held for this iPhone. Sign in with Apple to carry them to a new phone, and to get them back if you delete the app."
     }
 
     // MARK: - Plan & usage (live backend only)
@@ -486,7 +489,10 @@ struct SettingsView: View {
     private var usageSection: some View {
         Section {
             if !auth.isSignedIn {
-                Text("Sign in to see your plan and this month's usage.")
+                // Not a sign-in prompt: every launch opens a session by itself,
+                // so the only way to be here is that the phone hasn't reached
+                // Rendprop yet.
+                Text("Not connected yet — your plan and this month's usage appear as soon as this iPhone reaches Rendprop.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             } else if let usage {
@@ -668,7 +674,11 @@ struct SettingsView: View {
     /// What the Account row shows — the real state, never a dev placeholder.
     private var accountStatusLabel: String {
         guard serverAccountsEnabled else { return "Offline build" }
-        guard auth.isSignedIn else { return "Not signed in" }
+        // An anonymous session is a session, not an identity. Claiming "Signed
+        // in with Apple" here would be a lie to everyone who never tapped it.
+        guard auth.isIdentified else {
+            return auth.isSignedIn ? "Not signed in" : "Connecting…"
+        }
         let name = auth.displayName.trimmingCharacters(in: .whitespaces)
         return name.isEmpty ? "Signed in with Apple" : name
     }
@@ -782,7 +792,10 @@ struct SettingsView: View {
     @MainActor
     private func clearLocalDataTapped() {
         if uploads.state != nil { uploads.cancel() }
-        auth.signOut()
+        // Anonymous sessions keep their session: this alert promises the
+        // published tours survive, and for an anonymous workspace the token is
+        // the ONLY key to them. Delete account is the honest way to end one.
+        if auth.isIdentified { auth.signOut() }
         wipeLocalData()
         Haptics.success()
         showDataCleared = true

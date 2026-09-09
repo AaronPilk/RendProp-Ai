@@ -644,22 +644,53 @@ final class AuthStore: ObservableObject {
         }
     }
 
+    /// When to make each attempt, in seconds from the one before.
+    ///
+    /// A single failed POST used to leave the app with NO session until the next
+    /// foreground — and with no session, every AI tool, every publish and every
+    /// plan row falls back to the Sign in with Apple sheet. That fallback IS the
+    /// wall App Review rejected under 5.1.1(v), so one bad minute on a
+    /// reviewer's network must not be able to recreate it.
+    private static let anonymousRetryDelays: [TimeInterval] = [0, 1, 3, 8, 20]
+
     private func performAnonymousSignIn() async {
+        guard Config.supabaseURL != nil, !Config.supabaseAnonKey.isEmpty else { return }
+        for (index, delay) in Self.anonymousRetryDelays.enumerated() {
+            if delay > 0 { try? await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
+            if Task.isCancelled { return }
+            // Sign in with Apple may have landed a real session while we waited.
+            if await MainActor.run(body: { self.isSignedIn }) { return }
+            if await attemptAnonymousSignIn() {
+                await MainActor.run {
+                    Analytics.track("anonymous_session_started", ["attempt": "\(index + 1)"])
+                }
+                return
+            }
+        }
+        await MainActor.run {
+            Analytics.track("anonymous_session_failed",
+                            ["attempts": "\(Self.anonymousRetryDelays.count)"])
+        }
+    }
+
+    /// One signup POST. `true` when a session landed.
+    private func attemptAnonymousSignIn() async -> Bool {
         guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
-              !Config.supabaseAnonKey.isEmpty else { return }
+              !Config.supabaseAnonKey.isEmpty else { return false }
         var req = URLRequest(url: authBase.appendingPathComponent("signup"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
         req.httpBody = Data("{}".utf8)
+        req.timeoutInterval = 20
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let session = try? JSONDecoder().decode(SupabaseSession.self, from: data)
-        else { return }
+        else { return false }
         await applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
-        await MainActor.run { Analytics.track("anonymous_session_started") }
+        return true
     }
 
     /// The anonymous token, read BEFORE Sign in with Apple replaces the session.

@@ -4031,6 +4031,11 @@ struct PhotoStudioView: View {
     /// Present the sign-in sheet instead of letting the call 401 (F-A-13).
     private func requireSignIn() -> Bool {
         if Config.enableAuth && !auth.isSignedIn {
+            // Every launch opens a session by itself, so landing here means the
+            // network refused it — not that this person owes us a registration.
+            // Ask for one again before falling back to the sheet, whose AI copy
+            // ("Couldn't reach your account") says the same thing.
+            auth.signInAnonymouslyIfNeeded()
             showSignIn = true
             return false
         }
