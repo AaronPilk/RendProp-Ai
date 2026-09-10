@@ -31,7 +31,7 @@ begin
   insert into auth.users(id,email,raw_user_meta_data)
   values(v_user,'worker-publish-fixture@example.invalid','{}');
   select org_id into strict v_org from public.memberships where user_id=v_user;
-  for n in 1..9 loop
+  for n in 1..11 loop
     v_listing := ('a0351000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid;
     v_asset := ('a0352000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid;
     v_job := ('a0353000-0000-0000-0000-' || lpad(n::text,12,'0'))::uuid;
@@ -39,7 +39,7 @@ begin
     v_prefix := 'renders/' || v_listing::text || '/' || v_render::text;
     insert into public.listings(id,org_id,agent_id,status) values(v_listing,v_org,v_user,'draft');
     insert into public.capture_assets(id,listing_id,kind,storage_key,bucket,uploaded,bytes)
-    values(v_asset,v_listing,'video','uploads/fixture.mov','uploads',true,1);
+    values(v_asset,v_listing,case when n=10 then 'photo' else 'video' end,'uploads/fixture.mov','uploads',true,1);
     insert into public.render_jobs(id,listing_id,capture_asset_id,source,status,worker_id,attempts,lease_expires_at)
     values(v_job,v_listing,v_asset,'worker','processing','worker-B',2,clock_timestamp()+interval '10 minutes');
     insert into _wp_inputs values(n,v_job,jsonb_build_object('id',v_render,'slug','worker-fixture-'||n,
@@ -138,9 +138,11 @@ begin
   select * into v from _wp_inputs where n=2;
   insert into public.renders(id,job_id,listing_id,slug,duration_s,video_key)
   select old_id,v.job,j.listing_id,'kept-old-slug',30,'old-worker-output.mp4' from public.render_jobs j where j.id=v.job;
-  result := pg_temp.wp_call(2);
+  result := pg_temp.wp_call(2,'worker-B',2,'{"duration_s":12.34,"speed_factor":1.25}');
   perform pg_temp.wp_assert(result->'render'->>'id'=old_id::text and result->'render'->>'slug'='kept-old-slug'
-    and result->'render'->>'video_key'=v.payload->>'video_key','fenced legacy partial replacement keeps id and slug');
+    and result->'render'->>'video_key'=v.payload->>'video_key'
+    and (result->'render'->>'duration_s')::numeric=12.34 and (result->'render'->>'speed_factor')::numeric=1.25,
+    'fenced legacy partial replacement keeps id slug and exact two-decimal scalars');
 end $$;
 
 do $$
@@ -173,6 +175,35 @@ begin
     and (select j.status='processing' and j.enhancement_result is null and j.worker_publish_receipt is null
       and l.status='draft' from public.render_jobs j join public.listings l on l.id=j.listing_id where j.id=v_job),
     'photo write failure rolls back render outcome photos listing and job');
+end $$;
+
+-- Non-video raw media and numeric-column coercion are rejected before any
+-- output is published. Group the scalar variants into one registered check;
+-- each variant must independently raise WP003, not silently fall through.
+do $$
+declare v_job uuid; v_patch jsonb;
+begin
+  select job into v_job from _wp_inputs where n=10;
+  begin perform pg_temp.wp_call(10); raise exception 'photo capture accepted as raw video';
+  exception when sqlstate 'WP003' then null; end;
+  perform pg_temp.wp_assert(not exists(select 1 from public.renders where job_id=v_job)
+    and not exists(select 1 from public.photos p join public.render_jobs j on j.listing_id=p.listing_id where j.id=v_job)
+    and (select j.status='processing' and j.enhancement_result is null and j.worker_publish_receipt is null
+      and l.status='draft' from public.render_jobs j join public.listings l on l.id=j.listing_id where j.id=v_job),
+    'photo raw capture cannot publish video output or readiness');
+  select job into v_job from _wp_inputs where n=11;
+  for v_patch in select value from jsonb_array_elements('[
+    {"duration_s":0.004}, {"duration_s":30.001}, {"speed_factor":2.004},
+    {"duration_s":"30"}, {"speed_factor":"2"}, {"duration_s":true}
+  ]'::jsonb) loop
+    begin perform pg_temp.wp_call(11,'worker-B',2,v_patch); raise exception 'noncanonical scalar accepted: %',v_patch;
+    exception when sqlstate 'WP003' then null; end;
+  end loop;
+  perform pg_temp.wp_assert(not exists(select 1 from public.renders where job_id=v_job)
+    and not exists(select 1 from public.photos p join public.render_jobs j on j.listing_id=p.listing_id where j.id=v_job)
+    and (select j.status='processing' and j.enhancement_result is null and j.worker_publish_receipt is null
+      and l.status='draft' from public.render_jobs j join public.listings l on l.id=j.listing_id where j.id=v_job),
+    'all six noncanonical scalar variants leave output and readiness unchanged');
 end $$;
 reset role;
 
@@ -228,7 +259,7 @@ end $$;
 reset role;
 select * from _wp_checks order by name;
 do $$ begin
-  if (select count(*) from _wp_checks) <> 20 then raise exception 'expected exactly 20 publication checks'; end if;
+  if (select count(*) from _wp_checks) <> 22 then raise exception 'expected exactly 22 publication checks'; end if;
 end $$;
 rollback;
-\echo WORKER_PUBLISH_TRANSACTION_PASS_20
+\echo WORKER_PUBLISH_TRANSACTION_PASS_22

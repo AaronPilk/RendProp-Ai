@@ -97,8 +97,8 @@ begin
   end if;
   if not exists (select 1 from public.capture_assets a
     where a.id = v_job.capture_asset_id and a.listing_id = v_listing_id
-      and a.uploaded is true and coalesce(a.bucket, 'uploads') = 'uploads') then
-    raise exception using errcode = 'WP003', message = 'worker publication requires an uploaded raw capture';
+      and a.kind = 'video' and a.uploaded is true and coalesce(a.bucket, 'uploads') = 'uploads') then
+    raise exception using errcode = 'WP003', message = 'worker publication requires an uploaded raw video capture';
   end if;
 
   begin
@@ -111,9 +111,16 @@ begin
   end;
   v_slug := p_render->>'slug';
   v_prefix := 'renders/' || v_listing_id::text || '/' || v_id::text;
+  -- The persisted numeric columns have two decimal places. Reject coercion
+  -- rather than commit rounded output which cannot match the exact receipt:
+  -- a positive 0.004-second request must never become a ready 0.00-second tour.
   if v_id is null or v_slug is null or v_slug !~ '^[a-zA-Z0-9_-]{6,80}$'
+     or jsonb_typeof(p_render->'duration_s') is distinct from 'number'
+     or jsonb_typeof(p_render->'speed_factor') is distinct from 'number'
      or v_duration is null or not (v_duration > 0 and v_duration <= 7200)
      or v_speed is null or not (v_speed >= 0.25 and v_speed <= 8)
+     or round(v_duration, 2) is distinct from v_duration
+     or round(v_speed, 2) is distinct from v_speed
      or jsonb_typeof(p_enhancement_result->'staged') is distinct from 'boolean'
      or jsonb_typeof(p_enhancement_result->'ran') is distinct from 'boolean'
      or p_render->>'video_key' is distinct from v_prefix || '.mp4'
