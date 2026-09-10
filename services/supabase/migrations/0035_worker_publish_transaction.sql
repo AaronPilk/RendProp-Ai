@@ -112,8 +112,8 @@ begin
   v_slug := p_render->>'slug';
   v_prefix := 'renders/' || v_listing_id::text || '/' || v_id::text;
   -- The persisted numeric columns have two decimal places. Reject coercion
-  -- rather than commit rounded output which cannot match the exact receipt:
-  -- a positive 0.004-second request must never become a ready 0.00-second tour.
+  -- rather than commit 30.001 as 30.00 and disagree with the exact receipt.
+  -- Existing chk_renders_duration already rejects 0.004 rounding to zero.
   if v_id is null or v_slug is null or v_slug !~ '^[a-zA-Z0-9_-]{6,80}$'
      or jsonb_typeof(p_render->'duration_s') is distinct from 'number'
      or jsonb_typeof(p_render->'speed_factor') is distinct from 'number'
