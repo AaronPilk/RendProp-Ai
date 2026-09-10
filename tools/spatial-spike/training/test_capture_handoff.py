@@ -1,5 +1,6 @@
 """Synthetic-only handoff regressions. No user captures or reconstruction."""
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -175,6 +176,73 @@ class HandoffTests(unittest.TestCase):
             with self.assertRaisesRegex(adapter.CaptureError, "disk space"):
                 self.assemble(self.base / "copy")
         self.assertEqual(before, self.inventory())
+
+    def test_copy_inside_manifest_parent_is_refused_without_touching_source(self):
+        before = self.inventory()
+        output = self.root / "copy"
+        with self.assertRaisesRegex(adapter.CaptureError, "outside"):
+            self.assemble(output)
+        self.assertFalse(output.exists())
+        self.assertEqual(self.inventory(), before)
+
+    def test_copy_inside_manifest_parent_via_alias_is_refused(self):
+        before = self.inventory()
+        alias = self.base / "source-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        output = alias / "copy"
+        with self.assertRaisesRegex(adapter.CaptureError, "outside"):
+            self.assemble(output)
+        self.assertFalse(output.exists())
+        self.assertEqual(self.inventory(), before)
+
+    def test_dataset_is_owner_only_before_first_write_under_permissive_umask(self):
+        # tempfile may use /var while the actual writer resolves /private/var.
+        # Match the writer's real path so its FIRST JPEG open is observed.
+        output = (self.base / "dataset").resolve()
+        original_open = Path.open
+        writes = []
+        def checking_open(path, mode="r", *args, **kwargs):
+            stream = original_open(path, mode, *args, **kwargs)
+            if any(flag in mode for flag in ("w", "x", "a")) and path.is_relative_to(output):
+                try:
+                    self.assertEqual(path.stat().st_mode & 0o777, 0o600, str(path))
+                    parent = path.parent
+                    while parent.is_relative_to(output):
+                        self.assertEqual(parent.stat().st_mode & 0o777, 0o700, str(parent))
+                        parent = parent.parent
+                    writes.append(path)
+                except BaseException:
+                    stream.close()
+                    raise
+            return stream
+        saved = os.umask(0o022)
+        try:
+            with patch.object(Path, "open", checking_open):
+                handoff.inspect_capture(self.root, output)
+            self.assertGreaterEqual(len(writes), 25)
+            observed = os.umask(0o022)
+            self.assertEqual(observed, 0o022, "caller umask was not restored")
+        finally:
+            os.umask(saved)
+
+    def test_dataset_failure_restores_umask_and_keeps_partial_files_private(self):
+        output = self.base / "dataset"
+        def interrupted_writer(capture, destination):
+            destination.mkdir()
+            (destination / "partial.bin").write_bytes(b"synthetic only")
+            raise KeyboardInterrupt("injected after partial write")
+        saved = os.umask(0o022)
+        try:
+            with patch.object(adapter, "write_dataset", side_effect=interrupted_writer):
+                with self.assertRaises(KeyboardInterrupt):
+                    handoff.inspect_capture(self.root, output)
+            observed = os.umask(0o022)
+            self.assertEqual(observed, 0o022, "caller umask was not restored on interruption")
+            self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((output / "partial.bin").stat().st_mode & 0o777, 0o600)
+            self.assertFalse((output / "capture-provenance.json").exists())
+        finally:
+            os.umask(saved)
 
     def test_changed_source_never_gets_handoff_completion_marker(self):
         original = adapter.write_dataset

@@ -35,6 +35,20 @@ unchanged** adapter. It does not create a second pose validator, normalize raw
 matrices, relax minimum seeds, manufacture feature tracks, estimate surfaces,
 spawn a process, load CUDA or contact a service.
 
+Independent review of the initial handoff commit found two real boundary defects:
+assembly allowed a destination under the source manifest's parent, and dataset
+files inherited a permissive caller umask. Four focused synthetic regressions
+failed before the repair (exit 1). Assembly now refuses descendants of the entire
+manifest parent, including resolved aliases; it must not add even a new `copy/`
+entry to the original capture. Dataset creation uses a scoped restrictive umask
+**before** the unchanged adapter opens any image/model/report: directories are
+0700 and files 0600, including partial outputs. The previous umask is restored on
+success and exceptions. This process-wide setting belongs to this single-threaded
+CLI, not a concurrently embedded library. Tests observe modes at the first actual
+JPEG open under umask 022 and inject interruption. The actual owner run used an
+outside-source 0700 private parent and umask 077, so these defects did not expose
+or alter its originals; the first version was nevertheless unsafe in general.
+
 Its `assemble` command accepts only three explicit input paths: a manifest, a
 frames directory and an images directory. Before creating output it requires
 20–400 contiguous native pairs, matching sidecar session IDs, schema/convention
@@ -190,7 +204,7 @@ a filename or checkbox.
 
 ## Verification and limitations
 
-Fresh portable gate: 59 Python tests (15 handoff), 21 viewer tests, 115 native
+Fresh portable gate after boundary repair: 63 Python tests (19 handoff), 21 viewer tests, 115 native
 capture assertions, 7 adversarial cases, 8 JPEG-resource cases and 3,076 pose
 precision assertions, no skipped tests. UI-summary controls and actual synthetic
 Swift native-JPEG/JSON→Python binary interop also pass. Invalid inspector/gate

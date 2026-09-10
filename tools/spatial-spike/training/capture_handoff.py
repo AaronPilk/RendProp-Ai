@@ -5,6 +5,7 @@ Only explicit local paths are read. No subprocess, GPU, provider or network code
 Keep stdout/provenance private: filenames, hashes and session IDs identify media.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -136,7 +137,9 @@ def new_output(path, source_paths, required_bytes):
 
 def assemble_capture(manifest, frames, images, output):
     before, sources = inventory(manifest, frames, images)
-    new_output(output, [frames, images, manifest], before["total_bytes"])
+    # Even a new sibling of frames/images would add an unexpected entry to the
+    # original capture. Protect the manifest's WHOLE parent, including aliases.
+    new_output(output, [frames, images, manifest.parent], before["total_bytes"])
     output.mkdir(mode=0o700)
     (output / "frames").mkdir(mode=0o700)
     (output / "images").mkdir(mode=0o700)
@@ -150,6 +153,18 @@ def assemble_capture(manifest, frames, images, output):
     adapter.require(before == after == root_inventory(output),
                     "source/copy changed during assembly; partial output preserved, not approved")
     return output
+
+
+@contextmanager
+def private_file_creation():
+    # The unchanged adapter creates its own output root. Restrict permissions
+    # BEFORE mkdir/open, including partial failures, not after media is written.
+    # umask is process-wide: this is a single-threaded CLI, not a concurrent API.
+    previous = os.umask(0o077)
+    try:
+        yield
+    finally:
+        os.umask(previous)
 
 
 def inspect_capture(root, dataset=None):
@@ -173,17 +188,17 @@ def inspect_capture(root, dataset=None):
         # points3D records are 51 bytes; include generous camera/report overhead.
         needed = before["image_bytes"] + 51 * seed_count + 200 * len(capture["frames"]) + 1024 * 1024
         new_output(dataset, [root], needed)
-        adapter.write_dataset(capture, dataset)
-        adapter.require(before == root_inventory(root),
-                        "source changed during preparation; dataset not handoff-approved")
-        report["dataset_prepared"] = True
-        report["adapter_report_sha256"] = bounded_file(dataset / "adapter-report.json", MANIFEST_LIMIT)[0]["sha256"]
-        # This is this wrapper's completion marker, separate from the adapter's.
-        # run_training currently verifies adapter-report, not this extra report.
-        with (dataset / "capture-provenance.json").open("x") as stream:
-            os.chmod(dataset / "capture-provenance.json", 0o600)
-            json.dump(report, stream, indent=2, allow_nan=False)
-            stream.write("\n")
+        with private_file_creation():
+            adapter.write_dataset(capture, dataset)
+            adapter.require(before == root_inventory(root),
+                            "source changed during preparation; dataset not handoff-approved")
+            report["dataset_prepared"] = True
+            report["adapter_report_sha256"] = bounded_file(dataset / "adapter-report.json", MANIFEST_LIMIT)[0]["sha256"]
+            # This is this wrapper's completion marker, separate from the adapter's.
+            # run_training currently verifies adapter-report, not this extra report.
+            with (dataset / "capture-provenance.json").open("x") as stream:
+                json.dump(report, stream, indent=2, allow_nan=False)
+                stream.write("\n")
     return report
 
 
