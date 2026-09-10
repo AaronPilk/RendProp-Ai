@@ -118,6 +118,19 @@ final class SpatialCaptureViewController: UIViewController {
                             .max(by: { $0.imageResolution.width < $1.imageResolution.width }) {
                             configuration.videoFormat = format
                         }
+                        // A device-dependent default must satisfy the same
+                        // native-raster limits as encoding and saved export.
+                        // Fail before starting AR; do not crop/scale or alter K.
+                        let nativeSize = configuration.videoFormat.imageResolution
+                        guard let width = Int(exactly: nativeSize.width), let height = Int(exactly: nativeSize.height) else {
+                            self.recorder.finish(status: "failed", detail: "ARKit selected an invalid native raster size. Files preserved.")
+                            return
+                        }
+                        do { try CaptureRasterLimits.validate(ImageResolution(width: width, height: height)) }
+                        catch {
+                            self.recorder.finish(status: "failed", detail: error.localizedDescription)
+                            return
+                        }
                         self.makePreview().session.run(configuration, options: [.resetTracking, .removeExistingAnchors])
                     }
                 }

@@ -13,6 +13,9 @@ rg -q 'func endPresentation' Sources/SpatialCaptureViewController.swift || mark_
 rg -q 'struct CaptureArchive' Sources/CaptureArchive.swift || mark_failure 'persistent capture recovery missing'
 rg -q 'validateFileSet' Sources/RasterWriter.swift || mark_failure 'whole-folder export integrity check missing'
 rg -q 'oversized-sidecar' Tests/AdversarialChecks.swift || mark_failure 'adversarial export checks missing'
+rg -q 'maximumJPEGBytes' Sources/RasterWriter.swift || mark_failure 'JPEG encoded-byte limit missing'
+rg -q 'CaptureRasterLimits.validate' Sources/SpatialCaptureViewController.swift || mark_failure 'selected format resource guard missing'
+rg -q 'metadata-excessive-pixels' Tests/JPEGResourceChecks.swift || mark_failure 'JPEG metadata resource checks missing'
 if rg -q '@main' Sources/SpatialCaptureViewController.swift; then mark_failure 'shared controller contains a standalone entry point'; fi
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 if ! spike_verify_dir=$(mktemp -d /tmp/spatial-capture-verify.XXXXXX); then mark_failure 'cannot create isolated verification directory'; exit "$FAIL"; fi
@@ -34,6 +37,18 @@ if ! swiftc Sources/CaptureModel.swift Sources/RasterWriter.swift Tests/Adversar
     mark_failure 'adversarial capture checks did not compile'; exit "$FAIL"
 fi
 "$spike_verify_dir/adversarial-checks" || mark_failure 'adversarial capture checks failed'
+if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
+if ! swiftc Sources/CaptureModel.swift Sources/RasterWriter.swift Tests/JPEGResourceChecks.swift -o "$spike_verify_dir/jpeg-resource-checks"; then
+    mark_failure 'JPEG resource checks did not compile'; exit "$FAIL"
+fi
+if "$spike_verify_dir/jpeg-resource-checks" unknown-case; then
+    mark_failure 'JPEG resource negative control returned success'
+else
+    spike_jpeg_negative_status=$?
+    [ "$spike_jpeg_negative_status" -eq 1 ] || mark_failure "JPEG negative control exited unexpectedly ($spike_jpeg_negative_status)"
+fi
+if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
+"$spike_verify_dir/jpeg-resource-checks" || mark_failure 'JPEG resource checks failed'
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 if [ "${1:-}" = "--build" ]; then
     if ! xcodegen generate; then mark_failure 'standalone project generation failed'; exit "$FAIL"; fi

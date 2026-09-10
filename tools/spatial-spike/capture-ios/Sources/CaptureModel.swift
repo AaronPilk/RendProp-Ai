@@ -17,6 +17,26 @@ enum CaptureGeometry {
 }
 
 struct ImageResolution: Codable, Equatable { let width: Int; let height: Int }
+
+enum CaptureRasterLimits {
+    // Native 1920-wide preferred video and 4K/4032x3024 fallback rasters fit.
+    // These are explicit Phase A resource limits, not a claim about every future
+    // ARKit format. Never resize a frame to satisfy them: K must stay verbatim.
+    static let maximumDimension = 8192
+    static let maximumPixels = 16 * 1024 * 1024
+
+    static func validate(_ resolution: ImageResolution) throws {
+        guard resolution.width > 0, resolution.height > 0,
+              resolution.width <= maximumDimension, resolution.height <= maximumDimension else {
+            throw CaptureError.invalid("Native raster exceeds the 8192-pixel axis safety limit or has an invalid size.")
+        }
+        let (pixels, overflow) = resolution.width.multipliedReportingOverflow(by: resolution.height)
+        guard !overflow, pixels <= maximumPixels else {
+            throw CaptureError.invalid("Native raster exceeds the 16,777,216-pixel safety limit.")
+        }
+    }
+}
+
 struct TrackingRecord: Codable {
     let state: String
     let reason: String?
@@ -68,7 +88,7 @@ struct FrameRecord: Codable {
         try require(abs(det - 1) < 0.01, "Reflected camera rotation.")
         try require(intrinsics.count == 3 && intrinsics.allSatisfy { $0.count == 3 && $0.allSatisfy(\.isFinite) }, "Invalid intrinsics.")
         try require(intrinsics[0][0] > 0 && intrinsics[1][1] > 0 && intrinsics[2] == [0, 0, 1], "Invalid calibration matrix.")
-        try require(image_resolution.width > 0 && image_resolution.height > 0, "Invalid image size.")
+        try CaptureRasterLimits.validate(image_resolution)
         try require(exposure_duration_seconds.isFinite && exposure_offset_ev.isFinite, "Invalid exposure.")
         try require(raw_feature_points.count <= 50_000, "More than 50,000 feature points in one frame; capture stopped without truncation.")
         for point in raw_feature_points {

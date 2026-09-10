@@ -221,6 +221,30 @@ and skipped. Core Image uses one context without intermediate caching; each
 write and each validation pass uses an autorelease pool. The cap bounds stored
 sidecar count and prevents an unbounded capture.
 
+Native image safety limits are **8192 pixels per axis, 16,777,216 total pixels,
+and 64 MiB encoded per JPEG**. The preferred 30 fps, at-most-1920-wide video
+format is unchanged. These limits also admit 3840×2160 and 4032×3024 dimensions;
+this is policy coverage, not proof those formats are available on every phone.
+The local ARKit SDK declares the first supported video format as the default,
+without a universal numeric maximum. The selected configuration is therefore
+checked before starting AR, including the fallback when no preferred format is
+found. An oversized future/default format fails visibly and preserves the
+attempt; no image is resized, cropped, or recalibrated to make it fit. The same
+dimension policy runs before native encoding and on frame/export validation.
+
+The pixel cap corresponds to at most 64 MiB of tightly packed 8-bit RGBA raster;
+the encoded cap generously allows four bytes per pixel at that ceiling for the
+quality-0.92 JPEG encoder. These are input/raster bounds, **not** a guarantee of
+total ImageIO/ARKit process memory or performance on older iPhones. JPEG files
+are read in bounded chunks before ImageIO receives their data. Decoded-image
+caching is disabled during metadata inspection; one JPEG image, 8-bit depth, orientation 1, calibrated dimensions,
+axis and pixel count are required before full decode. The decoded dimensions
+and depth are then checked again. Count/read-limit arithmetic rejects overflow.
+
+Portable JPEG-resource tests use sparse padding and edited small JPEG headers.
+They exercise the production metadata preflight without decoding an excessive
+raster; they do not prove camera output, physical-device memory, or room quality.
+
 An image is encoded to a unique partial path and validated, then renamed into
 place. The paired sidecar is written atomically next, then the manifest advances
 atomically last. Stopping closes frame admission immediately and waits for the

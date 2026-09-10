@@ -9,10 +9,14 @@ final class NativeRasterWriter {
     // 50,000 feature points with UInt64 IDs and full Float-coordinate decimal
     // precision fit comfortably below this bound. Never read arbitrary file sizes.
     static let maximumSidecarBytes = 16 * 1024 * 1024
+    // Generous allowance for quality-0.92, 8-bit native JPEGs: 4 encoded bytes
+    // per permitted pixel at the raster ceiling. Not a process-memory guarantee.
+    static let maximumJPEGBytes = 64 * 1024 * 1024
     private let context = CIContext(options: [.cacheIntermediates: false])
     private let colorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
 
     func write(_ pixelBuffer: CVPixelBuffer, resolution: ImageResolution, to destination: URL) throws {
+        try CaptureRasterLimits.validate(resolution)
         guard CVPixelBufferGetWidth(pixelBuffer) == resolution.width,
               CVPixelBufferGetHeight(pixelBuffer) == resolution.height else {
             throw CaptureError.invalid("Native image resolution disagrees with ARCamera calibration.")
@@ -36,16 +40,37 @@ final class NativeRasterWriter {
     }
 
     static func validateJPEG(at url: URL, resolution: ImageResolution) throws {
-        try requireRegularFile(at: url)
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              properties[kCGImagePropertyPixelWidth] as? Int == resolution.width,
-              properties[kCGImagePropertyPixelHeight] as? Int == resolution.height,
-              properties[kCGImagePropertyOrientation] as? Int == 1,
-              CGImageSourceCreateImageAtIndex(source, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) != nil else {
-            throw CaptureError.invalid("JPEG dimensions, orientation or decoding failed validation.")
+        let source = try validatedJPEGSource(at: url, resolution: resolution)
+        guard let raster = CGImageSourceCreateImageAtIndex(source, 0,
+            [kCGImageSourceShouldCacheImmediately: true, kCGImageSourceShouldAllowFloat: false] as CFDictionary),
+              raster.width == resolution.width, raster.height == resolution.height,
+              raster.bitsPerComponent == 8 else {
+            throw CaptureError.invalid("JPEG decoded dimensions or depth disagree with validated metadata.")
         }
+    }
+
+    // Kept separate from full raster decoding so every resource check is made
+    // before ImageIO can allocate the decoded image.
+    static func validatedJPEGSource(at url: URL, resolution: ImageResolution) throws -> CGImageSource {
+        try CaptureRasterLimits.validate(resolution)
+        let bytes = try boundedData(at: url, maximumBytes: maximumJPEGBytes, kind: "JPEG")
+        let metadataOptions = [kCGImageSourceShouldCache: false] as CFDictionary
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, metadataOptions),
+              CGImageSourceGetType(source) as String? == UTType.jpeg.identifier,
+              CGImageSourceGetCount(source) == 1,
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, metadataOptions) as? [CFString: Any],
+              let width = properties[kCGImagePropertyPixelWidth] as? Int,
+              let height = properties[kCGImagePropertyPixelHeight] as? Int,
+              properties[kCGImagePropertyDepth] as? Int == 8,
+              properties[kCGImagePropertyOrientation] as? Int == 1 else {
+            throw CaptureError.invalid("JPEG type, depth, dimensions or orientation failed validation.")
+        }
+        let native = ImageResolution(width: width, height: height)
+        try CaptureRasterLimits.validate(native)
+        guard native == resolution else {
+            throw CaptureError.invalid("JPEG dimensions disagree with ARCamera calibration.")
+        }
+        return source
     }
 
     static func validateCapture(at root: URL) throws -> CaptureManifest {
@@ -92,12 +117,25 @@ final class NativeRasterWriter {
     }
 
     static func boundedJSONData(at url: URL, maximumBytes: Int) throws -> Data {
+        try boundedData(at: url, maximumBytes: maximumBytes, kind: "JSON")
+    }
+
+    private static func boundedData(at url: URL, maximumBytes: Int, kind: String) throws -> Data {
+        let (readLimit, overflow) = maximumBytes.addingReportingOverflow(1)
+        guard maximumBytes >= 0, !overflow else { throw CaptureError.invalid("Invalid capture file byte limit.") }
         try requireRegularFile(at: url)
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
-        let bytes = try handle.read(upToCount: maximumBytes + 1) ?? Data()
+        var bytes = Data()
+        // Handle short reads without accepting only a prefix of an oversized
+        // file. No length lookup or unbounded Data(contentsOf:) read is needed.
+        while bytes.count < readLimit {
+            let chunk = try handle.read(upToCount: min(1024 * 1024, readLimit - bytes.count)) ?? Data()
+            if chunk.isEmpty { break }
+            bytes.append(chunk)
+        }
         guard bytes.count <= maximumBytes else {
-            throw CaptureError.invalid("Capture JSON exceeds the \(maximumBytes)-byte safety limit. Files are preserved.")
+            throw CaptureError.invalid("Capture \(kind) exceeds the \(maximumBytes)-byte safety limit. Files are preserved.")
         }
         return bytes
     }
