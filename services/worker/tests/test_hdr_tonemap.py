@@ -22,10 +22,8 @@ Three properties are asserted, each of which was BROKEN at the time of the audit
 
     python3 tests/test_hdr_tonemap.py            # needs ffmpeg + ffprobe with libzimg
 
-Skips (exit 0) when ffmpeg lacks zscale/tonemap — but LOUDLY: it names exactly
-which filter is missing and prints a `::warning::` GitHub Actions annotation,
-so a green CI run can never quietly hide the fact this test never ran a single
-assertion (see `skip()`).
+Fails (exit 1) when ffmpeg lacks zscale/tonemap: missing prerequisites are not
+evidence that the HDR path works. The release gate must not accept zero tests.
 """
 
 from __future__ import annotations
@@ -62,11 +60,15 @@ def stats(path: str) -> dict:
              "-show_entries",
              "frame_tags=lavfi.signalstats.YAVG,lavfi.signalstats.YMAX,lavfi.signalstats.SATAVG",
              "-of", "json"])
+    if p.returncode:
+        raise RuntimeError(f"signalstats ffprobe failed: {p.stderr[:400]}")
     frames = json.loads(p.stdout or "{}").get("frames", [])
 
     def avg(key: str) -> float:
         vals = [float(f["tags"][key]) for f in frames if f.get("tags", {}).get(key)]
-        return round(sum(vals) / len(vals), 1) if vals else 0.0
+        if not vals:
+            raise RuntimeError(f"signalstats produced no {key} measurements")
+        return round(sum(vals) / len(vals), 1)
 
     return {"YAVG": avg("lavfi.signalstats.YAVG"),
             "YMAX": avg("lavfi.signalstats.YMAX"),
@@ -119,30 +121,23 @@ def missing_filters(ffmpeg_bin: str) -> list[str]:
     return [f for f in ("zscale", "tonemap") if f not in names]
 
 
-def skip(reason: str) -> int:
-    """Exit 0, but LOUD.
-
-    A skip must never read like an ordinary pass: this prints a GitHub Actions
-    `::warning::` annotation (surfaces in the Checks UI as a yellow warning
-    even though the job itself stays green) plus a hard-to-miss banner for
-    anyone reading raw log output, so a green CI run can never quietly hide
-    the fact that this test executed zero real assertions.
-    """
-    print(f"::warning::HDR tonemap test SKIPPED — {reason}")
-    print(f"\n{'!' * 78}\n!! SKIPPED — 0 assertions ran: {reason}\n{'!' * 78}\n")
-    return 0
+def unavailable(reason: str) -> int:
+    """A missing encode capability must stop the gate, not produce green CI."""
+    print(f"::error::HDR tonemap verification unavailable — {reason}")
+    print(f"\n0 assertions ran: {reason}\n")
+    return 1
 
 
 def main() -> int:
     if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
-        return skip("ffmpeg/ffprobe not on PATH — cannot verify the HDR path.")
+        return unavailable("ffmpeg/ffprobe not on PATH — cannot verify the HDR path.")
 
     os.environ.setdefault("TONEMAP_HDR", "1")
     import ffmpeg_render as fr  # noqa: WPS433 — after env is set
 
     if not fr.ffmpeg_has_tonemap_filters():
         absent = missing_filters(shutil.which("ffmpeg") or "ffmpeg")
-        return skip(
+        return unavailable(
             f"this ffmpeg build is missing filter(s) {absent or ['zscale', 'tonemap']} "
             "(needs libzimg's zscale + tonemap) — cannot verify the HDR path. "
             "Install/upgrade ffmpeg with --enable-libzimg to actually run this test."
@@ -151,9 +146,9 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="rendprop-hdr-") as td:
         tmp = Path(td)
         fx = synth(tmp)
-        missing = [k for k, v in fx.items() if not os.path.getsize(v)]
+        missing = [k for k, v in fx.items() if not os.path.isfile(v) or not os.path.getsize(v)]
         if missing:
-            return skip(f"could not synthesise fixtures {missing} with this ffmpeg build.")
+            return unavailable(f"could not synthesise fixtures {missing} with this ffmpeg build.")
 
         ref = stats(fx["ref_sdr"])
         print(f"\nreference (bt709 SDR source): {ref}")

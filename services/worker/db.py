@@ -341,7 +341,7 @@ def reap_stale_jobs(limit: int = 20) -> int:
         rows = select("render_jobs",
                       {"status": "eq.processing", "lease_expires_at": f"lt.{now_iso()}",
                        "attempts": f"gte.{MAX_JOB_ATTEMPTS}",
-                       "select": "id,attempts,worker_id"},
+                       "select": "id,attempts,worker_id,lease_expires_at"},
                       limit=limit)
     except DBError as e:
         print(f"    ⚠ reaper query failed (continuing): {e}")
@@ -349,8 +349,18 @@ def reap_stale_jobs(limit: int = 20) -> int:
     reaped = 0
     for row in rows:
         try:
+            # Selection is only a candidate list, not ownership of the row.
+            # A heartbeat can renew between SELECT and PATCH; failing that
+            # live worker would throw away a valid render. Compare the full
+            # selected ownership snapshot inside the UPDATE, including the
+            # exact expired deadline. Any renewal/reclaim wins this race.
             done = patch("render_jobs",
-                         {"id": f"eq.{row['id']}", "status": "eq.processing"},
+                         {"id": f"eq.{row['id']}", "status": "eq.processing",
+                          "lease_expires_at": f"eq.{row['lease_expires_at']}",
+                          "attempts": f"eq.{row['attempts']}",
+                          "worker_id": (f"eq.{row['worker_id']}"
+                                        if row.get("worker_id") is not None
+                                        else "is.null")},
                          {"status": "failed", "current_step": "failed",
                           "finished_at": now_iso(),
                           "error": {"type": "poison", "step": "reaper",
