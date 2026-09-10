@@ -220,55 +220,24 @@ def test_claim_scope_and_fail_guard() -> None:
         server.shutdown()
 
 
-# ── 4. F-G-09: outcome persistence degrades cleanly before migration 0016 ────
+# ── 4. Publication requires the transaction, without a legacy write path ───
 
-def test_enhancement_result_optional() -> None:
-    print("\n4. enhancement_result / hero_key are column-optional (F-G-09)")
-
-    # (a) columns present
-    fdb = fresh_db(lease_columns=True)
-    server, url = fake_postgrest.start(fdb)
-    try:
-        db = load_db_module(url)
-        fdb.tables["render_jobs"] = [{"id": "J9", "status": "processing"}]
-        check("writes enhancement_result when the column exists",
-              db.set_enhancement_result("J9", {"ran": True, "staged": True}) is True)
-        check("value landed",
-              (fdb.tables["render_jobs"][0].get("enhancement_result") or {}).get("staged") is True)
-        row = db.insert_render({"id": "R9", "job_id": "J9", "listing_id": "L1",
-                                "slug": "abc", "video_key": "v", "poster_key": "p"},
-                               extra={"hero_key": "renders/L1/R9-hero.mp4"})
-        check("hero_key persisted when the column exists",
-              row.get("hero_key") == "renders/L1/R9-hero.mp4", str(row))
-    finally:
-        server.shutdown()
-
-    # (b) pre-0015 database
-    fdb = fresh_db(lease_columns=True, unknown_columns=("enhancement_result", "hero_key"))
-    server, url = fake_postgrest.start(fdb)
-    try:
-        db = load_db_module(url)
-        fdb.tables["render_jobs"] = [{"id": "J9", "status": "processing"}]
-        check("reports False without the column",
-              db.set_enhancement_result("J9", {"ran": True}) is False)
-        check("job row is untouched",
-              "enhancement_result" not in fdb.tables["render_jobs"][0])
-        check("second call is silent and cached",
-              db.set_enhancement_result("J9", {"ran": True}) is False)
-        row = db.insert_render({"id": "R9", "job_id": "J9", "listing_id": "L1",
-                                "slug": "abc", "video_key": "v", "poster_key": "p"},
-                               extra={"hero_key": "renders/L1/R9-hero.mp4"})
-        check("the TOUR still publishes without hero_key",
-              row.get("id") == "R9" and "hero_key" not in row, str(row))
-    finally:
-        server.shutdown()
+def test_publication_requires_transaction() -> None:
+    # The old optional writes were the unfenced alternate path. Actual helper
+    # tests and the disposable-Postgres fixture now cover publication itself.
+    print("\n4. atomic publication has no unsafe legacy helper")
+    db = load_db_module("http://127.0.0.1:1")  # Structural check; no request.
+    for name in ("insert_render", "_replace_render_for_job", "set_enhancement_result",
+                 "set_listing_status", "finish_job", "insert_photo"):
+        check(f"unsafe publication helper {name} removed", not hasattr(db, name))
+    check("atomic publication helper exists", callable(db.publish_worker_render))
 
 
 # ── 5. Fix 2: a stale worker must not be able to mutate a reclaimed job ─────
 #      another worker reclaimed out from under it.
 
 def test_stale_worker_cannot_mutate_reclaimed_job() -> None:
-    print("\n5. a stale worker cannot finish/progress/fail/release a job "
+    print("\n5. a stale worker cannot progress/fail/release a job "
           "reclaimed by another worker (external release audit — Fix 2)")
     fdb = fresh_db(lease_columns=True)
     server, url = fake_postgrest.start(fdb)
@@ -298,7 +267,7 @@ def test_stale_worker_cannot_mutate_reclaimed_job() -> None:
 
         # Worker A — unaware its lease is gone — keeps trying to work the job.
         # Every ownership-scoped mutation must refuse, and the two that are
-        # "must-stop" checkpoints (set_progress, finish_job) must RAISE
+        # "must-stop" checkpoint (set_progress) must RAISE
         # JobNotOwned rather than silently doing nothing.
         try:
             worker_a.set_progress("J5", 0.5, "encoding")
@@ -307,17 +276,6 @@ def test_stale_worker_cannot_mutate_reclaimed_job() -> None:
             check("set_progress raises JobNotOwned for the stale owner", True)
         check("worker B's current_step untouched by A's set_progress",
               row.get("current_step") != "encoding", str(row.get("current_step")))
-
-        try:
-            worker_a.finish_job("J5")
-            check("finish_job raises JobNotOwned for the stale owner", False, "did not raise")
-        except worker_a.JobNotOwned:
-            check("finish_job raises JobNotOwned for the stale owner", True)
-        check("worker B's job is still 'processing' — NOT stomped to 'ready' by A",
-              row["status"] == "processing", str(row["status"]))
-        check("worker B's lease is untouched by A's finish_job attempt",
-              row.get("lease_expires_at") == b_lease)
-        check("finished_at was NOT stamped by A", row.get("finished_at") in (None,))
 
         # fail_job and release_job are terminal/cleanup calls: they log and
         # return quietly on a lost claim rather than raising, but they must
@@ -337,9 +295,8 @@ def test_stale_worker_cannot_mutate_reclaimed_job() -> None:
         # Worker B, the ACTUAL owner, can still do every one of these normally.
         worker_b.set_progress("J5", 0.9, "uploading")
         check("worker B's own set_progress works", row.get("current_step") == "uploading")
-        worker_b.finish_job("J5")
-        check("worker B's own finish_job succeeds", row["status"] == "ready")
-        check("worker B's finish_job stamped finished_at", row.get("finished_at") is not None)
+        # Finishing/publishing is now one RPC. The SQL fixture establishes its
+        # atomicity; this fake table store cannot prove a database transaction.
     finally:
         server.shutdown()
 
@@ -497,7 +454,7 @@ if __name__ == "__main__":
     test_with_lease()
     test_without_lease()
     test_claim_scope_and_fail_guard()
-    test_enhancement_result_optional()
+    test_publication_requires_transaction()
     test_stale_worker_cannot_mutate_reclaimed_job()
     test_claim_by_job_id()
     test_record_cost_idempotency()

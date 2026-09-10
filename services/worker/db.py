@@ -26,9 +26,10 @@ cleanly — no double-processing without needing SELECT … FOR UPDATE.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import os
+import json
 import re
 import socket
 import sys
@@ -37,7 +38,6 @@ import time
 import requests
 
 from settings import SETTINGS
-from slugs import new_slug
 
 
 class DBError(RuntimeError):
@@ -53,6 +53,14 @@ class DBError(RuntimeError):
 
 class LeaseProbeUnavailable(DBError):
     """Retryable: ownership schema is unknown, so no claim may be written."""
+
+
+class PublishUncertain(DBError):
+    """The RPC may have committed: never delete its uploads or fail the job."""
+
+
+class PublishRejected(DBError):
+    """The publication transaction explicitly refused without committing."""
 
 
 class JobNotOwned(RuntimeError):
@@ -192,18 +200,11 @@ WORKER_ID = os.environ.get("WORKER_ID") or f"{socket.gethostname()}:{os.getpid()
 _LEASE_SUPPORTED: bool | None = None       # None = not probed yet
 
 
-def _looks_like_missing_column(err: Exception) -> bool:
-    m = str(err).lower()
-    return ("42703" in m or "does not exist" in m or "unknown column" in m
-            or "pgrst100" in m or "pgrst204" in m)
-
-
 def _looks_like_duplicate_key(err: Exception) -> bool:
     """True for a unique-constraint violation (PostgREST 409 / SQLSTATE 23505).
 
-    Shared by `insert_render` (slug / uq_renders_job) and `_insert_cost_row`
-    (the new `uq_cost_ledger_idempotency`, migration 0025) — same shape of
-    error, same detection.
+    Used for cost-ledger idempotency (migration 0025). Publication slug
+    collisions are handled inside the fenced database transaction instead.
     """
     m = str(err).lower()
     return "409" in m or "duplicate key" in m or "23505" in m
@@ -413,7 +414,7 @@ def _owned_filters(job_id: str) -> dict:
     ALSO 'processing', so an id+status filter lets a stale worker's write land
     on the new owner's row. This is Fix 2 from the release audit, reproduced as:
     worker A claims a job (e.g. via --job-id), A's lease expires, worker B
-    reclaims it, A's finish_job()/set_progress() would silently overwrite B's
+    reclaims it, A's set_progress() would silently overwrite B's
     state (and re-publish/re-bill) without the worker_id half of this filter.
     """
     filters = {"id": f"eq.{job_id}", "status": "eq.processing"}
@@ -493,25 +494,6 @@ def set_progress(job_id: str, progress: float, step: str | None = None) -> None:
                           f"don't own")
 
 
-def finish_job(job_id: str) -> None:
-    """Flip a job to 'ready' — but ONLY while THIS worker still owns it.
-
-    Zero matched rows means someone else owns the job now (release audit, Fix 2:
-    without this check a stale worker's finish_job() would silently overwrite
-    whatever the new owner had already written — a different render, a
-    different status, an in-progress lease). Raises JobNotOwned rather than
-    returning quietly so the caller never treats a lost claim as a successful
-    publish.
-    """
-    rows = _owned_patch(job_id, {"status": "ready", "progress": 1.0,
-                                 "current_step": "ready", "finished_at": now_iso(),
-                                 "error": None})
-    if not rows:
-        raise JobNotOwned(f"job {job_id} could not be finished — this worker "
-                          f"({WORKER_ID}) no longer owns it (reclaimed, or already "
-                          f"moved on)")
-
-
 def fail_job(job_id: str, error: dict) -> None:
     """Mark the job failed — but ONLY while it is still `processing` UNDER US.
 
@@ -554,116 +536,65 @@ def fetch_chapters(asset_id: str) -> list:
                    "select": "label,t_ms,sort"})
 
 
-def set_listing_status(listing_id: str, status: str) -> None:
-    try:
-        patch("listings", {"id": f"eq.{listing_id}"}, {"status": status})
-    except DBError as e:
-        print(f"    ⚠ listing status update failed (continuing): {e}")
+# ── atomic worker publication (migration 0035 REQUIRED) ────────────────────────
+
+def validate_publish_claim(job: dict) -> None:
+    """Refuse a legacy/unowned snapshot before any download, encode, or spend."""
+    if (job.get("source") != "worker" or job.get("worker_id") != WORKER_ID
+            or type(job.get("attempts")) is not int or job["attempts"] < 1):
+        raise JobNotOwned("worker publication requires a claimed worker id and attempt (migration 0015+0035)")
 
 
-# ── renders + photos ──────────────────────────────────────────────────────────
+def publish_worker_render(job: dict, render: dict, enhancement_result: dict,
+                          photos: list[dict]) -> dict:
+    """One transaction publishes every required row, fenced by owner AND attempt.
 
-def set_enhancement_result(job_id: str, result: dict) -> bool:
-    """Persist what the AI pipeline actually did, on `render_jobs`.
-
-    Needs `render_jobs.enhancement_result jsonb` (migration 0016 — HANDOFF.md).
-    Best-effort and column-optional: without it the worker warns ONCE and the
-    tour publishes exactly as before. Never raises.
+    The same frozen request is retried once on ambiguous transport/response
+    failure. A 2xx alone is not proof: require the database's exact request and
+    result receipt. If neither response proves it, preserve uploads because the
+    transaction may already have committed. No legacy direct-write fallback.
     """
-    global _ENH_RESULT_SUPPORTED
-    if _ENH_RESULT_SUPPORTED is False:
-        return False
-    try:
-        patch("render_jobs", {"id": f"eq.{job_id}"}, {"enhancement_result": result})
-        _ENH_RESULT_SUPPORTED = True
-        return True
-    except DBError as e:
-        if _looks_like_missing_column(e):
-            if _ENH_RESULT_SUPPORTED is None:
-                print("    ⚠ render_jobs has no enhancement_result column (migration 0016 "
-                      "not applied) — the add-on outcome/skip reason stays in the log only. "
-                      "See HANDOFF.md.")
-            _ENH_RESULT_SUPPORTED = False
-        else:
-            print(f"    ⚠ could not record enhancement_result (continuing): {e}")
-        return False
-
-
-_ENH_RESULT_SUPPORTED: bool | None = None
-_RENDER_EXTRA_SUPPORTED: bool | None = None
-
-
-def insert_render(row: dict, *, slug_retries: int = 5, extra: dict | None = None) -> dict:
-    """Insert a renders row; on a collision, do the right thing per constraint.
-
-    Two unique constraints can fire (audit F-G-14 — they used to be conflated):
-      • `renders_slug_key`  — the random slug collided → regenerate and retry;
-      • `uq_renders_job`    — this job ALREADY has a renders row (a re-run of a
-        job that published before) → replace that row's media keys in place
-        (same slug, so the share link the customer already has keeps working)
-        instead of burning five slug retries and orphaning the fresh uploads.
-    """
-    # `extra` carries columns that only exist after a later migration (today:
-    # renders.hero_key, migration 0016). Try WITH them once; on a missing-column
-    # error drop them and insert the core row — a hero clip must never cost the
-    # customer their tour.
-    global _RENDER_EXTRA_SUPPORTED
-    if extra and _RENDER_EXTRA_SUPPORTED is not False:
+    validate_publish_claim(job)
+    request = json.loads(json.dumps({"render": render, "enhancement_result": enhancement_result,
+                                    "photos": photos}, allow_nan=False))
+    payload = {"p_job": job["id"], "p_worker": WORKER_ID, "p_attempt": job["attempts"],
+               "p_render": request["render"], "p_enhancement_result": request["enhancement_result"],
+               "p_photos": request["photos"]}
+    for _ in range(2):
         try:
-            out = insert("renders", {**row, **extra}, prefer="return=representation")
-            if out:
-                _RENDER_EXTRA_SUPPORTED = True
-                return out[0]
-        except DBError as e:
-            if _looks_like_missing_column(e):
-                if _RENDER_EXTRA_SUPPORTED is None:
-                    print(f"    ⚠ renders has no {sorted(extra)} column(s) (migration 0016 "
-                          f"not applied) — publishing without them. See HANDOFF.md.")
-                _RENDER_EXTRA_SUPPORTED = False
-            elif not _looks_like_duplicate_key(e):
-                raise
-            # duplicate → fall through to the normal retry/replace path below
-
-    for attempt in range(slug_retries):
+            response = _request("POST", "rpc/publish_worker_render", headers=_headers(), json=payload)
+            _check(response)
+            result = _json(response)
+        except DBError as error:
+            if error.code in ("WP001", "WP002"):
+                raise JobNotOwned("worker publication rejected: stale claim or conflicting committed output") from error
+            if error.code in ("WP003", "42501", "PGRST202"):
+                raise PublishRejected(f"worker publication refused ({error.code}); transaction did not commit") from error
+            continue  # The answer may have been lost AFTER commit; replay exactly.
+        if not isinstance(result, dict):
+            continue
+        row, receipt = result.get("render"), result.get("receipt")
+        if not isinstance(row, dict) or not isinstance(receipt, dict):
+            continue
         try:
-            out = insert("renders", row, prefer="return=representation")
-            if out:
-                return out[0]
-            raise DBError("insert renders returned no row")
-        except DBError as e:
-            msg = str(e).lower()
-            if not _looks_like_duplicate_key(e):
-                raise
-            if "uq_renders_job" in msg or ("job_id" in msg and "slug" not in msg):
-                existing = _replace_render_for_job(row)
-                if existing:
-                    return existing
-                raise
-            # Otherwise (renders_slug_key, or an ambiguous message): new slug.
-            row = {**row, "slug": new_slug()}
-    raise DBError(f"could not insert render after {slug_retries} slug attempts")
-
-
-def _replace_render_for_job(row: dict) -> dict | None:
-    """PATCH the existing renders row for row['job_id'] with the new media."""
-    job_id = row.get("job_id")
-    if not job_id:
-        return None
-    values = {k: v for k, v in row.items() if k not in ("id", "job_id", "listing_id", "slug")}
-    out = patch("renders", {"job_id": f"eq.{job_id}"}, values, prefer="return=representation")
-    if out:
-        print(f"    · job {job_id} already had a renders row — replaced its media in place "
-              f"(slug {out[0].get('slug')} unchanged)")
-        return out[0]
-    return None
-
-
-def insert_photo(row: dict) -> None:
-    """Best-effort insert of an enhanced/staged listing photo."""
-    try:
-        insert("photos", row, prefer="return=minimal")
-    except DBError as e:
-        print(f"    ⚠ photo row insert failed (continuing): {e}")
+            UUID(row.get("id", ""))
+            published_at = datetime.fromisoformat(row.get("published_at", "").replace("Z", "+00:00"))
+        except (ValueError, TypeError, AttributeError):
+            continue
+        expected = {"version": 1, "job_id": job["id"], "worker_id": WORKER_ID,
+                    "attempt": job["attempts"], "request": request, "render": row}
+        if (result.get("job_id") != job["id"] or result.get("status") != "ready"
+                or receipt != expected or row.get("job_id") != job["id"]
+                or row.get("listing_id") != job["listing_id"]
+                or type(receipt.get("version")) is not int or type(receipt.get("attempt")) is not int
+                or not isinstance(row.get("slug"), str) or not re.fullmatch(r"[a-zA-Z0-9_-]{6,80}", row["slug"])
+                or published_at.tzinfo is None
+                or row.get("staged") is not enhancement_result.get("staged")
+                or any(row.get(k) != request["render"].get(k) for k in
+                       ("duration_s", "speed_factor", "video_key", "poster_key", "stream_uid", "hero_key"))):
+            continue
+        return row
+    raise PublishUncertain("worker publication could not be confirmed after an exact retry; preserve uploaded artifacts")
 
 
 # ── cost ledger ───────────────────────────────────────────────────────────────
