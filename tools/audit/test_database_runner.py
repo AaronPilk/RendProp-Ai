@@ -64,6 +64,7 @@ class RunnerCase(unittest.TestCase):
         case = Path(tempfile.mkdtemp(prefix='case-', dir=EVIDENCE))
         calls = []
         invariant_count = 0
+        publication_counts = {}
         prior = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
         disk_paths = []
 
@@ -108,6 +109,17 @@ class RunnerCase(unittest.TestCase):
                     output, rc = table(states=states), 3
             elif sqlfile == 'negative_astra_paid_gates.sql':
                 output, rc = scenario.get('paid', (PAID_MARKER + '\n', 0))
+            elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
+                count = publication_counts.get(sqlfile, 0) + 1
+                publication_counts[sqlfile] = count
+                marker = ('WORKER_PUBLISH_TRANSACTION_PASS_20' if sqlfile.startswith('worker') else
+                          'PASS: 17 upload publication trigger checks; all synthetic mutations rolled back.')
+                reason = ('stale A accepted' if sqlfile.startswith('worker') else
+                          'Missing publication rejection: completed: uploaded = false')
+                if count == 2:
+                    output, rc = scenario.get('publication_negative', (reason, 3))
+                else:
+                    output, rc = scenario.get('publication_positive', (marker, 0))
             elif command[-1] == 'stop':
                 if scenario.get('stop_timeout'):
                     raise subprocess.TimeoutExpired(command, 300, output=b'partial synthetic stop\n')
@@ -115,6 +127,8 @@ class RunnerCase(unittest.TestCase):
                     (case / 'cluster').mkdir()
                     (case / 'cluster/postmaster.pid').write_text('synthetic-not-a-real-pid\n')
                 rc = scenario.get('stop_exit', 0)
+            elif kwargs.get('input') is not None:
+                self.assertEqual(kwargs['input'].count('deliberate isolated ownership mutant'), 2)
             elif (command[0].endswith('/initdb') or command[0].endswith('/createdb')
                   or command[-1] == 'start' or sqlfile is not None or '-c' in command):
                 pass  # synthetic migration/create/update acknowledgements only
@@ -180,6 +194,15 @@ class CoreRegressionTests(RunnerCase):
 
 
 class InventoryTests(RunnerCase):
+    def test_publication_exit_zero_without_required_marker_rejects(self):
+        self.rejected(publication_positive=('printed without actually finishing', 0))
+
+    def test_broken_publication_guard_cannot_report_success(self):
+        self.rejected(publication_negative=('stale A accepted', 0))
+
+    def test_publication_negative_sql_error_is_not_guard_proof(self):
+        self.rejected(publication_negative=('ERROR: unrelated syntax failure', 3))
+
     def test_full_198_suite_accepts(self):
         result = self.invoke()
         self.assertIsNone(result.failure)

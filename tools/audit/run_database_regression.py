@@ -132,6 +132,41 @@ def main():
         require("PASS: exact paid-plan predicates registered 6 expected outcomes across baseline and 2 negative fixtures; all mutations rolled back." in paid,
                 "Paid gate negative fixture did not complete")
         receipt["paidGateNegativeControl"] = {"outcomes": 6, "fixtures": 2, "rolledBack": True}
+        # The HTTP/Python mocks cannot prove a Postgres publication fence. Run
+        # the real transaction/trigger fixtures, then deliberately remove each
+        # relevant guard in THIS owned disposable database. A missing guard
+        # must fail for the intended invariant, not merely a syntax/ACL error.
+        publication_specs = [
+            ("worker", "worker_publish_transaction.sql", "0035_worker_publish_transaction.sql",
+             "WORKER_PUBLISH_TRANSACTION_PASS_20", "stale A accepted", 20),
+            ("uploads", "negative_upload_publication.sql", "0036_upload_publication_immutability.sql",
+             "PASS: 17 upload publication trigger checks; all synthetic mutations rolled back.",
+             "Missing publication rejection: completed: uploaded = false", 17),
+        ]
+        receipt["publicationFixtures"] = []
+        for name, fixture, migration_name, marker, failure, count in publication_specs:
+            script = sqlroot / "tests" / fixture
+            migration = sqlroot / "migrations" / migration_name
+            require(script in sources and migration in sources, "Required publication sources missing from receipt")
+            output = run("publication-" + name, psql + ["-f", str(script)])
+            require(marker in output, f"{name} publication fixture did not finish")
+            if name == "worker":
+                mutant = migration.read_text()
+                for guard in ("or v_job.worker_id is distinct from p_worker",
+                              "or v_job.attempts is distinct from p_attempt"):
+                    require(mutant.count(guard) == 1, "Worker mutation no longer matches one exact ownership guard")
+                    mutant = mutant.replace(guard, "or false /* deliberate isolated ownership mutant */")
+                run("mutate-publication-worker", psql, input_text=mutant)
+            else:
+                run("mutate-publication-uploads", psql + ["-c",
+                    "alter table public.capture_assets disable trigger trg_capture_asset_publication;"])
+            broken = run("negative-publication-" + name, psql + ["-f", str(script)], expected=3)
+            require(failure in broken, f"{name} negative fixture failed for an unexpected reason")
+            run("restore-publication-" + name, psql + ["-q", "-1", "-f", str(migration)])
+            restored = run("restored-publication-" + name, psql + ["-f", str(script)])
+            require(marker in restored, f"{name} publication fixture failed after restoring the source migration")
+            receipt["publicationFixtures"].append({"name": name, "checksPerRun": count,
+                "runs": 2, "negativeControlDetected": True, "sourceRestored": True})
         # Break actual entitlement data in this synthetic database. A gate that
         # only prints results must not pass when the published contract is false.
         run("mutate-negative", psql + ["-c", "update public.plan_entitlements set seats=999 where plan='team';"])
