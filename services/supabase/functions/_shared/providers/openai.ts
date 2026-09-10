@@ -207,6 +207,26 @@ export async function openaiChat(
     { method: "POST", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify(body) },
     BUDGETS.submitMs,
   );
+  // HTTP 200 is only transport success: a Responses answer can contain usable-
+  // looking text (even valid JSON) while its token budget or content filter
+  // stopped generation. Returning that prefix would mark an unfinished EDL or
+  // review verdict as successful. Require an explicit completed envelope before
+  // either extraction path; unknown/pending states are not synchronous answers.
+  if (data.status !== "completed" || data.error != null || data.incomplete_details != null) {
+    const details = data.incomplete_details;
+    const reason = details && typeof details === "object"
+      ? (details as Record<string, unknown>).reason
+      : undefined;
+    // A content refusal is terminal under runChain's existing policy: do not
+    // send it to another vendor. No raw error body or partial output is echoed.
+    if (reason === "content_filter") {
+      throw new ProviderError(PROVIDER, "nsfw", "OpenAI did not complete the response because of its content filter");
+    }
+    const message = reason === "max_output_tokens"
+      ? "OpenAI response was incomplete: max_output_tokens reached"
+      : "OpenAI did not return a completed response";
+    throw new ProviderError(PROVIDER, "upstream", message);
+  }
   if (typeof data.output_text === "string" && data.output_text.trim()) return data.output_text;
   const output = Array.isArray(data.output) ? data.output : [];
   for (const item of output as Array<Record<string, unknown>>) {
