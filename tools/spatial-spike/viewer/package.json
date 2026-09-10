@@ -5,7 +5,7 @@
   "engines": { "node": ">=22" },
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test benchmark.test.mjs",
+    "test": "node --test benchmark.test.mjs viewer-input.test.mjs input-policy.test.mjs",
     "negative-control": "node benchmark.test.mjs --negative-control",
     "convert": "splat-transform"
   },

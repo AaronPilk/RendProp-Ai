@@ -1,6 +1,17 @@
 # iPhone TestFlight checklist — private spatial capture experiment
 
-**Delivery confirmed 2026-09-10:** update the existing Rendprop app through TestFlight to **1.0 (17)**. Apple reports VALID, INTERNAL_ONLY and IN_BETA_TESTING in the existing **Rendprop team** group. This is not an App Store release; build 16's pending review remains untouched. See `INTEGRATION-VERIFICATION.md` for the exact source and live verification evidence.
+**Field-test update, 2026-09-10:** the owner installed **1.0 (17)** and observed
+capture stopping after zero or three saved frames with `Invalid c2w homogeneous
+row.` A local fix exists in commit `f789abc`; it has **not** been uploaded to
+TestFlight. Do not treat retrying build 17 as testing the fix, and do not delete
+or reinstall Rendprop. Preserve the attempts. See
+`capture-ios/POSE-PRECISION-FIX-2026-09-10.md` for the reproduction and evidence.
+
+The procedure below is the acceptance checklist for a fresh capture once an
+updated internal build is separately authorized and delivered. The owner's
+Apple freeze remains in effect. Build 17's historical delivery details are in
+`INTEGRATION-VERIFICATION.md`; that record is not a new release action or a claim
+that the physical capture passed.
 
 This is an experimental, local one-room capture inside the existing **Rendprop** app—not a separate app or a finished spatial-tour product. The integrated app requires **iOS 16+** and an iPhone supporting ARKit world tracking. **LiDAR is not required.** Start with the owner's iPhone 15 Pro; older-device performance is not yet proven.
 
@@ -8,7 +19,7 @@ This is an experimental, local one-room capture inside the existing **Rendprop**
 
 - Open **Rendprop → Settings → Spatial capture (TestFlight)**. If the entry is missing, report the installed app version/build; do not delete or reinstall Rendprop to troubleshoot.
 - Choose one private room with good, steady lighting. Avoid moving people, mirrors, blank walls as the only subject, and sensitive items such as mail, family photographs, or prescriptions.
-- The feature saves room photos and measured camera poses locally, excludes its capture storage from device backups, and makes no automatic upload. Keep enough free storage for several hundred images. Do not erase existing Rendprop data to make room.
+- The feature saves room photos and ARKit-estimated camera poses locally, excludes its capture storage from device backups, and makes no automatic upload. Keep enough free storage for several hundred images. Do not erase existing Rendprop data to make room.
 
 ## 2. Capture one room
 

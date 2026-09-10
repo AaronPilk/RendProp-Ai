@@ -1,4 +1,5 @@
-import { RenderBenchmark, assertSogEnvelope } from './benchmark.mjs';
+import { RenderBenchmark } from './benchmark.mjs';
+import { readSogInput, assertDecodedSplatCount, localProvenance, readFixtureResponse } from './input-policy.mjs';
 
 const $ = (id) => document.getElementById(id);
 const benchmark = new RenderBenchmark();
@@ -38,7 +39,7 @@ function resize() {
   app.resizeCanvas(window.innerWidth, window.innerHeight);
 }
 
-async function loadFile(file, synthetic = false) {
+async function loadFile(file, explicitFixture = false) {
   if (loading) return;
   loading = true;
   invalidate('A new file was selected');
@@ -47,8 +48,7 @@ async function loadFile(file, synthetic = false) {
   $('measure').disabled = true;
   status('Reading SOG on this device…');
   try {
-    const bytes = await file.arrayBuffer();
-    assertSogEnvelope(file.name, bytes);
+    const bytes = await readSogInput(file);
     if (splat) { splat.destroy(); splat = null; }
     if (asset) { asset.unload(); app.assets.remove(asset); asset = null; }
     // SogBundleParser 2.22.1 consumes file.contents directly. The synthetic URL
@@ -63,7 +63,9 @@ async function loadFile(file, synthetic = false) {
       app.assets.add(next); app.assets.load(next);
     });
     const count = next.resource?.numSplats;
-    if (!Number.isFinite(count) || count <= 0) throw new Error('SOG decoded without any splats');
+    // Match the Phase A trainer's cap before admitting a render entity. The
+    // decoder has already allocated resources; this is not a decode-bomb guard.
+    assertDecodedSplatCount(count);
     splat = new pc.Entity('local-scene');
     splat.addComponent('gsplat', { asset: next, unified: true });
     app.root.addChild(splat);
@@ -73,9 +75,9 @@ async function loadFile(file, synthetic = false) {
     defaultPose = { position: [center.x, center.y, center.z + radius * 1.5], target: [center.x, center.y, center.z] };
     camera.camera.farClip = Math.max(100, radius * 10);
     resetView();
-    loaded = { name: file.name, bytes: file.size, splatCount: count, synthetic };
+    loaded = { name: file.name, bytes: bytes.byteLength, splatCount: count, ...localProvenance(file.name, explicitFixture) };
     $('reset').disabled = false;
-    status(`${synthetic ? 'SYNTHETIC TEST — NOT A ROOM. ' : ''}${file.name}: ${count.toLocaleString()} splats, ${file.size.toLocaleString()} bytes. Drag to look, hold buttons to move.`);
+    status(`${loaded.provenance === 'synthetic' ? 'SYNTHETIC TEST — NOT A ROOM.' : 'UNVERIFIED LOCAL ARTIFACT — room provenance unknown.'} ${file.name}: ${count.toLocaleString()} splats, ${bytes.byteLength.toLocaleString()} bytes. Drag to look, hold buttons to move.`);
   } catch (error) {
     loaded = null;
     status(`Could not load SOG: ${error.message}`);
@@ -218,7 +220,7 @@ async function main() {
       try {
         const response = await fetch('/fixture.sog');
         if (!response.ok) throw new Error('Start server with --fixture pointing to SYNTHETIC-NOT-A-ROOM.sog');
-        await loadFile(new File([await response.arrayBuffer()], 'SYNTHETIC-NOT-A-ROOM.sog'), true);
+        await loadFile(new File([await readFixtureResponse(response)], 'SYNTHETIC-NOT-A-ROOM.sog'), true);
       } catch (error) { status(error.message); }
     });
   }
