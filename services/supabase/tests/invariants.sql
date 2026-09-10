@@ -10,9 +10,10 @@
 -- users through the real signup trigger and deletes them at the end). Output is
 -- one row per assertion; any `pass = f` is a release blocker.
 --
--- Numbers in the "plan coherence" section are the PUBLISHED entitlements from
--- services/edge/tour-host/public/pricing.html. Change them there and here
--- together — that is the whole point of the check ("enforced == published").
+-- Paid plan quantities mirror services/edge/tour-host/public/pricing.html.
+-- Signup-trial/lapsed-free quantities mirror migration 0032, not an Apple
+-- introductory offer on a purchased plan. Keep the independent literal matrix
+-- here: deriving expected values from the same table would test nothing.
 
 \set ON_ERROR_STOP on
 
@@ -162,30 +163,32 @@ where (lat is not null and lat <> round(lat::numeric, 3))
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
 
 insert into _inv(name, pass, note)
-select 'render caps match rendprop.com/pricing (8/25/80; trial 1)',
+select 'render caps match paid plans and 0032 signup trial/free (8/25/80; trial 3; free 1)',
        plan_render_cap('solo') = 8 and plan_render_cap('starter') = 8
        and plan_render_cap('pro') = 25 and plan_render_cap('team') = 80
-       and plan_render_cap('trial') = 1,
+       and plan_render_cap('trial') = 3 and plan_render_cap('free') = 1,
        format('solo=%s starter=%s pro=%s team=%s trial=%s free=%s',
               plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('pro'),
               plan_render_cap('team'), plan_render_cap('trial'), plan_render_cap('free'));
 
 insert into _inv(name, pass, note)
-select 'plan_entitlements match rendprop.com/pricing for every metered feature',
-       coalesce(bool_and(ok), false),
+select 'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
+       count(*) = 6 and coalesce(bool_and(ok), false),
        coalesce(string_agg(plan, ', ') filter (where not ok), '')
 from (
-  select e.plan,
-         (e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month, e.topaz_per_month, e.seats)
-           = (x.edits, x.reels, x.aerials, x.topaz, x.seats) as ok
-    from plan_entitlements e
-    join (values ('trial',   10, 1,  2, 1, 1),
-                 ('free',    10, 1,  2, 1, 1),
-                 ('starter',150, 8,  2, 0, 1),
-                 ('solo',   150, 8,  2, 0, 1),
-                 ('pro',    300, 20, 6, 0, 1),
-                 ('team',   600, 40, 15, 2, 3)) as x(plan, edits, reels, aerials, topaz, seats)
-      on x.plan = e.plan
+  select x.plan,
+         ((e.renders_per_month, e.photo_edits_per_month, e.reels_per_month,
+           e.aerials_per_month, e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+           is not distinct from
+          (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
+    from (values ('trial',   3,  60, 4,  2, 1, 1, 1200,     0),
+                 ('free',    1,   5, 0,  0, 0, 1,  300,     0),
+                 ('starter', 8, 150, 8,  2, 0, 1, 1500,  4900),
+                 ('solo',    8, 150, 8,  2, 0, 1, 1500,  4900),
+                 ('pro',    25, 300,20,  6, 0, 1, 3200,  9900),
+                 ('team',   80, 600,40, 15, 2, 3, 8200, 24900))
+           as x(plan, renders, edits, reels, aerials, topaz, seats, cogs, price)
+    left join plan_entitlements e on x.plan = e.plan
 ) s;
 
 insert into _inv(name, pass, note)
@@ -583,7 +586,7 @@ begin
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded)
     values (v_listing, 'photo', 'renders', 'renders/_inv/p.jpg', 100, true) returning id into v_poster;
 
-  -- App publishes are free: the trial cap is 1 render/month and BOTH must succeed.
+  -- App publishes do not consume the 0032 signup-trial cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000002', 'app');
   insert into _inv(name, pass, note)
@@ -619,15 +622,23 @@ begin
     values ('fail_render_job marks an unpublished app job failed',
             v_job2.status = 'failed' and v_job2.error->>'message' = 'publish failed in test', v_job2.status);
 
-  -- Worker jobs DO count: the first fits the trial cap, the second must hit RP402.
-  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000001', 'worker');
-  insert into _inv(name, pass, note)
-    values ('worker job #1 fits the trial cap (app jobs did not count)', v_job.source = 'worker', v_job.source);
+  -- Exactly THREE cloud renders fit the 0032 trial quota. Finish each fixture
+  -- job before asking for the next: leaving three in-flight would make #4 fail
+  -- the independent RP429 guard first and would not test the monthly RP402 cap.
+  for v_n in 1..3 loop
+    v_job := create_render_job(v_listing, v_asset, 'smooth', '{}',
+                              '_inv-wrk-' || lpad(v_n::text, 6, '0'), 'worker');
+    insert into _inv(name, pass, note)
+      values (format('worker job #%s fits the 0032 trial cap (app jobs did not count)', v_n),
+              v_job.source = 'worker', v_job.source);
+    update render_jobs set status = 'ready', progress = 1, finished_at = now()
+      where id = v_job.id;
+  end loop;
   begin
-    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000002', 'worker');
-    insert into _inv(name, pass, note) values ('worker job #2 exceeds the trial cap (RP402)', false, 'no error raised');
+    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000004', 'worker');
+    insert into _inv(name, pass, note) values ('worker job #4 exceeds the trial cap (RP402)', false, 'no error raised');
   exception when others then
-    insert into _inv(name, pass, note) values ('worker job #2 exceeds the trial cap (RP402)', sqlerrm like 'RP402%', sqlerrm);
+    insert into _inv(name, pass, note) values ('worker job #4 exceeds the trial cap (RP402)', sqlerrm like 'RP402%', sqlerrm);
   end;
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000003', 'app');
   insert into _inv(name, pass, note)
@@ -688,8 +699,8 @@ begin
 end $fx$;
 
 -- ── MUTATING: job lease + disclosure outcome (0015/0016) ─────────────────────
--- A third throwaway user on a plan with head-room (the trial cap of 1 would
--- mask RP429 behind RP402), exercising the two behaviours 0015/0016 changed.
+-- A third throwaway user on a plan with head-room, so the monthly quota cannot
+-- interfere with the separate lease scenarios that 0015/0016 changed.
 -- Worker jobs point at an UPLOADS-bucket asset, which is what the worker's own
 -- claim filter requires; the publish path needs a RENDERS-bucket one.
 
@@ -1326,13 +1337,18 @@ where table_schema = 'public' and table_name = 'ai_routes'
   and column_name = 'params' and data_type = 'jsonb' and is_nullable = 'YES';
 
 -- NULL means "whatever the adapter does by default", which is what makes 0030
--- additive — so it must stay legal, and it must stay the answer for every row
--- that existed before 0030. Exactly the two seeded gpt-6-astra rows carry a
--- blob; everything else is untouched.
+-- additive — so it must stay legal. 0030 seeds two Astra writing routes and
+-- 0034 adds the agent-reel writing route. Only those three specific first-seat
+-- rows carry params; three arbitrary rows or two copies of one task cannot pass.
 insert into _inv(name, pass, note)
-select 'only the rows 0030 seeds carry params; every other row is untouched',
-       count(*) filter (where params is not null) = 2
-   and count(*) filter (where params is not null and model <> 'gpt-6-astra') = 0,
+select 'only the three explicit 0030/0034 Astra writing seats carry params',
+       count(*) filter (where params is not null) = 3
+   and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
+                        and position = 1 and task = 'copy.shotlist') = 1
+   and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
+                        and position = 1 and task = 'copy.reel_script') = 1
+   and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
+                        and position = 1 and task = 'copy.agent_reel') = 1,
        format('%s row(s) with params: %s', count(*) filter (where params is not null),
               coalesce(string_agg(format('%s/%s', task, model), ', ')
                        filter (where params is not null), 'none'))
@@ -1369,16 +1385,9 @@ where r.params is not null and k not in ('effort', 'max_output_tokens');
 -- lever — router.ts's defaultPolicyFor() is dead code, so the cheapest-policy
 -- protection free and trial tiers should get does not exist. Without this,
 -- a free signup reaches a 10c model on a route with no per-call quota.
-select 'both gpt-6-astra rows are gated to a paying plan, not free',
-       count(*) = 2
-from public.ai_routes
-where model = 'gpt-6-astra'
-  and min_plan in ('starter', 'solo', 'pro', 'team');
-
-select 'no gpt-6-astra row is reachable on the free or trial tier',
-       count(*) = 0
-from public.ai_routes
-where model = 'gpt-6-astra' and min_plan in ('free', 'trial');
+-- Shared with the rollback-only negative fixture: it mutates the real test
+-- rows and executes these SAME registered predicates, not copied test logic.
+\ir invariant_astra_paid_gates.sql
 
 -- ── 0030: gpt-6-astra takes position 1 on the two writing routes ────────────
 --
@@ -1407,8 +1416,10 @@ where model = 'gpt-6-astra' and params ->> 'effort' = 'none';
 -- The ceiling has to clear the VISIBLE answer the caller asks for, because a
 -- reasoning model spends reasoning tokens out of the same budget: ai-copy asks
 -- for 1,600 tokens of shot list (MAX_SHOTLIST_TOKENS) and 700 of script
--- (MAX_TOKENS). It also has to stay under the code clamp in params.ts, or the
--- row is quietly not what it says.
+-- (MAX_TOKENS), and 700 for agent-reel (MAX_AGENT_REEL_TOKENS). The 0034
+-- agent-reel seed currently violates this headroom rule (700 == 700). Keep that
+-- failure visible; updating stale route counts is not permission to enlarge
+-- a provider budget or weaken > to >=. It must also stay under the code clamp.
 insert into _inv(name, pass, note)
 select 'each astra ceiling clears its route''s visible answer and stays under the code clamp',
        coalesce(bool_and(ceiling > visible and ceiling <= 8000), false),
@@ -1456,11 +1467,11 @@ from (
 -- on EVERY generation, and haiku at 0.66c against astra at ~4.5c is a 7x tax on
 -- the one thing whose job is to be cheap enough to always run.
 insert into _inv(name, pass, note)
-select 'gpt-6-astra is seeded ONLY on the two text-out writing tasks',
+select 'gpt-6-astra is seeded ONLY on the three 0030/0034 text-out writing tasks',
        count(*) = 0,
        coalesce(string_agg(format('%s (%s)', task, position), ', '), 'text routes only')
 from ai_routes
-where model = 'gpt-6-astra' and task not in ('copy.shotlist', 'copy.reel_script');
+where model = 'gpt-6-astra' and task not in ('copy.shotlist', 'copy.reel_script', 'copy.agent_reel');
 
 -- ── 0018 grants ─────────────────────────────────────────────────────────────
 -- Model ids and list prices are not secret, so `authenticated` READS the two
