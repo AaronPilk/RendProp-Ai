@@ -11,9 +11,8 @@ Regression tests for the resource controls added to services/worker/ffmpeg_rende
 
     python3 tests/test_resource_limits.py     # needs ffmpeg + ffprobe on PATH
 
-Skips (exit 0) the two integration sections (pixel limit, output cap) with a
-clear message if ffmpeg/ffprobe are not available; the stall-timeout parsing
-section is pure Python and always runs.
+Fails when either integration section cannot run. A green process must mean
+the real pixel-limit and encoded-output-cap assertions actually executed.
 """
 
 from __future__ import annotations
@@ -119,7 +118,7 @@ def test_pixel_limit_via_probe_source() -> None:
     print("\n2b. probe_source() enforces the pixel ceiling from ffprobe metadata "
           "(before any decode)")
     if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
-        print("  SKIP: ffmpeg/ffprobe not on PATH")
+        check("pixel-limit prerequisites available: ffmpeg/ffprobe on PATH", False)
         return
     import ffmpeg_render as fr  # noqa: WPS433
 
@@ -129,10 +128,10 @@ def test_pixel_limit_via_probe_source() -> None:
             ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
              "-i", "testsrc=size=320x240:rate=10:duration=1",
              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", src],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=300,
         )
         if res.returncode != 0 or not os.path.exists(src):
-            print(f"  SKIP: could not synthesise a fixture with this ffmpeg build: {res.stderr[:200]}")
+            check("pixel-limit fixture synthesised", False, res.stderr[:200])
             return
 
         info = fr.probe_source(src)
@@ -161,7 +160,7 @@ def test_pixel_limit_via_probe_source() -> None:
 def test_output_size_cap() -> None:
     print("\n3. render() enforces a real cap on the ENCODED output's byte size")
     if not (shutil.which("ffmpeg") and shutil.which("ffprobe")):
-        print("  SKIP: ffmpeg/ffprobe not on PATH")
+        check("output-cap prerequisites available: ffmpeg/ffprobe on PATH", False)
         return
     import ffmpeg_render as fr  # noqa: WPS433
 
@@ -171,10 +170,10 @@ def test_output_size_cap() -> None:
             ["ffmpeg", "-v", "error", "-y", "-f", "lavfi",
              "-i", "smptehdbars=size=320x240:rate=10:duration=2",
              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-crf", "23", src],
-            capture_output=True, text=True,
+            capture_output=True, text=True, timeout=300,
         )
         if res.returncode != 0 or not os.path.exists(src):
-            print(f"  SKIP: could not synthesise a fixture with this ffmpeg build: {res.stderr[:200]}")
+            check("output-cap fixture synthesised", False, res.stderr[:200])
             return
 
         orig_bytes = fr.MAX_OUTPUT_BYTES
