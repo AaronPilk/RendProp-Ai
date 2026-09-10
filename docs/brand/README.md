@@ -37,3 +37,19 @@ unchanged.
 
 `#9b6dff` also appears in `services/edge/tour-host/src/html.ts` as the tour
 page's accent.
+
+## Lockups (mark + wordmark)
+
+`rendprop-ig-profile-lockup-dark-4096.png` and its light twin put RENDPROP under
+the mark, sized and positioned so the whole lockup sits **inside the circle's
+safe area** — content half-diagonal is 0.37 of the square against a circle
+radius of 0.50, so nothing clips at any crop.
+
+The wordmark is set in DejaVu Sans Bold, which reproduces the App Store icon's
+own wordmark at IoU 0.943 with a matching 8.00 aspect ratio — effectively the
+same face the icon was set in.
+
+Use the lockup where the avatar renders large (a profile header). Use the
+mark-only avatars where it renders small: at the 32px of a comments row the
+wordmark is an illegible smudge, which is normal, and the mark alone reads
+better there.
