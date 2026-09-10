@@ -2,24 +2,26 @@
 //
 // Bytes never pass through Supabase; the app streams straight to R2.
 //
-// Audit P0-2 hardening (round 2 — the presigned-URL TOCTOU is now closed):
+// Upload publication hardening (requires migration 0036 and drained old handlers):
 //   • aws4fetch's signQuery signs ONLY `host`, so a presigned PUT can bind
 //     neither content-type nor content-length. Enforcement is therefore
 //     server-side: single PUTs land on a STAGING key, /complete HEAD-verifies
 //     it (exists, size == declared, content-type in the allowlist), then
-//     server-side-COPIES it to the final key and deletes staging. The final key
-//     never gets a PUT URL, so the still-valid staging URL can only overwrite an
-//     orphan that is never served — no post-verification swap.
+//     copies the ETag-selected snapshot to a UNIQUE completion-attempt key,
+//     then atomically publishes that key in the database. Losing attempts may
+//     delete only their own candidate; no two copies target a shared final key.
 //   • Only owner/admin/agent may upload (marketing is read-only, audit P0-7).
 //   • Ticket limits are charged PER FILE, plus a per-org daily BYTE budget.
 //   • Multipart: part numbers bounded to 1…parts_total, completion requires the
-//     exact unique part set; the object assembles at the final key under an
-//     uploadId with no outstanding single-PUT URL, so it is verified in place.
+//     exact unique part set frozen in the DB BEFORE assembly. Every assembly
+//     and recovery must match that manifest; no single-PUT URL targets its key.
 //   • Membership is verified with the user client (RLS), then rows are written
 //     with the service client — direct Data-API writes on capture_assets are
 //     revoked in migration 0007, so this function is the only write path.
-//   • Residual (manual gate): an R2 lifecycle rule on the `_staging/` prefix to
-//     reap abandoned staged objects.
+//   • Abort/mismatch and completion compete for the same terminal row fence.
+//     Completed publication fields are immutable, but probes and deletion work.
+//   • Residual: staging lifecycle and unreferenced completion-attempt cleanup
+//     need separately approved operations; ambiguous DB writes retain candidates.
 //
 // Fix wave 1 (2026-09-03, audit F-E-01 / F-supabase-01 / -18 / F-E-05):
 //   • `content_type` is accepted (allow-listed) on every ticket and the row
@@ -49,9 +51,9 @@
 //     full 50 MB photo ceiling, because an original is a full-resolution photo,
 //     not a 1280 px thumbnail. `role:"original"` is always `kind:"photo"`.
 //   • /complete is idempotent: a replay on an already-completed asset returns
-//     200 + the row when no NEW staged object exists (a lost response no longer
-//     strands the upload); a multipart whose R2 assembly already happened
-//     (NoSuchUpload on retry) is verified at the final key and completed.
+//     200 + the DB winner regardless of new staging bytes. Multipart recovery
+//     also requires the previously frozen part manifest; unbound legacy
+//     assemblies must be aborted/re-ticketed, never adopted by a new caller.
 //   • Errors carry `{ error, code }` (see _shared/http.ts).
 //
 // Fix wave p12-E (2026-09-04, audit F-E-06):
@@ -113,6 +115,7 @@ import { HttpError, assert, json, pathSegments, readJson, respondError } from ".
 import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
 import { adminClient, assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
 import { baseMediaType, isContentTypeDeclared, requireBareContentType } from "./content_type.ts";
+import { canonicalParts, publicationKey, sameParts } from "./publication.ts";
 import {
   abortMultipartUpload,
   choosePartSize,
@@ -137,12 +140,36 @@ function r2BucketFor(bucket: unknown): string {
 
 // Single-PUT uploads land on a STAGING key first; /complete verifies the staged
 // object and server-side-copies it to the final key, which never receives a
-// presigned PUT URL. This is the real close of the audit's TOCTOU: aws4fetch's
+// presigned PUT URL. The UNIQUE destination + DB winner closes concurrent-copy
+// overwrites; a shared final destination would still be unsafe. aws4fetch's
 // signQuery only signs `host`, so content-type/content-length can't be bound
 // into a presigned URL — the object must be verified server-side AND made
 // unreachable to the still-valid PUT URL afterward. Abandoned staging objects
 // are reaped by an R2 lifecycle rule on the `_staging/` prefix (manual gate).
 const stagingKey = (finalKey: string) => `_staging/${finalKey}`;
+
+// All terminal transitions compete on the same row predicate. In particular,
+// abort/mismatch must win THIS fence before deleting any assembled object.
+// deno-lint-ignore no-explicit-any
+function pendingAsset(admin: any, asset: Record<string, unknown>, patch: Record<string, unknown>) {
+  return admin.from("capture_assets").update(patch).eq("id", asset.id)
+    .eq("storage_key", asset.storage_key).eq("uploaded", false).eq("upload_aborted", false);
+}
+
+// deno-lint-ignore no-explicit-any
+async function reloadAsset(admin: any, assetId: string): Promise<Record<string, unknown>> {
+  const { data, error } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
+  if (error || !data) throw new HttpError(503, "Upload state could not be confirmed — retry completion");
+  return data;
+}
+
+// deno-lint-ignore no-explicit-any
+async function invalidatePending(admin: any, asset: Record<string, unknown>) {
+  const { data, error } = await pendingAsset(admin, asset,
+    { upload_aborted: true, idem_key: null }).select().maybeSingle();
+  if (error) throw new HttpError(503, "Upload cancellation could not be confirmed — retry");
+  return { changed: !!data, row: data ?? await reloadAsset(admin, asset.id as string) };
+}
 
 /** Marketing is read-only (audit P0-7): only owner/admin/agent may upload. */
 // deno-lint-ignore no-explicit-any
@@ -431,6 +458,7 @@ Deno.serve(async (req) => {
       const body = await readJson<PartUrlsBody>(req);
       const asset = await requireAsset(db, assetId);
       await requireAssetWriteRole(db, admin, user.id, asset);
+      assert(asset.uploaded !== true && asset.upload_aborted !== true, 409, "This upload is no longer accepting parts");
       assert(asset.upload_id, 409, "Asset is not a multipart upload");
 
       const partsTotal = Number(asset.parts_total ?? R2_MAX_PARTS);
@@ -466,25 +494,12 @@ Deno.serve(async (req) => {
       const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
       const isMultipart = !!asset.upload_id;
 
-      // Completion is one-shot for the OBJECT (a second staged object must never
-      // be promoted over a verified final key — audit round 4) but the CALL is
-      // idempotent: a replay after a lost response returns the completed row so
-      // the client can move on (audit F-E-05). Only a NEW staged object turns a
-      // replay into a 409.
+      // A replay returns the DB winner, never a newly observed staging object.
+      // Ticket keys are provisional; only the completed row identifies media.
       if (asset.uploaded === true) {
-        const staged = await headObject(bucket, stagingKey(key));
-        if (staged.exists) {
-          throw new HttpError(
-            409,
-            "This upload is already complete; a new staged object cannot replace it — create a new upload ticket",
-            "conflict",
-            { already_complete: true },
-          );
-        }
-        const { data: row, error: rErr } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
-        if (rErr || !row) throw new HttpError(500, `Asset reload failed: ${rErr?.message ?? "not found"}`);
-        return json(row, 200);
+        return json(await reloadAsset(admin, assetId), 200);
       }
+      assert(asset.upload_aborted !== true, 409, "This upload was aborted — create a new upload ticket");
 
       // A ticket with no declared size can't be size-verified — the equality
       // check would be skipped and any size would pass. Refuse it.
@@ -503,18 +518,30 @@ Deno.serve(async (req) => {
 
       if (isMultipart) {
         const partsTotal = Number(asset.parts_total ?? 0);
-        assert(partsTotal >= 1, 409, "Asset has no recorded part count");
-        const parts = (body.parts ?? []).filter((p) =>
-          p && Number.isInteger(p.number) && p.number >= 1 && p.number <= partsTotal &&
-          typeof p.etag === "string" && p.etag.length > 0 && p.etag.length <= 256
-        );
-        const nums = [...new Set(parts.map((p) => p.number))].sort((a, b) => a - b);
-        assert(
-          parts.length === partsTotal && nums.length === partsTotal &&
-            nums[0] === 1 && nums[nums.length - 1] === partsTotal,
-          400,
-          `parts[] must contain each part 1…${partsTotal} exactly once`,
-        );
+        const requested = canonicalParts(body.parts, partsTotal);
+        let frozenAsset = asset;
+        if (asset.completion_parts == null) {
+          // Old handlers could assemble without a durable manifest. Size/ETag
+          // cannot prove such an object came from this caller's parts. Do not
+          // freeze new claims around pre-existing unbound bytes on retry.
+          const beforeFreeze = await headObject(bucket, key);
+          if (beforeFreeze.exists) {
+            frozenAsset = await reloadAsset(admin, assetId);
+            if (frozenAsset.uploaded === true) return json(frozenAsset, 200);
+            assert(frozenAsset.completion_parts != null, 409,
+              "This assembled upload has no recorded part manifest — abort it and create a new ticket");
+          } else {
+            const { data, error } = await pendingAsset(admin, asset, { completion_parts: requested })
+              .is("completion_parts", null).select().maybeSingle();
+            if (error) throw new HttpError(503, "Multipart completion could not be reserved — retry");
+            frozenAsset = data ?? await reloadAsset(admin, assetId);
+          }
+          if (frozenAsset.uploaded === true) return json(frozenAsset, 200);
+          assert(frozenAsset.upload_aborted !== true, 409, "This upload was aborted — create a new upload ticket");
+        }
+        const parts = canonicalParts(frozenAsset.completion_parts, partsTotal);
+        assert(sameParts(parts, requested), 409,
+          "Multipart completion already selected a different part manifest — retry the original parts or abort");
         // Idempotent assembly (audit F-supabase-18): if an earlier attempt
         // already completed the multipart in R2 (then died before the row
         // update), the final object exists at the declared size — don't send
@@ -547,6 +574,8 @@ Deno.serve(async (req) => {
       // ticket declared. Client claims stop here (audit P0-2).
       const head = await headObject(bucket, verifyKey);
       if (!head.exists) {
+        const winner = await reloadAsset(admin, assetId);
+        if (winner.uploaded === true) return json(winner, 200);
         throw new HttpError(409, "No uploaded object found for this asset — upload the file, then complete");
       }
       // A single upload with no ETag can't be promoted safely: copyObject would
@@ -593,10 +622,11 @@ Deno.serve(async (req) => {
       const allowedOk = allowed.includes(observedType);
       const matchOk = !declaredByClient || declaredType === "" || observedType === declaredType;
       if (!sizeOk || !allowedOk || !matchOk) {
-        // The staged/assembled object doesn't match its ticket — remove it so a
-        // lying client can't park arbitrary content behind a validated row.
-        await deleteObject(bucket, verifyKey).catch(() => {});
-        await admin.from("capture_assets").update({ uploaded: false, upload_id: null }).eq("id", assetId);
+        // Win the terminal fence BEFORE cleanup. A stale HEAD/mismatch may not
+        // reset a winner or delete its assembled multipart object.
+        const invalidated = await invalidatePending(admin, asset);
+        if (invalidated.row.uploaded === true) return json(invalidated.row, 200);
+        if (invalidated.changed) await deleteObject(bucket, verifyKey).catch(() => {});
         const why = !sizeOk
           ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
           : !allowedOk
@@ -605,16 +635,27 @@ Deno.serve(async (req) => {
         throw new HttpError(400, why, "validation", { observed_type: observedType, declared_type: declaredType });
       }
 
-      // Single PUT: promote the verified staging object to the final key (which
-      // has no presigned PUT URL) and delete staging. The still-valid staging
-      // PUT URL can now only overwrite an orphan that is never served — the
-      // TOCTOU the audit flagged is closed. Multipart is already at the final key.
+      // Singles copy to a NEW key per attempt, never a shared destination.
+      // Source ETag alone cannot prevent two different valid snapshots from
+      // overwriting one final object. Only the DB-selected key is published.
+      // Multipart stays in place: a frozen manifest binds every assembly retry
+      // to the same part ETags, including crash recovery, with no 12 GiB copy.
+      const finalKey = isMultipart ? key : publicationKey(key);
       if (!isMultipart) {
         // Conditional on the ETag we just HEAD-verified: if anything re-PUT the
         // staging key between HEAD and here, R2 returns 412 and we refuse
         // (audit: the HEAD→copy gap was itself a race window).
-        await copyObject(bucket, verifyKey, key, head.etag);
-        await deleteObject(bucket, verifyKey).catch(() => {});
+        try {
+          await copyObject(bucket, verifyKey, finalKey, head.etag);
+        } catch (error) {
+          // No DB publication was attempted for this unique copy, so cleanup
+          // can never remove a winner. An ambiguous R2 timeout may leave an
+          // unreferenced object; no cross-service transaction is claimed.
+          await deleteObject(bucket, finalKey).catch(() => {});
+          const winner = await reloadAsset(admin, assetId);
+          if (winner.uploaded === true) return json(winner, 200);
+          throw error;
+        }
       }
 
       const patch: Record<string, unknown> = {
@@ -623,25 +664,26 @@ Deno.serve(async (req) => {
         upload_id: null,
         bytes: head.bytes, // server-observed truth
         content_type: observedType,
+        storage_key: finalKey,
       };
-      // Conditional on still-not-uploaded: two concurrent completes can't both
-      // claim the transition (they'd have copied identical verified bytes, but
-      // exactly one may own the row's state change).
-      const { data, error } = await admin
-        .from("capture_assets")
-        .update(patch)
-        .eq("id", assetId)
-        .eq("uploaded", false)
-        .select()
-        .maybeSingle();
-      if (error) throw new HttpError(400, `Complete failed: ${error.message}`);
+      const { data, error } = await pendingAsset(admin, asset, patch).select().maybeSingle();
+      // A DB error may be an acknowledged-lost commit. Never delete this copy
+      // on uncertainty: the stored winner might be this very key.
+      if (error) throw new HttpError(503, "Upload publication could not be confirmed — retry completion");
       if (!data) {
-        // Lost the race to a concurrent complete of the same verified bytes —
-        // that request owns the transition; this one still succeeds.
-        const { data: row } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
+        const row = await reloadAsset(admin, assetId);
+        if (!isMultipart && row.storage_key !== finalKey) {
+          await deleteObject(bucket, finalKey).catch(() => {});
+        } else if (isMultipart && row.upload_aborted === true) {
+          // An abort won while R2 assembly was in flight; never publish it.
+          await deleteObject(bucket, key).catch(() => {});
+        }
         if (row?.uploaded === true) return json(row, 200);
-        throw new HttpError(409, "This upload was already completed by another request");
+        throw new HttpError(409, "This upload was aborted or changed before publication — create a new ticket");
       }
+      // Only the winner touches shared staging, and only after commit. A
+      // concurrent copy can now fail/retry, but cannot overwrite the winner.
+      if (!isMultipart) await deleteObject(bucket, verifyKey).catch(() => {});
       return json(data, 200);
     }
 
@@ -656,25 +698,34 @@ Deno.serve(async (req) => {
       // deliberate operation.
       assert(asset.uploaded !== true, 409, "This upload is already complete and cannot be aborted");
       const bucket = r2BucketFor(asset.bucket);
-      if (asset.upload_id) {
+      if (asset.upload_id && asset.upload_aborted !== true && asset.completion_parts != null) {
         // If R2 already assembled the object (Complete succeeded, row update
         // didn't), the right move is /complete, not abort — otherwise the
         // assembled object becomes an unreferenced orphan (audit F-supabase-18).
+        // Unbound legacy assemblies are different: /complete cannot prove their
+        // manifest, so explicit cancellation must remain available.
         const claimed = asset.bytes != null ? Number(asset.bytes) : null;
         const final = await headObject(bucket, asset.storage_key as string);
         if (final.exists && claimed != null && final.bytes === claimed) {
           throw new HttpError(409, "This upload has already been assembled — call /complete instead of /abort", "conflict");
         }
+      }
+      const invalidated = await invalidatePending(admin, asset);
+      if (invalidated.row.uploaded === true) throw new HttpError(409, "This upload is already complete and cannot be aborted");
+      assert(invalidated.row.upload_aborted === true, 409, "Upload state changed before abort — retry");
+      // Retain the session ID on terminal rows so an abort whose R2 cleanup
+      // failed can safely retry cleanup. Such rows cannot accept parts/replay.
+      if (asset.upload_id) {
         await abortMultipartUpload({
           bucket,
           key: asset.storage_key as string,
           uploadId: asset.upload_id as string,
         });
+        await deleteObject(bucket, asset.storage_key as string).catch(() => {});
       } else {
         // Single PUT: drop any staged bytes so an aborted upload leaves nothing.
         await deleteObject(bucket, stagingKey(asset.storage_key as string)).catch(() => {});
       }
-      await admin.from("capture_assets").update({ upload_id: null, uploaded: false }).eq("id", assetId);
       return json({ ok: true });
     }
 
@@ -914,10 +965,11 @@ function idempotencyKey(req: Request): string | null {
 async function findInFlightTicket(admin: any, listingId: string, idem: string) {
   const { data, error } = await admin
     .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type")
+    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type, upload_aborted")
     .eq("listing_id", listingId)
     .eq("idem_key", idem)
     .eq("uploaded", false)
+    .eq("upload_aborted", false)
     .maybeSingle();
   // A lookup failure must not block the upload — fall through to a fresh
   // ticket (the pre-0014 behaviour), never fail the request.
@@ -1035,7 +1087,7 @@ async function requireListing(db: any, listingId: string) {
 async function requireAsset(db: any, assetId: string) {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type, content_type_declared")
+    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type, content_type_declared, upload_aborted, completion_parts")
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);

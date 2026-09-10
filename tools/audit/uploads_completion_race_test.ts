@@ -1,6 +1,6 @@
 // Diagnostic of the ACTUAL route, not a replacement implementation. No socket
 // is opened: Deno.serve is intercepted and every upstream response is synthetic.
-// This desired-contract test currently FAILS if a delayed complete can replace
+// This required regression FAILS if a delayed complete can replace
 // the object after another complete has committed the asset as uploaded.
 import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
 
@@ -38,8 +38,10 @@ Deno.test("a delayed second complete must not replace an already-completed objec
     bucket: "uploads", kind: "photo", bytes: 4, uploaded: false,
     upload_id: null, part_size: null, parts_total: null,
     content_type: "image/jpeg", content_type_declared: true,
+    upload_aborted: false, completion_parts: null,
   };
-  let staged: string | null = "AAAA", finalObject: string | null = null;
+  let staged: string | null = "AAAA";
+  const finalObjects = new Map<string, string | null>();
   let copyCount = 0;
   const json = (data: unknown, status = 200) => new Response(JSON.stringify(data), {
     status, headers: { "content-type": "application/json" },
@@ -69,8 +71,9 @@ Deno.test("a delayed second complete must not replace an already-completed objec
     }
     if (url.hostname === "fixture.r2.cloudflarestorage.com") {
       const isStage = url.pathname.includes("/_staging/");
+      const objectKey = decodeURIComponent(url.pathname.split("/").slice(2).join("/"));
       if (request.method === "HEAD") {
-        const bytes = isStage ? staged : finalObject;
+        const bytes = isStage ? staged : finalObjects.get(objectKey) ?? null;
         return new Response(null, {
           status: bytes === null ? 404 : 200,
           headers: bytes === null ? {} : {
@@ -80,6 +83,10 @@ Deno.test("a delayed second complete must not replace an already-completed objec
       }
       if (request.method === "DELETE" && isStage) {
         staged = null;
+        return new Response(null, { status: 204 });
+      }
+      if (request.method === "DELETE") {
+        finalObjects.delete(objectKey);
         return new Response(null, { status: 204 });
       }
       if (request.method === "PUT" && request.headers.has("x-amz-copy-source")) {
@@ -92,8 +99,9 @@ Deno.test("a delayed second complete must not replace an already-completed objec
         }
         // Each copy's source condition holds. The missing condition is on
         // destination publication, not the source ETag checked by R2.
-        assertEquals(staged, selected);
-        finalObject = selected;
+        // Model a copy whose condition/source snapshot was accepted before
+        // winner cleanup, but whose destination commit is delayed afterward.
+        finalObjects.set(objectKey, selected);
         return new Response("<CopyObjectResult><ETag>fixture</ETag></CopyObjectResult>");
       }
     }
@@ -116,14 +124,19 @@ Deno.test("a delayed second complete must not replace an already-completed objec
     const firstResponse = await first;
     assertEquals(firstResponse.status, 200, await firstResponse.clone().text());
     assertEquals(asset.uploaded, true);
-    assertEquals(finalObject, "AAAA");
+    const firstRow = await firstResponse.json();
+    const winnerKey = String(asset.storage_key);
+    assertEquals(firstRow.storage_key, winnerKey);
+    assertEquals(finalObjects.get(winnerKey), "AAAA");
     permitSecondCopy.resolve();
     const secondResponse = await second;
     assertEquals(secondResponse.status, 200, await secondResponse.clone().text());
+    assertEquals((await secondResponse.json()).storage_key, winnerKey, "Loser must return the DB winner key");
     assertEquals(copyCount, 2);
-    // Desired immutability invariant: FAIL on current code, even though both
+    // Required immutability invariant: FAIL on a shared-key copy, even though both
     // source objects individually meet the ticket's byte/type checks.
-    assertEquals(finalObject, "AAAA", "Final object was replaced after completion committed");
+    assertEquals(finalObjects.get(winnerKey), "AAAA", "Final object was replaced after completion committed");
+    assertEquals(finalObjects.size, 1, "Only this attempt's losing copy is cleaned up");
   } finally {
     clearTimeout(deadline);
     firstAtCAS.resolve(); secondAtCopy.resolve(); permitSecondCopy.resolve();
