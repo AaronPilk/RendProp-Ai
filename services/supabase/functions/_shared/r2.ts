@@ -295,8 +295,9 @@ export async function deleteObject(bucket: string, key: string): Promise<boolean
  * Server-side copy within a bucket (SigV4 HEADER-signed, so x-amz-copy-source
  * IS covered by the signature — unlike presigned query URLs, which aws4fetch
  * only signs `host` for). Used by the upload flow to promote a verified staging
- * object to its final key: the final key never gets a presigned PUT URL, so it
- * can't be overwritten after verification (closes the audit's TOCTOU). ≤5 GB
+ * object to a unique completion-attempt key. This helper alone does NOT make
+ * a shared destination immutable: the caller must publish only the DB winner
+ * and never copy another attempt to that key. ≤5 GB
  * per single copy (S3 limit); all single-PUT objects here are ≤64 MB.
  */
 export async function copyObject(
