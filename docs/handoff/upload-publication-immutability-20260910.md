@@ -163,3 +163,51 @@ physical acceptance cap; later deletion/lifecycle cannot undo incurred cost.
 ETag selection is the storage API's identity check, not independent cryptographic
 file verification. This unit closes publication races under these assumptions;
 it does not claim complete upload cost containment or a cross-service transaction.
+
+## Follow-up: bind verified Content-Type, not only the body's ETag
+
+Independent review found a remaining single-PUT metadata race in `a00f673`:
+after HEAD returned `image/jpeg`, identical bytes could be re-PUT with the same
+ETag but `text/html`. Default CopyObject metadata behavior inherited the newer
+type while the database still recorded the verified old type. Unique keys
+protected the destination from later copies, but did not correct that first copy.
+
+The uploads caller now passes its already-allowlisted, canonical observed base
+type to an optional `copyObject` argument. That branch supplies
+`x-amz-metadata-directive: REPLACE` and explicit `Content-Type`. A strict header
+shape guard rejects noncanonical values before dispatch. Unspecified source
+metadata is intentionally not inherited; the caller does not promise to preserve
+client cache-control, encoding, disposition or custom metadata. No additional
+HEAD is substituted for binding the copy operation itself. Multipart is unchanged.
+
+[Cloudflare's R2 compatibility reference](https://developers.cloudflare.com/r2/api/s3/api/)
+explicitly lists CopyObject support for the metadata directive and Content-Type.
+[The linked S3 operation reference](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CopyObject.html)
+defines `COPY` as default and `REPLACE` as request-supplied metadata. These were
+checked on 2026-09-10; this is documentation support, not a live R2 test.
+
+The pinned [aws4fetch 1.0.20 signer source](https://github.com/mhart/aws4fetch/blob/v1.0.20/src/main.js)
+excludes Content-Type from signed headers by default. The replacement branch
+therefore opts into `aws: { allHeaders: true }`. The regression inspects the
+actual signer's resulting SignedHeaders and requires Content-Type, the metadata
+directive and the source ETag condition, without printing signing material.
+`git grep` found only the uploads route calling this helper in tracked code.
+Omitting the optional argument retains its prior COPY behavior; a compatibility
+test explicitly covers omission. No other provider, route or schema was changed.
+
+Evidence retained in `/tmp/rendprop-upload-metadata.qMCcU9/`:
+
+- `before.log`: actual-route metadata-swap regression against the old helper,
+  **0 passed / 1 failed, exit 1**, with stored `text/html` versus expected
+  `image/jpeg` (23 unrelated scenarios filtered out for this red control).
+- `unsigned-negative.log`: metadata replacement without the signer opt-in also
+  **fails, exit 1**, specifically because Content-Type is absent from SignedHeaders.
+- `after.log`: the unfiltered uploads-directory command above now passes
+  **51 tests, 0 failed, 0 skipped, exit 0**: all prior 46 plus the metadata race,
+  optional-COPY compatibility, eight malformed replacement inputs, observed
+  parameter normalization and server-default-type compatibility.
+
+The same actual-route CI wrapper discovers the added regressions automatically.
+The unchanged remaining limits above still apply: metadata normalization is not
+media sniffing/decoding, a verified content hash, a cleanup guarantee, or a
+physical upload-cost cap. No live R2 request was made.

@@ -646,7 +646,10 @@ Deno.serve(async (req) => {
         // staging key between HEAD and here, R2 returns 412 and we refuse
         // (audit: the HEAD→copy gap was itself a race window).
         try {
-          await copyObject(bucket, verifyKey, finalKey, head.etag);
+          // Body ETags do not bind metadata. Copy with the verified base type
+          // explicitly replacing source metadata, even if the uploader re-PUTs
+          // identical bytes with a different Content-Type after HEAD.
+          await copyObject(bucket, verifyKey, finalKey, head.etag, observedType);
         } catch (error) {
           // No DB publication was attempted for this unique copy, so cleanup
           // can never remove a winner. An ambiguous R2 timeout may leave an

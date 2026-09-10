@@ -1,6 +1,6 @@
 // Execute the actual uploads handler with fixture-only fetch/Deno.serve.
 // No sockets or real SQL/R2; PostgREST conditional updates are modeled atomically.
-import { assertEquals, assert } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assert, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
 
 type Row = Record<string, unknown>;
 type ObjectBytes = { bytes: number; type: string; etag: string; body: string };
@@ -24,6 +24,7 @@ class Fixture {
   };
   objects = new Map<string, ObjectBytes>([[`_staging/${TICKET}`, object()]]);
   copies: string[] = [];
+  copyHeaders: Headers[] = [];
   deletes: string[] = [];
   assemblies: string[] = [];
   charges: Row[] = [];
@@ -109,12 +110,19 @@ class Fixture {
       }
       if (request.method === "PUT" && request.headers.has("x-amz-copy-source")) {
         this.copies.push(key);
+        this.copyHeaders.push(new Headers(request.headers));
         const source = decodeURIComponent(request.headers.get("x-amz-copy-source")!.split("/").slice(2).join("/"));
         const selected = this.objects.get(source);
         if (!selected || selected.etag !== request.headers.get("x-amz-copy-source-if-match")) return new Response(null, { status: 412 });
         await this.beforeCopy?.(key);
         if (this.failCopy) return new Response("<Error>synthetic</Error>", { status: 400 });
-        this.objects.set(key, selected);
+        // Model documented CopyObject metadata behavior, not just body identity.
+        // COPY (the default) inherits metadata from the selected source; REPLACE
+        // uses request metadata even when identical bytes have the same ETag.
+        const type = request.headers.get("x-amz-metadata-directive") === "REPLACE"
+          ? request.headers.get("content-type") ?? "application/octet-stream"
+          : selected.type;
+        this.objects.set(key, { ...selected, type });
         return new Response("<CopyObjectResult><ETag>fixture</ETag></CopyObjectResult>");
       }
       if (request.method === "POST" && url.searchParams.has("uploadId")) {
@@ -230,6 +238,66 @@ Deno.test("completed replay cannot promote a new same-size staging object", () =
   assertEquals((await f.ok()).storage_key, winner.storage_key);
   assertEquals(f.objects.get(String(winner.storage_key))?.body, "AAAA");
   assertEquals(f.copies.length, 1);
+}));
+
+Deno.test("same bytes and ETag cannot swap the verified Content-Type during copy", () => fixture(async (f) => {
+  const key = "renders/org/listing/gallery-asset.jpg", staged = `_staging/${key}`;
+  Object.assign(f.asset!, { storage_key: key, bucket: "renders", kind: "photo", content_type: "image/jpeg" });
+  f.objects.clear(); f.objects.set(staged, object("AAAA", 4, "image/jpeg"));
+  let swaps = 0;
+  f.afterHead = async (observedKey, snapshot) => {
+    if (observedKey !== staged || swaps !== 0) return;
+    assertEquals(snapshot?.type, "image/jpeg");
+    const replacement = object("AAAA", 4, "text/html");
+    assertEquals(replacement.etag, snapshot?.etag);
+    assertEquals(replacement.body, snapshot?.body);
+    f.objects.set(staged, replacement); swaps++;
+  };
+  const row = await f.ok();
+  assertEquals(swaps, 1); assertEquals(row.content_type, "image/jpeg");
+  assertEquals(f.objects.get(String(row.storage_key))?.body, "AAAA");
+  assertEquals(f.objects.get(String(row.storage_key))?.type, row.content_type,
+    "Published storage metadata must match the verified DB type, not the replacement source type");
+  const headers = f.copyHeaders[0];
+  assertEquals(headers.get("x-amz-metadata-directive"), "REPLACE");
+  assertEquals(headers.get("content-type"), "image/jpeg");
+  const signed = /SignedHeaders=([^, ]+)/.exec(headers.get("authorization") ?? "")?.[1].split(";") ?? [];
+  for (const name of ["content-type", "x-amz-metadata-directive", "x-amz-copy-source-if-match"]) {
+    assert(signed.includes(name), `${name} must be protected by actual aws4fetch header signing`);
+  }
+}));
+
+Deno.test("copy helper omission keeps existing COPY metadata behavior", () => fixture(async (f) => {
+  const { copyObject } = await import("../../services/supabase/functions/_shared/r2.ts");
+  await copyObject("rendprop-uploads", `_staging/${TICKET}`, "fixture-copy.mov", '"AAAA"');
+  assertEquals(f.objects.get("fixture-copy.mov")?.type, "video/quicktime");
+  assertEquals(f.copyHeaders[0].get("x-amz-metadata-directive"), null);
+  assertEquals(f.copyHeaders[0].get("content-type"), null);
+}));
+
+Deno.test("copy helper rejects noncanonical replacement types before storage dispatch", () => fixture(async (f) => {
+  const { copyObject } = await import("../../services/supabase/functions/_shared/r2.ts");
+  for (const value of ["", " image/jpeg", "IMAGE/JPEG", "image/jpeg; charset=utf-8",
+    "image/jpeg\r\nx-injected: true", `image/${"a".repeat(128)}`, null, 42]) {
+    await assertRejects(() => copyObject("rendprop-uploads", `_staging/${TICKET}`,
+      "fixture-copy.mov", '"AAAA"', value as string), Error, "Invalid verified copy content-type");
+  }
+  assertEquals(f.copies, []);
+}));
+
+Deno.test("publication installs the allowlisted observed base type without parameters", () => fixture(async (f) => {
+  Object.assign(f.asset!, { kind: "photo", content_type: "image/jpeg" });
+  f.objects.set(`_staging/${TICKET}`, object("AAAA", 4, "IMAGE/JPEG; charset=utf-8"));
+  const row = await f.ok();
+  assertEquals(row.content_type, "image/jpeg");
+  assertEquals(f.objects.get(String(row.storage_key))?.type, "image/jpeg");
+}));
+
+Deno.test("publication uses observed allowed type when the ticket type was only a server guess", () => fixture(async (f) => {
+  Object.assign(f.asset!, { content_type: "video/mp4", content_type_declared: false });
+  const row = await f.ok();
+  assertEquals(row.content_type, "video/quicktime");
+  assertEquals(f.objects.get(String(row.storage_key))?.type, "video/quicktime");
 }));
 
 Deno.test("multipart freezes parts before assembly and rejects competing same-size manifest", () => fixture(async (f) => {
