@@ -3133,9 +3133,10 @@ struct AIConsentView: View {
                 }
                 .padding(22)
             }
-            .accessibilityIdentifier("aiConsent.scroll")
+            // This ScrollView IS the consent root. Giving its ancestor a
+            // second ID overwrites the exposed scroll ID in SwiftUI's AX tree.
+            .accessibilityIdentifier("aiConsent.root")
         }
-        .accessibilityIdentifier("aiConsent.root")
     }
 
     private func bullet(_ symbol: String, _ tint: Color, _ text: String) -> some View {

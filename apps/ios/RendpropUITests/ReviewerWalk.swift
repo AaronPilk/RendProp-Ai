@@ -3,7 +3,7 @@
 //  The FIRST-RUN capture — what an App Store reviewer sees, in the order they
 //  see it (docs/appstore/…, and the review notes the integrator writes).
 //
-//  ONE test — `testReviewerWalk()` — launches the app the way a reviewer's
+//  The full `testReviewerWalk()` launches the app the way a reviewer's
 //  fresh install launches it and attaches a `keepAlways` screenshot of each
 //  screen, named `r01-…` … `r11-…`. Run on the dedicated synthetic simulator.
 //  Launch arguments force consent unanswered; Settings' existing intro action
@@ -100,6 +100,11 @@ final class ReviewerWalk: XCTestCase {
             "-ai.thirdPartyProcessing.consent.v1", "NO",
             "-space.type", "real_estate",
         ]
+        if name.contains("testAIConsentDecisions") {
+            // Focused iteration reuses r11 without spending minutes on the
+            // unrelated onboarding/player/legal/deletion-dialog screenshot walk.
+            app.launchArguments += ["-hasOnboarded", "YES"]
+        }
         app.launch()
     }
 
@@ -129,6 +134,15 @@ final class ReviewerWalk: XCTestCase {
                             "r11-ai-consent"])
         XCTAssertTrue(required.isSubset(of: capturedScreens),
                       "Missing required reviewer steps: \(required.subtracting(capturedScreens).sorted()); r10 is excluded only in identified mock")
+    }
+
+    /// Same actual r11 path and assertions as the release walk. No fixture
+    /// consent view, coordinate taps, AI edit or destructive dialog is used.
+    func testAIConsentDecisions() {
+        step11AIConsent()
+        let required = Set(["r11-ai-consent", "r11b-consent-actions", "r11c-consent-granted"])
+        XCTAssertTrue(required.isSubset(of: capturedScreens),
+                      "Missing required consent states: \(required.subtracting(capturedScreens).sorted())")
     }
 
     // MARK: r01 — the onboarding pages
@@ -551,12 +565,17 @@ final class ReviewerWalk: XCTestCase {
     /// A bounded failure remains a test failure; no coordinate fallback can hit
     /// a different action beneath an obstructing native toolbar.
     private func consentAction(_ identifier: String) -> XCUIElement? {
-        let scroll = app.scrollViews["aiConsent.scroll"]
+        let scrolls = app.scrollViews.matching(identifier: "aiConsent.root")
+        let scroll = scrolls.firstMatch
         guard scroll.waitForExistence(timeout: screenTimeout) else {
             note("Consent scroll view is missing")
             return nil
         }
-        let action = app.buttons[identifier]
+        guard scrolls.count == 1 else {
+            note("Consent must expose exactly one identified scroll viewport")
+            return nil
+        }
+        let action = scroll.buttons[identifier]
         for attempt in 0...8 {
             if action.exists, action.isEnabled, action.isHittable,
                action.frame.width > 0, action.frame.height > 0,
