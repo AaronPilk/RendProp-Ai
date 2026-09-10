@@ -49,7 +49,8 @@ def main():
         log.write_text(result.stdout)
         receipt["commands"].append({"name": name, "command": command, "exit": result.returncode,
                                     "log": str(log), "logSHA256": hashlib.sha256(log.read_bytes()).hexdigest()})
-        require(result.returncode == expected, f"{name} exited {result.returncode}, expected {expected}; see {log}")
+        allowed = expected if isinstance(expected, tuple) else (expected,)
+        require(result.returncode in allowed, f"{name} exited {result.returncode}, expected {expected}; see {log}")
         print(name + ": exit=" + str(result.returncode), flush=True)
         return result.stdout
 
@@ -72,31 +73,45 @@ def main():
         for migration in migrations:
             run("apply-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
         counts = []
+        receipt["invariantRuns"] = []
         for phase in ("initial", "replayed"):
             if phase == "replayed":
                 replay = [p for p in migrations if p.name.startswith(("0005b_", "0008b_")) or p.name >= "0009"]
                 for migration in replay:
                     run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
                 receipt["replayedMigrations"] = len(replay)
-            output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")])
-            count = re.findall(r"All (\d+) invariants passed\.", output)
-            require(len(count) == 1 and int(count[0]) > 0, "Missing/ambiguous actual invariant count")
-            counts.append(int(count[0]))
+            output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
+            # Preserve a genuine red suite, but still test migration replay.
+            # A SQL/load error is not a completed red suite and aborts here.
+            rows = re.findall(r"^\s*(\d+) \| (.*?) \| (t|f)\s+\|", output, re.MULTILINE)
+            require(rows and [int(row[0]) for row in rows] == list(range(1, len(rows) + 1)),
+                    "Missing/incomplete invariant result table")
+            failed_names = [name.strip() for _, name, passed in rows if passed != "t"]
+            exit_code = receipt["commands"][-1]["exit"]
+            require((not failed_names and exit_code == 0 and f"All {len(rows)} invariants passed." in output)
+                    or (failed_names and exit_code == 3 and f"INVARIANTS FAILED: {len(failed_names)} assertion(s)" in output),
+                    "Invariant exit/status disagrees with actual assertions")
+            receipt["invariantRuns"].append({"phase": phase, "count": len(rows), "failed": failed_names})
+            counts.append(len(rows))
         require(counts[0] == counts[1], "Invariant count changed on replay")
         # Break actual entitlement data in this synthetic database. A gate that
         # only prints results must not pass when the published contract is false.
         run("mutate-negative", psql + ["-c", "update public.plan_entitlements set seats=999 where plan='team';"])
         failed = run("negative-invariants", psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=3)
         require("INVARIANTS FAILED:" in failed, "Negative control failed for the wrong reason")
+        require(re.search(r"plan_entitlements match[^\n]*\| f\s+\|[^\n]*team", failed),
+                "Negative control did not detect the deliberately corrupted team entitlement")
         require(all(hashlib.sha256(p.read_bytes()).hexdigest() == receipt["sourceHashes"][str(p.relative_to(root))]
                     for p in sources), "SQL sources changed during run")
-        receipt.update({"accepted": True, "appliedMigrations": len(migrations), "invariantsEachPass": counts[0],
+        receipt.update({"accepted": all(not phase["failed"] for phase in receipt["invariantRuns"]),
+                        "appliedMigrations": len(migrations), "invariantsEachRun": counts[0],
                         "negativeControl": "Actual team entitlement corrupted; real invariant gate exited 3"})
     finally:
         if started or (data / "postmaster.pid").exists():
             run("stop", [bins["pg_ctl"], "-D", str(data), "-w", "-t", "30", "-m", "fast", "stop"])
         receipt["finishedAt"] = datetime.now(timezone.utc).isoformat()
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
+    require(receipt["accepted"], f"Database assertions remain red; full replay/negative evidence: {out / 'receipt.json'}")
     print("PASS: migrations, replay, actual invariants and negative control;", out / "receipt.json", flush=True)
 
 
