@@ -56,8 +56,23 @@ node --test tests/phase1/ask-ai-label.test.mjs tests/phase1/consent-disclosure.t
 and requires the two exact consent/AskAI tests,0skips and5 required screen
 attachments. Default still performs the full walks too; receipt counts are
 derived from the selected tests. This scoped rerun does not claim the old
-walkthroughs executed against the new disclosure. **Fresh UI result pending
-at this checkpoint.** No TestFlight or App Store operation occurred.
+walkthroughs executed against the new disclosure.
+
+**Fresh focused run passed on `50c95d3`:2 exact tests,0skips,5 required screen
+attachments.** Release build, bundle/resource gate and unchanged source/artifact
+checks also passed. Receipt:
+`/tmp/rendprop-noncamera-ui-3_d1cfjd/receipt.json`.
+Root inspected all5 required images: Ask AI is fully drawn next to the long
+title, its tap opens Coach, all4 corrected processor cards are readable, and
+both consent decisions remain reachable after scrolling. The two additional
+sample/navigation attachments are not counted as5 more tests. Exact command:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tools/audit/run_noncamera_ui.py --focus-only --simulator D4BAC4B1-5F7D-4C4E-88A5-FC10746C152C --simulator-name 'Rendprop TestFlight Gate 20260910' --derived-data /tmp/rendprop-spatial-integration.sLQDuM/DerivedData
+```
+
+No TestFlight or App Store operation occurred. The installed build18 is still
+the earlier source, not this corrected simulator binary.
 
 ## Still-open build warnings and limits
 

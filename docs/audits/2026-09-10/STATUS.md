@@ -6,7 +6,17 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
-### Current integration checkpoint — approximately 19:30 Eastern
+### Current integration checkpoint — approximately 19:42 Eastern
+
+All28 baseline screenshots have now been visually reviewed. The resulting
+Ask AI truncation repair and processor-disclosure/v2 re-consent correction
+passed a **new clean Release build +2 focused UI tests,0skips,5 required images**
+on `50c95d3`. Root inspected those5 images; label is complete, Coach opens,
+corrected cards fit and agree/decline remain reachable. Exact receipt:
+`/tmp/rendprop-noncamera-ui-3_d1cfjd/receipt.json`.
+See `UI-VISUAL-REVIEW.md` and `AI-CONSENT-DISCLOSURE.md` for source changes,
+10 portable checks/24 persistence assertions, and remaining privacy-policy and
+device-matrix gaps. These changes are not in the owner's installed TestFlight18.
 
 Current combined-source edge receipt is `/tmp/rendprop-edge-audit-dpkovht9/receipt.json`,
 source `50342c7`: **563 tests passed,0 failed/ignored;21 entrypoint typechecks passed;
@@ -16,10 +26,9 @@ hashed too, and clean unchanged source is required for an accepted receipt.
 The rebuilt consent + Reviewer + Main UI gate passed on `7d0b0ca`: **3 exact
 tests,0 skips,24 required screenshot attachments (21 distinct required names)**.
 Receipt `/tmp/rendprop-noncamera-ui-3hx5az4i/receipt.json`; Release build and exact
-app/test artifacts are hashed. Root inspected all three focused consent images;
-remaining walkthrough visual review is continuing. This proves interaction and
-screen reachability, not that every disclosure sentence is accurate. A separate
-code-proven processor-disclosure correction and re-consent update is underway.
+app/test artifacts are hashed. Root inspected all28 exported screenshots.
+This proves interaction and screen reachability, not live backend behavior.
+The separate disclosure correction and focused rebuilt result are above.
 
 New reviewed units are integrated: `29b0f16` consent selector, `1c42bd8` Coach
 offline/account copy, `b6c0d8a` bounded host upstream reads, `76fe6ee` unfinished
