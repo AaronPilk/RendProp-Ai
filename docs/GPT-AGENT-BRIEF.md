@@ -157,6 +157,27 @@ happen. Every harness must:
   against production endpoints, then verified in the database — not reasoned about.
 - **Prove the change landed** before building: grep for the new symbols in the tree.
 
+**A shell gotcha that has already produced a lying gate in this repo — twice.** `grep -c`
+prints `0` **and exits 1** when it finds nothing. So the natural-looking
+
+```bash
+n=$(grep -c -F "$needle" "$file" || echo 0)   # WRONG
+[ "$n" = "0" ] && FAIL=1
+```
+
+sets `n` to the two-line string `"0\n0"`, the comparison never matches, and **the gate never
+fires**. Write it as:
+
+```bash
+n=$(grep -c -F "$needle" "$file" 2>/dev/null); n=${n:-0}    # grep's own 0 is the answer
+[ "$n" -eq 0 ] && FAIL=1
+```
+
+Use `-eq`, not `=`, so a malformed value is an error rather than a silent pass. The same class
+of mistake sank an earlier privilege check that grepped for `"ok"` and could not see `\"ok\"`
+inside a `::text`-cast JSON string. **Test your harness against a case you know should fail,
+before you trust it on a case you hope will pass.**
+
 Test commands that work today:
 
 ```bash
@@ -446,10 +467,60 @@ A splat you can fly through is a demo. These four make it something a brokerage 
 - **Privacy blur — non-negotiable, and it is a launch blocker, not a nice-to-have.** A 3D
   capture of somebody's home records the family photographs on the wall, the mail on the
   counter, the prescription on the nightstand and the contents of an open closet. This app
-  already takes provenance and disclosure seriously (`_shared/provenance.ts`, the "Virtually
-  staged" label). A spatial tour needs at least: a review step before publish, region blur, and
+  already takes provenance and disclosure seriously (`_shared/provenance.ts`, and the
+  "✦ Virtually staged" chip in `tour-host/src/player.ts` and `functions/tours/index.ts`). A spatial tour needs at least: a review step before publish, region blur, and
   the ability to exclude a whole room from the published scene. **Do not ship a public spatial
   tour without it.**
+
+### Phase E — bind it to the flythrough (this is the differentiator, not a nice-to-have)
+
+**The owner's requirement, in his words: "if I click on a room in the drone flythrough right now
+I can't enter 3D world."** The two features must be one product. Do the flythrough, tag the
+rooms, build the 3D worlds, and then *from inside the flythrough* a viewer standing in the
+kitchen taps and walks around the real kitchen — then comes back out where they left off.
+
+Nobody else has both halves. Matterport has the 3D and no cinematic. Every video tour has the
+cinematic and no 3D. Rendprop already has the room tags that join them, which is why this is an
+extension rather than a new system.
+
+**The data model already exists and needs one optional field.** `Chapter` in
+`services/edge/tour-host/src/types.ts` is `{ label, t_ms, sort }` — a room name and where it
+sits on the rendered timeline. `player.ts` `planSection()` already renders one button per
+chapter that seeks the flythrough to that room. So:
+
+1. **Extend `Chapter` with an optional spatial anchor** — a scene id plus the camera pose to
+   enter at. Optional is load-bearing: a listing with a flythrough and no scan, a scan and no
+   flythrough, or 3D for only two of nine rooms must all render correctly. **A chapter with no
+   anchor shows exactly what it shows today.**
+2. **Two entry points, both already on the page.** The chapter rail under the player (the
+   horizontal room strip) and the "Rooms in this tour" list in `planSection()`. Where a chapter
+   has an anchor, that control gains a second, clearly labelled action — the owner's standing
+   rule applies: **an unlabelled control is invisible to an average agent**, so it is a worded
+   button, never a bare glyph.
+3. **Entering and leaving must be lossless.** Remember the flythrough's scroll position on the
+   way in and restore it on the way out. A viewer who steps into the primary bedroom and backs
+   out should be exactly where they were, not at the top of the tour. This is the detail that
+   decides whether the feature feels like one product or two bolted together.
+4. **One page, one viewer, both modes.** The splat viewer and the scroll-scrub player live in
+   the same document, and only one is mounted at a time — a WebGL context and an HLS video
+   competing for memory on a mid-range Android is how this becomes a crash report. Tear one
+   down before building the other, and do not load the splat library until a viewer actually
+   asks to enter a room.
+5. **The app gets it for free.** `Screens/PlayerWebView.swift` shows the same page, so the
+   in-app experience needs no separate work — which is the whole reason §4b insists the viewer
+   is web and not Metal.
+6. **The unbranded `/u/` twin must behave.** MLS rules forbid branding and contact capture on
+   that page (`services/edge/tour-host/scripts/check-unbranded.mjs`, 557 assertions, is the gate). The 3D entry is a
+   feature, not branding, so it belongs there — but run the gate and prove it rather than
+   assuming.
+
+**Capture-order independence is a requirement, not an implementation detail.** The owner
+described doing the flythrough first, tagging rooms, then building the worlds "after" and
+having it apply to the flythrough. So the binding is late and by room, not baked at render
+time: adding a scan to a listing that already has a published flythrough must light up the 3D
+entry on the existing tour without re-rendering the video. Match a scan's rooms to the
+flythrough's chapters by the room label the agent already assigned, and leave anything
+unmatched inert rather than guessing.
 
 ### Hard rules for this feature
 
@@ -476,7 +547,10 @@ Phase A: a real room, captured on a phone, moving in a browser, with the numbers
 Phase B: a non-technical person completes a full house without instruction, and the app
 correctly names anything they missed. Phase C: a job runs end to end with a hard cost ceiling
 and a manifest. Phase D: the tour page and the app's `PlayerWebView` show the same scene from
-one implementation, and nothing publishes without a privacy review step.
+one implementation, and nothing publishes without a privacy review step. Phase E: from a
+published flythrough, tapping a tagged room enters that room in 3D and backing out returns
+to the same scroll position — and a listing whose scan was added *after* the flythrough was
+published lights up without re-rendering the video.
 
 ---
 
