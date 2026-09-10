@@ -1,8 +1,8 @@
 // coach — the customer-service knowledge base.
 //
-// EVERY fact in this file is copied or tightly paraphrased from one of six
-// sources, named on each entry. Nothing here is invented, and nothing here
-// should ever drift from its source without this file changing too:
+// Facts are drawn from the documented sources below or the actual application
+// contract/source, named on each entry. Keep these facts aligned with their
+// sources rather than carrying forward stale account or publication claims:
 //
 //   description.txt   docs/appstore/metadata/en-US/description.txt
 //   review_notes.txt   docs/appstore/metadata/en-US/review_notes.txt
@@ -29,7 +29,7 @@
 /** One knowledge-base entry: a short topic label plus the fact(s) it covers. */
 export interface KnowledgeEntry {
   topic: string;
-  /** Which of the six sources this was drawn from, for anyone auditing drift. */
+  /** Documentation or implementation source, for anyone auditing drift. */
   source: string;
   fact: string;
 }
@@ -46,12 +46,12 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Signing in — what needs an account",
-    source: "review_notes.txt + description.txt",
+    source: "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
-      "Recording, on-device rendering, the AI Photo Studio, reels, aerial intros and floor " +
-      "plans all work fully signed out. Sign in with Apple is needed only to PUBLISH a tour to " +
-      "the web, because publishing is the step that creates the hosted link and the contact " +
-      "form. Any Apple ID can sign in — there is no invite list.",
+      "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
+      "Studio, reels, aerial intros and floor plans. The app connects through an anonymous " +
+      "session. Publishing needs an internet connection. Sign in with Apple is optional " +
+      "for accessing your workspace on another device.",
   },
   {
     topic: "The two links every published tour gets",
@@ -156,14 +156,14 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Deleting an account",
-    source: "support.html + review_notes.txt",
+    source: "SettingsView.swift deleteAccount + me/index.ts handleDelete",
     fact:
-      "In the app: Settings → \"Your data\" → \"Delete account\" (this is offered whether the " +
-      "person is signed in or not). It removes the server account, unpublishes every shared " +
-      "tour link, and deletes listings, tours, uploaded media and leads from the server, then " +
-      "wipes local data on the phone. It also works for guests who never signed in (a local " +
-      "wipe only, since there is no server account to remove). Deleting the account does NOT " +
-      "cancel an App Store subscription — cancel that with Apple separately.",
+      "In the app: Settings → \"Your data\" → \"Delete account\". Guests using an anonymous " +
+      "session also have a server account: this is not a local-only wipe. Account deletion " +
+      "requests removal of that account and its solo-workspace data; the phone clears its " +
+      "local data after server confirmation. Shared-team data is not all deleted with your " +
+      "account, and server cleanup may remain pending. Deleting the account does NOT cancel " +
+      "an App Store subscription — cancel that with Apple separately.",
   },
   {
     topic: "What the app needs to run",

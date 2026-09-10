@@ -11,6 +11,29 @@ single-flight retry, continuation of the original four waiting actions,
 independent cancellation, generation replacement, and waking an existing retry
 delay. A ten-second watchdog fails the process if a continuation never resumes.
 
+The same gate compiles the complete production `CoachModel.swift` and
+`CoachAPI.swift` with `CoachOfflineTests.swift`. The test calls the actual
+`CoachOffline.answer` matcher: five account-question variants, existing/empty
+project state, unrelated MLS/next-step responses, and the anonymous-account
+deletion explanation. It runs a deliberate exit-1 assertion before trusting
+the 37 positive assertions. Only unrelated app types are inert test stand-ins;
+API, analytics, purchases, consent and disk-backed app-state access trap if
+called. This is an offline response check, not CoachView/consent UI or live
+Supabase publication/deletion verification. No iOS simulator or Xcode app build
+is launched by this portable gate.
+
+Server knowledge is independently executable without runtime permissions or
+downloads:
+
+```sh
+deno test --cached-only --deny-net --deny-env --deny-run --deny-read --deny-write services/supabase/functions/coach/
+```
+
+The new `knowledge_test.ts` imports only local production knowledge/formatter
+code and uses no third-party test dependency. Existing action tests need their
+already-cached pinned Deno standard-library assertions; absent cache fails rather
+than downloading or skipping. This does not invoke the Coach endpoint or an LLM.
+
 ## Actual simulator screens, failed signup sockets, automatic recovery
 
 Run `bash tests/phase1/run-network.sh`. Requires Xcode, its iOS 26.4 simulator
