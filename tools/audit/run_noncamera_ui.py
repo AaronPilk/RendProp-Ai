@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the current clean source and verify two exact synthetic UI walks.
+"""Build clean source; verify consent first, then two synthetic UI walks.
 
 No archive, Apple upload, simulator erase, uninstall or camera test. The caller
 must explicitly select an already-created dedicated test simulator and scratch
@@ -103,11 +103,16 @@ def main():
     specs = list(products.glob("RendpropSpatialTestFlight_*.xctestrun"))
     require(len(specs) == 1, "Ambiguous test specification")
     spec_hash = digest(specs[0])
-    for name, test, expected, shots in [
+    # Exercise the repaired decision flow first against the same built binary.
+    # A regression should fail in minutes, not after unrelated onboarding steps.
+    checks = [
+        ("Consent", "ReviewerWalk/testAIConsentDecisions", {"ReviewerWalk/testAIConsentDecisions()"},
+         {"r11-ai-consent", "r11b-consent-actions", "r11c-consent-granted"}),
         ("Reviewer", "ReviewerWalk/testReviewerWalk", evidence.REVIEWER,
          evidence.REVIEWER_SHOTS | {"r11b-consent-actions", "r11c-consent-granted"}),
         ("Main", "RendpropUITests/testWalk", evidence.MAIN, evidence.MAIN_SHOTS),
-    ]:
+    ]
+    for name, test, expected, shots in checks:
         invoke(name, common + ["test-without-building", "-only-testing:RendpropUITests/" + test,
                               "-resultBundlePath", str(out / (name + ".xcresult"))])
         require(source() == initial, "Source changed during UI walk")
@@ -118,13 +123,13 @@ def main():
     receipt = {"source": initial, "configuration": "Release", "simulator": args.simulator,
                "commands": commands, "artifacts": artifact_hashes, "projectSHA256": project_hash,
                "xctestrunSHA256": spec_hash, "completedAt": datetime.now(timezone.utc).isoformat(),
-               "results": {name: digest(out / (name + ".xcresult")) for name in ("Reviewer", "Main")},
+               "results": {name: digest(out / (name + ".xcresult")) for name, *_ in checks},
                "logs": {name: digest(out / (name + ".log")) for name in commands},
-               "tests": 2, "skips": 0, "requiredScreens": 21,
+               "tests": 3, "skips": 0, "requiredScreenAttachments": 24, "distinctRequiredScreens": 21,
                "limits": ["Synthetic offline data", "No camera/AR tests", "Visual inspection still required",
                           "No TestFlight upload or App Store changes"]}
     (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    print("PASS: two exact tests, zero skips, 21 required screenshots; receipt:", out / "receipt.json", flush=True)
+    print("PASS: three exact tests, zero skips, 24 required screen attachments; receipt:", out / "receipt.json", flush=True)
 
 
 if __name__ == "__main__":
