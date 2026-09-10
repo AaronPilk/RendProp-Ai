@@ -31,15 +31,27 @@ P = {
  "great_room":  "great-room.jpg",     "kitchen":    "kitchen.jpg",
  "living_before":"living-cluttered.jpg","living_after":"living-tidy.jpg",
  "room_before": "room-empty.jpg",     "room_after": "room-staged.jpg",
+ "ranch":       "ranch.jpg",          "bedroom":    "bedroom.jpg",
+ "bath":        "bath.jpg",           "dining":     "dining.jpg",
+ "pool":        "pool.jpg",           "townhouse":  "townhouse.jpg",
+ "venue":       "venue.jpg",          "office":     "office.jpg",
 }
 _pc = {}
-def photo(w, h, key="great_room"):
-    """A listing photo, filled to the box, centre-cropped."""
+def photo(w, h, key="great_room", focus=0.5):
+    """A listing photo, filled to the box.
+
+    focus is where the crop sits vertically: 0.0 keeps the top of the frame,
+    1.0 keeps the bottom, 0.5 is centred. It matters because Instagram crops
+    a 4:5 post to a square from the middle for the profile grid, so whatever
+    sits in the middle of the frame is the tile. On the sky and lawn posts
+    that has to be the sky, or the lawn, or the two exterior tiles come out
+    identical in the grid."""
     if key not in _pc: _pc[key] = Image.open(PHOTO_DIR + P[key]).convert("RGB")
     im = _pc[key]
     sc = max(w/im.width, h/im.height)
     im = im.resize((max(1,int(im.width*sc)), max(1,int(im.height*sc))), Image.LANCZOS)
-    x=(im.width-w)//2; y=(im.height-h)//2
+    x=(im.width-w)//2
+    y=int((im.height-h)*min(1.0, max(0.0, focus)))
     return im.crop((x,y,x+w,y+h))
 
 

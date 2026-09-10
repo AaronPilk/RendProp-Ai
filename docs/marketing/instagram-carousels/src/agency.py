@@ -11,7 +11,7 @@ def new(seed):
     img = ground("dark", seed); return img, ImageDraw.Draw(img)
 
 def eyebrow(d, n, feature, y=140):
-    txt = f"{n:02d}  ·  {feature.upper()}"; f = XBOLD(26); x = M
+    txt = feature.upper(); f = XBOLD(26); x = M
     for ch in txt: d.text((x,y), ch, font=f, fill=LAVENDER); x += d.textlength(ch,font=f)+3.2
     return y+52
 
@@ -155,9 +155,9 @@ def L_cta(n, total, shot="02-home-showroom"):
 from uikit import photo, screen_photo_studio, screen_tour, P
 
 # ── PHOTO HERO: the property, full bleed, copy over a graduated scrim ────────
-def L_photo_hero(n, total, feature, headline, sub, key):
+def L_photo_hero(n, total, feature, headline, sub, key, focus=0.5):
     img = Image.new("RGBA",(W,H),(11,13,16,255))
-    ph = photo(W, H, key); img.paste(ph,(0,0))
+    ph = photo(W, H, key, focus); img.paste(ph,(0,0))
     sc = Image.new("RGBA",(W,H),(0,0,0,0)); sd = ImageDraw.Draw(sc)
     sd.rectangle([0,0,W,int(H*0.20)], fill=(0,0,0,175))
     N=18; y0=int(H*0.34)

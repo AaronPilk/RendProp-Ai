@@ -9,13 +9,25 @@ shutil.rmtree(OUT, ignore_errors=True); os.makedirs(OUT, exist_ok=True)
 
 # Per carousel: the hero photo, and (for the five photo tools) a before/after pair.
 HERO = {
- "flythrough":"great_room","share-link":"ext_twilight","room-tags":"great_room",
- "blue-sky":"ext_before","twilight":"ext_before","green-lawn":"ext_before",
- "tidy":"living_before","staging":"room_before","reels":"kitchen","aerial":"ext_twilight",
- "floor-plan":"great_room","two-links":"ext_blue","agent-card":"kitchen","leads":"great_room",
- "modes":"kitchen","no-account":"ext_blue","disclosure":"room_after","plans":"ext_twilight",
- "free-trial":"ext_blue","your-content":"great_room",
+ # Chosen against the posting order in ../Instagram. Instagram crops a 4:5 post
+ # to a square from the middle for the profile grid, so the grid tile is the
+ # middle of the hero photo. Four of these photos are the SAME house (the sky,
+ # twilight and lawn variants), which means their tiles are near identical —
+ # so that scene is spaced at least five posts apart in the running order, and
+ # never lands in the same grid row or directly above another use of itself.
+ "staging":"room_before",   "twilight":"ext_twilight", "flythrough":"great_room",
+ "share-link":"townhouse",  "reels":"kitchen",         "room-tags":"dining",
+ "blue-sky":"ext_blue",     "tidy":"living_before",    "aerial":"ranch",
+ "disclosure":"bath",       "floor-plan":"bedroom",    "green-lawn":"ext_lawn",
+ "two-links":"office",      "leads":"pool",            "agent-card":"living_after",
+ "no-account":"great_room", "modes":"venue",           "your-content":"room_after",
+ "plans":"ext_twilight",    "free-trial":"kitchen",
 }
+# Where the hero crop sits vertically. The grid tile is the middle of the frame,
+# so the blue-sky post has to keep sky in the middle and the lawn post has to
+# keep lawn, or the two read as the same tile.
+FOCUS = {"blue-sky":0.12, "green-lawn":0.85, "aerial":0.45}
+
 PAIR = {
  "blue-sky":  ("ext_before","ext_blue","BEFORE","ONE TAP LATER"),
  "twilight":  ("ext_before","ext_twilight","SHOT AT MIDDAY","ONE TAP LATER"),
@@ -30,7 +42,7 @@ for i,c in enumerate(C, start=1):
     slug=c["slug"]; total=5
     folder=os.path.join(OUT,f"reel-{i:02d}-{slug}"); os.makedirs(folder,exist_ok=True)
     S=[]
-    S.append(("01-hook", L_photo_hero(i,total,c["feature"],c["hook"],c["sub"],HERO[slug])))
+    S.append(("01-hook", L_photo_hero(i,total,c["feature"],c["hook"],c["sub"],HERO[slug],FOCUS.get(slug,0.5))))
     if slug in PAIR:
         b,a,bl,al = PAIR[slug]
         S.append(("02-before-after", L_before_after(i,total,c["feature"],"One tap. Same photo.",b,a,0,bl,al)))
