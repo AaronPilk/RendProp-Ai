@@ -305,16 +305,33 @@ export async function copyObject(
   srcKey: string,
   destKey: string,
   /** ETag observed by the caller's HEAD. When given, the copy is conditional:
-   * R2 fails with 412 if the source changed since that HEAD, which closes the
-   * HEAD→copy race (an attacker re-PUTting the staging key mid-flight). */
+   * R2 fails with 412 if the body's ETag changed since that HEAD. This does NOT
+   * bind metadata: identical bytes can be re-PUT with a different Content-Type. */
   ifMatchEtag?: string | null,
+  /** Already policy-validated, canonical bare media type. When provided, replace
+   * source metadata rather than inherit a mutable Content-Type. Omission keeps
+   * the helper's original COPY behavior for non-publication uses. */
+  verifiedContentType?: string,
 ): Promise<void> {
   const url = `${endpoint()}/${bucket}/${encodeKey(destKey)}`;
   const headers: Record<string, string> = {
     "x-amz-copy-source": `/${bucket}/${encodeKey(srcKey)}`,
   };
   if (ifMatchEtag) headers["x-amz-copy-source-if-match"] = ifMatchEtag;
-  const res = await client().fetch(url, { method: "PUT", headers });
+  if (verifiedContentType !== undefined) {
+    // The upload caller enforces its role-specific allowlist; this is only a
+    // fail-closed shape guard for a trusted, already-canonical header value.
+    if (typeof verifiedContentType !== "string" || verifiedContentType.length > 127 ||
+      !/^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/.test(verifiedContentType)) {
+      throw new HttpError(500, "Invalid verified copy content-type");
+    }
+    headers["x-amz-metadata-directive"] = "REPLACE";
+    headers["content-type"] = verifiedContentType;
+  }
+  // aws4fetch 1.0.20 excludes Content-Type from signing by default, including
+  // header-signed requests. Opt in for this verified metadata replacement.
+  const res = await client().fetch(url, { method: "PUT", headers,
+    aws: { allHeaders: verifiedContentType !== undefined } });
   if (res.status === 412) {
     throw new HttpError(409, "The staged upload changed during verification — re-upload and try again");
   }
