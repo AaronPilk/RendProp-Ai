@@ -275,6 +275,8 @@ jobs:
           python3 services/worker/tests/test_job_lease.py
           python3 services/worker/tests/test_reaper_snapshot.py
           python3 services/worker/tests/test_verification_prerequisites.py
+          python3 services/worker/tests/test_stream_fallback.py
+          python3 services/worker/tests/test_lease_probe_fail_closed.py
           python3 services/worker/tests/test_process_specific.py
           python3 services/worker/tests/test_cost_spool.py
           python3 services/worker/tests/test_r2_timeouts.py

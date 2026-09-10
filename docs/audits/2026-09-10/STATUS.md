@@ -12,10 +12,16 @@ for an executed result. Every later checkpoint must preserve open findings.
 `e388f019` and consent unit `b96896e` have now been independently reviewed and
 merged into this audit branch. The worker test commands omitted by the existing
 CI are wired in; missing HDR filters now fail instead of reporting green.
-Fresh integrated non-camera UI verification is **pending**, using the committed
+Fresh integrated non-camera UI verification **found a new failure**, using the committed
 `tools/audit/run_noncamera_ui.py` (two exact tests, 21 required screenshots,
-source/artifact receipt, no camera tests, no Apple upload). No new UI success
-is claimed until its actual results are parsed and inspected.
+source/artifact receipt, no camera tests, no Apple upload). Source `d05bbec`
+built successfully, but ReviewerWalk exited65: 0passed/1failed/0skipped,
+“Consent scroll view is missing.” The actual accessibility hierarchy shows
+the outer `aiConsent.root` ID masking the inner scroll ID. A repair is underway;
+the original assertion was not skipped or relaxed. MainWalk did not run after
+this failure. Evidence: `/tmp/rendprop-noncamera-ui-jxozgi3w/Reviewer.xcresult`.
+The earlier attempt stopped before compilation because XcodeGen changed
+worktree-derived project IDs; that generated project was checkpointed first.
 
 The upload-completion reproduction was independently rerun and reviewed against
 the installed PostgREST client: **one intended failed invariant**, same-size
@@ -24,7 +30,20 @@ content replacement after completion. This is not an oversized-object proof.
 The real capture is assembled outside Downloads under an owner-only local
 directory. Independent synthetic review of its new wrapper found two boundary
 bugs (nested output mutating an original capture tree, default dataset modes);
-repairs are underway before integration. The owner's originals were not altered.
+repairs in `869c30f` are now independently reviewed and integrated. Four new
+regressions failed before repair, then passed. The owner's originals were not altered.
+
+Worker reliability `5aa0678` and host revocation `7933f75` are integrated too.
+Root reran the new Stream12/lease10 tests with a cleared environment: all22
+passed. Root reran host584 route assertions and typecheck: both exit0. The
+reaper6/prerequisite4 tests also passed independently. No production deployment.
+
+An isolated local PostgreSQL17.11 cluster applied all36 migrations successfully.
+The real invariant suite executed194 assertions, with6false/exit3. Five stale
+test expectations and two additional unregistered bare-SELECT gates are being
+corrected; the remaining token-headroom mismatch is not being hidden. The
+cluster was stopped and retained. See the separate pushed branch
+`audit/database-regression-20260910` for its runner and deployed-spatial inventory.
 
 ## Source and delivered work
 
@@ -54,7 +73,7 @@ repairs are underway before integration. The owner's originals were not altered.
 | New audit-runner parser | **5 tests passed** | Names containing “ignored” are not skips; real skipped summaries are counted |
 | Web contract/tokens | **14 passed** | 41 unique API methods/42 declarations,24 outside-protocol capabilities; zero browser-parity claims |
 | Style library | **101 passed; seven real mutants failed** | 408 EDL-preservation combinations; no rendering or human quality study |
-| Worker/hosting lane | Agent reports 140 Python checks +10 new tests;557 unbranded +361 route assertions +12 self-tests | Root integration/review pending below; no deployment |
+| Worker/hosting lane | 140 existing Python checks +32 unittest cases;584 route assertions;557 unbranded +12 self-tests | New fixes integrated; root independently reran32 cases and584 routes; no deployment |
 | Real owner capture | **256 JPEGs decoded and dataset prepared** | 14,654 usable initialization seeds; no GPU reconstruction or phone-room viewer yet |
 
 Main edge receipt: `/tmp/rendprop-edge-audit-l_pqliup/receipt.json`.
@@ -109,18 +128,20 @@ A second SELECT, source ETag alone, or a post-copy uploaded CAS is insufficient.
 Completion/abort/mismatch cleanup must use the same attempt identity so a stale
 request cannot undo a winning completion. Do not deploy a speculative partial fix.
 
-## Units awaiting root integration
+## Integrated units and remaining verification
 
 - `b96896e` / `audit/ios-noncamera-ux-20260910`: consent tab-bar layout,
-  accessibility IDs, strengthened ReviewerWalk, and full IOS-UX.md. Syntax
-  parsed; new UI walk **not run yet**. Only the existing overlap is visually proven.
-- `e388f01` / `audit/worker-host-20260910`: stale-job reaper snapshot fence;
+  accessibility IDs, strengthened ReviewerWalk, and full IOS-UX.md. Integrated;
+  the actual new walk failed on its scroll identifier, as recorded above.
+- `e388f01` and `5aa0678`: stale-job reaper snapshot fence;
   original6-test fixture failed4, patched6 pass. Verification prerequisites no
   longer report success with zero HDR assertions. Full WORKER-HOST.md includes
-  still-open stale-publication, buffering and cache-revocation findings.
-- `feat/spatial-local-handoff-20260910`: capture inspector, hash-bound private
-  preparation and portable no-Xcode-build gate. Agent reports59 Python tests,
-  21 viewer tests and native portable checks passed; changes awaiting review/commit.
+  still-open stale-publication findings. Buffering and transient lease discovery
+  are fixed locally; the separate host revocation repair is `7933f75`.
+- `fbdcba2` plus `869c30f`: capture inspector, hash-bound private preparation
+  and portable no-Xcode-build gate. Final63 Python/21viewer tests and native
+  portable checks pass; root read all new code/tests and independent review
+  found no remaining blocker in this bounded wrapper. Integrated, not reconstruction.
 
 ## Spatial: what actually happened and what is next
 
@@ -142,9 +163,10 @@ owner seeing the real reconstructed room; the Phase A experiment is unfinished.
 
 ## Next work, not completion claims
 
-1. Independently review/integrate the completed worker and consent units; run
-   ReviewerWalk+Main only, with the new consent screenshots. No redundant camera tests.
-2. Review/commit the spatial handoff unit and preserve its private-data boundary.
+1. Repair the measured consent accessibility-ID collision, then rerun
+   ReviewerWalk+Main with the new consent screenshots. No redundant camera tests.
+2. Integrate the reviewed Coach copy repair and database-test corrections;
+   keep the spatial handoff/private-data boundary intact.
 3. Continue backend state-machine/deletion/spend and anonymous/team regression.
    Existing TENANCY-AUDIT findings remain open;526 unit tests do not close them.
 4. Resolve durable upload/approval/tenancy contracts before claiming a complete
