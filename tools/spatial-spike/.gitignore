@@ -1,0 +1,14 @@
+# The source is reviewable; a room and generated outputs never belong in git.
+captures/
+datasets/
+artifacts/
+results/
+*.sog
+*.ply
+*.spz
+*.zip
+*.jpg
+*.jpeg
+__pycache__/
+*.pyc
+.venv/

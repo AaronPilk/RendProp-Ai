@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <title>Spatial Phase A — private viewer</title>
+  <link rel="stylesheet" href="/style.css">
+  <script defer src="/vendor/playcanvas.min.js" integrity="sha384-2sYsYZfrbYhDV41s7X2ecMMRNZ8xTYBbSZcu3t9x0fpAFoqDtCQVeQtiq+mx0Fwz" crossorigin="anonymous"></script>
+  <script type="module" src="/viewer.mjs"></script>
+</head>
+<body>
+  <canvas id="scene" aria-label="3D scene: drag to look around"></canvas>
+  <section id="panel" aria-label="Private spatial spike">
+    <strong>Spatial Phase A · private local viewer</strong>
+    <p>Choose a SOG from this device. Its contents stay in this browser.</p>
+    <label class="file">Choose SOG <input id="file" type="file" accept=".sog"></label>
+    <button id="fixture" hidden>Load synthetic test only</button>
+    <p id="status" role="status">Starting viewer…</p>
+    <details open>
+      <summary>Measurement</summary>
+      <label>Device, OS, browser <input id="device" placeholder="e.g. iPhone 13 · iOS 18.7 · Safari" autocomplete="off"></label>
+      <label>Rendering resolution <select id="resolution"><option value="1">1 pixel per CSS pixel</option><option value="native">Native device pixels</option></select></label>
+      <label><input id="phone" type="checkbox"> I am using a physical phone, not a simulator or desktop</label>
+      <button id="measure" disabled>Record 30 seconds</button>
+      <button id="export" disabled>Export JSON</button>
+      <p id="measurement">5 seconds of warmup, then 30 seconds while you move. Keep this tab visible.</p>
+    </details>
+    <button id="reset" disabled>Reset view</button>
+    <p class="hint">Drag the scene to look. Hold the movement controls to move. Desktop: WASD, Q/E.</p>
+  </section>
+  <nav id="movement" aria-label="Move through the scene">
+    <button data-move="forward">Forward</button>
+    <div><button data-move="left">Left</button><button data-move="back">Back</button><button data-move="right">Right</button></div>
+    <div><button data-move="up">Up</button><button data-move="down">Down</button></div>
+  </nav>
+</body>
+</html>

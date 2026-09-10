@@ -1,0 +1,16 @@
+{
+  "name": "rendprop-spatial-phase-a-viewer",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test benchmark.test.mjs",
+    "negative-control": "node benchmark.test.mjs --negative-control",
+    "convert": "splat-transform"
+  },
+  "dependencies": {
+    "playcanvas": "2.22.1",
+    "@playcanvas/splat-transform": "3.4.2"
+  }
+}

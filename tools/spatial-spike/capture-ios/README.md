@@ -1,0 +1,158 @@
+# Phase A local iPhone capture harness
+
+This standalone, disposable app captures the input for the one-room spatial spike.
+It is **not** part of `apps/ios/Rendprop`, has no production imports, credentials,
+analytics, networking, accounts, purchases, or package dependencies. Its separate
+bundle identifier is `com.rendprop.spatialspike.capture`. Do not add it to the
+shipping project or upload it to App Store Connect.
+
+## Build and verification
+
+From this directory, run `bash verify.sh --build`. The script asserts that new
+symbols exist, compiles the portable Swift checks, confirms an intentional failing
+assertion exits nonzero, runs the positive and negative checks, and builds an
+unsigned iPhone app with XcodeGen in a unique `/tmp` DerivedData directory. Omit
+`--build` for just the checks. No device is installed, launched, or scanned by the
+script. A successful build or synthetic raster test is not a physical room proof.
+
+For a coordinated physical run, generate the standalone project with
+`xcodegen generate`, open `SpatialSpikeCapture.xcodeproj`, select the owner's
+development team and the intended iPhone, and run this separate app. There is no
+provisioning team hardcoded. A real ARKit world-tracking iPhone is necessary;
+LiDAR is not required for this Phase A harness. Do not replace or reinstall the
+shipping Rendprop app. The minimum deployment target is iOS 17.
+
+## One-room operator run
+
+1. Clear moving people from the room, turn on adequate light, and keep the phone
+   steady while tracking initializes. Tap **Start new room**.
+2. Walk slowly around the room looking at the walls, floor, objects, and corners
+   from overlapping viewpoints. Translation matters; standing in place and
+   spinning does not establish useful baselines. Avoid mirrors and motion blur.
+3. Aim for roughly 150–250 saved images, then tap **Stop and save**. At most one
+   normal-tracking frame is selected every 0.5 seconds. The stop control always
+   remains available, including when tracking is limited.
+4. **Export completed capture** validates every file before presenting the system
+   folder-copy picker. Copy the entire UUID directory to the Mac by a user-chosen
+   local method. For manual USB retrieval it also appears under this app's
+   Documents/Captures directory in Finder file sharing. Do not upload room images
+   anywhere until the owner has selected the GPU destination and authorized it.
+
+There are hard caps of 400 frames, ten minutes, and 50,000 feature points per
+frame. Hitting a cap preserves files with `limit_reached` or `failed`, which is
+not exportable as successful input. Stop normally before reaching a cap.
+
+Backgrounding, a phone call, AR session interruption, or ARKit relocalization
+ends this capture with `interrupted`; there is no resume or merge in Phase A.
+Start a new UUID capture after returning. A crash leaves the prior directory and
+`recording` manifest intact for diagnosis; the app never treats it as complete.
+The app does not delete previous attempts. These are intentional spike limits,
+not the resumable multi-room behavior required in Phase B.
+
+## Files and coordinate contract
+
+Each capture UUID is one AR world-coordinate epoch:
+
+```
+<session UUID>/
+  manifest.json
+  images/000001.jpg
+  frames/000001.json
+  ...
+```
+
+`manifest.json` has format `rendprop-arkit-capture`, schema version `1`, status,
+session identifier, coordinate conventions, device/OS description, cadence/caps,
+saved byte count, feature-point observation count, skipped-frame counts, and an
+ordered `frames` array of relative JSON sidecar paths. The training adapter must
+require `status == "complete"`; app export additionally requires at least 20
+saved images and one feature-point observation. These are file-validity minima,
+not a reconstruction-quality guarantee. The training adapter separately requires
+at least 100 distinct usable seed points and 5 cm of camera translation, along
+with its strict camera/image checks. The `device_model` also includes the device's
+hardware product identifier from `uname` (for example `iPhone17,3`), not a serial,
+UDID, user-assigned device name, or other persistent personal identifier.
+
+Each sidecar stores `image` relative to the capture root, `session_id`,
+`camera_to_world`, `intrinsics`, `image_resolution` (`width`, `height`),
+`timestamp`, `tracking_state` (`state`, nullable `reason`),
+`raw_feature_points` (`id` decimal string, `position` world XYZ), exposure duration
+in seconds, exposure offset in EV, and world mapping status. Only `.normal`
+tracking frames are admitted; raw feature-point absence is an empty array.
+UInt64 point IDs are strings to avoid JavaScript number precision loss.
+
+The JPEG contains the native sensor raster of `ARFrame.capturedImage`. It is
+never rotated, mirrored, resized, or cropped to match the portrait preview.
+The actual JPEG EXIF orientation is explicitly **1** and checked after encoding.
+Color converts from the captured pixel buffer to sRGB at JPEG quality 0.92.
+There is no original EXIF dictionary copy (which could contain unrelated data).
+Raster width/height must exactly match `ARCamera.imageResolution`, and remain
+constant throughout the capture; the per-frame K remains copied verbatim.
+
+Both matrices are **nested mathematical rows**, serialized as
+`json[row][column] = simdMatrix[column][row]`. `camera_to_world` is the raw
+`ARCamera.transform`: right-handed world coordinates, gravity-aligned Y up,
+metres; native camera X right, Y up, Z backward (visible points lie along -Z).
+There is no transpose, inversion, axis change, pose optimization, world
+recentering, display transform, half-pixel adjustment, or intrinsics scaling in
+capture. A training camera convention change belongs solely in the documented
+adapter. The local SDK describes the intrinsic origin at the upper-left pixel's
+center while Apple's web wording says image top-left; preserving K numerically
+avoids silently imposing an unverified half-pixel correction.
+
+Image, camera, and estimated ARKit feature points are copied from the **same
+ARFrame** before asynchronous disk work. Points are initialization hints; ARKit
+does not promise point-cloud stability or a complete surface model. Pose drift,
+weak texture, blur, rolling shutter, autofocus/calibration behavior, and limited
+point coverage still need to be evaluated on the actual room.
+
+## Memory and write behavior
+
+A serial AR delegate queue only admits a frame if a nonblocking single-slot
+semaphore is available. Disk encoding runs on a separate serial queue. At most
+one captured pixel buffer plus its metadata is retained by the exporter; full
+`ARFrame` objects are never retained. Other candidate frames are counted as busy
+and skipped. Core Image uses one context without intermediate caching; each
+write and each validation pass uses an autorelease pool. The cap bounds stored
+sidecar count and prevents an unbounded capture.
+
+An image is encoded to a unique partial path and validated, then renamed into
+place. The paired sidecar is written atomically next, then the manifest advances
+atomically last. Stopping closes frame admission immediately and waits for the
+single pending write before finalizing status. Storage errors fail closed and
+preserve partial files. Orphan or partial files are diagnostic evidence and are
+never named as successful frames in a final manifest.
+
+## Existing RoomPlan integration findings (no shipping changes)
+
+The shipping `RoomScanController` lives at
+`apps/ios/Rendprop/Screens/FlythroughDetailView.swift:9821`. It owns one
+`RoomCaptureView`, keeps the AR session alive between rooms with
+`stop(pauseARSession: false)` on iOS 17+, then merges with `StructureBuilder`.
+This harness only runs ARKit; it neither subclasses nor replaces that controller.
+
+Apple permits passing an existing `ARSession` to `RoomCaptureSession(arSession:)`
+or `RoomCaptureView(frame:arSession:)` on iOS 17+. A later integration must observe
+that one session rather than create another, coordinate the single AR session
+delegate, and retain the world coordinate space across rooms. Backgrounding and
+relocalization require explicit treatment; continuing the object alone does not
+prove coordinate continuity. No such production integration is part of Phase A.
+
+Primary references checked against Apple's docs and the installed iPhoneOS 26.4 SDK:
+
+- [Native image resolution and sensor orientation](https://developer.apple.com/documentation/arkit/arcamera/imageresolution?language=objc)
+- [ARCamera transform convention](https://developer.apple.com/documentation/arkit/arcamera/transform?changes=__3)
+- [ARCamera intrinsics](https://developer.apple.com/documentation/arkit/arcamera/intrinsics?changes=__5)
+- [Session frame data](https://developer.apple.com/documentation/arkit/arframe)
+- [ARKit interruption behavior](https://developer.apple.com/documentation/arkit/arsessionobserver/sessioninterruptionended(_:))
+- [Do not pause inside interruption callback](https://developer.apple.com/documentation/arkit/arsessionobserver/sessionwasinterrupted(_:))
+- [One AR session across RoomPlan rooms](https://developer.apple.com/documentation/roomplan/scanning-the-rooms-of-a-single-structure)
+- [Core Image contexts and image export](https://developer.apple.com/documentation/coreimage/cicontext)
+
+## Still required for Phase A acceptance
+
+A real room capture and manual transfer; training using the saved poses without
+SfM; PLY and SOG artifacts; and navigation in a physical phone browser. Record
+actual frame count, phone/OS, image bytes, training minutes, GPU model, PLY bytes,
+SOG bytes, and phone browser FPS. Neither this app nor its tests supply or claim
+any of those measurements.
