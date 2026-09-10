@@ -3,15 +3,19 @@
 This standalone, disposable app captures the input for the one-room spatial spike.
 It is **not** part of `apps/ios/Rendprop`, has no production imports, credentials,
 analytics, networking, accounts, purchases, or package dependencies. Its separate
-bundle identifier is `com.rendprop.spatialspike.capture`. Do not add it to the
-shipping project or upload it to App Store Connect.
+bundle identifier is `com.rendprop.spatialspike.capture`. It remains separate from
+the shipping project. TestFlight upload requires an explicit owner choice of
+this target, a matching app record, and coordinated release/signing gates; these
+scripts do not create an app record, sign for distribution, or upload anything.
 
 ## Build and verification
 
 From this directory, run `bash verify.sh --build`. The script asserts that new
 symbols exist, compiles the portable Swift checks, confirms an intentional failing
 assertion exits nonzero, runs the positive and negative checks, and builds an
-unsigned iPhone app with XcodeGen in a unique `/tmp` DerivedData directory. Omit
+unsigned Release iPhone app with XcodeGen in a unique `/tmp` DerivedData directory.
+The built bundle is checked for the intended identifier, minimum OS, ARKit
+capability, app icon, privacy manifest, and absence of source/script resources. Omit
 `--build` for just the checks. No device is installed, launched, or scanned by the
 script. A successful build or synthetic raster test is not a physical room proof.
 
@@ -20,7 +24,51 @@ For a coordinated physical run, generate the standalone project with
 development team and the intended iPhone, and run this separate app. There is no
 provisioning team hardcoded. A real ARKit world-tracking iPhone is necessary;
 LiDAR is not required for this Phase A harness. Do not replace or reinstall the
-shipping Rendprop app. The minimum deployment target is iOS 17.
+shipping Rendprop app. The minimum deployment target is iOS 15.0, matching the
+newest API required by this harness (`UIButton.Configuration`). The target is
+iPhone-only and declares `arm64` and `arkit` required capabilities. Runtime
+`ARWorldTrackingConfiguration.isSupported` is checked **before** asking for
+camera access or allocating an AR renderer. No LiDAR-only API is used.
+
+This is an intended compatibility range, not proof of performance on every older
+iPhone. The currently available simulator runtime is iOS 26.4; minimum-iOS-15
+deployment can be checked by compilation, not by an iOS 15 runtime test here.
+Physical capture, sustained memory/thermal behavior, camera permission handling,
+and export still require a coordinated device run, initially on the owner's
+iPhone 15 Pro through TestFlight. That physical AR validation follows delivery;
+it is not a pre-upload gate. No simulator can supply AR room evidence.
+
+For asserting simulator UI checks, supply a **separately owned disposable**
+simulator UUID to `bash verify-ui.sh <UUID>`. The script builds/tests Release in a
+unique temporary directory and requires exactly three passes, zero failures, and
+zero skips or expected failures, overall `Passed`, and a total of three tests in
+the result bundle. Before trusting results, its checker must reject ten known
+invalid summaries in subprocess tests. It never creates, erases, or shuts down a
+simulator. Tests cover idle controls, unsupported start without a camera prompt
+or AR preview, and relaunch without inventing saved frames. Portable checks cover
+the actual start/stop/save/export control policy, including rejecting restart
+during saving or export validation. Neither set asserts successful physical
+capture or real export; the app contains no mock-completion launch mode.
+
+## Packaging and privacy
+
+The app icon is an unchanged copy of the owned Rendprop
+`apps/ios/Rendprop/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png`.
+No third-party design asset or SDK was added. There are no app entitlements,
+sign-in, associated domains, background capture, or hardcoded signing team.
+
+`Resources/PrivacyInfo.xcprivacy` declares no tracking and no collected data: room
+images, poses, device product identifier, and OS version stay in this app's local
+Documents directory until the operator deliberately exports them. The app makes
+no network request. Export invokes the system document picker; choose a local
+destination unless another transfer destination has been authorized.
+
+The current required-reason API audit found no listed API in app source. Reading
+the app's own JPEG **file size** uses `URLResourceKey.fileSizeKey`; it does not
+read file timestamps, disk capacity, system uptime, or UserDefaults. `Date()` is
+wall-clock time and `uname` records a hardware product type, not a serial or UDID.
+The accessed-API array is therefore empty, not copied from the shipping app.
+Re-audit this declaration whenever storage or timing code changes.
 
 ## One-room operator run
 
@@ -148,6 +196,10 @@ Primary references checked against Apple's docs and the installed iPhoneOS 26.4 
 - [Do not pause inside interruption callback](https://developer.apple.com/documentation/arkit/arsessionobserver/sessionwasinterrupted(_:))
 - [One AR session across RoomPlan rooms](https://developer.apple.com/documentation/roomplan/scanning-the-rooms-of-a-single-structure)
 - [Core Image contexts and image export](https://developer.apple.com/documentation/coreimage/cicontext)
+- [ARKit support and camera permission](https://developer.apple.com/documentation/arkit/verifying-device-support-and-user-permission)
+- [UIKit button configuration introduced with iOS 15](https://developer.apple.com/videos/play/wwdc2021/10064/)
+- [Required-reason API categories](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)
+- [File-size resource key](https://developer.apple.com/documentation/foundation/urlresourcekey/filesizekey)
 
 ## Still required for Phase A acceptance
 

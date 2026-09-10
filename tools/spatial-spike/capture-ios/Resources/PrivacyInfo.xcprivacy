@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- The standalone app stores captures locally. Only the user can copy
+         them through Files/Finder/the document picker. No developer collection,
+         account, analytics, tracking, network client, or third-party SDK exists. -->
+    <key>NSPrivacyTracking</key><false/>
+    <key>NSPrivacyTrackingDomains</key><array/>
+    <key>NSPrivacyCollectedDataTypes</key><array/>
+    <!-- Audited app APIs: URLResourceKey.fileSizeKey, Date(), ARFrame.timestamp,
+         and uname are not Apple's listed required-reason APIs. The app does not
+         call file timestamps/stat, disk capacity, UserDefaults, systemUptime,
+         or mach_absolute_time. Re-audit if those APIs are added. -->
+    <key>NSPrivacyAccessedAPITypes</key><array/>
+</dict>
+</plist>

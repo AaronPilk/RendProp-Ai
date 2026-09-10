@@ -10,6 +10,8 @@
     <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
     <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
     <key>LSRequiresIPhoneOS</key><true/>
+    <key>ITSAppUsesNonExemptEncryption</key><false/>
+    <key>UIRequiredDeviceCapabilities</key><array><string>arm64</string><string>arkit</string></array>
     <key>NSCameraUsageDescription</key><string>Capture a local room dataset for the spatial reconstruction experiment.</string>
     <key>UIFileSharingEnabled</key><true/>
     <key>LSSupportsOpeningDocumentsInPlace</key><true/>

@@ -13,6 +13,30 @@ func check(_ condition: @autoclosure () -> Bool, _ message: String) {
 // Exercise the harness's own failure exit before trusting its positive run.
 if CommandLine.arguments.contains("--force-failure") { check(false, "intentional gate self-test") }
 
+// Pure control-policy regression checks. These exercise button interlocks only;
+// no AR frame, capture directory, or successful room capture is manufactured.
+var controls = CaptureControls()
+check(controls.startEnabled && !controls.stopEnabled && !controls.exportEnabled, "idle controls prevent stop/export")
+check(!controls.beginStop() && !controls.beginExport(), "idle actions cannot claim work")
+check(controls.beginStart() && !controls.beginStart(), "only one permission/start request admitted")
+check(!controls.stopEnabled && !controls.exportEnabled, "permission phase is not a recording")
+controls.startFailed()
+check(controls.startEnabled && !controls.captureStarted(), "denied permission restores start without a late recording")
+check(controls.beginStart() && controls.captureStarted(), "recording follows a prepared start")
+check(controls.stopEnabled && !controls.startEnabled && !controls.exportEnabled, "stop stays available during a capture")
+check(controls.beginStop() && !controls.beginStop(), "stop is admitted once")
+check(!controls.beginStart() && !controls.beginExport(), "saving cannot race a new start/export")
+controls.captureFinished(exportable: false)
+check(controls.startEnabled && !controls.exportEnabled, "interrupted/failed data cannot offer export")
+check(controls.beginStart() && controls.captureStarted(), "a new capture can start after preserved failure")
+// This bool models an existing validator's verdict in a policy unit test only.
+// The application never exposes an API/launch flag to inject that verdict.
+controls.captureFinished(exportable: true)
+check(controls.beginExport(), "export can begin only after a validating verdict")
+check(!controls.beginStart() && !controls.stopEnabled && !controls.exportEnabled, "file validation blocks a racing capture")
+controls.exportChecked(valid: false)
+check(controls.startEnabled && !controls.exportEnabled, "failed revalidation revokes export")
+
 var transform = matrix_identity_float4x4
 transform.columns.3 = SIMD4<Float>(1.25, -2.5, 3.75, 1)
 let rows = CaptureGeometry.rows(transform)
