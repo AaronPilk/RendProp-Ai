@@ -15,6 +15,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  web-client-contracts:
+    name: Web parity inventory and design-token contracts (offline)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Verify inventory, contrast and negative cases
+        run: python3 tools/web-client/verify_foundation.py
+      - name: Prove defective inputs and validator cannot pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          for fault in missing-upload low-contrast no-op-validator; do
+            set +e
+            python3 tools/web-client/verify_foundation.py --inject-fault "$fault"
+            status=$?
+            set -e
+            if [ "$status" -ne 1 ]; then
+              echo "FAIL: negative control $fault exited $status, expected 1"
+              exit 1
+            fi
+          done
+
   worker-edge:
     name: Cloudflare Worker (tour-host)
     runs-on: ubuntu-latest
