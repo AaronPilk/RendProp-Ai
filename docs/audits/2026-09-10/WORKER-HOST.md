@@ -1,12 +1,13 @@
 # Render worker and public hosting — independent regression audit
 
 2026-09-10. Base source: `de4b0b1cfd5475b3439350bd21ede9c28cfc7d33`.
-Isolated branch: `audit/worker-host-20260910`.
+Original isolated branch: `audit/worker-host-20260910`; follow-up reliability branch:
+`fix/worker-fallback-lease-20260910`, based on `e388f019662f7e83efede3d432b8d60a36075c41`.
 Worktree: `/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910`.
 
 ## Outcome and scope
 
-**Not a full-backend GO.** The hosting bundle builds and its existing assertions pass. A real reaper race is fixed locally with failing-before/passing-after evidence. Stale-worker publishing, Stream fallback buffering, revocation caching, and durable cleanup still require work. No deployment was performed. These edits are not in the owner's installed build 18.
+**Not a full-backend GO.** The hosting bundle builds and its existing assertions pass. The reaper race, oversized Stream multipart fallback, and transient lease-probe degradation are fixed locally with failing-before/passing-after evidence. Stale-worker publishing, revocation caching, and durable cleanup still require work. No deployment was performed. These edits are not in the owner's installed build 18.
 
 Read the standing brief completely. Cloudflare, Workers best-practices, Wrangler and Supabase skills guided config/reference retrieval, isolated local verification and the reaper compare-and-set change. No protected motion text, AI route, Apple state, provider settings or production data changed. No camera simulator test was attempted.
 
@@ -46,6 +47,21 @@ Thus **140 pre-existing explicit checks + 10 new unittest cases passed**, with n
 
 Before testing edits, `rg` confirmed `selected ownership snapshot`, `test_heartbeat_renewal_wins_before_patch`, `unavailable`, and `prerequisites` in the actual files. `git diff --check` passed.
 
+### Follow-up reliability unit — executed after the original audit
+
+No dependencies were installed or changed for this follow-up. It reuses the isolated Python 3.14 virtualenv. Tests run as separate subprocesses with only an allowlisted PATH, empty isolated HOME, `PYTHONDONTWRITEBYTECODE=1`, `AWS_EC2_METADATA_DISABLED=true`, and CI flag. Neither worker nor pipeline `.env` is present in this worktree. New tests intercept every request and forbid `Session.send`; existing DB suites use only their loopback fake server.
+
+| Command from `services/worker` | Before fix | After fix |
+|---|---|---|
+| `.venv/bin/python tests/test_stream_fallback.py` | **Exit 1: 12 tests, 9 failures** | **Exit 0: 12 passed, 0 skips** |
+| `.venv/bin/python tests/test_lease_probe_fail_closed.py` | **Exit 1: 10 tests, 8 failures** | **Exit 0: 10 passed, 0 skips** |
+
+Logs: `stream-fallback-before.log`, `stream-fallback-after.log`, `lease-probe-before.log`, `lease-probe-after.log` in the evidence directory above. The Stream harness was corrected before accepting its negative control: a process-global fake `os.stat` broke traceback loading; the committed harness mocks only `stream.os`, so the recorded nine failures are actual assertions about the original production behavior, not harness exceptions.
+
+`.venv/bin/python /tmp/rendprop-worker-host-audit.VukmCV/run_worker_reliability.py` then reran **nine suites**, exited 0, and asserted exact counts and zero skips: `test_job_lease` 75 checks, `test_process_specific` 17, `test_cost_spool` 23, `test_r2_timeouts` 6, `test_resource_limits` 19, `test_reaper_snapshot` 6 unittest cases, `test_verification_prerequisites` 4, `test_stream_fallback` 12, and `test_lease_probe_fail_closed` 10. Total: **140 existing explicit checks + 32 unittest cases** (22 added in this follow-up). Receipt: `worker-reliability-results.json`; individual logs use `reliability-<suite>.log`.
+
+These changes do not claim a fresh host run, a real Stream upload, an actual R2 delivery, production lease configuration, a Linux container run, or HDR coverage. The existing zscale prerequisite gap remains. Source references in the original findings below describe the original audited snapshot unless explicitly labelled follow-up; follow-up fixes carry their current lines.
+
 ## Fixed locally
 
 ### WH-01 — P1: reaper could kill a renewed live job
@@ -70,7 +86,7 @@ Before testing edits, `rg` confirmed `selected ownership snapshot`, `test_heartb
 
 `services/worker/tests/test_verification_prerequisites.py:14` covers missing HDR binaries, both resource prerequisite failures, empty stats and failed stats. The production HDR fallback itself is **not** changed or certified by this test fix.
 
-## Remaining issues, ranked, with concrete reproductions and repair contracts
+## Ranked findings, current status, concrete reproductions and repair contracts
 
 ### WH-03 — P1: a stale worker can still replace a newer worker's published media
 
@@ -103,7 +119,7 @@ end if;
 
 Acceptance: actual two-worker barrier race at publish; losing attempt updates **zero** render/listing/photo rows, makes no additional paid calls, leaves winner's bytes/hash/slug unchanged, and persists cleanup for its own unused attempt artifacts. Also test repeated WORKER_ID values across restarts; attempt identity must be fenced, not only a process name.
 
-### WH-04 — P1: Stream fallback buffers an entire potentially multi-GB render
+### WH-04 — P1: oversized Stream fallback — FIXED LOCALLY, not deployed
 
 `services/worker/stream.py:92` uses Requests `files=...`; `services/worker/worker.py:268` automatically calls it if copy-by-URL fails. Requests prepares the multipart body by reading the file into memory. The output ceiling is 8 GiB (`services/worker/ffmpeg_render.py:174`) and there is no direct-upload size guard. A transient Stream copy failure can therefore turn an otherwise completed tour into an OOM/retry loop.
 
@@ -111,16 +127,23 @@ Acceptance: actual two-worker barrier race at publish; losing attempt updates **
 
 The endpoint itself only documents basic form uploads for files **smaller than 200 MB**; larger uploads need tus. [Cloudflare basic uploads](https://developers.cloudflare.com/stream/uploading-videos/upload-video-file/).
 
-**Repair:** first guard basic-upload size before `open()` and before constructing `files`, falling back to the already-uploaded R2 MP4 with an explicit diagnostic; implement bounded resumable tus separately. A conservative interim body could be:
+**Implemented follow-up:** `services/worker/stream.py:40` sets an explicit 16 MiB **source-payload** limit. `:93` refuses non-regular/empty/oversized inputs; `:111` checks before opening, `:113` checks the opened descriptor, and `:118` reads at most the budget plus one sentinel byte. `:119` rejects a changed size instead of truncating; `:123` passes only the checked bytes to Requests, never an unbounded file handle. Local file errors become `StreamError`. The essential safety boundary is:
 
 ```python
-MAX_BUFFERED_STREAM_BYTES = 16 * 1024 * 1024  # explicit worker memory budget
-size = os.path.getsize(file_path)
-if size <= 0 or size > MAX_BUFFERED_STREAM_BYTES:
-    raise StreamError("basic Stream fallback exceeds its memory budget; use R2 playback or tus")
+MAX_BUFFERED_STREAM_BYTES = 16 * 1024 * 1024
+_check_buffered_source(os.stat(file_path))
+with open(file_path, "rb") as fh:
+    opened = os.fstat(fh.fileno())
+    _check_buffered_source(opened)
+    payload = fh.read(MAX_BUFFERED_STREAM_BYTES + 1)
+if not payload or len(payload) > MAX_BUFFERED_STREAM_BYTES or len(payload) != opened.st_size:
+    raise StreamError("Stream fallback file changed during read; continuing with R2 playback")
+# Send only this checked payload, not fh, through Requests' multipart encoder.
 ```
 
-That 16 MiB value is a proposed safety budget, **not** a provider limit or implemented policy. Tests must ensure an over-cap synthetic stat never opens/reads the file and the worker still publishes R2 playback. Tus needs offset reconciliation, cancellation, per-job deadline, and orphan persistence.
+**Proof:** `services/worker/tests/test_stream_fallback.py:78` covers oversized and empty inputs with zero opens/reads/requests, regular-file checks, stat failure, exact-cap success, growth before opening/during read, empty-after-open failure, and missing UID. It prepares the real Requests multipart body for synthetic small files but forbids sending it. Tests at `:139` and `:149` call actual `worker._register_stream`: after a simulated copy-from-URL failure, an oversized fallback returns no Stream UID and leaves the existing R2-only publication path intact; a normal small fallback returns its fixture UID. Twelve tests, nine failing before, all passing after.
+
+**Remaining limits:** 16 MiB is now implemented local payload policy, not the provider limit and **not a process-RSS ceiling**: Requests makes additional bounded multipart copies. R2 URL-copy stays the primary path; it is not size-limited by this fallback guard. Large uploads can still play from R2. Resumable tus remains unimplemented and needs offset reconciliation, cancellation, deadline and orphan persistence. The earlier diagnostic `reproduce_stream_buffering.py` still intentionally fails its library-streaming invariant: Requests did not become streaming; the production caller no longer hands it an unbounded file.
 
 ### WH-05 — P1 against an immediate-revocation promise: edge/browser HTML survives revocation
 
@@ -149,11 +172,17 @@ The old claim that ffmpeg has no timeouts is false now. Probe/poster timeouts an
 
 Repair: encoded-byte/disk-free watchdog during encode, verified total source limit on transfer, explicit CPU/memory/concurrency budgets in deployment, per-attempt scratch IDs, and live lease check before abandoned-directory cleanup. Preserve the successful existing timeout and abort tests.
 
-### WH-08 — P2: transient lease discovery failure can still claim without a lease
+### WH-08 — P2: transient lease discovery degradation — FIXED LOCALLY, not deployed
 
 `services/worker/db.py:214` returns false on a transient schema probe failure; `_claim_values` at `:228` omits lease/owner/attempt fields whenever false. A successful queued-job SELECT, failed metadata probe, successful PATCH can therefore claim a job without ownership stamps. A subsequent successful probe can make that job appear not-owned immediately, or leave it unreclaimable if lease is null. This is distinct from the correctly implemented fresh claim CAS.
 
-Repair: before accepting any production job require confirmed lease schema. A transient probe raises a retryable error and prevents claim. Remove or explicitly opt in to legacy no-lease mode; never degrade into it on a transport failure. Acceptance: mock probe 503 followed by healthy PATCH and assert PATCH is never attempted, then retry successfully after probe recovers. Static finding; this particular branch was not dynamically reproduced in this pass.
+**Implemented follow-up:** `services/worker/db.py:46` retains structured HTTP status, PostgREST code and API message on `DBError`; `:94` captures these from error responses. `lease_supported` at `:212` distinguishes a confirmed missing lease column from unknown support. Only HTTP 400 + `42703`/`PGRST204` + a lease-column name in the actual API message permits the existing documented legacy compatibility. Do not search the whole exception string: its URL already names every lease column even when the error is about an unrelated missing `id`.
+
+Other failures raise `LeaseProbeUnavailable`, a retryable `DBError` (`db.py:54`, `:242`), without caching false. `_claim_values` cannot return and therefore the claim PATCH is never sent. The poll loop retries normally (`worker.py:686`); one-shot/webhook CLI modes propagate a nonzero error to their caller rather than reporting a successful claim. Reaper discovery remains inside its advisory DB-error handler.
+
+**Proof:** `services/worker/tests/test_lease_probe_fail_closed.py:56` exercises the actual claim and transport-error mapping. Timeout, connection reset, 503, misleading 503/missing-column text, malformed-query `PGRST100`, permission failure, missing unrelated column, and unstructured error text all leave the job queued, cache unset and **zero PATCH requests**. Every case then changes the probe to healthy, retries, and asserts exactly one claim with worker ID, deadline and incremented attempt. Two explicit legacy-schema cases remain compatible. Ten tests, eight failing before, all passing after.
+
+**Manual gate / remaining contract:** confirmed pre-0015 legacy databases still intentionally have no stuck-job recovery, as the standing worker contract and existing tests require. This unit does not prove migration 0015 is deployed. Production must have the lease schema; an operator deliberately running a legacy database is not covered by a recovery guarantee. It does not fix WH-03 publication fencing or require a SQL change.
 
 ### WH-09 — P2: dependency pinning is only partial, and runtime advisories are not dev-only
 

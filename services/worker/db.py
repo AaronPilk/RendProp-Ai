@@ -29,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import os
+import re
 import socket
 import sys
 import time
@@ -41,6 +42,17 @@ from slugs import new_slug
 
 class DBError(RuntimeError):
     """Any Supabase/PostgREST failure (HTTP status or network transport)."""
+
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 code: str | None = None, api_message: str = ""):
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.api_message = api_message
+
+
+class LeaseProbeUnavailable(DBError):
+    """Retryable: ownership schema is unknown, so no claim may be written."""
 
 
 class JobNotOwned(RuntimeError):
@@ -81,8 +93,15 @@ def _headers(prefer: str | None = None) -> dict:
 
 def _check(resp: requests.Response) -> None:
     if not resp.ok:
+        try:
+            error = resp.json()
+        except ValueError:
+            error = {}
+        if not isinstance(error, dict):
+            error = {}
         raise DBError(f"PostgREST HTTP {resp.status_code} {resp.request.method} "
-                      f"{resp.url}: {resp.text[:600]}")
+                      f"{resp.url}: {resp.text[:600]}", status_code=resp.status_code,
+                      code=error.get("code"), api_message=error.get("message") or "")
 
 
 def _json(resp: requests.Response):
@@ -193,9 +212,9 @@ def _looks_like_duplicate_key(err: Exception) -> bool:
 def lease_supported() -> bool:
     """Probe ONCE whether migration 0015's lease columns exist.
 
-    A definite schema error latches the answer to False; a transient network or
-    5xx failure does NOT (that would silently disable stuck-job recovery for the
-    life of the process because Supabase blinked at startup).
+    Only an explicit missing lease-column error retains the documented legacy
+    mode. An unknown schema raises a retryable DBError, without latching False:
+    a successful PATCH after a failed probe must never claim without a lease.
     """
     global _LEASE_SUPPORTED
     if _LEASE_SUPPORTED is not None:
@@ -206,14 +225,21 @@ def lease_supported() -> bool:
         print(f"    · job lease active: {LEASE_SECONDS}s, heartbeat {HEARTBEAT_SECONDS}s, "
               f"max {MAX_JOB_ATTEMPTS} attempts, worker_id={WORKER_ID}")
     except DBError as e:
-        if _looks_like_missing_column(e):
+        # Inspect structured response evidence, not the whole exception text:
+        # its URL always names the lease columns, even when the actual error
+        # is a 503, denied permission, malformed query, or missing unrelated id.
+        missing_lease_column = (e.status_code == 400 and e.code in ("42703", "PGRST204")
+                                and isinstance(e.api_message, str)
+                                and re.search(r"\b(lease_expires_at|attempts|worker_id)\b", e.api_message))
+        if missing_lease_column:
             _LEASE_SUPPORTED = False
             print("    ⚠ render_jobs has no lease_expires_at/attempts/worker_id "
                   "(migration 0015 not applied) — NO stuck-job recovery: a worker that "
                   "dies mid-render leaves its job 'processing' forever. See HANDOFF.md.")
         else:
-            print(f"    ⚠ could not probe for lease columns ({e}); will retry next claim")
-            return False           # not latched — try again next time
+            # The poll loop already retries DB errors. --once/--job-id must
+            # exit non-zero so their caller can retry, not report work claimed.
+            raise LeaseProbeUnavailable("Could not confirm job lease schema; retry claim without changing the job") from e
     return bool(_LEASE_SUPPORTED)
 
 
@@ -335,9 +361,9 @@ def reap_stale_jobs(limit: int = 20) -> int:
     Jobs still under the attempt ceiling are left alone: `claim_next_job`
     reclaims them. Returns how many were marked failed. Never raises.
     """
-    if not lease_supported():
-        return 0
     try:
+        if not lease_supported():
+            return 0
         rows = select("render_jobs",
                       {"status": "eq.processing", "lease_expires_at": f"lt.{now_iso()}",
                        "attempts": f"gte.{MAX_JOB_ATTEMPTS}",

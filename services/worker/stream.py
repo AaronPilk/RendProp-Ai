@@ -23,6 +23,8 @@ transcoding in the background. Default is non-blocking (publish fast).
 
 from __future__ import annotations
 
+import os
+import stat
 import time
 
 import requests
@@ -30,6 +32,12 @@ import requests
 from settings import SETTINGS
 
 _API = "https://api.cloudflare.com/client/v4"
+
+# Requests eagerly builds multipart bodies in memory; this is a source-payload
+# budget, not a process-RSS ceiling (the encoder also makes bounded copies).
+# A failed optional Stream copy must not OOM a multi-GB tour already safe in R2.
+# Larger files keep R2 playback until a separately tested tus path exists.
+MAX_BUFFERED_STREAM_BYTES = 16 * 1024 * 1024
 
 
 class StreamError(RuntimeError):
@@ -82,16 +90,38 @@ def copy_from_url(source_url: str, name: str | None = None, meta: dict | None = 
     return uid
 
 
+def _check_buffered_source(info: os.stat_result) -> None:
+    if not stat.S_ISREG(info.st_mode):
+        raise StreamError("Stream basic fallback requires a regular file; continuing with R2 playback")
+    if info.st_size <= 0 or info.st_size > MAX_BUFFERED_STREAM_BYTES:
+        raise StreamError(
+            f"Stream basic fallback size {info.st_size} bytes is outside 1..{MAX_BUFFERED_STREAM_BYTES}; "
+            "continuing with R2 playback (larger Stream uploads require resumable tus)"
+        )
+
+
 def direct_upload(file_path: str, name: str | None = None) -> str:
     """Fallback: push the file bytes straight to Stream (multipart). Returns UID.
 
-    Use when the copy source isn't reachable by Cloudflare. Fine for the worker's
-    ~1280p proxies; very large files should prefer the tus resumable endpoint
-    (TODO) — see https://developers.cloudflare.com/stream/uploading-videos/ .
+    Only small, non-empty files fit the explicit 16 MiB source-payload budget.
+    This is a local memory policy, not Cloudflare's basic-upload size limit.
+    The caller treats StreamError as optional and keeps the uploaded R2 MP4.
     """
-    with open(file_path, "rb") as fh:
-        files = {"file": (name or "tour.mp4", fh, "video/mp4")}
-        r = _request("POST", _base(), headers=_headers(), files=files, timeout=SETTINGS.stream_timeout_s)
+    try:
+        _check_buffered_source(os.stat(file_path))  # Reject oversized/empty inputs before opening.
+        with open(file_path, "rb") as fh:
+            opened = os.fstat(fh.fileno())
+            _check_buffered_source(opened)
+            # The file can change after stat. Never let Requests call an
+            # unbounded fh.read(): snapshot at most budget + one sentinel byte,
+            # then refuse changed/truncated data rather than upload a prefix.
+            payload = fh.read(MAX_BUFFERED_STREAM_BYTES + 1)
+        if not payload or len(payload) > MAX_BUFFERED_STREAM_BYTES or len(payload) != opened.st_size:
+            raise StreamError("Stream fallback file changed during read; continuing with R2 playback")
+    except OSError as e:
+        raise StreamError(f"Stream fallback file unavailable ({type(e).__name__}); continuing with R2 playback") from e
+    files = {"file": (name or "tour.mp4", payload, "video/mp4")}
+    r = _request("POST", _base(), headers=_headers(), files=files, timeout=SETTINGS.stream_timeout_s)
     result = _unwrap(r)
     uid = result.get("uid")
     if not uid:
