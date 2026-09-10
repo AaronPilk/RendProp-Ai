@@ -15,6 +15,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  audit-harnesses:
+    name: Offline audit evidence and consent source gates
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+      - name: Database runner control-flow (mocked, no database)
+        run: python3 tools/audit/test_database_runner.py
+      - name: Invariant source registration contracts
+        run: python3 tools/audit/test_database_invariant_sources.py
+      - name: Consent selector contracts (not a UI runtime test)
+        run: node --test tests/phase1/consent-contract.test.mjs
+
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
     runs-on: ubuntu-latest

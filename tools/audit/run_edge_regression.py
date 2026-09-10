@@ -37,6 +37,11 @@ def summary_counts(output):
 
 def main():
     root = Path(__file__).resolve().parents[2]
+    def clean_source():
+        require(not subprocess.check_output(["git", "status", "--porcelain"], cwd=root, text=True).strip(),
+                "Checkpoint clean source before collecting an edge receipt")
+        return subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
+    source = clean_source()
     functions = root / "services/supabase/functions"
     deno = shutil.which("deno")
     require(deno is not None, "Deno must already be installed")
@@ -48,12 +53,18 @@ def main():
         "NO_COLOR": "1", "DENO_NO_PROMPT": "1",
     }
     out = Path(tempfile.mkdtemp(prefix="rendprop-edge-audit-", dir="/tmp"))
-    source = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=root, text=True).strip()
     tests = sorted(p for p in functions.rglob("*.ts") if p.name.endswith((".test.ts", "_test.ts")))
     entrypoints = sorted(p for p in functions.glob("*/index.ts") if p.parent.name != "_shared")
     require(tests and entrypoints, "Missing real tests or route entrypoints")
-    manifest = {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
-                for p in sorted(set(tests + entrypoints))}
+    def source_manifest():
+        # Tests and entrypoints alone omit the shared adapters being repaired.
+        # Bind all first-party edge code and SQL fixtures, not only test names.
+        paths = set(functions.rglob("*.ts")) | set((root / "services/supabase").glob("*/*.sql"))
+        paths.add(Path(__file__).resolve())
+        paths.update(functions.glob("deno.*"))
+        return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
+                for p in sorted(paths) if p.is_file()}
+    manifest = source_manifest()
     common = ["--no-config", "--no-lock", "--cached-only", "--node-modules-dir=manual"]
     permissions = ["--deny-net", "--deny-run", "--deny-write", "--allow-env",
                    f"--allow-read={root}", "--no-prompt"]
@@ -122,14 +133,16 @@ def main():
     negative["ignoredTests"] = negative_ignored
     negative["accepted"] = negative["exit"] == 1 and negative_failed > 0 and negative_ignored == 0
     print(f"negative-turnstile: exit={negative['exit']}, detected={negative['accepted']}", flush=True)
+    unchanged = source_manifest() == manifest and clean_source() == source
     report = {
         "sourceCommit": source, "denoVersion": info["denoVersion"],
         "environment": "cleared; PATH, discovered DENO_DIR, NO_COLOR and DENO_NO_PROMPT only",
         "sourceManifestSHA256": hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
         "sourceFiles": manifest, "unit": unit, "entrypointChecks": checks,
         "negativeControl": negative, "runtimeNetworkPermitted": False,
+        "sourceUnchanged": unchanged,
         "liveRoutesTested": 0, "productionMutations": 0,
-        "passed": unit["accepted"] and all(c["exit"] == 0 for c in checks) and negative["accepted"],
+        "passed": unchanged and unit["accepted"] and all(c["exit"] == 0 for c in checks) and negative["accepted"],
     }
     (out / "receipt.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Retained evidence:", out / "receipt.json", flush=True)

@@ -185,3 +185,12 @@ Deno.test("Responses judge still accepts a completed JSON verdict", async () => 
     );
   });
 });
+
+for (const body of [null, false, 7, "not an envelope"]) {
+  Deno.test(`Responses rejects non-object envelope ${JSON.stringify(body)}`, async () => {
+    await withResponse(body, async () => {
+      const error = await assertRejects(() => openaiChat("fixture-model", INPUT), ProviderError);
+      assertEquals(error.error_class, "upstream");
+    });
+  });
+}
