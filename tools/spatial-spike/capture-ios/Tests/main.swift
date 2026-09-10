@@ -101,6 +101,22 @@ do {
     malformed = decoded
     malformed.image = "../outside.jpg"
     check((try? malformed.validate(expectedSession: sid)) == nil, "reject path traversal")
+    // Positive bound check for the real recorder's maximum point count, using
+    // UInt64-width IDs and extreme finite Float coordinates (not room evidence).
+    let extreme = Double(Float.greatestFiniteMagnitude)
+    let maximumCloud = (0..<50_000).map {
+        FeaturePoint(id: String(UInt64.max - UInt64($0)), position: [extreme, -extreme, extreme])
+    }
+    let maximumRecord = FrameRecord(session_id: sid, image: frame.image,
+        camera_to_world: frame.camera_to_world, intrinsics: frame.intrinsics, image_resolution: frame.image_resolution,
+        timestamp: frame.timestamp, tracking_state: frame.tracking_state, raw_feature_points: maximumCloud,
+        exposure_duration_seconds: frame.exposure_duration_seconds, exposure_offset_ev: frame.exposure_offset_ev,
+        world_mapping_status: frame.world_mapping_status)
+    let maximumEncoded = try JSONEncoder().encode(maximumRecord)
+    check(maximumEncoded.count < NativeRasterWriter.maximumSidecarBytes, "bounded read admits maximum 50,000-point recorder output")
+    let maximumDecoded = try JSONDecoder().decode(FrameRecord.self, from: maximumEncoded)
+    try maximumDecoded.validate(expectedSession: sid)
+    check(maximumDecoded.raw_feature_points.count == 50_000, "maximum point cloud survives exact JSON round trip")
     var policy = FrameCadence()
     check(policy.accept(timestamp: 1, normalTracking: true), "first normal frame selected")
     check(!policy.accept(timestamp: 1.1, normalTracking: true), "cadence refuses duplicate near frame")

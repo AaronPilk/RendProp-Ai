@@ -17,7 +17,7 @@ struct CaptureArchivePage {
 // summaries, never all manifests/images or an unbounded list of capture folders.
 struct CaptureArchive {
     static let pageSize = 50
-    static let maximumManifestBytes = 256 * 1024
+    static let maximumManifestBytes = NativeRasterWriter.maximumManifestBytes
     let root: URL
 
     static func local() throws -> CaptureArchive {
@@ -69,16 +69,7 @@ struct CaptureArchive {
 
     func manifest(id: String) throws -> CaptureManifest {
         let url = try captureURL(id: id).appendingPathComponent("manifest.json")
-        let properties = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        guard properties.isRegularFile == true, properties.isSymbolicLink != true else {
-            throw CaptureError.invalid("Saved manifest is not a regular local file.")
-        }
-        let handle = try FileHandle(forReadingFrom: url)
-        defer { try? handle.close() }
-        let bytes = try handle.read(upToCount: Self.maximumManifestBytes + 1) ?? Data()
-        guard bytes.count <= Self.maximumManifestBytes else {
-            throw CaptureError.invalid("Saved manifest exceeds the 256 KiB safety limit; files preserved.")
-        }
+        let bytes = try NativeRasterWriter.boundedJSONData(at: url, maximumBytes: Self.maximumManifestBytes)
         let manifest = try JSONDecoder().decode(CaptureManifest.self, from: bytes)
         guard manifest.format == "rendprop-arkit-capture", manifest.schema_version == 1,
               manifest.session_id.caseInsensitiveCompare(id) == .orderedSame,

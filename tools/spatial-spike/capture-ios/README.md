@@ -48,6 +48,15 @@ reported as an empty archive. Selecting any attempt re-reads its manifest and
 validates all JPEGs/sidecars before export; incomplete or corrupt attempts cannot
 be exported as completed captures. There is no erase action or network request.
 
+Export also requires the exact declared file set: `manifest.json`, `images/`,
+`frames/`, and their contiguous frame files. Symlinks, extra/orphan files (including
+desktop-added metadata), missing files, and unexpected directories prevent export;
+they are preserved, never deleted or silently excluded. Manifest reads are bounded
+to 256 KiB and sidecars to 16 MiB before JSON decoding. The sidecar bound is tested
+with the recorder's maximum 50,000 points, full-width IDs, and finite Float extremes.
+These are static saved-file integrity checks, not an atomic snapshot or a security
+guarantee against another process mutating files between validation and copying.
+
 The Captures parent directory is excluded from backups before any capture files
 are written. The flag is re-applied and read back when existing captures are
 listed or exported; failure prevents capture/export instead of silently relaxing
