@@ -16,7 +16,7 @@ export interface Env {
    *  all call sites default to "". The public functions are --no-verify-jwt,
    *  so requests still pass without it. */
   SUPABASE_ANON_KEY?: string;
-  /** Optional: edge cache TTL (seconds) for published tour/portfolio HTML. */
+  /** Optional: edge cache TTL (seconds) for synthetic demo tours only. */
   TOUR_CACHE_TTL?: string;
   /** Optional Cloudflare Turnstile SITE key (public). When set, the tour lead
    *  form renders the Turnstile widget; the leads function verifies the token

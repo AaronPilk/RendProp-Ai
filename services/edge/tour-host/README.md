@@ -9,7 +9,8 @@ Serves Rendprop's **public** pages at the edge:
 | `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
 
 Each request is server-rendered to a **self-contained HTML page** (no build step, no
-client framework) and cached at the edge with a short TTL. The player is a port of the
+client framework). Customer pages check upstream on every request and return
+`Cache-Control: no-store`; only synthetic demo HTML remains cacheable. The player is a port of the
 proven iOS webview player (`apps/ios/Rendprop/Resources/player/index.html`) — same
 rAF-lerp scrub loop, buffer gate, chapter rail, room label, jank watchdog and autoplay
 fallback — adapted to stream its video instead of bundling a demo file.
@@ -163,7 +164,7 @@ every branded tour page carries a canonical link to its `share_url`.
 |---|---|
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check:unbranded` | the MLS-safe `/u/<slug>` page: no sentinel, no branding, no form, no external link, and the required property content + AI disclosure still present. Also asserts the promo/indexing defaults from F-H-17/F-H-19 |
-| `npm run check:routes` | malformed paths (`/f/%`) answer with a branded 404 not a 500, the global error boundary, `/u/` failing unbranded, HSTS, and the ordinary routes |
+| `npm run check:routes` | malformed paths (`/f/%`) answer with a branded 404 not a 500, the global error boundary, `/u/` failing unbranded, HSTS, customer revocation despite primed old caches, synthetic demo caching, and ordinary routes |
 | `npm test` | both of the above |
 | `npm run check:assets` | the demo media that is deliberately not in git is present and under the 25 MiB Static Assets cap (run via `npm run predeploy`) |
 
@@ -173,7 +174,7 @@ every branded tour page carries a canonical link to its `share_url`.
 |---|---|---|
 | `SUPABASE_FUNCTIONS_URL` | `[vars]` | e.g. `https://<ref>.supabase.co/functions/v1` (no trailing slash needed) |
 | `SUPABASE_ANON_KEY` | `[vars]` **or** `wrangler secret put` | public anon/publishable key; used as `apikey`/Bearer for the server read + browser lead/beacon |
-| `TOUR_CACHE_TTL` | `[vars]` (optional) | edge cache seconds for rendered HTML; `0` disables; default `60` |
+| `TOUR_CACHE_TTL` | `[vars]` (optional) | edge cache seconds for synthetic demo tour HTML only; `0` disables new demo writes; default `60`; customer HTML always bypasses caching |
 
 The upstream `tours`/`leads`/`beacon`/`portfolio` functions must be deployed **`--no-verify-jwt`** (they are, per `services/supabase/deploy-functions.sh`) so these anon-key calls pass the gateway.
 
@@ -193,11 +194,24 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
 
 ## Caching & errors
 
-- Published HTML is cached in the **Cache API** (`caches.default`) under a query-independent
-  key (`/f/:slug`, `/a/:handle`) with `Cache-Control: public, max-age=<ttl>, s-maxage=<ttl>`.
-  Republishing a tour is visible after at most `TOUR_CACHE_TTL` seconds.
-- Unknown/invalid slug or upstream `404` → branded **404** page (short-cached).
-- Upstream network/5xx → **502** page (`no-store`).
+- Customer `/f/:slug`, `/u/:slug` and `/a/:handle` HTML bypasses **all Cache API reads
+  and writes**, including entries written by an older deployment. Each request reaching
+  this Worker checks upstream and returns `Cache-Control: no-store`, so a stale edge
+  page cannot override the upstream publication state.
+- Explicit synthetic demo tour slugs (`estate-demo`, `demo`) retain their existing
+  Cache API keys, embed variants and `public, max-age=<ttl>, s-maxage=<ttl>` policy.
+  Fictional portfolio handles (`meridian`, `demo`) keep `public, max-age=300`.
+- Unknown/invalid customer slug or upstream `404` → branded **404** page with
+  `no-store`; `/u/` keeps its neutral MLS-safe notice instead of branded content.
+- Tour upstream network/5xx → **502** page (`no-store`). Portfolio failures still
+  collapse to the existing branded **404**, now `no-store`; fixing that status
+  classification is the separate WH-10 audit item.
+- This is not retroactive erasure: browser/intermediary HTML cached before rollout
+  can remain until its old freshness period expires, and already-open pages,
+  downloads, search-engine copies and previously issued media URLs are not revoked
+  by this change. Deployment cache rules, upstream publication enforcement and media
+  access policy need separate validation. No cache purge is required for the Worker's
+  own customer cache bypass to work, and none was performed by this patch.
 - `HEAD` is served (headers only); non-`GET`/`HEAD` → `405`.
 - Security headers on every HTML response: `nosniff`, `Referrer-Policy`, and a CSP that
   allows inline styles/scripts (the player engine), hls.js from cdnjs, `blob:` media/workers
