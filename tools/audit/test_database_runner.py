@@ -112,11 +112,15 @@ class RunnerCase(unittest.TestCase):
             elif sqlfile in ('worker_publish_transaction.sql', 'negative_upload_publication.sql'):
                 count = publication_counts.get(sqlfile, 0) + 1
                 publication_counts[sqlfile] = count
-                marker = ('WORKER_PUBLISH_TRANSACTION_PASS_20' if sqlfile.startswith('worker') else
+                marker = ('WORKER_PUBLISH_TRANSACTION_PASS_22' if sqlfile.startswith('worker') else
                           'PASS: 19 upload publication trigger checks; all synthetic mutations rolled back.')
                 reason = ('stale A accepted' if sqlfile.startswith('worker') else
                           'Missing publication rejection: completed: uploaded = false')
-                if count == 2:
+                if sqlfile.startswith('worker') and count == 4:
+                    reason = 'photo capture accepted as raw video'
+                elif sqlfile.startswith('worker') and count == 6:
+                    reason = 'noncanonical scalar accepted:'
+                if count == 2 or (sqlfile.startswith('worker') and count in (4, 6)):
                     output, rc = scenario.get('publication_negative', (reason, 3))
                 else:
                     output, rc = scenario.get('publication_positive', (marker, 0))
@@ -128,7 +132,10 @@ class RunnerCase(unittest.TestCase):
                     (case / 'cluster/postmaster.pid').write_text('synthetic-not-a-real-pid\n')
                 rc = scenario.get('stop_exit', 0)
             elif kwargs.get('input') is not None:
-                self.assertEqual(kwargs['input'].count('deliberate isolated ownership mutant'), 2)
+                if 'deliberate isolated ownership mutant' in kwargs['input']:
+                    self.assertEqual(kwargs['input'].count('deliberate isolated ownership mutant'), 2)
+                else:
+                    self.assertRegex(kwargs['input'], r'-- deliberate isolated worker-(video|scalars) mutant')
             elif (command[0].endswith('/initdb') or command[0].endswith('/createdb')
                   or command[-1] == 'start' or sqlfile is not None or '-c' in command):
                 pass  # synthetic migration/create/update acknowledgements only
