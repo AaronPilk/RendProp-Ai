@@ -192,8 +192,11 @@ begin
       and l.status='draft' from public.render_jobs j join public.listings l on l.id=j.listing_id where j.id=v_job),
     'photo raw capture cannot publish video output or readiness');
   select job into v_job from _wp_inputs where n=11;
+  -- Start with a value whose rounded result passes chk_renders_duration. The
+  -- removed-precision-guard negative control must expose acceptance, not fail
+  -- first on the existing constraint which already rejects 0.004 -> 0.00.
   for v_patch in select value from jsonb_array_elements('[
-    {"duration_s":0.004}, {"duration_s":30.001}, {"speed_factor":2.004},
+    {"duration_s":30.001}, {"duration_s":0.004}, {"speed_factor":2.004},
     {"duration_s":"30"}, {"speed_factor":"2"}, {"duration_s":true}
   ]'::jsonb) loop
     begin perform pg_temp.wp_call(11,'worker-B',2,v_patch); raise exception 'noncanonical scalar accepted: %',v_patch;
