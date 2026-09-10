@@ -6,7 +6,45 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
-### Current integration checkpoint
+### Current integration checkpoint — approximately 19:30 Eastern
+
+Current combined-source edge receipt is `/tmp/rendprop-edge-audit-dpkovht9/receipt.json`,
+source `50342c7`: **563 tests passed,0 failed/ignored;21 entrypoint typechecks passed;
+actual Turnstile mutant failed as required**. Shared adapters and SQL are now
+hashed too, and clean unchanged source is required for an accepted receipt.
+
+The rebuilt consent + Reviewer + Main UI gate passed on `7d0b0ca`: **3 exact
+tests,0 skips,24 required screenshot attachments (21 distinct required names)**.
+Receipt `/tmp/rendprop-noncamera-ui-3hx5az4i/receipt.json`; Release build and exact
+app/test artifacts are hashed. Root inspected all three focused consent images;
+remaining walkthrough visual review is continuing. This proves interaction and
+screen reachability, not that every disclosure sentence is accurate. A separate
+code-proven processor-disclosure correction and re-consent update is underway.
+
+New reviewed units are integrated: `29b0f16` consent selector, `1c42bd8` Coach
+offline/account copy, `b6c0d8a` bounded host upstream reads, `76fe6ee` unfinished
+AI response rejection, and the database test/harness corrections. Four further
+primitive-response fixtures passed without another adapter change; they are
+additional coverage, not a newly reproduced product bug.
+
+Actual isolated DB execution applied36 migrations and replayed28: **198
+assertions per run;197 pass,1 fails** on both runs. Six real paid-route negative
+outcomes pass; corrupt team data is rejected. Cluster stop exit0. Overall
+runner remains exit1/accepted=false. See `DATABASE-EXECUTED-RESULTS.md` and
+`/tmp/rendprop-db-audit-s_7bv818/receipt.json`. The runner's27 mocked control-flow
+regressions also pass; those are not27 extra DB invariants.
+
+Root independently reran the existing140 worker checks against integrated
+source (including real tiny ffmpeg fixtures), all exit0, in addition to the32
+new/repaired unittest cases. Host upstream:707 assertions/75 cases pass;
+existing584 routes and557 unbranded assertions/12 self-tests pass.
+
+Still being implemented independently, **not yet fixed/integrated/deployed**:
+upload completion immutability and transactional stale-worker publication.
+Reserved migrations0035(worker) and0036(uploads) are development work, not live
+database changes. Pending Apple submission and installed TestFlight18 are untouched.
+
+### Earlier checkpoints and repaired failures
 
 `8111522` and the foundation/style branches were pushed to GitHub. Worker unit
 `e388f019` and consent unit `b96896e` have now been independently reviewed and
@@ -17,7 +55,7 @@ Fresh integrated non-camera UI verification **found a new failure**, using the c
 source/artifact receipt, no camera tests, no Apple upload). Source `d05bbec`
 built successfully, but ReviewerWalk exited65: 0passed/1failed/0skipped,
 “Consent scroll view is missing.” The actual accessibility hierarchy shows
-the outer `aiConsent.root` ID masking the inner scroll ID. A repair is underway;
+the outer `aiConsent.root` ID masking the inner scroll ID. The later repair passed above;
 the original assertion was not skipped or relaxed. MainWalk did not run after
 this failure. Evidence: `/tmp/rendprop-noncamera-ui-jxozgi3w/Reviewer.xcresult`.
 The earlier attempt stopped before compilation because XcodeGen changed
@@ -67,16 +105,22 @@ cluster was stopped and retained. See the separate pushed branch
 
 | Area | Executed result | Evidence / limit |
 | --- | --- | --- |
-| Supabase edge tests | **526 passed, zero failed/ignored** | Actual tests, network denied and process environment cleared; not live routes |
+| Supabase edge tests | **563 passed, zero failed/ignored** | Actual tests, network denied and process environment cleared; not live routes |
 | All edge entrypoints | **21/21 typechecks passed** | Cached imports, no route execution |
 | Deliberately broken Turnstile | **Exit1 with real failed assertions** | Copied source changed to fail open; proves tests detect that defect |
 | New audit-runner parser | **5 tests passed** | Names containing “ignored” are not skips; real skipped summaries are counted |
 | Web contract/tokens | **14 passed** | 41 unique API methods/42 declarations,24 outside-protocol capabilities; zero browser-parity claims |
 | Style library | **101 passed; seven real mutants failed** | 408 EDL-preservation combinations; no rendering or human quality study |
 | Worker/hosting lane | 140 existing Python checks +32 unittest cases;584 route assertions;557 unbranded +12 self-tests | New fixes integrated; root independently reran32 cases and584 routes; no deployment |
+| Bounded host upstream | **707 assertions /75 actual-handler cases** | Synthetic streams, aborts, byte caps and honest statuses; no production request |
+| Database replay | **197/198 pass, twice; overall FAIL** | All36 migrations +28 replays; one retained headroom mismatch, not live Supabase |
+| Database harness | **27 mocked-main +7 source tests pass** | Includes intentionally truncated suites, lost receipts and real SQL registration checks |
+| Portable spatial suite | **63 Python +21 viewer tests pass** | Native115 capture assertions,3076 pose assertions and actual Swift→Python interop; no real-room reconstruction |
+| Rebuilt non-camera iOS UI | **3 exact tests,0 skips,24 required attachments pass** | Source7d0b0ca; no camera/AR, new upload or App Store change |
 | Real owner capture | **256 JPEGs decoded and dataset prepared** | 14,654 usable initialization seeds; no GPU reconstruction or phone-room viewer yet |
 
-Main edge receipt: `/tmp/rendprop-edge-audit-l_pqliup/receipt.json`.
+Main edge receipt: `/tmp/rendprop-edge-audit-dpkovht9/receipt.json`.
+Earlier530-test receipt: `/tmp/rendprop-edge-audit-33zluacl/receipt.json`.
 Main style receipt: `/tmp/rendprop-style-policy-verify-4a4985b890c82161/summary.json`.
 Temporary evidence paths are not backups; source/scripts and this account are
 committed, but logs/archive bytes must be retained separately if needed.
@@ -163,12 +207,12 @@ owner seeing the real reconstructed room; the Phase A experiment is unfinished.
 
 ## Next work, not completion claims
 
-1. Repair the measured consent accessibility-ID collision, then rerun
-   ReviewerWalk+Main with the new consent screenshots. No redundant camera tests.
-2. Integrate the reviewed Coach copy repair and database-test corrections;
-   keep the spatial handoff/private-data boundary intact.
+1. Finish processor-disclosure correction/re-consent and rebuild its focused
+   consent gate. The original selector failure is fixed and freshly tested.
+2. Finish/review the upload and worker publication state machines; execute their
+   concurrency/transaction regressions before claiming either race closed.
 3. Continue backend state-machine/deletion/spend and anonymous/team regression.
-   Existing TENANCY-AUDIT findings remain open;526 unit tests do not close them.
+   Existing TENANCY-AUDIT findings remain open;563 unit tests do not close them.
 4. Resolve durable upload/approval/tenancy contracts before claiming a complete
    web UI. No real-browser create→edit→review→publish→two-links walk has occurred.
 5. Keep this checkpoint and per-lane reports current and push unit branches
