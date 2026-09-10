@@ -39,6 +39,26 @@ jobs:
             fi
           done
 
+  style-policy:
+    name: Offline reel-style preservation and blind-evaluation contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          # Match the existing edge-functions runtime pin.
+          deno-version: "2.9.6"
+      # All imports are local; no dependency install or cache warm-up is needed.
+      # The verifier requires the full positive suite and real failing mutants.
+      # Only its local Deno children and owned /tmp evidence need extra access.
+      - name: Verify immutable EDLs, bound scores and negative controls
+        run: >-
+          deno run --no-config --no-lock --cached-only --deny-net --deny-env
+          --allow-read --allow-write=/tmp --allow-run tools/style-policy/verify.ts
+
   worker-edge:
     name: Cloudflare Worker (tour-host)
     runs-on: ubuntu-latest
