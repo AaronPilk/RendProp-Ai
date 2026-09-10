@@ -1,4 +1,4 @@
-# TestFlight preflight — local checks completed, distribution target unresolved
+# Historical TestFlight preflight — superseded by build 17 delivery
 
 > Historical preflight snapshot. The owner subsequently confirmed integration
 > into Rendprop's existing TestFlight app. Work continues on

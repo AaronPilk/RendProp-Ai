@@ -1,6 +1,6 @@
 # iPhone TestFlight checklist — private spatial capture experiment
 
-**Delivery status:** use this checklist only after the intended TestFlight build is confirmed available. This document does not mean a build has been uploaded or released.
+**Delivery confirmed 2026-09-10:** update the existing Rendprop app through TestFlight to **1.0 (17)**. Apple reports VALID, INTERNAL_ONLY and IN_BETA_TESTING in the existing **Rendprop team** group. This is not an App Store release; build 16's pending review remains untouched. See `INTEGRATION-VERIFICATION.md` for the exact source and live verification evidence.
 
 This is an experimental, local one-room capture inside the existing **Rendprop** app—not a separate app or a finished spatial-tour product. The integrated app requires **iOS 16+** and an iPhone supporting ARKit world tracking. **LiDAR is not required.** Start with the owner's iPhone 15 Pro; older-device performance is not yet proven.
 
