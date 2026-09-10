@@ -1,4 +1,42 @@
-# RENDPROP — MASTER CONTEXT & CHAT LOG
+# RENDPROP — current engineering context and historical chat log
+
+## Current entry point — 2026-09-10 evening
+
+**The July snapshot below is historical, not current build instructions.** Its
+sandbox limitations, provider assumptions, pricing, bundle fallback and “backend
+stubbed” statements must not be carried into a new build. The current app is
+deployed. Current fixes are being tested on Git branches, not silently shipped.
+
+Read in this order:
+
+1. [`../GPT-AGENT-BRIEF.md`](../GPT-AGENT-BRIEF.md): standing product/build rules.
+2. [`../audits/2026-09-10/STATUS.md`](../audits/2026-09-10/STATUS.md): current
+   integration, actual passing/failing tests, open defects and next work.
+3. [`CONTEXT-PROTOCOL.md`](CONTEXT-PROTOCOL.md): source/test/deployment handoff
+   discipline so switching models does not turn an unfinished step into a claim.
+4. [`../releases/TESTFLIGHT-18-20260910.md`](../releases/TESTFLIGHT-18-20260910.md):
+   installed internal build18, source `ed0131b`, actual receipt and its limits.
+
+Active integration branch: `audit/full-regression-20260910`, pushed to
+`AaronPilk/RendProp-Ai`. The foundation is also separately available on
+`integration/web-editor-foundation-20260910`. Fetch and inspect before changing
+branches; another agent is working concurrently. Do not force-push shared work.
+
+Owner priorities: an in-app navigable reconstructed spatial tour, continued
+whole-app/backend/non-camera testing, consistent brand/UX, and durable Markdown
+handoffs for Claude/Fable. No camera simulator busywork. Do not touch the pending
+Apple submission; build16 remains the last independently verified review build.
+Build18 is internal TestFlight and is **capture/export only**, not 3D processing.
+
+The owner's 256-frame export is valid and prepared privately for reconstruction.
+No trained real-room artifact exists yet. Files stay outside Git. The completed
+web architecture/style contracts are not a shipped agent web app or a completed
+editing engine. Scope and evidence live in the current audit documents, not in
+aspirational descriptions of features.
+
+---
+
+## Historical snapshot follows — retained for decision history only
 
 > Single catch-up file. Read this first in any new session. It captures what Rendprop is,
 > every decision made, the current build state, known issues, and what's next — so we never
