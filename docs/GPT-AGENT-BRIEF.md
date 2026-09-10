@@ -272,87 +272,211 @@ position 2 for everyone else. Measured cost: **1.5 ¢ for a 60-second reel.**
 
 ---
 
-## 4b. Guided Scan — coverage, not technique (the Matterport-parity feature)
+## 4b. Spatial Tour — a true 3D walkthrough (this is the Matterport replacement)
 
-The owner's standing thesis, and it is the right one: **generative video will always be
-inventing. The thing that actually beats Matterport is the LiDAR scan — measured geometry.**
-This feature is that thesis executed, and it is the last real gap.
+**This is the single most strategically important feature in the product, and it is a separate
+thing from the flythrough video.** The flythrough is a scroll-driven cinematic. This is a 3D
+reconstruction of the real rooms that a buyer moves around inside, with a joystick, on a web
+page. It is what Matterport sells, and replacing Matterport is the point.
 
-### What is missing, stated exactly
+Budget for it accordingly: this is weeks of work, not days. Ship it in the phases below, and
+treat Phase A as a spike that proves the pipeline end to end on one room before anything is
+polished.
 
-The app already has both halves and they do not talk to each other:
+### The reference flow, from the demo the owner supplied
 
-- `Capture/GuidanceOverlays.swift` coaches **technique** during a walkthrough — `LevelBubble`,
-  `PaceRing`, `LightWarning`, `ThirdsGrid`. Hold it level, do not rush, there is not enough
-  light. All real-time, all about *how* you are moving the phone.
-- The RoomPlan scanner (inside `Screens/FlythroughDetailView.swift`, ~line 9459) produces a
-  `SavedFloorPlan` of `[CapturedRoom]` merged by `StructureBuilder`, multi-storey, with
-  `CapturedRoom.sections` classifying each area and `CapturedRoom.story` giving the floor.
+Three states, in order:
 
-**Nothing in the app knows about coverage.** No screen tells the agent where they have not
-been. The scan knows the geometry; the walkthrough does not know where it is inside that
-geometry. So an agent finishes a capture with no idea they never walked the north-east corner,
-and finds out when the tour is rendered.
+1. **Guided AR capture.** The live camera view with capture targets drawn *in 3D space* as
+   green spheres. A white reticle in the centre of the screen; the agent walks and points at
+   each target and it registers. A progress bar and a counter — the demo shows `8 of 16`, then
+   `14 of 16`. An undo control top-left, a stop control top-right. This is not video recording;
+   it is a structured, countable capture.
+2. **"Generating 3D World."** A full-screen progress state: *"This will take about 5 minutes —
+   feel free to leave the app and come back."* The work is off-device and asynchronous.
+3. **The navigable 3D world.** A photoreal render of the actual kitchen and living area, with a
+   small round joystick control bottom-left for moving through the space.
 
-Matterport's actual moat is not its camera. It is that its app stands you on a numbered point,
-counts them down, and refuses to call the scan done until the floor is covered.
+That third screen is the product. The first two exist to make it possible.
 
-### The feature
+### What the technology actually is, and why it is now affordable
 
-A capture mode that plans waypoints from the room geometry, tracks which have been covered
-live, draws a top-down map while you walk, and tells you what is left. The reference demo shows
-exactly this: a phone screen with the room footprint drawn, capture points as dots around it,
-the current target highlighted, and a progress bar reading **"5 of 16"**.
+This is **3D Gaussian Splatting (3DGS)** — the technique that displaced NeRF for this use case
+because it renders in real time in a browser. The pipeline is: many posed images → a GPU
+training run → a splat file → a WebGL viewer.
 
-### Build it in this order
+**The insight that makes this cheap for Rendprop specifically:** the normal slowest and most
+failure-prone stage is COLMAP / structure-from-motion, which recovers where each photo was
+taken from. **Rendprop does not need it.** The app already runs an `ARSession` for RoomPlan, so
+`ARCamera.transform` gives a known pose for every frame, in metres, in one world coordinate
+space, for free. Export poses with the frames and the reconstruction starts at training.
 
-1. **Waypoint planning is DETERMINISTIC AND SERVER-STYLE, on device.** Given the
-   `[CapturedRoom]` polygons, compute the capture points before the walk starts: one per room
-   minimum, plus additional points for rooms above an area threshold or whose polygon is
-   non-convex (an L-shaped great room needs two, because one standing point cannot see round
-   the notch). Same discipline as `ai-copy/shotlist.ts` `planShots` and `ai-copy/agentreel.ts`
-   `planWindows` — pure, testable, and the same house plans the same points twice. Unit-test
-   the geometry before any UI exists.
-2. **Coverage tracking from the ARKit pose.** RoomPlan runs on an `ARSession`, so
-   `ARCamera.transform` is already in the same world coordinate space as the polygons. A
-   waypoint is covered when the camera has been within a radius of it AND has swept enough
-   yaw there — standing on a point facing one wall is not coverage. Do not invent a second
-   coordinate system; do not re-localise.
-3. **The map.** A top-down overlay: the room outline, covered points solid, the current target
-   highlighted, remaining points dim, and `N of M`. This is a new file under `Capture/`, beside
-   `GuidanceOverlays.swift` — do **not** add it to `FlythroughDetailView.swift`, which is
-   already 526 KB and is where this codebase goes to become unmaintainable.
-4. **Gap reporting at the end.** Name what was missed in the agent's own words — "you did not
-   cover the primary bathroom" — using the `CapturedRoom.sections` labels the scan already
-   produces. Never a silent pass. Follow the house rule from §7: refuse or warn honestly rather
-   than quietly delivering something incomplete.
-5. **Resumable.** A phone call, a battery warning or a backgrounded app must not lose fifteen
-   covered waypoints. Persist coverage alongside the scan.
+Verified numbers (2026):
 
-### Rules specific to this feature
+| | |
+|---|---|
+| A small interior scene | ~200 images, ~500K gaussians, **8 GB VRAM**, an RTX 4090 is enough |
+| Training time | minutes, not hours — the demo's "about 5 minutes" is realistic |
+| Raw output (PLY) | 50–200 MB for a small scene |
+| Web-delivery format | **SOG**, 15–20× smaller than PLY → roughly **3–13 MB per room** |
+| Whole-house scenes | **Streamed SOG** — a spatial tree that loads chunks by camera position |
+| GPU cost | a 4090-class hour is well under a dollar on commodity GPU cloud, so a room is **cents** |
+
+Compare that to everything else in this app: a single generated reel on Seedance 2.5 costs
+$14.19 (§6). A spatial tour of an entire house costs a fraction of that and is the feature that
+removes the reason to own a $3,000 camera and a Matterport subscription. **The unit economics
+here are better than any AI feature in the product.** That is not an accident — it is the
+owner's own thesis, which is worth restating because it should govern every decision in this
+section: *generative video will always be inventing; the thing that beats Matterport is the
+scan, because the geometry is measured.*
+
+### The architecture, end to end
+
+Every piece has an existing home. **Do not invent a parallel stack.**
+
+```
+iOS: ARSession (already running for RoomPlan)
+       ├─ RoomPlan  → CapturedRoom polygons        → waypoint planning + the floor plan we already ship
+       └─ frames    → keyframes + ARCamera poses   → uploaded to R2
+                                                        │
+R2 (services/supabase/functions/_shared/r2.ts — presignPut, multipart already exist)
+                                                        │
+Edge function: POST /spatial  → enqueues a job (model it on render_jobs)
+                                                        │
+GPU worker (new, off-platform): posed frames → 3DGS training → PLY → SOG
+                                                        │
+R2 ← the .sog, plus a manifest (bounds, floor plane, room anchors, initial camera)
+                                                        │
+Cloudflare Worker services/edge/tour-host → the tour page embeds a WebGL splat viewer
+                                                        │
+                                    ┌───────────────────┴───────────────────┐
+                          the buyer's browser              the app's own PlayerWebView
+                          (shareable link, no app)         (Screens/PlayerWebView.swift)
+```
+
+**The single most important architectural decision: the viewer is WEB, not Metal.** The tour is
+already a hosted page built by `services/edge/tour-host/src/player.ts`, and the app already
+displays that page inside `Screens/PlayerWebView.swift` (a `WKWebView`). So one WebGL viewer
+serves the buyer's browser, the agent's phone, and the MLS-unbranded `/u/` twin. Writing a
+native splat renderer would triple the work and produce three things to keep in sync. Do not do
+it.
+
+`player.ts` already loads a pinned external library from cdnjs with an SRI hash (see `HLS_SRC`
+/ `HLS_SRI`). Follow that exact pattern for the splat viewer — pinned version, SRI, same CSP
+posture. Candidate viewers, in order: **Spark** (World Labs, Three.js, reads SOG/SPZ/PLY) or
+the **PlayCanvas engine**, whose SOG support is first-party. Evaluate both on a real room before
+committing; the deciding criteria are mid-range Android and older iPhone performance, not
+desktop.
+
+### Phase A — the spike (do this first, prove it, then stop and report)
+
+**Goal: one real room, captured on an iPhone, rendered as a splat in a browser.** No UI polish,
+no job queue, no plan gating. If this does not work, nothing else in this section matters.
+
+1. A throwaway capture harness in the app that runs an `ARSession`, saves keyframes as JPEG at
+   a sensible cadence, and writes a sidecar JSON of `ARCamera.transform`, intrinsics, timestamp
+   and `trackingState` per frame.
+2. Get those onto a GPU box by hand. Train a splat using the ARKit poses **instead of** COLMAP.
+   Prove that works — it is the load-bearing claim of this whole design.
+3. Convert to SOG. Load it in Spark or PlayCanvas in a plain HTML page. Move around.
+4. **Report with numbers:** frames captured, training minutes, GPU used, PLY size, SOG size,
+   and the frame rate on a real phone browser — not a desktop.
+
+Do not proceed to Phase B until the owner has seen that.
+
+### Phase B — capture that a working agent can actually complete
+
+This is where the demo's `N of 16` lives, and it is a coverage problem, not a technique problem.
+
+The app today has `Capture/GuidanceOverlays.swift` — `LevelBubble`, `PaceRing`, `LightWarning`,
+`ThirdsGrid` — all of which coach *how you hold the phone*. **Nothing in the app knows where you
+have and have not been.** That is the gap.
+
+1. **Waypoint planning is deterministic and runs on device before the walk.** Given the
+   `[CapturedRoom]` polygons, compute capture points: one per room minimum, plus extra points
+   for rooms above an area threshold or whose polygon is non-convex — an L-shaped great room
+   needs two, because one standing point cannot see round the notch. Same discipline as
+   `ai-copy/shotlist.ts` `planShots` and `ai-copy/agentreel.ts` `planWindows`: pure, unit-tested,
+   and the same house plans the same points twice. **Write the geometry tests before any UI.**
+2. **Coverage tracking from the pose.** A waypoint is satisfied when the camera has been within
+   a radius of it **and** swept enough yaw there — standing on a point facing one wall is not
+   coverage. RoomPlan and the frames share one world space; do not introduce a second
+   coordinate system and do not re-localise.
+3. **Draw the targets in AR**, as the demo does — spheres in world space, plus the counter and
+   the progress bar. A new file under `Capture/`, beside `GuidanceOverlays.swift`. **Do not add
+   this to `Screens/FlythroughDetailView.swift`**, which is already 526 KB and is where this
+   codebase goes to become unmaintainable.
+4. **Frame selection is a real problem, not an afterthought.** 200 good frames beat 2,000 bad
+   ones. Drop frames on blur (variance of Laplacian), on `ARCamera.trackingState != .normal`,
+   and on insufficient baseline from the last kept frame. This is what decides reconstruction
+   quality and upload size, so it gets its own tests.
+5. **Name the gaps at the end in the agent's own words** — "you did not cover the primary
+   bathroom" — using the `CapturedRoom.sections` labels the scan already produces. Never a
+   silent pass.
+6. **Resumable.** A phone call, a low-battery warning or a backgrounded app must not lose
+   fifteen covered waypoints.
+
+### Phase C — the reconstruction service
+
+1. **Model the job on `render_jobs`.** There is already an async job table, a cost ledger
+   (`_shared/ledger.ts`), and a worker-lease pattern. Reuse them. Note the open finding: a stale
+   worker can overwrite a newer render because `insert_render` replaces by `job_id` with no
+   ownership predicate (§5) — do not copy that bug into a new worker.
+2. **A per-job cost ceiling, decided before the first job runs.** §5 F15 is the standing
+   warning: the repo's per-generation cap lives in `log_job_cost()`, which the in-app AI routes
+   never reach. A GPU job that can run away is worse than an API call that can, because nothing
+   times it out for you. Cap wall-clock, cap iterations, cap gaussian count.
+3. **The output is a manifest plus the splat**, not a bare file: bounds, the floor plane, the
+   room anchors with their labels, and the initial camera pose so the tour opens somewhere
+   sensible rather than inside a wall.
+4. **This is not an `ai_routes` task.** It is not a vendor text/video call and it does not
+   belong in the router. Do not add a row.
+
+### Phase D — the viewer, and what makes it a product rather than a demo
+
+A splat you can fly through is a demo. These four make it something a brokerage buys:
+
+- **Floor-locked navigation.** Buyers do not want a free-flying camera; they want to walk. Lock
+  the camera to eye height above the detected floor plane, with the joystick from the demo, and
+  keep click-to-move between room anchors.
+- **A dollhouse / top-down view.** Matterport's signature. The room polygons are already there
+  from RoomPlan — this is mostly a camera state, not new data.
+- **Measurement.** Matterport sells this hard, and Rendprop can do it *better*, because the
+  geometry is measured LiDAR rather than inferred from photos. Tap two points, get a distance.
+- **Privacy blur — non-negotiable, and it is a launch blocker, not a nice-to-have.** A 3D
+  capture of somebody's home records the family photographs on the wall, the mail on the
+  counter, the prescription on the nightstand and the contents of an open closet. This app
+  already takes provenance and disclosure seriously (`_shared/provenance.ts`, the "Virtually
+  staged" label). A spatial tour needs at least: a review step before publish, region blur, and
+  the ability to exclude a whole room from the published scene. **Do not ship a public spatial
+  tour without it.**
+
+### Hard rules for this feature
 
 - **Multi-storey already works and must keep working.** One `RoomCaptureSession`, with
-  `stop(pauseARSession: false)` between rooms to preserve the world coordinate space, then
-  `StructureBuilder.capturedStructure(from:)`. Waypoints are grouped by `CapturedRoom.story`.
-  Area is summed **per room** — one convex hull over a whole L-shaped floor bridges the notch
-  and invents square footage. That bug has been fixed once; do not reintroduce it.
+  `stop(pauseARSession: false)` between rooms so the world coordinate space survives, then
+  `StructureBuilder.capturedStructure(from:)`. Waypoints group by `CapturedRoom.story`. Area is
+  summed **per room** — one convex hull over a whole L-shaped floor bridges the notch and
+  invents square footage. That bug has been fixed once; do not reintroduce it.
 - **Not every device has LiDAR.** `RoomCaptureSession.isSupported` is already checked at
-  `FlythroughDetailView.swift:9560`. On a device without it, this mode must degrade to the
-  existing technique guidance rather than appearing and failing.
-- **The guidance must never block the shutter.** An agent standing in a client's kitchen with a
-  seller watching cannot be locked out of finishing. Warn, count, name the gaps — never refuse
-  to stop recording.
+  `FlythroughDetailView.swift:9560`. Degrade to the existing capture rather than showing a mode
+  that fails.
+- **Never block the shutter.** An agent standing in a client's kitchen with the seller watching
+  cannot be locked out of finishing. Warn, count, name the gaps — never refuse to stop.
+- **Upload is the user-visible cost.** A few hundred JPEGs on a listing agent's cellular
+  connection is the step that will actually fail. Resumable multipart (`_shared/r2.ts` already
+  has it), background upload, and honest progress. A previous field test lost a 343 MB upload
+  silently on a 5G→wifi handover; do not repeat it.
+- **Plan gating is the owner's decision, not yours.** Bring numbers and ask.
 - **No new analytics events** unless all four places in §2 are edited.
-- **This is a capture feature, not an AI feature.** It costs nothing per use: no route, no
-  provider, no `ai_routes` row, no per-generation ceiling. Keep it that way — do not reach for a
-  model to decide something geometry already answers.
 
-### Why it matters commercially
+### Acceptance
 
-Everything else in the app is a better version of something an agent could already do badly.
-This is the one feature that removes the reason to own a $3,000 camera and a Matterport
-subscription. It is also the feature a brokerage's ops lead evaluates, because it is the one
-that determines whether twenty agents produce usable scans without training.
+Phase A: a real room, captured on a phone, moving in a browser, with the numbers listed above.
+Phase B: a non-technical person completes a full house without instruction, and the app
+correctly names anything they missed. Phase C: a job runs end to end with a hard cost ceiling
+and a manifest. Phase D: the tour page and the app's `PlayerWebView` show the same scene from
+one implementation, and nothing publishes without a privacy review step.
 
 ---
 
