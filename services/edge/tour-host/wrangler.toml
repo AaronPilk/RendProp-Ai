@@ -56,8 +56,9 @@ SUPABASE_FUNCTIONS_URL = "https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1"
 # leaving a placeholder here would silently break all upstream calls with 401s.
 # SUPABASE_ANON_KEY = "(set via: wrangler secret put SUPABASE_ANON_KEY)"
 
-# Optional: edge cache TTL (seconds) for rendered tour/portfolio HTML.
-# 0 disables the edge cache. Default is 60 when unset.
+# Optional: edge cache TTL (seconds) for synthetic demo tour HTML only.
+# Customer tour/portfolio HTML always bypasses cache and returns no-store.
+# 0 disables new demo cache writes. Default is 60 when unset.
 TOUR_CACHE_TTL = "60"
 
 # Cloudflare Turnstile SITE key (PUBLIC — safe to commit). When set, the tour

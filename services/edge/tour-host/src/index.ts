@@ -10,8 +10,9 @@
 //   GET /terms       Terms of Service   (static; linked from the iOS app)
 //   GET /privacy     Privacy Policy     (static; linked from the iOS app)
 //
-// The dynamic pages are server-rendered to a self-contained HTML page and cached at the edge
-// (Cache API) with a short TTL. Video is served zero-egress: the all-intra R2
+// Customer pages are server-rendered with no-store and a fresh upstream lookup
+// on every request so old edge HTML cannot outlive publication revocation.
+// Only self-contained synthetic demos retain caching. Video is served zero-egress: the all-intra R2
 // mp4 (`scrub_url`, byte-range) is the primary scroll-scrub source, with
 // Cloudflare Stream HLS (`hls_url`) as fallback only. The browser talks to
 // Supabase directly for the lead form (POST /leads) and the view beacon
@@ -33,7 +34,7 @@ import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
 
-const DEFAULT_TTL = 60; // seconds — published HTML can change on republish
+const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
 function ttl(env: Env): number {
   const n = Number(env.TOUR_CACHE_TTL);
@@ -243,8 +244,8 @@ async function fetchSupabase(path: string, env: Env): Promise<Response> {
       Authorization: `Bearer ${key}`,
       Accept: "application/json",
     },
-    // Don't let the runtime cache the upstream API response; we manage our own
-    // edge cache on the rendered HTML.
+    // Publication state must be current on every customer request. Neither the
+    // upstream API response nor the rendered customer HTML may be cached here.
     cf: { cacheTtl: 0, cacheEverything: false },
   });
 }
@@ -260,8 +261,8 @@ async function handleTour(
   const base = unbranded ? UNBRANDED_HEADERS : {};
   const notFound = () =>
     unbranded
-      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "public, max-age=30" }, { unbranded })
-      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
+      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
   const upstreamError = () =>
     unbranded
       ? htmlResponse(unbrandedFallback("error"), 502, { ...base, "Cache-Control": "no-store" }, { unbranded })
@@ -270,29 +271,35 @@ async function handleTour(
   // Slugs are nanoid (base64url) — reject anything else fast.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) {
     return unbranded
-      ? htmlResponse(unbrandedFallback("notfound"), 404, base, { unbranded })
-      : htmlResponse(notFoundPage(), 404);
+      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
   }
 
   // ?embed=1 renders ONLY the flythrough hero (for the in-app "See it in
   // action" card); the full page is served otherwise. Keep separate cache keys.
   const embed = url.searchParams.has("embed");
+  const demo = isDemoSlug(slug);
   // The in-app card for a venue / bar / store / gym asks the demo to present
   // itself as a sample tour rather than a home listing (`?embed=1&space=venue`).
   // Only the demo slug honours it, only in embed mode, and only for a known
   // business type; it is part of the cache key so the two renders never mix.
-  const demoAs = embed && isDemoSlug(slug) ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
+  const demoAs = embed && demo ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
 
-  const cache = caches.default;
+  // WH-05: changing only the response TTL leaves old cache hits reachable.
+  // Customer HTML must bypass both reads AND writes, including entries from a
+  // previous deployment. The explicit demo slugs have no revocable user data.
+  const cache = demo ? caches.default : null;
   const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}${demoAs ? `&space=${demoAs}` : ""}`);
-  const hit = await cache.match(key);
-  if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+  if (cache) {
+    const hit = await cache.match(key);
+    if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+  }
 
   const renderOpts = { embed, unbranded, origin: url.origin };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
   const finish = (tour: Tour): Response => {
-    const t = ttl(env);
+    const t = demo ? ttl(env) : 0;
     const html = renderTourPage(
       tour,
       functionsBase(env),
@@ -318,17 +325,17 @@ async function handleTour(
     const resp = htmlResponse(
       html,
       200,
-      { ...base, ...robots, "Cache-Control": `public, max-age=${t}, s-maxage=${t}` },
+      { ...base, ...robots, "Cache-Control": demo ? `public, max-age=${t}, s-maxage=${t}` : "no-store" },
       { unbranded },
     );
-    if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
+    if (cache && req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   };
 
   // Demo tour — self-contained, no DB. Renders through the SAME renderer a real
   // listing uses, so rendprop.com/f/estate-demo IS the product (and powers the
   // in-app Home demo). /u/estate-demo is the MLS-safe cut of the same tour.
-  if (isDemoSlug(slug)) return finish(buildDemoTour(demoAs));
+  if (demo) return finish(buildDemoTour(demoAs));
 
   let upstream: Response;
   try {
@@ -351,11 +358,11 @@ async function handleTour(
   return finish(tour);
 }
 
-async function handlePortfolio(handle: string, req: Request, url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
-  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404);
+async function handlePortfolio(handle: string, req: Request, env: Env): Promise<Response> {
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
 
   // The demo agent is fictional, so no org answers for the handle. Served
-  // from here for the same reason the demo TOUR is, and before the cache
+  // from here for the same reason the demo TOUR is, and before the upstream
   // lookup so it never depends on an upstream that cannot know about it.
   if (isDemoHandle(handle)) {
     const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio()), 200, {
@@ -364,10 +371,8 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env,
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
-  const cache = caches.default;
-  const key = cacheKeyFor(url, `/a/${handle}`);
-  const hit = await cache.match(key);
-  if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+  // A portfolio contains revocable customer addresses/photos/links too. Do not
+  // consult or refresh any customer HTML cached by an earlier deployment.
 
   // GET /portfolio/:handle is live (services/supabase/functions/portfolio) but
   // stay graceful: any non-2xx / network error / malformed body → branded 404.
@@ -382,15 +387,13 @@ async function handlePortfolio(handle: string, req: Request, url: URL, env: Env,
   }
 
   if (!data || !data.agent_card) {
-    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "public, max-age=30" });
+    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
   }
 
-  const t = ttl(env);
   const html = renderPortfolioPage(data);
   const resp = htmlResponse(html, 200, {
-    "Cache-Control": `public, max-age=${t}, s-maxage=${t}`,
+    "Cache-Control": "no-store",
   });
-  if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
   return req.method === "HEAD" ? new Response(null, resp) : resp;
 }
 
@@ -418,7 +421,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   const fMatch = path.match(/^\/f\/([^/]+)$/);
   if (fMatch) {
     const slug = safeDecode(fMatch[1]);
-    if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
+    if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
     return handleTour(slug, req, url, env, ctx);
   }
 
@@ -430,7 +433,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       return htmlResponse(
         unbrandedFallback("notfound"),
         404,
-        { ...UNBRANDED_HEADERS, "Cache-Control": "public, max-age=30" },
+        { ...UNBRANDED_HEADERS, "Cache-Control": "no-store" },
         { unbranded: true },
       );
     }
@@ -440,8 +443,8 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   const aMatch = path.match(/^\/a\/([^/]+)$/);
   if (aMatch) {
     const handle = safeDecode(aMatch[1]);
-    if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "public, max-age=30" });
-    return handlePortfolio(handle, req, url, env, ctx);
+    if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "no-store" });
+    return handlePortfolio(handle, req, env);
   }
 
   // Legal pages — static HTML, cacheable for an hour.
