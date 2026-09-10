@@ -140,8 +140,8 @@ def main():
             ("worker", "worker_publish_transaction.sql", "0035_worker_publish_transaction.sql",
              "WORKER_PUBLISH_TRANSACTION_PASS_20", "stale A accepted", 20),
             ("uploads", "negative_upload_publication.sql", "0036_upload_publication_immutability.sql",
-             "PASS: 17 upload publication trigger checks; all synthetic mutations rolled back.",
-             "Missing publication rejection: completed: uploaded = false", 17),
+             "PASS: 19 upload publication trigger checks; all synthetic mutations rolled back.",
+             "Missing publication rejection: completed: uploaded = false", 19),
         ]
         receipt["publicationFixtures"] = []
         for name, fixture, migration_name, marker, failure, count in publication_specs:

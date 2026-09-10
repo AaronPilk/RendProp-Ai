@@ -113,7 +113,7 @@ class RunnerCase(unittest.TestCase):
                 count = publication_counts.get(sqlfile, 0) + 1
                 publication_counts[sqlfile] = count
                 marker = ('WORKER_PUBLISH_TRANSACTION_PASS_20' if sqlfile.startswith('worker') else
-                          'PASS: 17 upload publication trigger checks; all synthetic mutations rolled back.')
+                          'PASS: 19 upload publication trigger checks; all synthetic mutations rolled back.')
                 reason = ('stale A accepted' if sqlfile.startswith('worker') else
                           'Missing publication rejection: completed: uploaded = false')
                 if count == 2:
