@@ -1,0 +1,58 @@
+RENDPROP — INSTAGRAM POSTS
+20 carousels, ready to go out.
+
+
+HOW TO POST ONE
+
+Open a folder. Inside:
+
+  1.jpg through 5.jpg   the slides, in swipe order
+  caption.txt           the caption, copy the whole thing
+  preview.jpg           all five side by side, so you can see the post
+                        before you upload it
+
+In Instagram, pick Post, select all five images, and check the order
+before you hit next. Instagram usually keeps the order you tapped them
+in, not the filename order, so tap 1 through 5 one at a time.
+
+Paste the caption. Swap #yourcity for your actual market tag. Post it.
+
+
+THE ORDER
+
+Post them 01 through 20. The order isn't the order they were made in,
+it's the order that works.
+
+Four of the first eight are before-and-afters, because those are the
+ones that stop a scroll and they're what you want on the page while
+somebody is deciding whether to follow.
+
+The rest of the order is about the grid. Your profile shows three
+across, and Instagram crops each post square from the middle, so the
+middle of every cover photo is a tile in that grid. Posts that lead
+with the same house are spaced at least five apart, which keeps them
+out of the same row and off each other's shoulder. That's why the
+running order looks shuffled. Don't resort it alphabetically.
+
+Two or three a week. Don't burn all twenty in a fortnight.
+
+
+ONE RULE ABOUT THE PHOTOS
+
+The houses are AI-generated for this brand. They're demonstrations of
+what the app does to a photo, not properties you sold.
+
+So never caption one as your listing. "This is what Rendprop does to a
+photo" is honest. "My listing at 24 Willow Bend" is not, and it would
+undercut the whole labelling position the app is built on, which is
+post 10.
+
+
+WHAT'S NOT IN HERE
+
+Nothing in these posts advertises a feature that isn't live. The
+agent-on-camera reel is server-side only right now and the 3D walk-around
+tour is specced but not built, so both stay off the feed until they ship.
+
+Source files that rebuild all of this live in the repo at
+docs/marketing/instagram-carousels.
