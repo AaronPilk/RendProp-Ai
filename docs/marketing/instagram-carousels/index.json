@@ -1,0 +1,122 @@
+[
+ {
+  "n": 1,
+  "feature": "The Flythrough",
+  "slug": "flythrough",
+  "slides": 5
+ },
+ {
+  "n": 2,
+  "feature": "The Share Link",
+  "slug": "share-link",
+  "slides": 5
+ },
+ {
+  "n": 3,
+  "feature": "Room Tags",
+  "slug": "room-tags",
+  "slides": 5
+ },
+ {
+  "n": 4,
+  "feature": "Blue Sky",
+  "slug": "blue-sky",
+  "slides": 5
+ },
+ {
+  "n": 5,
+  "feature": "Twilight",
+  "slug": "twilight",
+  "slides": 5
+ },
+ {
+  "n": 6,
+  "feature": "Green Lawn",
+  "slug": "green-lawn",
+  "slides": 5
+ },
+ {
+  "n": 7,
+  "feature": "Tidy The Room",
+  "slug": "tidy",
+  "slides": 5
+ },
+ {
+  "n": 8,
+  "feature": "Virtual Staging",
+  "slug": "staging",
+  "slides": 5
+ },
+ {
+  "n": 9,
+  "feature": "Reels With Your Voice",
+  "slug": "reels",
+  "slides": 5
+ },
+ {
+  "n": 10,
+  "feature": "Aerial Intro",
+  "slug": "aerial",
+  "slides": 5
+ },
+ {
+  "n": 11,
+  "feature": "Floor Plan",
+  "slug": "floor-plan",
+  "slides": 5
+ },
+ {
+  "n": 12,
+  "feature": "Two Links, Every Time",
+  "slug": "two-links",
+  "slides": 5
+ },
+ {
+  "n": 13,
+  "feature": "Your Card On Every Tour",
+  "slug": "agent-card",
+  "slides": 5
+ },
+ {
+  "n": 14,
+  "feature": "Lead Capture",
+  "slug": "leads",
+  "slides": 5
+ },
+ {
+  "n": 15,
+  "feature": "Not Only Homes",
+  "slug": "modes",
+  "slides": 5
+ },
+ {
+  "n": 16,
+  "feature": "No Account Needed",
+  "slug": "no-account",
+  "slides": 5
+ },
+ {
+  "n": 17,
+  "feature": "Every AI Edit Is Labelled",
+  "slug": "disclosure",
+  "slides": 5
+ },
+ {
+  "n": 18,
+  "feature": "The Plans",
+  "slug": "plans",
+  "slides": 5
+ },
+ {
+  "n": 19,
+  "feature": "7 Days Free",
+  "slug": "free-trial",
+  "slides": 5
+ },
+ {
+  "n": 20,
+  "feature": "Your Content Stays Yours",
+  "slug": "your-content",
+  "slides": 5
+ }
+]
