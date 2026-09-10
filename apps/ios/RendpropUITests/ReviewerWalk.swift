@@ -36,8 +36,8 @@
 //     only button list this step is allowed to use.
 //  2. Never run an AI edit. `-uiTesting` means `MockAPIClient`, whose
 //     `aiPhotoEdit` echoes the submitted image back; a "result" built from that
-//     would be a misleading screenshot. r11 stops at the consent sheet and
-//     declines it.
+//     would be a misleading screenshot. r11 exercises consent decisions only;
+//     agreement exposes the idle studio and never taps an edit action.
 //  3. Never hide missing required coverage. `continueAfterFailure = true`
 //     collects the remaining screenshots, but missing screens fail XCTest.
 //     Only r10 is explicitly excluded in the identified mock, verified by the
@@ -466,9 +466,9 @@ final class ReviewerWalk: XCTestCase {
     /// `AIConsent.shared.ensureGranted()` and whose `.aiConsentGate()` overlay
     /// draws `AIConsentView` while it waits.
     ///
-    /// Then "Not now" — declining is what `PhotoStudioView` handles by
-    /// dismissing itself, and it leaves the consent flag false so a re-run
-    /// captures the same sheet again. NO AI EDIT IS EVER RUN.
+    /// Exercise both decisions in the mock-only app: decline must return Home;
+    /// reopening must ask again; agreement must reveal the studio. No edit,
+    /// provider request, camera, microphone or purchase action is started.
     private func step11AIConsent() {
         activity("r11 — AI processing consent") {
             popToRoot()
@@ -490,10 +490,8 @@ final class ReviewerWalk: XCTestCase {
                              labels: ["Rendprop's AI runs in the cloud", "Agree and continue"],
                              timeout: screenTimeout) else {
                 if waitForAny(ids: [], labels: ["AI Photo Studio"], timeout: shortTimeout) {
-                    note("SKIPPED: the studio opened with NO consent sheet. That means the consent "
-                         + "was already granted on this simulator — uninstall the app before the "
-                         + "run (bridge-cmd-reviewerwalk.sh does) so "
-                         + "\"ai.thirdPartyProcessing.consent.v1\" is genuinely unset.")
+                    note("The studio opened without consent despite the explicit NO launch argument. "
+                         + "The required disclosure gate failed; do not erase or reinstall the app.")
                     popToRoot()
                 } else {
                     note("SKIPPED: neither the consent sheet nor the AI Photo Studio appeared after "
@@ -504,17 +502,73 @@ final class ReviewerWalk: XCTestCase {
             settle(1.5)
             shot("r11-ai-consent")
 
-            // Decline. `PhotoStudioView` dismisses itself on false, and the
-            // flag stays unset so the next run sees the same sheet.
-            if let notNow = find(ids: [], labels: ["Not now"], timeout: shortTimeout) {
-                tap(notNow)
-            } else {
-                note("The consent sheet had no \"Not now\" — backing out instead. NOTHING was agreed.")
-                dismissTopScreen()
+            // Existence or partial window intersection is not reachability.
+            // The historical r11 image had the floating tab bar across Agree.
+            // Scroll the disclosure itself and require fully visible controls.
+            XCTAssertFalse(app.tabBars.firstMatch.exists,
+                           "The tab bar must not cover the consent disclosure")
+            guard consentAction("aiConsent.agree") != nil,
+                  let notNow = consentAction("aiConsent.decline") else { return }
+            XCTAssertGreaterThanOrEqual(notNow.frame.height, 44,
+                                        "Decline needs a full-size tap target")
+            shot("r11b-consent-actions")
+            notNow.tap()
+            XCTAssertTrue(waitForHome(timeout: screenTimeout),
+                          "Declining consent must leave the studio and return Home")
+            XCTAssertFalse(app.navigationBars["AI Photo Studio"].exists,
+                           "Declining must dismiss the studio, not merely hide its overlay")
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "aiConsent.root").firstMatch.exists,
+                           "Declining must remove the disclosure")
+            XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: shortTimeout),
+                          "Declining must restore the tab bar")
+
+            guard let reopen = scrollTo(ids: ["home.feature.photoStudio"],
+                                        labels: [], swipes: 8) else {
+                note("Cannot reopen AI Photo Studio after declining consent")
+                return
             }
-            settle(1)
+            tap(reopen)
+            nameFirstProjectIfAsked()
+            let disclosure = app.descendants(matching: .any).matching(identifier: "aiConsent.root").firstMatch
+            XCTAssertTrue(disclosure.waitForExistence(timeout: screenTimeout),
+                          "Declining must not silently grant consent on reopening")
+            guard let agree = consentAction("aiConsent.agree") else { return }
+            agree.tap()
+            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                 object: disclosure)
+            XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: screenTimeout), .completed,
+                           "Agreement must remove the disclosure")
+            XCTAssertTrue(app.navigationBars["AI Photo Studio"].exists,
+                          "Agreement must keep the user in AI Photo Studio")
+            XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: shortTimeout),
+                          "Agreement must restore the tab bar")
+            shot("r11c-consent-granted")
             popToRoot()
         }
+    }
+
+    /// Checks the real scroll viewport, not just any intersection with a window.
+    /// A bounded failure remains a test failure; no coordinate fallback can hit
+    /// a different action beneath an obstructing native toolbar.
+    private func consentAction(_ identifier: String) -> XCUIElement? {
+        let scroll = app.scrollViews["aiConsent.scroll"]
+        guard scroll.waitForExistence(timeout: screenTimeout) else {
+            note("Consent scroll view is missing")
+            return nil
+        }
+        let action = app.buttons[identifier]
+        for attempt in 0...8 {
+            if action.exists, action.isEnabled, action.isHittable,
+               action.frame.width > 0, action.frame.height > 0,
+               scroll.frame.contains(action.frame) {
+                return action
+            }
+            guard attempt < 8 else { break }
+            scroll.swipeUp()
+            settle(0.35)
+        }
+        note("Consent action is not fully visible and hittable: \(identifier)")
+        return nil
     }
 
     // MARK: - Navigation helpers

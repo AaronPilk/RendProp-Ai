@@ -3037,6 +3037,10 @@ struct AIConsentGate: ViewModifier {
                         .transition(.opacity)
                 }
             }
+            // The disclosure is an in-place overlay, so the native floating
+            // tab bar otherwise remains above it and obscures its actions.
+            // Restore the host's normal navigation after either decision.
+            .toolbar(consent.isAsking ? .hidden : .automatic, for: .tabBar)
             .animation(.easeInOut(duration: 0.2), value: consent.isAsking)
             // Backing out of the screen (nav Back, swipe-dismiss of the host
             // sheet) must resume whoever is awaiting `ensureGranted()` — an
@@ -3109,11 +3113,16 @@ struct AIConsentView: View {
                             Haptics.success()
                             consent.grant()
                         }
-                        Button("Not now") {
+                        .accessibilityIdentifier("aiConsent.agree")
+                        Button {
                             consent.decline()
+                        } label: {
+                            Text("Not now")
+                                .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .font(.rpBody)
                         .foregroundStyle(Theme.inkDim)
+                        .accessibilityIdentifier("aiConsent.decline")
                         Text("You can turn this off any time in Settings → Your data. Capture, on-device rendering and sharing keep working either way.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
@@ -3124,7 +3133,9 @@ struct AIConsentView: View {
                 }
                 .padding(22)
             }
+            .accessibilityIdentifier("aiConsent.scroll")
         }
+        .accessibilityIdentifier("aiConsent.root")
     }
 
     private func bullet(_ symbol: String, _ tint: Color, _ text: String) -> some View {
