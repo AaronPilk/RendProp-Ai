@@ -168,10 +168,16 @@ struct AskAIButton: View {
                 Text("Ask AI")
                     .font(.caption.weight(.bold))
             }
+            // A long listing title otherwise compresses the visible label to
+            // "A…" even though VoiceOver still reads the full action. Reserve
+            // the label's intrinsic width; the title can yield that space.
+            .fixedSize(horizontal: true, vertical: false)
             .foregroundStyle(Theme.accent)
             .padding(.horizontal, 10)
             .padding(.vertical, 5)
             .background(Theme.accentSoft, in: Capsule())
+            .frame(minWidth: 76, minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text("Ask AI — questions about this screen"))

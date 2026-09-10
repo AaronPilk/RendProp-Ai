@@ -61,6 +61,8 @@ def main():
     parser.add_argument("--simulator", required=True)
     parser.add_argument("--simulator-name", required=True)
     parser.add_argument("--derived-data", required=True, type=Path)
+    parser.add_argument("--focus-only", action="store_true",
+                        help="Rebuild and test consent + Ask AI only; does not claim the full walkthroughs")
     args = parser.parse_args()
     require(args.derived_data.is_absolute(), "Use an explicit absolute DerivedData path")
     initial = source()
@@ -108,10 +110,14 @@ def main():
     checks = [
         ("Consent", "ReviewerWalk/testAIConsentDecisions", {"ReviewerWalk/testAIConsentDecisions()"},
          {"r11-ai-consent", "r11b-consent-actions", "r11c-consent-granted"}),
+        ("AskAI", "ReviewerWalk/testAskAILabelOnLongTitle", {"ReviewerWalk/testAskAILabelOnLongTitle()"},
+         {"ask-ai-long-title", "ask-ai-coach-open"}),
         ("Reviewer", "ReviewerWalk/testReviewerWalk", evidence.REVIEWER,
          evidence.REVIEWER_SHOTS | {"r11b-consent-actions", "r11c-consent-granted"}),
         ("Main", "RendpropUITests/testWalk", evidence.MAIN, evidence.MAIN_SHOTS),
     ]
+    if args.focus_only:
+        checks = checks[:2]
     for name, test, expected, shots in checks:
         invoke(name, common + ["test-without-building", "-only-testing:RendpropUITests/" + test,
                               "-resultBundlePath", str(out / (name + ".xcresult"))])
@@ -125,11 +131,15 @@ def main():
                "xctestrunSHA256": spec_hash, "completedAt": datetime.now(timezone.utc).isoformat(),
                "results": {name: digest(out / (name + ".xcresult")) for name, *_ in checks},
                "logs": {name: digest(out / (name + ".log")) for name in commands},
-               "tests": 3, "skips": 0, "requiredScreenAttachments": 24, "distinctRequiredScreens": 21,
+               "tests": sum(len(expected) for _, _, expected, _ in checks), "skips": 0,
+               "scope": "focused consent and Ask AI" if args.focus_only else "full non-camera walkthroughs",
+               "requiredScreenAttachments": sum(len(shots) for _, _, _, shots in checks),
+               "distinctRequiredScreens": len(set().union(*(shots for _, _, _, shots in checks))),
                "limits": ["Synthetic offline data", "No camera/AR tests", "Visual inspection still required",
                           "No TestFlight upload or App Store changes"]}
     (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    print("PASS: three exact tests, zero skips, 24 required screen attachments; receipt:", out / "receipt.json", flush=True)
+    print(f"PASS: {receipt['tests']} exact tests, zero skips, {receipt['requiredScreenAttachments']} required screen attachments; receipt:",
+          out / "receipt.json", flush=True)
 
 
 if __name__ == "__main__":

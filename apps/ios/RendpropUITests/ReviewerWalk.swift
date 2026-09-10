@@ -100,7 +100,7 @@ final class ReviewerWalk: XCTestCase {
             "-ai.thirdPartyProcessing.consent.v2", "NO",
             "-space.type", "real_estate",
         ]
-        if name.contains("testAIConsentDecisions") {
+        if name.contains("testAIConsentDecisions") || name.contains("testAskAILabelOnLongTitle") {
             // Focused iteration reuses r11 without spending minutes on the
             // unrelated onboarding/player/legal/deletion-dialog screenshot walk.
             app.launchArguments += ["-hasOnboarded", "YES"]
@@ -143,6 +143,31 @@ final class ReviewerWalk: XCTestCase {
         let required = Set(["r11-ai-consent", "r11b-consent-actions", "r11c-consent-granted"])
         XCTAssertTrue(required.isSubset(of: capturedScreens),
                       "Missing required consent states: \(required.subtracting(capturedScreens).sorted())")
+    }
+
+    /// An accessibility label can be complete while the drawn title is "A…".
+    /// Check geometry and opening the real destination, then require review of
+    /// the screenshot. This never sends a Coach message or invokes a provider.
+    func testAskAILabelOnLongTitle() {
+        step03Homes()
+        guard step04SampleDetail() else {
+            XCTFail("Long-title sample detail must be reached")
+            return
+        }
+        let buttons = app.buttons.matching(identifier: "askAI")
+        XCTAssertEqual(buttons.count, 1, "Ask AI must be unambiguous")
+        guard buttons.count == 1 else { return }
+        let button = buttons.element(boundBy: 0)
+        XCTAssertTrue(button.isHittable && button.isEnabled)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 76)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        XCTAssertTrue(app.frame.contains(button.frame))
+        shot("ask-ai-long-title")
+        tap(button)
+        XCTAssertTrue(app.navigationBars["Coach"].waitForExistence(timeout: screenTimeout),
+                      "Ask AI must open the actual Coach screen")
+        shot("ask-ai-coach-open")
+        XCTAssertTrue(Set(["ask-ai-long-title", "ask-ai-coach-open"]).isSubset(of: capturedScreens))
     }
 
     // MARK: r01 — the onboarding pages
