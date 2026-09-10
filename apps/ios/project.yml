@@ -37,6 +37,22 @@ targets:
           # Don't ship the placeholder example either — it leaks provider/model names.
           - "Resources/Secrets.example.plist"
           - "**/Secrets.example.plist"
+          # NOTHING THAT IS NOT THE APP GOES IN THE APP.
+          #
+          # This target's sources path is the whole `Rendprop` directory, so
+          # anything anyone drops in it is picked up — and a file xcodegen does
+          # not recognise as source becomes a RESOURCE, i.e. it ships inside the
+          # .app. That is how `Screens/ia_split.py`, a throwaway refactor script
+          # with internal commentary in its docstring, ended up in the Resources
+          # build phase next to Assets.xcassets and shipped in build 16.
+          #
+          # A per-file exclude would only fix the one we caught. These patterns
+          # fix the class: a script, a note or an editor backup left in the tree
+          # is now invisible to the build instead of being cargo.
+          - "**/*.py"
+          - "**/*.sh"
+          - "**/*.md"
+          - "**/*.bak"
       # Bundled as a FOLDER reference ("player/"): everything inside ships as-is,
       # so `index.html` and the optional `demo.mp4` (untracked — see
       # apps/web/player/README.md for the recipe) need no per-file entries. The

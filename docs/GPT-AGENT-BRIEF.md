@@ -122,6 +122,25 @@ minutes.
 
 **iOS Keychain survives app deletion.** Delete-and-reinstall is not a clean-install test.
 
+**A test that cannot tell whether it should run must not answer "no".**
+`shotlist_test.ts` decided whether to run its two compatibility checks with a
+`statSync` inside a bare `catch`, which swallowed a permission error exactly like a
+missing file. Run without `--allow-read` and the suite reported "109 passed, 2
+ignored" and looked green while the one gate proving `ai-copy` and `ai-video` still
+share a move vocabulary never executed. It now rethrows anything that is not
+`Deno.errors.NotFound`, so the environment problem is visible instead of silent.
+**Treat every "ignored" in a test summary as a claim to verify, not a pass.**
+
+**Nothing that is not the app goes in the app.** The iOS target's sources path is
+the whole `Rendprop` directory, so anything left in it is picked up — and a file
+xcodegen does not recognise as source becomes a **resource**, shipped inside the
+`.app`. A throwaway refactor script, `Screens/ia_split.py`, sat in the Resources
+build phase next to `Assets.xcassets` and shipped in build 16 with internal
+commentary in its docstring. `project.yml` now excludes `**/*.py`, `**/*.sh`,
+`**/*.md` and `**/*.bak`. Before any archive, check what is actually in the bundle:
+`grep -oE "/\* [^*]+ in Resources \*/" apps/ios/Rendprop.xcodeproj/project.pbxproj | sort -u`
+should list only `Assets.xcassets`, `PrivacyInfo.xcprivacy` and `player`.
+
 ---
 
 ## 3. Verification is the job, not the last step
@@ -141,21 +160,30 @@ happen. Every harness must:
 Test commands that work today:
 
 ```bash
-# Deno unit tests for the edge functions
-cd services/supabase/functions && deno test --allow-net --no-check ai-copy/
-# 109 tests currently green across ai-copy
+# Deno unit tests for the edge functions.
+# --allow-read IS REQUIRED and is not cosmetic: shotlist_test.ts imports
+# ai-video/motion.ts at runtime to prove the two move vocabularies still agree.
+# Without the flag that read is refused and those tests report as "ignored".
+cd services/supabase/functions && deno test --allow-net --allow-read --no-check ai-copy/
+# 111 tests green across ai-copy, 0 ignored. If you see "ignored", something is
+# skipping itself — find out what and why before you trust the run.
 
 # Deploy one edge function (token read into an env var, never printed)
 export SUPABASE_ACCESS_TOKEN="$(cat ~/'Rendprop AI'/_bridge/.supabase-token)"
 supabase functions deploy ai-copy --project-ref ymgqpbnjpztwjsyvceld
 
-# iOS: generate, build for testing, then run the two walks that gate a release
+# iOS. THE SIMULATOR IS PINNED BY UDID, not by name — names go stale every time
+# Xcode ships. This machine has iPhone 17-series; iPhone 16 Pro is not installed.
+SIM=CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E   # iPhone 17 Pro
 cd apps/ios && xcodegen generate
+xcrun simctl boot "$SIM" 2>/dev/null; xcrun simctl bootstatus "$SIM" -b
 xcodebuild build-for-testing -project Rendprop.xcodeproj -scheme Rendprop \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro'
+  -destination "platform=iOS Simulator,id=$SIM"
 xcodebuild test-without-building -project Rendprop.xcodeproj -scheme Rendprop \
-  -destination 'platform=iOS Simulator,name=iPhone 16 Pro' \
+  -destination "platform=iOS Simulator,id=$SIM" \
   -only-testing:RendpropUITests/ReviewerWalk/testReviewerWalk
+# If that UDID is gone, list what is there rather than guessing a name:
+#   xcrun simctl list devices available | grep iPhone
 ```
 
 **ReviewerWalk and the main UI walk are the release gate.** Both must be green before any
@@ -241,6 +269,90 @@ position 2 for everyone else. Measured cost: **1.5 ¢ for a 60-second reel.**
 - A window with an empty `photo_id` shows the agent, with no caption over their face.
 - ReviewerWalk and the main UI walk stay green.
 - No new analytics event unless all four places in §2 are edited.
+
+---
+
+## 4b. Guided Scan — coverage, not technique (the Matterport-parity feature)
+
+The owner's standing thesis, and it is the right one: **generative video will always be
+inventing. The thing that actually beats Matterport is the LiDAR scan — measured geometry.**
+This feature is that thesis executed, and it is the last real gap.
+
+### What is missing, stated exactly
+
+The app already has both halves and they do not talk to each other:
+
+- `Capture/GuidanceOverlays.swift` coaches **technique** during a walkthrough — `LevelBubble`,
+  `PaceRing`, `LightWarning`, `ThirdsGrid`. Hold it level, do not rush, there is not enough
+  light. All real-time, all about *how* you are moving the phone.
+- The RoomPlan scanner (inside `Screens/FlythroughDetailView.swift`, ~line 9459) produces a
+  `SavedFloorPlan` of `[CapturedRoom]` merged by `StructureBuilder`, multi-storey, with
+  `CapturedRoom.sections` classifying each area and `CapturedRoom.story` giving the floor.
+
+**Nothing in the app knows about coverage.** No screen tells the agent where they have not
+been. The scan knows the geometry; the walkthrough does not know where it is inside that
+geometry. So an agent finishes a capture with no idea they never walked the north-east corner,
+and finds out when the tour is rendered.
+
+Matterport's actual moat is not its camera. It is that its app stands you on a numbered point,
+counts them down, and refuses to call the scan done until the floor is covered.
+
+### The feature
+
+A capture mode that plans waypoints from the room geometry, tracks which have been covered
+live, draws a top-down map while you walk, and tells you what is left. The reference demo shows
+exactly this: a phone screen with the room footprint drawn, capture points as dots around it,
+the current target highlighted, and a progress bar reading **"5 of 16"**.
+
+### Build it in this order
+
+1. **Waypoint planning is DETERMINISTIC AND SERVER-STYLE, on device.** Given the
+   `[CapturedRoom]` polygons, compute the capture points before the walk starts: one per room
+   minimum, plus additional points for rooms above an area threshold or whose polygon is
+   non-convex (an L-shaped great room needs two, because one standing point cannot see round
+   the notch). Same discipline as `ai-copy/shotlist.ts` `planShots` and `ai-copy/agentreel.ts`
+   `planWindows` — pure, testable, and the same house plans the same points twice. Unit-test
+   the geometry before any UI exists.
+2. **Coverage tracking from the ARKit pose.** RoomPlan runs on an `ARSession`, so
+   `ARCamera.transform` is already in the same world coordinate space as the polygons. A
+   waypoint is covered when the camera has been within a radius of it AND has swept enough
+   yaw there — standing on a point facing one wall is not coverage. Do not invent a second
+   coordinate system; do not re-localise.
+3. **The map.** A top-down overlay: the room outline, covered points solid, the current target
+   highlighted, remaining points dim, and `N of M`. This is a new file under `Capture/`, beside
+   `GuidanceOverlays.swift` — do **not** add it to `FlythroughDetailView.swift`, which is
+   already 526 KB and is where this codebase goes to become unmaintainable.
+4. **Gap reporting at the end.** Name what was missed in the agent's own words — "you did not
+   cover the primary bathroom" — using the `CapturedRoom.sections` labels the scan already
+   produces. Never a silent pass. Follow the house rule from §7: refuse or warn honestly rather
+   than quietly delivering something incomplete.
+5. **Resumable.** A phone call, a battery warning or a backgrounded app must not lose fifteen
+   covered waypoints. Persist coverage alongside the scan.
+
+### Rules specific to this feature
+
+- **Multi-storey already works and must keep working.** One `RoomCaptureSession`, with
+  `stop(pauseARSession: false)` between rooms to preserve the world coordinate space, then
+  `StructureBuilder.capturedStructure(from:)`. Waypoints are grouped by `CapturedRoom.story`.
+  Area is summed **per room** — one convex hull over a whole L-shaped floor bridges the notch
+  and invents square footage. That bug has been fixed once; do not reintroduce it.
+- **Not every device has LiDAR.** `RoomCaptureSession.isSupported` is already checked at
+  `FlythroughDetailView.swift:9560`. On a device without it, this mode must degrade to the
+  existing technique guidance rather than appearing and failing.
+- **The guidance must never block the shutter.** An agent standing in a client's kitchen with a
+  seller watching cannot be locked out of finishing. Warn, count, name the gaps — never refuse
+  to stop recording.
+- **No new analytics events** unless all four places in §2 are edited.
+- **This is a capture feature, not an AI feature.** It costs nothing per use: no route, no
+  provider, no `ai_routes` row, no per-generation ceiling. Keep it that way — do not reach for a
+  model to decide something geometry already answers.
+
+### Why it matters commercially
+
+Everything else in the app is a better version of something an agent could already do badly.
+This is the one feature that removes the reason to own a $3,000 camera and a Matterport
+subscription. It is also the feature a brokerage's ops lead evaluates, because it is the one
+that determines whether twenty agents produce usable scans without training.
 
 ---
 

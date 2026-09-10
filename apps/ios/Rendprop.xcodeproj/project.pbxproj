@@ -70,7 +70,6 @@
 		B9A6F7F75A8F754430AF3596 /* AdminProbeAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */; };
 		B9E457FC5C1CEC72EE934651 /* Attribution.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E4555C52A9520EAD2225DF8 /* Attribution.swift */; };
 		BB26F6B8B89FEC985937CAC3 /* NewListingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F07519FDA41A8A1043CDA0 /* NewListingView.swift */; };
-		BB3DBCA1519E5749BE14EA2E /* ia_split.py in Resources */ = {isa = PBXBuildFile; fileRef = 5976ED26A8C3B49AC916BC3F /* ia_split.py */; };
 		BBC7304F8A16C32D18F20146 /* ListingLink.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9965D9148426EE44C81D787 /* ListingLink.swift */; };
 		BEE25F08505CE041A86B2AB1 /* PlanBanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = CAA52851DA0729992C9F5EE1 /* PlanBanner.swift */; };
 		CACAB30497633B51EA176D55 /* FirstProjectGuide.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1F816F304AD1C7DF8F43C824 /* FirstProjectGuide.swift */; };
@@ -138,7 +137,6 @@
 		54BAD1E704C7727945DD4F73 /* RenderStatusView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderStatusView.swift; sourceTree = "<group>"; };
 		5544A6806716A76F8327A02F /* CoachShot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachShot.swift; sourceTree = "<group>"; };
 		57A1816864B52BA95F584EB5 /* PurchaseManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PurchaseManager.swift; sourceTree = "<group>"; };
-		5976ED26A8C3B49AC916BC3F /* ia_split.py */ = {isa = PBXFileReference; lastKnownFileType = text.script.python; path = ia_split.py; sourceTree = "<group>"; };
 		59943686A99D4D4A87578653 /* SessionNetworkFlow.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionNetworkFlow.swift; sourceTree = "<group>"; };
 		5ED4FB348EEDA03CD0E8C941 /* CoachAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachAPI.swift; sourceTree = "<group>"; };
 		61AD972518DD362511944597 /* DirectUploader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectUploader.swift; sourceTree = "<group>"; };
@@ -437,7 +435,6 @@
 				EAF7254EA3A61DFD3EC2EB19 /* AdminProbeAPI.swift */,
 				159750D918990BA658CFBBB7 /* FlythroughDetailView.swift */,
 				4DB70E1D3371927DB43F686D /* HomeListingsView.swift */,
-				5976ED26A8C3B49AC916BC3F /* ia_split.py */,
 				A3F07519FDA41A8A1043CDA0 /* NewListingView.swift */,
 				4EFAB60A262F81770E76534E /* OnboardingView.swift */,
 				7F31D014BAD4F175BA1951C3 /* PlayerWebView.swift */,
@@ -575,7 +572,6 @@
 			files = (
 				FB7EB9BFCB4BCF6B59E4B78C /* Assets.xcassets in Resources */,
 				489E5980C2D0848331D853B8 /* PrivacyInfo.xcprivacy in Resources */,
-				BB3DBCA1519E5749BE14EA2E /* ia_split.py in Resources */,
 				A2D5B60401411E19E6F32D53 /* player in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

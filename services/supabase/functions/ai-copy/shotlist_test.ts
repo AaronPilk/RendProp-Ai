@@ -226,8 +226,27 @@ const MOTION_MODULE = new URL("../ai-video/motion.ts", import.meta.url);
 let motionModuleExists = false;
 try {
   motionModuleExists = Deno.statSync(MOTION_MODULE).isFile;
-} catch {
-  motionModuleExists = false;
+} catch (err) {
+  // A MISSING FILE AND A REFUSED LOOK ARE NOT THE SAME ANSWER.
+  //
+  // This used to be a bare `catch` that set the flag false either way, and the
+  // consequence was worse than the bug it was skipping: run without
+  // --allow-read and Deno throws PermissionDenied here, the flag goes false,
+  // and BOTH compatibility tests report themselves as deliberately ignored. The
+  // suite says "31 passed, 2 ignored" and looks green while the one gate that
+  // proves ai-copy and ai-video still share a move vocabulary never ran at all.
+  // The whole point of this route is that a motion ai-video cannot render falls
+  // back to a fixed push-in, so this is precisely the check that must not be
+  // able to switch itself off quietly.
+  //
+  // Skipping is only legitimate for the reason the comment above gives — the
+  // file genuinely not being on this branch. Anything else is an environment
+  // problem the runner has to see.
+  if (err instanceof Deno.errors.NotFound) {
+    motionModuleExists = false;
+  } else {
+    throw err;
+  }
 }
 
 function setOf(v: unknown): Set<string> | null {
