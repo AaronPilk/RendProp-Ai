@@ -138,7 +138,7 @@ def main():
         # must fail for the intended invariant, not merely a syntax/ACL error.
         publication_specs = [
             ("worker", "worker_publish_transaction.sql", "0035_worker_publish_transaction.sql",
-             "WORKER_PUBLISH_TRANSACTION_PASS_20", "stale A accepted", 20),
+             "WORKER_PUBLISH_TRANSACTION_PASS_22", "stale A accepted", 22),
             ("uploads", "negative_upload_publication.sql", "0036_upload_publication_immutability.sql",
              "PASS: 19 upload publication trigger checks; all synthetic mutations rolled back.",
              "Missing publication rejection: completed: uploaded = false", 19),
@@ -167,6 +167,33 @@ def main():
             require(marker in restored, f"{name} publication fixture failed after restoring the source migration")
             receipt["publicationFixtures"].append({"name": name, "checksPerRun": count,
                 "runs": 2, "negativeControlDetected": True, "sourceRestored": True})
+            if name == "worker":
+                guards = [
+                    ("video", [("and a.kind = 'video' and a.uploaded", "and a.uploaded")],
+                     "photo capture accepted as raw video"),
+                    ("scalars", [(line, "") for line in (
+                        "     or jsonb_typeof(p_render->'duration_s') is distinct from 'number'\n",
+                        "     or jsonb_typeof(p_render->'speed_factor') is distinct from 'number'\n",
+                        "     or round(v_duration, 2) is distinct from v_duration\n",
+                        "     or round(v_speed, 2) is distinct from v_speed\n")],
+                     "noncanonical scalar accepted:"),
+                ]
+                receipt["workerInputNegativeControls"] = []
+                for guard_name, replacements, reason in guards:
+                    mutant = migration.read_text()
+                    for old, new in replacements:
+                        require(mutant.count(old) == 1, f"{guard_name} mutation no longer matches exactly")
+                        mutant = mutant.replace(old, new)
+                    mutant += f"\n-- deliberate isolated worker-{guard_name} mutant\n"
+                    run("mutate-worker-" + guard_name, psql, input_text=mutant)
+                    broken = run("negative-worker-" + guard_name, psql + ["-f", str(script)], expected=3)
+                    require(reason in broken, f"{guard_name} negative failed for the wrong reason")
+                    run("restore-worker-" + guard_name, psql + ["-q", "-1", "-f", str(migration)])
+                    restored = run("restored-worker-" + guard_name, psql + ["-f", str(script)])
+                    require(marker in restored, f"{guard_name} restored fixture did not finish")
+                    receipt["publicationFixtures"][-1]["runs"] += 1
+                    receipt["workerInputNegativeControls"].append({"guard": guard_name,
+                        "detected": True, "sourceRestored": True})
         # Break actual entitlement data in this synthetic database. A gate that
         # only prints results must not pass when the published contract is false.
         run("mutate-negative", psql + ["-c", "update public.plan_entitlements set seats=999 where plan='team';"])
