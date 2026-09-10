@@ -7,6 +7,13 @@ enum CaptureError: LocalizedError {
 }
 
 enum CaptureGeometry {
+    // ARKit supplies Float transforms. Even a rigid affine Float matrix can gain
+    // a few ULPs in its homogeneous row after matrix arithmetic. Exact equality
+    // stops otherwise valid captures; match prepare_capture.py's strict absolute
+    // bound instead. This is validation, not pose repair: never snap the row,
+    // divide by w, or change the measured matrix written to the sidecar.
+    static let homogeneousRowTolerance = 1e-6
+
     // Swift SIMD indexes columns first. JSON explicitly stores mathematical rows.
     static func rows(_ matrix: simd_float4x4) -> [[Double]] {
         (0..<4).map { row in (0..<4).map { Double(matrix[$0][row]) } }
@@ -74,7 +81,12 @@ struct FrameRecord: Codable {
         try require(tracking_state.state == "normal", "Frame tracking must be normal.")
         try require(timestamp.isFinite && timestamp >= 0, "Invalid timestamp.")
         try require(camera_to_world.count == 4 && camera_to_world.allSatisfy { $0.count == 4 && $0.allSatisfy(\.isFinite) }, "Invalid c2w matrix.")
-        try require(camera_to_world[3] == [0, 0, 0, 1], "Invalid c2w homogeneous row.")
+        let homogeneousRowError = zip(camera_to_world[3], [0.0, 0, 0, 1])
+            .map { abs($0 - $1) }.max()!
+        // A bounded residual is enough to diagnose future device failures; do
+        // not put camera positions or the full measured pose in error messages.
+        try require(homogeneousRowError < CaptureGeometry.homogeneousRowTolerance,
+                    "Invalid c2w homogeneous row (max error \(homogeneousRowError); must be below \(CaptureGeometry.homogeneousRowTolerance)).")
         let c = camera_to_world
         for a in 0..<3 {
             for b in 0..<3 {

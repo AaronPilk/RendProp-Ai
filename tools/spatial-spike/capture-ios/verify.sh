@@ -16,6 +16,8 @@ rg -q 'oversized-sidecar' Tests/AdversarialChecks.swift || mark_failure 'adversa
 rg -q 'maximumJPEGBytes' Sources/RasterWriter.swift || mark_failure 'JPEG encoded-byte limit missing'
 rg -q 'CaptureRasterLimits.validate' Sources/SpatialCaptureViewController.swift || mark_failure 'selected format resource guard missing'
 rg -q 'metadata-excessive-pixels' Tests/JPEGResourceChecks.swift || mark_failure 'JPEG metadata resource checks missing'
+rg -q 'homogeneousRowTolerance = 1e-6' Sources/CaptureModel.swift || mark_failure 'bounded homogeneous row validation missing'
+rg -q 'struct PosePrecisionChecks' Tests/PosePrecisionChecks.swift || mark_failure 'pose precision regression checks missing'
 if rg -q '@main' Sources/SpatialCaptureViewController.swift; then mark_failure 'shared controller contains a standalone entry point'; fi
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 if ! spike_verify_dir=$(mktemp -d /tmp/spatial-capture-verify.XXXXXX); then mark_failure 'cannot create isolated verification directory'; exit "$FAIL"; fi
@@ -49,6 +51,18 @@ else
 fi
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 "$spike_verify_dir/jpeg-resource-checks" || mark_failure 'JPEG resource checks failed'
+if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
+if ! swiftc Sources/CaptureModel.swift Sources/RasterWriter.swift Sources/CaptureArchive.swift Tests/PosePrecisionChecks.swift -o "$spike_verify_dir/pose-precision-checks"; then
+    mark_failure 'pose precision checks did not compile'; exit "$FAIL"
+fi
+if "$spike_verify_dir/pose-precision-checks" --force-failure; then
+    mark_failure 'pose precision negative control returned success'
+else
+    spike_pose_negative_status=$?
+    [ "$spike_pose_negative_status" -eq 1 ] || mark_failure "pose negative control exited unexpectedly ($spike_pose_negative_status)"
+fi
+if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
+"$spike_verify_dir/pose-precision-checks" || mark_failure 'pose precision checks failed'
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 if [ "${1:-}" = "--build" ]; then
     if ! xcodegen generate; then mark_failure 'standalone project generation failed'; exit "$FAIL"; fi
