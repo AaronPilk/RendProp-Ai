@@ -78,6 +78,10 @@ def verify(root, output):
 
 
 if __name__ == '__main__':
+    # -O / PYTHONOPTIMIZE removes assert statements. A verifier must refuse that
+    # mode instead of printing PASS after its checks have been compiled away.
+    if not __debug__:
+        raise SystemExit('FAIL: Python optimization disables contract assertions')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('capture', type=Path)
     parser.add_argument('dataset', nargs='?', type=Path)

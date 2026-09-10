@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Read-only ASC preflight found 16 as the newest uploaded build. Recheck
+    # Read-only ASC preflight found 17 as the newest uploaded build. Recheck
     # immediately before archive/upload; never let export renumber silently.
-    CURRENT_PROJECT_VERSION: "17"
+    CURRENT_PROJECT_VERSION: "18"
 targets:
   Rendprop:
     sources:

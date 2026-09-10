@@ -31,6 +31,24 @@ bundle has an SRI hash in `index.html`; dependency package integrity is pinned i
 `package-lock.json`. The HTTP CSP permits only the local scripts and the blob
 workers/textures used for rendering.
 
+Input admission is limited to **64 MiB encoded SOG** (inclusive), checked from
+the selected `File` before `arrayBuffer()`, then checked again against the actual
+byte length and existing ZIP envelope guard. The opt-in fixture response also
+has a bounded streaming reader; its HTTP length is not trusted as the actual
+length. After engine decode, **1–500,000 integer splats** are admitted before a
+render entity is created, matching the selected Phase A trainer's Gaussian cap.
+These are local spike policy limits, **not safe-device capacity measurements**.
+ZIP/WebP decoding and texture allocations happen before the engine exposes the
+decoded count. A small malicious SOG can still exhaust decoder/GPU memory; use
+only trusted converted artifacts, not arbitrary public uploads.
+
+Every local selection exports `provenance: "unknown"`, `synthetic: null`, and
+`realRoomVerified: false`, except reserved `SYNTHETIC-NOT-A-ROOM*` filenames or
+the explicit fixture button, which export `provenance: "synthetic"` and
+`synthetic: true`. A filename can warn of a synthetic fixture but cannot prove a
+measured room. Renaming the fixture leaves its provenance unknown, never real.
+The physical-phone checkbox attests only to the device, not the artifact.
+
 ## Real phone procedure
 
 1. Copy the private converted SOG to the physical phone and select it in this page.
@@ -65,6 +83,17 @@ frames physically presented by the display. Median, p95, maximum inter-frame
 intervals, raw intervals, canvas/CSS sizes, device pixel ratio, engine version,
 asset size/count, operator label, and user agent are included. A desktop result
 remains a desktop result, even if the browser emulates a phone viewport.
+`valid: true` means only a valid submission measurement; it is not a Phase A
+acceptance certificate, proof of visible room pixels, or a reconstruction score.
+
+The engine load callback currently has no timeout/cancel boundary. A stalled
+decode can leave selection disabled until reload, and a context loss while a
+decode is pending has no generation guard against late completion. Reload after
+either condition; safe asynchronous teardown is still a gate before production
+embedding. A completed measurement remains exportable after input changes and
+retains its original asset context: check the exported asset, not just the scene
+currently visible. This spike does not implement later Phase D joystick, floor
+lock, collisions, room anchors, public publishing or privacy review/blur.
 
 ## Conversion and deterministic smoke fixture
 
@@ -100,8 +129,13 @@ real-room quality or phone performance.
 
 Before trusting the normal test output, run `npm run negative-control`. It must
 exit nonzero: it deliberately asserts that an empty animation loop generated
-valid FPS. Then `npm test` must pass. These tests cover counter math and failure
-states; browser verification must separately prove that the synthetic SOG is
+valid FPS. Then `npm test` must pass. These tests cover counter math, the actual
+production `loadFile` path with a stubbed engine, and the input-policy helpers.
+They assert pre-read rejection, entity admission, cleanup and conservative
+provenance; they do not exercise the real SOG decoder or WebGL. The new loader
+tests were run against the unchanged loader first: 1 positive case passed and
+6 intended rejections/provenance checks failed (exit 1). Browser verification
+must separately prove that the synthetic SOG is
 visible, actual render counts increase, movement changes the camera, and a
 malformed file is refused. `window.spatialSpike.snapshot()` provides read-only
 diagnostics for that verification; it cannot force a successful result.

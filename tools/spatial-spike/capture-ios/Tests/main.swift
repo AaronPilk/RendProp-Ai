@@ -76,6 +76,19 @@ let frame = FrameRecord(session_id: sid, image: "images/000001.jpg", camera_to_w
     timestamp: 123.5, tracking_state: TrackingRecord(state: "normal", reason: nil),
     raw_feature_points: [FeaturePoint(id: String(UInt64.max), position: [1, 2, -3])],
     exposure_duration_seconds: 0.01, exposure_offset_ev: 0, world_mapping_status: "mapped")
+// Resolution-policy tests allocate no rasters. Include preferred video sizes,
+// 4K/12 MP fallbacks, the exact cap, and malformed Ints that could overflow a
+// naive width*height calculation. No ARKit device-format availability is implied.
+for size in [ImageResolution(width: 1920, height: 1440), ImageResolution(width: 1920, height: 1080),
+             ImageResolution(width: 3840, height: 2160), ImageResolution(width: 4032, height: 3024),
+             ImageResolution(width: 4096, height: 4096), ImageResolution(width: 8192, height: 2048)] {
+    check((try? CaptureRasterLimits.validate(size)) != nil, "raster policy accepts native format/boundary \(size)")
+}
+for size in [ImageResolution(width: 0, height: 48), ImageResolution(width: -1, height: 48),
+             ImageResolution(width: 8193, height: 1), ImageResolution(width: 8192, height: 2049),
+             ImageResolution(width: Int.max, height: Int.max), ImageResolution(width: Int.min, height: -1)] {
+    check((try? CaptureRasterLimits.validate(size)) == nil, "raster policy rejects malformed/excessive size \(size) without overflow")
+}
 do {
     try frame.validate(expectedSession: sid)
     let encoded = try JSONEncoder().encode(frame)
@@ -101,6 +114,22 @@ do {
     malformed = decoded
     malformed.image = "../outside.jpg"
     check((try? malformed.validate(expectedSession: sid)) == nil, "reject path traversal")
+    // Positive bound check for the real recorder's maximum point count, using
+    // UInt64-width IDs and extreme finite Float coordinates (not room evidence).
+    let extreme = Double(Float.greatestFiniteMagnitude)
+    let maximumCloud = (0..<50_000).map {
+        FeaturePoint(id: String(UInt64.max - UInt64($0)), position: [extreme, -extreme, extreme])
+    }
+    let maximumRecord = FrameRecord(session_id: sid, image: frame.image,
+        camera_to_world: frame.camera_to_world, intrinsics: frame.intrinsics, image_resolution: frame.image_resolution,
+        timestamp: frame.timestamp, tracking_state: frame.tracking_state, raw_feature_points: maximumCloud,
+        exposure_duration_seconds: frame.exposure_duration_seconds, exposure_offset_ev: frame.exposure_offset_ev,
+        world_mapping_status: frame.world_mapping_status)
+    let maximumEncoded = try JSONEncoder().encode(maximumRecord)
+    check(maximumEncoded.count < NativeRasterWriter.maximumSidecarBytes, "bounded read admits maximum 50,000-point recorder output")
+    let maximumDecoded = try JSONDecoder().decode(FrameRecord.self, from: maximumEncoded)
+    try maximumDecoded.validate(expectedSession: sid)
+    check(maximumDecoded.raw_feature_points.count == 50_000, "maximum point cloud survives exact JSON round trip")
     var policy = FrameCadence()
     check(policy.accept(timestamp: 1, normalTracking: true), "first normal frame selected")
     check(!policy.accept(timestamp: 1.1, normalTracking: true), "cadence refuses duplicate near frame")
@@ -178,6 +207,8 @@ do {
     let corruptURL = temporaryRoot.appendingPathComponent("corrupt.jpg")
     try Data("not a JPEG".utf8).write(to: corruptURL)
     check((try? NativeRasterWriter.validateJPEG(at: corruptURL, resolution: nativeSize)) == nil, "reject corrupt JPEG")
+    check((try? NativeRasterWriter.boundedJSONData(at: corruptURL, maximumBytes: Int.max)) == nil, "reject overflowing read limit without a trap")
+    check((try? NativeRasterWriter.boundedJSONData(at: corruptURL, maximumBytes: -1)) == nil, "reject negative read limit without a trap")
     // End-to-end local file validator; this is explicitly a synthetic fixture,
     // not captured data or evidence for the one-room acceptance gate.
     let captureRoot = temporaryRoot.appendingPathComponent("synthetic-validation-fixture")

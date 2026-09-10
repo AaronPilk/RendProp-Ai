@@ -18,6 +18,7 @@ const files = new Map([
   ['/', ['index.html', 'text/html; charset=utf-8']],
   ['/viewer.mjs', ['viewer.mjs', 'text/javascript; charset=utf-8']],
   ['/benchmark.mjs', ['benchmark.mjs', 'text/javascript; charset=utf-8']],
+  ['/input-policy.mjs', ['input-policy.mjs', 'text/javascript; charset=utf-8']],
   ['/style.css', ['style.css', 'text/css; charset=utf-8']],
   ['/vendor/playcanvas.min.js', ['node_modules/playcanvas/build/playcanvas.min.js', 'text/javascript; charset=utf-8']],
   ['/vendor/LICENSE', ['node_modules/playcanvas/LICENSE', 'text/plain; charset=utf-8']]

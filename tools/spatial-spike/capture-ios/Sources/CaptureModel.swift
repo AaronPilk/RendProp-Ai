@@ -7,6 +7,13 @@ enum CaptureError: LocalizedError {
 }
 
 enum CaptureGeometry {
+    // ARKit supplies Float transforms. Even a rigid affine Float matrix can gain
+    // a few ULPs in its homogeneous row after matrix arithmetic. Exact equality
+    // stops otherwise valid captures; match prepare_capture.py's strict absolute
+    // bound instead. This is validation, not pose repair: never snap the row,
+    // divide by w, or change the measured matrix written to the sidecar.
+    static let homogeneousRowTolerance = 1e-6
+
     // Swift SIMD indexes columns first. JSON explicitly stores mathematical rows.
     static func rows(_ matrix: simd_float4x4) -> [[Double]] {
         (0..<4).map { row in (0..<4).map { Double(matrix[$0][row]) } }
@@ -17,6 +24,26 @@ enum CaptureGeometry {
 }
 
 struct ImageResolution: Codable, Equatable { let width: Int; let height: Int }
+
+enum CaptureRasterLimits {
+    // Native 1920-wide preferred video and 4K/4032x3024 fallback rasters fit.
+    // These are explicit Phase A resource limits, not a claim about every future
+    // ARKit format. Never resize a frame to satisfy them: K must stay verbatim.
+    static let maximumDimension = 8192
+    static let maximumPixels = 16 * 1024 * 1024
+
+    static func validate(_ resolution: ImageResolution) throws {
+        guard resolution.width > 0, resolution.height > 0,
+              resolution.width <= maximumDimension, resolution.height <= maximumDimension else {
+            throw CaptureError.invalid("Native raster exceeds the 8192-pixel axis safety limit or has an invalid size.")
+        }
+        let (pixels, overflow) = resolution.width.multipliedReportingOverflow(by: resolution.height)
+        guard !overflow, pixels <= maximumPixels else {
+            throw CaptureError.invalid("Native raster exceeds the 16,777,216-pixel safety limit.")
+        }
+    }
+}
+
 struct TrackingRecord: Codable {
     let state: String
     let reason: String?
@@ -54,7 +81,12 @@ struct FrameRecord: Codable {
         try require(tracking_state.state == "normal", "Frame tracking must be normal.")
         try require(timestamp.isFinite && timestamp >= 0, "Invalid timestamp.")
         try require(camera_to_world.count == 4 && camera_to_world.allSatisfy { $0.count == 4 && $0.allSatisfy(\.isFinite) }, "Invalid c2w matrix.")
-        try require(camera_to_world[3] == [0, 0, 0, 1], "Invalid c2w homogeneous row.")
+        let homogeneousRowError = zip(camera_to_world[3], [0.0, 0, 0, 1])
+            .map { abs($0 - $1) }.max()!
+        // A bounded residual is enough to diagnose future device failures; do
+        // not put camera positions or the full measured pose in error messages.
+        try require(homogeneousRowError < CaptureGeometry.homogeneousRowTolerance,
+                    "Invalid c2w homogeneous row (max error \(homogeneousRowError); must be below \(CaptureGeometry.homogeneousRowTolerance)).")
         let c = camera_to_world
         for a in 0..<3 {
             for b in 0..<3 {
@@ -68,7 +100,7 @@ struct FrameRecord: Codable {
         try require(abs(det - 1) < 0.01, "Reflected camera rotation.")
         try require(intrinsics.count == 3 && intrinsics.allSatisfy { $0.count == 3 && $0.allSatisfy(\.isFinite) }, "Invalid intrinsics.")
         try require(intrinsics[0][0] > 0 && intrinsics[1][1] > 0 && intrinsics[2] == [0, 0, 1], "Invalid calibration matrix.")
-        try require(image_resolution.width > 0 && image_resolution.height > 0, "Invalid image size.")
+        try CaptureRasterLimits.validate(image_resolution)
         try require(exposure_duration_seconds.isFinite && exposure_offset_ev.isFinite, "Invalid exposure.")
         try require(raw_feature_points.count <= 50_000, "More than 50,000 feature points in one frame; capture stopped without truncation.")
         for point in raw_feature_points {
