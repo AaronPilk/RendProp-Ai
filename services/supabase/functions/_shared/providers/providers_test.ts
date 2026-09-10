@@ -625,7 +625,7 @@ async function openaiChatBody(
   await withFetch(
     (_url, init) => {
       sent = JSON.parse(String(init?.body ?? "{}"));
-      return new Response(JSON.stringify({ output_text: "ok" }), { status: 200 });
+      return new Response(JSON.stringify({ status: "completed", output_text: "ok" }), { status: 200 });
     },
     async () => {
       const { openaiChat } = await import("./openai.ts");
