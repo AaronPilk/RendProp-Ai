@@ -31,6 +31,8 @@ jobs:
         run: python3 tools/audit/test_database_invariant_sources.py
       - name: Consent selector contracts (not a UI runtime test)
         run: node --test tests/phase1/consent-contract.test.mjs
+      - name: Ask AI label source contract (not a screenshot test)
+        run: node --test tests/phase1/ask-ai-label.test.mjs
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -238,6 +240,53 @@ jobs:
       - name: Invariants after the replay (same answers, one overload per RPC)
         run: psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql
 
+  db-publication-regression:
+    name: Disposable PostgreSQL publication and invariant regression
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    # Do not reuse db-migrations' TCP service/database. The unchanged runner
+    # owns initdb, a private Unix socket and rendprop_audit, verifies identity,
+    # discards inherited PG credentials, and stops only its own cluster.
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Install explicit PostgreSQL 16 binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq postgresql-16 postgresql-client-16
+          for tool in initdb pg_ctl psql createdb; do
+            test -x "/usr/lib/postgresql/16/bin/$tool"
+            pg_version=$("/usr/lib/postgresql/16/bin/$tool" --version)
+            [[ "$pg_version" == "$tool (PostgreSQL) 16."* ]]
+            printf '%s\n' "$pg_version"
+          done
+      - name: Run actual SQL fixtures, replay and deliberately broken guards
+        id: database
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 tools/audit/run_database_regression.py
+      # A real red invariant suite still runs positive/negative publication
+      # fixtures before exiting nonzero. Preserve its evidence, not a green
+      # override. Preflight can fail before the runner creates any evidence.
+      - name: Retain database receipt and logs, including failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: disposable-database-regression-${{ github.run_attempt }}
+          path: |
+            /tmp/rendprop-db-audit-*/receipt.json
+            /tmp/rendprop-db-audit-*/*.log
+          retention-days: 7
+          if-no-files-found: ${{ steps.database.outcome == 'success' && 'error' || 'warn' }}
+
   python-worker:
     name: Render worker (python)
     runs-on: ubuntu-latest
@@ -290,6 +339,7 @@ jobs:
       - name: Run worker tests (ownership, recovery, resources and HDR)
         run: |
           python3 services/worker/tests/test_job_lease.py
+          python3 services/worker/tests/reproduce_stale_publish.py
           python3 services/worker/tests/test_reaper_snapshot.py
           python3 services/worker/tests/test_verification_prerequisites.py
           python3 services/worker/tests/test_stream_fallback.py
