@@ -10,7 +10,7 @@
 //  reopens onboarding on a rerun. No uninstall/erase/clear occurs.
 //
 //  This is NOT the UI walk and NOT the store-shot set. The other two both pass
-//  `-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v1 YES` so they
+//  `-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v2 YES` so they
 //  land straight on Home with every gate already answered. That is exactly the
 //  part a reviewer never gets. This test leaves onboarding unset and pins consent NO:
 //
@@ -92,12 +92,12 @@ final class ReviewerWalk: XCTestCase {
         // Do not pin hasOnboarded=false: argument-domain precedence would
         // prevent its persisted completion from being read after Get started.
         //   RendpropApp.swift  @AppStorage("hasOnboarded")  → NOT set: the intro shows
-        //   AIConsent          "ai.thirdPartyProcessing.consent.v1" → NOT set: r11 shows
+        //   AIConsent          "ai.thirdPartyProcessing.consent.v2" → NOT set: r11 shows
         //   RendpropApp.swift  @AppStorage("appearance") / Appearance.light == "light"
         app.launchArguments += [
             "-uiTesting",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v1", "NO",
+            "-ai.thirdPartyProcessing.consent.v2", "NO",
             "-space.type", "real_estate",
         ]
         if name.contains("testAIConsentDecisions") {

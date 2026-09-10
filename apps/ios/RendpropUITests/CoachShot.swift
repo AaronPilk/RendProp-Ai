@@ -35,7 +35,7 @@ final class CoachShot: XCTestCase {
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
         ]
         app.launch()
     }

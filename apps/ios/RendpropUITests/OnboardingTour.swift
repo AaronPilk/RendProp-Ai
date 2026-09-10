@@ -72,7 +72,7 @@
 //  slow drags (`gentleScroll`, `scrubPlayer`), which are gestures, not taps.
 //
 //  Launch: `-uiTesting -hasOnboarded YES -appearance light
-//  -ai.thirdPartyProcessing.consent.v1 YES` and NO `-space.type`, so the
+//  -ai.thirdPartyProcessing.consent.v2 YES` and NO `-space.type`, so the
 //  top-left business-type menu can really be driven (an argument-domain value
 //  would win over every pick — see IndustryWalk.swift's header). The tour
 //  starts in real estate and switches back to it after showing the menu.
@@ -138,7 +138,7 @@ final class OnboardingTour: XCTestCase {
             "-appearance", "light",
             // Guideline 5.1.2(i) consent — without it the AI screens show the
             // disclosure overlay and dismiss themselves when it is not answered.
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
         ]
     }
 

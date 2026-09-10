@@ -352,7 +352,7 @@ final class IndustryWalk: XCTestCase {
             "-appearance", "light",
             // Guideline 5.1.2(i) consent — without it the AI screens show the
             // disclosure overlay and dismiss themselves when it is not answered.
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
         ]
     }
 

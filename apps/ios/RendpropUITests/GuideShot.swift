@@ -41,13 +41,13 @@ final class GuideShot: XCTestCase {
         // Keys verified against source: RendpropApp.swift
         // @AppStorage("hasOnboarded"), RootTabView @AppStorage("space.type"),
         // @AppStorage("appearance"), AIConsent
-        // "ai.thirdPartyProcessing.consent.v1", Config.uiTestGuideState.
+        // "ai.thirdPartyProcessing.consent.v2", Config.uiTestGuideState.
         app.launchArguments += [
             "-uiTesting",
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
             "-ui.guideState", "2",
         ]
         app.launch()

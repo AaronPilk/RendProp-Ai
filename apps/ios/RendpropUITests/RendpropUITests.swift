@@ -63,7 +63,7 @@ final class RendpropUITests: XCTestCase {
             //   RendpropApp.swift  @AppStorage("hasOnboarded")
             //   RootTabView        @AppStorage("space.type") / SpaceType.realEstate == "real_estate"
             //   RendpropApp.swift  @AppStorage("appearance")  / Appearance.light == "light"
-            //   AIConsent          "ai.thirdPartyProcessing.consent.v1"
+            //   AIConsent          "ai.thirdPartyProcessing.consent.v2"
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             // Deterministic screenshots regardless of the simulator's theme.
@@ -71,7 +71,7 @@ final class RendpropUITests: XCTestCase {
             // Guideline 5.1.2(i) consent. Without it the AI screens
             // (PhotoStudioView, ReelStudioView) show a full-screen disclosure
             // overlay and dismiss themselves when it is not answered.
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
             "-ui.seedPhotosDir", fixtureDirectory.path,
         ]
         app.launch()

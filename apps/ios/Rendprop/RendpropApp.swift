@@ -2922,10 +2922,9 @@ struct Reveal: ViewModifier {
 //  parties, INCLUDING WITH THIRD-PARTY AI, and obtain explicit permission
 //  before doing so."  — App Review Guidelines 5.1.2(i)
 //
-// Every AI tool in Rendprop uploads a photo or a video the user picked and
-// hands it to an outside model (Google's Gemini for photo edits, Google's Veo
-// and Seedance for generated video, Topaz Labs for motion smoothing/upscale).
-// That is personal data leaving the device for a third party, so it needs an
+// Cloud AI tools can send media, text and project context to outside services,
+// including image-based quality checks after generation. That can include
+// personal information in a photo or script, so it needs an
 // explicit, affirmative opt-in BEFORE the first transmission — a line buried in
 // the privacy policy is not enough, and a pre-checked box is not enough.
 //
@@ -2943,8 +2942,9 @@ final class AIConsent: ObservableObject {
 
     /// Bumped if the set of processors or what we send them ever changes — a
     /// new suffix re-asks everyone, which is what a materially different
-    /// disclosure requires.
-    private static let storageKey = "ai.thirdPartyProcessing.consent.v1"
+    /// disclosure requires. v2 corrects omitted recipients and media/text uses;
+    /// a prior grant must not silently stand in for the corrected disclosure.
+    private static let storageKey = "ai.thirdPartyProcessing.consent.v2"
 
     /// Drives the disclosure overlay on whichever AI surface is open.
     @Published private(set) var isAsking = false
@@ -2964,12 +2964,14 @@ final class AIConsent: ObservableObject {
         let detail: String
     }
     static let processors: [Processor] = [
-        Processor(name: "Google",
-                  detail: "Gemini edits your listing photos. Veo and Seedance generate aerial intros and reel clips."),
-        Processor(name: "Topaz Labs",
-                  detail: "Smooths the motion in your walkthrough and upscales it to 4K."),
+        Processor(name: "Google (Gemini)",
+                  detail: "Receives photos, video or text for photo editing, video analysis and writing assistance."),
+        Processor(name: "fal.ai",
+                  detail: "Receives photos, video and prompts for AI edits, generated clips and upscaling. Available models include ByteDance Seedance, Google Veo, Topaz Labs, Bria, FLUX and MiniMax Hailuo."),
         Processor(name: "Anthropic and OpenAI",
-                  detail: "Answer what you type to the coach. Your photos and videos are never sent to them."),
+                  detail: "Receive chat, project context and writing requests. Quality checks can also send source photos and frames from generated clips; OpenAI can edit photos."),
+        Processor(name: "ElevenLabs",
+                  detail: "Receives your voiceover script, including any address or personal details in it, and your selected voice to generate narration."),
     ]
 
     /// Ask once, then never again on this device. Returns true when the person
@@ -3055,8 +3057,8 @@ extension View {
     func aiConsentGate() -> some View { modifier(AIConsentGate()) }
 }
 
-/// The disclosure itself. Names the processors, says exactly what leaves the
-/// phone and what never does, and offers a real decline.
+/// The disclosure itself. Names the services and data uses, warns that selected
+/// content can include personal information, and offers a real decline.
 struct AIConsentView: View {
     @ObservedObject private var consent = AIConsent.shared
 
@@ -3072,7 +3074,7 @@ struct AIConsentView: View {
                         Text("Rendprop's AI runs in the cloud")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        Text("AI photo edits, aerial intros, reel clips and AI-upscaled tours are not made on your phone. To make one, Rendprop sends the photo or video you pick to these AI providers:")
+                        Text("Cloud AI tools send the media, text and project context needed for your request through Rendprop's servers to the providers below. Some tools use more than one provider, including for quality checks or fallback.")
                             .font(.rpBody)
                             .foregroundStyle(Theme.inkDim)
                             .fixedSize(horizontal: false, vertical: true)
@@ -3096,11 +3098,11 @@ struct AIConsentView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         bullet("checkmark.circle.fill", Theme.good,
-                               "What we send: the image or video you choose, the words you type into a custom edit, and — for an aerial — the city and state only.")
+                               "What we send depends on the tool: selected media and sampled frames, edit prompts, chat history, project context, script text and transcript excerpts. For aerials, enter only city and state in the region field.")
                         bullet("xmark.circle.fill", Theme.bad,
-                               "What we never send: your street address, your name, your email, your phone number or your device's location.")
+                               "Review before sending: media can show people, addresses or documents. Text and project labels can contain personal information. Remove anything you do not want processed by these providers.")
                         bullet("clock.arrow.circlepath", Theme.inkDim,
-                               "They process the file to return your result. Rendprop does not sell your media and does not use it for advertising.")
+                               "These services process what is sent to return your result. Rendprop does not sell your media and does not use it for advertising.")
                     }
 
                     Link("Read the Privacy Policy",
