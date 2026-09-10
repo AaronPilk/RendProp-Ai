@@ -318,7 +318,7 @@ async function main() {
 
   upstream = { status: 500, body: () => "" };
   const broke = await get(worker, "/f/abc127");
-  expect(broke.status === 502, `[upstream 500] want 502, got ${broke.status}`);
+  expect(broke.status === 503, `[upstream 500] want 503, got ${broke.status}`);
   expect((broke.h("cache-control") || "").includes("no-store"), "[upstream 500] must not be cached");
   assertNoStack("upstream 500", broke.body);
 
@@ -331,7 +331,7 @@ async function main() {
     globalThis.fetch = async () => { throw new Error("network is down"); };
     return get(worker, "/f/abc129");
   })();
-  expect(netDown.status === 502, `[upstream unreachable] want 502, got ${netDown.status}`);
+  expect(netDown.status === 503, `[upstream unreachable] want 503, got ${netDown.status}`);
   assertNoStack("upstream unreachable", netDown.body);
   ok("the upstream path: happy render, indexing opt-in, 404, 5xx, junk body, unreachable");
 

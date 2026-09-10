@@ -9,7 +9,7 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
-    "test": "node scripts/check-unbranded.mjs && node scripts/check-routes.mjs",
+    "test": "node scripts/check-unbranded.mjs && node scripts/check-routes.mjs && node scripts/check-upstream.mjs",
     "tail": "wrangler tail",
     "check:unbranded": "node scripts/check-unbranded.mjs",
     "check:routes": "node scripts/check-routes.mjs",
