@@ -177,6 +177,21 @@ import {
   planShots,
   shotlistInstruction,
 } from "./shotlist.ts";
+import {
+  MAX_CLIP_SECONDS,
+  MAX_TRANSCRIPT_PHRASES,
+  MIN_CLIP_SECONDS,
+  type AgentReelAnswer,
+  type AgentReelRequest,
+  agentReelInstruction,
+  buildAgentReelTurn,
+  cleanTranscript,
+  parseAgentReel,
+  planWindows,
+  subjectOf,
+  t1,
+  transcriptText,
+} from "./agentreel.ts";
 import { EMPTY_REFUSAL, assertInputSafe, guardedCopy } from "./guard.ts";
 
 // ── Tunables ─────────────────────────────────────────────────────────────────
@@ -197,6 +212,12 @@ const MAX_TOKENS = 700;
  *  each is ~1,100; the rest is slack, for the same reason MAX_TOKENS is
  *  generous — it stops a runaway generation, it does not shape the answer. */
 const MAX_SHOTLIST_TOKENS = 1600;
+
+/** Bound the /agent-reel reply. It is one short object per cutaway — an id, a
+ *  photo id and at most five upper-case words — and MAX_WINDOWS caps it at
+ *  twelve of them. Far smaller than a shot list, because this model writes no
+ *  narration at all: the agent already spoke. */
+const MAX_AGENT_REEL_TOKENS = 700;
 
 /** Reel photo count. 5 s per clip and the app's own reel ceiling put this well
  *  under 20; the cap only exists so a junk body cannot reach the prompt. */
@@ -402,6 +423,20 @@ interface ShotlistBody {
   tone?: unknown;
 }
 
+interface AgentReelBody {
+  listing_id?: string;
+  space_type?: string;
+  tone?: string;
+  /** "listing" or "agent" — what the reel is about. */
+  subject?: string;
+  /** The real length of the talking-head clip, in seconds. */
+  clip_seconds?: number;
+  /** Phrase-level transcript with start times, produced ON DEVICE. */
+  transcript?: unknown;
+  photos?: unknown;
+  facts?: unknown;
+}
+
 interface EditPromptBody {
   listing_id?: string;
   space_type?: string;
@@ -419,10 +454,12 @@ Deno.serve(async (req) => {
     const seg = pathSegments(req, "ai-copy");
     const route = seg.length === 1 ? seg[0] : "";
 
-    if (req.method !== "POST" || (route !== "script" && route !== "shotlist" && route !== "edit-prompt")) {
+    const ROUTES = new Set(["script", "shotlist", "edit-prompt", "agent-reel"]);
+    if (req.method !== "POST" || !ROUTES.has(route)) {
       throw new HttpError(
         404,
-        "Unknown ai-copy route — use POST /ai-copy/script, POST /ai-copy/shotlist or POST /ai-copy/edit-prompt",
+        "Unknown ai-copy route — use POST /ai-copy/script, POST /ai-copy/shotlist, " +
+          "POST /ai-copy/agent-reel or POST /ai-copy/edit-prompt",
         "not_found",
       );
     }
@@ -661,6 +698,174 @@ Deno.serve(async (req) => {
         script: answer.script,
         characters: answer.script.length,
         estimated_seconds: estimatedSecondsFor(answer.script.length),
+        model: lastStep.model,
+      });
+    }
+
+    // ---- POST /ai-copy/agent-reel ----
+    //
+    // The agent filmed themselves. NOTHING IS GENERATED HERE and nothing is
+    // written: this route decides an EDIT — which listing photograph covers
+    // which sentence, and what few words burn on it — and the phone executes it
+    // with the compositing it already does. agentreel.ts's header argues why
+    // that is the right shape; the short version is that it costs a couple of
+    // cents instead of roughly fourteen dollars, and the agent's real face beats
+    // a model's impression of it in a video whose whole job is to be trusted.
+    if (route === "agent-reel") {
+      const body = await readJson<AgentReelBody>(req);
+
+      // VALIDATE FIRST, CHARGE SECOND (audit round 4), exactly as /shotlist does.
+      const facts: ScriptFacts = cleanFacts(body.facts);
+      const tone = toneOf(body.tone);
+      const subject = subjectOf(body.subject);
+
+      const clipSeconds = Number(body.clip_seconds);
+      assert(
+        Number.isFinite(clipSeconds) && clipSeconds >= MIN_CLIP_SECONDS,
+        400,
+        `The clip needs to be at least ${MIN_CLIP_SECONDS} seconds — there is nothing to cut yet.`,
+      );
+      assert(
+        clipSeconds <= MAX_CLIP_SECONDS,
+        400,
+        `That take is ${Math.round(clipSeconds)}s. The longest we will edit is ${MAX_CLIP_SECONDS}s — ` +
+          "trim it first so you choose what gets cut, not us.",
+      );
+
+      // Same rule as /shotlist: refuse an over-long list for the reason it is
+      // actually wrong rather than quietly truncating somebody's selection.
+      const rawPhotos = Array.isArray(body.photos) ? body.photos : [];
+      assert(
+        rawPhotos.length > 0,
+        400,
+        "`photos` is required — send the listing photos that can be cut in behind them",
+      );
+      assert(
+        rawPhotos.length <= MAX_SHOTS,
+        400,
+        `At most ${MAX_SHOTS} photos — you sent ${rawPhotos.length}.`,
+      );
+      const photos = cleanPhotos(rawPhotos);
+      assert(photos.length > 0, 400, "every photo needs its own non-empty `id`");
+
+      const rawTranscript = Array.isArray(body.transcript) ? body.transcript : [];
+      assert(
+        rawTranscript.length > 0,
+        400,
+        "`transcript` is required — transcribe the clip on device and send the phrases with their start times",
+      );
+      assert(
+        rawTranscript.length <= MAX_TRANSCRIPT_PHRASES,
+        400,
+        `At most ${MAX_TRANSCRIPT_PHRASES} transcript phrases — send phrases, not words.`,
+      );
+      const phrases = cleanTranscript(rawTranscript, clipSeconds);
+      assert(
+        phrases.length > 0,
+        400,
+        "None of those transcript entries had a usable start time inside the clip.",
+      );
+
+      // THE COVERAGE PLAN IS PURE AND RUNS BEFORE ANYTHING IS SPENT. Where
+      // /shotlist plans order, moves and seconds, this plans WHEN it is allowed
+      // to cut away — from the transcript's own boundaries, under the six rules
+      // in agentreel.ts. A take with no legal window costs nothing: we say so
+      // instead of buying an answer we cannot use.
+      const windows = planWindows(phrases, clipSeconds, photos.length);
+      assert(
+        windows.length > 0,
+        422,
+        "There is nowhere to cut away in this take — it is too short, or it never pauses. " +
+          "Leave a beat between sentences and we can cut the photos in.",
+      );
+
+      // The LISTING wins over the body (gate 4), same as /script and /shotlist.
+      const listingSpace = await listingSpaceType(userClient(req), body.listing_id);
+      const space = spaceTypeOf(listingSpace ?? body.space_type);
+
+      // FAIR HOUSING ON THE INPUT — and here the input includes WHAT THE AGENT
+      // SAID OUT LOUD, which is the point. A line like "perfect for a young
+      // family" is a steering problem in the agent's own voice, on a video they
+      // are about to publish under their own licence. Refusing the edit is the
+      // one moment we can stop it, and it is worth more to them than the edit.
+      const brief = userFreeText(facts, [...photoWords(photos), transcriptText(phrases)]);
+      assertInputSafe("marketing", brief, "What you said on camera", listingSpace);
+
+      const orgId = await guardAssist(user.id, req);
+      const orgPlan = await routingPlan(orgId);
+      const task = "copy.agent_reel";
+      const chain = await chooseChain(task, orgPlan);
+
+      const request: AgentReelRequest = { space, tone, subject, facts, photos, windows, clipSeconds };
+      const system = agentReelInstruction(request);
+      const turn = buildAgentReelTurn(request);
+
+      // THE COMPLIANCE SURFACE IS THE CAPTIONS AND ONLY THE CAPTIONS. Unlike
+      // /shotlist there is no model-written narration to gate — the words in
+      // this reel were spoken by a person and were gated on the way in. So the
+      // surface is every burned-in caption, joined by SURFACE_SEPARATOR for the
+      // reason shotlist.ts gives: a whitespace join could manufacture a phrase
+      // across the seam that exists in neither caption.
+      let lastStep: RouteStep = chain[0];
+      const parsed: AgentReelAnswer[] = [];
+      const written = await guardedCopy({
+        gate: "marketing",
+        input: brief,
+        inputWhat: "What you said on camera",
+        outputWhat: "These captions",
+        spaceType: listingSpace,
+        clean: (raw) => {
+          const answer = parseAgentReel(raw, windows, photos);
+          if (!answer) return ""; // no picture matched anything: broken, not refused
+          parsed.push(answer);
+          // An edit whose every caption is empty is still a good edit — the
+          // pictures are the deliverable. A blank surface passes the gate
+          // trivially and must not be mistaken for a failed attempt, so it
+          // carries a constant the gate has nothing to say about.
+          return answer.surface || "ok";
+        },
+        refusal:
+          "We could not caption this reel in a way that clears the fair-housing rules — " +
+          "nothing was returned. Try again, or describe the property rather than who it suits.",
+        attempt: async (isRetry) => {
+          const attempt = await runChain(task, chain, (step) =>
+            callStep(step, system, isRetry ? turn + RETRY_NOTE : turn, MAX_AGENT_REEL_TOKENS));
+          lastStep = attempt.step;
+          return attempt.value;
+        },
+      });
+
+      // Look the answer up BY THE SURFACE THAT PASSED THE GATE, same as
+      // /shotlist: the edit we hand back must provably be the edit that was
+      // checked, not one from an attempt that was thrown away.
+      const answer = parsed.find((a) => (a.surface || "ok") === written.text);
+      if (!answer) throw new HttpError(502, EMPTY_REFUSAL, "upstream");
+
+      // Bounded integers only in a durable row every member of the org can
+      // read — never a room label, never a caption, and above all never a word
+      // of what the agent said on camera.
+      await recordRoutedAiCost(adminClient(), {
+        orgId,
+        feature: "copy_assist",
+        step: lastStep,
+        meta: {
+          kind: "agent_reel",
+          subject,
+          clip_seconds: Math.round(clipSeconds),
+          attempts: written.attempts,
+          cutaways: answer.cutaways.filter((c) => c.photo_id).length,
+        },
+      });
+
+      // The EDL. `cutaways` is the whole edit: every window in clip order, with
+      // an empty photo_id wherever the reel deliberately stays on the agent.
+      // The client needs no other instruction to render it.
+      return json({
+        subject,
+        clip_seconds: t1(clipSeconds),
+        cutaways: answer.cutaways,
+        covered_seconds: answer.covered_seconds,
+        face_seconds: t1(clipSeconds - answer.covered_seconds),
         model: lastStep.model,
       });
     }
