@@ -332,8 +332,10 @@ enum CoachOffline {
             "Settings → Plan & usage → \"Manage subscription.\" Cancelling stops the next renewal " +
             "— your plan keeps working until the period you already paid for ends."),
         Topic(keywords: ["delete my account", "delete account", "remove my data"], reply:
-            "In Settings → \"Your data\" → \"Delete account.\" That removes your Rendprop account, " +
-            "unpublishes every tour link, and clears this phone."),
+            "In Settings → \"Your data\" → \"Delete account.\" Guests using an anonymous session " +
+            "also have a server account, so this is not a local-only wipe. Server cleanup may " +
+            "remain pending, and shared-team data is not all deleted with your account. " +
+            "Deleting the account does not cancel an App Store subscription."),
         Topic(keywords: ["film", "record", "walkthrough tip", "how do i shoot", "how to record"], reply:
             "Walk at a normal, steady pace — the way you'd show a friend around. Hold the phone " +
             "upright at chest height, keep it level, and turn the lights on first. One continuous " +
@@ -347,9 +349,10 @@ enum CoachOffline {
             "Reels turn a handful of your photos into a short vertical video — a gliding camera " +
             "move on each photo, a voiceover, and captions that land on the beat."),
         Topic(keywords: ["sign in", "guest", "account needed", "do i need an account"], reply:
-            "Recording, editing and building a tour all work fully signed out. Signing in is " +
-            "needed only to publish a tour to the web, since that's the step that creates the " +
-            "live link."),
+            // Anonymous sessions support publication; an Apple identity is optional.
+            "No account is required to record, edit, build or publish a tour. " +
+            "Publishing needs an internet connection. Sign in with Apple is optional " +
+            "for accessing your workspace on another device."),
     ]
 
     private static let offlineNote = "\n\n(I'm answering offline right now, so this is from what I already know.)"
