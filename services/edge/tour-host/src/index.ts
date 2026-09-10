@@ -33,6 +33,7 @@ import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
+import { fetchUpstreamJSON } from "./upstream";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -234,20 +235,22 @@ function safeDecode(segment: string): string | null {
   }
 }
 
-/** Fetch JSON from a Supabase Edge Function with the anon key attached. */
-async function fetchSupabase(path: string, env: Env): Promise<Response> {
-  const key = env.SUPABASE_ANON_KEY || "";
-  return fetch(`${functionsBase(env)}${path}`, {
-    method: "GET",
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      Accept: "application/json",
-    },
-    // Publication state must be current on every customer request. Neither the
-    // upstream API response nor the rendered customer HTML may be cached here.
-    cf: { cacheTtl: 0, cacheEverything: false },
-  });
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Minimum renderer contract, not a replacement for upstream field validation. */
+function isTour(value: unknown): value is Tour {
+  return isRecord(value) && typeof value.slug === "string" && value.slug.length > 0 &&
+    isRecord(value.listing) && isRecord(value.agent_card) && isRecord(value.cta) &&
+    Array.isArray(value.chapters) && value.chapters.every(isRecord);
+}
+
+function isPortfolio(value: unknown): value is Portfolio {
+  return isRecord(value) && isRecord(value.agent_card) &&
+    (value.org === undefined || isRecord(value.org)) &&
+    (value.tours === undefined || (Array.isArray(value.tours) && value.tours.every(isRecord))) &&
+    (value.listings === undefined || (Array.isArray(value.listings) && value.listings.every(isRecord)));
 }
 
 async function handleTour(
@@ -263,10 +266,10 @@ async function handleTour(
     unbranded
       ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
       : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
-  const upstreamError = () =>
+  const upstreamError = (status: 502 | 503 = 502) =>
     unbranded
-      ? htmlResponse(unbrandedFallback("error"), 502, { ...base, "Cache-Control": "no-store" }, { unbranded })
-      : htmlResponse(errorPage(), 502, { "Cache-Control": "no-store" });
+      ? htmlResponse(unbrandedFallback("error"), status, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(errorPage(), status, { "Cache-Control": "no-store" });
 
   // Slugs are nanoid (base64url) — reject anything else fast.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) {
@@ -337,25 +340,17 @@ async function handleTour(
   // in-app Home demo). /u/estate-demo is the MLS-safe cut of the same tour.
   if (demo) return finish(buildDemoTour(demoAs));
 
-  let upstream: Response;
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
+  if (upstream.kind === "not-found") return notFound();
+  if (upstream.kind === "error") return upstreamError(upstream.status);
+  if (!isTour(upstream.value)) return upstreamError();
   try {
-    upstream = await fetchSupabase(`/tours/${encodeURIComponent(slug)}`, env);
+    return finish(upstream.value);
   } catch {
+    // A malformed nested field is an invalid upstream response, not a missing
+    // published tour. Never render its raw JSON/error text into the public page.
     return upstreamError();
   }
-
-  if (upstream.status === 404) return notFound();
-  if (!upstream.ok) return upstreamError();
-
-  let tour: Tour;
-  try {
-    tour = (await upstream.json()) as Tour;
-  } catch {
-    return upstreamError();
-  }
-  if (!tour || !tour.slug) return notFound();
-
-  return finish(tour);
 }
 
 async function handlePortfolio(handle: string, req: Request, env: Env): Promise<Response> {
@@ -374,27 +369,19 @@ async function handlePortfolio(handle: string, req: Request, env: Env): Promise<
   // A portfolio contains revocable customer addresses/photos/links too. Do not
   // consult or refresh any customer HTML cached by an earlier deployment.
 
-  // GET /portfolio/:handle is live (services/supabase/functions/portfolio) but
-  // stay graceful: any non-2xx / network error / malformed body → branded 404.
-  let data: Portfolio | null = null;
-  try {
-    const upstream = await fetchSupabase(`/portfolio/${encodeURIComponent(handle)}`, env);
-    if (upstream.ok) {
-      data = (await upstream.json()) as Portfolio;
-    }
-  } catch {
-    data = null;
-  }
-
-  if (!data || !data.agent_card) {
+  const upstream = await fetchUpstreamJSON(`/portfolio/${encodeURIComponent(handle)}`, env);
+  if (upstream.kind === "not-found") {
     return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
   }
-
-  const html = renderPortfolioPage(data);
-  const resp = htmlResponse(html, 200, {
-    "Cache-Control": "no-store",
-  });
-  return req.method === "HEAD" ? new Response(null, resp) : resp;
+  const upstreamError = (status: 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store" });
+  if (upstream.kind === "error") return upstreamError(upstream.status);
+  if (!isPortfolio(upstream.value)) return upstreamError(502);
+  try {
+    const resp = htmlResponse(renderPortfolioPage(upstream.value), 200, { "Cache-Control": "no-store" });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  } catch {
+    return upstreamError(502);
+  }
 }
 
 async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {

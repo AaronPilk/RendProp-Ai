@@ -165,7 +165,8 @@ every branded tour page carries a canonical link to its `share_url`.
 | `npm run typecheck` | `tsc --noEmit` |
 | `npm run check:unbranded` | the MLS-safe `/u/<slug>` page: no sentinel, no branding, no form, no external link, and the required property content + AI disclosure still present. Also asserts the promo/indexing defaults from F-H-17/F-H-19 |
 | `npm run check:routes` | malformed paths (`/f/%`) answer with a branded 404 not a 500, the global error boundary, `/u/` failing unbranded, HSTS, customer revocation despite primed old caches, synthetic demo caching, and ordinary routes |
-| `npm test` | both of the above |
+| `node scripts/check-upstream.mjs` | actual-handler upstream deadline, decoded-body cap, malformed/absent/unavailable classification, cancellation, generic branded and MLS-neutral failures; synthetic offline inputs only |
+| `npm test` | unbranded, route and upstream gates |
 | `npm run check:assets` | the demo media that is deliberately not in git is present and under the 25 MiB Static Assets cap (run via `npm run predeploy`) |
 
 ### Vars / secrets
@@ -203,9 +204,20 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
   Fictional portfolio handles (`meridian`, `demo`) keep `public, max-age=300`.
 - Unknown/invalid customer slug or upstream `404` → branded **404** page with
   `no-store`; `/u/` keeps its neutral MLS-safe notice instead of branded content.
-- Tour upstream network/5xx → **502** page (`no-store`). Portfolio failures still
-  collapse to the existing branded **404**, now `no-store`; fixing that status
-  classification is the separate WH-10 audit item.
+- Tour and portfolio upstream network/read/deadline failures, 429 and 5xx →
+  **503** (`no-store`). Invalid JSON/UTF-8, invalid required renderer shape,
+  oversized responses and other bad upstream statuses → **502** (`no-store`).
+  Only an actual upstream 404 is reported as missing. Errors retain branded
+  pages on `/f/` and `/a/`, neutral MLS-safe notices on `/u/`.
+- One **8-second** timer covers fetching headers and reading the response body.
+  The reader caps decoded JSON at **4 MiB**, checking every chunk before retaining
+  it, independent of `Content-Length`, and refuses more than 64 consecutive empty
+  chunks. It aborts/cancels failures without waiting indefinitely for cancellation.
+  Redirects are not followed and there are no retries. These are operational
+  budgets, not a provider SLA: freeform metadata/portfolio size is not fully bounded
+  upstream, so an over-cap response is refused rather than silently truncated.
+  Timers cannot preempt synchronous JSON parsing or rendering; this is not a total
+  Worker CPU/RSS/latency guarantee. Browser lead-form deadlines are separate work.
 - This is not retroactive erasure: browser/intermediary HTML cached before rollout
   can remain until its old freshness period expires, and already-open pages,
   downloads, search-engine copies and previously issued media URLs are not revoked
