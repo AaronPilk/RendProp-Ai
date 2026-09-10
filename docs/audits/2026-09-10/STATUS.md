@@ -6,6 +6,26 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
+### Current integration checkpoint
+
+`8111522` and the foundation/style branches were pushed to GitHub. Worker unit
+`e388f019` and consent unit `b96896e` have now been independently reviewed and
+merged into this audit branch. The worker test commands omitted by the existing
+CI are wired in; missing HDR filters now fail instead of reporting green.
+Fresh integrated non-camera UI verification is **pending**, using the committed
+`tools/audit/run_noncamera_ui.py` (two exact tests, 21 required screenshots,
+source/artifact receipt, no camera tests, no Apple upload). No new UI success
+is claimed until its actual results are parsed and inspected.
+
+The upload-completion reproduction was independently rerun and reviewed against
+the installed PostgREST client: **one intended failed invariant**, same-size
+content replacement after completion. This is not an oversized-object proof.
+
+The real capture is assembled outside Downloads under an owner-only local
+directory. Independent synthetic review of its new wrapper found two boundary
+bugs (nested output mutating an original capture tree, default dataset modes);
+repairs are underway before integration. The owner's originals were not altered.
+
 ## Source and delivered work
 
 - Installed internal TestFlight build: **1.0 (18)**, source `ed0131b`.

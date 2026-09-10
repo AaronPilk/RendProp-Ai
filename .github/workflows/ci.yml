@@ -258,10 +258,8 @@ jobs:
       # 127.0.0.1 (tests/fake_postgrest.py) to exercise claim/lease/heartbeat/
       # reap. test_hdr_tonemap.py synthesises its own fixtures with local
       # ffmpeg and measures the real encode path; if the runner's ffmpeg build
-      # ever lacks zscale/tonemap it SKIPS — but LOUDLY (a ::warning::
-      # annotation naming exactly the missing filter, not a silent no-op —
-      # see skip() in that file) — so a green run here can never hide the
-      # fact this test never executed a single assertion.
+      # lacks zscale/tonemap it FAILS. Missing prerequisites are not evidence
+      # that an encode passed; the prerequisite regressions enforce this.
       #
       # Run as plain scripts, NOT via pytest: their `check()` helper only
       # appends to a list and never raises, so pytest would happily report a
@@ -272,9 +270,15 @@ jobs:
       # services/pipeline has no tests/ directory yet (stdlib-only glue code,
       # exercised today through its own cli.py cost-test path) — nothing to
       # wire up there until one exists.
-      - name: Run worker tests (job lease + HDR tonemap)
+      - name: Run worker tests (ownership, recovery, resources and HDR)
         run: |
           python3 services/worker/tests/test_job_lease.py
+          python3 services/worker/tests/test_reaper_snapshot.py
+          python3 services/worker/tests/test_verification_prerequisites.py
+          python3 services/worker/tests/test_process_specific.py
+          python3 services/worker/tests/test_cost_spool.py
+          python3 services/worker/tests/test_r2_timeouts.py
+          python3 services/worker/tests/test_resource_limits.py
           python3 services/worker/tests/test_hdr_tonemap.py
 
   ios-static:
