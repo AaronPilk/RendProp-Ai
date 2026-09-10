@@ -1,5 +1,11 @@
 # TestFlight preflight — local checks completed, distribution target unresolved
 
+> Historical preflight snapshot. The owner subsequently confirmed integration
+> into Rendprop's existing TestFlight app. Work continues on
+> `feat/spatial-testflight-integration-20260910`; the separate capture-app
+> distribution choice below is no longer a blocker. This document's results
+> predate the integrated build and must not be presented as its release proof.
+
 2026-09-10. Worktree: `/Users/pilksclaes/Rendprop AI/spatial-testflight-20260910`.
 Branch: `testflight/spatial-validation-20260910`, based on `3643398`.
 

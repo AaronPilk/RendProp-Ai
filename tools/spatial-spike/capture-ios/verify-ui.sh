@@ -8,7 +8,7 @@ spike_simulator="$1"
 if ! rg -q 'testUnsupportedStartDoesNotRequestCameraOrClaimCapture' UITests/SpatialCaptureUITests.swift; then
     mark_failure 'asserting unsupported-device test did not land'; exit "$FAIL"
 fi
-if ! rg -q 'private var arView: ARView\?' Sources/App.swift; then
+if ! rg -q 'private var arView: ARView\?' Sources/SpatialCaptureViewController.swift; then
     mark_failure 'lazy AR preview implementation did not land'; exit "$FAIL"
 fi
 if ! ruby verify-ui-summary.rb --self-test; then mark_failure 'UI summary negative-control checks failed'; exit "$FAIL"; fi

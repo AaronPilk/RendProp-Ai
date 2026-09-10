@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>method</key><string>app-store-connect</string>
+    <key>destination</key><string>upload</string>
+    <key>signingStyle</key><string>automatic</string>
+    <key>teamID</key><string>5F5C5G25Y6</string>
+    <!-- Apple enforces this: an experimental build cannot be attached to the
+         pending App Store version or distributed to external testers. -->
+    <key>testFlightInternalTestingOnly</key><true/>
+    <!-- The verified archive and ASC result must retain the same build number. -->
+    <key>manageAppVersionAndBuildNumber</key><false/>
+    <key>uploadSymbols</key><true/>
+    <key>generateAppStoreInformation</key><true/>
+    <key>stripSwiftSymbols</key><true/>
+</dict>
+</plist>

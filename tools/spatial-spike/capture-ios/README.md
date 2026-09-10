@@ -1,16 +1,62 @@
-# Phase A local iPhone capture harness
+# Phase A local iPhone capture
 
-This standalone, disposable app captures the input for the one-room spatial spike.
-It is **not** part of `apps/ios/Rendprop`, has no production imports, credentials,
-analytics, networking, accounts, purchases, or package dependencies. Its separate
-bundle identifier is `com.rendprop.spatialspike.capture`. It remains separate from
-the shipping project. TestFlight upload requires an explicit owner choice of
-this target, a matching app record, and coordinated release/signing gates; these
-scripts do not create an app record, sign for distribution, or upload anything.
+This local capture implementation supplies the input for the one-room spatial
+spike. The owner chose delivery inside the existing Rendprop TestFlight app
+(`com.rendprop.app`), using the explicit `SPATIAL_CAPTURE_LAB` build overlay.
+The normal Rendprop project does not include the shared capture implementation.
+The capture feature adds no production-service imports, credentials, analytics,
+networking, account/purchase gate, or package dependency.
+
+The standalone diagnostic app remains available as
+`com.rendprop.spatialspike.capture`, but is **not** the selected TestFlight target.
+These local verification scripts do not sign for distribution or upload anything.
+
+## Rendprop TestFlight integration
+
+`apps/ios/project-spatial-testflight.yml` owns the opted-in build. Its explicit
+shared source list is `Sources/SpatialCaptureViewController.swift`,
+`Sources/CaptureControls.swift`, `Sources/CaptureModel.swift`,
+`Sources/CaptureRecorder.swift`, `Sources/CaptureArchive.swift`, and `Sources/RasterWriter.swift` from this
+directory. Never include `Sources/App.swift`: its standalone `@main AppDelegate`
+would collide with Rendprop's existing app entry point. Do not add this whole
+directory or its scripts/tests as resources.
+
+`apps/ios/Rendprop/Capture/SpatialCaptureLabView.swift` is entirely fenced by
+`#if SPATIAL_CAPTURE_LAB`. It exposes `SpatialCaptureLabView()` for a Settings
+full-screen cover, with an experimental local-only description and a labelled
+**Done** action. The wrapper needs no environment object, account, entitlement,
+network client, or production-service dependency. The overlay preserves
+Rendprop's existing minimum OS, icon, privacy manifest and global capabilities;
+do not copy the standalone app's ARKit-required capability into the normal app.
+
+Done closes the controller synchronously before dismissing. SwiftUI teardown and
+UIKit removal also close it idempotently. Closing while preparing or recording
+requests `interrupted`, pauses/detaches/releases the AR session, restores the
+previous idle-timer value, and preserves all files. An already-requested stop/save
+continues draining without changing its requested status. A terminal `closed`
+control state prevents late permission, recorder-start, completion, or export
+callbacks from starting a renderer or presenting a picker after dismissal.
+Reopening creates a fresh controller and a fresh capture epoch; it never resumes
+an interrupted room. Interactive dismissal is disabled, but Done always remains
+available. No RoomPlan session is shared or changed by this Phase A integration.
+
+**Saved captures** reopens local attempts after dismissal or app relaunch. Its
+50-entry pages show creation date, frame count, stored status, and the capture's
+UUID in storage order; Previous/More reaches all pages without retaining an
+unbounded list. Unreadable attempts remain visible, and a listing error is not
+reported as an empty archive. Selecting any attempt re-reads its manifest and
+validates all JPEGs/sidecars before export; incomplete or corrupt attempts cannot
+be exported as completed captures. There is no erase action or network request.
+
+The Captures parent directory is excluded from backups before any capture files
+are written. The flag is re-applied and read back when existing captures are
+listed or exported; failure prevents capture/export instead of silently relaxing
+the local-storage promise. Preserve important captures with an explicit export:
+these diagnostic files intentionally do not participate in device backups.
 
 ## Build and verification
 
-From this directory, run `bash verify.sh --build`. The script asserts that new
+For the standalone diagnostic target, run `bash verify.sh --build`. The script asserts that new
 symbols exist, compiles the portable Swift checks, confirms an intentional failing
 assertion exits nonzero, runs the positive and negative checks, and builds an
 unsigned Release iPhone app with XcodeGen in a unique `/tmp` DerivedData directory.
@@ -19,7 +65,7 @@ capability, app icon, privacy manifest, and absence of source/script resources. 
 `--build` for just the checks. No device is installed, launched, or scanned by the
 script. A successful build or synthetic raster test is not a physical room proof.
 
-For a coordinated physical run, generate the standalone project with
+For an optional coordinated standalone development run, generate its project with
 `xcodegen generate`, open `SpatialSpikeCapture.xcodeproj`, select the owner's
 development team and the intended iPhone, and run this separate app. There is no
 provisioning team hardcoded. A real ARKit world-tracking iPhone is necessary;
@@ -52,12 +98,12 @@ capture or real export; the app contains no mock-completion launch mode.
 
 ## Packaging and privacy
 
-The app icon is an unchanged copy of the owned Rendprop
+The standalone app icon is an unchanged copy of the owned Rendprop
 `apps/ios/Rendprop/Resources/Assets.xcassets/AppIcon.appiconset/icon-1024.png`.
 No third-party design asset or SDK was added. There are no app entitlements,
 sign-in, associated domains, background capture, or hardcoded signing team.
 
-`Resources/PrivacyInfo.xcprivacy` declares no tracking and no collected data: room
+The standalone `Resources/PrivacyInfo.xcprivacy` declares no tracking and no collected data: room
 images, poses, device product identifier, and OS version stay in this app's local
 Documents directory until the operator deliberately exports them. The app makes
 no network request. Export invokes the system document picker; choose a local
@@ -82,8 +128,10 @@ Re-audit this declaration whenever storage or timing code changes.
    remains available, including when tracking is limited.
 4. **Export completed capture** validates every file before presenting the system
    folder-copy picker. Copy the entire UUID directory to the Mac by a user-chosen
-   local method. For manual USB retrieval it also appears under this app's
-   Documents/Captures directory in Finder file sharing. Do not upload room images
+   local method. Reopen **Saved captures** to export a prior completed room after
+   closing or relaunching. The standalone diagnostic target additionally exposes
+   Documents/Captures through Finder file sharing; Rendprop does not need to expose
+   its other documents. Do not upload room images
    anywhere until the owner has selected the GPU destination and authorized it.
 
 There are hard caps of 400 frames, ten minutes, and 50,000 feature points per
@@ -200,6 +248,9 @@ Primary references checked against Apple's docs and the installed iPhoneOS 26.4 
 - [UIKit button configuration introduced with iOS 15](https://developer.apple.com/videos/play/wwdc2021/10064/)
 - [Required-reason API categories](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype)
 - [File-size resource key](https://developer.apple.com/documentation/foundation/urlresourcekey/filesizekey)
+- [SwiftUI controller teardown before removal](https://developer.apple.com/documentation/swiftui/uiviewcontrollerrepresentable/dismantleuiviewcontroller(_:coordinator:))
+- [Interactive versus programmatic dismissal](https://developer.apple.com/documentation/swiftui/view/interactivedismissdisabled(_:))
+- [Backup exclusion resource flag](https://developer.apple.com/documentation/foundation/urlresourcevalues/isexcludedfrombackup)
 
 ## Still required for Phase A acceptance
 

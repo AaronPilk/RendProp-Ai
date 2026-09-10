@@ -31,8 +31,11 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
             guard self.active == nil else { return }
             do {
                 let sid = UUID().uuidString
-                let documents = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-                let root = documents.appendingPathComponent("Captures", isDirectory: true).appendingPathComponent(sid, isDirectory: true)
+                let archive = try CaptureArchive.local()
+                guard try archive.prepareRoot(createIfMissing: true) else {
+                    throw CaptureError.invalid("Capture storage could not be prepared.")
+                }
+                let root = archive.root.appendingPathComponent(sid, isDirectory: true)
                 try FileManager.default.createDirectory(at: root.appendingPathComponent("images"), withIntermediateDirectories: true)
                 try FileManager.default.createDirectory(at: root.appendingPathComponent("frames"), withIntermediateDirectories: true)
                 let files = SessionFiles(root: root, manifest: CaptureManifest(sessionID: sid, deviceModel: deviceModel, operatingSystem: operatingSystem))

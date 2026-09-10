@@ -62,6 +62,12 @@ struct SettingsView: View {
     /// docs/COACH-CONTRACT.md.
     @State private var showCoach = false
 
+#if SPATIAL_CAPTURE_LAB
+    // Only the explicit TestFlight project includes the local capture harness.
+    // The reviewed App Store configuration must not acquire an experimental door.
+    @State private var showSpatialCaptureLab = false
+#endif
+
     /// True when a server account exists to sign into / delete. In the offline
     /// (mock) build there is no account — only data on this phone.
     private var serverAccountsEnabled: Bool { Config.useLiveBackend && Config.enableAuth }
@@ -94,6 +100,20 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+#if SPATIAL_CAPTURE_LAB
+            Section {
+                Button {
+                    showSpatialCaptureLab = true
+                } label: {
+                    Label("Spatial capture (TestFlight)", systemImage: "viewfinder")
+                }
+                .accessibilityIdentifier("settings.spatialCapture")
+            } header: {
+                Text("TestFlight lab")
+            } footer: {
+                Text("Experimental one-room capture. Images and camera poses stay on this iPhone until you export them. This does not publish a tour.")
+            }
+#endif
             Section {
                 NavigationLink {
                     BusinessTypeView()
@@ -374,6 +394,11 @@ struct SettingsView: View {
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
         }
+#if SPATIAL_CAPTURE_LAB
+        .fullScreenCover(isPresented: $showSpatialCaptureLab) {
+            SpatialCaptureLabView()
+        }
+#endif
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn {
                 adminProbeDone = false
@@ -825,6 +850,7 @@ struct SettingsView: View {
     /// ── WRITE-LOCATION CHECKLIST (keep in sync; add a line when you add a writer) ──
     /// Documents/                (wiped wholesale, step 1)
     ///   Recordings/             capture + on-device renders + enhanced-*.mp4   FileStore.recordingsDir
+    ///   Captures/<UUID>/        local spatial TestFlight images + poses         CaptureArchive (lab overlay only)
     ///   Imports/                imported source clips                          FileStore.importsDir
     ///   Aerials/                AI aerial intros <id>-<stamp>.mp4              FileStore.aerialsDir
     ///   Photos/<listingID>/     AI photo studio originals + edits              FlythroughDetailView

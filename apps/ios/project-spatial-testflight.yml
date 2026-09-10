@@ -1,0 +1,44 @@
+# A separate generated project prevents a normal `xcodegen generate` / App Store
+# archive from silently picking up an unfinished experiment. Both projects still
+# identify as Rendprop; only this explicit TestFlight artifact exposes local capture.
+include:
+  - project.yml
+name: RendpropSpatialTestFlight
+settings:
+  base:
+    # Read-only ASC preflight found 16 as the newest uploaded build. Recheck
+    # immediately before archive/upload; never let export renumber silently.
+    CURRENT_PROJECT_VERSION: "17"
+targets:
+  Rendprop:
+    sources:
+      # Enumerate source files, never the tools directory: no scripts, fixtures,
+      # standalone @main, duplicate privacy manifest or icon enter the app bundle.
+      - path: ../../tools/spatial-spike/capture-ios/Sources/SpatialCaptureViewController.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureControls.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureArchive.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureModel.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureRecorder.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/RasterWriter.swift
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"
+  RendpropUITests:
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"
+schemes:
+  RendpropSpatialTestFlight:
+    build:
+      targets:
+        Rendprop: all
+        RendpropUITests: [test]
+    run:
+      config: Release
+    test:
+      config: Release
+      targets:
+        - RendpropUITests
+      captureScreenshotsAutomatically: false
+    archive:
+      config: Release

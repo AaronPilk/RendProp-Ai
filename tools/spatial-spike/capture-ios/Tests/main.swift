@@ -36,6 +36,33 @@ check(controls.beginExport(), "export can begin only after a validating verdict"
 check(!controls.beginStart() && !controls.stopEnabled && !controls.exportEnabled, "file validation blocks a racing capture")
 controls.exportChecked(valid: false)
 check(controls.startEnabled && !controls.exportEnabled, "failed revalidation revokes export")
+var recoveryControls = CaptureControls()
+check(recoveryControls.beginSavedExport() && !recoveryControls.startEnabled && !recoveryControls.exportEnabled, "saved selection enters validation without claiming completion")
+recoveryControls.endPresentation()
+check(!recoveryControls.beginSavedExport(), "closed presentation cannot recover/export")
+var activeRecoveryControls = CaptureControls()
+activeRecoveryControls.beginStart()
+check(!activeRecoveryControls.beginSavedExport(), "saved export cannot race preparation")
+activeRecoveryControls.captureStarted()
+check(!activeRecoveryControls.beginSavedExport(), "saved export cannot race recording")
+
+// A dismissed UI instance must never restart after delayed permission, disk, or
+// export callbacks. Test every lifecycle phase, including dismissal while saving.
+for phase in 0...6 {
+    var closing = CaptureControls()
+    if phase >= 1 { closing.beginStart() }
+    if phase >= 2 { closing.captureStarted() }
+    if phase == 3 { closing.beginStop() }
+    if phase >= 4 { closing.captureFinished(exportable: phase != 5) }
+    if phase == 6 { closing.beginExport() }
+    check(closing.endPresentation() == (phase == 1 || phase == 2), "dismissal interrupts exactly preparing/recording phase \(phase)")
+    check(closing.isClosed && !closing.startEnabled && !closing.stopEnabled && !closing.exportEnabled, "dismissal disables every action in phase \(phase)")
+    closing.startFailed()
+    closing.captureFinished(exportable: true)
+    closing.exportChecked(valid: true)
+    check(!closing.captureStarted() && !closing.beginStart() && !closing.beginStop() && !closing.beginExport() && closing.isClosed, "late callbacks cannot revive phase \(phase)")
+    check(!closing.endPresentation(), "repeated dismissal does not request another interruption in phase \(phase)")
+}
 
 var transform = matrix_identity_float4x4
 transform.columns.3 = SIMD4<Float>(1.25, -2.5, 3.75, 1)
@@ -176,6 +203,64 @@ do {
     try encoder.encode(fixtureManifest).write(to: manifestURL)
     let validatedFixture = try NativeRasterWriter.validateCapture(at: captureRoot)
     check(validatedFixture.frames.count == 20, "validate all paired fixture files")
+    // Persistent recovery tests use only explicitly synthetic temporary data.
+    let archive = CaptureArchive(root: temporaryRoot.appendingPathComponent("Captures"))
+    let absent = try archive.page(offset: 0)
+    check(absent.entries.isEmpty && !absent.hasMore, "missing capture storage is genuinely empty")
+    let preparedArchive = try archive.prepareRoot(createIfMissing: true)
+    check(preparedArchive, "prepare archive storage")
+    let excluded = try URL(fileURLWithPath: archive.root.path).resourceValues(forKeys: [.isExcludedFromBackupKey])
+    check(excluded.isExcludedFromBackup == true, "capture storage is persistently excluded from backups")
+    check((try? archive.captureURL(id: "../outside")) == nil, "recovery rejects path traversal")
+    let recoveredRoot = archive.root.appendingPathComponent(sid)
+    try FileManager.default.copyItem(at: captureRoot, to: recoveredRoot)
+    var attemptIDs: Set<String> = [sid]
+    for i in 1...51 {
+        let id = UUID().uuidString
+        attemptIDs.insert(id)
+        let attempt = archive.root.appendingPathComponent(id)
+        try FileManager.default.createDirectory(at: attempt, withIntermediateDirectories: true)
+        var incomplete = CaptureManifest(sessionID: id, deviceModel: "synthetic-recovery-test", operatingSystem: "test")
+        incomplete.status = i == 1 ? "recording" : "interrupted"
+        try encoder.encode(incomplete).write(to: attempt.appendingPathComponent("manifest.json"))
+    }
+    let firstPage = try archive.page(offset: 0)
+    let secondPage = try archive.page(offset: CaptureArchive.pageSize)
+    check(firstPage.entries.count == 50 && firstPage.hasMore, "recovery page memory is bounded and reveals more attempts")
+    check(secondPage.entries.count == 2 && !secondPage.hasMore, "older attempts remain reachable on another page")
+    check(Set((firstPage.entries + secondPage.entries).map(\.id)) == attemptIDs, "pagination does not silently hide or duplicate attempts")
+    check(firstPage.entries.allSatisfy { $0.createdAt != nil && $0.frameCount != nil }, "saved summaries contain creation time and frame counts")
+    let reopened = CaptureArchive(root: archive.root)
+    let recoveredExport = try reopened.validateForExport(id: sid)
+    check(recoveredExport.standardizedFileURL.path == recoveredRoot.standardizedFileURL.path, "fresh archive instance recovers completed synthetic data after reopening")
+    var interruptedRecovery = fixtureManifest
+    interruptedRecovery.status = "interrupted"
+    let recoveryManifestURL = recoveredRoot.appendingPathComponent("manifest.json")
+    try encoder.encode(interruptedRecovery).write(to: recoveryManifestURL)
+    check((try? reopened.validateForExport(id: sid)) == nil, "recovered export re-reads status and refuses interrupted attempts")
+    try encoder.encode(fixtureManifest).write(to: recoveryManifestURL)
+    let invalidID = UUID().uuidString
+    let invalidAttempt = archive.root.appendingPathComponent(invalidID)
+    try FileManager.default.createDirectory(at: invalidAttempt, withIntermediateDirectories: true)
+    try Data("not JSON".utf8).write(to: invalidAttempt.appendingPathComponent("manifest.json"))
+    let visibleAttempts = try archive.page(offset: 0).entries + archive.page(offset: CaptureArchive.pageSize).entries
+    check(visibleAttempts.contains { $0.id == invalidID && $0.status == "unreadable" && $0.issue != nil }, "unreadable attempts remain visible instead of becoming empty/successful")
+    try Data(repeating: 32, count: CaptureArchive.maximumManifestBytes + 1).write(to: invalidAttempt.appendingPathComponent("manifest.json"))
+    check((try? archive.manifest(id: invalidID)) == nil, "oversized manifest fails within the bounded read policy")
+    let wrongIdentity = CaptureManifest(sessionID: UUID().uuidString, deviceModel: "test", operatingSystem: "test")
+    try encoder.encode(wrongIdentity).write(to: invalidAttempt.appendingPathComponent("manifest.json"))
+    check((try? archive.manifest(id: invalidID)) == nil, "recovery refuses directory/manifest identity mismatch")
+    let badArchiveURL = temporaryRoot.appendingPathComponent("archive-is-a-file")
+    try Data("not a directory".utf8).write(to: badArchiveURL)
+    check((try? CaptureArchive(root: badArchiveURL).page(offset: 0)) == nil, "storage/enumeration failures are not reported as no saved captures")
+    let linkedArchiveURL = temporaryRoot.appendingPathComponent("linked-archive")
+    try FileManager.default.createSymbolicLink(at: linkedArchiveURL, withDestinationURL: archive.root)
+    check((try? CaptureArchive(root: linkedArchiveURL).page(offset: 0)) == nil, "archive root cannot redirect outside owned storage")
+    let linkedID = UUID().uuidString
+    try FileManager.default.createSymbolicLink(at: archive.root.appendingPathComponent(linkedID), withDestinationURL: captureRoot)
+    check((try? archive.captureURL(id: linkedID)) == nil, "capture selection rejects a symlink to another directory")
+    try Data("corrupted after initial export validation".utf8).write(to: recoveredRoot.appendingPathComponent("images/000020.jpg"))
+    check((try? reopened.validateForExport(id: sid)) == nil, "recovered exports revalidate the final JPEG on every attempt")
     fixtureManifest.status = "interrupted"
     try encoder.encode(fixtureManifest).write(to: manifestURL)
     check((try? NativeRasterWriter.validateCapture(at: captureRoot)) == nil, "refuse interrupted on-disk capture")

@@ -6,12 +6,11 @@
 //  screen and attaches a `keepAlways` screenshot of each. The owner reviews
 //  those PNGs before ad spend, so the walk is built around one rule:
 //
-//      A MISSING SCREEN MUST NEVER COST US THE OTHER SCREENSHOTS.
+//      A MISSING SCREEN FAILS THE GATE, WITHOUT LOSING LATER SCREENSHOTS.
 //
-//  Hence `continueAfterFailure = true`, generous waits, no XCTAssert in the
-//  walk itself, and one `XCTContext.runActivity` per step whose name says what
-//  happened (captured / skipped and why). A step that cannot be reached writes
-//  its reason into the activity instead of failing the run.
+//  `continueAfterFailure = true` preserves diagnostic screenshots, but every
+//  required screen/control has a failing assertion. Fixture images are drawn
+//  by this test; the photo library, microphone and AI generation are never used.
 //
 //  Element lookup order is always: accessibility identifier → visible label
 //  text → nothing. Never coordinates. The identifiers below do not all exist
@@ -25,12 +24,15 @@
 //
 
 import XCTest
+import UIKit
 
 final class RendpropUITests: XCTestCase {
 
     // MARK: - Fixtures
 
     private var app: XCUIApplication!
+    private var fixtureDirectory: URL!
+    private var capturedScreens = Set<String>()
 
     /// Longest wait for a screen to come up. The first launch on a cold
     /// simulator has to compile shaders and seed the sample listings.
@@ -46,6 +48,10 @@ final class RendpropUITests: XCTestCase {
         // The whole point of the walk is the screenshots. One unreachable
         // control must not take the rest of the run with it.
         continueAfterFailure = true
+
+        // The existing app hook imports these two generated images into an
+        // empty test project. Never inspect or drive the real photo library.
+        fixtureDirectory = try makeSyntheticPhotos()
 
         app = XCUIApplication()
         app.launchArguments += [
@@ -66,6 +72,7 @@ final class RendpropUITests: XCTestCase {
             // (PhotoStudioView, ReelStudioView) show a full-screen disclosure
             // overlay and dismiss themselves when it is not answered.
             "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ui.seedPhotosDir", fixtureDirectory.path,
         ]
         app.launch()
     }
@@ -86,6 +93,11 @@ final class RendpropUITests: XCTestCase {
         step07Routing()
         step08Paywall()
         step09HealthProbe()
+        let required = Set(["01-home", "02-add-home", "03-photo-studio",
+                            "04-reel-studio-voice", "05-settings", "06-owner-console",
+                            "07-routing", "08-paywall", "09-health-probe"])
+        XCTAssertTrue(required.isSubset(of: capturedScreens),
+                      "Missing required screenshot steps: \(required.subtracting(capturedScreens).sorted())")
     }
 
     // MARK: 01 — Home
@@ -114,45 +126,36 @@ final class RendpropUITests: XCTestCase {
             // The big button pushes NewListingView (nav title "New Home");
             // the same words also title StartProjectSheet, which the feature
             // tiles raise. Either is a correct `02-add-home`.
-            _ = waitForAny(ids: [],
+            XCTAssertTrue(waitForAny(ids: [],
                            labels: ["New Home", "Add a home", "Name this home first"],
-                           timeout: shortTimeout + 3)
+                           timeout: shortTimeout + 3), "Add-home form did not open")
             settle()
             shot("02-add-home")
             dismissTopScreen()
-            _ = waitForHome(timeout: shortTimeout + 3)
+            XCTAssertTrue(waitForHome(timeout: shortTimeout + 3), "Add-home form did not dismiss")
         }
     }
 
     // MARK: 03 — AI Photo Studio
 
-    /// Two ways in, tried in order:
-    ///   a) Home already lists a real project → open it → toolbox → AI Photo Studio.
-    ///   b) Fresh install (no real projects, only samples, whose tools are
-    ///      disabled by design) → tap the "Take photos" tile → the gate asks
-    ///      for a name → "Save and continue" lands straight in the studio.
+    /// Use Home's current AI Photo Studio route. The listing detail embeds a
+    /// scroll-scrub player above its toolbox; app-wide swipes can scrub that
+    /// player instead of bringing the toolbox onscreen. Home's feature gate
+    /// resolves the same synthetic project without that ambiguous gesture.
     /// - Returns: true when the studio is on screen at the end of the step.
     @discardableResult
     private func step03PhotoStudio() -> Bool {
         var reached = false
         activity("03 — AI Photo Studio") {
-            if openFirstListing(), let studio = find(ids: ["detail.photoStudio"],
-                                                     labels: ["AI Photo Studio"],
-                                                     timeout: shortTimeout) {
-                tap(studio)
-            } else {
-                // (b) — the fresh-install path.
-                guard let tile = find(ids: ["home.feature.photos"],
-                                      labels: ["Take photos"],
-                                      timeout: shortTimeout) else {
-                    note("SKIPPED: neither a listing row nor a \"Take photos\" tile on Home.")
-                    return
-                }
-                tap(tile)
-                nameFirstProjectIfAsked()
+            guard returnToHomeDashboard(),
+                  let tile = scrollTo(ids: ["home.feature.photoStudio"], labels: [], swipes: 8) else {
+                note("Required AI Photo Studio tile is missing from the confirmed Home dashboard.")
+                return
             }
+            tap(tile)
+            nameFirstProjectIfAsked()
 
-            guard waitForAny(ids: [], labels: ["AI Photo Studio"], timeout: screenTimeout) else {
+            guard app.navigationBars["AI Photo Studio"].waitForExistence(timeout: screenTimeout) else {
                 note("SKIPPED: AI Photo Studio did not open.")
                 shot("03-photo-studio")     // whatever is on screen — better than nothing
                 return
@@ -166,11 +169,10 @@ final class RendpropUITests: XCTestCase {
 
     // MARK: 04 — Reel Studio, the Voice step
 
-    /// Reel Studio's card in the photo studio is `.disabled` until the home has
-    /// TWO photos, so this step first tries to add photos from the simulator's
-    /// library (seed it with `xcrun simctl addmedia` — see README.md). Every
-    /// stage is optional: with no photos in the library the step records why it
-    /// skipped and the rest of the walk carries on.
+    /// Home's current reel feature opens ReelStudioView directly, using the
+    /// same listing-photo input as the toolbox. Two generated fixtures must
+    /// have completed local ingest before opening that presentation.
+    /// Select them locally, then expose Voice without recording or generating.
     private func step04ReelStudioVoice(reachedPhotoStudio: Bool) {
         activity("04 — Reel Studio · Voice step") {
             guard reachedPhotoStudio else {
@@ -178,47 +180,53 @@ final class RendpropUITests: XCTestCase {
                 return
             }
 
-            var reel = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
-            if reel == nil || reel?.isEnabled == false {
-                addTwoPhotosFromLibrary()
-                reel = find(ids: ["detail.reelStudio"], labels: ["Make a reel"], timeout: shortTimeout)
-            }
-
-            guard let card = reel, card.isEnabled, card.isHittable else {
-                note("SKIPPED: the \"Make a reel\" card is disabled — it needs 2 photos on this home, "
-                     + "and the simulator's photo library has none. Seed it with `xcrun simctl addmedia`.")
+            // Ingest is asynchronous. Home's .reel gate reloads this listing's
+            // photos before constructing ReelStudioView's immutable input.
+            settle(4)
+            guard returnToHomeDashboard(),
+                  let card = scrollTo(ids: ["home.feature.reel"], labels: [], swipes: 8),
+                  card.isEnabled, card.isHittable else {
+                note("Required Home Make a reel control is missing, disabled or offscreen.")
                 return
             }
             tap(card)
+            nameFirstProjectIfAsked()
 
-            guard waitForAny(ids: [], labels: ["Reel Studio", "Make a reel"], timeout: screenTimeout) else {
+            guard app.navigationBars["Reel Studio"].waitForExistence(timeout: screenTimeout) else {
                 note("SKIPPED: Reel Studio did not open.")
                 return
             }
 
-            // The setup screen is one scroll — 1 Photos → 2 Voice → 3 Make it.
-            // "Navigating to the Voice step" means scrolling STEP 2 into view
-            // and switching the picker off "Off" so its pane is visible.
-            if let voice = scrollTo(ids: ["reel.step.voice"],
-                                    labels: ["STEP 2 · ADD YOUR VOICE", "My voice"],
-                                    swipes: 8) {
-                // Tapping the segment expands the record pane; harmless if the
-                // element found was the step title rather than the segment.
-                if voice.isHittable && voice.elementType == .button { voice.tap() }
-                if let myVoice = find(ids: [], labels: ["My voice"], timeout: 1),
-                   myVoice.isHittable {
-                    myVoice.tap()
+            let photos = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reel.photo."))
+            guard photos.element(boundBy: 1).waitForExistence(timeout: screenTimeout) else {
+                note("Reel Studio has fewer than two synthetic photos; test-only seed import failed.")
+                return
+            }
+            for index in 0..<2 {
+                let photo = photos.element(boundBy: index)
+                guard let visible = scrollTo(ids: [photo.identifier], labels: [], swipes: 6) else {
+                    note("Synthetic reel photo \(index + 1) is not tappable.")
+                    return
                 }
-            } else {
-                note("The Voice step never scrolled into view — capturing Reel Studio as it stands.")
+                tap(visible)
+            }
+            XCTAssertTrue(waitForAny(ids: [], labels: ["2/8"], timeout: shortTimeout),
+                          "Reel Studio did not select both synthetic photos")
+            guard let myVoice = scrollTo(ids: [], labels: ["My voice"], swipes: 8) else {
+                note("Required My voice segment did not scroll into view.")
+                return
+            }
+            tap(myVoice)
+            guard scrollTo(ids: [], labels: ["Record"], swipes: 3) != nil else {
+                note("My voice did not expose its Record control; no recording was started.")
+                return
             }
             settle()
             shot("04-reel-studio-voice")
 
-            dismissTopScreen()          // Close → back to the photo studio
-            settle()
-            dismissTopScreen()          // back out of the studio
-            _ = waitForHome(timeout: shortTimeout + 3)
+            dismissTopScreen()          // Close → Home dashboard
+            let home = app.tabBars.buttons["Home"]
+            if home.exists && home.isHittable { home.tap() }
         }
     }
 
@@ -232,7 +240,8 @@ final class RendpropUITests: XCTestCase {
             }
             // `loadUsage()` runs on appear (mock `me()`), and its result is
             // what decides whether the owner-console rows draw.
-            _ = waitForAny(ids: [], labels: ["Plan & usage", "Business type"], timeout: screenTimeout)
+            XCTAssertTrue(waitForAny(ids: [], labels: ["Plan & usage", "Business type"], timeout: screenTimeout),
+                          "Settings content did not load")
             settle(1.5)
             shot("05-settings")
         }
@@ -363,13 +372,37 @@ final class RendpropUITests: XCTestCase {
         waitForAny(ids: ["home.addHome"], labels: ["Add a home", "My Homes"], timeout: timeout)
     }
 
+    /// A Home-tab selection alone can leave that tab's navigation stack pushed.
+    /// Confirm its exact navigation title before looking for Home feature IDs.
+    private func returnToHomeDashboard() -> Bool {
+        for _ in 0..<4 {
+            let tab = app.tabBars.buttons["Home"]
+            if tab.exists && tab.isHittable { tab.tap() }
+            if app.navigationBars["Home"].waitForExistence(timeout: 1) {
+                scrollToTop()
+                return true
+            }
+            dismissTopScreen()
+        }
+        note("Could not return to the Home dashboard before opening its feature")
+        return false
+    }
+
     @discardableResult
     private func openSettingsTab() -> Bool {
+        // A previous step may have left a sheet or pushed screen open.
+        for _ in 0..<3 where !app.tabBars.buttons["Settings"].isHittable {
+            dismissTopScreen()
+        }
         // Already there?
-        if find(ids: [], labels: ["Plan & usage"], timeout: 0.5) != nil { return true }
+        if find(ids: [], labels: ["Plan & usage"], timeout: 0.5) != nil {
+            scrollToTop()
+            return true
+        }
         let tab = app.tabBars.buttons["Settings"]
         guard tab.waitForExistence(timeout: shortTimeout) else { return false }
         tab.tap()
+        scrollToTop()
         // A tab tap while a screen is pushed only pops to the tab's root, so
         // tap again when the root did not surface.
         if !waitForAny(ids: [], labels: ["Plan & usage", "Business type"], timeout: shortTimeout) {
@@ -383,11 +416,10 @@ final class RendpropUITests: XCTestCase {
     /// never appear in that list, which is what makes this safe: every tool on
     /// a sample listing is deliberately disabled.
     private func openFirstListing() -> Bool {
-        guard let row = find(ids: ["home.listing.first"], labels: [], timeout: 1)
-                ?? firstListingRowByAddress() else { return false }
+        guard let row = scrollTo(ids: ["home.listing.first"], labels: [], swipes: 6)
+                ?? firstListingRowByAddress() else { scrollToTop(); return false }
         tap(row)
-        return waitForAny(ids: ["detail.photoStudio"], labels: ["TOOLBOX", "AI Photo Studio"],
-                          timeout: shortTimeout + 4)
+        return scrollTo(ids: ["detail.photoStudio"], labels: [], swipes: 8) != nil
     }
 
     /// Fallback for a missing `home.listing.first`: the walk's own home is the
@@ -405,43 +437,61 @@ final class RendpropUITests: XCTestCase {
     /// first; typing one and confirming lands straight in the feature that was
     /// tapped. A no-op when the gate did not appear (1+ homes already exist).
     private func nameFirstProjectIfAsked() {
+        if app.navigationBars["Pick a home"].waitForExistence(timeout: 1) {
+            // These are the only addresses authored by the two release walks.
+            guard let fixture = scrollTo(ids: [], labels: [walkAddress, "24 Willow Bend Court"], swipes: 6) else {
+                note("Project picker has no known synthetic walk project; refusing to choose another listing.")
+                return
+            }
+            tap(fixture)
+            return
+        }
         guard waitForAny(ids: [], labels: ["Name this home first", "Save and continue"],
                          timeout: shortTimeout) else { return }
         let field = app.textFields.firstMatch
-        if field.waitForExistence(timeout: shortTimeout) {
-            field.tap()
-            field.typeText(walkAddress)
+        guard field.waitForExistence(timeout: shortTimeout) else {
+            note("New-project name field is missing")
+            return
         }
+        field.tap()
+        field.typeText(walkAddress)
+        if app.keyboards.buttons["Done"].isHittable { app.keyboards.buttons["Done"].tap() }
         if let save = find(ids: [], labels: ["Save and continue"], timeout: shortTimeout) {
             tap(save)
+        } else {
+            note("New-project Save and continue control is missing")
         }
     }
 
-    /// Best-effort: add two images from the simulator's photo library so the
-    /// reel card unlocks. PHPicker is a separate process and a fresh simulator
-    /// has an empty library, so every stage here is allowed to come up empty.
-    private func addTwoPhotosFromLibrary() {
-        guard let add = find(ids: [], labels: ["Add photos"], timeout: shortTimeout), add.isHittable else {
-            return
+    /// Tiny, unmistakably synthetic images, generated locally. No library,
+    /// customer path, internet, or fixture download. Retained for diagnostics.
+    private func makeSyntheticPhotos() throws -> URL {
+        #if !targetEnvironment(simulator)
+        throw NSError(domain: "ReleaseWalk", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Synthetic shared-path UI walk requires an iOS simulator"])
+        #else
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("rendprop-ui-synthetic-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        format.opaque = true
+        for index in 1...2 {
+            let picture = UIGraphicsImageRenderer(size: CGSize(width: 480, height: 320), format: format).image { context in
+                (index == 1 ? UIColor.systemTeal : UIColor.systemOrange).setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 480, height: 320))
+                UIColor.white.setFill()
+                context.fill(CGRect(x: CGFloat(40 * index), y: 45, width: 180, height: 130))
+                ("SYNTHETIC UI FIXTURE \(index)\nNOT A PROPERTY PHOTO" as NSString).draw(
+                    in: CGRect(x: 20, y: 225, width: 440, height: 80),
+                    withAttributes: [.font: UIFont.boldSystemFont(ofSize: 20), .foregroundColor: UIColor.black])
+            }
+            let data = try XCTUnwrap(picture.jpegData(compressionQuality: 0.9))
+            XCTAssertLessThan(data.count, 100_000, "Synthetic fixture unexpectedly large")
+            try data.write(to: directory.appendingPathComponent("fixture-\(index).jpg"), options: .atomic)
         }
-        tap(add)
-        // PHPicker's grid. `images` is what it publishes for each asset cell.
-        let images = app.images
-        guard images.element(boundBy: 0).waitForExistence(timeout: 6) else {
-            dismissTopScreen()      // empty library — close the picker
-            return
-        }
-        for index in 0..<2 {
-            let cell = images.element(boundBy: index)
-            if cell.exists && cell.isHittable { cell.tap() }
-        }
-        if let done = find(ids: [], labels: ["Add", "Done"], timeout: 2), done.isHittable {
-            done.tap()
-        } else {
-            dismissTopScreen()
-        }
-        // Ingest writes the files and rebuilds the grid.
-        settle(4)
+        return directory
+        #endif
     }
 
     /// Back out of whatever is on top: a sheet's cancellation button first
@@ -507,8 +557,11 @@ final class RendpropUITests: XCTestCase {
             app.swipeUp()
             settle(0.35)
         }
-        if let element = find(ids: ids, labels: labels, timeout: perSwipeTimeout) { return element }
         return nil
+    }
+
+    private func scrollToTop() {
+        for _ in 0..<8 { app.swipeDown(); settle(0.15) }
     }
 
     private func isOnScreen(_ element: XCUIElement) -> Bool {
@@ -517,11 +570,11 @@ final class RendpropUITests: XCTestCase {
         guard frame.width > 0, frame.height > 0 else { return false }
         let window = app.windows.element(boundBy: 0)
         guard window.exists else { return true }
-        return window.frame.intersects(frame)
+        return window.frame.intersects(frame) && element.isHittable
     }
 
     private func tap(_ element: XCUIElement) {
-        guard element.exists else { return }
+        guard element.exists else { note("Required tap target disappeared"); return }
         if element.isHittable {
             element.tap()
         } else {
@@ -530,6 +583,7 @@ final class RendpropUITests: XCTestCase {
             app.swipeUp()
             settle(0.35)
             if element.isHittable { element.tap() }
+            else { note("Required tap target is not hittable: \(element.identifier) / \(element.label)") }
         }
         settle(0.6)
     }
@@ -537,6 +591,7 @@ final class RendpropUITests: XCTestCase {
     // MARK: - Screenshots, activities and waiting
 
     private func shot(_ name: String) {
+        capturedScreens.insert(name)
         let attachment = XCTAttachment(screenshot: app.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -547,10 +602,12 @@ final class RendpropUITests: XCTestCase {
         XCTContext.runActivity(named: name) { _ in body() }
     }
 
-    /// A line in the result bundle explaining a skip. Named activities are the
-    /// only place a non-failing note survives into the `.xcresult`.
-    private func note(_ text: String) {
-        XCTContext.runActivity(named: text) { _ in }
+    /// Missing required coverage is an XCTest failure, not a passing note.
+    /// Continue collecting independent screenshots after recording the failure.
+    private func note(_ text: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTContext.runActivity(named: "REQUIRED COVERAGE FAILURE: \(text)") { _ in
+            XCTFail(text, file: file, line: line)
+        }
     }
 
     /// Let animations and async loads settle. An inverted expectation waits the

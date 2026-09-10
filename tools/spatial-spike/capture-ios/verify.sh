@@ -8,9 +8,13 @@ rg -q 'final class CaptureRecorder' Sources/CaptureRecorder.swift || mark_failur
 rg -q 'final class NativeRasterWriter' Sources/RasterWriter.swift || mark_failure 'NativeRasterWriter symbol missing'
 rg -q 'raw_feature_points' Sources/CaptureModel.swift || mark_failure 'feature point schema missing'
 rg -q 'struct CaptureControls' Sources/CaptureControls.swift || mark_failure 'capture control interlocks missing'
+rg -q 'final class SpatialCaptureViewController' Sources/SpatialCaptureViewController.swift || mark_failure 'reusable capture controller missing'
+rg -q 'func endPresentation' Sources/SpatialCaptureViewController.swift || mark_failure 'capture dismissal teardown missing'
+rg -q 'struct CaptureArchive' Sources/CaptureArchive.swift || mark_failure 'persistent capture recovery missing'
+if rg -q '@main' Sources/SpatialCaptureViewController.swift; then mark_failure 'shared controller contains a standalone entry point'; fi
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 if ! spike_verify_dir=$(mktemp -d /tmp/spatial-capture-verify.XXXXXX); then mark_failure 'cannot create isolated verification directory'; exit "$FAIL"; fi
-if ! swiftc Sources/CaptureModel.swift Sources/RasterWriter.swift Sources/CaptureControls.swift Tests/main.swift -o "$spike_verify_dir/capture-tests"; then
+if ! swiftc Sources/CaptureModel.swift Sources/RasterWriter.swift Sources/CaptureControls.swift Sources/CaptureArchive.swift Tests/main.swift -o "$spike_verify_dir/capture-tests"; then
     mark_failure 'portable capture checks did not compile'; exit "$FAIL"
 fi
 if "$spike_verify_dir/capture-tests" --force-failure; then
