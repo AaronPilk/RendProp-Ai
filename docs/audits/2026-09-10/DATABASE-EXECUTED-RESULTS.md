@@ -4,6 +4,34 @@ This is a local **disposable PostgreSQL17.11** result, not a hosted Supabase
 attestation. No existing database, customer records, credentials, provider or
 Apple service was used. Overall result remains **FAIL / exit1**.
 
+## Later publication-transaction run — 19:45 Eastern
+
+Source `4e44afff6ceb71a17e86da74600342c3aedb9b91`, clean branch
+`ci/publication-database-fixtures-20260910`. Same command below. Actual receipt:
+`/tmp/rendprop-db-audit-8e9l3gmm/receipt.json`.
+
+- All38 migrations through0036 applied;30 replayed; every migration exit0.
+- Both invariant runs retain197/198 pass, with the same token-headroom failure.
+- **20 worker transaction assertions and19 upload trigger assertions passed,
+  each twice** (initial fixture and after restoring deliberately broken guards).
+- Worker ownership/attempt predicates were actually disabled in the owned
+  database: the real fixture failed `stale A accepted`, exit3. Original0035
+  restored; the20-check fixture passed again.
+- Upload publication trigger was actually disabled in that database: the real
+  fixture failed `Missing publication rejection: completed: uploaded = false`,
+  exit3. Original0036 restored; the19-check fixture passed again.
+- Six paid-route negative outcomes and the corrupted team-entitlement control
+  passed. Exact owned cluster stopped, exit0, PID gone. Receipt accepted=false
+  and overall runner exit1 honestly preserve the unrelated headroom defect.
+- Updated runner's30 mocked safety/control-flow tests passed. They are not30
+  additional real database assertions.
+
+This verifies bounded SQL behavior, not live PostgREST/R2 publication or a
+production rollout. Cross-review then found two additional worker RPC input
+guards (sub-cent duration rounding, photo-backed worker job) and a single-copy
+MIME metadata race; those follow-ups were still being implemented at this
+checkpoint. Do not use the20/19 result to claim those later changes passed.
+
 ## Exact source, command and evidence
 
 Source: `ba59f3d94bb8189bb7f14ca88c20694eb607d922`, clean before execution.

@@ -6,6 +6,23 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
+### Publication checkpoint — approximately 19:48 Eastern
+
+Uploads `a00f673` and worker `4aca5d0` are reviewed and integrated. Root executed
+both migrations in actual disposable PostgreSQL: **38 apply,30 replay;20 worker
++19 upload checks each pass twice; both deliberately removed guards are caught**.
+Receipt `/tmp/rendprop-db-audit-8e9l3gmm/receipt.json`. Overall DB result remains
+exit1/accepted=false solely for the existing197/198 token-headroom mismatch.
+See `DATABASE-EXECUTED-RESULTS.md`; no live database was changed.
+
+Independent cross-review found follow-ups before closing the units: copy an
+explicit verified Content-Type rather than trusting ETag to bind metadata;
+reject sub-cent worker durations that round to zero and photo-backed worker
+jobs. These are in progress, not covered by the passing20/19 receipt above.
+The actual upload race/terminal suites now register in ordinary edge CI.
+Privacy/Terms factual reconciliation is documented in
+`PRIVACY-POLICY-RECONCILIATION.md`; proposed legal copy is not published.
+
 ### Current integration checkpoint — approximately 19:42 Eastern
 
 All28 baseline screenshots have now been visually reviewed. The resulting

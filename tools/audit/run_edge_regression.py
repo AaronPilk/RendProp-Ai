@@ -60,6 +60,9 @@ def main():
         # Tests and entrypoints alone omit the shared adapters being repaired.
         # Bind all first-party edge code and SQL fixtures, not only test names.
         paths = set(functions.rglob("*.ts")) | set((root / "services/supabase").glob("*/*.sql"))
+        # The upload test registration files import actual-handler fixtures
+        # from tools/audit. Bind those bodies, not just their three-line imports.
+        paths.update((root / "tools/audit").glob("*.ts"))
         paths.add(Path(__file__).resolve())
         paths.update(functions.glob("deno.*"))
         return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
