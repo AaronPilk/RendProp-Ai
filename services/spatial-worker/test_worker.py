@@ -150,6 +150,10 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(terminal), 1)
         self.assertEqual(terminal[0].kwargs["cost_cents"], 600)
         self.assertIs(terminal[0].kwargs["provider_stopped"], True)
+        proof = [c for c in api.job_call.call_args_list if c.args[1] == "provider-attempt"]
+        self.assertEqual(len(proof), 1)
+        self.assertEqual(proof[0].kwargs["action"], "not_created")
+        self.assertEqual(proof[0].kwargs["data"]["proof"], "create_not_invoked")
 
     def test_failure_reports_provider_stop_proof_not_failure_alone(self):
         for terminal_proved in (False, True):
@@ -157,6 +161,7 @@ class LifecycleTests(unittest.TestCase):
                 api, provider, adapter = Mock(), Mock(), Mock()
                 api.claim.return_value = job()
                 def uncertain_provider(value, root, capture, lease):
+                    lease.provider_attempted = True
                     lease.provider_stopped = terminal_proved
                     raise w.JobFailure("generation_failed")
                 provider.reconstruct.side_effect = uncertain_provider
@@ -166,6 +171,7 @@ class LifecycleTests(unittest.TestCase):
                 terminal = [c for c in api.job_call.call_args_list if c.args[1] == "fail"]
                 self.assertEqual(len(terminal), 1)
                 self.assertIs(terminal[0].kwargs["provider_stopped"], terminal_proved)
+                self.assertFalse(any(c.args[1] == "provider-attempt" for c in api.job_call.call_args_list))
 
     def test_lease_failure_aborts_gpu_and_will_not_heartbeat_forever(self):
         api = Mock(); api.job_call.side_effect = w.JobFailure("lease_lost")

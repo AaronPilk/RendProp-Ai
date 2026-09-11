@@ -29,12 +29,13 @@ create or replace function public.spatial_provider_attempt_update(
   p_job uuid,p_lease uuid,p_attempt uuid,p_action text,p_data jsonb)
 returns jsonb language plpgsql security invoker set search_path=public as $$
 declare j spatial_jobs; r spatial_provider_attempts; l uuid; actor uuid; dispatch boolean:=false;
+  initial_absence boolean:=p_action='not_created' and p_data->>'origin'='before_provider_entry';
 begin
   perform spatial_service_only();
   if p_job is null or p_lease is null or p_attempt is null or p_action is null
     or jsonb_typeof(p_data) is distinct from 'object' or octet_length(p_data::text)>4096 then
     raise exception 'RP400: invalid provider receipt'; end if;
-  if p_action='plan' then
+  if p_action='plan' or initial_absence then
     -- Same ownership/lock order as claim/delete; commit intent BEFORE CREATE.
     select listing_id,actor_id into l,actor from spatial_jobs where id=p_job;
     perform spatial_access(actor,l);
@@ -47,15 +48,24 @@ begin
       or p_data->>'sandbox_name' is distinct from 'spatial-'||p_job::text||'-'||p_lease::text
       or (p_data->>'source_sha256') is null or (p_data->>'source_sha256') !~ '^[a-f0-9]{64}$' then
       raise exception 'RP400: invalid provider identity'; end if;
-    insert into spatial_provider_attempts(lease_token,job_id,attempt_key,app_name,sandbox_name,source_sha256,deadline_at)
-      values(p_lease,p_job,p_attempt,p_data->>'app_name',p_data->>'sandbox_name',p_data->>'source_sha256',j.deadline_at)
+    if initial_absence and p_data->>'proof' is distinct from 'create_not_invoked' then
+      raise exception 'RP400: absence of allocation is not proven'; end if;
+    insert into spatial_provider_attempts(lease_token,job_id,attempt_key,app_name,sandbox_name,source_sha256,deadline_at,
+      allocation_state,files_removed,terminated)
+      values(p_lease,p_job,p_attempt,p_data->>'app_name',p_data->>'sandbox_name',p_data->>'source_sha256',j.deadline_at,
+        case when initial_absence then 'not_created' else 'planned' end,coalesce(initial_absence,false),coalesce(initial_absence,false))
       on conflict(lease_token) do nothing returning * into r;
     dispatch:=found;
   end if;
   select * into r from spatial_provider_attempts where lease_token=p_lease for update;
   if not found or r.job_id is distinct from p_job or r.attempt_key is distinct from p_attempt then
     raise exception 'RP409: provider attempt was not journaled'; end if;
-  if p_action='plan' then
+  if initial_absence then
+    -- A pre-provider failure may insert its first no-allocation receipt, but
+    -- MUST NOT overwrite an existing ambiguous or allocated attempt. The other
+    -- controller's CREATE may have happened even if this caller never invoked it.
+    null;
+  elsif p_action='plan' then
     if r.source_sha256 is distinct from p_data->>'source_sha256' then
       raise exception 'RP409: provider source changed'; end if;
   elsif p_action in ('created','cleanup','unknown','not_created') then
@@ -93,7 +103,7 @@ begin
       last_error_code=coalesce(p_data->>'last_error_code',last_error_code),updated_at=clock_timestamp()
       where lease_token=p_lease returning * into r;
   else raise exception 'RP400: unknown provider receipt transition'; end if;
-  return jsonb_build_object('ok',true,'dispatch',dispatch,'lease_token',r.lease_token,
+  return jsonb_build_object('ok',true,'dispatch',dispatch and p_action='plan','lease_token',r.lease_token,
     'job_id',r.job_id,'attempt_key',r.attempt_key,'allocation_state',r.allocation_state,
     'files_removed',r.files_removed,'terminated',r.terminated,'sandbox_id',r.sandbox_id);
 end $$;

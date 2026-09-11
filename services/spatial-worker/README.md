@@ -8,10 +8,12 @@ do not export folders, rent GPUs or run any command.
 
 ## Deployment status
 
-**Source implemented; not deployed or verified on a real cloud job.** The previous
-one-room experiment failed at Modal's account billing-cycle limit; a fresh
-authorized allocation was accepted September11 at21:12:48UTC and its training
-outcome remains pending. The old failure is not a current allocation refusal.
+**Automatic app-queue workflow is not yet accepted on a real cloud job.** The
+separate authorized153-frame experiment completed training September11 at
+21:26UTC and produced a private PLY/held-out diagnostics; its explicit directory
+cleanup and GPU termination were confirmed. The output is visibly blurry and
+does not pass production-quality acceptance. The prior billing-cycle allocation
+failure is historical, not a current refusal.
 This worker does not change that account setting. Importing`app.py` or running the tests
 neither starts the scheduler nor allocates a GPU.
 
@@ -35,6 +37,8 @@ no App Review metadata/build attachment changes are part of this service.
   provider ID before transfer, and independent file-removal/termination flags.
   It has no cascading job/account foreign keys. Failed cleanup remains pending
   after temporary controller files disappear or account deletion completes.
+  Download/adapter failures before provider entry record `not_created` atomically;
+  they cannot overwrite an existing ambiguous provider intent or grant dispatch.
 - All HTTP requests identify the actual service as`Rendprop-Spatial-Worker/1.0`;
   no browser impersonation or firewall setting changes are used.
 - Input files use expiring exact-host private download URLs; redirects refused.
@@ -93,8 +97,8 @@ assertions with synthetic inputs. They are not a GPU reconstruction acceptance
 test. The actual pinned Modal1.5.3 application definition and disabled local
 invocation have also been exercised without any provider allocation.
 
-Remaining runtime proof: image dependency build, account billing headroom, one
-source-bound real-room training/quality run, measured cost, real iPhone viewer
+Remaining runtime proof: deployed automatic worker entry/queue integration,
+acceptable source-bound real-room quality, finalized cost, real iPhone viewer
 navigation/performance and native background upload through a network handover.
 The floor and navigation box are capture-derived estimates, not RoomPlan geometry,
 collision boundaries or trustworthy two-point measurements. No such claim is

@@ -20,6 +20,7 @@ insert into spatial_jobs(id,org_id,listing_id,actor_id,capture_id,idem_key,attem
  select f.job,l.org_id,l.id,l.agent_id,f.job,f.job,f.attempt,'Fixture','{}','processing',f.lease,clock_timestamp()+interval '2 minutes',clock_timestamp()+interval '2 hours' from _fixture f cross join listings l where l.id='a0410000-0000-4000-8000-000000000002';
 create function pg_temp.call(action text,data jsonb) returns jsonb language sql as $$select spatial_provider_attempt_update(job,lease,attempt,action,data) from _fixture$$;
 create function pg_temp.plan() returns jsonb language sql as $$select pg_temp.call('plan',jsonb_build_object('app_name','rendprop-spatial-worker','sandbox_name','spatial-'||job::text||'-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$$;
+create function pg_temp.no_allocation() returns jsonb language sql as $$select pg_temp.call('not_created',jsonb_build_object('origin','before_provider_entry','proof','create_not_invoked','app_name','rendprop-spatial-worker','sandbox_name','spatial-'||job::text||'-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$$;
 do $$ declare ns text;begin select nspname into ns from pg_namespace where oid=pg_my_temp_schema();execute format('grant usage on schema %I to service_role,anon,authenticated',ns);end $$;
 grant select,insert,update on _checks,_fixture to service_role,anon,authenticated;
 grant execute on all functions in schema pg_temp to service_role,anon,authenticated;
@@ -31,12 +32,19 @@ select pg_temp.denied('select pg_temp.plan()','permission denied%','actual membe
 reset role;
 set local role service_role;
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"files_removed":true,"terminated":true}'')','RP409:%','unjournaled cleanup rejected');
+select pg_temp.a(pg_temp.no_allocation()->>'dispatch'='false','early failure grants no dispatch');
+select pg_temp.a((select allocation_state='not_created' and files_removed and terminated and sandbox_id is null from spatial_provider_attempts),'early failure has durable no-allocation proof');
+reset role;
+delete from spatial_provider_attempts where lease_token=(select lease from _fixture);
+set local role service_role;
 select pg_temp.a(pg_temp.plan()->>'dispatch'='true','first durable plan grants one dispatch');
 select pg_temp.a(pg_temp.plan()->>'dispatch'='false','plan replay never grants another dispatch');
 select pg_temp.denied('select spatial_provider_attempt_update(job,gen_random_uuid(),attempt,''plan'',jsonb_build_object(''app_name'',''rendprop-spatial-worker'',''sandbox_name'',''spatial-''||job::text||''-''||lease::text,''source_sha256'',repeat(''a'',64))) from _fixture','RP409:%','stale lease cannot plan allocation');
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"files_removed":true,"terminated":true}'')','RP409:%','unknown identity cannot claim cleanup');
 select pg_temp.call('unknown','{"last_error_code":"allocation_unknown"}');
 select pg_temp.a((select allocation_state='unknown' and not terminated and not files_removed from spatial_provider_attempts),'ambiguous allocation remains pending');
+select pg_temp.no_allocation();
+select pg_temp.a((select allocation_state='unknown' and not terminated and not files_removed from spatial_provider_attempts),'early failure cannot overwrite another ambiguous create');
 select pg_temp.call('created','{"sandbox_id":"sb-fixture1234"}');
 select pg_temp.denied('select pg_temp.call(''created'',''{"sandbox_id":"sb-different1234"}'')','RP409:%','provider identity immutable');
 select pg_temp.denied('select spatial_provider_attempt_update(job,lease,gen_random_uuid(),''cleanup'',''{}'') from _fixture','RP409:%','paid attempt identity distinct from lease');
@@ -54,6 +62,6 @@ select pg_temp.a((select files_removed and terminated from spatial_provider_atte
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"files_removed":null}'')','RP400:%','null proof rejected');
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"reason_code":"raw provider body with credentials"}'')','new row for relation "spatial_provider_attempts" violates check constraint%','arbitrary provider error body not retained');
 reset role;
-select pg_temp.a((select count(*)=19 from _checks),'all expected provider assertions executed');
+select pg_temp.a((select count(*)=22 from _checks),'all expected provider assertions executed');
 select 'PASS: '||count(*)||' provider SQL assertions' from _checks;
 rollback;

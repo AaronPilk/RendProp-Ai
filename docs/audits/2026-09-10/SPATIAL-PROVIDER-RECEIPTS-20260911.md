@@ -1,8 +1,9 @@
 # Spatial provider receipts and one-room continuation
 
 Source branch: `fix/spatial-provider-receipts-20260911`, based on `baf77f9`.
-This document records source/offline verification before the proposed room run;
-it does not claim reconstruction, deployment or iPhone acceptance.
+This document records source verification and the completed private room run.
+Training completion is not production quality, automatic service deployment,
+or iPhone acceptance.
 
 ## Durable provider journal
 
@@ -27,6 +28,14 @@ journal row requiring assisted provider cleanup; no autonomous orphan-sweeper
 has been proven by this unit. A missing/ambiguous provider is never treated as
 deleted merely because its TTL elapsed.
 
+A failed download or adapter validation now records an atomic `not_created`
+receipt before the normal failure callback. It does not grant dispatch. Its
+conflict path cannot overwrite an existing planned/unknown/created attempt:
+another controller may have invoked CREATE even when this one did not. The
+worker flips `provider_attempted` before CREATE, including ambiguous exceptions,
+so those failures never assert the new no-allocation proof. Missing receipt
+acknowledgements remain cleanup debt, not inferred success.
+
 The scheduled deployment source is explicitly disabled (`DEPLOYMENT_ENABLED`
 false) and attaches no service Secret or recurring schedule. Even a stale environment
 `SPATIAL_WORKER_ENABLED=true` cannot activate it. Enabling the deployment,
@@ -34,11 +43,12 @@ its service credential and operational budgets is a separate reviewed action.
 
 ## Actual verification
 
-- `python3 -m unittest discover -s services/spatial-worker -v`: 38 tests,
+- `python3 -m unittest discover -s services/spatial-worker -v`: 41 tests,
   exit0. Includes actual disabled entry invocation with synthetic decorators,
   no-allocation on missing journal acknowledgement, no transfer before ID
   acknowledgement, temporary-directory removal with retained external receipt,
-  lost CREATE response, terminal failure and durable cleanup failure.
+  lost CREATE response, terminal failure, durable cleanup failure, pre-provider
+  validation failure, and remote `/root/app.py` import without local mounts.
 - `python3 -m unittest discover -s tools/spatial-spike/training
   -p 'test_modal*.py' -v`: 35 tests, exit0. Six continuation tests prove prior
   charge retention, unchanged original marker, no second attempt, rejected
@@ -49,10 +59,14 @@ its service credential and operational budgets is a separate reviewed action.
 - `deno test --allow-net --allow-env --no-check spatial/`: 26 tests, exit0.
   Executes the provider receipt route with injected database fixtures; actual
   Postgres behavior is covered separately below.
+- `/tmp/spatial-training-verify.rUYL0A/venv/bin/python -m unittest discover
+  -s tools/spatial-spike/training -v`: 98 tests, exit0, using verified Python3.12.14
+  and Pillow12.1.1. Includes actual JPEG adapter validation and bounded child
+  process timeout tests, not only mocked provider boundaries.
 - `python3 tools/audit/run_spatial_provider_regression.py`: exit0. New owned
-  socket-only PostgreSQL17 database; 20 assertions on first apply/replay/restore.
+  socket-only PostgreSQL17 database; 23 assertions on first apply/replay/restore.
   Red-before-migration exit3; deliberate always-dispatch mutant exit3 at the
-  replay guard. Evidence: `/tmp/rendprop-provider-db-zkk1d46k/receipt.json`.
+  replay guard. Evidence: `/tmp/rendprop-provider-db-56spmv_v/receipt.json`.
   The owned database was stopped. No production SQL was executed.
 - Targeted Python negative control replaced `ProviderJournal.plan` with a no-op
   in memory. `test_no_allocation_without_durable_intent_acknowledgement` exited1
@@ -91,7 +105,7 @@ It rechecks plan hashes, committed clean source, the exact app, zero active
 sandboxes and previous termination. It never creates a new app, changes billing,
 retries allocation automatically or increases the budget.
 
-Pending command, authorized only after parent review and clean source:
+Executed command, after parent review and clean source:
 
 ```sh
 MODAL_PROFILE=rendprop-room-experiment \
@@ -110,7 +124,7 @@ bounded; failures preserve terminal evidence without printing SDK credentials.
 No scheduled production budgets, Apple review settings, or public room
 publication are part of this experiment authorization.
 
-## Execution started (September11)
+## Completed private execution (September11)
 
 Parent reviewed the exact plan and authorized its single attempt after the
 source was committed and clean. Commit`88066a3887852d3d6e4c021ac901783cea05d133`
@@ -118,10 +132,31 @@ passed the clean source gate. The above command was executed once.
 
 Modal accepted sandbox`sb-2fqSw5zWu2dFlWhRAsmq2z` at
 `2026-09-11T21:12:48.138521Z`; the actual outbound-policy API succeeded before
-setup. Setup started`21:12:52.644388Z`. Private evidence is under the reviewed
-state directory. The allocation is not a completed room and not a deployed
-automatic app-to-viewer workflow. Training, held-out quality, artifact collection,
-termination and final billing still require final receipts.
+setup. Setup started`21:12:52.644388Z` and exited0. Outbound networking was denied
+at`21:21:25.139223Z`, before any private media transfer. Training started
+at`21:22:48.568848Z` and exited0. Artifacts were collected at`21:26:52.210002Z`.
+
+Actual run: 153 images,9,226 initial seeds,3,000 steps,29,733 final gaussians,
+209.441 seconds trainer runtime and a7,018,464-byte PLY. Twenty held-out renders,
+training logs and metrics are retained privately. The original capture has not
+been committed or publicly published. The held-out metrics were PSNR19.6598568,
+SSIM0.8109714 and LPIPS0.5567622. **The held-out prediction is visibly blurry;
+this is not production-quality acceptance.** Geometry initialization used all
+capture frames even though the held-out images were excluded from training loss.
+Reported GPU render timing is not iPhone FPS.
+
+The exact remote directory deletion returned success. Terminate-with-wait and
+independent terminal poll returned137 at`21:26:53.721114Z`; training had already
+exited0. A fresh exact-app readback at`21:27:53.534993Z` found zero active
+sandboxes and confirmed the exact sandbox's terminal137. A scoped receipt is
+saved privately as`modal-room-20260911-01/terminal-readback.json`.
+
+Provider usage read at`21:28:07.168208Z` reported **$0.57381695** for this exact
+app's current-hour run: CPU$0.15307022, L4$0.21466670, RAM$0.20608003. This is
+**provisional**, before the hour closed; reporting can lag and it is not a final
+invoice. The previous failed run's$1.09974939 remains recorded separately. No
+second allocation is authorized or initiated. The end-to-end automatic app
+queue and real iPhone quality/navigation still need their own proof.
 
 A separate follow-up adds the truthful`Rendprop-Spatial-Worker/1.0` User-Agent
 to control-plane, private-input and output-upload requests. The parent's live

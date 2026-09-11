@@ -227,6 +227,7 @@ class Lease:
         # restores it only after a terminal poll. A retry must not overlap a GPU
         # whose lease was lost but whose provider lifetime is still uncertain.
         self.provider_stopped = True
+        self.provider_attempted = False
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
@@ -326,9 +327,9 @@ def run_one(api, provider, allowed_input_hosts, *, scratch_parent=None):
     job = api.claim()
     if job is None:
         return {"status": "idle"}
-    validate_job(job)
     lease = Lease(api, job)
     try:
+        validate_job(job)
         with tempfile.TemporaryDirectory(prefix="rendprop-spatial-job-", dir=scratch_parent) as tmp:
             root = Path(tmp)
             with lease:
@@ -346,6 +347,14 @@ def run_one(api, provider, allowed_input_hosts, *, scratch_parent=None):
             return {"status": result["status"], "job_id": job["id"]}
     except Exception as error:
         code = error.code if isinstance(error, JobFailure) else "generation_failed"
+        if not lease.provider_attempted:
+            try:
+                from provider_journal import ProviderJournal
+                ProviderJournal(lease, job).no_allocation()
+            except Exception:
+                # Missing/ambiguous acknowledgement remains cleanup debt. It is
+                # not permission to erase a receipt or pretend a GPU was stopped.
+                pass
         try:
             # Full reservation is retained, not guessed down from a timer or an
             # absent invoice. Billing reconciliation can settle actual cost later.

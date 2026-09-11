@@ -46,14 +46,14 @@ def main():
         assert 'provider assertion failed: durable provider table exists' in run('before', psql + ['-f', test], 3)
         for phase in ('after', 'replayed'):
             run('apply-' + phase, psql + ['-q', '-1', '-f', target])
-            assert 'PASS: 20 provider SQL assertions' in run(phase, psql + ['-f', test])
+            assert 'PASS: 23 provider SQL assertions' in run(phase, psql + ['-f', test])
         definition = run('definition', psql + ['-Atc', "select pg_get_functiondef('spatial_provider_attempt_update(uuid,uuid,uuid,text,jsonb)'::regprocedure);"])
         needle = "'dispatch',dispatch"
         assert definition.count(needle) == 1
         run('mutate', psql, stdin=definition.replace(needle, "'dispatch',true"))
         assert 'provider assertion failed: plan replay never grants another dispatch' in run('reject-mutant', psql + ['-f', test], 3)
         run('restore', psql + ['-q', '-1', '-f', target])
-        assert 'PASS: 20 provider SQL assertions' in run('restored', psql + ['-f', test])
+        assert 'PASS: 23 provider SQL assertions' in run('restored', psql + ['-f', test])
         receipt['accepted'] = True
     finally:
         if started:

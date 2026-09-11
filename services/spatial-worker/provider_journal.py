@@ -48,6 +48,18 @@ class ProviderJournal:
         result = self.write("created", sandbox_id=sandbox_id)
         require(result.get("sandbox_id") == sandbox_id, "provider_identity_unconfirmed")
 
+    def no_allocation(self):
+        # Failed downloads/adapter validation have a claimed job but no provider
+        # entry yet. Record the absence atomically; never rewrite an older intent
+        # that could represent another controller's ambiguous CREATE.
+        result = self.write("not_created", origin="before_provider_entry", proof="create_not_invoked",
+                            app_name="rendprop-spatial-worker",
+                            sandbox_name="spatial-" + self.job["id"] + "-" + self.job["lease_token"],
+                            source_sha256=source_fingerprint())
+        require(result.get("allocation_state") == "not_created"
+                and result.get("files_removed") is True and result.get("terminated") is True,
+                "provider_no_allocation_unconfirmed")
+
     def cleanup(self, receipt):
         data = {"files_removed": receipt.get("private_files_removed") is True,
                 "terminated": receipt.get("terminated") is True}

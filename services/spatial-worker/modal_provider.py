@@ -65,6 +65,7 @@ class ModalProvider:
             planned = True
             lease.check()
             attempted = True
+            lease.provider_attempted = True
             lease.provider_stopped = False
             sb = self.modal.Sandbox.create(**options)
             receipt["sandbox_id"] = sb.object_id
