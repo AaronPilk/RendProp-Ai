@@ -89,11 +89,11 @@ slice, not camera/video playback or a copied submit implementation.
 | `git diff --check` | **Exit 0** |
 
 The full `npm test` total is **2,266 assertions + 12 gate self-tests**, not
-2,278 distinct end-to-end user flows. The first negative run executes eight
-fewer assertions because the pre-fix handler throws synchronously in its
-deliberate synchronous-fetch-failure case; that exception is a recorded test
-failure, not a skip. The subsequent UUID negative and positive runs execute
-the same 418 assertions.
+2,278 distinct end-to-end user flows. The initial negative run contains30
+rather than31 cases. It also executes fewer postcondition assertions because
+the pre-fix handler throws synchronously in its deliberate synchronous-fetch-
+failure case; that exception is a recorded test failure, not a skip. The
+subsequent UUID negative and positive runs both execute31 cases and418 assertions.
 
 Evidence directory: `/tmp/rendprop-lead-form.1taicF/` (temporary; not durable).
 Logs: `negative-before.log`, `negative-id-shape.log`, `lead-form-after.log`,
@@ -124,3 +124,17 @@ the event loop runs, not a guarantee that a suspended page redraws on time.
 No camera simulator testing, App Store Connect, provider spend, or deployment
 was performed. Review and integrate this commit, then run the host gates on the
 integrated tree before any separately authorized deployment.
+
+## Root integration proof
+
+Integrated and pushed as **`a9b13b1f1b66fee1f52fdd566e7de82f8b272b3b`**. Root read
+the complete diff and actual-handler fixture, then independently executed
+`npm run typecheck && npm test && npm run check:assets` from the integrated
+host directory. Exit0, with the same2,266 assertions/12 self-tests and31 form
+cases/0 skips; both demo assets pass. Current hashes match the three source
+hashes above. A full hosted CI run was dispatched on this exact source; its
+result is recorded separately in `HOSTED-CI-20260910.md`. Run34546654166 host
+job103100643656 now also passes all2,266 assertions/12 self-tests including
+418/31 form assertions/cases, clean install/typecheck, dry-run bundle and zero
+production npm advisories. Full workflow remains red for the separate database
+and scanner gates. No deployment occurred.

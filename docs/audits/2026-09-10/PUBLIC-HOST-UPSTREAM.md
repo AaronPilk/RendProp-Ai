@@ -105,7 +105,10 @@ in `/tmp/rendprop-host-upstream.eL9E3C/verify.sh`.
 No actual Cloudflare execution, compressed HTTP integration, backend publication
 transaction, browser lead submission, phone interaction or deployed cache policy
 was proven. WH-05's old-browser-cache and already-issued-media limitations remain.
-The separate WH-10 browser lead-form timeout/strict-success work is not implemented.
+The later WH-10 browser lead-form timeout/strict-success unit is now implemented
+and tested locally in `PUBLIC-LEAD-FORM.md`, including actual emitted-handler
+deadline, retry and confirmation tests. It remains a separate, undeployed
+change; this upstream-reader unit alone did not establish that behavior.
 No public response or prompt claims the complete hosting stack is verified.
 
 Cloudflare/Workers skills guided retrieval and streaming/cancellation semantics:

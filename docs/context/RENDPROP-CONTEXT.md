@@ -59,6 +59,14 @@ classifications in CI-RUN-34544905277.md. See HOSTED-CI-20260910.md for run/job
 links and the repaired fixture failures; do not interpret a local pass as a
 green full workflow or a production release.
 
+Subsequent product fix: **a9b13b1**, public lead-form bounded confirmation. It
+preserves brand/inputs, prevents duplicate submit, requires an actual success
+envelope and UUID (except the intentional honeypot), and handles uncertain
+15-second timeout without automatically sending again. Root's integrated host
+typecheck,2,266 assertions/12 self-tests and2-file asset gate pass;418 assertions
+cover31 emitted-form scenarios. Current hosted follow-up is in STATUS and
+HOSTED-CI-20260910.md. This is source pushed to GitHub, not a Cloudflare deploy.
+
 ---
 
 ## Historical snapshot follows — retained for decision history only

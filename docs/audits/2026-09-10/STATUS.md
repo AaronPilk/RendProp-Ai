@@ -6,9 +6,9 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
-## Latest integrated checkpoint — 20:22 Eastern
+## Latest integrated checkpoint — 20:30 Eastern
 
-Tested code checkpoint: **`68f39a24c9d685cc198dee3c899bf15a672716cd`** on
+Base combined checkpoint: **`68f39a24c9d685cc198dee3c899bf15a672716cd`** on
 `audit/full-regression-20260910`. The app is live; these changes are source
 repairs, **not a production deployment or a new TestFlight build**. Verdict for
 the entire requested experience remains **NO-GO / unfinished**, not a claim
@@ -87,6 +87,18 @@ No evidence establishes a privileged credential compromise; private triage and
 rotation verification if real remain required for that unresolved hit. Follow
 [`HOSTED-CI-20260910.md`](HOSTED-CI-20260910.md) for the exact run and corrections;
 neither a push nor a green individual job is a whole-app release verdict.
+
+Latest implemented/pushed code is **a9b13b1**: the public lead form now waits at
+most15 seconds for headers plus JSON, requires `ok:true` and a UUID lead ID for
+ordinary confirmation, preserves the intentional honeypot exception, prevents
+double-submit and ignores late completion after timeout/retry. Failure retains
+inputs and resets Turnstile; it does not claim an uncertain lead was never saved.
+Root independently ran the full host typecheck/tests/assets:2,266 assertions+
+12 self-tests pass, including418 assertions/31 actual emitted-form scenarios.
+See `PUBLIC-LEAD-FORM.md`. Hosted CI run34546654166 now confirms this exact
+source: lead-form/full host suite, clean install, typecheck,186.08KiB dry-run
+bundle and zero production npm advisories pass. Edge again passes602 tests.
+Seven jobs pass/three remain red for the documented database/scanner gates.
 
 ### Verified iOS checkpoint — approximately 19:42 Eastern
 
@@ -205,6 +217,7 @@ cluster was stopped and retained. See the separate pushed branch
 | Worker/hosting lane | **180 current Python checks/tests**;584 route assertions;557 unbranded +12 self-tests | Root reran all ten current worker scripts; supersedes former140+32 total after replacing unsafe-helper tests; no deployment |
 | Hosted worker including HDR | **199 checks/tests, including19 real HDR assertions** | Eleven scripts; separate from local180, not199 live calls; HOSTED-WORKER-VERIFICATION.md |
 | Bounded host upstream | **707 assertions /75 actual-handler cases** | Synthetic streams, aborts, byte caps and honest statuses; no production request |
+| Public lead-form handler | **418 assertions /31 cases,0 skips** | Real emitted JS with stub DOM/fetch/timers; not a live CRM/browser session |
 | Database replay | **197/198 pass, twice; overall FAIL** | All38 migrations +30 replays; one retained headroom mismatch, not live Supabase |
 | Publication SQL | **22 worker checks ×4;19 upload checks ×2 pass** | Four actual removed guards detected and restored; not concurrent production HTTP |
 | Database harness | **30 mocked-main +7 source tests pass** | Includes intentionally truncated suites, lost receipts, wrong-reason mutants and real SQL registration checks |
@@ -327,8 +340,9 @@ owner seeing the real reconstructed room; the Phase A experiment is unfinished.
    Current unit/SQL checks do not replace multi-role live HTTP coverage.
 5. **Finish UX/legal and media reliability:** reconcile public privacy/Terms
    with actual data flows (proposal in `PRIVACY-POLICY-RECONCILIATION.md`), fix
-   remaining RenderEngine concurrency warnings, and bound the browser lead
-   form's timeout/success contract. Hosted synthetic HDR now passes19 assertions;
+   remaining RenderEngine concurrency warnings. The browser lead-form timeout/
+   confirmation contract is now repaired locally; live CRM/Turnstile delivery
+   and server-side idempotency remain separate. Hosted HDR passes19 assertions;
    actual iPhone/Dolby Vision quality and device accessibility/layout coverage
    still need real-device evidence, without simulator camera attempts.
 6. **Complete web/editor product after its contracts:** foundations are not
