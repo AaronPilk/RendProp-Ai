@@ -60,6 +60,14 @@ function client(): AwsClient {
   return _client;
 }
 
+/** One journal claim means ONE dispatch. AwsClient.fetch retries some statuses;
+ * sign + native fetch deliberately does not. A timeout is an uncertain write,
+ * not permission to dispatch or charge again. Only uploads uses these helpers. */
+async function uploadDispatch(url: string, init: Parameters<AwsClient["sign"]>[1], timeout=120_000): Promise<Response> {
+  const request = await client().sign(url, init);
+  return await fetch(request, { signal: AbortSignal.timeout(timeout), redirect: "error" });
+}
+
 /** Encode each path segment but keep the "/" separators (safe for S3 SigV4). */
 function encodeKey(key: string): string {
   return key.split("/").map(encodeURIComponent).join("/");
@@ -146,7 +154,7 @@ export async function createMultipartUpload(
 ): Promise<string> {
   const { bucket, key, contentType } = args;
   const url = `${endpoint()}/${bucket}/${encodeKey(key)}?uploads`;
-  const res = await client().fetch(url, {
+  const res = await uploadDispatch(url, {
     method: "POST",
     headers: contentType ? { "content-type": contentType } : undefined,
   });
@@ -194,7 +202,7 @@ export async function completeMultipartUpload(
 
   const url = new URL(`${endpoint()}/${bucket}/${encodeKey(key)}`);
   url.searchParams.set("uploadId", uploadId);
-  const res = await client().fetch(url.toString(), {
+  const res = await uploadDispatch(url.toString(), {
     method: "POST",
     body,
     headers: { "content-type": "application/xml" },
@@ -219,6 +227,75 @@ export async function completeMultipartUpload(
 /** True when an error is the "multipart session no longer exists" signal above. */
 export function isNoSuchUpload(err: unknown): boolean {
   return err instanceof HttpError && err.details?.r2_code === "NoSuchUpload";
+}
+
+function xmlValue(value: string): string {
+  return value.replace(/&quot;/g,'"').replace(/&apos;/g,"'").replace(/&lt;/g,"<")
+    .replace(/&gt;/g,">").replace(/&amp;/g,"&");
+}
+async function boundedXML(url: URL,timeout=120_000): Promise<string | null> {
+  const response=await uploadDispatch(url.toString(),{method:"GET"},timeout);
+  if(response.status===404){await response.body?.cancel();return null;}
+  if(!response.ok){await response.body?.cancel();throw new HttpError(503,"Recorded upload inventory unavailable");}
+  if(!response.body)throw new HttpError(503,"Recorded upload inventory is empty");
+  const reader=response.body.getReader(),decoder=new TextDecoder();let count=0,text="";
+  try{while(true){const r=await reader.read();if(r.done)break;count+=r.value.byteLength;
+    if(count>131072)throw new HttpError(503,"Recorded upload inventory exceeds bound");
+    text+=decoder.decode(r.value,{stream:true});}return text+decoder.decode();}
+  finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+}
+
+/** Read-only lost-receipt recovery. These exact keys/sessions were registered
+ * BEFORE their one dispatch. Never enumerate arbitrary prefixes or re-upload. */
+export async function recoverMultipartPart(args:{bucket:string;key:string;uploadId:string;part:number;bytes:number}):Promise<string|null>{
+  const url=new URL(`${endpoint()}/${args.bucket}/${encodeKey(args.key)}`);
+  url.searchParams.set("uploadId",args.uploadId);url.searchParams.set("part-number-marker",String(args.part-1));
+  url.searchParams.set("max-parts","1");
+  const text=await boundedXML(url);if(text===null)return null;
+  const parts=[...text.matchAll(/<Part>([\s\S]*?)<\/Part>/g)];
+  if(parts.length===0)return null;
+  if(parts.length!==1)throw new HttpError(503,"Ambiguous recorded part inventory");
+  const part=parts[0][1],number=Number(firstTag(part,"PartNumber")),size=Number(firstTag(part,"Size"));
+  if(number!==args.part)return null;
+  const etag=firstTag(part,"ETag");
+  if(size!==args.bytes || !etag || etag.length>256)throw new HttpError(503,"Recorded part does not match its byte authority");
+  return normalizeEtag(xmlValue(etag));
+}
+export async function recoverMultipartInitialization(bucket:string,key:string,timeout=120_000):Promise<string|null>{
+  const url=new URL(`${endpoint()}/${bucket}`);
+  url.searchParams.set("uploads","");url.searchParams.set("prefix",key);url.searchParams.set("max-uploads","2");
+  const text=await boundedXML(url,timeout);if(text===null)return null;
+  const sessions=[...text.matchAll(/<Upload>([\s\S]*?)<\/Upload>/g)]
+    .filter(m=>xmlValue(firstTag(m[1],"Key")??"")===key);
+  if(sessions.length===0)return null;
+  if(sessions.length!==1 || firstTag(text,"IsTruncated")==="true")throw new HttpError(503,"Ambiguous recorded multipart initialization");
+  const id=firstTag(sessions[0][1],"UploadId");
+  if(!id || id.length>2048)throw new HttpError(503,"Recorded multipart ID is invalid");
+  return xmlValue(id);
+}
+
+/** Cleanup only an already claimed journal entry; no caller-shaped keys.
+ * Each HTTP dispatch is bounded, non-retrying and acknowledged before marking
+ * it deleted. Failure remains in the durable queue. */
+export async function deleteRecordedUpload(op:Record<string,unknown>):Promise<boolean>{
+  if(!["uploads","renders"].includes(String(op.bucket))||!["single","copy","init","part","assemble"].includes(String(op.kind))||
+    typeof op.object_key!=="string"||op.object_key.length>1024||op.object_key.includes("..")||
+    !(op.object_key.startsWith(`${op.bucket}/`)||op.object_key.startsWith(`_staging/${op.bucket}/`)))
+    throw new HttpError(503,"Invalid journaled cleanup identity");
+  if(op.claim==null)return true; // No external write was ever authorized.
+  const bucket=op.bucket==="renders"?R2_BUCKET_RENDERS:R2_BUCKET_UPLOADS,key=String(op.object_key);
+  let uploadId=typeof op.upload_id==="string"?op.upload_id:null;
+  if(op.kind==="init" && !uploadId){
+    uploadId=await recoverMultipartInitialization(bucket,key,10_000);
+    if(!uploadId)return false; // Unknown session remains an explicit unresolved record.
+  }
+  if(["init","part","assemble"].includes(String(op.kind)) && uploadId){
+    const abort=new URL(`${endpoint()}/${bucket}/${encodeKey(key)}`);abort.searchParams.set("uploadId",uploadId);
+    const response=await uploadDispatch(abort.toString(),{method:"DELETE"},10_000);
+    await response.body?.cancel();if(!response.ok && response.status!==404)return false;
+  }
+  const response=await uploadDispatch(`${endpoint()}/${bucket}/${encodeKey(key)}`,{method:"DELETE"},10_000);
+  await response.body?.cancel();return response.ok || response.status===404;
 }
 
 /** Abort a multipart upload (cleanup); 404 is treated as already-gone. */
@@ -330,7 +407,7 @@ export async function copyObject(
   }
   // aws4fetch 1.0.20 excludes Content-Type from signing by default, including
   // header-signed requests. Opt in for this verified metadata replacement.
-  const res = await client().fetch(url, { method: "PUT", headers,
+  const res = await uploadDispatch(url, { method: "PUT", headers,
     aws: { allHeaders: verifiedContentType !== undefined } });
   if (res.status === 412) {
     throw new HttpError(409, "The staged upload changed during verification — re-upload and try again");
