@@ -8,6 +8,11 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+New owner UX direction: [`HOME-SPATIAL-FEATURE.md`](HOME-SPATIAL-FEATURE.md).
+Add a dedicated **3D walkthrough** card on Home, backed by the complete in-app
+flow—not the existing export-only lab. This is a recorded requirement, not a
+shipped card or a waiver of the real-room acceptance gate.
+
 Latest intake: [`CAPTURE-INTAKE-20260911.md`](CAPTURE-INTAKE-20260911.md).
 The owner's new153-frame/76-second export passes full local input validation;
 all307 file hashes match the private working copy, and a9,226-seed dataset is
