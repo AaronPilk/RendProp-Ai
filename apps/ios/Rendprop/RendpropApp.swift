@@ -1761,34 +1761,22 @@ enum PersistentStore {
         var adoptionBindingsUnreadable = false
     }
 
-    /// Armed by `load()` when a snapshot existed on disk but could NOT be read
-    /// or decoded AND could not be moved aside. While it is armed, `save()`
-    /// refuses to write an EMPTY snapshot — a transient read error must never
-    /// turn into "all your listings are gone" one auto-save later. Disarmed as
-    /// soon as a snapshot with real content is written.
+    /// A transient read error must never turn into "all your listings are gone"
+    /// one auto-save later. Recovery refusal below also protects nonempty edits
+    /// from replacing an original library we have not successfully loaded.
     /// Main-actor only: `load()`/`save()` are called from `AppModel` (@MainActor).
     private static var refusesEmptyOverwrite = false
     // Salvage readable listings, but never silently drop an unreadable recovery
     // journal during the next autosave. Original bytes stay in place for help.
     private static var refusesRecoveryOverwrite = false
 
-    /// Move an unusable snapshot to `rendprop-state.corrupt-<unix>.json`.
-    /// MOVE, not copy: once it is out of the way the next save writes a clean
-    /// file and nothing the user still has is destroyed. Returns false when even
-    /// the move failed — the caller then protects the file by refusing to
-    /// overwrite it with an empty snapshot.
-    @discardableResult
-    private static func quarantineSnapshot() -> Bool {
-        let stamp = Int(Date().timeIntervalSince1970)
-        let backup = FileStore.documents.appendingPathComponent("rendprop-state.corrupt-\(stamp).json")
-        do {
-            try FileManager.default.moveItem(at: fileURL, to: backup)
-            return true
-        } catch {
-            // Last resort: a copy at least preserves the bytes for forensics.
-            try? FileManager.default.copyItem(at: fileURL, to: backup)
-            return false
-        }
+    private static func unreadableSnapshot() -> Loaded {
+        // Leave the original at its exact path. Moving it aside would look
+        // like a fresh empty install after relaunch and permit an empty local
+        // handoff snapshot despite an unknown original library.
+        refusesEmptyOverwrite = true
+        refusesRecoveryOverwrite = true
+        return Loaded(adoptionBindingsUnreadable: true)
     }
 
     static func load() -> Loaded {
@@ -1802,31 +1790,32 @@ enum PersistentStore {
             // The file is THERE but unreadable (transient I/O, protected data
             // still locked, disk pressure). Getting this wrong is what destroys
             // a user's library, so do not treat it as "no data".
-            refusesEmptyOverwrite = !quarantineSnapshot()
-            return Loaded()
+            return unreadableSnapshot()
         }
         guard let state = try? JSONDecoder().decode(PersistedState.self, from: data) else {
             // Truly undecodable at the TOP level (truncated write, not JSON at
             // all) — per-collection and per-element salvage already ran inside
             // PersistedState.init, so reaching here means there was nothing to
-            // salvage. Move it aside rather than let the next save clobber it.
-            refusesEmptyOverwrite = !quarantineSnapshot()
-            return Loaded()
+            // salvage. Preserve the original path and refuse handoff/autosave.
+            return unreadableSnapshot()
         }
 
-        // The decode succeeded but salvaged NOTHING out of a file that clearly
-        // held something (an honestly-empty snapshot is ~48 bytes). Everything
-        // in it was undecodable, so keep a copy before the next auto-save
-        // replaces it, and don't let that save be an empty one.
+        // An empty snapshot can exceed128 bytes now that it has ownership
+        // metadata. Inspect actual collection shape rather than guessing from
+        // file size. All-malformed content is unknown, not an empty library.
         let salvagedNothing = state.listings.isEmpty && state.assets.isEmpty
             && state.tours.isEmpty && state.renders.isEmpty
-            && state.adoptionBindings == nil && !state.adoptionBindingsUnreadable
-        if salvagedNothing && data.count > 128 {
-            _ = quarantineSnapshot()
-            refusesEmptyOverwrite = true
-        } else {
-            refusesEmptyOverwrite = false
+        if salvagedNothing {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let heldContent = ["listings", "assets", "tours", "renders"].contains { key in
+                guard let value = raw[key], !(value is NSNull) else { return false }
+                if let array = value as? [Any] { return !array.isEmpty }
+                if let object = value as? [String: Any] { return !object.isEmpty }
+                return true
+            }
+            if heldContent { return unreadableSnapshot() }
         }
+        refusesEmptyOverwrite = false
 
         var out = Loaded()
         refusesRecoveryOverwrite = state.adoptionBindingsUnreadable

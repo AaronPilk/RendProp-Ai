@@ -169,5 +169,37 @@ struct AdoptionLocalBindingsTests {
         try JSONSerialization.data(withJSONObject: old).write(to: legacyFile, options: .atomic)
         let oldLoaded = PersistentStore.load()
         check(oldLoaded.listings.count == 1 && !oldLoaded.adoptionBindingsUnreadable, "legacy absent metadata remains readable without invented transfer")
+        let honestEmpty = try await fresh(); honestEmpty.listings = []
+        let honestFile = FileStore.documents.appendingPathComponent("rendprop-state.json")
+        let honestReload = AppModel(); await honestReload.load()
+        check(!honestReload.adoptionBindingsUnreadable && FileManager.default.fileExists(atPath: honestFile.path),
+              "honestly empty owned metadata remains a valid durable snapshot on relaunch")
+        for failure in ["invalid-json", "directory-instead-of-state", "all-library-entries-malformed"] {
+            _ = try await fresh()
+            let file = FileStore.documents.appendingPathComponent("rendprop-state.json")
+            // Preserve every fixture: move the valid synthetic snapshot aside,
+            // then make only this owned fixture unreadable/undecodable.
+            try FileManager.default.moveItem(at: file, to: FileStore.documents.appendingPathComponent("prior-valid.json"))
+            if failure == "invalid-json" { try Data("not-json".utf8).write(to: file, options: .atomic) }
+            else if failure == "all-library-entries-malformed" {
+                try JSONSerialization.data(withJSONObject: ["listings": ["unreadable-entry"], "unknown-padding": String(repeating: "x", count: 200)]).write(to: file, options: .atomic)
+            }
+            else { try FileManager.default.createDirectory(at: file, withIntermediateDirectories: false) }
+            let damaged = AppModel(); await damaged.load()
+            check(damaged.adoptionBindingsUnreadable, "\(failure) is not an honestly empty library")
+            check(!damaged.prepareLocalAdoption(pending()), "\(failure) refuses optional source-session replacement")
+            let again = AppModel(); await again.load()
+            check(again.adoptionBindingsUnreadable && !again.prepareLocalAdoption(pending()), "\(failure) remains fail-closed after another process-style load")
+        }
+        let journalWithUnreadableRows = try await fresh(); journalWithUnreadableRows.listings = [original]
+        check(journalWithUnreadableRows.prepareLocalAdoption(transfer), "valid journal fixture prepared")
+        let journalFile = FileStore.documents.appendingPathComponent("rendprop-state.json")
+        var malformedRows = try JSONSerialization.jsonObject(with: Data(contentsOf: journalFile)) as! [String: Any]
+        malformedRows["listings"] = ["unreadable-listing"]
+        try JSONSerialization.data(withJSONObject: malformedRows).write(to: journalFile, options: .atomic)
+        AuthStore.shared.userID = destination.uuidString
+        let unknownLibrary = AppModel(); await unknownLibrary.load()
+        check(unknownLibrary.adoptionBindingsUnreadable && !unknownLibrary.confirmLocalAdoption(transfer, orgID: org),
+              "valid journal cannot turn an unreadable library into successful empty rebind")
     }
 }
