@@ -35,6 +35,12 @@ class Response(BytesIO):
 
 
 class ContractTests(unittest.TestCase):
+    def test_control_plane_identifies_actual_worker_without_default_urllib_agent(self):
+        opener = Mock(); opener.open.return_value = Response(b'{"job":null}')
+        api = w.ControlPlane("https://api.example/functions/v1/spatial", "fixture-not-a-credential", opener=opener)
+        self.assertIsNone(api.claim())
+        self.assertEqual(opener.open.call_args.args[0].get_header("User-agent"), "Rendprop-Spatial-Worker/1.0")
+
     def test_valid_contract(self):
         self.assertGreater(w.validate_job(job()), 7000)
 
@@ -99,6 +105,8 @@ class DownloadTests(unittest.TestCase):
             path = Path(tmp) / "capture"
             w.download_capture(job(), path, {"storage.example"}, opener=opener)
             self.assertEqual(opener.open.call_count, 20)
+            self.assertTrue(all(c.args[0].get_header("User-agent") == w.WORKER_USER_AGENT
+                                for c in opener.open.call_args_list))
             self.assertEqual(len(list(path.rglob("*.*"))), 41)
             self.assertEqual((path / "images/000000.jpg").read_bytes(), b"jpg")
             self.assertEqual((path / "manifest.json").stat().st_mode & 0o777, 0o600)
@@ -217,6 +225,7 @@ class OutputTests(unittest.TestCase):
                 "artifact_revision": REVISION}, {"status": "review"}]
             api.opener.open.return_value = Response(b'{"ok":true}')
             self.assertEqual(w.upload_output(api, job(), path, {"privacy_reviewed": True}), {"status": "review"})
+            self.assertEqual(api.opener.open.call_args.args[0].get_header("User-agent"), w.WORKER_USER_AGENT)
             completed = api.job_call.call_args.kwargs
             self.assertEqual(completed["manifest"]["artifact_revision"], REVISION)
             self.assertFalse(completed["manifest"]["privacy_reviewed"])

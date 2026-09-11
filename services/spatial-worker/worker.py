@@ -32,6 +32,7 @@ MAX_JSON_BYTES = 32 * 1024**2
 MAX_OUTPUT_BYTES = 32 * 1024**2
 MAX_FRAMES = 400
 MIN_COST_RESERVATION_CENTS = 600  # GPU full TTL plus bounded CPU controller.
+WORKER_USER_AGENT = "Rendprop-Spatial-Worker/1.0"
 TRAINING_ROOT = Path(__file__).resolve().parents[2] / "tools/spatial-spike/training"
 
 
@@ -108,7 +109,8 @@ class ControlPlane:
         require(re.fullmatch(r"/worker/(claim|[0-9a-f-]{36}/(?:heartbeat|complete|fail|output-ticket|provider-attempt))", path)
                 is not None, "invalid_worker_path")
         request = Request(self.base_url + path, data=json_bytes(payload), method="POST", headers={
-            "Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
+            "Authorization": "Bearer " + self.token, "Content-Type": "application/json",
+            "User-Agent": WORKER_USER_AGENT})
         try:
             with self.opener.open(request, timeout=45) as response:
                 require(200 <= response.status < 300, "control_plane_rejected")
@@ -184,7 +186,9 @@ def download_capture(job, destination, allowed_hosts, *, opener=None, check=lamb
         path = destination / item["relative_path"]
         expected, written, digest = item["bytes"], 0, hashlib.sha256()
         try:
-            with opener.open(Request(url, method="GET"), timeout=45) as response, path.open("xb") as out:
+            # Identify our service honestly. The default Python-urllib UA was
+            # rejected by the live Cloudflare gateway before application code.
+            with opener.open(Request(url, method="GET", headers={"User-Agent": WORKER_USER_AGENT}), timeout=45) as response, path.open("xb") as out:
                 require(response.status == 200, "image_download_rejected")
                 declared = response.headers.get("Content-Length")
                 require(declared is not None and declared.isdecimal() and int(declared) == expected,
@@ -291,7 +295,8 @@ def upload_output(api, job, path, manifest, lease=None):
     require(isinstance(token, str) and token and "\n" not in token, "invalid_output_token")
     require(canonical_uuid(ticket.get("artifact_revision")), "invalid_output_revision")
     request = Request(url, data=data, method="PUT", headers={
-        "Authorization": "Bearer " + token, "Content-Type": "application/octet-stream"})
+        "Authorization": "Bearer " + token, "Content-Type": "application/octet-stream",
+        "User-Agent": WORKER_USER_AGENT})
     try:
         with api.opener.open(request, timeout=120) as response:
             require(200 <= response.status < 300, "output_upload_rejected")

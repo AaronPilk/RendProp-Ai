@@ -109,3 +109,22 @@ provider receipt saves the allocation ID immediately. Logs are streamed and
 bounded; failures preserve terminal evidence without printing SDK credentials.
 No scheduled production budgets, Apple review settings, or public room
 publication are part of this experiment authorization.
+
+## Execution started (September11)
+
+Parent reviewed the exact plan and authorized its single attempt after the
+source was committed and clean. Commit`88066a3887852d3d6e4c021ac901783cea05d133`
+passed the clean source gate. The above command was executed once.
+
+Modal accepted sandbox`sb-2fqSw5zWu2dFlWhRAsmq2z` at
+`2026-09-11T21:12:48.138521Z`; the actual outbound-policy API succeeded before
+setup. Setup started`21:12:52.644388Z`. Private evidence is under the reviewed
+state directory. The allocation is not a completed room and not a deployed
+automatic app-to-viewer workflow. Training, held-out quality, artifact collection,
+termination and final billing still require final receipts.
+
+A separate follow-up adds the truthful`Rendprop-Spatial-Worker/1.0` User-Agent
+to control-plane, private-input and output-upload requests. The parent's live
+upload proof found Cloudflare error1010 for Python's default agent and succeeded
+with an explicit Rendprop agent. Local tests assert the actual Request headers
+on all three paths. No experiment runner source or reviewed plan changed.

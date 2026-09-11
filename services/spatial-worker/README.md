@@ -9,13 +9,18 @@ do not export folders, rent GPUs or run any command.
 ## Deployment status
 
 **Source implemented; not deployed or verified on a real cloud job.** The previous
-one-room experiment failed at Modal's account billing-cycle limit. This worker
-does not change that account setting. Importing`app.py` or running the tests
+one-room experiment failed at Modal's account billing-cycle limit; a fresh
+authorized allocation was accepted September11 at21:12:48UTC and its training
+outcome remains pending. The old failure is not a current allocation refusal.
+This worker does not change that account setting. Importing`app.py` or running the tests
 neither starts the scheduler nor allocates a GPU.
 
 Never enable this worker just to make a UI screenshot look complete. The backend
 runtime row defaults disabled with zero budgets and the scheduler independently
-requires`SPATIAL_WORKER_ENABLED=true`. Read the standing brief before deployment;
+requires both reviewed source`DEPLOYMENT_ENABLED=True` and
+`SPATIAL_WORKER_ENABLED=true`. The current source has the former false and
+attaches no Secret, so stale configuration cannot activate a disabled deploy.
+Read the standing brief before deployment;
 no App Review metadata/build attachment changes are part of this service.
 
 ## Runtime contract
@@ -24,6 +29,12 @@ no App Review metadata/build attachment changes are part of this service.
   atomic global/day+organization/month reservations. Migration0039 deletion work
   must be integrated first and cover spatial keys before production enablement.
 - Service key exists ONLY in the CPU controller, never the GPU sandbox or iOS.
+- Migration0041 journals paid attempt and lease identities before allocation,
+  provider ID before transfer, and independent file-removal/termination flags.
+  It has no cascading job/account foreign keys. Failed cleanup remains pending
+  after temporary controller files disappear or account deletion completes.
+- All HTTP requests identify the actual service as`Rendprop-Spatial-Worker/1.0`;
+  no browser impersonation or firewall setting changes are used.
 - Input files use expiring exact-host private download URLs; redirects refused.
  20–400JPEGs,32MiB/file,2GiB total; sidecars1MiB each, metadata16MiB total.
 - `max_seconds`: first-profile lifecycle is fixed at7200s maximum authority;
