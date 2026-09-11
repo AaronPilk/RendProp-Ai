@@ -31,7 +31,7 @@ for relative in (
     image = image.add_local_file(REPO / relative, "/workspace/" + relative)
 
 
-@app.function(image=image, schedule=modal.Period(minutes=1), timeout=7500,
+@app.function(image=image, schedule=modal.Period(minutes=1) if DEPLOYMENT_ENABLED else None, timeout=7500,
               cpu=(2.0, 2.0), memory=(4096, 4096), ephemeral_disk=8192, max_containers=1, retries=0,
               region="us", secrets=[modal.Secret.from_name("rendprop-spatial-control-plane")] if DEPLOYMENT_ENABLED else [])
 def process_next():

@@ -27,6 +27,7 @@ class AppTests(unittest.TestCase):
             self.assertEqual(module.process_next(), {'status': 'disabled'})
         self.assertFalse(module.DEPLOYMENT_ENABLED)
         self.assertEqual(kwargs['secrets'], [])
+        self.assertIsNone(kwargs['schedule'])
         self.assertEqual(kwargs['max_containers'], 1)
         self.assertEqual(kwargs['retries'], 0)
         self.assertNotIn('gpu', kwargs)

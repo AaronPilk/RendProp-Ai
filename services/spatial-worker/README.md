@@ -19,7 +19,9 @@ Never enable this worker just to make a UI screenshot look complete. The backend
 runtime row defaults disabled with zero budgets and the scheduler independently
 requires both reviewed source`DEPLOYMENT_ENABLED=True` and
 `SPATIAL_WORKER_ENABLED=true`. The current source has the former false and
-attaches no Secret, so stale configuration cannot activate a disabled deploy.
+attaches no Secret or schedule, so stale configuration cannot activate a disabled
+deploy or incur recurring idle invocations. A bounded manual disabled invocation
+can prove deployment without polling production or creating a GPU.
 Read the standing brief before deployment;
 no App Review metadata/build attachment changes are part of this service.
 

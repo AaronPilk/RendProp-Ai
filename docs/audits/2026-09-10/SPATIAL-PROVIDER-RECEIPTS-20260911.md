@@ -28,7 +28,7 @@ has been proven by this unit. A missing/ambiguous provider is never treated as
 deleted merely because its TTL elapsed.
 
 The scheduled deployment source is explicitly disabled (`DEPLOYMENT_ENABLED`
-false) and attaches no service Secret. Even a stale environment
+false) and attaches no service Secret or recurring schedule. Even a stale environment
 `SPATIAL_WORKER_ENABLED=true` cannot activate it. Enabling the deployment,
 its service credential and operational budgets is a separate reviewed action.
 
