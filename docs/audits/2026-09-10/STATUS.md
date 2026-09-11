@@ -15,9 +15,13 @@ decoder throws `ReferenceError: __name is not defined`. The previous local
 room preview exercised the production **source through Deno**, not Wrangler's
 emitted Worker/browser bundle. Its successful render does not prove deployed
 viewer execution. That distinction corrects the wording below, not the observed
-local render or its unacceptable room quality. Viewer build regression and
-bounded, explicit interrupted-upload Restart are being implemented on separate
-branches. No new deployment, GPU run, budget change or Apple operation has
+local render or its unacceptable room quality. **Viewer fix and actual emitted-
+bundle gate are now integrated/pushed at16b219f.** Root's full predeploy passes,
+34 new assertions pass and the deliberately broken config fails for the exact
+missing helper. The actual owner room also rendered through that fixed built
+Worker in a local browser; visual quality still fails. The live asset still
+fails the new gate at23:46UTC. Bounded, explicit interrupted-upload Restart is
+being implemented on separate branches. No new deployment, GPU run, budget change or Apple operation has
 occurred in this follow-up. Do not describe these in-progress fixes as shipped.
 
 **LATEST evening integration and real-room result:**

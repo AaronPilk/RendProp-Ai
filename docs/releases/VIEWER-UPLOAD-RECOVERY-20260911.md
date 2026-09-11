@@ -52,6 +52,40 @@ These are implementation goals until replaced with commands/results below.
 Source fixes must be integrated and tested together; a new client must not be
 distributed before the corresponding recovery route/migration is deployed.
 
+## Viewer fix ready in source, still failing live
+
+Unit commit `0d88415d4c3bda74daa98a7ec2175af512528d92` is integrated as16b219f
+and pushed on `fix/spatial-upload-release-recovery-20260911`.
+`services/edge/tour-host/wrangler.toml:6` sets `keep_names = false` with the
+serialization rationale. The new `scripts/check-spatial-built.mjs` invokes
+the installed, lockfile-pinned Wrangler's actual dry-run, evaluates that Worker,
+requests its browser asset, then executes both emitted validators in a fresh VM
+without adding the missing helper. `npm test`, `predeploy` and the existing CI
+job all reach the gate. This is intentionally distinct from WebGL acceptance.
+
+Root ran `npm run predeploy` after integration:exit0, every prior host suite
+green, **34 new built-byte assertions**, plus exact-reason negative control.
+The broken-config child exited1 with `ReferenceError: __name is not defined`
+and reproduced the live browser byte count/hash exactly. Full receipt:
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-SGTNyW/receipt.json`.
+
+Root then ran the live-read-only gate:
+
+```sh
+cd services/edge/tour-host
+node --experimental-vm-modules scripts/check-spatial-built.mjs \
+  --asset-url https://rendprop.com/spatial-viewer.js
+```
+
+At23:46:09UTC this correctly exited1, same26,442bytes/hash and missing-helper
+error. Receipt:
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-Lzf7ze/receipt.json`.
+**Do not say deployed/fixed in production until a subsequent real deploy and
+this same URL gate pass.** Do not enable spatial budgets as part of a viewer fix.
+
+Detailed unit report:
+[`SPATIAL-BUILT-VIEWER-FIX-20260911.md`](../audits/2026-09-10/SPATIAL-BUILT-VIEWER-FIX-20260911.md).
+
 ## Unchanged limits and delivery gates
 
 - No production data deletion, bulk ticket cancellation, feature enablement,
@@ -140,5 +174,9 @@ browser execution on local real-room input, **not live production auth,
 publication, revocation, iPhone performance or acceptable reconstruction**.
 The temporary tab was closed and server stopped (SIGINT130). No private room
 files were uploaded or committed.
+
+A root subprocess assertion also verifies that the old source-only invocation
+(manifest and model without a bundle argument) exits1 with the exact new usage
+error before any `PRIVATE_LOCAL_PREVIEW` listener announcement.
 
 Upload implementation and independent integration results remain pending.
