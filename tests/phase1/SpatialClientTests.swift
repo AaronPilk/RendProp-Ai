@@ -163,39 +163,63 @@ import Foundation
         capability.frames[0].putURL = URL(string: "https://user:password@wrong.example.invalid/")
         try rejects("Embedded credentials are never recovered as upload URLs") { _ = try capability.validated() }
         var renewCount = 0
+        let boundedURL = URL(string: "https://upload.example.invalid/v2/11111111-1111-4111-8111-111111111111?expires=1893456000&signature=" + String(repeating: "a", count: 64))!
+        func ticket(_ assetID: String) -> UploadTicket {
+            UploadTicket(assetID: assetID, mode: .single, putURL: boundedURL, transportVersion: 2, uploaded: false)
+        }
         let alreadyStored = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
-            probe: { .complete }, renew: {
+            probe: { .complete }, renew: { originalID in
                 renewCount += 1
-                return .init(ticketID: id.uuidString, putURL: URL(string: "https://upload.example.invalid/same-ticket")!)
+                return ticket(originalID)
             })
         if case .complete = alreadyStored { try check(true, "Stored upload completes") }
         else { throw Failure(detail: "Already stored upload was reissued") }
         try check(renewCount == 0, "Confirmed upload must not renew a transfer")
         let pending = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
-            probe: { .needsReconciliation }, renew: {
+            probe: { .needsReconciliation }, renew: { originalID in
                 renewCount += 1
-                return .init(ticketID: id.uuidString, putURL: URL(string: "https://upload.example.invalid/same-ticket")!)
+                try check(originalID == id.uuidString, "Renew receives immutable original asset identity")
+                return ticket(originalID)
             })
-        if case .renew(let url) = pending { try check(url.lastPathComponent == "same-ticket", "Renewed exact ticket URL") }
+        if case .renew(let url) = pending { try check(url == boundedURL, "Renewed exact ticket URL") }
         else { throw Failure(detail: "Unsent upload cannot resume") }
         try check(renewCount == 1, "Pending upload only renews once")
         var denied = false
         do {
             _ = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
-                probe: { throw Failure(detail: "401 unauthorized") }, renew: {
+                probe: { throw Failure(detail: "401 unauthorized") }, renew: { originalID in
                     renewCount += 1
-                    return .init(ticketID: id.uuidString, putURL: URL(string: "https://upload.example.invalid/must-not-run")!)
+                    return ticket(originalID)
                 })
         } catch { denied = true }
         try check(denied && renewCount == 1, "401 must not renew or schedule a transport")
         denied = false
         do {
             _ = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
-                probe: { .needsReconciliation }, renew: {
-                    .init(ticketID: listing.uuidString, putURL: URL(string: "https://upload.example.invalid/new-paid-ticket")!)
+                probe: { .needsReconciliation }, renew: { _ in
+                    ticket(listing.uuidString)
                 })
         } catch { denied = true }
         try check(denied, "Renewal cannot silently purchase a different ticket")
+        let wonRace = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
+            probe: { .needsReconciliation }, renew: { originalID in
+                renewCount += 1
+                return UploadTicket(assetID: originalID, mode: .single, uploaded: true)
+            })
+        if case .complete = wonRace { try check(true, "Completion won renewal race without another PUT") }
+        else { throw Failure(detail: "Completion won renewal race without another PUT") }
+        try check(renewCount == 2, "Completed renewal uses one metadata request and no reservation callback")
+        for invalid in [UploadTicket(assetID: listing.uuidString, mode: .single, uploaded: true),
+                        UploadTicket(assetID: id.uuidString, mode: .single, transportVersion: 2, uploaded: false),
+                        UploadTicket(assetID: id.uuidString, mode: .single, putURL: boundedURL, transportVersion: 1),
+                        UploadTicket(assetID: id.uuidString, mode: .multipart, uploaded: true)] {
+            denied = false
+            do {
+                _ = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
+                    probe: { .needsReconciliation }, renew: { _ in invalid })
+            } catch { denied = true }
+            try check(denied, "Malformed or different completed renewal never attaches another asset")
+        }
         print("PASS SpatialClientTests \(count) assertions")
     }
 }

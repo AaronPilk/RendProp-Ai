@@ -19,7 +19,15 @@ def main():
     state = root / "apps/ios/Rendprop/Upload/SpatialUploadState.swift"
     recovery = root / "apps/ios/Rendprop/Upload/SpatialUploadRecovery.swift"
     tests = root / "tests/phase1/SpatialClientTests.swift"
-    paths = [models, state, recovery, tests]
+    api = root / "apps/ios/Rendprop/Networking/APIClient.swift"
+    common_recovery = root / "apps/ios/Rendprop/Upload/UploadRecovery.swift"
+    coordinator = root / "apps/ios/Rendprop/Upload/SpatialUploadCoordinator.swift"
+    api_source = api.read_text()
+    upload_models = out / "ActualUploadModels.swift"
+    upload_models.write_text("import Foundation\n" +
+        api_source[api_source.index("struct UploadTicket:"):api_source.index("/// The org's plan")] +
+        api_source[api_source.index("enum APIError:"):api_source.index("// MARK: - Admin console models")])
+    paths = [models, state, recovery, tests, api, common_recovery, coordinator]
     receipt = {"accepted": False, "commands": [], "sourceHashes": {
         str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in paths}}
     print(f"EVIDENCE: {out}", flush=True)
@@ -38,7 +46,14 @@ def main():
     try:
         assert "enum SpatialJSON" in models.read_text()
         assert "struct SpatialUploadRecord" in state.read_text()
-        swift = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-warnings-as-errors"]
+        # This is a source-presence gate, not a substitute for the native tests:
+        # the actual coordinator must call by-id renewal, not reservation replay.
+        production = coordinator.read_text()
+        renewal_block = production.split("}, renew: { originalID in", 1)[1].split("})", 1)[0]
+        assert "self.api.renewUpload(assetID: originalID)" in renewal_block
+        assert "requestUpload(" not in renewal_block
+        assert renewal_block.count("self.assertOwner(id)") == 2
+        swift = ["/usr/bin/xcrun", "swiftc", "-swift-version", "5", "-warnings-as-errors", upload_models, common_recovery]
         binary = out / "spatial-tests"
         run("compile", [*swift, models, state, recovery, tests, "-o", binary])
         output = run("actual-production-models", [binary])
@@ -92,6 +107,16 @@ def main():
         run("compile-capture-owner-mutant", [*swift, mutant, state, recovery, tests, "-o", broken])
         failure = run("reject-capture-owner-mutant", [broken], expected=1)
         assert "Account switch cannot adopt a late capture callback" in failure, "Wrong failure in capture handoff control"
+        mutant = out / "SpatialRecovery-ignores-completed.swift"
+        text = recovery.read_text()
+        needle = "if receipt.uploaded == true { return .complete }"
+        assert text.count(needle) == 1
+        mutant.write_text(text.replace(needle,
+            'if receipt.uploaded == true { return .renew(URL(string: "https://invalid.example/extra-write")!) }'))
+        broken = out / "broken-completed-renewal"
+        run("compile-completed-renewal-mutant", [*swift, models, state, mutant, tests, "-o", broken])
+        failure = run("reject-completed-renewal-mutant", [broken], expected=1)
+        assert "Completion won renewal race without another PUT" in failure, "Wrong failure in completed renewal control"
         run("restore-production", [binary])
         receipt["accepted"] = True
     finally:

@@ -233,6 +233,7 @@ final class SpatialUploadCoordinator: ObservableObject {
             if let ticketID = frame.ticketID, frame.phase == .sending || frame.phase == .uploaded {
                 guard frame.reconciliations < 3 else { throw SpatialClientError.uploadUncertain }
                 let outcome = try await SpatialUploadRecovery.reconcile(ticketID: ticketID, probe: {
+                    _ = try self.assertOwner(id)
                     do {
                         try await self.api.completeUpload(assetID: ticketID, parts: nil,
                             metadata: UploadMetadata(bytes: frame.bytes, sha256: frame.sha256))
@@ -241,17 +242,14 @@ final class SpatialUploadCoordinator: ObservableObject {
                         // Only server-declared pending/uncertain receipts enter
                         // renewal. A 401, offline error or forbidden workspace
                         // is not permission to schedule another transfer.
-                        guard let status = (error as? APIError)?.status, [409, 503].contains(status) else { throw error }
+                        guard UploadRecovery.mayReconcile(error, incompleteMultipart: false) else { throw error }
                         return .needsReconciliation
                     }
-                }, renew: {
+                }, renew: { originalID in
                     _ = try self.assertOwner(id)
-                    let ticket = try await self.api.requestUpload(filename: "spatial-\(record.captureID.uuidString)-\(index).jpg",
-                        bytes: frame.bytes, listingID: record.listingID, sha256: frame.sha256, kind: "photo", role: "capture",
-                        contentType: "image/jpeg", idempotencyKey: "spatial:\(record.id.uuidString):\(index)")
+                    let ticket = try await self.api.renewUpload(assetID: originalID)
                     _ = try self.assertOwner(id)
-                    guard ticket.mode == .single, let url = ticket.putURL else { throw SpatialClientError.invalidResponse }
-                    return .init(ticketID: ticket.assetID, putURL: url)
+                    return ticket
                 })
                 i = try assertOwner(id)
                 if case .renew(let url) = outcome {
