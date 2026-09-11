@@ -24,7 +24,7 @@ expiry and terminal errors preserve the capture and report failure.
 
 ## Verification
 
-`python3 tools/audit/run_spatial_client.py` passed native production-model tests
+`python3 tools/audit/run_spatial_client.py` passed **75 native assertions**
 and six successfully compiled source mutants, then reran the original source.
 Receipt: `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-client-3s8l9kwe/receipt.json`.
 The added mutant turns a completed renewal into another PUT and fails the exact

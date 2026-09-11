@@ -182,6 +182,13 @@ struct SettingsView: View {
                     } else if s.status == .paused || s.status == .failed {
                         Button("Resume upload") { uploads.resume() }
                     }
+                    if s.status == .paused {
+                        Text("Transfers already in progress can finish. No new parts start until you resume.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                    if let message = s.failureMessage, !message.isEmpty {
+                        Text(message).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
                     // No cancel once it's finished — nothing left to cancel.
                     if s.status != .done {
                         Button("Cancel upload", role: .destructive) { uploads.cancel() }

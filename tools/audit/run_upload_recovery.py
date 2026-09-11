@@ -70,6 +70,12 @@ def main():
              "true", "Changed asset must be rejected", 1),
             ("resume-discards-identity", files[4], "legacyRecoveryApproved = true",
              "legacyRecoveryApproved = true; assetID = nil; parts = []", "Explicit Resume preserves legacy identity and completed parts", 1),
+            ("pause-cancels-dispatched", files[4], "mutate { $0.status = .paused }",
+             "mutate { $0.status = .paused }; backgroundSession.getAllTasks { $0.forEach { $0.cancel() } }",
+             "Pause must not interrupt a dispatched one-write operation", 1),
+            ("ignore-confirmed-parts", files[4], "for receipt in ticket.confirmedParts ?? [] {",
+             "for receipt in [UploadTicket.ConfirmedPart]() {",
+             "Confirmed multipart receipts skip physical retransfers", 1),
         ]
         for name, path, needle, replacement, expected_message, expected_count in mutations:
             text = path.read_text()

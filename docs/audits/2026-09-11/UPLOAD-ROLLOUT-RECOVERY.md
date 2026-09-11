@@ -156,10 +156,9 @@ No full UI walk, camera session, archive or Apple operation ran in this unit.
 3. Expired or irrecoverably uncertain v2 reservations remain explicit failures.
    Replacing them is a separate, deliberate per-ticket user workflow; this
    patch does not silently spend a fresh allowance on them.
-4. The separate spatial uploader still calls POST /uploads for its same-key
-   renewal. It should migrate to the new same-asset renewal contract, including
-   the completed response, in its own tested follow-up. Do not claim this patch
-   automatically changes the spatial coordinator.
+4. Spatial renewal was migrated in the subsequent separate commit `9d79394`.
+   See `SPATIAL-UPLOAD-RENEWAL.md` for its native tests and exact boundaries;
+   the original general-upload commit alone did not cover spatial recovery.
 5. Photo receipt files are small but have no pruning/retention policy yet.
    Completed records avoid re-uploading the same original; cleanup must retain
    unfinished records and must never remove the original photo.

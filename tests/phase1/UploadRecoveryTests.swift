@@ -9,7 +9,7 @@ import Foundation
     static func expectFailure(_ message: String, _ operation: () async throws -> Void) async {
         do { try await operation(); check(false, message) } catch { assertions += 1 }
     }
-    static func main() async throws {
+    @MainActor static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
         let file = root.appendingPathComponent("original.jpg")
         let bytes = Data("synthetic upload fixture — no customer media".utf8)
@@ -96,6 +96,20 @@ import Foundation
               "Old host-only capability cannot renew bounded transport")
         check(!UploadRecovery.isBoundedCapability(URL(string: "http://upload.invalid/v2/11111111-1111-4111-8111-111111111111?expires=12&signature=" + String(repeating: "a", count: 64))!),
               "Plain HTTP cannot renew bounded transport")
+        let multi = UploadTicket(assetID: legacy.oldID, mode: .multipart, uploadID: "unchanged-session",
+            partSize: 16, partCount: 4, transportVersion: 2)
+        for invalidParts in [[UploadTicket.ConfirmedPart(number: 0, etag: "zero")],
+                             [.init(number: 5, etag: "outside")], [.init(number: 1, etag: "")],
+                             [.init(number: 1, etag: "a"), .init(number: 1, etag: "b")]] {
+            var invalid = multi; invalid.confirmedParts = invalidParts
+            await expectFailure("Invalid server part coverage cannot become confirmed progress") {
+                _ = try UploadRecovery.validatedRenewal(invalid, previous: multi)
+            }
+        }
+        var otherSession = multi; otherSession.uploadID = "another-session"
+        await expectFailure("Multipart renewal cannot change upload session") {
+            _ = try UploadRecovery.validatedRenewal(otherSession, previous: multi)
+        }
 
         let renewal = noDispatch.ticket()
         // The actual production model is immutable by asset id, so construct a
@@ -131,6 +145,101 @@ import Foundation
         let finalBytes = try Data(contentsOf: file)
         check(DirectUploader.sha256(of: file) == original && finalBytes == bytes,
               "Original media remains byte-identical after every recovery")
+        try await multipartRuntimeTests(root: root)
         print("PASS UploadRecoveryTests \(assertions) assertions")
+    }
+
+    @MainActor static func multipartRuntimeTests(root: URL) async throws {
+        FileStore.documents = root
+        let originalURL = root.appendingPathComponent("multipart.mov")
+        let originalBytes = Data(repeating: 97, count: 64)
+        try originalBytes.write(to: originalURL)
+        func state(_ api: MultipartRecoveryAPI) -> UploadManager.State {
+            var record = UploadManager.State(filePath: "multipart.mov", bytesTotal: 64,
+                status: .paused, mode: "multipart", assetID: api.assetID,
+                uploadID: "fixture-session", partSize: 16, partCount: 4)
+            record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
+            record.transportVersion = 2
+            record.ticketKey = "immutable-batch-fixture"
+            return record
+        }
+        func until(_ message: String, _ predicate: () -> Bool) async {
+            for _ in 0..<200 {
+                if predicate() { check(true, message); return }
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            check(false, message)
+        }
+        let api = MultipartRecoveryAPI()
+        let session = RecoverySession()
+        var persisted: UploadManager.State?
+        let manager = UploadManager(api: api, session: session, recovering: state(api), persistState: { persisted = $0; return true })
+        manager.resume()
+        await until("Real manager schedules three bounded parts") { session.fixtureTasks.filter { $0.starts == 1 }.count == 3 }
+        check(api.partRequests == [[1, 2, 3]] && api.creates == 0, "Multipart resume reuses original asset without fresh reserve")
+        manager.pause()
+        try await Task.sleep(nanoseconds: 20_000_000)
+        check(session.fixtureTasks.allSatisfy { $0.cancellations == 0 && $0.suspensions == 0 },
+              "Pause must not interrupt a dispatched one-write operation")
+        check(manager.state?.parts.prefix(3).allSatisfy { $0.status == .inflight } == true,
+              "Pause retains in-flight task identities until receipts settle")
+        for task in session.fixtureTasks {
+            task.fixtureResponse = HTTPURLResponse(url: URL(string: "https://fixture.invalid/")!,
+                statusCode: 200, httpVersion: nil, headerFields: ["ETag": "etag-\(task.fixtureID)"])
+            task.fixtureState = .completed
+            manager.urlSession(session, task: task, didCompleteWithError: nil)
+        }
+        await until("Real completion delegates retain paused part ETags") { manager.state?.parts.filter { $0.status == .done }.count == 3 }
+        check(manager.state?.status == .paused && session.fixtureTasks.count == 3 && api.partRequests == [[1, 2, 3]],
+              "Settled paused parts cannot dispatch the fourth part")
+        check(persisted?.parts.prefix(3).allSatisfy { $0.etag != nil } == true && persisted?.ticketKey == "immutable-batch-fixture",
+              "Paused receipts and original batch identity persist")
+
+        // A relaunch has lost three client callbacks, but /renew returns those
+        // server-confirmed receipts. Execute real reconciliation + applyTicket.
+        let confirmedAPI = MultipartRecoveryAPI()
+        confirmedAPI.confirmed = (1...3).map { .init(number: $0, etag: "server-etag-\($0)") }
+        let confirmedSession = RecoverySession()
+        let confirmedManager = UploadManager(api: confirmedAPI, session: confirmedSession,
+            recovering: state(confirmedAPI), persistState: { _ in true })
+        confirmedManager.resume()
+        await until("Confirmed multipart receipts skip physical retransfers") { confirmedSession.fixtureTasks.count == 1 }
+        check(confirmedAPI.renews == 1 && confirmedAPI.creates == 0 && confirmedAPI.partRequests == [[4]],
+              "Confirmed multipart ETags schedule only the missing part")
+        check(confirmedManager.state?.parts.prefix(3).map(\.etag) == ["server-etag-1", "server-etag-2", "server-etag-3"],
+              "Actual manager consumes all server-confirmed multipart ETags")
+        confirmedManager.pause()
+        let final = confirmedSession.fixtureTasks[0]
+        final.fixtureResponse = HTTPURLResponse(url: URL(string: "https://fixture.invalid/")!,
+            statusCode: 200, httpVersion: nil, headerFields: ["ETag": "server-etag-4"])
+        final.fixtureState = .completed
+        confirmedManager.urlSession(confirmedSession, task: final, didCompleteWithError: nil)
+        await until("Final paused multipart receipt settles without publishing") { confirmedManager.state?.parts.allSatisfy { $0.status == .done } == true }
+        check(confirmedAPI.acceptedParts == nil, "Pause must not complete the object automatically")
+        confirmedManager.resume()
+        await until("Explicit resume completes from retained multipart ETags") { confirmedManager.state?.status == .done }
+        check(confirmedAPI.acceptedParts?.map(\.etag) == (1...4).map { "server-etag-\($0)" } && confirmedAPI.creates == 0,
+              "Completion uses exact unique retained ETags and no new reservation")
+
+        let lateAPI = MultipartRecoveryAPI(); lateAPI.waitForRenewal = true
+        let lateManager = UploadManager(api: lateAPI, session: RecoverySession(), recovering: state(lateAPI), persistState: { _ in true })
+        lateManager.resume()
+        await until("Delayed renewal started for pause race") { lateAPI.delayedRenewal != nil }
+        lateManager.pause()
+        lateAPI.delayedRenewal?.resume(throwing: APIError.badResponse(503))
+        try await Task.sleep(nanoseconds: 20_000_000)
+        check(lateManager.state?.status == .paused, "Late renewal error cannot overwrite explicit Pause")
+
+        let delayedSession = RecoverySession(); delayedSession.deferEnumeration = true
+        let delayedAPI = MultipartRecoveryAPI()
+        let suspended = RecoveryTask(99); suspended.taskDescription = "part:\(delayedAPI.assetID):1"
+        delayedSession.fixtureTasks = [suspended]
+        let delayedManager = UploadManager(api: delayedAPI, session: delayedSession, recovering: state(delayedAPI), persistState: { _ in true })
+        delayedManager.resume(); delayedManager.pause()
+        for callback in delayedSession.enumerations { callback([suspended]) }
+        try await Task.sleep(nanoseconds: 20_000_000)
+        check(suspended.starts == 0 && delayedManager.state?.status == .paused,
+              "Late session enumeration cannot start a task after Pause")
+        check(try Data(contentsOf: originalURL) == originalBytes, "Multipart pause and recovery preserve original bytes")
     }
 }

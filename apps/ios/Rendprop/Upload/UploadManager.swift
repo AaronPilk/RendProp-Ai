@@ -195,6 +195,7 @@ final class UploadManager: NSObject, ObservableObject {
 
     // Mock by default; LiveAPIClient when Config.useLiveBackend.
     private var api: APIClient = Config.makeAPIClient()
+    private var persistState: (State?) -> Bool = UploadStore.save
 
     private lazy var backgroundSession: URLSession = {
         let config = URLSessionConfiguration.background(withIdentifier: "com.rendprop.upload")
@@ -253,6 +254,18 @@ final class UploadManager: NSObject, ObservableObject {
             }
         }
         _ = backgroundSession // create eagerly so background events attach
+    }
+
+    /// Explicit boundaries allow receipt/dispatch tests to execute this engine
+    /// without a real background daemon, app journal or network monitor. The
+    /// shipping singleton continues to use its OS session and durable store.
+    init(api: APIClient, session: URLSession, recovering state: State,
+         persistState: @escaping (State?) -> Bool) {
+        self.api = api
+        self.persistState = persistState
+        self.state = state
+        super.init()
+        self.backgroundSession = session
     }
 
     // MARK: - Public API
@@ -493,27 +506,14 @@ final class UploadManager: NSObject, ObservableObject {
         startOrResume()
     }
 
-    /// Pause. Multipart parts in flight are CANCELLED and sent back to pending
-    /// (nsurlsessiond does not honour `suspend()` on background tasks — the
-    /// bytes kept flowing); parts already done stay done, so resume re-uploads
-    /// only what's missing. A single PUT is suspended (cancelling it would lose
-    /// the whole transfer).
+    /// Pause scheduling, not an already-dispatched physical write. Cancelling a
+    /// v2 part mid-transfer can leave the server unable to prove whether bytes
+    /// landed; that one-dispatch operation must not be replayed. Up to three
+    /// existing parts (or one single PUT) may settle while paused; their receipts
+    /// are retained, and no new parts or completion requests start until Resume.
     func pause() {
         simulateTimer?.invalidate()
-        backgroundSession.getAllTasks { tasks in
-            for task in tasks {
-                let desc = task.taskDescription ?? ""
-                if desc.hasPrefix("part:") { task.cancel() }
-                else if desc.hasPrefix("single:") { task.suspend() }
-            }
-        }
-        mutate { st in
-            st.status = .paused
-            for i in st.parts.indices where st.parts[i].status == .inflight {
-                st.parts[i].status = .pending
-            }
-        }
-        inFlightBytes.removeAll()
+        mutate { $0.status = .paused }
         partNextTry.removeAll()
         updateProgress()
     }
@@ -545,7 +545,7 @@ final class UploadManager: NSObject, ObservableObject {
             Task { [weak self] in try? await self?.api.abortUpload(assetID: assetID) }
         }
         state = nil
-        UploadStore.save(nil)
+        _ = persistState(nil)
         // Resolve any awaiting upload() as a failure (cancel is a failed publish).
         onUploadFailed?(nil)
     }
@@ -560,7 +560,7 @@ final class UploadManager: NSObject, ObservableObject {
         isRequestingTicket = false
         isCompleting = false
         state = nil
-        UploadStore.save(nil)
+        _ = persistState(nil)
     }
 
     // MARK: - Dispatch
@@ -579,9 +579,9 @@ final class UploadManager: NSObject, ObservableObject {
         backgroundSession.getAllTasks { [weak self] tasks in
             guard let self else { return }
             let mine = tasks.filter { ($0.taskDescription ?? "").contains(assetID) }
-            mine.forEach { if $0.state == .suspended { $0.resume() } }
             DispatchQueue.main.async {
                 guard let cur = self.state, cur.status == .uploading, cur.assetID == assetID else { return }
+                mine.forEach { if $0.state == .suspended { $0.resume() } }
                 switch mode {
                 case .multipart?:
                     let active = Set(mine.compactMap { self.partNumber(from: $0) })
@@ -1106,7 +1106,7 @@ final class UploadManager: NSObject, ObservableObject {
                     persistCancellation: { id in
                         try requireCurrent()
                         self.mutate { $0.legacyCancellationAssetID = id }
-                        guard UploadStore.save(self.state) else { throw CocoaError(.fileWriteUnknown) }
+                        guard self.persistState(self.state) else { throw CocoaError(.fileWriteUnknown) }
                     }, complete: { id in
                         try requireCurrent()
                         try await self.api.completeUpload(assetID: id, parts: ticket.mode == .multipart ? parts : nil,
@@ -1142,7 +1142,8 @@ final class UploadManager: NSObject, ObservableObject {
             } catch is CancellationError {
                 // Pausing or replacing the record is not a server failure.
             } catch {
-                guard self.state?.id == snapshot.id, self.state?.assetID == assetID else { return }
+                guard self.state?.id == snapshot.id, self.state?.assetID == assetID,
+                      self.state?.status == .uploading else { return }
                 let status = (error as? APIError)?.status
                 let terminal = error is UploadRecovery.Failure ||
                     (status.map { (400..<500).contains($0) && $0 != 429 && $0 != 408 } ?? false)
@@ -1171,7 +1172,7 @@ final class UploadManager: NSObject, ObservableObject {
         // Settings shows "Complete" until the next upload replaces it, and a
         // relaunch never resurrects a weeks-old "Complete · 100%" because the
         // on-disk copy is removed here (and `init` drops any legacy `.done`).
-        UploadStore.save(nil)
+        _ = persistState(nil)
     }
 
     private func emitCompletion(assetID: String, from s: State) {
@@ -1338,7 +1339,7 @@ final class UploadManager: NSObject, ObservableObject {
 
     @discardableResult
     private func persist() -> Bool {
-        UploadStore.save(state)
+        persistState(state)
     }
 
     /// Sending/cancelling without a saved ticket identity cannot be recovered
