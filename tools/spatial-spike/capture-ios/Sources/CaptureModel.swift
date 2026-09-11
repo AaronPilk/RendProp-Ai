@@ -135,6 +135,14 @@ struct CaptureManifest: Codable {
     var feature_point_observations = 0
     var skipped_tracking_frames = 0
     var skipped_busy_frames = 0
+    // Optional preserves reading captures produced by build 18. These counters
+    // describe admission only; they are not a reconstructed-room quality score.
+    var skipped_blur_frames: Int? = nil
+    var skipped_baseline_frames: Int? = nil
+    var skipped_quality_frames: Int? = nil
+    var low_texture_frames: Int? = nil
+    var quality_policy: String? = nil
+    var quality_thresholds: [String: Double]? = nil
     var image_bytes: Int64 = 0
 
     init(sessionID: String, deviceModel: String, operatingSystem: String) {

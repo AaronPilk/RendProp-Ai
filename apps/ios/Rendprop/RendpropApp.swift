@@ -20,6 +20,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
+        if identifier == SpatialUploadCoordinator.sessionIdentifier {
+            SpatialUploadCoordinator.shared.finishBackgroundEvents = completionHandler
+            SpatialUploadCoordinator.shared.reconnect()
+            return
+        }
         BackgroundSessionBridge.shared.completionHandler = completionHandler
         _ = UploadManager.shared // recreate the background session so events are delivered
     }
@@ -2058,6 +2063,7 @@ struct RendpropApp: App {
             // work without anybody registering. Idempotent, and a no-op when a
             // session already exists — including a real Apple one.
             .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
+            .task { SpatialUploadCoordinator.shared.reconnect() }
             // A previous launch's Apple authorizationCode submission may have
             // been interrupted (killed mid-flight, offline, timeout) — give it
             // exactly one more try now that the app is back up (audit finding
@@ -2484,6 +2490,8 @@ struct HomeDashboardView: View {
                 FlythroughDetailView(listing: route.listing)
             case .floorPlan:
                 FloorPlanView(listing: route.listing)
+            case .spatial:
+                SpatialTourView(listing: route.listing)
             case .tour:
                 tourDestination(route.listing)
             case .aerial:
@@ -2650,6 +2658,7 @@ struct HomeDashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                             GridItem(.flexible(), spacing: 12)], spacing: 12) {
             featureButton(.tour)
+            featureButton(.spatial)
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
@@ -3347,7 +3356,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     /// (and one screen) and that conflation is the defect the owner reported
     /// across five sessions: the AI menu could not be the first thing you saw,
     /// because the screen had to be a photo manager first.
-    case tour, photos, photoStudio, reel, floorPlan, aerial
+    case tour, spatial, photos, photoStudio, reel, floorPlan, aerial
 
     var id: String { rawValue }
 
@@ -3355,6 +3364,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var actionTitle: String {
         switch self {
         case .tour:      return "Make a tour"
+        case .spatial:   return "3D walkthrough"
         case .photos:    return "Add photos"
         case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
@@ -3368,6 +3378,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var promise: String {
         switch self {
         case .tour:      return "Walk it once — glide forever"
+        case .spatial:   return "Scan rooms. Walk through them."
         case .photos:    return "Brightened automatically \u{2014} free"
         case .photoStudio: return SpaceType.current == .realEstate
             ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
@@ -3381,6 +3392,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var systemImage: String {
         switch self {
         case .tour:      return "video.fill"
+        case .spatial:   return "view.3d"
         case .photos:    return "photo.stack"
         case .photoStudio: return "wand.and.stars"
         case .reel:      return "film.stack"
@@ -3392,6 +3404,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var gradient: LinearGradient {
         switch self {
         case .tour:      return RPGradient.drone
+        case .spatial:   return RPGradient.drone
         case .photos:    return RPGradient.photo
         case .photoStudio: return RPGradient.photo
         case .reel:      return RPGradient.reel
@@ -3408,7 +3421,7 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
         // charge. Wearing the AI pill there implied a cost that isn't real and
         // hid the free win the owner actually likes.
         case .tour, .photoStudio, .reel, .aerial: return true
-        case .photos, .floorPlan:                 return false
+        case .photos, .floorPlan, .spatial:       return false
         }
     }
 }

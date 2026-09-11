@@ -723,6 +723,16 @@ struct PropertyLookup: Sendable, Equatable {
 }
 
 protocol APIClient: Sendable {
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob]
+    func spatialJob(id: UUID) async throws -> SpatialJob
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob
+    func startSpatialJob(id: UUID) async throws -> SpatialJob
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
     /// PATCH `listings/<serverID>` (falls back to the local id only when the

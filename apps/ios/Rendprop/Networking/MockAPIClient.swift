@@ -5,6 +5,18 @@ import Foundation
 /// returns a plausible value; the AI video features report honestly that they
 /// need the live backend instead of handing back a fake file.
 actor MockAPIClient: APIClient {
+    // Screenshot walks can open the real empty/error UI without pretending that
+    // an offline capture produced a model or a publicly shareable room.
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob] { [] }
+    func spatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func startSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
     private var renders: [UUID: (render: Render, startedAt: Date)] = [:]
     /// Listings created/updated offline, keyed by id — so `listings()` and
     /// `updateListing` round-trip like a real server would.

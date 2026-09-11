@@ -1,12 +1,37 @@
 # Rendprop: active engineering and audit checkpoint
 
-Updated 2026-09-11, 10:24 AM Eastern. **Work in progress, not a whole-app GO.**
+Updated 2026-09-11, spatial product integration checkpoint. **Work in progress, not a whole-app GO.**
 This file is the durable entry point for Claude and the parallel side chat.
 Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
+
+**New source checkpoint:** [`SPATIAL-PRODUCT-BUILD.md`](SPATIAL-PRODUCT-BUILD.md)
+is the current engineering entry point on `feat/spatial-product-20260911` in
+`room-proof-next-block-20260910`. The Home card, listing-scoped capture/background
+upload, bounded cloud worker, shared 3D viewer, review/sharing and explicit
+retry/cancel/resume now exist in source. The earlier upload/adoption/RenderEngine/
+privacy unit branches have been integrated here. They are not deployed or in a
+new TestFlight binary. Earlier “not combined” statements below are historical.
+
+Latest completed checks: 31 offline worker tests; 29 diagnostic tests; 68 native
+client assertions with compiled negative controls; 69 actual PostgreSQL
+assertions with migration replay and three observed lock-contention cases;
+25 Edge tests plus output-digest negative control; 2,426 host assertions plus
+12 self-tests; 69 actual Chromium checks. Full reviewer walk passed on build3;
+main walk and spatial entry passed on build4. Build5 adds recovery controls and
+the revision-bound rendered-preview bridge; build6 adds the scan-time account/
+presentation fence. This final source needs its own complete UI run.
+These synthetic/local fixtures do not prove real-room reconstruction or iPhone AR.
+
+Owner action: restore the existing Modal account's billing-cycle spend headroom,
+keeping the approved USD25 total one-room experiment ceiling. No need to rescan,
+operate a local GPU or alter Apple. Engineering still owes deployment cleanup
+integration, real region processing, cloud bootstrap/room acceptance and a
+source-bound internal TestFlight delivery. Account billing is not the only
+unfinished feature work. No account limit or Apple setting was changed here.
 
 New owner UX direction: [`HOME-SPATIAL-FEATURE.md`](HOME-SPATIAL-FEATURE.md).
 Add a dedicated **3D walkthrough** card on Home, backed by the complete in-app

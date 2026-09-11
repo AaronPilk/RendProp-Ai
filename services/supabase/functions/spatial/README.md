@@ -21,9 +21,20 @@ sessions work; there is no plan or Apple-account gate added here.
   attempt.
 - `GET /spatial?listing_id=UUID` returns `{jobs:[...]}`; `GET /spatial/:id`
   returns one job. States: uploading, queued, processing, review, ready, failed.
+  Owner status reads also expire overdue processing leases.
+- `POST /spatial/:id/retry {}`, with a new stable UUID Idempotency-Key for the
+  observed failed attempt, reuses the SAME job/capture/inputs. Maximum three
+  attempts. It reserves a new attempt atomically, waits for previous provider
+  termination or its deadline, and preserves historical output/lease metadata.
+  An HTTP replay of a prior retry key never queues another paid attempt.
+- `POST /spatial/:id/cancel {}` pauses only uploading/queued work; it deletes
+  nothing and does not claim to terminate a running provider. `/resume {}`
+  returns that undispatched capture to uploading; `/start` reuses an existing
+  undispatched reservation without charging it twice.
 - Every app mutation returns a job: `id`, `listing_id`, `room_label`, `status`,
   `progress` (0..1), nullable `failure_code`, nullable `artifact_revision`,
-  `privacy_state`, nullable `viewer_url`, nullable `share_url`, timestamps.
+  `privacy_state`, nullable `viewer_url`, nullable `share_url`, timestamps,
+  `attempt_number`, `can_retry`, `can_cancel`, `can_resume`, nullable `retry_after`.
 - `POST /spatial/:id/review` accepts
   `{artifact_revision, approved,
   exclude_room, redactions:[{min:[x,y,z],max:[x,y,z]}]}`.
@@ -75,10 +86,15 @@ never receive service-role or R2 credentials.
    artifact binding, ignores privacy approval from the worker, and transitions
    to private review.
 6. Failure:
-   `POST /spatial/worker/:id/fail {lease_token,failure_code,cost_cents}`. Worker
+   `POST /spatial/worker/:id/fail
+   {lease_token,failure_code,cost_cents,provider_stopped}`. Worker
    failure codes are bounded lowercase/underscore identifiers. Expired workers
    cannot publish and are never automatically requeued into another paid
-   attempt. `/worker/claim` first runs a separate expiry transaction.
+   attempt. `provider_stopped:true` requires actual terminal provider proof or
+   proof allocation was never attempted; failure alone is insufficient.
+   `/worker/claim` first runs a separate expiry transaction. An independent
+   authenticated `POST /spatial/worker/sweep {}` can expire leases even when
+   the operational runtime is disabled; it does not start compute.
 
 Runtime default is **disabled and both budgets zero**. The fixed $6 worst-case
 reservation covers the current 7,200-second GPU lifecycle plus bounded

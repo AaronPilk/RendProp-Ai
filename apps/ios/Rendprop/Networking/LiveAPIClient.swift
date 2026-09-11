@@ -295,6 +295,58 @@ final class LiveAPIClient: APIClient {
 
     // MARK: - Listings
 
+    // Spatial uses explicit CodingKeys throughout. The ordinary `decode` path
+    // rewrites those keys and previously hid real server responses in this app.
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob] {
+        struct Envelope: Decodable { let jobs: [SpatialJob] }
+        let data = try await execute(makeRequest(url: url(["spatial"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])))
+        let response: Envelope = try decodeExact(data)
+        return try response.jobs.map { try $0.validated() }
+    }
+    func spatialJob(id: UUID) async throws -> SpatialJob {
+        let data = try await execute(makeRequest(url: url(["spatial", id.uuidString])))
+        let response: SpatialJob = try decodeExact(data)
+        return try response.validated()
+    }
+    private func spatialBody<T: Encodable>(_ value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SpatialClientError.invalidResponse
+        }
+        return body
+    }
+    private func spatialWrite(_ path: [String], body: [String: Any], key: String? = nil) async throws -> SpatialJob {
+        let data = try await execute(makeRequest(url: url(["spatial"] + path), method: "POST", json: body,
+                                                idempotency: Self.idempotency(key)))
+        let response: SpatialJob = try decodeExact(data)
+        return try response.validated()
+    }
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob {
+        try await spatialWrite([], body: spatialBody(request), key: operationID.uuidString)
+    }
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob {
+        struct Body: Encodable { let files: [SpatialInput] }
+        return try await spatialWrite([jobID.uuidString, "inputs"], body: spatialBody(Body(files: files)))
+    }
+    func startSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "start"], body: [:])
+    }
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "review"], body: spatialBody(review))
+    }
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "publish"], body: ["artifact_revision": artifactRevision.uuidString])
+    }
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "retry"], body: [:], key: operationID.uuidString)
+    }
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "cancel"], body: [:])
+    }
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "resume"], body: [:])
+    }
+
     func listings() async throws -> [Listing] {
         let data = try await execute(makeRequest(url: url(["listings"])))
         let dtos: [ListingDTO] = try decode(data)

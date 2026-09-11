@@ -29,11 +29,16 @@ struct PlayerWebView: UIViewRepresentable {
     /// to this tour, so the MLS "Virtually staged" chip matches the hosted page.
     /// No such pipeline exists today (decision A5) — callers leave it false.
     var virtuallyStaged: Bool = false
+    var spatialExpectation: SpatialViewerExpectation? = nil
+    var onSpatialReady: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.allowsInlineMediaPlayback = true
         config.mediaTypesRequiringUserActionForPlayback = []
+        if spatialExpectation != nil {
+            config.userContentController.add(context.coordinator, name: "spatialViewer")
+        }
 
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -96,7 +101,13 @@ struct PlayerWebView: UIViewRepresentable {
     /// without a token — which an iOS app cannot mint.
     static let scrollToEndCard = Notification.Name("rendprop.player.scrollToEndCard")
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(spatialExpectation: spatialExpectation, onSpatialReady: onSpatialReady)
+    }
+    static func dismantleUIView(_ webView: WKWebView, coordinator: Coordinator) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: "spatialViewer")
+        webView.stopLoading()
+    }
 
     /// Deliberately empty, and it must stay cheap: SwiftUI calls this on every
     /// update of the parent screen (every scroll of the detail view, every
@@ -115,9 +126,26 @@ struct PlayerWebView: UIViewRepresentable {
     /// handler. Without this, target="_blank" links are silently dead (no
     /// UIDelegate → no window) and a plain link would hijack the player into
     /// browsing inside the card.
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
         private weak var webView: WKWebView?
         private var endCardObserver: NSObjectProtocol?
+        private let spatialExpectation: SpatialViewerExpectation?
+        private let onSpatialReady: (() -> Void)?
+        private var deliveredSpatialReady = false
+
+        init(spatialExpectation: SpatialViewerExpectation?, onSpatialReady: (() -> Void)?) {
+            self.spatialExpectation = spatialExpectation
+            self.onSpatialReady = onSpatialReady
+        }
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            guard !deliveredSpatialReady, message.name == "spatialViewer", let spatialExpectation,
+                  let body = message.body as? [String: Any] else { return }
+            let origin = message.frameInfo.securityOrigin
+            guard spatialExpectation.accepts(body, isMainFrame: message.frameInfo.isMainFrame,
+                  scheme: origin.protocol, host: origin.host, port: origin.port) else { return }
+            deliveredSpatialReady = true
+            onSpatialReady?()
+        }
 
         /// Idempotent — `updateUIView` runs on every SwiftUI update and must
         /// not stack observers.

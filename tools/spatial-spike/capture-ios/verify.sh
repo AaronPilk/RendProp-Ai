@@ -18,7 +18,11 @@ rg -q 'CaptureRasterLimits.validate' Sources/SpatialCaptureViewController.swift 
 rg -q 'metadata-excessive-pixels' Tests/JPEGResourceChecks.swift || mark_failure 'JPEG metadata resource checks missing'
 rg -q 'homogeneousRowTolerance = 1e-6' Sources/CaptureModel.swift || mark_failure 'bounded homogeneous row validation missing'
 rg -q 'struct PosePrecisionChecks' Tests/PosePrecisionChecks.swift || mark_failure 'pose precision regression checks missing'
+rg -q 'struct CaptureQualitySelector' Sources/CaptureQuality.swift || mark_failure 'frame quality selector missing'
+rg -q 'quality.evaluate' Sources/CaptureRecorder.swift || mark_failure 'quality selector not connected to capture'
 if rg -q '@main' Sources/SpatialCaptureViewController.swift; then mark_failure 'shared controller contains a standalone entry point'; fi
+if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
+python3 ../../audit/run_capture_quality.py || mark_failure 'capture quality checks or negative controls failed'
 if [ "$FAIL" -ne 0 ]; then exit "$FAIL"; fi
 if ! spike_verify_dir=$(mktemp -d /tmp/spatial-capture-verify.XXXXXX); then mark_failure 'cannot create isolated verification directory'; exit "$FAIL"; fi
 if ! swiftc Sources/CaptureModel.swift Sources/RasterWriter.swift Sources/CaptureControls.swift Sources/CaptureArchive.swift Tests/main.swift -o "$spike_verify_dir/capture-tests"; then

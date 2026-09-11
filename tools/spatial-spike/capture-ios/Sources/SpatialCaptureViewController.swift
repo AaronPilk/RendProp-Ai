@@ -7,6 +7,10 @@ import Darwin
 // Shared by the standalone diagnostic target and Rendprop's explicit TestFlight
 // build overlay. This file has no app entry point or production service dependency.
 final class SpatialCaptureViewController: UIViewController {
+    /// Product handoff is deliberately separate from the Files export. Only a
+    /// fully re-read archive may enter upload; recorder completion alone proves
+    /// neither that every JPEG is readable nor that its pose belongs to this room.
+    var onVerifiedCapture: ((URL) -> Void)?
     private var arView: ARView?
     private let recorder = CaptureRecorder()
     private let start = UIButton(type: .system)
@@ -22,7 +26,7 @@ final class SpatialCaptureViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         status.text = ARWorldTrackingConfiguration.isSupported
-            ? "Local Phase A capture. Walk slowly around one room, then stop. Files stay on this phone."
+            ? (onVerifiedCapture == nil ? "Local Phase A capture. Walk slowly around one room, then stop. Files stay on this phone." : "Walk slowly around one room. Keep the camera level and avoid mirrors. Stop when you have covered the room.")
             : "A physical iPhone supporting AR world tracking is required. The simulator cannot capture a room."
         status.accessibilityIdentifier = "spatial.status"
         start.accessibilityIdentifier = "spatial.start"
@@ -63,6 +67,9 @@ final class SpatialCaptureViewController: UIViewController {
             self.finishedURL = url
             self.status.text = message
             self.refreshControls()
+            if ready, let url, self.onVerifiedCapture != nil, self.controls.beginExport() {
+                self.verifyAndExport(id: url.lastPathComponent)
+            }
         }
         NotificationCenter.default.addObserver(self, selector: #selector(willResignActive), name: UIApplication.willResignActiveNotification, object: nil)
     }
@@ -178,8 +185,13 @@ final class SpatialCaptureViewController: UIViewController {
                     self.finishedURL = url
                     self.controls.exportChecked(valid: true)
                     self.refreshControls()
-                    self.status.text = "Capture verified. Choose a local folder for its copy."
-                    self.present(UIDocumentPickerViewController(forExporting: [url], asCopy: true), animated: true)
+                    if let onVerifiedCapture = self.onVerifiedCapture {
+                        self.status.text = "Capture verified. Preparing your private 3D walkthrough…"
+                        onVerifiedCapture(url)
+                    } else {
+                        self.status.text = "Capture verified. Choose a local folder for its copy."
+                        self.present(UIDocumentPickerViewController(forExporting: [url], asCopy: true), animated: true)
+                    }
                 }
             }
         }
@@ -188,6 +200,7 @@ final class SpatialCaptureViewController: UIViewController {
         start.isEnabled = controls.startEnabled
         stop.isEnabled = controls.stopEnabled
         export.isEnabled = controls.exportEnabled
+        export.isHidden = onVerifiedCapture != nil
         saved.isEnabled = controls.startEnabled
     }
 

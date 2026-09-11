@@ -11,15 +11,6 @@ settings:
     CURRENT_PROJECT_VERSION: "18"
 targets:
   Rendprop:
-    sources:
-      # Enumerate source files, never the tools directory: no scripts, fixtures,
-      # standalone @main, duplicate privacy manifest or icon enter the app bundle.
-      - path: ../../tools/spatial-spike/capture-ios/Sources/SpatialCaptureViewController.swift
-      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureControls.swift
-      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureArchive.swift
-      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureModel.swift
-      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureRecorder.swift
-      - path: ../../tools/spatial-spike/capture-ios/Sources/RasterWriter.swift
     settings:
       base:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"

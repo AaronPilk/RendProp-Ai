@@ -62,6 +62,15 @@ targets:
       - path: Rendprop/Resources/player
         type: folder
         buildPhase: resources
+      # One measured capture implementation serves the product and lab. Enumerate
+      # files so the diagnostic @main, fixtures and scripts never enter the app.
+      - path: ../../tools/spatial-spike/capture-ios/Sources/SpatialCaptureViewController.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureControls.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureQuality.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureArchive.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureModel.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/CaptureRecorder.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/RasterWriter.swift
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.rendprop.app

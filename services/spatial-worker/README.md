@@ -26,7 +26,9 @@ no App Review metadata/build attachment changes are part of this service.
 - Service key exists ONLY in the CPU controller, never the GPU sandbox or iOS.
 - Input files use expiring exact-host private download URLs; redirects refused.
  20–400JPEGs,32MiB/file,2GiB total; sidecars1MiB each, metadata16MiB total.
-- `max_seconds`: complete provider lifetime≤7200s.
+- `max_seconds`: first-profile lifecycle is fixed at7200s maximum authority;
+  the actual providerTTL uses remaining time minus120s. Shorter configuration
+  profiles need measured bootstrap support and are not silently accepted.
   `max_training_seconds`: trainer subprocess≤1800s (default900s).
   `max_iterations`:≤7000 (default3000); gaussians≤500000.
 - Database reservesUSD6 per attempt before queueing, conservatively covering the
@@ -40,6 +42,9 @@ no App Review metadata/build attachment changes are part of this service.
   actual bytes and SHA256. Completion is server-confirmed and remains private.
 - Lease renewal continues during output transfer. A failed heartbeat terminates
   compute. Finishing output serializes with heartbeat to avoid late mutations.
+- Failure sends `provider_stopped:true` only before any allocation attempt or
+  after terminal provider readback. An ambiguous CREATE/termination leaves it
+  false so explicit retry cannot overlap an uncertain previous GPU lifetime.
 - Raw captures are not public. Review/exclusion can revoke sharing; requested
   region edits cannot be published without an actual processed derivative.
 
