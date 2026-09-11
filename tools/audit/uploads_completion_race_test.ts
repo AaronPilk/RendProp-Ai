@@ -24,13 +24,6 @@ Deno.test("a delayed second complete must not replace an already-completed objec
   const serve = Object.getOwnPropertyDescriptor(Deno, "serve")!;
   const originalFetch = globalThis.fetch;
   let handler: ((request: Request) => Promise<Response>) | undefined;
-  Object.defineProperty(Deno, "serve", {
-    ...serve,
-    value: (callback: (request: Request) => Promise<Response>) => {
-      handler = callback;
-      return {};
-    },
-  });
   const firstAtCAS = latch(), secondAtCopy = latch(), permitSecondCopy = latch();
   const key = "uploads/fixture-org/fixture-listing/fixture-asset.jpg";
   const asset: Record<string, unknown> = {
@@ -111,6 +104,15 @@ Deno.test("a delayed second complete must not replace an already-completed objec
     firstAtCAS.resolve(); secondAtCopy.resolve(); permitSecondCopy.resolve();
   }, 5000);
   try {
+    // Newer Deno versions expose a lazy accessor: never mix its get/set with
+    // the data descriptor used by this stub. finally restores the original.
+    Object.defineProperty(Deno, "serve", {
+      configurable: serve.configurable, enumerable: serve.enumerable, writable: true,
+      value: (callback: (request: Request) => Promise<Response>) => {
+        handler = callback;
+        return {};
+      },
+    });
     await import("../../services/supabase/functions/uploads/index.ts");
     if (!handler) throw new Error("Actual uploads route was not captured");
     const complete = () => handler!(new Request("https://edge.invalid/uploads/fixture-asset/complete", {
