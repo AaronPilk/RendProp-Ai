@@ -48,9 +48,14 @@ no App Review metadata/build attachment changes are part of this service.
   documented full sandbox lifetime and bounded CPU controller. This is not a
   measured typical room cost. No automatic refund or second paid GPU on ambiguous
   failure; actual invoice reconciliation is separate.
-- One CPU controller container at a time,2CPU/4GiB,8GiB scratch,7500s timeout,
+- One CPU controller container at a time,2CPU/4GiB,7500s timeout,
   no automatic invocation retries. Sandbox has1L4/4CPU/32GiB, hard TTL, no volumes,
   snapshots, ports or credentials. Network denied before media transfer.
+- No provider8GiB disk limit is claimed. Modal rejected that explicit disk
+  request; its parameter increases the default512GiB quota and can increase
+  billable memory. The override is omitted. Input and output are separately
+  bounded by the application at2GiB and32MiB; temporary derived datasets and
+  dependencies also occupy scratch space.
 - FinalSOG≤32MiB. One-write service output ticket binds a server-created revision,
   actual bytes and SHA256. Completion is server-confirmed and remains private.
 - Lease renewal continues during output transfer. A failed heartbeat terminates

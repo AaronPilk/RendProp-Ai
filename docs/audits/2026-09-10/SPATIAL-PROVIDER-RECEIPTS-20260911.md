@@ -128,3 +128,13 @@ to control-plane, private-input and output-upload requests. The parent's live
 upload proof found Cloudflare error1010 for Python's default agent and succeeded
 with an explicit Rendprop agent. Local tests assert the actual Request headers
 on all three paths. No experiment runner source or reviewed plan changed.
+
+The parent's first disabled-service deployment reached Modal validation and
+failed because`ephemeral_disk=8192` is below the provider's allowed range.
+Local SDK import and decorator fixtures did not prove that remote admission
+rule. The override was removed and a regression asserts its absence. No512GiB
+disk request is substituted, because explicit disk requests raise billable
+memory at20:1. The application's2GiB input/32MiB output limits are real; an8GiB
+provider disk cap was not. [Modal resource documentation](https://modal.com/docs/guide/resources)
+was checked for this correction. This source-only change does not affect the
+running private sandbox or its reviewed cost policy.

@@ -31,6 +31,7 @@ class AppTests(unittest.TestCase):
         self.assertEqual(kwargs['max_containers'], 1)
         self.assertEqual(kwargs['retries'], 0)
         self.assertNotIn('gpu', kwargs)
+        self.assertNotIn('ephemeral_disk', kwargs)
         modal.Secret.from_name.assert_not_called()
         control.assert_not_called()
         run.assert_not_called()
