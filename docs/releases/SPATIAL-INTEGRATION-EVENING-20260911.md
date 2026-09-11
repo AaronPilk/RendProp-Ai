@@ -94,6 +94,22 @@ visibly and rendered the room structure from above. Images remained visibly
 blurry/smeared. No physical-phone performance or real backend viewer auth test
 is claimed by this local fixture. Privacy review remains false.
 
+Starting-view reset visibly cleared top-down mode; Close removed the viewer
+and displayed its closed state. No captured warning/error console entries
+appeared during the walkthrough. Both temporary loopback servers were stopped
+after testing; room files were retained privately. A wrong-model negative
+control failed before listening, and three HTTP checks verified401 without
+the local capability,403 for another Origin and405 for POST. Explicit Python
+guards also remain active under optimized Python; no `assert`-only cap is used
+by the preview preparation tool.
+
+The independent, source-and-data-bound quality review is
+[`ROOM-QUALITY-DIAGNOSIS-2026-09-11.md`](../audits/2026-09-10/ROOM-QUALITY-DIAGNOSIS-2026-09-11.md).
+It verifies all153 pose inversions and all20 original image halves, records
+growth/seed/motion evidence, and qualifies the metrics: validation images were
+excluded from training loss, but some initialization colors came from them.
+These are loss-held-out metrics, not a fully image-disjoint benchmark.
+
 ## Cloud deployment: failures retained, then remote proof
 
 Pinned Modal1.5.3, profile`rendprop-room-experiment`, environment`main`.
@@ -149,14 +165,42 @@ production account deletion, customer-ticket cancellation or bulk abort ran.
 The agent's full generic iOS simulator build of`ebdeb53` passed; it is compile
 evidence, not a new archive, UI walk or iPhone background-handover test.
 
+### Additional integrated checks after provider/spatial-renewal changes
+
+- 41 worker unit tests and26 spatial Edge tests passed with network denied.
+- Provider0041:23 SQL assertions, replay/restored and dispatch mutant checks;
+  `/tmp/rendprop-provider-db-0x62ynii/receipt.json`, accepted/cluster_stopped true.
+- Deletion0039 rerun paired with exact provider commit
+  `98ee202d2a63cef31899e41d2213f36881b7199f`:62 assertions and6 lock races passed;
+  `/tmp/rendprop-deletion-db-00laxkga/receipt.json`. An earlier launch with an
+  abbreviated commit was correctly refused before any DB started.
+- Spatial0040:69 assertions and3 observed lock races passed; its own suite
+  tests0040 in isolation from0041. Receipt
+  `/tmp/rendprop-spatial-db-qrkbzyqn/receipt.json`; owned cluster stopped.
+- Spatial client:75 native assertions and6 compiled mutants passed/rejected as
+  intended; `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-client-tcibj_66/receipt.json`.
+- The old Edge regression wrapper expected25 tests and failed when the new
+  provider-journal test raised that to26. Fixed its exact count and zero-ignore
+  parsing; rerun passed26 with its copied-source digest-check mutant rejected.
+  `/tmp/rendprop-spatial-edge-27b54nxi/receipt.json`. Network/run/write are denied.
+
+Pre-provider download/validation failure now journals `not_created` atomically
+without granting dispatch or overwriting an older ambiguous allocation. That
+source fix and spatial same-asset renewal are integrated. These later changes
+are not implied deployed by the earlier22ad794 cloud receipt.
+
 ## Remaining work — do not erase these from the handoff
 
 - Diagnose and improve real-room reconstruction quality with measured evidence;
   do not claim the current blurred model is an acceptable market-ready tour.
-- Finish separate spatial same-asset renewal and multipart Pause regression.
-  General recovery peer review found Pause cancels dispatched parts, and
-  expired v2 foreground photo journals lack an explicit restart UI. No silent
-  reallocation is an acceptable substitute for user-confirmed recovery.
+- Spatial same-asset renewal and general multipart Pause are now implemented
+  and tested. General Pause stops scheduling while dispatched parts settle;
+  the full simulator build passed. Distribution remains outstanding.
+  Expired v2 foreground photo journals still lack an explicit restart UI, and
+  several photo callers discard their errors with `try?`. Separately, spatial
+  cloud-job Cancel still cancels frame transfers: Cancel→Resume during an
+  uncertain write is not proven recoverable. No silent reallocation is an
+  acceptable substitute for user-confirmed recovery.
 - Deploy paired0039/me and0041/spatial with a coordinated old-handler/sweep
   drain. Applying0039 alone changes write grants and breaks the old handler.
   Existing ambiguous old worker/multipart identities can require assisted

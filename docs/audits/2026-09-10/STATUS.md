@@ -17,7 +17,8 @@ viewer locally, but substantial blur means visual acceptance FAILS. Disabled,
 unscheduled Modal controller now passes a real remote invocation after two
 deployment defects were fixed. Deletion0039/me/provider0041 and general upload
 recovery are integrated and regression-tested in source, not deployed. Spatial
-renewal/Pause follow-up, quality improvement and phone delivery remain open.
+same-asset renewal and general Pause now also pass native regressions/build;
+expired-photo Restart, spatial Cancel→Resume, quality and phone delivery remain open.
 Production spatial budgets remain disabled/zero. No Apple change. Older entries
 below are dated history, not competing claims about current deployments.
 

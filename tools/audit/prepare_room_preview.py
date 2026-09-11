@@ -18,6 +18,11 @@ from modal_provider import navigation_manifest
 from prepare_capture import load_capture
 
 
+def require(condition, message):
+    if not condition:
+        raise ValueError(message)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("capture", type=Path)
@@ -25,15 +30,19 @@ def main():
     parser.add_argument("validation_stats", type=Path)
     parser.add_argument("manifest_output", type=Path)
     args = parser.parse_args()
-    assert not args.manifest_output.exists(), "Refusing to overwrite a preview"
-    assert REPO not in args.manifest_output.resolve().parents, "Room metadata stays outside Git"
+    require(not args.manifest_output.exists(), "Refusing to overwrite a preview")
+    output_path = args.manifest_output.resolve()
+    require(not any((parent / ".git").exists() for parent in output_path.parents),
+            "Room metadata stays outside every Git worktree")
     size = args.sog.stat().st_size
-    assert 0 < size <= 32 * 1024 * 1024, "Production SOG byte cap"
-    data = args.sog.read_bytes()
-    assert data[:4] == b"PK\x03\x04", "Bundled SOG required"
+    require(0 < size <= 32 * 1024 * 1024, "Production SOG byte cap")
+    with args.sog.open("rb") as source:
+        data = source.read(32 * 1024 * 1024 + 1)
+    require(len(data) == size, "Model changed while reading")
+    require(data[:4] == b"PK\x03\x04", "Bundled SOG required")
     stats = json.loads(args.validation_stats.read_text())
     count = stats["num_GS"]
-    assert type(count) is int and 0 < count <= 500000, "Production splat cap"
+    require(type(count) is int and 0 < count <= 500000, "Production splat cap")
     capture = load_capture(args.capture)
     manifest = {
         **navigation_manifest(capture, "Owner room — quality test"),
