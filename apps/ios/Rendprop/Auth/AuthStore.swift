@@ -77,12 +77,17 @@ final class AuthStore: ObservableObject {
                 let (bytes, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
                 return (bytes, http)
-            }, changed: { [weak self] message in self?.adoptionRecoveryMessage = message })
+            }, changed: { [weak self] message in self?.adoptionRecoveryMessage = message },
+            prepareLocal: { [weak self] pending in self?.onPrepareAdoption?(pending) == true },
+            finishLocal: { [weak self] pending, orgID in self?.onConfirmAdoption?(pending, orgID) == true })
     }()
 
     /// Fired (main thread) when a DIFFERENT account signs in than the one that
     /// last used this device — the app clears per-account listing state.
-    var onAccountChanged: (() -> Void)?
+    var onAccountChanged: (@MainActor (UUID) -> Void)?
+    var onPrepareAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending) -> Bool)?
+    var onConfirmAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending, UUID) -> Bool)?
+    var onAdoptionStorageReady: (@MainActor () -> Bool)?
 
     /// Single-flight guard so concurrent callers share one network refresh.
     @MainActor private var refreshInFlight: Task<Bool, Never>?
@@ -326,7 +331,7 @@ final class AuthStore: ObservableObject {
                 orgName = ""
                 UserDefaults.standard.removeObject(forKey: Keys.userName)
                 UserDefaults.standard.removeObject(forKey: Keys.orgName)
-                onAccountChanged?()
+                if let id = UUID(uuidString: sub) { onAccountChanged?(id) }
             }
         }
         Self.persistTokens(access: accessToken, refresh: refreshToken, expiresAt: expiresAt)
@@ -785,11 +790,28 @@ final class AuthStore: ObservableObject {
     @MainActor
     func retryPendingAdoptionIfNeeded() async {
         guard Config.enableAuth, Config.useLiveBackend, let recovery = adoptionRecovery else { return }
+        // Launch can reach Auth before AppModel has loaded its metadata. Do
+        // not confirm/clear recovery against an empty, not-yet-loaded library.
+        guard onAdoptionStorageReady?() == true else { return }
         let token = Self.storedAccessToken() ?? ""
         let epoch = sessionEpoch
         await recovery.retry(destinationAccess: token, isCurrent: { [weak self] in
             self?.sessionEpoch == epoch && self?.isSignedIn == true
         })
+    }
+
+    @MainActor
+    func reportUnreadableAdoptionBindings() {
+        adoptionRecoveryMessage = "Workspace recovery metadata could not be read. Your saved data was preserved. Please get recovery help before retrying cloud publishing."
+    }
+
+    /// Non-secret existence check only. A confirmed local journal can outlive
+    /// its cleared Keychain envelope; it must not block arbitrary future
+    /// account switches forever. Read failures remain failures, not absence.
+    @MainActor
+    func hasPendingAdoption(operationID: UUID) throws -> Bool {
+        guard let recovery = adoptionRecovery else { throw AnonymousAdoptionRecovery.RecoveryError.storage }
+        return try recovery.pending()?.operationID == operationID
     }
 
     /// GoTrue error bodies vary (`{error, error_description}`, `{msg}`,
