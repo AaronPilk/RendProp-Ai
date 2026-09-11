@@ -6,6 +6,16 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
+## New block authorized — September10 evening
+
+Read [`NEXT-BLOCK.md`](NEXT-BLOCK.md) for the owner's new one-room GPU approval,
+parallel branch ownership and remaining decisions. The former missing-spend-
+approval gate is superseded: USD25 total, one GPU, provider-enforced two-hour
+lifetime, prepared dataset only, remote cleanup mandatory. Modal was selected
+and authenticated; no trained-room result is claimed yet. Production and Apple
+remain untouched. Later checkpoint counts below are historical evidence, not
+proof of these new units.
+
 ## Read first: final tested and pushed code checkpoint
 
 - **Branch:** `audit/full-regression-20260910`, pushed to `AaronPilk/RendProp-Ai`.
