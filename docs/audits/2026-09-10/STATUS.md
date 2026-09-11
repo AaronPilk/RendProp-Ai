@@ -8,6 +8,18 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+**LATEST controlled live proof,21:02–21:12UTC:**
+[`LIVE-UPLOAD-PROOF-20260911.md`](../../releases/LIVE-UPLOAD-PROOF-20260911.md).
+Uploads35/spatial2 deployed bundles exactly match8263e25; gateway custom domain
+and real buckets confirmed; tour-host updated. Three synthetic files actually
+transferred through the gateway, completed and replayed. One app-render
+publication plus replay produced one render/job; both hosted tour variants200.
+Real final MP4 SHA matches. DB3tickets/5711spentbytes/0held; native URLSession
+stored-capability replay200 did not increase that ledger. First Python403 was
+Cloudflare1010 before dispatch, diagnosed and retained in the receipt; no firewall
+change. Legacy recovery, deletion/provider integration and real room acceptance
+remain open. Spatial runtime still disabled/zero-budget. No Apple change.
+
 **NEWER rollback/bucket check,20:17UTC onward:**
 [`UPLOAD-ROLLBACK-AND-GATEWAY-VALUES-20260911.md`](../../releases/UPLOAD-ROLLBACK-AND-GATEWAY-VALUES-20260911.md).
 Uploads is now ACTIVE v33, exact deployed source8ce5e4a: direct presigned path

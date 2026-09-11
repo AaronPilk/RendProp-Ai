@@ -1,0 +1,97 @@
+{
+  "verified_at": "2026-09-11T21:07:00Z",
+  "fixture_listing_id": "3f5e3bf8-54d9-4d82-a9c9-6ecf412dfbb3",
+  "assets": [
+    {
+      "id": "b30aa84b-27a1-4406-9ded-901b99876fc1",
+      "bytes": 73,
+      "state": "completed",
+      "uploaded": true,
+      "held_bytes": 0,
+      "spent_bytes": 146,
+      "transport_version": 2
+    },
+    {
+      "id": "77061ea2-517c-4970-845a-26aa1614e2ed",
+      "bytes": 1855,
+      "state": "completed",
+      "uploaded": true,
+      "held_bytes": 0,
+      "spent_bytes": 3710,
+      "transport_version": 2
+    },
+    {
+      "id": "4a416b82-ee2d-4951-9c1f-9bf352eb88e9",
+      "bytes": 1855,
+      "state": "completed",
+      "uploaded": true,
+      "held_bytes": 0,
+      "spent_bytes": 1855,
+      "transport_version": 2
+    }
+  ],
+  "budget": [
+    {
+      "tickets": 3,
+      "held_bytes": 0,
+      "spent_bytes": 5711
+    }
+  ],
+  "runtime": {
+    "enabled": false,
+    "job_cap_cents": 600,
+    "daily_budget_cents": 0,
+    "org_monthly_budget_cents": 0
+  },
+  "operations": [
+    {
+      "kind": "copy",
+      "bytes": 73,
+      "state": "retained",
+      "asset_id": "b30aa84b-27a1-4406-9ded-901b99876fc1",
+      "has_claim": true
+    },
+    {
+      "kind": "single",
+      "bytes": 73,
+      "state": "stored",
+      "asset_id": "b30aa84b-27a1-4406-9ded-901b99876fc1",
+      "has_claim": true
+    },
+    {
+      "kind": "copy",
+      "bytes": 1855,
+      "state": "retained",
+      "asset_id": "77061ea2-517c-4970-845a-26aa1614e2ed",
+      "has_claim": true
+    },
+    {
+      "kind": "single",
+      "bytes": 1855,
+      "state": "stored",
+      "asset_id": "77061ea2-517c-4970-845a-26aa1614e2ed",
+      "has_claim": true
+    },
+    {
+      "kind": "assemble",
+      "bytes": 0,
+      "state": "retained",
+      "asset_id": "4a416b82-ee2d-4951-9c1f-9bf352eb88e9",
+      "has_claim": true
+    },
+    {
+      "kind": "init",
+      "bytes": 0,
+      "state": "retained",
+      "asset_id": "4a416b82-ee2d-4951-9c1f-9bf352eb88e9",
+      "has_claim": true
+    },
+    {
+      "kind": "part",
+      "bytes": 1855,
+      "state": "retained",
+      "asset_id": "4a416b82-ee2d-4951-9c1f-9bf352eb88e9",
+      "has_claim": true
+    }
+  ]
+}
