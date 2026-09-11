@@ -138,3 +138,12 @@ memory at20:1. The application's2GiB input/32MiB output limits are real; an8GiB
 provider disk cap was not. [Modal resource documentation](https://modal.com/docs/guide/resources)
 was checked for this correction. This source-only change does not affect the
 running private sandbox or its reviewed cost policy.
+
+A real remote disabled invocation then caught a second cloud-only issue: Modal
+reimports the deployment module at`/root/app.py`, where`parents[2]` does not
+exist. The local repository import was not sufficient proof. Remote import now
+uses the explicit uploaded`/workspace` root; local file mounts are constructed
+only on the deploying machine. A new test executes the actual module with the
+remote`__file__` layout and requires zero local mount lookups. The disabled
+function returns before importing the queue/provider modules. Remote acceptance
+must still be re-run by the parent; these fixtures alone do not claim it passes.

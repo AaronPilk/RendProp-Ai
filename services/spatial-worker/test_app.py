@@ -18,7 +18,7 @@ class AppTests(unittest.TestCase):
             return lambda fn: fn
         app = SimpleNamespace(function=decorate)
         modal = SimpleNamespace(App=lambda _: app, Image=SimpleNamespace(from_registry=lambda _: image),
-                                Period=lambda **kw: kw, Secret=Mock())
+                                Period=lambda **kw: kw, Secret=Mock(), is_local=lambda: True)
         spec = importlib.util.spec_from_file_location('disabled_fixture_app', Path(__file__).with_name('app.py'))
         module = importlib.util.module_from_spec(spec)
         with patch.dict(sys.modules, {'modal': modal}), patch.dict('os.environ', {'SPATIAL_WORKER_ENABLED': 'true'}), \
@@ -35,6 +35,25 @@ class AppTests(unittest.TestCase):
         modal.Secret.from_name.assert_not_called()
         control.assert_not_called()
         run.assert_not_called()
+
+    def test_remote_module_layout_has_no_local_repository_parent_or_mount_lookup(self):
+        image = Mock(); image.pip_install.return_value = image
+        kwargs = {}
+        def decorate(**values):
+            kwargs.update(values)
+            return lambda fn: fn
+        modal = SimpleNamespace(App=lambda _: SimpleNamespace(function=decorate),
+                                Image=SimpleNamespace(from_registry=lambda _: image),
+                                Period=Mock(), Secret=Mock(), is_local=lambda: False)
+        module = {"__file__": "/root/app.py", "__name__": "remote_fixture_app"}
+        source = Path(__file__).with_name('app.py').read_text()
+        with patch.dict(sys.modules, {'modal': modal}), patch.dict('os.environ', {'SPATIAL_WORKER_ENABLED': 'true'}):
+            exec(compile(source, '/root/app.py', 'exec'), module)
+            self.assertEqual(module['process_next'](), {'status': 'disabled'})
+        self.assertEqual(module['REPO'], Path('/workspace'))
+        image.add_local_file.assert_not_called()
+        self.assertIsNone(kwargs['schedule'])
+        self.assertEqual(kwargs['secrets'], [])
 
 
 if __name__ == '__main__':
