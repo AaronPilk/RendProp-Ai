@@ -1,5 +1,19 @@
 # Owner direction: a first-class Home 3D walkthrough feature
 
+## Superseding direction — September11, full product implementation
+
+The owner explicitly requested ALL four deliverables: real-room phone acceptance,
+automatic background upload/cloud generation with recovery/cost bounds, a Home
+card/in-app navigation/privacy/sharing, and integration/testing/internal
+TestFlight delivery without changing the App Review submission. This supersedes
+the old **stop before PhaseB** sequencing below. Do not use the earlier spike gate
+to stop parallel source implementation. It does not turn missing real-room
+acceptance into a pass or authorize increasing an account-wide spend limit.
+
+Implementation and actual test receipts: [SPATIAL-PRODUCT-BUILD.md](SPATIAL-PRODUCT-BUILD.md).
+The historical paragraphs below describe the earlier state, not the latest
+authorization or current implementation progress.
+
 September11 request: the owner supplied the current Home feature-grid screenshot
 and asked what is required to make spatial work and add it **there as a feature**.
 This confirms the desired product entry, not a claim that the feature is built.

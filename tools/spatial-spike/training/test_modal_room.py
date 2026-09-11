@@ -303,5 +303,80 @@ class CollectionTests(unittest.TestCase):
             sb.filesystem.copy_to_local.assert_not_called()
 
 
+class DiagnosticTests(unittest.TestCase):
+    def test_streamed_log_exists_before_process_wait_returns_and_records_exit(self):
+        import threading
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stage.log"
+            consumed = threading.Event()
+            def stream():
+                yield "trainer started\n"
+                consumed.set()
+            def wait():
+                self.assertTrue(consumed.wait(2), "stdout was not drained while process ran")
+                self.assertEqual(path.read_text(), "trainer started\n")
+                return 137
+            sb = SimpleNamespace(exec=lambda *a, **k: SimpleNamespace(
+                stdout=stream(), stderr=iter(()), wait=wait))
+            stage, snapshots = {}, []
+            with self.assertRaises(room.StageFailure) as error:
+                room.exec_to_log(sb, ["fixture"], 10, path, stage=stage,
+                                 persist=lambda: snapshots.append(dict(stage)))
+            self.assertEqual(error.exception.exit_code, 137)
+            self.assertEqual(stage["exit_code"], 137)
+            self.assertTrue(any(x["exit_code"] == 137 for x in snapshots))
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+
+    def test_log_ceiling_drains_every_chunk_without_buffering_entire_log(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            yielded = []
+            def stream():
+                for n in range(100):
+                    yielded.append(n)
+                    yield "xxxxxxxx"
+            sb = SimpleNamespace(exec=lambda *a, **k: SimpleNamespace(
+                stdout=stream(), stderr=iter(()), wait=lambda: 0))
+            with patch.object(room, "MAX_STAGE_LOG", 32):
+                report = room.exec_to_log(sb, ["fixture"], 10, Path(tmp) / "log")
+            self.assertEqual(len(yielded), 100)
+            self.assertEqual(report["log_bytes"], 32)
+            self.assertTrue(report["log_truncated"])
+            self.assertEqual((Path(tmp) / "log").stat().st_size, 32)
+
+    def test_stream_failure_cannot_erase_numeric_stage_exit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            def stream():
+                yield "partial log"
+                raise ConnectionError("SDK payload not serialized")
+            sb = SimpleNamespace(exec=lambda *a, **k: SimpleNamespace(
+                stdout=stream(), stderr=iter(()), wait=lambda: 137))
+            stage = {}
+            with self.assertRaises(ConnectionError):
+                room.exec_to_log(sb, ["fixture"], 10, Path(tmp) / "log", stage=stage)
+            self.assertEqual(stage["exit_code"], 137)
+            self.assertEqual((Path(tmp) / "log").read_text(), "partial log")
+
+    def test_failed_diagnostic_stat_is_recorded_not_silently_dropped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sb = Mock()
+            sb.filesystem.stat.side_effect = FileNotFoundError("private path")
+            result = room.collect_failed_diagnostics(sb, Path(tmp))
+            self.assertEqual(len(result), 3)
+            self.assertTrue(all(not x["collected"] for x in result))
+            self.assertTrue(all(x["error_type"] == "FileNotFoundError" for x in result))
+            self.assertNotIn("private path", json.dumps(result))
+            sb.filesystem.copy_to_local.assert_not_called()
+
+    def test_provider_readback_failure_stays_unavailable(self):
+        sb = SimpleNamespace(poll=lambda: None)
+        self.assertEqual(room.provider_terminal(sb), {"poll_exit_code": None, "reason": "running"})
+        sb = Mock()
+        sb.poll.side_effect = RuntimeError("private provider payload")
+        result = room.provider_terminal(sb)
+        self.assertEqual(result["reason"], "unavailable")
+        self.assertEqual(result["readback_error_type"], "RuntimeError")
+        self.assertNotIn("payload", json.dumps(result))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

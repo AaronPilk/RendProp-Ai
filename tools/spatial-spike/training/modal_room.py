@@ -17,6 +17,7 @@ import signal
 import stat
 import subprocess
 import sys
+import threading
 import time
 import uuid
 
@@ -26,7 +27,15 @@ REMOTE = "/opt/room-experiment"
 PROFILE = "rendprop-room-experiment"
 MAX_DOWNLOAD = 512 * 1024 * 1024
 MAX_DATASET = 2 * 1024**3
+MAX_STAGE_LOG = 8 * 1024**2
 SOURCE_FILES = ("run_training.py", "prepare_capture.py", "modal_setup.sh")
+
+
+class StageFailure(ValueError):
+    """Keep the numeric provider result without leaking arbitrary SDK payloads."""
+    def __init__(self, exit_code):
+        self.exit_code = exit_code
+        super().__init__("remote stage failed; inspect private stage receipt")
 
 
 def require(ok, message):
@@ -170,23 +179,100 @@ def cleanup(sb, receipt_path, receipt):
     require(not failures, "cleanup requires follow-up: " + ",".join(failures))
 
 
-def exec_to_log(sb, argv, timeout, logfile):
+def exec_to_log(sb, argv, timeout, logfile, *, stage=None, persist=None):
     process = sb.exec(*argv, timeout=timeout, text=True)
-    # Drain both streams concurrently, without printing remote data or error
-    # payloads into chat. These logs are local, private, and outside Git.
+    # Write chunks as they arrive. Waiting for read() to return lost every byte
+    # when the billing limit killed the container. Drain beyond the disk limit
+    # so a noisy trainer cannot deadlock on stderr or exhaust the controller.
     pool = ThreadPoolExecutor(max_workers=2)
     completed = False
+    lock = threading.Lock()
+    report = stage if stage is not None else {}
+    report.update(exit_code=None, log_bytes=0, log_truncated=False)
+    logfile.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor = os.open(logfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    log = os.fdopen(descriptor, "wb", buffering=0)
+
+    def drain(stream):
+        for chunk in stream:
+            encoded = chunk.encode("utf-8", errors="replace")
+            with lock:
+                remaining = max(0, MAX_STAGE_LOG - report["log_bytes"])
+                saved = encoded[:remaining]
+                if saved:
+                    log.write(saved)
+                    report["log_bytes"] += len(saved)
+                if len(encoded) > remaining:
+                    report["log_truncated"] = True
+
     try:
-        out = pool.submit(process.stdout.read)
-        err = pool.submit(process.stderr.read)
+        out = pool.submit(drain, process.stdout)
+        err = pool.submit(drain, process.stderr)
         code = process.wait()
-        logfile.write_text(out.result() + err.result())
+        require(type(code) is int, "missing numeric remote stage exit")
+        report["exit_code"] = code
+        # Save the exit before joining stream futures: streaming itself can fail
+        # after a terminal result, which must not erase the reason the run died.
+        if persist:
+            persist()
+        out.result()
+        err.result()
         completed = True
+        if code != 0:
+            raise StageFailure(code)
     finally:
         # On interruption, don't wait for a stalled read before reaching the
         # caller's provider termination. Termination closes those remote streams.
         pool.shutdown(wait=completed, cancel_futures=True)
-    require(code == 0, f"remote stage failed (exit {code}); inspect private stage log")
+        with lock:
+            log.close()
+        if persist:
+            persist()
+    return report
+
+
+def provider_terminal(sb):
+    """Pinned-SDK readback, classified instead of copying arbitrary error text.
+
+    poll() alone reports 137 for both an external billing kill and many unrelated
+    failures. Modal1.5.3 exposes the populated result internally, not as a public
+    getter. Keep that version-specific access isolated and report unavailable
+    rather than inventing an OOM diagnosis if the boundary changes.
+    """
+    result = {"poll_exit_code": None, "reason": "unavailable"}
+    try:
+        code = sb.poll()
+        require(code is None or type(code) is int, "invalid provider exit")
+        result["poll_exit_code"] = code
+        if code is None:
+            result["reason"] = "running"
+            return result
+        from modal._utils.async_utils import synchronizer
+        terminal = synchronizer._translate_in(sb)._result
+        known = {"Container terminated due to reaching billing cycle spend limit": "billing_cycle_spend_limit"}
+        result["reason"] = known.get(terminal.exception, "other_provider_termination")
+    except Exception as exc:
+        result["readback_error_type"] = type(exc).__name__
+    return result
+
+
+def collect_failed_diagnostics(sb, state):
+    results = []
+    for name in ("result/run.json", "result/training.log", "resolved-setup.txt"):
+        entry = {"path": name, "collected": False}
+        try:
+            size = sb.filesystem.stat(f"{REMOTE}/{name}").size
+            require(type(size) is int and 0 <= size <= MAX_STAGE_LOG, "diagnostic exceeds bound")
+            destination = state / "failed" / name
+            require(not destination.exists(), "refusing to replace a diagnostic")
+            sb.filesystem.copy_to_local(f"{REMOTE}/{name}", destination)
+            os.chmod(destination, 0o600)
+            require(destination.stat().st_size == size, "diagnostic size changed")
+            entry.update(collected=True, bytes=size, sha256=sha(destination))
+        except Exception as exc:
+            entry["error_type"] = type(exc).__name__
+        results.append(entry)
+    return results
 
 
 def collect(sb, target):
@@ -260,7 +346,9 @@ def run(modal, dataset, state):
         for name in SOURCE_FILES:
             sb.filesystem.copy_from_local(source / name, f"{REMOTE}/{name}")
         record(receipt_path, receipt, "setup_started")
-        exec_to_log(sb, ["bash", f"{REMOTE}/modal_setup.sh"], 1800, state / "setup.log")
+        receipt["stages"] = {"setup": {}}
+        exec_to_log(sb, ["bash", f"{REMOTE}/modal_setup.sh"], 1800, state / "setup.log",
+                    stage=receipt["stages"]["setup"], persist=lambda: save(receipt_path, receipt))
         # Dataset bytes are not present until public dependency setup succeeds.
         sb._experimental_set_outbound_network_policy(outbound_cidr_allowlist=[], outbound_domain_allowlist=[])
         record(receipt_path, receipt, "outbound_denied")
@@ -276,7 +364,9 @@ def run(modal, dataset, state):
                    "--max-seconds", "900", "--max-steps", "3000", "--max-gaussians", "500000"]
         receipt["training_command"] = command
         save(receipt_path, receipt)
-        exec_to_log(sb, command, 1000, state / "wrapper.log")
+        receipt["stages"]["training"] = {}
+        exec_to_log(sb, command, 1000, state / "wrapper.log",
+                    stage=receipt["stages"]["training"], persist=lambda: save(receipt_path, receipt))
         # wrapper stdout is already local; do not require a nonexistent remote log.
         artifacts = collect(sb, state / "download")
         record(receipt_path, receipt, "artifacts_collected", artifacts=artifacts, outcome="trained")
@@ -291,12 +381,9 @@ def run(modal, dataset, state):
                 record(receipt_path, receipt, "allocation_unresolved_no_retry")
         if sb is not None:
             # Preserve bounded diagnostics on a failed run without retrying it.
-            for name in ("result/run.json", "result/training.log", "resolved-setup.txt"):
-                try:
-                    if sb.filesystem.stat(f"{REMOTE}/{name}").size <= 8 * 1024**2:
-                        sb.filesystem.copy_to_local(f"{REMOTE}/{name}", state / "failed" / name)
-                except Exception:
-                    pass
+            receipt["provider_terminal"] = provider_terminal(sb)
+            receipt["failed_diagnostics"] = collect_failed_diagnostics(sb, state)
+            save(receipt_path, receipt)
         raise
     finally:
         if sb is not None:

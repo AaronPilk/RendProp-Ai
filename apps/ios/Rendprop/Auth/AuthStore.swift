@@ -210,7 +210,11 @@ final class AuthStore: ObservableObject {
     private static func storedRefreshToken() -> String? { secret(Keys.refreshToken) }
 
     init() {
-        let hasToken = Self.storedAccessToken() != nil
+        // The screenshot walk uses no credentials. Reading an old simulator
+        // Keychain token here let auto-refresh replace the mock identity (or
+        // sign it out) halfway through a walk, and could make a real auth call.
+        let offlineWalk = Config.isUITesting && !Config.isSessionNetworkTesting
+        let hasToken = !offlineWalk && Self.storedAccessToken() != nil
         // Dev stub stays "signed in"; real auth gates on a persisted token.
         // UI WALK: `-uiTesting` makes every API client a MockAPIClient (see
         // Config.makeAPIClient), which answers every route with no token. Report
@@ -237,7 +241,7 @@ final class AuthStore: ObservableObject {
         // `validAccessToken()` before every request, and this store also
         // refreshes shortly before every expiry while the app runs and
         // immediately on each return to the foreground.
-        if Config.enableAuth {
+        if Config.enableAuth && !offlineWalk {
             foregroundObserver = NotificationCenter.default.addObserver(
                 forName: UIApplication.didBecomeActiveNotification,
                 object: nil, queue: .main
@@ -419,6 +423,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     @discardableResult
     func refreshIfNeeded(leeway: TimeInterval = 60) async -> Bool {
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return true }
         guard Config.enableAuth, isSignedIn else { return true }   // dev stub / signed out
         guard Self.storedRefreshToken() != nil else {
             if let expiry = Self.tokenExpiresAt, Date() >= expiry {
@@ -439,6 +444,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     @discardableResult
     func forceRefresh() async -> Bool {
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return true }
         guard Config.enableAuth, isSignedIn else { return true }
         guard Self.storedRefreshToken() != nil else {
             signOut()
@@ -503,6 +509,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     private func scheduleAutoRefresh() {
         autoRefreshTask?.cancel()
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return }
         guard Config.enableAuth,
               Self.storedRefreshToken() != nil else { return }
         autoRefreshTask = Task { [weak self] in
@@ -789,6 +796,7 @@ final class AuthStore: ObservableObject {
     /// as the active session. A receipt, not a 2xx/no-op, permits removal.
     @MainActor
     func retryPendingAdoptionIfNeeded() async {
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return }
         guard Config.enableAuth, Config.useLiveBackend, let recovery = adoptionRecovery else { return }
         // Launch can reach Auth before AppModel has loaded its metadata. Do
         // not confirm/clear recovery against an empty, not-yet-loaded library.
