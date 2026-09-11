@@ -8,6 +8,16 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+**NEWER live readback,18:42–18:45UTC:**
+[`CLAUDE-DEPLOYMENT-FACTCHECK-20260911.md`](../../releases/CLAUDE-DEPLOYMENT-FACTCHECK-20260911.md).
+Another operator has now deployed22 Supabase functions and0035/36/37/38/40;
+Apple build19 is VALID, INTERNAL_ONLY, IN_BETA_TESTING. Review remains attached
+to16. Spatial runtime is disabled/zero-budget. Separate Cloudflare upload gateway
+is absent from the checked account; tour-host's latest deploy remains Sept8;
+automatic Modal worker is absent from the checked environment. Cleanup and real
+room acceptance remain open. Earlier build18/missing-Supabase inventories below
+are historical, not the latest state.
+
 **Latest phone/billing correction:**
 [`SPATIAL-DELIVERY-STATUS-20260911.md`](../../releases/SPATIAL-DELIVERY-STATUS-20260911.md).
 Apple readback16:55:57UTC confirms newest uploaded build18 and unchanged pending
