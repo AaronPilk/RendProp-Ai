@@ -45,6 +45,7 @@ claim that the earlier result covers those changes, even if they look small.
 | Found | Concrete evidence exists; not repaired |
 | Implemented | Source changed; verification may remain |
 | Tested locally | Named checks executed against named source; not deployed |
+| Tested on hosted CI | Exact run/job URL and source SHA read back, commands/counts checked; still not deployed |
 | Independently reviewed | Another reviewer inspected the source/proof |
 | Integrated and pushed | Included in the named remote branch |
 | Deployed | Provider/Apple state explicitly read back and source binding recorded |
@@ -53,6 +54,28 @@ claim that the earlier result covers those changes, even if they look small.
 Use FIXED/PARTIAL/NOT FIXED only with scope: a repaired local worker function is
 not a production rollout, and a valid capture is not completed spatial delivery.
 Do not mark the whole application GO merely because some suites pass.
+
+## Hosted CI and corrected findings
+
+Record the overall workflow conclusion separately from each job. An edge
+entrypoint typecheck passing does not mean tests compiled or executed. A worker
+job may genuinely pass HDR while a separate database invariant remains red.
+Record the selected runtime versions: this pass found a timer type error on
+Deno2.9.6 that the local2.7.13 suite did not reproduce. A narrow local pass
+cannot certify the different hosted type environment.
+
+When a negative control fails, inspect the reason before calling it proof. The
+first removed scalar-guard experiment hit an existing duration constraint,
+not the intended acceptance assertion. Keep that failed attempt in the report,
+correct the claimed defect, and show the later intended failure plus restored
+positive result. Never erase an inconvenient earlier result or quietly count
+unexecuted/skipped stages as covered.
+
+`VERIFICATION-INDEX.json` is a curated receipt/hash index, not the raw artifact
+backup. GitHub artifact retention is finite; expired artifacts mean the bytes
+are unavailable even if the durable Markdown still records their historical
+result. Update existing reports when a fix supersedes a finding, rather than
+leaving an older “still open” section as the apparent current diagnosis.
 
 ## File map
 
