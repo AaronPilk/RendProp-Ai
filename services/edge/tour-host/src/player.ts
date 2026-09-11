@@ -1592,9 +1592,51 @@ const ENGINE_LEADFORM_JS = `
   function resetTurnstile(){
     try { if (window.turnstile && window.turnstile.reset) window.turnstile.reset(); } catch (e) {}
   }
+  var leadSubmitting = false;
+  var LEAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var LEAD_UNCONFIRMED = "We couldn't confirm your request. Your details are still here. Please wait a moment before trying again.";
+  function sendLead(top){
+    var controller = new AbortController(), timer;
+    // CRM work can delay the reply after the lead was saved. Bound headers AND
+    // JSON, but never claim a timeout means "not sent" or retry automatically.
+    // The race releases the form even if a stalled body ignores cancellation;
+    // only its winner can confirm or open the booking link.
+    var deadline = new Promise(function(resolve, reject){
+      timer = setTimeout(function(){
+        reject(new Error(LEAD_UNCONFIRMED));
+        controller.abort();
+      }, 15000);
+    });
+    var request = Promise.resolve().then(function(){
+      return fetch(CFG.functionsBase + '/leads', { method: 'POST', headers: leadHeaders, body: JSON.stringify(top), mode: 'cors', credentials: 'omit', signal: controller.signal });
+    }).then(function(res){
+      if (controller.signal.aborted) throw new Error(LEAD_UNCONFIRMED);
+      return res.json().catch(function(){ return {}; }).then(function(body){
+        if (!res.ok){
+          var err = new Error(body && typeof body.error === 'string' ? body.error : '');
+          err.status = res.status;
+          throw err;
+        }
+        // Ordinary creation and dedup both return {ok:true,id}. Only a filled
+        // honeypot intentionally receives {ok:true} without inserting a lead.
+        // A proxy's empty/HTML 2xx must never masquerade as a buyer enquiry.
+        if (!body || typeof body !== 'object' || Array.isArray(body) || body.ok !== true ||
+            (!top._hp && (typeof body.id !== 'string' || !LEAD_ID_RE.test(body.id)))) throw new Error(LEAD_UNCONFIRMED);
+        return body;
+      });
+    });
+    return Promise.race([request, deadline]).then(function(body){
+      clearTimeout(timer); return body;
+    }, function(err){
+      clearTimeout(timer); throw err;
+    });
+  }
   if (form){
     form.addEventListener('submit', function(e){
       e.preventDefault();
+      // Disabling the button alone does not fence a second Enter/programmatic
+      // submit. Keep the guard set after success too: the hidden form is done.
+      if (leadSubmitting) return;
       showMsg('');
       var fd = new FormData(form);
       if (!validate(fd)) return;
@@ -1609,18 +1651,9 @@ const ENGINE_LEADFORM_JS = `
       });
       var btn = form.querySelector('button[type=submit]');
       var orig = btn ? btn.textContent : '';
+      leadSubmitting = true;
       if (btn){ btn.disabled = true; btn.textContent = 'Sending...'; }
-      fetch(CFG.functionsBase + '/leads', { method: 'POST', headers: leadHeaders, body: JSON.stringify(top), mode: 'cors', credentials: 'omit' })
-        .then(function(res){
-          return res.json().catch(function(){ return {}; }).then(function(body){
-            if (!res.ok){
-              var err = new Error(body && typeof body.error === 'string' ? body.error : '');
-              err.status = res.status;
-              throw err;
-            }
-            return body;
-          });
-        })
+      sendLead(top)
         .then(function(){
           form.style.display = 'none';
           var ok = document.getElementById('leadok');
@@ -1631,6 +1664,7 @@ const ENGINE_LEADFORM_JS = `
           if (CFG.handoffUrl){ try { window.open(CFG.handoffUrl, '_blank', 'noopener'); } catch (e2) {} }
         })
         .catch(function(err){
+          leadSubmitting = false;
           if (btn){ btn.disabled = false; btn.textContent = orig || 'Try again'; }
           resetTurnstile(); // a consumed Turnstile token can't be re-sent
           var st = err && err.status;
