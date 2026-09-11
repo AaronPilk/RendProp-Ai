@@ -34,6 +34,22 @@ web architecture/style contracts are not a shipped agent web app or a completed
 editing engine. Scope and evidence live in the current audit documents, not in
 aspirational descriptions of features.
 
+Latest verified code checkpoint: `68f39a2`.598 offline edge tests and21
+entrypoint checks pass;180 current worker checks/tests pass. Actual disposable
+SQL applies38/replays30 migrations, passes22 worker checks four times and19
+upload checks twice, and detects four deliberately removed guards. Overall
+invariants remain197/198 for the agent-reel700-token headroom mismatch.
+The immutable upload/signed metadata and atomic worker publication repairs are
+integrated, not deployed. Rebuilt focused iOS consent/Ask AI tests pass2/2 with
+all5 required images inspected; those fixes are not in installed build18.
+
+Do not revive superseded findings: completed-upload publication and stale-worker
+publication were repaired locally; the whole upload-cost/cleanup category is
+not closed. The proposed zero-duration-ready case was disproved by an existing
+constraint;30.001→30.00 is the real scalar mismatch, now covered. Read the latest
+database report before interpreting older negative-control logs. Public
+privacy/Terms reconciliation remains a proposal, not published legal policy.
+
 ---
 
 ## Historical snapshot follows — retained for decision history only

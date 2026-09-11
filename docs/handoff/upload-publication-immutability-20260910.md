@@ -211,3 +211,20 @@ The same actual-route CI wrapper discovers the added regressions automatically.
 The unchanged remaining limits above still apply: metadata normalization is not
 media sniffing/decoding, a verified content hash, a cleanup guarantee, or a
 physical upload-cost cap. No live R2 request was made.
+
+## Coordinating agent's integrated verification
+
+The authored SQL fixture has now run: root's final disposable PostgreSQL17.11
+gate at `a81a143` applied38 migrations/replayed30; the19 upload checks passed
+twice. Disabling the actual0036 trigger made the fixture fail specifically on
+changing a completed row back to `uploaded=false`; restoring it passed again.
+Receipt: `/tmp/rendprop-db-audit-h9sm8997/receipt.json`. The overall198-invariant
+suite remains197pass/1fail for AI token headroom, not an upload assertion.
+
+All upload changes, including the signed metadata replacement, are integrated
+on `audit/full-regression-20260910`. Root executed the complete edge suite at
+clean `68f39a24c9d685cc198dee3c899bf15a672716cd`:598 tests,0 failures/ignored,
+21 entrypoint typechecks and a detected fail-open Turnstile mutant. Receipt:
+`/tmp/rendprop-edge-audit-o5on_vp_/receipt.json`. Independent final review found
+no additional winner-deletion or unbound-manifest recovery escape within the
+documented drain/storage assumptions. This is not a live R2 transport test.

@@ -6,24 +6,78 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
-### Publication checkpoint — approximately 19:48 Eastern
+## Latest integrated checkpoint — 20:04 Eastern
 
-Uploads `a00f673` and worker `4aca5d0` are reviewed and integrated. Root executed
-both migrations in actual disposable PostgreSQL: **38 apply,30 replay;20 worker
-+19 upload checks each pass twice; both deliberately removed guards are caught**.
-Receipt `/tmp/rendprop-db-audit-8e9l3gmm/receipt.json`. Overall DB result remains
-exit1/accepted=false solely for the existing197/198 token-headroom mismatch.
-See `DATABASE-EXECUTED-RESULTS.md`; no live database was changed.
+Tested code checkpoint: **`68f39a24c9d685cc198dee3c899bf15a672716cd`** on
+`audit/full-regression-20260910`. The app is live; these changes are source
+repairs, **not a production deployment or a new TestFlight build**. Verdict for
+the entire requested experience remains **NO-GO / unfinished**, not a claim
+that every existing app feature fails. The owner should not have to operate a
+GPU or export files to use the eventual spatial product.
 
-Independent cross-review found follow-ups before closing the units: copy an
-explicit verified Content-Type rather than trusting ETag to bind metadata;
-reject sub-cent worker durations that round to zero and photo-backed worker
-jobs. These are in progress, not covered by the passing20/19 receipt above.
-The actual upload race/terminal suites now register in ordinary edge CI.
-Privacy/Terms factual reconciliation is documented in
-`PRIVACY-POLICY-RECONCILIATION.md`; proposed legal copy is not published.
+Completed and independently reviewed in this branch:
 
-### Current integration checkpoint — approximately 19:42 Eastern
+- **Upload publication race repaired locally:** each single-PUT completion
+  copies to its own fresh key; a conditional database update selects the only
+  winner. Late complete/abort/mismatch handlers cannot overwrite or erase that
+  winner. Multipart freezes the exact canonical manifest before assembly.
+- **Same-ETag metadata race repaired:** promote with explicit verified
+  Content-Type and `REPLACE`; opt into the pinned signer's `allHeaders` so the
+  metadata is actually signed. The previous helper and an unsigned-replacement
+  mutant both failed the new regression before the final 51-upload-test pass.
+- **Stale-worker publication repaired locally:** migration0035 atomically
+  fences owner, attempt and database-clock lease; render/photos/outcome/receipt/
+  job/listing readiness commit together. Exact replays are read-only. Raw input
+  must be a private completed video; duration/speed must be numeric and exactly
+  representable at database precision. Migration0036 freezes completed uploads.
+- **UX/disclosure repairs built and visually checked:** complete Ask AI label
+  and 44-point target, reachable consent actions, corrected processor/data
+  disclosures and version2 re-consent. Coach offline/account copy and the
+  consent selector repair are integrated too.
+- **Host/provider reliability:** bounded upstream response reads, immediate
+  customer-page revocation behavior, incomplete OpenAI response rejection,
+  bounded Stream fallback and fail-closed lease-schema discovery are integrated.
+- **CI wiring:** actual 14-test worker publication wrapper, Ask AI source test,
+  isolated PostgreSQL16 execution and seven-day receipt/log artifacts. No red
+  invariant is skipped or converted into success. See `CI-PUBLICATION-GATES.md`.
+
+Latest root-executed edge run: **598 tests,0 failures/ignored;21/21 entrypoint
+checks; actual Turnstile fail-open mutant rejected**. Clean source remained
+unchanged. Receipt `/tmp/rendprop-edge-audit-o5on_vp_/receipt.json`.
+Root also reran all ten worker scripts on this same clean checkpoint:
+**180 checks/tests pass**, including tiny real ffmpeg resource fixtures. This
+does not include the unavailable local HDR/zscale path or a live provider call.
+
+Latest actual disposable PostgreSQL17.11 run on `a81a143`: **38 migrations
+apply,30 replay;22 worker checks pass four times;19 upload checks pass twice**.
+Four actual removed-guard controls fail for the intended reasons; restored
+functions pass again. Six paid-route outcomes and the team-entitlement
+corruption control are detected. Cluster stopped successfully. **197/198
+invariants still pass on both runs, overall exit1/accepted=false** for the
+unchanged AI headroom mismatch. Receipt `/tmp/rendprop-db-audit-h9sm8997/receipt.json`.
+The tested SQL/runner is integrated unchanged; `DATABASE-EXECUTED-RESULTS.md`
+records commands, sources, limits and the earlier wrong-reason negative control.
+
+**Correction:** the existing duration constraint already rejects `0.004`
+rounding to zero. There was no demonstrated ready-zero-duration bug. The real
+precision mismatch was `30.001` accepted then stored as `30.00`; that case now
+fails explicitly, and removing the new guard demonstrably reintroduces it.
+
+Remaining work includes the hosted real-room 3D pipeline, physical upload-cost
+containment/orphan cleanup, durable worker artifact recovery, tenancy findings,
+privacy/Terms reconciliation and device coverage. The ranked next-work list is
+below. Reports preserve those residuals instead of marking entire historical
+P0 categories FIXED based on these narrower publication repairs.
+
+The tested code and four unit branches were pushed. Root then dispatched the
+actual GitHub workflow at68f39a2: **six jobs succeed, four fail, overall FAILURE**.
+The first confirmed new failure is a timer return-type mismatch in an upload
+test under Deno2.9.6; local2.7.13 did not expose it. Database/scan failure causes
+and the hosted HDR result are being inspected independently. Follow
+[`HOSTED-CI-20260910.md`](HOSTED-CI-20260910.md) for the exact run and corrections;
+neither a push nor a green individual job is a whole-app release verdict.
+
+### Verified iOS checkpoint — approximately 19:42 Eastern
 
 All28 baseline screenshots have now been visually reviewed. The resulting
 Ask AI truncation repair and processor-disclosure/v2 re-consent correction
@@ -35,7 +89,7 @@ See `UI-VISUAL-REVIEW.md` and `AI-CONSENT-DISCLOSURE.md` for source changes,
 10 portable checks/24 persistence assertions, and remaining privacy-policy and
 device-matrix gaps. These changes are not in the owner's installed TestFlight18.
 
-Current combined-source edge receipt is `/tmp/rendprop-edge-audit-dpkovht9/receipt.json`,
+Historical combined-source edge receipt is `/tmp/rendprop-edge-audit-dpkovht9/receipt.json`,
 source `50342c7`: **563 tests passed,0 failed/ignored;21 entrypoint typechecks passed;
 actual Turnstile mutant failed as required**. Shared adapters and SQL are now
 hashed too, and clean unchanged source is required for an accepted receipt.
@@ -65,10 +119,10 @@ source (including real tiny ffmpeg fixtures), all exit0, in addition to the32
 new/repaired unittest cases. Host upstream:707 assertions/75 cases pass;
 existing584 routes and557 unbranded assertions/12 self-tests pass.
 
-Still being implemented independently, **not yet fixed/integrated/deployed**:
-upload completion immutability and transactional stale-worker publication.
-Reserved migrations0035(worker) and0036(uploads) are development work, not live
-database changes. Pending Apple submission and installed TestFlight18 are untouched.
+The newer publication fixes and their expanded actual SQL evidence supersede
+this checkpoint's former in-progress status. Migrations0035(worker) and0036
+(uploads) are integrated development changes, not live database changes.
+Pending Apple submission and installed TestFlight18 are untouched.
 
 ### Earlier checkpoints and repaired failures
 
@@ -131,25 +185,30 @@ cluster was stopped and retained. See the separate pushed branch
 
 | Area | Executed result | Evidence / limit |
 | --- | --- | --- |
-| Supabase edge tests | **563 passed, zero failed/ignored** | Actual tests, network denied and process environment cleared; not live routes |
+| Supabase edge tests | **598 passed, zero failed/ignored** | Source68f39a2; network denied and process environment cleared; not live routes |
 | All edge entrypoints | **21/21 typechecks passed** | Cached imports, no route execution |
 | Deliberately broken Turnstile | **Exit1 with real failed assertions** | Copied source changed to fail open; proves tests detect that defect |
 | New audit-runner parser | **5 tests passed** | Names containing “ignored” are not skips; real skipped summaries are counted |
 | Web contract/tokens | **14 passed** | 41 unique API methods/42 declarations,24 outside-protocol capabilities; zero browser-parity claims |
 | Style library | **101 passed; seven real mutants failed** | 408 EDL-preservation combinations; no rendering or human quality study |
-| Worker/hosting lane | 140 existing Python checks +32 unittest cases;584 route assertions;557 unbranded +12 self-tests | New fixes integrated; root independently reran32 cases and584 routes; no deployment |
+| Worker/hosting lane | **180 current Python checks/tests**;584 route assertions;557 unbranded +12 self-tests | Root reran all ten current worker scripts; supersedes former140+32 total after replacing unsafe-helper tests; no deployment |
 | Bounded host upstream | **707 assertions /75 actual-handler cases** | Synthetic streams, aborts, byte caps and honest statuses; no production request |
-| Database replay | **197/198 pass, twice; overall FAIL** | All36 migrations +28 replays; one retained headroom mismatch, not live Supabase |
-| Database harness | **27 mocked-main +7 source tests pass** | Includes intentionally truncated suites, lost receipts and real SQL registration checks |
+| Database replay | **197/198 pass, twice; overall FAIL** | All38 migrations +30 replays; one retained headroom mismatch, not live Supabase |
+| Publication SQL | **22 worker checks ×4;19 upload checks ×2 pass** | Four actual removed guards detected and restored; not concurrent production HTTP |
+| Database harness | **30 mocked-main +7 source tests pass** | Includes intentionally truncated suites, lost receipts, wrong-reason mutants and real SQL registration checks |
 | Portable spatial suite | **63 Python +21 viewer tests pass** | Native115 capture assertions,3076 pose assertions and actual Swift→Python interop; no real-room reconstruction |
 | Rebuilt non-camera iOS UI | **3 exact tests,0 skips,24 required attachments pass** | Source7d0b0ca; no camera/AR, new upload or App Store change |
+| Focused repaired iOS UI | **2 exact tests,0 skips,5 required attachments pass** | Source50c95d3; root viewed all5; no iOS source changes since |
 | Real owner capture | **256 JPEGs decoded and dataset prepared** | 14,654 usable initialization seeds; no GPU reconstruction or phone-room viewer yet |
 
-Main edge receipt: `/tmp/rendprop-edge-audit-dpkovht9/receipt.json`.
+Main edge receipt: `/tmp/rendprop-edge-audit-o5on_vp_/receipt.json`.
 Earlier530-test receipt: `/tmp/rendprop-edge-audit-33zluacl/receipt.json`.
 Main style receipt: `/tmp/rendprop-style-policy-verify-4a4985b890c82161/summary.json`.
 Temporary evidence paths are not backups; source/scripts and this account are
 committed, but logs/archive bytes must be retained separately if needed.
+[`VERIFICATION-INDEX.json`](VERIFICATION-INDEX.json) durably records the selected
+source hashes, counts, command results and receipt/log hashes. It is a curated
+index, not a copy of raw logs, app artifacts, customer media or a deployment receipt.
 
 Exact portable edge command, run from repo root:
 
@@ -163,9 +222,13 @@ given an unsupported `--cached-only` flag. Both are fixed; real summary parsing
 has its own five tests, and the supported check command uses `--deny-import`.
 Those first results were NOT product defects and NOT claimed as passes.
 
-## New confirmed open upload finding
+## Historical upload reproduction — repaired locally, not deployed
 
-**P1: source-conditional copies do not make completion publication immutable.**
+**P1, before the new per-attempt-key repair:** source-conditional copies did not
+make completion publication immutable. The following lines describe the old
+reviewed source, not the current handler. Current implementation, exact code
+references and remaining cost/cleanup limits are in
+[`upload-publication-immutability-20260910.md`](../../handoff/upload-publication-immutability-20260910.md).
 `services/supabase/functions/uploads/index.ts:467–475` reads uploaded state;
 `:614–617` copies before the DB compare-and-set; `:629–643` compares uploaded
 only after the final object has already changed. The comment saying concurrent
@@ -179,9 +242,9 @@ ETag. Request A copies AAAA; request B reads the still-incomplete asset and
 HEAD-verifies BBBB; A commits uploaded=true; delayed B copies BBBB over A's final
 key. Both calls return200, but the immutable-object assertion fails.
 
-Current desired-contract test: **exit1, one executed assertion-failing test**,
+Pre-fix desired-contract test: **exit1, one executed assertion-failing test**,
 “Final object was replaced after completion committed”, actual BBBB vs AAAA.
-This is a recorded open defect, not a passing release check. Earlier fixture
+This was a recorded defect, not a passing release check. Earlier fixture
 iteration used the wrong zero-row PostgREST response and was corrected before
 claiming the actual invariant failure.
 
@@ -191,7 +254,7 @@ deno test --cached-only --no-config --no-lock --node-modules-dir=manual \
   tools/audit/uploads_completion_race_test.ts
 ```
 
-Repair contract: storage writes must be fenced **before promotion**, with
+Implemented repair contract: storage writes must be fenced **before promotion**, with
 immutable per-attempt destination keys and a DB-selected winning key, or a
 durable completion state/lease plus a genuinely enforced destination fence.
 A second SELECT, source ETag alone, or a post-copy uploaded CAS is insufficient.
@@ -206,7 +269,8 @@ request cannot undo a winning completion. Do not deploy a speculative partial fi
 - `e388f01` and `5aa0678`: stale-job reaper snapshot fence;
   original6-test fixture failed4, patched6 pass. Verification prerequisites no
   longer report success with zero HDR assertions. Full WORKER-HOST.md includes
-  still-open stale-publication findings. Buffering and transient lease discovery
+  historical stale-publication findings, superseded locally by
+  `WORKER-PUBLISH-TRANSACTION.md`. Buffering and transient lease discovery
   are fixed locally; the separate host revocation repair is `7933f75`.
 - `fbdcba2` plus `869c30f`: capture inspector, hash-bound private preparation
   and portable no-Xcode-build gate. Final63 Python/21viewer tests and native
@@ -233,13 +297,30 @@ owner seeing the real reconstructed room; the Phase A experiment is unfinished.
 
 ## Next work, not completion claims
 
-1. Finish processor-disclosure correction/re-consent and rebuild its focused
-   consent gate. The original selector failure is fixed and freshly tested.
-2. Finish/review the upload and worker publication state machines; execute their
-   concurrency/transaction regressions before claiming either race closed.
-3. Continue backend state-machine/deletion/spend and anonymous/team regression.
-   Existing TENANCY-AUDIT findings remain open;563 unit tests do not close them.
-4. Resolve durable upload/approval/tenancy contracts before claiming a complete
-   web UI. No real-browser create→edit→review→publish→two-links walk has occurred.
-5. Keep this checkpoint and per-lane reports current and push unit branches
-   without force-pushing or changing the pending Apple submission.
+1. **Deliver the real spatial product:** finish one private reconstructed-room
+   proof, then hosted upload/job/executor/status/viewer/review/publication wiring
+   in the brief's order. See `SPATIAL-DEPLOYED-GAP.md`. A deployed iOS app does
+   not supply the missing reconstruction executor. No real-room artifact or
+   approved compute destination/spend ceiling has been established.
+2. **Close bounded-cost and cleanup gaps:** presigned upload transport still
+   accepts oversized/replayed physical data; orphan candidates and failed
+   cleanup need durable accounting/retry. Worker publication is now atomic,
+   but crash artifacts and superseded media still need durable recovery.
+3. **Resolve the actual red AI invariant:** agent-reel row ceiling700 equals
+   visible maximum700. Measure maximum-shape EDLs and choose a deliberate
+   budget/contract correction; do not raise cost or weaken `>` silently.
+4. **Continue tenancy/adoption/deletion regression:** retained
+   `docs/web-client/TENANCY-AUDIT.md` findings include adoption error handling,
+   workspace selection, writable trust fields and refresh/idempotency gaps.
+   Current unit/SQL checks do not replace multi-role live HTTP coverage.
+5. **Finish UX/legal and media reliability:** reconcile public privacy/Terms
+   with actual data flows (proposal in `PRIVACY-POLICY-RECONCILIATION.md`), fix
+   remaining RenderEngine concurrency warnings, verify HDR with zscale, and
+   bound the browser lead form's timeout/success contract. Then expand actual
+   device accessibility/layout coverage without simulator camera attempts.
+6. **Complete web/editor product after its contracts:** foundations are not
+   browser parity. No actual web create→edit→review→publish→two-links walk ran.
+7. **Release separately:** verify deployed migration/code parity, drain old
+   upload handlers and worker binaries, run authorized test-environment round
+   trips, and retain release receipts. Do not infer deployment from GitHub push.
+   Pending Apple submission remains untouched.

@@ -67,6 +67,29 @@ The two added checks reject an uploaded raw photo and six scalar variants (`30.0
 
 ## Deployment order and open limits
 
+### Coordinating agent's later executed evidence
+
+The SQL is no longer merely authored: root executed the final22-check fixture
+on actual disposable PostgreSQL17.11 at `a81a143`. It passed four times, including
+after restoration of each actually removed owner/attempt, video-kind and scalar
+guard. All three mutants failed for their intended acceptance assertions.
+Upload0036's19-check fixture passed twice with its own trigger-removal control.
+All38 migrations apply and30 replay. Overall DB remains197/198 and exit1 for
+the unrelated token-headroom mismatch. Full evidence and the corrected0.004
+interpretation: `DATABASE-EXECUTED-RESULTS.md` and
+`/tmp/rendprop-db-audit-h9sm8997/receipt.json`.
+
+Root then reran the ten Python commands listed above on the clean integrated
+`68f39a24c9d685cc198dee3c899bf15a672716cd` checkout, with
+`env -i PATH=/opt/homebrew/bin:/usr/bin:/bin PYTHONDONTWRITEBYTECODE=1` and the
+already-installed worker `.venv` interpreter. All180 current checks/tests pass,
+all commands exit0; no source changed. Missing-binary messages inside the four
+prerequisite tests are deliberately asserted negative cases, not evidence that
+HDR ran. The standalone HDR/zscale path is excluded and remains unverified here.
+No production storage/RPC call, worker deployment or Apple action occurred.
+
+### Separately authorized rollout
+
 1. Independently run the migration plus this fixture and migration replay in a new disposable database. Inspect actual service-role grants/schema and RPC availability before rollout.
 2. Apply 0035 through the approved migration process **before** the new worker. Drain/stop old worker binaries before treating publication fencing as deployed: an old binary with service-role credentials can still use its former direct table writes. This patch is not a new database prohibition on all possible service-role writes.
 3. Verify a controlled worker publication and exact replay in an authorized test environment, including the real PostgREST JSON response and deployment revision. No such environment call happened here.

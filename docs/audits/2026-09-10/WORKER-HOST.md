@@ -88,7 +88,14 @@ These changes do not claim a fresh host run, a real Stream upload, an actual R2 
 
 ## Ranked findings, current status, concrete reproductions and repair contracts
 
-### WH-03 — P1: a stale worker can still replace a newer worker's published media
+### WH-03 — P1: stale-worker publication — REPAIRED LOCALLY, not deployed
+
+**Latest status supersedes the original reproduction below:** migration0035 and
+the actual worker now publish through one owner/attempt/lease-fenced RPC. The
+14-test Python gate and22-check actual SQL fixture pass, with real guard-removal
+negative controls. See `WORKER-PUBLISH-TRANSACTION.md` and
+`DATABASE-EXECUTED-RESULTS.md`. Durable artifact cleanup remains open. The code
+references and failing diagnostic below describe the pre-fix snapshot.
 
 `services/worker/worker.py:443` checks progress/heartbeat before publishing; `services/worker/db.py:587` / `:603` insert without job ownership; unique-job conflicts call `_replace_render_for_job` at `:611`. Its PATCH at `:627` filters only by `job_id`. The later ownership-checked `finish_job` cannot undo an already changed `renders` row. Enhancement outcome writes at `services/worker/db.py:551` and listing status writes at `services/worker/worker.py:508` also lack the same atomic ownership boundary.
 
@@ -99,9 +106,9 @@ result_video_key=worker-A-stale.mp4 current_owner=worker-B current_status=ready
 AssertionError: stale publisher changed the newer owner output
 ```
 
-Command, exit 1: from `services/worker`, `.venv/bin/python tests/reproduce_stale_publish.py`. The durable diagnostic is deliberately not named `test_*`; it fails while the finding remains open and is not a passing acceptance suite.
+Pre-fix command, exit 1: from `services/worker`, `.venv/bin/python tests/reproduce_stale_publish.py`. That entrypoint now runs the14-test actual helper/process suite and asserts its exact count; it no longer executes this old expected-failure diagnostic. CI now invokes it.
 
-**Required fix, not applied:** one service-role-only `publish_worker_render` RPC must lock the job row, verify source=worker, processing status, exact attempt fencing token and unexpired lease using DB time, then insert/replace the render, record outcomes, update listing state and mark the job ready in the **same transaction**. Revoke function execution from PUBLIC/anon/authenticated. An `assert_owned()` query followed by today's REST insert is not sufficient.
+**Original repair contract, now implemented locally:** one service-role-only `publish_worker_render` RPC must lock the job row, verify source=worker, processing status, exact attempt fencing token and unexpired lease using DB time, then insert/replace the render, record outcomes, update listing state and mark the job ready in the **same transaction**. Revoke function execution from PUBLIC/anon/authenticated. An `assert_owned()` query followed by the former REST insert is not sufficient.
 
 Core transaction condition, not a complete migration:
 
@@ -145,7 +152,13 @@ if not payload or len(payload) > MAX_BUFFERED_STREAM_BYTES or len(payload) != op
 
 **Remaining limits:** 16 MiB is now implemented local payload policy, not the provider limit and **not a process-RSS ceiling**: Requests makes additional bounded multipart copies. R2 URL-copy stays the primary path; it is not size-limited by this fallback guard. Large uploads can still play from R2. Resumable tus remains unimplemented and needs offset reconciliation, cancellation, deadline and orphan persistence. The earlier diagnostic `reproduce_stream_buffering.py` still intentionally fails its library-streaming invariant: Requests did not become streaming; the production caller no longer hands it an unbounded file.
 
-### WH-05 — P1 against an immediate-revocation promise: edge/browser HTML survives revocation
+### WH-05 — P1: cached HTML survives revocation — REPAIRED LOCALLY, not deployed
+
+Latest implementation/evidence is in `PUBLIC-HOST-REVOCATION.md` and
+`PUBLIC-HOST-UPSTREAM.md`: customer HTML bypasses old cache reads/writes and
+returns no-store; demos remain separate. Actual-handler tests pass. The original
+cached-response reproduction below is historical. Previously downloaded media
+and issued public object URLs are not erased by that repair.
 
 `services/edge/tour-host/src/index.ts:288` returns cached HTML before checking the tours route. Successful HTML sets public browser and shared-cache TTL at `:321`; configured TTL is 60 seconds (`wrangler.toml:61`). Portfolios have the same pattern (`index.ts:369`, `:391`). A revoked/deleted/unpublished tour can still expose its previously rendered address, photos and links until those caches expire. Existing open pages or downloaded files cannot be remotely erased; this finding concerns new requests.
 

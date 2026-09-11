@@ -1,0 +1,376 @@
+{
+  "schemaVersion": 1,
+  "kind": "curated verification index, not a deployment receipt or full raw evidence backup",
+  "date": "2026-09-10",
+  "codeCheckpoint": "68f39a24c9d685cc198dee3c899bf15a672716cd",
+  "branch": "audit/full-regression-20260910",
+  "edge": {
+    "sourceCommit": "68f39a24c9d685cc198dee3c899bf15a672716cd",
+    "sourceManifestSHA256": "e6e6909ac7fd5a44cdf175383f6598a7d6bbbd68b3383ac59d9eff96204d75b0",
+    "sourceUnchanged": true,
+    "passed": true,
+    "denoVersion": "2.7.13",
+    "tests": {
+      "passed": 598,
+      "failed": 0,
+      "ignored": 0,
+      "logSHA256": "a56436301351133ab71d8d6bb864435905cf762d9d0c99a60e51a8a773d201a1"
+    },
+    "entrypointChecks": [
+      {
+        "name": "check-admin",
+        "exit": 0
+      },
+      {
+        "name": "check-adopt",
+        "exit": 0
+      },
+      {
+        "name": "check-ai-chapters",
+        "exit": 0
+      },
+      {
+        "name": "check-ai-copy",
+        "exit": 0
+      },
+      {
+        "name": "check-ai-enhance",
+        "exit": 0
+      },
+      {
+        "name": "check-ai-photo",
+        "exit": 0
+      },
+      {
+        "name": "check-ai-video",
+        "exit": 0
+      },
+      {
+        "name": "check-ai-voice",
+        "exit": 0
+      },
+      {
+        "name": "check-apple-subscriptions",
+        "exit": 0
+      },
+      {
+        "name": "check-beacon",
+        "exit": 0
+      },
+      {
+        "name": "check-coach",
+        "exit": 0
+      },
+      {
+        "name": "check-events",
+        "exit": 0
+      },
+      {
+        "name": "check-leads",
+        "exit": 0
+      },
+      {
+        "name": "check-listings",
+        "exit": 0
+      },
+      {
+        "name": "check-me",
+        "exit": 0
+      },
+      {
+        "name": "check-portfolio",
+        "exit": 0
+      },
+      {
+        "name": "check-property",
+        "exit": 0
+      },
+      {
+        "name": "check-renders",
+        "exit": 0
+      },
+      {
+        "name": "check-team",
+        "exit": 0
+      },
+      {
+        "name": "check-tours",
+        "exit": 0
+      },
+      {
+        "name": "check-uploads",
+        "exit": 0
+      }
+    ],
+    "negativeControl": {
+      "name": "negative-turnstile",
+      "exit": 1,
+      "passedTests": 5,
+      "failedTests": 2,
+      "ignoredTests": 0,
+      "logSHA256": "259c880acd5e31adc8a319e70c917db76597061fd33d2ed3e9bc319236ae93c1"
+    }
+  },
+  "database": {
+    "sourceCommit": "a81a1432bac21a19b25c82f2ace396c67fa08cef",
+    "appliedMigrations": 38,
+    "replayedMigrations": 30,
+    "invariantsEachRun": 198,
+    "invariantRuns": [
+      {
+        "count": 198,
+        "failed": [
+          "each astra ceiling clears its route's visible answer and stays under the code clamp"
+        ]
+      },
+      {
+        "count": 198,
+        "failed": [
+          "each astra ceiling clears its route's visible answer and stays under the code clamp"
+        ]
+      }
+    ],
+    "publicationFixtures": [
+      {
+        "name": "worker",
+        "checksPerRun": 22,
+        "runs": 4,
+        "negativeControlDetected": true,
+        "sourceRestored": true
+      },
+      {
+        "name": "uploads",
+        "checksPerRun": 19,
+        "runs": 2,
+        "negativeControlDetected": true,
+        "sourceRestored": true
+      }
+    ],
+    "workerInputNegativeControls": [
+      {
+        "guard": "video",
+        "detected": true,
+        "sourceRestored": true
+      },
+      {
+        "guard": "scalars",
+        "detected": true,
+        "sourceRestored": true
+      }
+    ],
+    "paidGateNegativeControl": {
+      "outcomes": 6,
+      "fixtures": 2,
+      "rolledBack": true
+    },
+    "negativeControl": "Actual team entitlement corrupted; real invariant gate exited 3",
+    "accepted": false,
+    "clusterStopped": true,
+    "publicationLogs": [
+      {
+        "name": "publication-worker",
+        "exit": 0,
+        "logSHA256": "9f382b27672a0cb80fc5e30367a01d42aaed5ddeddd1be79665d25466b23640a"
+      },
+      {
+        "name": "negative-publication-worker",
+        "exit": 3,
+        "logSHA256": "6816597e534e9fcf5115e3ff4039d5782f5717e1b04512fa3d8e851c0d197c5d"
+      },
+      {
+        "name": "restored-publication-worker",
+        "exit": 0,
+        "logSHA256": "9f382b27672a0cb80fc5e30367a01d42aaed5ddeddd1be79665d25466b23640a"
+      },
+      {
+        "name": "negative-worker-video",
+        "exit": 3,
+        "logSHA256": "97036126ae3dd59f164563d10a2d232757f1dd2806d526e749753d0a8618b331"
+      },
+      {
+        "name": "restored-worker-video",
+        "exit": 0,
+        "logSHA256": "9f382b27672a0cb80fc5e30367a01d42aaed5ddeddd1be79665d25466b23640a"
+      },
+      {
+        "name": "negative-worker-scalars",
+        "exit": 3,
+        "logSHA256": "84b6a9022f49cf97750e6571abd7c5b8c6ba9bace7d30f57b6bb7e81b011eba9"
+      },
+      {
+        "name": "restored-worker-scalars",
+        "exit": 0,
+        "logSHA256": "9f382b27672a0cb80fc5e30367a01d42aaed5ddeddd1be79665d25466b23640a"
+      },
+      {
+        "name": "publication-uploads",
+        "exit": 0,
+        "logSHA256": "b13c82492f8e62cdcd00412677212e1e654a673b76f0cc1e98858c3e61c1892f"
+      },
+      {
+        "name": "negative-publication-uploads",
+        "exit": 3,
+        "logSHA256": "638a38f6bbc6c41e67ded9a174eca387c38caed9aee4d8c838ecad81b41ef424"
+      },
+      {
+        "name": "restored-publication-uploads",
+        "exit": 0,
+        "logSHA256": "b13c82492f8e62cdcd00412677212e1e654a673b76f0cc1e98858c3e61c1892f"
+      },
+      {
+        "name": "stop",
+        "exit": 0,
+        "logSHA256": "ca19178a35ab4153b75b494963b66ce8243e1b94c173107c87b44d09db23652d"
+      }
+    ]
+  },
+  "worker": {
+    "base_commit": "4aca5d00c728c8de65f91799228e270d4d97b577",
+    "source_file_count": 806,
+    "source_sha256": "14e1ff0fbb9a282f1323a3324a040cc6876b9a3fc916cbd44d3669a6d3a700d4",
+    "source_before_equals_after": true,
+    "commands": [
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_job_lease.py"
+        ],
+        "exit_code": 0,
+        "executed": 69,
+        "kind": "checks",
+        "skipped": 0,
+        "log_sha256": "a8fdfa3710b1c97bd078b8158a5369aedb5a4b12658084a03019bf6e78413475"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_process_specific.py"
+        ],
+        "exit_code": 0,
+        "executed": 17,
+        "kind": "checks",
+        "skipped": 0,
+        "log_sha256": "4d1e83d81ba20b4a1dc996e3395806ab20970190d3a1e7c53f5c657126ff6a44"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_cost_spool.py"
+        ],
+        "exit_code": 0,
+        "executed": 23,
+        "kind": "checks",
+        "skipped": 0,
+        "log_sha256": "06fe95c4f05261d7793d6cac7fa992fa4d698230f5085475ef5fb54dc6e3c279"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_resource_limits.py"
+        ],
+        "exit_code": 0,
+        "executed": 19,
+        "kind": "checks",
+        "skipped": 0,
+        "log_sha256": "0f05af59c7496e844299d3b53da879b0822b892af17be2cf20bb6687cfcba975"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_r2_timeouts.py"
+        ],
+        "exit_code": 0,
+        "executed": 6,
+        "kind": "checks",
+        "skipped": 0,
+        "log_sha256": "0dc4f03f54a8498b2aad11af933b4fde0b3f57ffd548b4b89e172edcff07ad33"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_reaper_snapshot.py"
+        ],
+        "exit_code": 0,
+        "executed": 6,
+        "kind": "unittest",
+        "skipped": 0,
+        "log_sha256": "4d84647e746dc8908c31c640271b17be19aed68c89afb3e74d5a16c1fdf36f91"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_verification_prerequisites.py"
+        ],
+        "exit_code": 0,
+        "executed": 4,
+        "kind": "unittest",
+        "skipped": 0,
+        "log_sha256": "b29a96b240b09a6db910b30f95154ff02177f9ae28db7796f003f4a9dacb02aa"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_stream_fallback.py"
+        ],
+        "exit_code": 0,
+        "executed": 12,
+        "kind": "unittest",
+        "skipped": 0,
+        "log_sha256": "8ff4b7d34ca3590fc2b7f1a906da76c39782fa5f3e1ab0b11436693f1536faf6"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/test_lease_probe_fail_closed.py"
+        ],
+        "exit_code": 0,
+        "executed": 10,
+        "kind": "unittest",
+        "skipped": 0,
+        "log_sha256": "67567e4b4c0a4c155abc3144b784e5065d855fc95a948a5521b0ddc6ba8e6d83"
+      },
+      {
+        "command": [
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/.venv/bin/python",
+          "/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910/services/worker/tests/reproduce_stale_publish.py"
+        ],
+        "exit_code": 0,
+        "executed": 14,
+        "kind": "unittest",
+        "skipped": 0,
+        "log_sha256": "2b943919cca482551ee6a8bd87ee6d806cad23f9d5676ab117ad0522714f3a3e"
+      }
+    ]
+  },
+  "focusedUI": {
+    "source": {
+      "commit": "50c95d37cc7c976838bd7d08d2bd53c786dc3b27",
+      "tree": "3346f6774a0053c130ada5545397364b8ff61e9b"
+    },
+    "configuration": "Release",
+    "tests": 2,
+    "skips": 0,
+    "requiredScreenAttachments": 5,
+    "distinctRequiredScreens": 5,
+    "completedAt": "2026-09-10T23:40:24.974124+00:00"
+  },
+  "rawReceiptHashes": {
+    "edge": "9004739e7b7704eac9a91e5c3d71f1fcece057131d197c3bcb415a5c56ddb746",
+    "database": "55f40085aa4844fea8c5fc861adbc1f86cf14ca3873c7580cb02098423875eab",
+    "focusedUI": "227fe2f48c5c166e8340cf091a3181a663c2b631a9bde3730da12fad25f2ad9f",
+    "worker": "d7467f765fe2e1613e4cc1d8e5a8ebe143fc7e2abf7a80bc9cffabb7581f0161"
+  },
+  "rawReceiptPaths": {
+    "edge": "/tmp/rendprop-edge-audit-o5on_vp_/receipt.json",
+    "database": "/tmp/rendprop-db-audit-h9sm8997/receipt.json",
+    "focusedUI": "/tmp/rendprop-noncamera-ui-3_d1cfjd/receipt.json",
+    "worker": "/tmp/rendprop-worker-publish.Gi3gUt/source-bound-results-guards.json"
+  },
+  "limits": [
+    "Raw logs and app/archive/media artifacts are not embedded; temporary paths are not durable backups.",
+    "The worker source-bound receipt precedes the SQL fixture ordering correction; no Python code changed. Root independently reran all ten scripts on68f39a2, exit0.",
+    "No actual R2, Stream, customer JWT, provider generation, camera or reconstruction is established by these offline results.",
+    "Overall database acceptance is false. The known headroom invariant was not weakened.",
+    "The later hosted CI run has separate evidence and cannot be inferred from this index."
+  ]
+}

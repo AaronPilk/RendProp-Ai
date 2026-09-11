@@ -18,6 +18,12 @@ The runner remains byte-identical to the base: SHA-256 `df9ec8916f04611ee452d027
 
 The known Astra headroom mismatch remains a **red gate**: historical execution reported 197/198 assertions passing on both passes, not overall acceptance; see [DATABASE-EXECUTED-RESULTS.md](DATABASE-EXECUTED-RESULTS.md). The runner continues from a structurally valid red invariant report through replay, paid-route controls, real worker/upload publication fixtures, deliberately broken guards, restored positive fixtures and the entitlement negative control, before its final nonzero result. SQL/load failures still abort. CI does not hardcode publication-fixture counts; their runner/source owns those expectations. No token budget, entitlement predicate or runtime route is changed to make CI green.
 
+Integration note: the hash above describes this unit's older base, not the
+latest integrated runner. Integration `68f39a2` includes the independently
+executed22-worker/19-upload fixture expansion and three worker guard controls;
+its runner SHA-256 is `ff3071db4e5b2945830e6c6caa53a38b005d2c668473207b2b5097f183605973`.
+The workflow invokes that checked-in runner without a fixture-count override.
+
 ## Failure evidence, without cluster data
 
 `actions/upload-artifact` v4.6.2 is pinned to `ea165f8d65b6e75b540449e92b4886f43607fa02`, independently resolved from the [official tag](https://github.com/actions/upload-artifact/tree/v4.6.2) using:
@@ -46,4 +52,11 @@ Local versions: Ruby 4.0.5 / Psych 5.3.1, Node 25.9.0, and the reused worker int
 | `python3 tools/audit/test_database_runner.py` | 30 mocked runner-control tests passed, zero skipped, exit 0; `runner-control.log`. This is not database execution. |
 | `git diff --check` | Exit 0. |
 
-**Remote CI is unexecuted.** No Actions dispatch, PostgreSQL installation/start, live database, provider, Apple or deployment action occurred. Local YAML/Psych and Bash validation are not GitHub's workflow validator or an Ubuntu execution. Remote apt availability, runner package contents, PostgreSQL 16 migration behavior, action permissions/artifact collection and the complete multi-job CI result still require a future authorized run. The SQL gate is expected to remain red until the real invariant mismatch is resolved, not bypassed.
+**At this unit's authoring, remote CI was unexecuted.** No Actions dispatch,
+PostgreSQL installation/start, live database, provider, Apple or deployment
+action occurred in those local checks. Local YAML/Psych and Bash validation are
+not GitHub's workflow validator or Ubuntu execution. The coordinator subsequently
+dispatched the actual integrated workflow; current evidence and failures are in
+[`HOSTED-CI-20260910.md`](HOSTED-CI-20260910.md). Do not carry the old unexecuted
+label forward or infer green from local syntax checks. The SQL gate must remain
+red until the real invariant mismatch is resolved, not bypassed.

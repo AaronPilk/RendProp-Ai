@@ -27,7 +27,7 @@ review → publish**, inside the app. Exporting a folder is not that journey.
   exists. Original files were not modified or committed; no room imagery was
   uploaded. No trained real-room PLY/SOG exists yet.
 - The repository does contain an enabled `3d.world` / `marble-1.1` route seed
-  (`services/supabase/migrations/0018_ai_routes.sql:455–459`). That is not a
+  (`services/supabase/migrations/0018_ai_routes.sql:455–459`). That is not an
   implemented spatial backend: the seed notes the missing adapter;
   `functions/admin/index.ts:493–509` describes a CLI bridge rather than app
   wiring, and `functions/admin/probe.ts:509–528` is a credits probe. Do not
