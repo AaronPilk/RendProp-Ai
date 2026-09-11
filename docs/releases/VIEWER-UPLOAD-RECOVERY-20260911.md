@@ -69,7 +69,76 @@ distributed before the corresponding recovery route/migration is deployed.
 - The pending App Review submission and existing internal TestFlight builds are
   untouched. Source fixes do not update the owner's installed app.
 
-## Results
+## Root verification so far
 
-Pending implementation and independent integration tests. Retain failures and
-exact command receipts here; do not substitute another agent's claimed counts.
+Baseline at documentation-only commit `de5c4f9` (application source unchanged
+from71f9eb7):
+
+- `python3 tools/audit/run_edge_regression.py`:731 passed,0 failed/ignored,
+  all22 function entrypoints typecheck; real fail-open Turnstile mutant rejected.
+  Receipt `/tmp/rendprop-edge-audit-rgc1uo1t/receipt.json`.
+- First clean-worktree launch correctly failed before tests because the runner
+  requires preinstalled `node_modules` (`npm:@supabase/supabase-js@2` absent).
+  Evidence retained at `/tmp/rendprop-edge-audit-e7q9x29r/receipt.json`.
+  Ran `deno install --entrypoint --no-config --no-lock --node-modules-dir=auto
+  */index.ts` from `services/supabase/functions`:9 packages reused from cache,
+  zero package downloads, Supabase JS2.112.4. Then reran the unchanged runner
+  with network denied. No failed launch is counted as a test pass.
+- Pinned Python3.12.14: `-m unittest discover -s services/spatial-worker
+  -p 'test_*.py' -v`:41 passed; training directory equivalent:98 passed.
+  These are offline controller/training tests, not a new training run.
+- Tour-host `npm ci --ignore-scripts --no-audit --no-fund`, typecheck and old
+  `npm test`:557 unbranded assertions+12 self-tests,584 route,707 upstream,
+  418 lead-form,57 legal,103 spatial assertions all pass. Their success does
+  not close the emitted-code defect. New gate results will be recorded separately.
+- Spike viewer clean lockfile install and `npm test`:21 passed, zero skips.
+
+## Actual-room check through the fixed emitted Worker
+
+The local preview tool now **requires** an emitted Worker path. It dynamically
+imports that artifact and requests its real `fetch` handler for both the page
+and `/spatial-viewer.js`; source imports only prevalidate private input files.
+The tool checks unchanged bundle hash during preparation and prints bundle and
+browser-payload hashes, never its local fixture credential.
+
+Artifact supplied by the viewer unit's actual Wrangler4.129.0 dry run:
+
+- Worker SHA256 `b0e1a36a73bd294822a33a3eb973457a7c0ccc51ce51a9b4e6a31a3a620e6ca3`.
+- Browser payload26,118bytes, SHA256
+  `c31b3d1c86fc65fd418a78343071b6f3c701627399c55c994d89420d20436517`.
+- Exact local bundle:
+  `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-7MSKrs/bundle/index.js`.
+
+Root ran:
+
+```sh
+deno check --unstable-sloppy-imports tools/audit/preview_spatial_room.ts
+deno run --cached-only --allow-read --allow-net=127.0.0.1:8098 \
+  tools/audit/preview_spatial_room.ts \
+  /Users/pilksclaes/LocalSpatialExperiments/modal-room-20260911-01/preview-manifest-final.json \
+  /Users/pilksclaes/LocalSpatialExperiments/modal-room-20260911-01/room.sog \
+  /var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-7MSKrs/bundle/index.js \
+  8098
+```
+
+The first typecheck exposed a generic `Uint8Array<ArrayBufferLike>` versus
+WebCrypto `BufferSource` mismatch in the new helper. Corrected its argument to
+`Uint8Array<ArrayBuffer>`; subsequent typecheck exited0, without a type cast.
+
+Browser skill CLI was unavailable; the connected Chromium browser was used.
+Observed actual room render and private-preview status after the runtime draw
+gate, Top-down selected and visibly changed viewpoint, Starting view cleared
+Top-down, drag visibly rotated the room, and Close removed the viewer.
+Captured warning/error console lists were empty. An attempted Playwright
+checkbox selector timed out; the fresh accessibility control was used instead.
+The Forward accessibility click did not establish measurable translation; no
+translation/FPS/physical-iPhone claim is made. Images remain visibly blurry.
+
+The only fixture substitutions remain the page's local capability and the
+same SRI-pinned engine served from loopback. This check proves actual built
+browser execution on local real-room input, **not live production auth,
+publication, revocation, iPhone performance or acceptable reconstruction**.
+The temporary tab was closed and server stopped (SIGINT130). No private room
+files were uploaded or committed.
+
+Upload implementation and independent integration results remain pending.
