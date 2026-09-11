@@ -6,7 +6,7 @@ import Foundation
 /// server renewal may authorize the next transfer.
 enum UploadRecovery {
     enum Failure: LocalizedError {
-        case needsLegacyConfirmation, changedTicket, incompatibleTransport, invalidTicket
+        case needsLegacyConfirmation, changedTicket, incompatibleTransport, invalidTicket, accountChanged, restartUnavailable
         var errorDescription: String? {
             switch self {
             case .needsLegacyConfirmation:
@@ -17,11 +17,48 @@ enum UploadRecovery {
                 return "Upload recovery is temporarily unavailable. Your original and saved progress are safe. Try again after the service update."
             case .invalidTicket:
                 return "The server returned an incomplete upload ticket. Your original is safe."
+            case .accountChanged:
+                return "This upload belongs to another workspace. Your original is safe; return to its workspace before retrying."
+            case .restartUnavailable:
+                return "Restart is not available on the service yet. Your original and restart request are saved. Try again after the service update."
             }
         }
     }
 
     enum Result { case complete(String), ticket(UploadTicket) }
+    struct RestartRequired: LocalizedError {
+        let ticket: UploadTicket
+        var errorDescription: String? {
+            if (ticket.restartGeneration ?? 0) >= 3 {
+                return "This upload has used its three restarts. Your original is safe. Keep it and contact support; no further upload was started."
+            }
+            return "This upload can no longer resume. Your original is safe. Review Restart upload to send it again using a new upload allowance."
+        }
+    }
+    struct RestartIntent: Codable, Sendable {
+        let assetID: String
+        let ownerID: String
+        let operationID: UUID
+        init(assetID: String, ownerID: String, operationID: UUID = UUID()) {
+            self.assetID = assetID; self.ownerID = ownerID; self.operationID = operationID
+        }
+    }
+    struct AwaitingReceipt: LocalizedError {
+        let seconds: Int
+        var errorDescription: String? {
+            "Confirming the previous upload. Check again in \(seconds) seconds; no replacement has been started and your original is safe."
+        }
+    }
+    struct PhotoSource: Codable, Sendable {
+        let ownerID: String
+        let relativePath: String
+        let listingID: UUID
+        let role: String
+        let contentType: String
+        let keyPrefix: String
+        let bytes: Int64
+        let sha256: String
+    }
 
     /// Kept with either a video record or a foreground photo journal. Persist
     /// before the cancellation call so a killed app can recover a lost abort
@@ -31,6 +68,10 @@ enum UploadRecovery {
         var cancellationAuthorizedFor: String?
         var dispatched = false
         var completed = false
+        var restartIntent: RestartIntent?
+        var source: PhotoSource?
+        var failureMessage: String?
+        var needsRestart: Bool?
     }
 
     static func sameAsset(_ lhs: String, _ rhs: String) -> Bool {
@@ -59,7 +100,13 @@ enum UploadRecovery {
         if status == 503 { return true } // renewal can only inspect this same reservation
         guard case .server(_, _, let text) = api else { return false }
         if status == 409 {
-            return text.lowercased() == "every transfer needs its durable stored receipt before completion"
+            // These messages authorize only metadata inspection of the same
+            // asset, never cancellation or replacement. /renew returns the
+            // structured restart_required receipt if a new attempt is needed.
+            return ["every transfer needs its durable stored receipt before completion",
+                    "upload is terminal or expired", "recovery is terminal or expired",
+                    "upload expired or cancelled", "this upload was aborted — create a new ticket"]
+                .contains(text.lowercased())
         }
         return incompleteMultipart && status == 400 &&
             text.hasPrefix("parts[] must contain each part 1…") && text.hasSuffix(" exactly once")
@@ -75,6 +122,14 @@ enum UploadRecovery {
             throw Failure.incompatibleTransport
         }
         if ticket.uploaded == true { return ticket }
+        if let seconds = ticket.retryAfterSeconds {
+            guard (1...900).contains(seconds), ticket.restartRequired != true else { throw Failure.invalidTicket }
+            return ticket
+        }
+        if ticket.restartRequired == true {
+            guard ["expired", "interrupted", "cancelled"].contains(ticket.restartReason ?? "") else { throw Failure.invalidTicket }
+            return ticket
+        }
         switch ticket.mode {
         case .single:
             guard let url = ticket.putURL, isBoundedCapability(url) else { throw Failure.invalidTicket }
@@ -105,12 +160,61 @@ enum UploadRecovery {
     }
 
     static func validatedReplacement(_ ticket: UploadTicket, retired: UploadTicket) throws -> UploadTicket {
-        guard !sameAsset(ticket.assetID, retired.assetID) else { throw Failure.changedTicket }
+        guard !sameAsset(ticket.assetID, retired.assetID), ticket.mode == retired.mode else { throw Failure.changedTicket }
         if ticket.transportVersion != 2 { throw Failure.incompatibleTransport }
+        if let seconds = ticket.retryAfterSeconds {
+            guard (1...900).contains(seconds), ticket.restartRequired != true else { throw Failure.invalidTicket }
+            return ticket
+        }
+        if ticket.uploaded == true || ticket.restartRequired == true {
+            if ticket.restartRequired == true, !["expired", "interrupted", "cancelled"].contains(ticket.restartReason ?? "") {
+                throw Failure.invalidTicket
+            }
+            return ticket
+        }
         if ticket.mode == .single {
             guard let url = ticket.putURL, isBoundedCapability(url) else { throw Failure.invalidTicket }
+        } else {
+            guard let count = ticket.partCount, (1...10_000).contains(count),
+                  let size = ticket.partSize, size > 0, size <= 64 * 1024 * 1024,
+                  let uploadID = ticket.uploadID, !uploadID.isEmpty else { throw Failure.invalidTicket }
         }
         return ticket
+    }
+
+    /// User consent is a saved intent, not a transient button flag. Completion
+    /// gets the first chance to win; the server owns atomic old→child linkage
+    /// and admission. An unavailable route never falls back to abort+create.
+    static func restart(_ intent: RestartIntent, ticket: UploadTicket, currentOwner: () -> String?,
+                        complete: () async throws -> Void,
+                        replace: (String, UUID) async throws -> UploadTicket) async throws -> UploadTicket {
+        func checkOwner() throws {
+            try Task.checkCancellation()
+            guard currentOwner() == intent.ownerID, sameAsset(intent.assetID, ticket.assetID) else { throw Failure.accountChanged }
+        }
+        try checkOwner()
+        do {
+            try await complete()
+            try checkOwner()
+            var completed = ticket; completed.uploaded = true; completed.restartRequired = false; completed.putURL = nil
+            return completed
+        } catch {
+            try checkOwner()
+            guard mayReconcile(error, incompleteMultipart: ticket.mode == .multipart) || isLegacyRetired(error) else { throw error }
+        }
+        let result: UploadTicket
+        do { result = try await replace(intent.assetID, intent.operationID) }
+        catch {
+            try checkOwner()
+            if let status = (error as? APIError)?.status, [404, 405, 501].contains(status) { throw Failure.restartUnavailable }
+            throw error
+        }
+        try checkOwner()
+        if sameAsset(result.assetID, ticket.assetID) {
+            guard result.uploaded == true else { throw Failure.changedTicket }
+            return try validatedRenewal(result, previous: ticket)
+        }
+        return try validatedReplacement(result, retired: ticket)
     }
 
     static func reconcile(journal: Journal, allowLegacyCancellation: Bool,
@@ -152,6 +256,8 @@ enum UploadRecovery {
             guard mayReconcile(error, incompleteMultipart: incompleteMultipart) else { throw error }
         }
         let renewed = try validatedRenewal(try await renew(existing.assetID), previous: existing)
+        if renewed.restartRequired == true { throw RestartRequired(ticket: renewed) }
+        if let seconds = renewed.retryAfterSeconds { throw AwaitingReceipt(seconds: seconds) }
         return renewed.uploaded == true ? .complete(renewed.assetID) : .ticket(renewed)
     }
 }

@@ -28,6 +28,10 @@ struct UploadTicket: Codable, Sendable {
     var uploaded: Bool? = nil
     var replayed: Bool? = nil
     var confirmedParts: [ConfirmedPart]? = nil
+    var restartRequired: Bool? = nil
+    var restartReason: String? = nil
+    var restartGeneration: Int? = nil
+    var retryAfterSeconds: Int? = nil
     struct ConfirmedPart: Codable, Sendable, Equatable {
         let number: Int
         let etag: String
@@ -802,6 +806,9 @@ protocol APIClient: Sendable {
     /// Renews only this existing reservation. Unlike POST /uploads, cannot
     /// allocate a second ticket if completion won a race with recovery.
     func renewUpload(assetID: String) async throws -> UploadTicket
+    /// Explicitly confirmed replacement, atomically linked to this exact asset.
+    /// Replaying an intent returns the existing child, never another reservation.
+    func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket
 
     /// POST /uploads/batch → one presigned PUT slot per photo (contract §2.5).
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket]

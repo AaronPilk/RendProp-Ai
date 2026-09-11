@@ -77,6 +77,9 @@ actor MockAPIClient: APIClient {
     func renewUpload(assetID: String) async throws -> UploadTicket {
         UploadTicket(assetID: assetID, mode: .single, uploaded: true)
     }
+    func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket {
+        UploadTicket(assetID: assetID, mode: .single, uploaded: true)
+    }
 
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
         // Offline: synthetic slots so callers get the right shape. The placeholder

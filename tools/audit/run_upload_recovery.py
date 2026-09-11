@@ -76,6 +76,15 @@ def main():
             ("ignore-confirmed-parts", files[4], "for receipt in ticket.confirmedParts ?? [] {",
              "for receipt in [UploadTicket.ConfirmedPart]() {",
              "Confirmed multipart receipts skip physical retransfers", 1),
+            ("overwrite-corrupt-journal", files[2], "if canPersistRecord { try? await store.save(record, for: journalKey) }",
+             "if true { try? await store.save(record, for: journalKey) }",
+             "Failed journal load must never overwrite the original receipt", 1),
+            ("recreate-restart-intent", files[2], "if record.restartIntent == nil { record.restartIntent = .init",
+             "if true { record.restartIntent = .init",
+             "Restart intent survives lost response and reuses one UUID", 1),
+            ("restart-after-completion", files[1], "try await complete()\n            try checkOwner()",
+             "try await complete()\n            try checkOwner()\n            _ = try await replace(intent.assetID, intent.operationID)",
+             "Completion probe winner never calls restart route", 1),
         ]
         for name, path, needle, replacement, expected_message, expected_count in mutations:
             text = path.read_text()

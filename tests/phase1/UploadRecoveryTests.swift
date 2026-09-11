@@ -11,15 +11,17 @@ import Foundation
     }
     @MainActor static func main() async throws {
         let root = URL(fileURLWithPath: CommandLine.arguments[1])
+        FileStore.documents = root
         let file = root.appendingPathComponent("original.jpg")
         let bytes = Data("synthetic upload fixture — no customer media".utf8)
         try bytes.write(to: file)
         let original = DirectUploader.sha256(of: file)
         let listing = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
-        func upload(_ api: RecoveryAPI, _ label: String) async throws -> String {
+        func upload(_ api: RecoveryAPI, _ label: String, restart: Bool = false) async throws -> String {
             try await DirectUploader.uploadPhoto(fileURL: file, listingID: listing, role: "capture",
                 contentType: "image/jpeg", keyPrefix: "photo", api: api,
                 journalStore: DirectUploadJournal(directory: root.appendingPathComponent(label)),
+                confirmRestart: restart,
                 transfer: api.transfer, delay: { _ in })
         }
 
@@ -76,13 +78,106 @@ import Foundation
         let expired = RecoveryAPI()
         expired.completionFailure = .server(status: 409, code: "CONFLICT", message: "upload is terminal or expired")
         await expectFailure("Expired ticket cannot pretend upload succeeded") { _ = try await upload(expired, "expired") }
-        check(expired.transfers == 1 && expired.creates == 1 && expired.renews == 0 && expired.cancels == 0,
+        check(expired.transfers == 1 && expired.creates == 1 && expired.renews == 1 && expired.cancels == 0 && expired.replacements == 0,
               "Expired reservation is preserved without a silent replacement or redispatch")
         let revoked = RecoveryAPI()
         revoked.completionFailure = .server(status: 403, code: "FORBIDDEN", message: "workspace changed")
         await expectFailure("Revoked workspace cannot publish") { _ = try await upload(revoked, "revoked") }
         check(revoked.transfers == 1 && revoked.renews == 0 && revoked.cancels == 0,
               "Permission failure never authorizes another physical write")
+
+        let pending = try await DirectUploadJournal(directory: root.appendingPathComponent("expired"))
+            .pendingPhotos(ownerID: AuthStore.jwtSubject(AuthStore.currentAccessToken!)!)
+        check(pending.count == 1 && pending[0].needsRestart && pending[0].source.bytes == bytes.count,
+              "Expired photo is an actionable durable recovery item")
+        check(try await upload(expired, "expired", restart: true) == expired.newID,
+              "Explicit photo Restart returns the replacement asset")
+        check(expired.replacements == 1 && expired.creates == 1 && expired.restartKeys.count == 1,
+              "Explicit restart calls linked route once and never fresh reservation")
+        check(expired.log.suffix(4) == ["complete", "restart", "put", "complete"],
+              "Explicit restart probes original completion before replacement bytes")
+        let cleared = try await DirectUploadJournal(directory: root.appendingPathComponent("expired"))
+            .pendingPhotos(ownerID: AuthStore.jwtSubject(AuthStore.currentAccessToken!)!)
+        check(cleared.isEmpty, "Completed photo leaves the recovery list without deleting original")
+
+        let restartLoss = RecoveryAPI()
+        restartLoss.completionFailure = .server(status: 409, code: "conflict", message: "upload is terminal or expired")
+        restartLoss.loseRestartReplyOnce = true
+        await expectFailure("Expired photo initially requires confirmation") { _ = try await upload(restartLoss, "restart-loss") }
+        await expectFailure("Lost restart reply cannot pretend success") { _ = try await upload(restartLoss, "restart-loss", restart: true) }
+        check(try await upload(restartLoss, "restart-loss", restart: true) == restartLoss.newID,
+              "Lost linked restart response recovers exact child")
+        check(restartLoss.restartKeys.count == 2 && Set(restartLoss.restartKeys).count == 1 && restartLoss.replacements == 1,
+              "Restart intent survives lost response and reuses one UUID")
+        check(restartLoss.creates == 1 && restartLoss.transfers == 2,
+              "Lost restart response cannot purchase a second child or resend it twice")
+
+        let completedRace = RecoveryAPI()
+        completedRace.completionFailure = .server(status: 409, code: "conflict", message: "upload is terminal or expired")
+        await expectFailure("Unresolved photo gets confirmation before race") { _ = try await upload(completedRace, "complete-wins") }
+        completedRace.completionWinsRestart = true
+        check(try await upload(completedRace, "complete-wins", restart: true) == completedRace.oldID,
+              "Original completion wins concurrent server restart")
+        check(completedRace.replacements == 0 && completedRace.transfers == 1,
+              "Completion-winning restart must not send replacement bytes")
+
+        let switched = RecoveryAPI()
+        switched.completionFailure = .server(status: 409, code: "conflict", message: "upload is terminal or expired")
+        await expectFailure("Interrupted photo cannot silently start over") { _ = try await upload(switched, "restart-owner") }
+        switched.switchOwnerOnRestart = true
+        await expectFailure("Account switch fences restarted media dispatch") { _ = try await upload(switched, "restart-owner", restart: true) }
+        check(switched.transfers == 1, "Different owner never uploads restarted original")
+        let otherPending = try await DirectUploadJournal(directory: root.appendingPathComponent("restart-owner"))
+            .pendingPhotos(ownerID: AuthStore.jwtSubject(AuthStore.currentAccessToken!)!)
+        check(otherPending.isEmpty, "Recovery list never reveals another owner's photo")
+        AuthStore.currentAccessToken = "offline-fixture-only"
+
+        let oldTicket = RecoveryAPI().ticket()
+        let intent = UploadRecovery.RestartIntent(assetID: oldTicket.assetID, ownerID: AuthStore.jwtSubject(AuthStore.currentAccessToken!)!)
+        var replacementCalls = 0
+        let probeWon = try await UploadRecovery.restart(intent, ticket: oldTicket,
+            currentOwner: { intent.ownerID }, complete: { }, replace: { _, _ in replacementCalls += 1; return oldTicket })
+        check(probeWon.uploaded == true && replacementCalls == 0, "Completion probe winner never calls restart route")
+        await expectFailure("Unavailable restart route preserves saved intent") {
+            _ = try await UploadRecovery.restart(intent, ticket: oldTicket, currentOwner: { intent.ownerID },
+                complete: { throw APIError.server(status: 409, code: "conflict", message: "upload is terminal or expired") },
+                replace: { _, _ in throw APIError.badResponse(404) })
+        }
+        await expectFailure("Generic conflict is not restart permission") {
+            _ = try await UploadRecovery.restart(intent, ticket: oldTicket, currentOwner: { intent.ownerID },
+                complete: { throw APIError.server(status: 409, code: "conflict", message: "some unrelated conflict") },
+                replace: { _, _ in replacementCalls += 1; return oldTicket })
+        }
+        check(replacementCalls == 0, "Unrelated conflict cannot reach replacement endpoint")
+        var waiting = oldTicket; waiting.putURL = nil; waiting.retryAfterSeconds = 120
+        let acceptedWaiting = try UploadRecovery.validatedRenewal(waiting, previous: oldTicket)
+        check(acceptedWaiting.retryAfterSeconds == 120 && acceptedWaiting.putURL == nil,
+              "Active transport wait is valid metadata, not a malformed ticket")
+        let corrupted = RecoveryAPI()
+        _ = try await upload(corrupted, "corrupt-journal")
+        let corruptURL = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("corrupt-journal"),
+            includingPropertiesForKeys: nil).first!
+        let corruptBytes = Data("deliberately unreadable receipt; preserve exact bytes".utf8)
+        try corruptBytes.write(to: corruptURL)
+        await expectFailure("Corrupt journal cannot authorize a new reservation") { _ = try await upload(corrupted, "corrupt-journal") }
+        check(try Data(contentsOf: corruptURL) == corruptBytes && corrupted.creates == 1,
+              "Failed journal load must never overwrite the original receipt")
+
+        let parallel = RecoveryAPI(); parallel.holdTransfer = true
+        let parallelStore = DirectUploadJournal(directory: root.appendingPathComponent("concurrent-journal"))
+        func parallelUpload() async throws -> String {
+            try await DirectUploader.uploadPhoto(fileURL: file, listingID: listing, role: "capture",
+                contentType: "image/jpeg", keyPrefix: "photo", api: parallel, journalStore: parallelStore,
+                transfer: parallel.transfer, delay: { _ in })
+        }
+        let firstUpload = Task { try await parallelUpload() }
+        for _ in 0..<200 where parallel.heldTransfer == nil { try await Task.sleep(nanoseconds: 5_000_000) }
+        check(parallel.heldTransfer != nil, "Concurrent first upload actually reached transport")
+        await expectFailure("Concurrent same-photo call cannot reserve again") { _ = try await parallelUpload() }
+        parallel.heldTransfer?.resume()
+        _ = try await firstUpload.value
+        check(parallel.creates == 1 && parallel.transfers == 1,
+              "Per-journal actor reservation prevents concurrent duplicate upload")
 
         check(UploadRecovery.sameAsset(legacy.oldID, legacy.oldID.uppercased()), "UUID case differences refer to same ticket")
         check(!UploadRecovery.sameAsset("token-A", "token-a"), "Opaque identity case is preserved")

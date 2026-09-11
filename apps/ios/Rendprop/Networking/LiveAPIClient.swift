@@ -398,12 +398,20 @@ final class LiveAPIClient: APIClient {
                             putURL: dto.putUrl, uploadID: dto.uploadId,
                             partSize: dto.partSize, partCount: dto.partCount,
                             storageKey: dto.storageKey, transportVersion: dto.transportVersion,
-                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts)
+                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts,
+                            restartRequired: dto.restartRequired, restartReason: dto.restartReason, restartGeneration: dto.restartGeneration,
+                            retryAfterSeconds: dto.retryAfterSeconds)
     }
 
     func renewUpload(assetID: String) async throws -> UploadTicket {
         let data = try await execute(makeRequest(url: url(["uploads", assetID, "renew"]),
                                                  method: "POST", json: [:]))
+        return try uploadTicket(data)
+    }
+
+    func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket {
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "restart"]), method: "POST",
+            json: ["confirm_new_attempt": true], idempotency: operationID.uuidString.lowercased()))
         return try uploadTicket(data)
     }
 
@@ -1723,6 +1731,10 @@ final class LiveAPIClient: APIClient {
         let uploaded: Bool?
         let replayed: Bool?
         let confirmedParts: [UploadTicket.ConfirmedPart]?
+        let restartRequired: Bool?
+        let restartReason: String?
+        let restartGeneration: Int?
+        let retryAfterSeconds: Int?
     }
 
     private struct PartURLsDTO: Decodable {

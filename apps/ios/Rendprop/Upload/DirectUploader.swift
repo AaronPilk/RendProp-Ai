@@ -11,6 +11,7 @@ enum DirectUploader {
     static func uploadPhoto(fileURL: URL, listingID: UUID, role: String,
                             contentType: String, keyPrefix: String, api: APIClient,
                             journalStore: DirectUploadJournal = .shared,
+                            confirmRestart: Bool = false,
                             transfer: (URLRequest, URL) async throws -> URLResponse = { request, file in
                                 try await URLSession.shared.upload(for: request, fromFile: file).1
                             }, delay: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) async throws -> String {
@@ -38,13 +39,43 @@ enum DirectUploader {
         if !Config.useLiveBackend { return try await create().assetID }
         let store = journalStore
         try await store.acquire(journalKey)
+        var record = UploadRecovery.Journal()
+        var canPersistRecord = false
         do {
-            var record = try await store.load(journalKey) ?? UploadRecovery.Journal()
+            record = try await store.load(journalKey) ?? UploadRecovery.Journal()
+            canPersistRecord = true
+            if let owner {
+                record.source = UploadRecovery.PhotoSource(ownerID: owner, relativePath: FileStore.relativePath(for: fileURL),
+                    listingID: listingID, role: role, contentType: contentType, keyPrefix: keyPrefix, bytes: bytes, sha256: digest)
+            }
             let explicitResume = record.ticket != nil
+            try await store.save(record, for: journalKey) // prove local persistence before any reservation
             if record.ticket == nil { record.ticket = try await create(); try await store.save(record, for: journalKey) }
             guard let initial = record.ticket, initial.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
             if record.completed { try checkOwner(); await store.release(journalKey); return initial.assetID }
             var metadata = UploadMetadata(); metadata.bytes = bytes; metadata.sha256 = digest
+            if confirmRestart {
+                guard let owner, record.needsRestart == true || record.restartIntent != nil else { throw UploadRecovery.Failure.invalidTicket }
+                if record.restartIntent == nil { record.restartIntent = .init(assetID: initial.assetID, ownerID: owner) }
+                try await store.save(record, for: journalKey)
+                let replaced = try await UploadRecovery.restart(record.restartIntent!, ticket: initial,
+                    currentOwner: { AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) },
+                    complete: { try checkOwner(); try await api.completeUpload(assetID: initial.assetID, parts: nil, metadata: metadata) },
+                    replace: { id, operationID in try checkOwner(); return try await api.restartUpload(assetID: id, operationID: operationID) })
+                try checkOwner()
+                // Persist the returned child BEFORE evaluating whether it has
+                // already expired. A lost response must not leave its identity
+                // behind and start another branch of paid attempts.
+                record.ticket = replaced
+                record.restartIntent = nil
+                record.dispatched = replaced.retryAfterSeconds != nil
+                record.needsRestart = replaced.restartRequired == true
+                record.completed = replaced.uploaded == true
+                try await store.save(record, for: journalKey)
+                if record.completed { await store.release(journalKey); return replaced.assetID }
+                if replaced.restartRequired == true { throw UploadRecovery.RestartRequired(ticket: replaced) }
+                if let seconds = replaced.retryAfterSeconds { throw UploadRecovery.AwaitingReceipt(seconds: seconds) }
+            }
             var lastError: Error = UploadRecovery.Failure.invalidTicket
             for attempt in 0..<3 {
                 try checkOwner()
@@ -64,7 +95,8 @@ enum DirectUploader {
                             cancel: { id in try checkOwner(); try await api.abortUpload(assetID: id) }, create: create)
                         switch result {
                         case .complete(let id):
-                            record.completed = true; try await store.save(record, for: journalKey)
+                            record.completed = true; record.failureMessage = nil; record.needsRestart = false
+                            try await store.save(record, for: journalKey)
                             try checkOwner(); await store.release(journalKey); return id
                         case .ticket(let ticket):
                             record.ticket = ticket
@@ -83,11 +115,13 @@ enum DirectUploader {
                     let status = (response as? HTTPURLResponse)?.statusCode ?? 0
                     guard (200..<300).contains(status) else { throw APIError.badResponse(status) }
                     try await api.completeUpload(assetID: ticket.assetID, parts: nil, metadata: metadata)
-                    record.completed = true; try await store.save(record, for: journalKey)
+                    record.completed = true; record.failureMessage = nil; record.needsRestart = false
+                    try await store.save(record, for: journalKey)
                     try checkOwner(); await store.release(journalKey); return ticket.assetID
                 } catch is CancellationError { throw CancellationError() }
                 catch {
                     lastError = error
+                    if error is UploadRecovery.RestartRequired || error is UploadRecovery.AwaitingReceipt { throw error }
                     if error is UploadRecovery.Failure { throw error }
                     // Retry means reconcile on the next iteration, never reuse
                     // this PUT URL. A service rollout may legitimately pause it.
@@ -97,6 +131,13 @@ enum DirectUploader {
             }
             throw lastError
         } catch {
+            if let required = error as? UploadRecovery.RestartRequired {
+                record.ticket = required.ticket; record.needsRestart = true
+            }
+            record.failureMessage = error.localizedDescription
+            // Record the failed operation under its ORIGINAL owner/key even if
+            // the account changed during the response. Never rebind its media.
+            if canPersistRecord { try? await store.save(record, for: journalKey) }
             await store.release(journalKey)
             throw error
         }

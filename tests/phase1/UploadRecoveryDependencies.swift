@@ -7,6 +7,7 @@ protocol APIClient {
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket
     func renewUpload(assetID: String) async throws -> UploadTicket
+    func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket
     func completeUpload(assetID: String, parts: [(number: Int, etag: String)]?, metadata: UploadMetadata) async throws
     func abortUpload(assetID: String) async throws
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL]
@@ -28,7 +29,9 @@ final class AuthStore {
     static let shared = AuthStore()
     static var currentAccessToken: String? = "offline-fixture-only"
     static var connections = 0
-    static func jwtSubject(_ token: String) -> String? { "11111111-1111-4111-8111-111111111111" }
+    static func jwtSubject(_ token: String) -> String? {
+        token == "other-owner-fixture" ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
+    }
     func ensureSession() async -> Bool {
         if Self.currentAccessToken == nil { Self.connections += 1; Self.currentAccessToken = "offline-fixture-only" }
         return true
@@ -61,11 +64,23 @@ final class RecoveryAPI: APIClient {
     var rollback = false
     var failAbortOnce = false
     var completionFailure: APIError?
+    var restartKeys: [UUID] = []
+    var replacements = 0
+    var loseRestartReplyOnce = false
+    var completionWinsRestart = false
+    var switchOwnerOnRestart = false
+    var restartGeneration = 0
+    var holdTransfer = false
+    var heldTransfer: CheckedContinuation<Void, Error>?
 
     func ticket(_ id: String? = nil) -> UploadTicket {
-        UploadTicket(assetID: id ?? oldID, mode: .single,
+        var result = UploadTicket(assetID: id ?? oldID, mode: .single,
                      putURL: URL(string: "https://upload.invalid/v2/11111111-1111-4111-8111-111111111111?expires=1893456000&signature=" + String(repeating: "a", count: 64)),
                      transportVersion: rollback ? nil : (legacy ? 1 : 2), uploaded: completed, replayed: creates > 1)
+        if completionFailure != nil, result.assetID == oldID {
+            result.restartRequired = true; result.restartReason = "expired"; result.restartGeneration = restartGeneration
+        }
+        return result
     }
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
@@ -78,6 +93,16 @@ final class RecoveryAPI: APIClient {
         log.append("renew"); renews += 1
         if uncertain { throw APIError.server(status: 503, code: "UPSTREAM", message: "Receipt not yet provable") }
         return ticket(assetID)
+    }
+    func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket {
+        log.append("restart"); restartKeys.append(operationID)
+        if completionWinsRestart { completed = true; return ticket(oldID) }
+        guard assetID == oldID else { throw APIError.badResponse(409) }
+        if replacements == 0 { replacements = 1; completed = false; stored = false; completionFailure = nil }
+        if switchOwnerOnRestart { AuthStore.currentAccessToken = "other-owner-fixture" }
+        if loseRestartReplyOnce { loseRestartReplyOnce = false; throw URLError(.networkConnectionLost) }
+        var result = ticket(newID); result.restartGeneration = 1
+        return result
     }
     func completeUpload(assetID: String, parts: [(number: Int, etag: String)]?, metadata: UploadMetadata) async throws {
         log.append("complete")
@@ -104,6 +129,7 @@ final class RecoveryAPI: APIClient {
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] { [:] }
     func transfer(_ request: URLRequest, _ file: URL) async throws -> URLResponse {
         log.append("put"); transfers += 1
+        if holdTransfer { try await withCheckedThrowingContinuation { heldTransfer = $0 } }
         if failTransferBeforeWriteOnce {
             failTransferBeforeWriteOnce = false; throw URLError(.notConnectedToInternet)
         }
@@ -175,6 +201,7 @@ final class MultipartRecoveryAPI: APIClient {
         acceptedParts = parts
     }
     func abortUpload(assetID: String) async throws { throw APIError.badResponse(500) }
+    func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket { throw APIError.badResponse(500) }
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
         partRequests.append(numbers)
         return Dictionary(uniqueKeysWithValues: numbers.map { ($0, URL(string:
