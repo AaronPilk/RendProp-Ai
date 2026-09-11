@@ -43,6 +43,7 @@ import { adminClient } from "../_shared/supabase.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 import { buildAgentCard } from "../_shared/agentcard.ts";
 import { buildCta } from "./cta.ts";
+import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
@@ -351,7 +352,7 @@ Deno.serve(async (req) => {
     const gallery = await galleryFor(admin, listing.id as string);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
-    let chapters: Array<{ label: string; t_ms: number; sort: number }> = [];
+    let chapters: SpatialChapter[] = [];
     const { data: job } = await admin
       .from("render_jobs")
       .select("capture_asset_id")
@@ -369,6 +370,19 @@ Deno.serve(async (req) => {
         t_ms: c.t_ms as number,
         sort: c.sort as number,
       }));
+    }
+
+    // A scan added after a video was published lights up its existing chapter.
+    // This is a private-table read with an explicit approved subset; it never
+    // returns original keys, pending reviews, or ambiguous room-label guesses.
+    if (chapters.length) {
+      const { data: scenes, error: spatialError } = await admin.from("spatial_jobs")
+        .select("id,status,approved,excluded,published_at,artifact_revision,review_revision,output_state,redactions,scene_manifest")
+        .eq("listing_id", listing.id).eq("org_id", listing.org_id).eq("status", "ready")
+        .eq("approved", true).eq("excluded", false).not("published_at", "is", null).limit(100);
+      // Before 0040 is rolled out, the existing flythrough must remain usable.
+      // Any read error suppresses only optional 3D anchors, never opens access.
+      if (!spatialError && scenes) chapters = bindSpatialChapters(chapters, scenes);
     }
 
     // 4. Assemble the safe agent card from the org's brand kit (allow-listed

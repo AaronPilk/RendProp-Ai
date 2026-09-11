@@ -60,6 +60,7 @@ class ModalProvider:
             options["timeout"] = min(7200, int(remaining) - 120)
             options["tags"] = {"product": "rendprop-spatial", "job": job["id"]}
             attempted = True
+            lease.provider_stopped = False
             sb = self.modal.Sandbox.create(**options)
             receipt["sandbox_id"] = sb.object_id
             save()
@@ -151,6 +152,7 @@ class ModalProvider:
                         sb.terminate(wait=True)
                         receipt["terminated"] = sb.poll() is not None
                         require(receipt["terminated"], "provider_termination_unconfirmed")
+                        lease.provider_stopped = True
                     finally:
                         sb.detach()
                         lease.abort = lambda: None

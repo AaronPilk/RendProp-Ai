@@ -34,6 +34,7 @@ import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
 import { fetchUpstreamJSON } from "./upstream";
+import { spatialData, spatialModule, spatialPage } from "./spatial";
 
 const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
@@ -64,7 +65,7 @@ function htmlResponse(
         "img-src 'self' https: data: blob:",
         "media-src 'self' https: data: blob:",
         "style-src 'self' 'unsafe-inline'",
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
         "worker-src 'self' blob:",
         "child-src 'self' blob:",
         "frame-src 'none'",
@@ -82,7 +83,7 @@ function htmlResponse(
         "media-src 'self' https: data: blob:",
         "style-src 'self' 'unsafe-inline'",
         // cdnjs = hls.js fallback; challenges.cloudflare.com = Turnstile widget.
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://challenges.cloudflare.com",
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://challenges.cloudflare.com",
         "worker-src 'self' blob:",
         // Turnstile renders its challenge in an iframe from challenges.cloudflare.com.
         "child-src 'self' blob: https://challenges.cloudflare.com",
@@ -404,6 +405,18 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (canonical) return canonical;
 
   const path = rawPath;
+
+  if (path === "/spatial-viewer.js") {
+    const response = spatialModule();
+    return req.method === "HEAD" ? new Response(null, response) : response;
+  }
+  const spatial = path.match(/^\/s\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(manifest|model))?$/i);
+  if (spatial) {
+    const response = spatial[2]
+      ? await spatialData(req, env, spatial[1].toLowerCase(), spatial[2] as "manifest" | "model")
+      : spatialPage(spatial[1].toLowerCase());
+    return req.method === "HEAD" ? new Response(null, response) : response;
+  }
 
   const fMatch = path.match(/^\/f\/([^/]+)$/);
   if (fMatch) {

@@ -43,6 +43,7 @@
 // HTML and the Worker fails CLOSED (neutral 503) if anything got through.
 
 import type { AlteredMedium, Cta, SecondaryLink, Tour, TourListing } from "./types";
+import { spatialAnchor } from "./spatial-manifest";
 import {
   type AgentModel,
   absolutize,
@@ -425,6 +426,11 @@ function renderDisclosureSection(tour: Tour): string {
 // the room chapters beside it wired to the player's own seek.
 // ---------------------------------------------------------------------------
 
+function spatialButton(chapter: Tour["chapters"][number]): string {
+  const anchor = spatialAnchor(chapter.spatial_anchor);
+  return anchor ? `<button type="button" class="plan-room spatial-enter" data-spatial-scene="${anchor.scene_id}" data-spatial-room="${anchor.room_id}" aria-label="Explore ${escapeAttr(chapter.label)} in 3D">Explore in 3D</button>` : "";
+}
+
 function planSection(tour: Tour): string {
   const url = safeUrl(first(tour.floorplan_url));
   if (!url) return "";
@@ -433,7 +439,7 @@ function planSection(tour: Tour): string {
     ? `<div class="plan-rooms">
         <h3>Rooms in this tour</h3>
         <div class="plan-roomlist">${chapters
-          .map((c) => `<button type="button" class="plan-room" data-seek="${(Number(c.t_ms) || 0) / 1000}">${escapeHtml(c.label)}</button>`)
+          .map((c) => `<button type="button" class="plan-room" data-seek="${(Number(c.t_ms) || 0) / 1000}">${escapeHtml(c.label)}</button>${spatialButton(c)}`)
           .join("")}</div>
         <p class="lp-fine">Pick a room to jump the tour to it.</p>
       </div>`
@@ -1101,6 +1107,7 @@ const ENGINE_CORE_JS = `
   var longFrames = 0, lastTick = performance.now();
   var usingHls = false, triedHlsFallback = false, hlsJs = null;
   var pollBuf = null;
+  var spatialOpen = false, spatialGeneration = 0;
 
   /* ---- Track sizing (100svh-safe, toolbar-resize-safe) ---- */
   var duration = Number(CFG.durationS) || 0;
@@ -1153,7 +1160,7 @@ const ENGINE_CORE_JS = `
      scroll IS the scrub — one auto-centre would fly the viewer through the
      house. Only the strip's own scrollLeft is touched, and only when the
      viewer is not dragging the strip themselves. */
-  var stripBtns = stripScroll ? Array.prototype.slice.call(stripScroll.querySelectorAll('button')) : [];
+  var stripBtns = stripScroll ? Array.prototype.slice.call(stripScroll.querySelectorAll('button[data-seek]')) : [];
   function touchStrip(){ stripHold = performance.now(); }
   if (stripScroll){
     stripScroll.addEventListener('pointerdown', touchStrip, { passive: true });
@@ -1210,6 +1217,7 @@ const ENGINE_CORE_JS = `
 
   /* ---- Core scrub loop ---- */
   function tick(now){
+    if (spatialOpen){ lastTick = now; requestAnimationFrame(tick); return; }
     // Jank watchdog → fallback ladder (ported from the iOS engine). Only
     // SUSTAINED jank trips it: gaps over ~1s are suspensions (app switch,
     // webview paused offscreen in the outer scroll, rAF throttled in a
@@ -1498,6 +1506,7 @@ const ENGINE_CORE_JS = `
   }
   function loadHls(url){
     function attach(){
+      if (spatialOpen) return;
       if (window.Hls && window.Hls.isSupported()){
         var hls = new window.Hls({
           maxBufferLength: 600, maxMaxBufferLength: 600, backBufferLength: 600,
@@ -1532,6 +1541,7 @@ const ENGINE_CORE_JS = `
     if (canNative){ directSrc(url); } else { loadHls(url); }
   }
   video.addEventListener('error', function(){
+    if (spatialOpen) return;
     if (started || fellBack || unavailable) return;
     // The scrub mp4 failed before we started (missing R2 object, codec, CDN
     // hiccup) — degrade to HLS once rather than showing a dead loader.
@@ -1546,6 +1556,45 @@ const ENGINE_CORE_JS = `
     if (CFG.scrubUrl){ directSrc(CFG.scrubUrl); }
     else { startHls(CFG.hlsUrl); }
   }
+  // One document, one expensive media engine. Pausing video alone retains its
+  // decoded buffers and MSE worker; destroy HLS and detach src before WebGL.
+  var spatialButtons = document.querySelectorAll('[data-spatial-scene]'), spatialRestore = null;
+  spatialButtons.forEach(function(button){
+    button.addEventListener('click', function(){
+      if (spatialOpen) return;
+      // Reopening before metadata arrives must cancel the previous resume: its
+      // stale time otherwise seeks a later video attachment behind the viewer.
+      if (spatialRestore){ video.removeEventListener('loadedmetadata', spatialRestore); spatialRestore = null; }
+      spatialOpen = true; var generation = ++spatialGeneration;
+      var saved = { x:scrollX, y:scrollY, time:video.currentTime || curT, overflow:document.body.style.overflow };
+      video.pause(); if (hlsJs){ hlsJs.destroy(); hlsJs = null; }
+      video.removeAttribute('src'); video.load();
+      document.body.style.overflow = 'hidden';
+      var host = document.createElement('div'); document.body.appendChild(host);
+      var inactive = Array.prototype.filter.call(document.body.children, function(el){ return el !== host && !el.inert; });
+      inactive.forEach(function(el){ el.inert = true; });
+      var instance = null;
+      function close(){
+        if (generation !== spatialGeneration || !spatialOpen) return;
+        if (instance) instance.destroy(); host.remove(); spatialOpen = false; ++spatialGeneration;
+        inactive.forEach(function(el){ el.inert = false; });
+        document.body.style.overflow = saved.overflow; usingHls = false; triedHlsFallback = false;
+        curT = saved.time; lastSet = -1; lastTick = performance.now();
+        spatialRestore = function(){
+          video.removeEventListener('loadedmetadata', spatialRestore); spatialRestore = null;
+          if (!spatialOpen) video.currentTime = Math.min(saved.time, video.duration || saved.time);
+        };
+        video.addEventListener('loadedmetadata', spatialRestore);
+        setupVideo(); window.scrollTo(saved.x, saved.y); button.focus({preventScroll:true});
+      }
+      host.innerHTML = '<div style="position:fixed;inset:0;z-index:10000;background:#0e0d14;color:white;padding:24px"><p role="status">Opening 3D room…</p><button type="button">Back to flythrough</button></div>';
+      host.querySelector('button').addEventListener('click', close);
+      import('/spatial-viewer.js').then(function(module){
+        if (generation !== spatialGeneration || !spatialOpen) return;
+        instance = module.mountSpatial(host, {sceneId:button.dataset.spatialScene,roomId:button.dataset.spatialRoom,onClose:close});
+      }).catch(function(){ if (generation === spatialGeneration) host.querySelector('[role=status]').textContent = '3D could not load. Return to the flythrough and retry.'; });
+    });
+  });
   setupVideo();
 })();
 `;
@@ -2235,7 +2284,7 @@ function renderListingSections(tour: Tour, unbranded = false): string {
       `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}</div>`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Every room, one scroll" : "Every area, one scroll",
-      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>`).join("")}</div>`));
+      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>`));
   }
 
   // Social reel (vertical cut) — appears when a reel_url is set. Never on
@@ -2592,7 +2641,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ? `<div class="chrome" id="roomstrip" role="group" aria-label="Rooms in this tour"><div class="rs-scroll">${chapters
         .map((c, i) => {
           const label = truncWords(c.label, 34);
-          return `<button type="button" class="plan-room${i === 0 ? " active" : ""}"${i === 0 ? ` aria-current="true"` : ""} data-seek="${(Number(c.t_ms) || 0) / 1000}" title="${escapeAttr(c.label)}">${escapeHtml(label)}</button>`;
+          return `<button type="button" class="plan-room${i === 0 ? " active" : ""}"${i === 0 ? ` aria-current="true"` : ""} data-seek="${(Number(c.t_ms) || 0) / 1000}" title="${escapeAttr(c.label)}">${escapeHtml(label)}</button>${spatialButton(c)}`;
         })
         .join("")}</div></div>`
     : "";

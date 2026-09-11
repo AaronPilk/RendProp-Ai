@@ -29,7 +29,7 @@ class ProviderTests(unittest.TestCase):
             local.write_bytes(json.dumps({"status": "trained", "gaussian_count": 100}).encode()
                               if remote.endswith("run.json") else b"sog")
         self.sb.filesystem.copy_to_local.side_effect = copy
-        self.lease = SimpleNamespace(check=Mock(), stage=Mock(), abort=lambda: None)
+        self.lease = SimpleNamespace(check=Mock(), stage=Mock(), abort=lambda: None, provider_stopped=True)
         self.capture = {"frames": [{"pose": [[1,0,0,0],[0,1,0,1.6],[0,0,1,0],[0,0,0,1]]}],
                         "seeds": [{"position": [-1,0,-1]}, {"position": [1,2,1]}]}
         self.provider = ModalProvider(self.modal, self.app)
@@ -57,6 +57,26 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(training[training.index("--max-steps") + 1], "3000")
         self.sb.terminate.assert_called_once_with(wait=True)
         self.sb.filesystem.remove.assert_called_once_with(modal_room.REMOTE, recursive=True)
+        self.assertIs(self.lease.provider_stopped, True)
+
+    def test_ambiguous_allocation_cannot_authorize_an_immediate_retry(self):
+        def lost_create(**options):
+            self.assertIs(self.lease.provider_stopped, False)
+            raise TimeoutError()
+        self.modal.Sandbox.create.side_effect = lost_create
+        self.modal.Sandbox.from_name.side_effect = TimeoutError()
+        with patch.object(modal_room, "inventory", return_value=[]):
+            with self.assertRaises(JobFailure):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.assertIs(self.lease.provider_stopped, False)
+        self.modal.Sandbox.create.assert_called_once()
+
+    def test_unconfirmed_termination_does_not_authorize_an_immediate_retry(self):
+        self.sb.poll.return_value = None
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"):
+            with self.assertRaisesRegex(JobFailure, "provider_termination_unconfirmed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.assertIs(self.lease.provider_stopped, False)
 
     def test_setup_failure_no_dataset_transfer_one_allocation(self):
         self.sb.filesystem.stat.side_effect = FileNotFoundError()
@@ -87,6 +107,7 @@ class ProviderTests(unittest.TestCase):
             with self.assertRaisesRegex(JobFailure, "lease_lost"):
                 self.provider.reconstruct(job(), self.root, self.capture, self.lease)
         self.modal.Sandbox.create.assert_not_called()
+        self.assertIs(self.lease.provider_stopped, True)
 
     def test_cleanup_failure_cannot_return_successful_artifact(self):
         self.sb.filesystem.remove.side_effect = RuntimeError("fixture")

@@ -28,6 +28,8 @@ export interface Chapter {
   label: string;
   t_ms: number;
   sort: number;
+  /** Late-bound by the spatial service; absent scenes leave existing video alone. */
+  spatial_anchor?: { scene_id: string; room_id: string } | null;
 }
 
 export interface SecondaryLink {

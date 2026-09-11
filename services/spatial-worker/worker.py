@@ -132,7 +132,7 @@ class ControlPlane:
 def validate_job(job, now=None):
     require(isinstance(job, dict) and canonical_uuid(job.get("id"))
             and canonical_uuid(job.get("lease_token")), "invalid_job_identity")
-    require(integer(job.get("max_seconds"), 60, 7200), "invalid_lifetime_ceiling")
+    require(integer(job.get("max_seconds"), 7200, 7200), "invalid_lifetime_ceiling")
     require(integer(job.get("max_training_seconds"), 1, 1800), "invalid_training_ceiling")
     require(integer(job.get("max_iterations"), 1, 7000), "invalid_iteration_ceiling")
     require(integer(job.get("max_gaussians"), 100, 500000), "invalid_gaussian_ceiling")
@@ -217,6 +217,11 @@ class Lease:
         self.progress = 0.05
         self.lock = threading.Lock()
         self.abort: Callable[[], None] = lambda: None
+        # True initially because no provider allocation has been attempted. The
+        # provider flips this BEFORE CREATE, including an ambiguous timeout, and
+        # restores it only after a terminal poll. A retry must not overlap a GPU
+        # whose lease was lost but whose provider lifetime is still uncertain.
+        self.provider_stopped = True
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
@@ -227,7 +232,12 @@ class Lease:
                 self.error = JobFailure("lease_lost")
                 # Losing authorization must stop compute, not merely prevent the
                 # final result from being saved while the GPU keeps billing.
-                self.abort()
+                try:
+                    self.abort()
+                except Exception as error:
+                    # The provider TTL remains the last resort. Do not let a
+                    # daemon-thread traceback print arbitrary SDK error bodies.
+                    self.abort_failure_type = type(error).__name__
                 return
 
     def check(self):
@@ -278,6 +288,7 @@ def upload_output(api, job, path, manifest, lease=None):
             "invalid_output_path")
     token = ticket.get("upload_token")
     require(isinstance(token, str) and token and "\n" not in token, "invalid_output_token")
+    require(canonical_uuid(ticket.get("artifact_revision")), "invalid_output_revision")
     request = Request(url, data=data, method="PUT", headers={
         "Authorization": "Bearer " + token, "Content-Type": "application/octet-stream"})
     try:
@@ -289,7 +300,6 @@ def upload_output(api, job, path, manifest, lease=None):
         # Do not blindly repeat an ambiguous physical write. The control plane
         # retains the immutable attempt journal for reconciliation.
         raise JobFailure("output_upload_unconfirmed") from None
-    require(canonical_uuid(ticket.get("artifact_revision")), "invalid_output_revision")
     manifest = {**manifest, "scene_id": job["id"], "artifact_revision": ticket["artifact_revision"],
                 "bytes": size, "sha256": digest, "privacy_reviewed": False, "provenance": "captured"}
     def complete():
@@ -311,10 +321,11 @@ def run_one(api, provider, allowed_input_hosts, *, scratch_parent=None):
     if job is None:
         return {"status": "idle"}
     validate_job(job)
+    lease = Lease(api, job)
     try:
         with tempfile.TemporaryDirectory(prefix="rendprop-spatial-job-", dir=scratch_parent) as tmp:
             root = Path(tmp)
-            with Lease(api, job) as lease:
+            with lease:
                 download_capture(job, root / "capture", allowed_input_hosts, check=lease.check)
                 adapter = load_adapter()
                 capture = adapter.load_capture(root / "capture")
@@ -332,7 +343,8 @@ def run_one(api, provider, allowed_input_hosts, *, scratch_parent=None):
         try:
             # Full reservation is retained, not guessed down from a timer or an
             # absent invoice. Billing reconciliation can settle actual cost later.
-            api.job_call(job, "fail", failure_code=code, cost_cents=job["max_cost_cents"])
+            api.job_call(job, "fail", failure_code=code, cost_cents=job["max_cost_cents"],
+                         provider_stopped=lease.provider_stopped is True)
         except Exception:
             pass  # DB deadline fences publication and retains the reservation.
         raise JobFailure(code) from None

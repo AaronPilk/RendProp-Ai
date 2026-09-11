@@ -39,7 +39,7 @@ class ContractTests(unittest.TestCase):
         self.assertGreater(w.validate_job(job()), 7000)
 
     def test_hostile_numeric_bounds(self):
-        for field, value in [("max_seconds", 0), ("max_seconds", 7201), ("max_seconds", True),
+        for field, value in [("max_seconds", 0), ("max_seconds", 60), ("max_seconds", 7201), ("max_seconds", True),
                              ("max_training_seconds", 1801), ("max_training_seconds", 0),
                              ("max_iterations", 7001), ("max_gaussians", 500001),
                              ("max_cost_cents", 599), ("max_cost_cents", 2501)]:
@@ -141,6 +141,23 @@ class LifecycleTests(unittest.TestCase):
         terminal = [c for c in api.job_call.call_args_list if c.args[1] == "fail"]
         self.assertEqual(len(terminal), 1)
         self.assertEqual(terminal[0].kwargs["cost_cents"], 600)
+        self.assertIs(terminal[0].kwargs["provider_stopped"], True)
+
+    def test_failure_reports_provider_stop_proof_not_failure_alone(self):
+        for terminal_proved in (False, True):
+            with self.subTest(terminal_proved=terminal_proved):
+                api, provider, adapter = Mock(), Mock(), Mock()
+                api.claim.return_value = job()
+                def uncertain_provider(value, root, capture, lease):
+                    lease.provider_stopped = terminal_proved
+                    raise w.JobFailure("generation_failed")
+                provider.reconstruct.side_effect = uncertain_provider
+                with patch.object(w, "download_capture"), patch.object(w, "load_adapter", return_value=adapter):
+                    with self.assertRaisesRegex(w.JobFailure, "generation_failed"):
+                        w.run_one(api, provider, {"storage.example"})
+                terminal = [c for c in api.job_call.call_args_list if c.args[1] == "fail"]
+                self.assertEqual(len(terminal), 1)
+                self.assertIs(terminal[0].kwargs["provider_stopped"], terminal_proved)
 
     def test_lease_failure_aborts_gpu_and_will_not_heartbeat_forever(self):
         api = Mock(); api.job_call.side_effect = w.JobFailure("lease_lost")
@@ -151,6 +168,15 @@ class LifecycleTests(unittest.TestCase):
         lease.thread.join(2)
         with self.assertRaisesRegex(w.JobFailure, "lease_lost"):
             lease.check()
+
+    def test_failed_abort_remains_failed_without_a_raw_thread_exception(self):
+        api = Mock(); api.job_call.side_effect = w.JobFailure("lease_lost")
+        lease = w.Lease(api, job(), interval=.001)
+        lease.abort = Mock(side_effect=RuntimeError("raw private SDK error"))
+        lease.thread.start(); lease.thread.join(2)
+        self.assertFalse(lease.thread.is_alive())
+        self.assertEqual(lease.abort_failure_type, "RuntimeError")
+        with self.assertRaisesRegex(w.JobFailure, "lease_lost"): lease.check()
 
     def test_success_uses_server_terminal_receipt_not_provider_return_alone(self):
         api, provider, adapter = Mock(), Mock(), Mock()
@@ -172,6 +198,16 @@ class LifecycleTests(unittest.TestCase):
 
 
 class OutputTests(unittest.TestCase):
+    def test_missing_revision_rejected_before_physical_output_transfer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.sog"; path.write_bytes(b"sog")
+            api = Mock(); api.service_host = "api.example"; api.base_url = "https://api.example/functions/v1/spatial"
+            api.job_call.return_value = {"method": "PUT", "bytes": 3, "content_type": "application/octet-stream",
+                "upload_url": f"{api.base_url}/worker/{JOB_ID}/output", "upload_token": "fixture-only"}
+            with self.assertRaisesRegex(w.JobFailure, "invalid_output_revision"):
+                w.upload_output(api, job(), path, {})
+            api.opener.open.assert_not_called()
+
     def test_output_revision_digest_and_private_state_are_server_bound(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "model.sog"; path.write_bytes(b"synthetic-output")
