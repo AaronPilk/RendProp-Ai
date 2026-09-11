@@ -235,12 +235,16 @@ def run(modal, dataset, state):
                "dataset_files": files, "transferred_files": [], "phase_a_acceptance_complete": False,
                "actual_charge_usd": None, "billing_status": "not_yet_measured"}
     receipt["sandbox_name"] = "room-proof-" + receipt["run_id"]
-    app = modal.App.lookup(APP_NAME, create_if_missing=True)
-    record(receipt_path, receipt, "creation_started", app_id=app.object_id)
+    record(receipt_path, receipt, "namespace_lookup_started")
     # The provider lifetime is in the creation request BEFORE setup/training.
     # A lost create response must never trigger a second rental automatically.
     sb = None
+    creation_attempted = False
     try:
+        app = modal.App.lookup(APP_NAME, create_if_missing=True)
+        require(isinstance(app.app_id, str) and app.app_id.startswith("ap-"), "invalid experiment app ID")
+        record(receipt_path, receipt, "creation_started", app_id=app.app_id)
+        creation_attempted = True
         sb = modal.Sandbox.create(**create_options(modal, app, receipt))
         record(receipt_path, receipt, "allocated", sandbox_id=sb.object_id)
         sb.filesystem.make_directory(REMOTE)
@@ -270,7 +274,7 @@ def run(modal, dataset, state):
         record(receipt_path, receipt, "artifacts_collected", artifacts=artifacts, outcome="trained")
     except BaseException as exc:
         record(receipt_path, receipt, "failed", failure_type=type(exc).__name__, outcome="failed")
-        if sb is None:
+        if sb is None and creation_attempted:
             # Reconciliation uses the unique provider name; it is lookup only.
             try:
                 sb = modal.Sandbox.from_name(APP_NAME, receipt["sandbox_name"])

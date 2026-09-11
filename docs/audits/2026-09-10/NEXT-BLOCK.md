@@ -68,6 +68,19 @@ The actual prepared dataset was rehashed read-only:260 approved adapter files,
 The billing-report API was queried read-only and is accessible with the
 experiment profile; historical workspace rows were deliberately not emitted.
 
+The first real CLI invocation on c875d2e exited1 before `Sandbox.create`:
+Modal App exposes `app_id`, not `object_id`. The original permissive Mock
+invented the latter attribute. No GPU was allocated and no dataset transferred;
+an exact-application provider `Sandbox.list` readback returned0 active entries.
+The original private allocation marker/state are retained as failed-preflight
+evidence, not erased or counted as a successful room run. The strict App-shaped
+double reproduced3 orchestration errors before the correction;22 tests pass
+afterward. An independent pinned-SDK1.5.3 contract check passed4 assertions
+without provider calls. Namespace lookup now occurs inside the recorded failure
+boundary so even this pre-allocation failure leaves a receipt. Only after that
+readback is the unused reservation released for the corrected first allocation.
+Logs: `negative-sdk-app.log` and `positive-sdk-app.log` in the preflight path.
+
 ## Parallel ownership
 
 | Lane | Isolated branch | Scope |

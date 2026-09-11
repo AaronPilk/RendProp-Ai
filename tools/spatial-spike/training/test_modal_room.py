@@ -186,7 +186,9 @@ class OrchestrationTests(unittest.TestCase):
         self.dataset.mkdir()
         self.state = self.root / "attempt"
         self.modal = Mock()
-        self.modal.App.lookup.return_value.object_id = "ap-fixture"
+        # App is not a Modal _Object: the real SDK exposes app_id, not object_id.
+        # A permissive Mock would invent either attribute and hide this boundary.
+        self.modal.App.lookup.return_value = SimpleNamespace(app_id="ap-fixture")
         self.sb = self.modal.Sandbox.create.return_value
         self.sb.object_id = "sb-fixture"
         self.sb.terminate.return_value = 137
@@ -241,6 +243,18 @@ class OrchestrationTests(unittest.TestCase):
         saved = json.loads((self.state / "provider-receipt.json").read_text())
         self.assertEqual(self.modal.Sandbox.from_name.call_args.args, (room.APP_NAME, saved["sandbox_name"]))
         recovered.terminate.assert_called_once_with(wait=True)
+
+    def test_namespace_failure_records_receipt_without_attempting_rental(self):
+        self.modal.App.lookup.side_effect = RuntimeError("private SDK detail")
+        with patch.object(room, "inventory", return_value=[]):
+            with self.assertRaises(RuntimeError):
+                room.run(self.modal, self.dataset, self.state)
+        self.modal.Sandbox.create.assert_not_called()
+        self.modal.Sandbox.from_name.assert_not_called()
+        saved = json.loads((self.state / "provider-receipt.json").read_text())
+        self.assertEqual(saved["phase"], "failed")
+        self.assertEqual(saved["failure_type"], "RuntimeError")
+        self.assertNotIn("private SDK detail", json.dumps(saved))
 
 
 class CollectionTests(unittest.TestCase):
