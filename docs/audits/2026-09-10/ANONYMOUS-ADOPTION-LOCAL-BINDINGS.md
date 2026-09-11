@@ -64,6 +64,11 @@ This is a model-method reproduction, not an iOS screen or real server test.
   A present malformed journal salvages readable listings, exposes a non-secret
   recovery error and refuses to overwrite the original state bytes. That is a
   storage-recovery condition, not a silently empty successful library.
+  Top-level read/decode failure and all-unsalvageable library collections also
+  refuse handoff/rebind, even when a valid journal exists. The original stays
+  at its exact path so another launch cannot mistake a moved-aside unknown
+  library for a fresh empty install. Truly empty collection shapes remain valid;
+  file byte length alone no longer determines whether content was lost.
 
 The journal cap is **1MiB of encoded metadata**. It refuses optional handoff
 rather than truncating identifiers; it is not a cap on capture, listing count,
@@ -79,8 +84,8 @@ bash tests/phase1/run-adoption.sh
 ```
 
 Final exit0 aggregate:
-`/tmp/rendprop-adoption-local.rOvm4J/final-gate.log`.
-Detailed gate directory: `/tmp/rendprop-adoption-swift.pK0C9d`.
+`/tmp/rendprop-adoption-local.rOvm4J/unreadable-complete-gate.log`.
+Detailed gate directory: `/tmp/rendprop-adoption-swift.UGPIsz`.
 
 | Executed surface | Result |
 |---|---|
@@ -88,12 +93,12 @@ Detailed gate directory: `/tmp/rendprop-adoption-swift.pK0C9d`.
 | Actual copied helper mutants |5 compile successfully and then fail executable assertions/exit1, including bypassed local-persistence confirmation |
 | Existing AuthStore/Settings source contracts |4 pass, no skips; source checks only |
 | New source binding + executable wrapper |2 Node tests pass, no skips |
-| Actual extracted AppModel metadata methods, complete PersistentStore, real Listing/Money/Render/RoomTag/CaptureAsset types |61 Swift assertions pass; forced failure exits1 |
+| Actual extracted AppModel metadata methods, complete PersistentStore, real Listing/Money/Render/RoomTag/CaptureAsset types |73 Swift assertions pass; forced failure exits1 |
 | Actual extracted AppModel mutants |3 compile then fail assertions/exit1: omitted restored IDs, ignored persistence failures, evicted pending binding |
 
-The 61-assertion executable's sources, binary, logs, actual mutant copies and
+The 73-assertion executable's sources, binary, logs, actual mutant copies and
 source-hash receipt are retained at:
-`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-local-binding-swift-mmOCgm`.
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-local-binding-swift-21JLrb`.
 Its `receipt.json` identifies the exact source hashes and limited runtime scope.
 All state fixtures are synthetic and created in that owned temporary directory;
 no customer library or photograph was read. The three copied AppModel mutants
@@ -106,6 +111,18 @@ The fixture now uses sorted JSON keys; no production token comparison was
 weakened. New extraction harness setup errors (URL percent-encoding and an
 ambiguous `load` declaration) also exited nonzero and executed no Swift tests;
 the final harness scopes extraction uniquely to AppModel and uses fileURLToPath.
+
+After checkpoint9469b4b, adversarial storage cases exposed a further failure:
+the old load/quarantine path could turn unreadable metadata into an empty local
+handoff. `unreadable-before.log` exits1 with4/65 failed assertions;
+`unreadable-before-expanded.log` exits1 with8/71 across invalid JSON, a directory
+at the state-file path, all-malformed listing entries and repeated loads.
+The first narrow correction still let a valid journal mask an all-malformed
+library: `unreadable-valid-journal-before.log` exits1 with1/73. All are under
+`/tmp/rendprop-adoption-local.rOvm4J`; the final73-assertion gate above closes
+those exact metadata failure cases. Earlier61/65/71 counts are superseded, not
+additive. Every failure used only owned synthetic state, preserved without
+deleting it. No original user file was quarantined, moved or read.
 
 The actual AuthStore/recovery/SessionConnection sources also **typechecked**
 against installed iOS Simulator26.4 SDK / iOS16 deployment target, using inert
@@ -138,6 +155,8 @@ run a simulator, or access an actual Keychain.
 - Malformed recovery metadata prevents overwriting its state file, including
   autosaves. The error is explicit, but edits made afterward are not claimed
   durable until storage recovery; use recovery help, never a delete/reset test.
+  Top-level unreadable state now follows this same rule, retaining the original
+  in place across launches instead of moving it aside and accepting empty data.
 - New source pickup still requires XcodeGen before the eventual full app build.
   App-wide build/link, non-camera UI, visible recovery copy/accessibility and
   real device persistence are **not verified by these portable checks**.
