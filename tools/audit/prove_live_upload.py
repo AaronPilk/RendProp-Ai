@@ -79,7 +79,7 @@ class Proof:
         check(method in ('GET', 'POST', 'PUT'), 'no destructive methods')
         u = urllib.parse.urlsplit(url)
         origin = f'{u.scheme}://{u.netloc}'
-        check(origin in (ORIGIN, GATEWAY, RENDERS, 'https://tours.rendprop.com', 'https://tour.rendprop.com'), 'exact destination allowlist')
+        check(origin in (ORIGIN, GATEWAY, RENDERS, 'https://rendprop.com'), 'exact destination allowlist')
         check(not u.username and not u.password and u.scheme == 'https', 'TLS destination')
         self.requests += 1
         check(self.requests <= 55, 'bounded request count')
@@ -226,6 +226,9 @@ class Proof:
         self.save()
         status, replay, _ = self.post('publish_replay', 'renders/publish-app', publish, self.s['run_id'] + ':publish')
         check(status == 201 and replay['id'] == render['id'] and replay['job_id'] == render['job_id'], 'publish replay same render and job')
+        for field in ('share_url', 'unbranded_url'):
+            status, page, _ = self.call('hosted_' + field, 'GET', render[field], auth=False)
+            check(status == 200 and isinstance(page, bytes) and b'<video' in page, 'hosted synthetic tour has video player')
         receipt = {'result': 'PASS', 'run_id': self.s['run_id'], 'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(), 'fixture_user_id': self.s['session']['user']['id'], 'fixture_org_id': self.s['listing']['org_id'], 'fixture_listing_id': self.s['listing']['id'], 'render_id': render['id'], 'assets': [{'fixture': k, 'asset_id': a['completed']['id'], 'storage_key': a['completed']['storage_key'], 'bytes': a['bytes'], 'sha256': a['sha256'], 'transport_version': 2} for k, a in self.s['assets'].items()], 'events': self.s['events'], 'limits': {'gpu_or_ai_calls': 0, 'customer_records_touched': 0, 'deletions': 0}, 'not_proven': ['iPhone background suspension', 'real room reconstruction', 'legacy ticket migration', 'global budget contention']}
         (self.dir / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
         print('PASS: three real transfers, completion replay, app publication replay; sanitized receipt written', flush=True)
