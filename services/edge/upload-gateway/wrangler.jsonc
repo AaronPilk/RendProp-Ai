@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "rendprop-upload-gateway",
+  "main": "index.ts",
+  "compatibility_date": "2026-09-10",
+  "workers_dev": false,
+  "preview_urls": false,
+  "vars": {
+    "UPLOAD_GATEWAY_ORIGIN": "",
+    "UPLOAD_GATEWAY_ALLOWED_ORIGIN": "",
+    "SUPABASE_ORIGIN": "",
+    "SUPABASE_ALLOWED_ORIGIN": ""
+  },
+  "secrets": {"required": ["UPLOAD_CAPABILITY_SECRET", "SUPABASE_SERVICE_ROLE_KEY"]},
+  "r2_buckets": [
+    {"binding": "UPLOADS", "bucket_name": "unconfigured-upload-gateway-private"},
+    {"binding": "RENDERS", "bucket_name": "unconfigured-upload-gateway-renders"}
+  ],
+  "limits": {"cpu_ms": 30000},
+  "observability": {"enabled": false}
+}
