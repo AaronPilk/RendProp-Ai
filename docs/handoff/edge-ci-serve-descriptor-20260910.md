@@ -66,3 +66,12 @@ entire Deno 2.9.6 runtime. A fresh hosted run is still required; no passing host
 result is claimed here. No installation, dependency download, live service,
 deployment, Apple action or publication-logic change occurred. The unrelated
 untracked Supabase CLI `.temp` directory was not read or staged.
+
+## Later coordinating-agent hosted proof
+
+Integrated as7b60ada and pushed. Actual GitHub run34546017429, edge job
+103098683585, now passes602 tests and all21 entrypoint checks. Root read the
+actual602passed/0failed footer. Same-source local receipt:
+`/tmp/rendprop-edge-audit-lszgf9yw/receipt.json`. The full workflow still has the
+separate database-headroom and scanner failures; see
+`docs/audits/2026-09-10/HOSTED-CI-20260910.md`.

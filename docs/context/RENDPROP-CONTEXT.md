@@ -34,8 +34,10 @@ web architecture/style contracts are not a shipped agent web app or a completed
 editing engine. Scope and evidence live in the current audit documents, not in
 aspirational descriptions of features.
 
-Latest verified code checkpoint: `68f39a2`.598 offline edge tests and21
-entrypoint checks pass;180 current worker checks/tests pass. Actual disposable
+Latest verified code checkpoint: `7b60ada`.602 edge tests and21 entrypoint checks
+pass both locally and on hosted Deno2.9.6 after two fixture-compatibility fixes.
+180 local worker checks pass; the hosted Linux job passes199 including19 actual
+HDR assertions. Actual disposable
 SQL applies38/replays30 migrations, passes22 worker checks four times and19
 upload checks twice, and detects four deliberately removed guards. Overall
 invariants remain197/198 for the agent-reel700-token headroom mismatch.
@@ -49,6 +51,13 @@ not closed. The proposed zero-duration-ready case was disproved by an existing
 constraint;30.001→30.00 is the real scalar mismatch, now covered. Read the latest
 database report before interpreting older negative-control logs. Public
 privacy/Terms reconciliation remains a proposal, not published legal policy.
+
+Hosted CI has now actually run, not merely been wired: run34546017429 has7
+passing jobs/3 failing jobs, overall failure. Both database jobs retain the
+known headroom failure; the scanner has six historical hits with value-free
+classifications in CI-RUN-34544905277.md. See HOSTED-CI-20260910.md for run/job
+links and the repaired fixture failures; do not interpret a local pass as a
+green full workflow or a production release.
 
 ---
 

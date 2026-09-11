@@ -6,7 +6,7 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
-## Latest integrated checkpoint — 20:04 Eastern
+## Latest integrated checkpoint — 20:22 Eastern
 
 Tested code checkpoint: **`68f39a24c9d685cc198dee3c899bf15a672716cd`** on
 `audit/full-regression-20260910`. The app is live; these changes are source
@@ -69,15 +69,22 @@ privacy/Terms reconciliation and device coverage. The ranked next-work list is
 below. Reports preserve those residuals instead of marking entire historical
 P0 categories FIXED based on these narrower publication repairs.
 
-The tested code and four unit branches were pushed. Root then dispatched the
-actual GitHub workflow at68f39a2: **six jobs succeed, four fail, overall FAILURE**.
-The first new failure was a timer return-type mismatch in an upload test under
-Deno2.9.6; local2.7.13 did not expose it. That fix is pushed as0051924. A second
-hosted run then executes569 passing/29 failing tests: Deno.serve interception
-incorrectly mixes accessor and value descriptors. That fixture repair is next.
-The database logs confirm the known headroom mismatch after the new job's full
-publication checks. Hosted worker evidence proves199 checks/tests including19
-actual HDR assertions; the scan ran and reported6 findings under review. Follow
+The tested code and unit branches were pushed. Latest tested code is now
+**7b60ada**: the subsequent timer-type and lazy-Deno.serve descriptor fixture
+repairs are proven by actual GitHub run34546017429. **602 edge tests and all21
+entrypoints pass on hosted Deno2.9.6**, and the local same-source gate also
+passes602 with the Turnstile mutant detected. Its receipt is
+`/tmp/rendprop-edge-audit-lszgf9yw/receipt.json`.
+
+The third hosted workflow has **seven passing jobs and three failing jobs**;
+overall FAILURE. Both database jobs report the retained headroom mismatch;
+the new job completed all publication/replay/negative/stop steps on PostgreSQL
+16.15 and retained verified receipt/log artifacts. Hosted worker evidence proves
+199 checks/tests including19 actual HDR assertions. The scanner's six historical
+hits are classified without values in `CI-RUN-34544905277.md`: four fixtures,
+one intended bundled anon claim and one unresolved historical curl header.
+No evidence establishes a privileged credential compromise; private triage and
+rotation verification if real remain required for that unresolved hit. Follow
 [`HOSTED-CI-20260910.md`](HOSTED-CI-20260910.md) for the exact run and corrections;
 neither a push nor a green individual job is a whole-app release verdict.
 
@@ -189,13 +196,14 @@ cluster was stopped and retained. See the separate pushed branch
 
 | Area | Executed result | Evidence / limit |
 | --- | --- | --- |
-| Supabase edge tests | **598 passed, zero failed/ignored** | Source68f39a2; network denied and process environment cleared; not live routes |
+| Supabase edge tests | **602 passed, zero failed/ignored** | Source7b60ada; both local and actual hosted runs, not live product routes |
 | All edge entrypoints | **21/21 typechecks passed** | Cached imports, no route execution |
 | Deliberately broken Turnstile | **Exit1 with real failed assertions** | Copied source changed to fail open; proves tests detect that defect |
 | New audit-runner parser | **5 tests passed** | Names containing “ignored” are not skips; real skipped summaries are counted |
 | Web contract/tokens | **14 passed** | 41 unique API methods/42 declarations,24 outside-protocol capabilities; zero browser-parity claims |
 | Style library | **101 passed; seven real mutants failed** | 408 EDL-preservation combinations; no rendering or human quality study |
 | Worker/hosting lane | **180 current Python checks/tests**;584 route assertions;557 unbranded +12 self-tests | Root reran all ten current worker scripts; supersedes former140+32 total after replacing unsafe-helper tests; no deployment |
+| Hosted worker including HDR | **199 checks/tests, including19 real HDR assertions** | Eleven scripts; separate from local180, not199 live calls; HOSTED-WORKER-VERIFICATION.md |
 | Bounded host upstream | **707 assertions /75 actual-handler cases** | Synthetic streams, aborts, byte caps and honest statuses; no production request |
 | Database replay | **197/198 pass, twice; overall FAIL** | All38 migrations +30 replays; one retained headroom mismatch, not live Supabase |
 | Publication SQL | **22 worker checks ×4;19 upload checks ×2 pass** | Four actual removed guards detected and restored; not concurrent production HTTP |
@@ -205,7 +213,7 @@ cluster was stopped and retained. See the separate pushed branch
 | Focused repaired iOS UI | **2 exact tests,0 skips,5 required attachments pass** | Source50c95d3; root viewed all5; no iOS source changes since |
 | Real owner capture | **256 JPEGs decoded and dataset prepared** | 14,654 usable initialization seeds; no GPU reconstruction or phone-room viewer yet |
 
-Main edge receipt: `/tmp/rendprop-edge-audit-o5on_vp_/receipt.json`.
+Main edge receipt: `/tmp/rendprop-edge-audit-lszgf9yw/receipt.json`.
 Earlier530-test receipt: `/tmp/rendprop-edge-audit-33zluacl/receipt.json`.
 Main style receipt: `/tmp/rendprop-style-policy-verify-4a4985b890c82161/summary.json`.
 Temporary evidence paths are not backups; source/scripts and this account are
