@@ -81,6 +81,34 @@ boundary so even this pre-allocation failure leaves a receipt. Only after that
 readback is the unused reservation released for the corrected first allocation.
 Logs: `negative-sdk-app.log` and `positive-sdk-app.log` in the preflight path.
 
+### First allocated host — failed setup, no room transfer
+
+Source c6b181747b4872ec3ddc12529eeebc92a058a44c; command:
+`uv tool run --from modal==1.5.3 python tools/spatial-spike/training/modal_room.py run
+--dataset <private prepared dataset> --state <private modal-room-20260910-02>`.
+Exit1. Allocated01:24:17UTC, setup began01:24:29, failed01:28:14,
+terminated01:28:16. **Zero dataset files transferred; trainer never ran.**
+The CUDA extension compiler failed because the shallow clone did not initialize
+the pinned GLM submodule (`glm/gtc/type_ptr.hpp` missing). This is an experiment
+setup defect, not evidence about room quality. Both exact-path remote deletion
+and `Sandbox.terminate(wait=True)` succeeded; terminate returned137 and separate
+poll returned137. A later exact-app list returned0 active sandboxes.
+
+Billing API for01:00–02:00UTC returned one exact-app row:
+**USD0.15374134 provider-metered usage**, read before01:33:05UTC. This is an
+actual provider report, not a rate-times-minutes estimate; the current partial
+hour/invoice can still finalize later. Private receipt and setup compiler log
+remain in `LocalSpatialExperiments/modal-room-20260910-02/`, outside Git.
+
+Corrective setup initializes the parent's pinned GLM gitlink and explicitly
+checks33b4a621a697a305bc3a7610d290677b96beb181 plus the required header before
+compilation. Public-only recursive checkout reproduced that exact header/commit
+locally; no CUDA execution on the Mac is inferred. A failure EXIT trap now saves
+resolved package and GPU diagnostics as well as successful setup. A second
+allocation may proceed only after preserving/reconciling the first marker;
+two full provider-lifetime compute bounds totalUSD9.8220672000, belowUSD25.
+There is no automatic retry or permission to keep tuning a completed bad room.
+
 ## Parallel ownership
 
 | Lane | Isolated branch | Scope |

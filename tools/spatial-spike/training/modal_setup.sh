@@ -5,10 +5,18 @@ export DEBIAN_FRONTEND=noninteractive
 export MAX_JOBS=4
 export PIP_NO_CACHE_DIR=1
 export OMP_NUM_THREADS=4
+# A failed compiler setup is still a paid attempt. Keep its actual environment
+# evidence too; a success-only freeze loses the facts needed to diagnose it.
+trap 'python -m pip freeze > /opt/room-experiment/resolved-setup.txt; nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv >> /opt/room-experiment/resolved-setup.txt' EXIT
 apt-get update
 apt-get install -y --no-install-recommends git build-essential libgl1 libglib2.0-0 ffmpeg
 git clone --depth 1 --branch v1.5.3 https://github.com/nerfstudio-project/gsplat.git /opt/gsplat-phase-a
 test "$(git -C /opt/gsplat-phase-a rev-parse HEAD)" = 937e29912570c372bed6747a5c9bf85fed877bae
+# A shallow tag clone does not populate GLM. The pinned parent commit's gitlink
+# is the authority; never install a floating system header to hide that omission.
+git -C /opt/gsplat-phase-a submodule update --init --recursive --depth 1
+test "$(git -C /opt/gsplat-phase-a/gsplat/cuda/csrc/third_party/glm rev-parse HEAD)" = 33b4a621a697a305bc3a7610d290677b96beb181
+test -f /opt/gsplat-phase-a/gsplat/cuda/csrc/third_party/glm/glm/gtc/type_ptr.hpp
 python -m pip install --no-build-isolation -r /opt/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==12.1.1 tyro==0.9.35 ninja
 python -m pip install --no-build-isolation -e /opt/gsplat-phase-a
 python -m pip check
