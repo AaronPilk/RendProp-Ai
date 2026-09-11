@@ -319,9 +319,10 @@ owner seeing the real reconstructed room; the Phase A experiment is unfinished.
    Current unit/SQL checks do not replace multi-role live HTTP coverage.
 5. **Finish UX/legal and media reliability:** reconcile public privacy/Terms
    with actual data flows (proposal in `PRIVACY-POLICY-RECONCILIATION.md`), fix
-   remaining RenderEngine concurrency warnings, verify HDR with zscale, and
-   bound the browser lead form's timeout/success contract. Then expand actual
-   device accessibility/layout coverage without simulator camera attempts.
+   remaining RenderEngine concurrency warnings, and bound the browser lead
+   form's timeout/success contract. Hosted synthetic HDR now passes19 assertions;
+   actual iPhone/Dolby Vision quality and device accessibility/layout coverage
+   still need real-device evidence, without simulator camera attempts.
 6. **Complete web/editor product after its contracts:** foundations are not
    browser parity. No actual web create→edit→review→publish→two-links walk ran.
 7. **Release separately:** verify deployed migration/code parity, drain old

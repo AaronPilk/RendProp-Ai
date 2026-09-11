@@ -7,7 +7,19 @@ Worktree: `/Users/pilksclaes/Rendprop AI/worker-host-audit-20260910`.
 
 ## Outcome and scope
 
-**Not a full-backend GO.** The hosting bundle builds and its existing assertions pass. The reaper race, oversized Stream multipart fallback, and transient lease-probe degradation are fixed locally with failing-before/passing-after evidence. Stale-worker publishing, revocation caching, and durable cleanup still require work. No deployment was performed. These edits are not in the owner's installed build 18.
+**Not a full-backend GO.** The reaper race, oversized Stream multipart fallback,
+and transient lease-probe degradation are fixed locally with failing-before/
+passing-after evidence. Later integrated units also repair stale-worker atomic
+publication and customer HTML revocation caching; see
+`WORKER-PUBLISH-TRANSACTION.md` and `PUBLIC-HOST-REVOCATION.md`. Durable artifact
+cleanup remains open. No deployment was performed.
+
+The command table below is historical local evidence at the stated base.
+The later hosted run at68f39a2 passed199 worker checks/tests, including19 real
+synthetic HDR assertions, and clean host install/typecheck/tests/dry-run plus
+zero production npm advisories. See `HOSTED-WORKER-VERIFICATION.md` for exact
+job URLs, source, counts and limits. The local Mac still lacks zscale; that is
+not a failure of the separately executed Linux HDR path. Full CI remains red.
 
 Read the standing brief completely. Cloudflare, Workers best-practices, Wrangler and Supabase skills guided config/reference retrieval, isolated local verification and the reaper compare-and-set change. No protected motion text, AI route, Apple state, provider settings or production data changed. No camera simulator test was attempted.
 
