@@ -8,6 +8,19 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+**LATEST evening integration and real-room result:**
+[`SPATIAL-INTEGRATION-EVENING-20260911.md`](../../releases/SPATIAL-INTEGRATION-EVENING-20260911.md).
+Controlled live upload/publication passed. A fresh GPU allocation succeeded and
+the owner's153-frame room trained; actual model and held-out renders retrieved,
+remote-copy removal/termination confirmed. The model loads in the production
+viewer locally, but substantial blur means visual acceptance FAILS. Disabled,
+unscheduled Modal controller now passes a real remote invocation after two
+deployment defects were fixed. Deletion0039/me/provider0041 and general upload
+recovery are integrated and regression-tested in source, not deployed. Spatial
+renewal/Pause follow-up, quality improvement and phone delivery remain open.
+Production spatial budgets remain disabled/zero. No Apple change. Older entries
+below are dated history, not competing claims about current deployments.
+
 **LATEST controlled live proof,21:02–21:12UTC:**
 [`LIVE-UPLOAD-PROOF-20260911.md`](../../releases/LIVE-UPLOAD-PROOF-20260911.md).
 Uploads35/spatial2 deployed bundles exactly match8263e25; gateway custom domain
@@ -20,7 +33,7 @@ Cloudflare1010 before dispatch, diagnosed and retained in the receipt; no firewa
 change. Legacy recovery, deletion/provider integration and real room acceptance
 remain open. Spatial runtime still disabled/zero-budget. No Apple change.
 
-**NEWER rollback/bucket check,20:17UTC onward:**
+**Historical rollback/bucket check,20:17UTC onward (superseded above):**
 [`UPLOAD-ROLLBACK-AND-GATEWAY-VALUES-20260911.md`](../../releases/UPLOAD-ROLLBACK-AND-GATEWAY-VALUES-20260911.md).
 Uploads is now ACTIVE v33, exact deployed source8ce5e4a: direct presigned path
 restored, publication fences retained, v2 physical-byte protection absent.
@@ -29,7 +42,7 @@ version1 and cannot attach to spatial0040. Actual Cloudflare bucket inventory
 confirms rendprop-uploads (private) and rendprop-renders; uploads.rendprop.com has
 no observed DNS/Worker conflict and is the recommended gateway host, not deployed.
 
-**NEWER live readback,18:42–18:45UTC:**
+**Historical live readback,18:42–18:45UTC (superseded above):**
 [`CLAUDE-DEPLOYMENT-FACTCHECK-20260911.md`](../../releases/CLAUDE-DEPLOYMENT-FACTCHECK-20260911.md).
 Another operator has now deployed22 Supabase functions and0035/36/37/38/40;
 Apple build19 is VALID, INTERNAL_ONLY, IN_BETA_TESTING. Review remains attached

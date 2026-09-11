@@ -1,5 +1,7 @@
 {
-  "verified_at": "2026-09-11T21:07:00Z",
+  "verified_on": "2026-09-11",
+  "native_replay_budget_readback_at": "2026-09-11T21:15:19.455416Z",
+  "timestamp_note": "The earlier 21:07 entry was approximate and has been removed; the replay readback timestamp was returned by PostgreSQL.",
   "fixture_listing_id": "3f5e3bf8-54d9-4d82-a9c9-6ecf412dfbb3",
   "assets": [
     {
