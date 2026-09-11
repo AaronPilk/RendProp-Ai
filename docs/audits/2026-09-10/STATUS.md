@@ -17,6 +17,10 @@ experiment usage is USD1.09974939. Upload, recovery/local-binding, RenderEngine,
 privacy and AI-measurement units are pushed separately, not deployed or combined
 into a fully tested phone build. Deletion transaction work remains unfinished.
 The integrated three-red-job CI result is unchanged. No Apple action occurred.
+The exact provider result, independently confirmed14:27UTC, says the container
+was terminated for reaching its **billing-cycle spend limit**. That is not a
+capture failure or exhaustion of the owner'sUSD25 experiment budget. No limit
+setting was changed and no additional GPU was rented during this readback.
 
 ## New block authorized — September10 evening
 

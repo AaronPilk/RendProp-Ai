@@ -46,10 +46,24 @@ not recovered. The durable receipt records **outcome failed**, `ValueError`:
   01:00–04:00 UTC experiment interval. This is actual metering, not a resource-rate
   estimate or a finalized invoice. The USD 25 total approval remains the ceiling.
 
+**Terminal cause confirmed at 14:27:38 UTC:** a read-only lookup/poll of this
+exact Sandbox returned exit137 and the provider terminal result:
+`Container terminated due to reaching billing cycle spend limit`.
+The root independently reproduced this result with Modal SDK1.5.3 after the
+investigating agent. This is the account's billing-cycle limit, not the USD25
+experiment ceiling (reported experiment usage is aboutUSD1.10). No account limit
+was changed. Do not label this as a camera, dataset, OOM or trainer defect.
+
+The runner obscured that cause by recording only `ValueError`, not the numeric
+stage exit or provider terminal reason; failed diagnostic-copy exceptions are
+also discarded. Repair that evidence path before another attempt. Resolving an
+account-wide billing setting needs owner direction; blindly retrying will not
+produce a phone-testable room.
+
 Private evidence: `LocalSpatialExperiments/modal-room-20260910-04/` contains
 `provider-receipt.json`, `setup.log`, and empty `wrapper.log`. No `download/`
-or failed-diagnostic artifacts were found. Provider-level terminal cause is still
-being investigated; no new allocation was started during this status check.
+or failed-diagnostic artifacts were found. No new allocation was started during
+this status check.
 
 ## Tested source is not the installed app
 
