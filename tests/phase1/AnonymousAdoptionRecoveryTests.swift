@@ -12,13 +12,14 @@ struct AnonymousAdoptionRecoveryTests {
         if !ok { failed += 1; print("FAIL: \(message)") }
     }
     static func token(_ id: UUID, anonymous: Bool, expired: Bool = false) -> String {
-        let bytes = try! JSONSerialization.data(withJSONObject: ["sub": id.uuidString.lowercased(), "is_anonymous": anonymous, "exp": expired ? 1 : 9999999999])
+        let bytes = try! JSONSerialization.data(withJSONObject: ["sub": id.uuidString.lowercased(), "is_anonymous": anonymous, "exp": expired ? 1 : 9999999999], options: .sortedKeys)
         let payload = bytes.base64EncodedString().replacingOccurrences(of: "+", with: "-").replacingOccurrences(of: "/", with: "_").replacingOccurrences(of: "=", with: "")
         return "synthetic.\(payload).unsigned"
     }
     final class Store {
         var raw: String?; var failRead = false; var failWrite = false; var failRemove = false
         var writes = 0; var removals = 0; var messages: [String?] = []
+        var failPrepareLocal = false; var failFinishLocal = false; var finishes = 0
     }
     static func make(_ store: Store, send: @escaping AnonymousAdoptionRecovery.Transport) -> AnonymousAdoptionRecovery {
         AnonymousAdoptionRecovery(apiBase: URL(string: "https://fixture.invalid/functions/v1")!,
@@ -26,7 +27,9 @@ struct AnonymousAdoptionRecoveryTests {
             read: { if store.failRead { throw AnonymousAdoptionRecovery.RecoveryError.storage }; return store.raw },
             write: { store.writes += 1; if store.failWrite { return false }; store.raw = $0; return true },
             remove: { store.removals += 1; if store.failRemove { return false }; store.raw = nil; return true },
-            send: send, changed: { store.messages.append($0) })
+            send: send, changed: { store.messages.append($0) },
+            prepareLocal: { _ in !store.failPrepareLocal },
+            finishLocal: { _, _ in store.finishes += 1; return !store.failFinishLocal })
     }
     static func prepared(_ value: AnonymousAdoptionRecovery, expired: Bool = false) throws {
         try value.prepare(sourceAccess: token(source, anonymous: true, expired: expired), sourceRefresh: "synthetic-source-refresh",
@@ -64,6 +67,19 @@ struct AnonymousAdoptionRecoveryTests {
         check(try restarted.pending() == first, "restart restores exact operation and source credentials")
         try prepared(restarted)
         check(store.writes == 1, "same handoff reuses operation")
+        let localFailure = Store(); localFailure.failPrepareLocal = true
+        let localPending = make(localFailure, send: noNetwork)
+        rejects("local snapshot write failure refuses activation") { try prepared(localPending) }
+        check(localFailure.raw != nil && localFailure.removals == 0, "local failure preserves saved source credentials")
+        localFailure.failPrepareLocal = false
+        try prepared(localPending)
+        localFailure.failFinishLocal = true
+        let localRetry = make(localFailure) { success($0) }
+        await localRetry.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
+        check(localFailure.raw != nil && localFailure.removals == 0 && localFailure.finishes == 1, "failed atomic local rebind retains server-replay envelope")
+        localFailure.failFinishLocal = false
+        await localRetry.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
+        check(localFailure.raw == nil && localFailure.removals == 1, "receipt replay clears only after local persistence succeeds")
         rejects("different destination cannot overwrite pending") {
             try recovery.prepare(sourceAccess: token(source, anonymous: true), sourceRefresh: "new", destinationAccess: token(other, anonymous: false))
         }
@@ -113,6 +129,7 @@ struct AnonymousAdoptionRecoveryTests {
             try prepared(target)
             await target.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { current })
             check(cell.raw != nil && cell.removals == 0, "logout during \(stage) cannot clear receipt")
+            check(cell.finishes == 0, "logout during \(stage) cannot apply local rebind")
             check(calls == (stage == "adopt" ? 1 : 2), "logout fences later \(stage) requests")
             if stage == "refresh" { check(try target.pending()?.sourceRefreshToken == "synthetic-rotated-refresh", "rotation durable despite logout, without active session overwrite") }
         }

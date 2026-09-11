@@ -25,15 +25,20 @@ final class AnonymousAdoptionRecovery {
     private let authBase: URL
     private let anonKey: String
     private let changed: (String?) -> Void
+    private let prepareLocal: (Pending) -> Bool
+    private let finishLocal: (Pending, UUID) -> Bool
     private var running = false
 
     init(apiBase: URL, authBase: URL, anonKey: String,
          read: @escaping () throws -> String?, write: @escaping (String) -> Bool,
          remove: @escaping () -> Bool, send: @escaping Transport,
-         changed: @escaping (String?) -> Void = { _ in }) {
+         changed: @escaping (String?) -> Void = { _ in },
+         prepareLocal: @escaping (Pending) -> Bool = { _ in false },
+         finishLocal: @escaping (Pending, UUID) -> Bool = { _, _ in false }) {
         self.apiBase = apiBase; self.authBase = authBase; self.anonKey = anonKey
         self.read = read; self.write = write; self.remove = remove
         self.send = send; self.changed = changed
+        self.prepareLocal = prepareLocal; self.finishLocal = finishLocal
     }
 
     static func identity(_ token: String) -> (id: UUID, anonymous: Bool)? {
@@ -84,11 +89,14 @@ final class AnonymousAdoptionRecovery {
                 prior.sourceRefreshToken = sourceRefresh
                 try save(prior)
             }
+            guard prepareLocal(prior) else { throw RecoveryError.storage }
             return
         }
-        try save(Pending(version: 1, operationID: UUID(), sourceUserID: source.id,
+        let value = Pending(version: 1, operationID: UUID(), sourceUserID: source.id,
                          destinationUserID: destination.id, sourceAccessToken: sourceAccess,
-                         sourceRefreshToken: sourceRefresh))
+                         sourceRefreshToken: sourceRefresh)
+        try save(value)
+        guard prepareLocal(value) else { throw RecoveryError.storage }
         changed("Your original workspace is waiting to be connected to this account.")
     }
 
@@ -140,7 +148,9 @@ final class AnonymousAdoptionRecovery {
                    receipt.ok, receipt.adopted, receipt.operation_id == value.operationID,
                    receipt.source_user_id == value.sourceUserID,
                    receipt.destination_user_id == value.destinationUserID {
-                    // A storage failure leaves the exact operation replayable.
+                    // The local metadata rebind and its confirmation marker
+                    // must commit atomically before discarding source recovery.
+                    guard finishLocal(value, receipt.org_id) else { throw RecoveryError.storage }
                     guard remove() else { throw RecoveryError.storage }
                     changed(nil)
                     return

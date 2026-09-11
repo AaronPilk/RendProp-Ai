@@ -76,15 +76,23 @@ final class AppModel: ObservableObject {
     private var isRestoring = false
     private var syncInFlight: Set<UUID> = []
     private var publishInFlight: Set<UUID> = []
+    private var serverCreationInFlight: Set<UUID> = []
+    private var identityOwnerUserID: UUID?
+    private var adoptionBindings: AdoptionLocalBindings?
+    private var adoptionBindingsUnreadable = false
     private var uploadObserver: NSObjectProtocol?
 
     init() {
         renderCoordinator.model = self
-        // A different Apple ID signing in means every cached server id belongs
-        // to the previous account's org — drop them so publishing re-creates the
-        // listings instead of 404ing forever (audit F-E-12).
-        AuthStore.shared.onAccountChanged = { [weak self] in
-            Task { @MainActor [weak self] in self?.forgetServerIdentities() }
+        // Clear metadata synchronously: a queued Task could run AFTER receipt
+        // recovery and erase the IDs we just restored. No media work here.
+        AuthStore.shared.onAccountChanged = { [weak self] userID in
+            self?.forgetServerIdentities(for: userID)
+        }
+        AuthStore.shared.onPrepareAdoption = { [weak self] in self?.prepareLocalAdoption($0) == true }
+        AuthStore.shared.onConfirmAdoption = { [weak self] in self?.confirmLocalAdoption($0, orgID: $1) == true }
+        AuthStore.shared.onAdoptionStorageReady = { [weak self] in
+            self?.hasLoaded == true && self?.adoptionBindingsUnreadable == false
         }
         // A publish upload that outlived the process (killed mid-upload, resumed
         // by UploadManager on relaunch) completes here; nobody else is waiting
@@ -102,7 +110,11 @@ final class AppModel: ObservableObject {
 
     /// Clear every per-account server reference (called when the signed-in
     /// account changes). Local tours/assets are untouched.
-    func forgetServerIdentities() {
+    func forgetServerIdentities(for userID: UUID) {
+        let wasRestoring = isRestoring
+        isRestoring = true
+        adoptionBindings = adoptionBindings?.detaching(listings, owner: identityOwnerUserID)
+        identityOwnerUserID = userID
         for i in listings.indices {
             listings[i].serverID = nil
             listings[i].shareSlug = nil
@@ -116,6 +128,67 @@ final class AppModel: ObservableObject {
         // Published compliance originals belong to the previous account's org.
         publishedOriginalAssets.removeAll()
         publishedGalleryAssets.removeAll()
+        isRestoring = wasRestoring
+        persist()
+    }
+
+    /// Called after the source Keychain envelope is durable, but BEFORE the
+    /// active session is replaced. Refuse optional sign-in if metadata is not
+    /// ready or source cloud writes have not settled; never race their replies.
+    func prepareLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending) -> Bool {
+        guard hasLoaded, !adoptionBindingsUnreadable, syncInFlight.isEmpty,
+              publishInFlight.isEmpty, serverCreationInFlight.isEmpty,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.sourceUserID,
+              identityOwnerUserID == nil || identityOwnerUserID == pending.sourceUserID else { return false }
+        if let old = adoptionBindings, old.confirmedOrgID == nil, !old.matches(pending) { return false }
+        do {
+            let next = try AdoptionLocalBindings.capture(pending, listings: listings)
+            let previous = adoptionBindings
+            adoptionBindings = next
+            if persist() { return true }
+            adoptionBindings = previous
+            return false
+        } catch { return false }
+    }
+
+    /// Only the currently verified destination + exact operation can restore
+    /// links. The restored IDs and confirmation marker share ONE atomic write;
+    /// Keychain credentials are retained until this returns true.
+    func confirmLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending, orgID: UUID) -> Bool {
+        guard hasLoaded, !adoptionBindingsUnreadable, let journal = adoptionBindings,
+              journal.matches(pending),
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.destinationUserID else { return false }
+        if journal.appliedToCurrentState, let confirmed = journal.confirmedOrgID {
+            return confirmed == orgID && identityOwnerUserID == pending.destinationUserID
+        }
+        do {
+            let restored = try journal.restoring(listings, pending: pending,
+                currentUserID: pending.destinationUserID, orgID: orgID)
+            let previousListings = listings, previousOwner = identityOwnerUserID
+            var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
+            isRestoring = true
+            listings = restored; adoptionBindings = confirmed; identityOwnerUserID = pending.destinationUserID
+            isRestoring = false
+            if persist() { return true }
+            isRestoring = true
+            listings = previousListings; adoptionBindings = journal; identityOwnerUserID = previousOwner
+            isRestoring = false
+            return false
+        } catch { return false }
+    }
+
+    private func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool {
+        if adoptionBindingsUnreadable { return true }
+        guard let journal = adoptionBindings else { return false }
+        if journal.confirmedOrgID != nil, !journal.appliedToCurrentState {
+            // A fully completed transfer is historical metadata, not a gate
+            // on the next unrelated account. Conversely, a Keychain read error
+            // must not discard an unfinished rebind after a failed clear.
+            do {
+                if try !AuthStore.shared.hasPendingAdoption(operationID: journal.operationID) { return false }
+            } catch { return true }
+        }
+        return journal.blocks(id, currentUserID: AuthStore.shared.userID.flatMap(UUID.init(uuidString:)))
     }
 
     func load() async {
@@ -131,6 +204,15 @@ final class AppModel: ObservableObject {
         renders = saved.renders
         pendingPublish = saved.pendingPublish
         uploadedRenderAssets = saved.uploadedRenderAssets
+        identityOwnerUserID = saved.identityOwnerUserID
+        adoptionBindings = saved.adoptionBindings
+        adoptionBindingsUnreadable = saved.adoptionBindingsUnreadable
+        if let active = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+           let owner = identityOwnerUserID, owner != active {
+            forgetServerIdentities(for: active)
+        }
+        if identityOwnerUserID == nil { identityOwnerUserID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) }
+        if adoptionBindingsUnreadable { AuthStore.shared.reportUnreadableAdoptionBindings() }
         reconcileAfterRestore()
         isRestoring = false
 
@@ -143,6 +225,7 @@ final class AppModel: ObservableObject {
         // 3. In the background: push local edits the server hasn't seen and
         //    finish any publish that was interrupted.
         Task { [weak self] in
+            await AuthStore.shared.retryPendingAdoptionIfNeeded()
             await self?.syncDirtyListings()
             await self?.resumePendingPublishes()
         }
@@ -348,6 +431,7 @@ final class AppModel: ObservableObject {
     /// after each PATCH so an edit made mid-sync is not lost.
     func syncListing(_ id: UUID) async {
         guard Config.useLiveBackend else { return }
+        guard !pendingAdoptionBlocksServerListing(id) else { return }
         guard !syncInFlight.contains(id) else { return }
         syncInFlight.insert(id)
         defer { syncInFlight.remove(id) }
@@ -381,13 +465,15 @@ final class AppModel: ObservableObject {
     // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
 
     enum PublishError: LocalizedError {
-        case sampleListing, listingMissing, noLocalTour, noShareURL
+        case sampleListing, listingMissing, noLocalTour, noShareURL, workspaceRecoveryPending, serverIdentityBusy
         var errorDescription: String? {
             switch self {
             case .sampleListing:  return "Sample tours can't be published — create your own first."
             case .listingMissing: return "That listing no longer exists on this phone."
             case .noLocalTour:    return "There's no rendered tour to publish yet — create the tour first."
             case .noShareURL:     return "The server didn't return a share link. Please try again."
+            case .workspaceRecoveryPending: return "This listing's original cloud link is waiting for workspace recovery. Retry workspace transfer in Settings before publishing it again. Your local work is still available."
+            case .serverIdentityBusy: return "This listing's cloud link is being prepared. Please try again shortly."
             }
         }
     }
@@ -397,12 +483,18 @@ final class AppModel: ObservableObject {
     /// identity (persisted). All later server calls for this listing use it.
     func ensureServerListing(_ listing: Listing) async throws -> UUID {
         let localID = listing.id
+        guard !pendingAdoptionBlocksServerListing(localID) else { throw PublishError.workspaceRecoveryPending }
         if let existing = listings.first(where: { $0.id == localID })?.serverID {
             return existing
         }
+        guard !serverCreationInFlight.contains(localID) else { throw PublishError.serverIdentityBusy }
+        serverCreationInFlight.insert(localID)
+        defer { serverCreationInFlight.remove(localID) }
+        let owner = AuthStore.shared.userID
         // Sync using the freshest local copy (address/details may have changed).
         let live = listings.first(where: { $0.id == localID }) ?? listing
         let created = try await api.createListing(live)
+        guard AuthStore.shared.userID == owner else { throw CancellationError() }
         let serverID = created.id
         if let i = listings.firstIndex(where: { $0.id == localID }) {
             listings[i].serverID = serverID   // persists via didSet
@@ -430,6 +522,7 @@ final class AppModel: ObservableObject {
     /// server says so in its `provenance.reason`.
     func serverListingIDForCompliance(_ id: UUID) async -> UUID? {
         guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return nil }
+        guard !pendingAdoptionBlocksServerListing(id) else { return nil }
         if let existing = listing.serverID { return existing }
         guard Config.useLiveBackend else { return nil }
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return nil }
@@ -717,10 +810,12 @@ final class AppModel: ObservableObject {
         return text.isEmpty ? "Something went wrong. Please try again." : text
     }
 
-    private func persist() {
-        guard hasLoaded, !isRestoring else { return }
-        PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders,
-                             pendingPublish: pendingPublish, uploadedRenderAssets: uploadedRenderAssets)
+    @discardableResult
+    private func persist() -> Bool {
+        guard hasLoaded, !isRestoring else { return false }
+        return PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders,
+                             pendingPublish: pendingPublish, uploadedRenderAssets: uploadedRenderAssets,
+                             identityOwnerUserID: identityOwnerUserID, adoptionBindings: adoptionBindings)
     }
 }
 
@@ -1598,15 +1693,24 @@ enum PersistentStore {
         // Added 2026-09-03 — Optional so snapshots from older builds decode.
         var pendingPublish: [UUID]? = nil
         var uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset]? = nil
+        var identityOwnerUserID: UUID? = nil
+        var adoptionBindings: AdoptionLocalBindings? = nil
+        var adoptionBindingsUnreadable = false
     }
 
+    @discardableResult
     static func save(listings: [Listing],
                      assets: [UUID: CaptureAsset],
                      tours: [UUID: AppModel.RenderedTour],
                      renders: [UUID: Render],
                      pendingPublish: [UUID] = [],
-                     uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:]) {
+                     uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:],
+                     identityOwnerUserID: UUID? = nil,
+                     adoptionBindings: AdoptionLocalBindings? = nil) -> Bool {
+        guard !refusesRecoveryOverwrite else { return false }
         var state = PersistedState()
+        state.identityOwnerUserID = identityOwnerUserID
+        state.adoptionBindings = adoptionBindings
         state.listings = listings.filter { !$0.isSample }
         let realIDs = Set(state.listings.map { $0.id })
 
@@ -1634,13 +1738,15 @@ enum PersistentStore {
         // still has. Real content is always allowed through (audit F-C-15).
         let isEmpty = state.listings.isEmpty && state.assets.isEmpty
             && state.tours.isEmpty && state.renders.isEmpty
-        if isEmpty && refusesEmptyOverwrite { return }
+        if isEmpty && refusesEmptyOverwrite { return false }
 
         do {
+            try adoptionBindings?.validate()
             let data = try JSONEncoder().encode(state)
             try data.write(to: fileURL, options: .atomic)
             if !isEmpty { refusesEmptyOverwrite = false }
-        } catch { /* non-fatal: files are safe, only this snapshot is lost */ }
+            return true
+        } catch { return false }
     }
 
     struct Loaded {
@@ -1650,6 +1756,9 @@ enum PersistentStore {
         var renders: [UUID: Render] = [:]
         var pendingPublish: [UUID] = []
         var uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:]
+        var identityOwnerUserID: UUID? = nil
+        var adoptionBindings: AdoptionLocalBindings? = nil
+        var adoptionBindingsUnreadable = false
     }
 
     /// Armed by `load()` when a snapshot existed on disk but could NOT be read
@@ -1659,6 +1768,9 @@ enum PersistentStore {
     /// soon as a snapshot with real content is written.
     /// Main-actor only: `load()`/`save()` are called from `AppModel` (@MainActor).
     private static var refusesEmptyOverwrite = false
+    // Salvage readable listings, but never silently drop an unreadable recovery
+    // journal during the next autosave. Original bytes stay in place for help.
+    private static var refusesRecoveryOverwrite = false
 
     /// Move an unusable snapshot to `rendprop-state.corrupt-<unix>.json`.
     /// MOVE, not copy: once it is out of the way the next save writes a clean
@@ -1683,6 +1795,7 @@ enum PersistentStore {
         let fm = FileManager.default
         guard fm.fileExists(atPath: fileURL.path) else {
             refusesEmptyOverwrite = false   // fresh install / after a wipe: nothing to protect
+            refusesRecoveryOverwrite = false
             return Loaded()
         }
         guard let data = try? Data(contentsOf: fileURL) else {
@@ -1707,6 +1820,7 @@ enum PersistentStore {
         // replaces it, and don't let that save be an empty one.
         let salvagedNothing = state.listings.isEmpty && state.assets.isEmpty
             && state.tours.isEmpty && state.renders.isEmpty
+            && state.adoptionBindings == nil && !state.adoptionBindingsUnreadable
         if salvagedNothing && data.count > 128 {
             _ = quarantineSnapshot()
             refusesEmptyOverwrite = true
@@ -1715,6 +1829,10 @@ enum PersistentStore {
         }
 
         var out = Loaded()
+        refusesRecoveryOverwrite = state.adoptionBindingsUnreadable
+        out.identityOwnerUserID = state.identityOwnerUserID
+        out.adoptionBindings = state.adoptionBindings
+        out.adoptionBindingsUnreadable = state.adoptionBindingsUnreadable
         out.listings = state.listings
 
         for (id, a) in state.assets {
@@ -1828,7 +1946,7 @@ private func rpSalvagedUUIDDict<V: Decodable, K: CodingKey>(
 }
 
 extension PersistentStore.PersistedState {
-    enum CodingKeys: String, CodingKey { case listings, assets, tours, renders, pendingPublish, uploadedRenderAssets }
+    enum CodingKeys: String, CodingKey { case listings, assets, tours, renders, pendingPublish, uploadedRenderAssets, identityOwnerUserID, adoptionBindings }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1849,6 +1967,13 @@ extension PersistentStore.PersistedState {
         let uploaded = rpSalvagedUUIDDict(AppModel.UploadedRenderAsset.self,
                                           from: c, forKey: .uploadedRenderAssets)
         uploadedRenderAssets = uploaded.isEmpty ? nil : uploaded
+        // Missing fields mean an old snapshot, not failed recovery. Present but
+        // invalid metadata must remain visible and must survive every autosave.
+        do {
+            identityOwnerUserID = try c.decodeIfPresent(UUID.self, forKey: .identityOwnerUserID)
+            adoptionBindings = try c.decodeIfPresent(AdoptionLocalBindings.self, forKey: .adoptionBindings)
+            try adoptionBindings?.validate()
+        } catch { adoptionBindingsUnreadable = true }
     }
 }
 

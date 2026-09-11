@@ -20,6 +20,7 @@ else
 fi
 if ! node --test "$SCRIPT_DIR/adoption-source.test.mjs" > "$OUT/source.log" 2>&1; then FAIL=1; fi
 if ! node --test "$SCRIPT_DIR/adoption-negative.test.mjs" > "$OUT/mutants.log" 2>&1; then FAIL=1; fi
+if ! node --test "$SCRIPT_DIR/adoption-local-bindings.test.mjs" > "$OUT/local-bindings.log" 2>&1; then FAIL=1; fi
 echo "Adoption evidence: $OUT"
 echo "Adoption portable gate exit: $FAIL"
 exit "$FAIL"

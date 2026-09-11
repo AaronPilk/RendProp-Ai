@@ -16,6 +16,7 @@ for (const [name, needle, broken] of [
   ['receipt-operation-binding', 'receipt.adopted, receipt.operation_id == value.operationID,', 'receipt.adopted, true,'],
   ['write-failure-before-replacement', 'write(raw) else', '(write(raw) || true) else'],
   ['late-response-fence', 'guard !Task.isCancelled, isCurrent() else { return }\n                if (200..<300)', 'if (200..<300)'],
+  ['local-persistence-before-clear', 'guard finishLocal(value, receipt.org_id) else { throw RecoveryError.storage }', '_ = finishLocal(value, receipt.org_id)'],
 ]) {
   test(`real recovery mutant rejected: ${name}`, { timeout: 30000 }, () => {
     assert.equal(source.split(needle).length - 1, 1, 'unique actual-source mutation');
