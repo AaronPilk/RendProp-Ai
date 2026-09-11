@@ -165,15 +165,21 @@ gate, Top-down selected and visibly changed viewpoint, Starting view cleared
 Top-down, drag visibly rotated the room, and Close removed the viewer.
 Captured warning/error console lists were empty. An attempted Playwright
 checkbox selector timed out; the fresh accessibility control was used instead.
-The Forward accessibility click did not establish measurable translation; no
-translation/FPS/physical-iPhone claim is made. Images remain visibly blurry.
+The first Forward accessibility click did not establish measurable translation.
+A second check used a393×852 browser viewport and the root gate's identical
+emitted Worker (`rendprop-spatial-built-SGTNyW/bundle/index.js`). All viewer
+controls and the wrapped private-preview status were visible without clipping;
+keyboard activation of the actual Forward button visibly changed the viewpoint.
+The second warning/error console list was also empty. This is a responsive
+Chromium check, not physical-iPhone acceptance or a measured translation/FPS
+benchmark. Images remain visibly blurry.
 
 The only fixture substitutions remain the page's local capability and the
 same SRI-pinned engine served from loopback. This check proves actual built
 browser execution on local real-room input, **not live production auth,
 publication, revocation, iPhone performance or acceptable reconstruction**.
-The temporary tab was closed and server stopped (SIGINT130). No private room
-files were uploaded or committed.
+Both temporary tabs were closed, the viewport override reset, and both preview
+servers stopped (SIGINT130). No private room files were uploaded or committed.
 
 A root subprocess assertion also verifies that the old source-only invocation
 (manifest and model without a bundle argument) exits1 with the exact new usage
