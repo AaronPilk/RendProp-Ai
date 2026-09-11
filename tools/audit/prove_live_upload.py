@@ -83,7 +83,10 @@ class Proof:
         check(not u.username and not u.password and u.scheme == 'https', 'TLS destination')
         self.requests += 1
         check(self.requests <= 55, 'bounded request count')
-        headers = {}
+        # Python's default urllib signature receives Cloudflare1010 before the
+        # Worker runs. Identify this authorized synthetic harness honestly; do
+        # not weaken the site's firewall or impersonate an end user's browser.
+        headers = {'User-Agent': 'Rendprop-Upload-Proof/1.0'}
         if origin == ORIGIN:
             headers['apikey'] = self.anon
             if auth:
@@ -113,6 +116,10 @@ class Proof:
             result = json.loads(raw)
         except (ValueError, UnicodeDecodeError):
             result = raw
+        if status >= 400:
+            # Protected diagnostic only; a proxy can echo signed request URLs.
+            self.s.setdefault('private_errors', []).append({'step': label, 'status': status, 'body': raw.decode('utf-8', errors='replace'), 'headers': h})
+            self.save()
         return status, result, h
 
     def post(self, label, path, body, idem=None):
