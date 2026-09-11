@@ -8,6 +8,15 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+**NEWER rollback/bucket check,20:17UTC onward:**
+[`UPLOAD-ROLLBACK-AND-GATEWAY-VALUES-20260911.md`](../../releases/UPLOAD-ROLLBACK-AND-GATEWAY-VALUES-20260911.md).
+Uploads is now ACTIVE v33, exact deployed source8ce5e4a: direct presigned path
+restored, publication fences retained, v2 physical-byte protection absent.
+Ordinary live upload success was not independently tested. Its new tickets are
+version1 and cannot attach to spatial0040. Actual Cloudflare bucket inventory
+confirms rendprop-uploads (private) and rendprop-renders; uploads.rendprop.com has
+no observed DNS/Worker conflict and is the recommended gateway host, not deployed.
+
 **NEWER live readback,18:42–18:45UTC:**
 [`CLAUDE-DEPLOYMENT-FACTCHECK-20260911.md`](../../releases/CLAUDE-DEPLOYMENT-FACTCHECK-20260911.md).
 Another operator has now deployed22 Supabase functions and0035/36/37/38/40;
