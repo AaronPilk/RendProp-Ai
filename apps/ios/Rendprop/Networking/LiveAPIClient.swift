@@ -388,12 +388,23 @@ final class LiveAPIClient: APIClient {
         if let contentType, !contentType.isEmpty { body["content_type"] = contentType }
         let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body,
                                                  idempotency: Self.idempotency(idempotencyKey)))
+        return try uploadTicket(data)
+    }
+
+    private func uploadTicket(_ data: Data) throws -> UploadTicket {
         let dto: UploadTicketDTO = try decode(data)
         let mode = UploadTicket.Mode(rawValue: dto.mode ?? "single") ?? .single
         return UploadTicket(assetID: dto.assetId, mode: mode,
                             putURL: dto.putUrl, uploadID: dto.uploadId,
                             partSize: dto.partSize, partCount: dto.partCount,
-                            storageKey: dto.storageKey)
+                            storageKey: dto.storageKey, transportVersion: dto.transportVersion,
+                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts)
+    }
+
+    func renewUpload(assetID: String) async throws -> UploadTicket {
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "renew"]),
+                                                 method: "POST", json: [:]))
+        return try uploadTicket(data)
     }
 
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
@@ -431,8 +442,12 @@ final class LiveAPIClient: APIClient {
     }
 
     func abortUpload(assetID: String) async throws {
-        _ = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
-                                          method: "POST", json: [:]))
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
+                                                 method: "POST", json: [:]))
+        // A 2xx alone does not authorize replacing the reservation. The explicit
+        // acknowledgement also survives a lost reply and repeated cancellation.
+        let receipt: UploadAbortReceipt = try decodeExact(data)
+        guard receipt.isConfirmed else { throw APIError.decoding }
     }
 
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
@@ -1704,6 +1719,10 @@ final class LiveAPIClient: APIClient {
         let partSize: Int64?
         let partCount: Int?
         let storageKey: String?
+        let transportVersion: Int?
+        let uploaded: Bool?
+        let replayed: Bool?
+        let confirmedParts: [UploadTicket.ConfirmedPart]?
     }
 
     private struct PartURLsDTO: Decodable {

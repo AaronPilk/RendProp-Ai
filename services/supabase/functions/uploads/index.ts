@@ -325,6 +325,18 @@ Deno.serve(async (req) => {
     const assetId = seg[0], asset = await requireAsset(db, assetId);
     await requireAssetWriteRole(db, admin, user.id, asset);
     const bucket = r2BucketFor(asset.bucket);
+    if (seg[1] === "renew") {
+      // Lookup by immutable asset id, not the POST /uploads idempotency index:
+      // that index excludes completed rows, so completion racing a re-ticket
+      // request could otherwise allocate and charge for a second reservation.
+      if (asset.uploaded === true) return json(await ticketResponse(admin, asset));
+      transportConfiguration();
+      assert(asset.transport_version === 2, 409,
+        "Legacy upload must be reticketed after rollout cleanup");
+      assert(asset.upload_aborted !== true, 409,
+        "This upload was aborted — create a new ticket");
+      return json(await ticketResponse(admin, asset, true));
+    }
     if (seg[1] === "abort") {
       assert(
         asset.uploaded !== true,
@@ -577,12 +589,18 @@ function uploadSpec(
 }
 
 // deno-lint-ignore no-explicit-any
-async function ticketResponse(admin: any, asset: Record<string, unknown>) {
+async function ticketResponse(admin: any, asset: Record<string, unknown>, recovery = false) {
   const base = {
     asset_id: asset.id,
     storage_key: asset.storage_key,
     content_type: asset.content_type,
     replayed: asset.replayed === true,
+    transport_version: asset.transport_version,
+    uploaded: asset.uploaded === true,
+  };
+  if (asset.uploaded === true) return {
+    ...base, mode: asset.parts_total != null ? "multipart" : "single",
+    upload_id: asset.upload_id, part_size: asset.part_size, part_count: asset.parts_total,
   };
   if (asset.parts_total != null) {
     const op = await recordedOperation(
@@ -598,12 +616,20 @@ async function ticketResponse(admin: any, asset: Record<string, unknown>) {
         return { etag: "multipart-initialized", uploadId };
       },
     );
+    let confirmedParts: Array<{number: number; etag: string}> | undefined;
+    if (recovery) {
+      const { data, error } = await admin.from("upload_operations")
+        .select("part,etag").eq("asset_id", asset.id).eq("kind", "part").eq("state", "stored");
+      if (error || !Array.isArray(data)) throw new HttpError(503, "Part receipts could not be recovered");
+      confirmedParts = data.map((part: {part: number; etag: string}) => ({ number: part.part, etag: part.etag }));
+    }
     return {
       ...base,
       mode: "multipart",
       upload_id: op.upload_id,
       part_size: asset.part_size,
       part_count: asset.parts_total,
+      ...(confirmedParts ? { confirmed_parts: confirmedParts } : {}),
     };
   }
   return {

@@ -12,21 +12,25 @@ enum UploadStore {
         return dir.appendingPathComponent("upload-state.json")
     }
 
-    static func save(_ state: UploadManager.State?) {
+    @discardableResult
+    static func save(_ state: UploadManager.State?) -> Bool {
         guard let state else {
             try? FileManager.default.removeItem(at: fileURL)
-            return
+            return !FileManager.default.fileExists(atPath: fileURL.path)
         }
-        guard let data = try? JSONEncoder().encode(state) else { return }
+        guard let data = try? JSONEncoder().encode(state) else { return false }
         var url = fileURL
         do {
             try data.write(to: url, options: .atomic)
             var values = URLResourceValues()
             values.isExcludedFromBackup = true
             try? url.setResourceValues(values)
+            return true
         } catch {
             // Disk-full or sandbox hiccup: the in-memory state still drives the
-            // engine; the next status change retries the write.
+            // engine; callers must not dispatch bytes/cancel tickets without a
+            // durable identity. The next explicit resume may retry the write.
+            return false
         }
     }
 

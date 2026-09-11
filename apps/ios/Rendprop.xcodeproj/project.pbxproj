@@ -112,6 +112,8 @@
 		FEB809B92CCE90A007E559BA /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9FBACFE1B0540B32F3BD4EAB /* SettingsView.swift */; };
 		FECBB1D3CFC854E498F2588F /* RendpropUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE47E2786B286E7686A64479 /* RendpropUITests.swift */; };
 		FFDE430BDCDF2D536BE7BBCD /* HomeListingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4DB70E1D3371927DB43F686D /* HomeListingsView.swift */; };
+		70140E1FDF283E4C5997ED75 /* DirectUploadJournal.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FFA346E82C2ABE0B2B84B64 /* DirectUploadJournal.swift */; };
+		7163AB5B506E125E7AD085E6 /* UploadRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29E85AFE75A4E97E95FEC47D /* UploadRecovery.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -234,6 +236,8 @@
 		F902EC3FAE3CB781FA5E5A0F /* CoachView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoachView.swift; sourceTree = "<group>"; };
 		FB2296848CBE319882226D1C /* ReviewPrompter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ReviewPrompter.swift; sourceTree = "<group>"; };
 		FCFC63BFC51CC5B643E6ACC9 /* BuildFourteenShots.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuildFourteenShots.swift; sourceTree = "<group>"; };
+		2FFA346E82C2ABE0B2B84B64 /* DirectUploadJournal.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DirectUploadJournal.swift; sourceTree = "<group>"; };
+		29E85AFE75A4E97E95FEC47D /* UploadRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UploadRecovery.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -400,6 +404,8 @@
 		A6F8678DE6DFC6C04E9896EC /* Upload */ = {
 			isa = PBXGroup;
 			children = (
+				29E85AFE75A4E97E95FEC47D /* UploadRecovery.swift */,
+				2FFA346E82C2ABE0B2B84B64 /* DirectUploadJournal.swift */,
 				61AD972518DD362511944597 /* DirectUploader.swift */,
 				0F60DCADB688E12C16D8E025 /* SpatialUploadCoordinator.swift */,
 				BAD62A87316381703172B670 /* SpatialUploadRecovery.swift */,
@@ -788,6 +794,8 @@
 				AC20895DB57A492231B1916D /* TourViewerView.swift in Sources */,
 				FBC7F7530EE3641AF6FCC985 /* Typography.swift in Sources */,
 				53CC0E62674B1169C4677F54 /* UploadManager.swift in Sources */,
+				7163AB5B506E125E7AD085E6 /* UploadRecovery.swift in Sources */,
+				70140E1FDF283E4C5997ED75 /* DirectUploadJournal.swift in Sources */,
 				900239439C3FF1B9C934F76D /* UploadStore.swift in Sources */,
 				EAB8A7CFB8C66E9775AA13EC /* VoiceRecorder.swift in Sources */,
 				0D2B231A90B9BC8E6A765727 /* VoiceTypes.swift in Sources */,

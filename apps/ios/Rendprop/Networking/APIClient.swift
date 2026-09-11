@@ -23,6 +23,22 @@ struct UploadTicket: Codable, Sendable {
     var partCount: Int? = nil     // ceil(bytes / partSize)
     // both
     var storageKey: String? = nil // R2 object key the file lands at
+    /// Server ticket version, not the app build. Never infer an upgrade from a retry.
+    var transportVersion: Int? = nil
+    var uploaded: Bool? = nil
+    var replayed: Bool? = nil
+    var confirmedParts: [ConfirmedPart]? = nil
+    struct ConfirmedPart: Codable, Sendable, Equatable {
+        let number: Int
+        let etag: String
+    }
+}
+
+struct UploadAbortReceipt: Decodable {
+    let ok: Bool
+    let uploadAborted: Bool
+    enum CodingKeys: String, CodingKey { case ok; case uploadAborted = "upload_aborted" }
+    var isConfirmed: Bool { ok && uploadAborted }
 }
 
 /// Probed video metadata threaded into `POST /uploads/:id/complete` (contract
@@ -783,6 +799,9 @@ protocol APIClient: Sendable {
     /// POST /uploads/:asset_id/abort — tears down the in-flight R2 multipart
     /// session. Safe to call on cancel.
     func abortUpload(assetID: String) async throws
+    /// Renews only this existing reservation. Unlike POST /uploads, cannot
+    /// allocate a second ticket if completion won a race with recovery.
+    func renewUpload(assetID: String) async throws -> UploadTicket
 
     /// POST /uploads/batch → one presigned PUT slot per photo (contract §2.5).
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket]

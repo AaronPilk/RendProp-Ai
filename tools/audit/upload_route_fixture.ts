@@ -341,6 +341,10 @@ export class Fixture {
         return row({ id: "fixture-listing", org_id: "fixture-org" });
       }
       if (url.pathname === "/rest/v1/deletion_requests") return json([]);
+      if (url.pathname === "/rest/v1/upload_operations" && request.method === "GET") {
+        return json([...this.operations.values()].filter((op) => op.asset_id === this.asset?.id &&
+          op.kind === "part" && op.state === "stored").map((op) => ({ part: op.part, etag: op.etag })));
+      }
       if (
         url.pathname.startsWith("/rest/v1/rpc/") &&
         !url.pathname.endsWith("bump_rate") &&
