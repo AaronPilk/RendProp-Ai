@@ -156,7 +156,7 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
   const prior = new Map(Object.keys(values).map((key) => [key, Deno.env.get(key)]));
   for (const [key, value] of Object.entries(values)) Deno.env.set(key, value);
   const oldFetch = globalThis.fetch, serve = Object.getOwnPropertyDescriptor(Deno, "serve")!;
-  let timer: number | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   globalThis.fetch = f.fetch;
   Object.defineProperty(Deno, "serve", { ...serve, value: (handler: Handler) => { actualHandler = handler; return {}; } });
   try {
