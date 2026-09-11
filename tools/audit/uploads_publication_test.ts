@@ -157,9 +157,12 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
   for (const [key, value] of Object.entries(values)) Deno.env.set(key, value);
   const oldFetch = globalThis.fetch, serve = Object.getOwnPropertyDescriptor(Deno, "serve")!;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  globalThis.fetch = f.fetch;
-  Object.defineProperty(Deno, "serve", { ...serve, value: (handler: Handler) => { actualHandler = handler; return {}; } });
   try {
+    globalThis.fetch = f.fetch;
+    // The original can be an accessor (lazy-loaded Deno.serve). A replacement
+    // data descriptor must not inherit get/set; restore the exact original below.
+    Object.defineProperty(Deno, "serve", { configurable: serve.configurable, enumerable: serve.enumerable,
+      writable: true, value: (handler: Handler) => { actualHandler = handler; return {}; } });
     await import("../../services/supabase/functions/uploads/index.ts");
     assert(actualHandler, "Actual route was not captured");
     await Promise.race([run(f), new Promise<never>((_, reject) => {
@@ -172,6 +175,39 @@ async function fixture(run: (f: Fixture) => Promise<void>) {
     for (const [key, value] of prior) {
       if (value === undefined) Deno.env.delete(key); else Deno.env.set(key, value);
     }
+  }
+}
+
+// Deno 2.9 lazily exposes serve through an accessor; older runtimes use a data
+// property. Exercise both shapes even on a runtime that supplies only one.
+for (const shape of ["data", "accessor"] as const) {
+  for (const failure of [false, true]) {
+    Deno.test(`actual route fixture restores ${shape} descriptor after ${failure ? "failure" : "success"}`, async () => {
+      const native = Object.getOwnPropertyDescriptor(Deno, "serve")!;
+      const originalFetch = globalThis.fetch;
+      const nativeServe = Deno.serve;
+      const supplied: PropertyDescriptor = shape === "accessor"
+        ? { configurable: true, enumerable: native.enumerable, get: () => nativeServe, set: () => {
+          throw new Error("Fixture must replace the property, not invoke its setter");
+        } }
+        : { configurable: true, enumerable: native.enumerable, writable: false, value: nativeServe };
+      try {
+        Object.defineProperty(Deno, "serve", supplied);
+        const run = () => fixture(async (f) => {
+          const winner = await f.ok();
+          assertEquals(f.asset!.uploaded, true);
+          assertEquals(f.objects.get(String(winner.storage_key))?.body, "AAAA");
+          if (failure) throw new Error("synthetic scenario failure");
+        });
+        if (failure) await assertRejects(run, Error, "synthetic scenario failure");
+        else await run();
+        assertEquals(Object.getOwnPropertyDescriptor(Deno, "serve"), supplied);
+        assertEquals(globalThis.fetch, originalFetch);
+      } finally {
+        Object.defineProperty(Deno, "serve", native);
+        globalThis.fetch = originalFetch;
+      }
+    });
   }
 }
 
