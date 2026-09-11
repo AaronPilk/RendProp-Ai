@@ -71,9 +71,13 @@ P0 categories FIXED based on these narrower publication repairs.
 
 The tested code and four unit branches were pushed. Root then dispatched the
 actual GitHub workflow at68f39a2: **six jobs succeed, four fail, overall FAILURE**.
-The first confirmed new failure is a timer return-type mismatch in an upload
-test under Deno2.9.6; local2.7.13 did not expose it. Database/scan failure causes
-and the hosted HDR result are being inspected independently. Follow
+The first new failure was a timer return-type mismatch in an upload test under
+Deno2.9.6; local2.7.13 did not expose it. That fix is pushed as0051924. A second
+hosted run then executes569 passing/29 failing tests: Deno.serve interception
+incorrectly mixes accessor and value descriptors. That fixture repair is next.
+The database logs confirm the known headroom mismatch after the new job's full
+publication checks. Hosted worker evidence proves199 checks/tests including19
+actual HDR assertions; the scan ran and reported6 findings under review. Follow
 [`HOSTED-CI-20260910.md`](HOSTED-CI-20260910.md) for the exact run and corrections;
 neither a push nor a green individual job is a whole-app release verdict.
 
