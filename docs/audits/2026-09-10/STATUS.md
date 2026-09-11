@@ -1,10 +1,22 @@
 # Rendprop: active engineering and audit checkpoint
 
-Updated 2026-09-10, evening Eastern. **Work in progress, not a whole-app GO.**
+Updated 2026-09-11, 10:24 AM Eastern. **Work in progress, not a whole-app GO.**
 This file is the durable entry point for Claude and the parallel side chat.
 Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
+
+## Current phone delivery status — September 11
+
+Read [`PHONE-READINESS-20260911.md`](PHONE-READINESS-20260911.md) first for the
+fresh branch/provider readback. Latest recorded phone build18 captures/exports,
+but no real-room 3D walkthrough or new TestFlight binary is available. The GPU
+attempt failed with no collected model; termination and zero active instances
+are confirmed, but its explicit remote-path deletion failed. Provider-reported
+experiment usage is USD1.09974939. Upload, recovery/local-binding, RenderEngine,
+privacy and AI-measurement units are pushed separately, not deployed or combined
+into a fully tested phone build. Deletion transaction work remains unfinished.
+The integrated three-red-job CI result is unchanged. No Apple action occurred.
 
 ## New block authorized — September10 evening
 

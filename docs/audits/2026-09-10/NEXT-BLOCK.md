@@ -1,5 +1,12 @@
 # Next authorized block — September10 evening
 
+**September11 current-state addendum:** read
+[`PHONE-READINESS-20260911.md`](PHONE-READINESS-20260911.md). The third allocated
+host failed after transfer, with no model collected. It is terminated; actual
+provider-reported cumulative usage is USD1.09974939. Explicit remote-path
+deletion failed and remains distinct from termination. This document's earlier
+preflight/progress entries below are historical, not a running-job claim.
+
 Continue from `STATUS.md`, not the historical July context. Base source is
 `2750953`; latest earlier tested application code is `a9b13b1`. The previous
 seven-pass/three-fail hosted result remains historical, not verification of this
