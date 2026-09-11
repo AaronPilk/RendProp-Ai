@@ -103,6 +103,7 @@ xcodebuild test-without-building \
   -xctestrun /tmp/rendprop-spatial-product-derived-20260911/Build/Products/Rendprop_iphonesimulator26.4-arm64.xctestrun \
   -destination 'platform=iOS Simulator,id=8D787CFB-B1F3-4950-854E-463126A68F92' \
   -parallel-testing-enabled NO \
+  -maximum-concurrent-test-simulator-destinations 1 \
   -only-testing:RendpropUITests/ReviewerWalk/testReviewerWalk \
   -only-testing:RendpropUITests/RendpropUITests/testWalk \
   -only-testing:RendpropUITests/SpatialProductIntegrationTests/testHomeCardOpensListingScopedProductWithoutCameraOrFakeRoom \
@@ -127,6 +128,27 @@ refresh and return to Home. This mock-backed test **does not** execute a camera,
 cloud reconstruction, background transfer on hardware, or real-room navigation.
 The older build3/build4 walks are no longer needed as proof of this final source.
 No application or test source changed during this run; this report is docs-only.
+
+The agent's receipt is`/tmp/rendprop-spatial-final-walks-20260911.2VD3vK/receipt.json`.
+Its exact test-ID/count/duration assertions passed and the frozen executable
+hashes were unchanged before/after execution. Preserve the hashes here because
+the raw receipt and xcresult are in temporary storage:
+
+```text
+source_commit       2612c7cc85bc8906287a11dc14c72e4b1105f238
+xctestrun_sha256    43833a8fd1655d0902dd29261deb577f052f4a9a7b4347218d4a98c2bc822efa
+app_sha256          c3acec81685a405da85d04ba6a053d0c1862840a8524c412bcf6d9a33a178bb4
+ui_test_sha256      d121bbd7b8cfb1851087cbd820d442d50bb1ec25afd97c99fe98057b4586011b
+summary_sha256      f94e010f9e00a98f4b2377c30ecaa59b8afd4ef20c05f6f854ea0ae114f0d00b
+test_tree_sha256    491ce707853aef7f5d5161bc34ef8b619a07cdb61bd3129ec767ef006b0e8e11
+home_png_sha256     5c6f458a092f59a5a72db86465d7768182dc2b1d4095c7ac2be9f283e45b44a9
+product_png_sha256  f11aa29b37c967faf4d46c570c67cf2264997b754d5a1a5300bc6735aa261d28
+```
+
+The agent's first xcresult extraction hit a SQLite indexing error; a separate
+retry succeeded and all count/test-ID assertions then ran. It did not delete or
+rewrite the result bundle to work around the error. Root's independent completed
+summary extraction also exited0. This does not affect the xcodebuild exit0 result.
 
 Root visually inspected both exported screenshots under the evidence folder:
 
