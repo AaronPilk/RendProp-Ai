@@ -64,6 +64,21 @@ final class AuthStore: ObservableObject {
     @Published var orgName: String
     /// Supabase user id (JWT `sub`) of the current/last session. Non-secret.
     @Published private(set) var userID: String?
+    /// Non-secret recovery status, never a gate on guest features/purchases.
+    @Published private(set) var adoptionRecoveryMessage: String?
+    @MainActor private lazy var adoptionRecovery: AnonymousAdoptionRecovery? = {
+        guard let api = Config.apiBaseURL,
+              let auth = Config.supabaseURL?.appendingPathComponent("auth/v1") else { return nil }
+        return AnonymousAdoptionRecovery(apiBase: api, authBase: auth, anonKey: Config.supabaseAnonKey,
+            read: { try SecureStore.getChecked(Keys.pendingAdoption) },
+            write: { SecureStore.set(Keys.pendingAdoption, $0) },
+            remove: { SecureStore.remove(Keys.pendingAdoption) },
+            send: { request in
+                let (bytes, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+                return (bytes, http)
+            }, changed: { [weak self] message in self?.adoptionRecoveryMessage = message })
+    }()
 
     /// Fired (main thread) when a DIFFERENT account signs in than the one that
     /// last used this device — the app clears per-account listing state.
@@ -91,6 +106,7 @@ final class AuthStore: ObservableObject {
         /// finding 8 / TN3194). Not a session credential — see
         /// `submitAppleAuthorizationCode`.
         static let pendingAppleAuthCode = "auth.pendingAppleAuthCode"
+        static let pendingAdoption = "auth.pendingAnonymousAdoption.v1"
     }
 
     // MARK: - Keychain-backed secret storage
@@ -115,6 +131,12 @@ final class AuthStore: ObservableObject {
         }
 
         static func get(_ key: String) -> String? {
+            try? getChecked(key)
+        }
+
+        /// A locked/unreadable Keychain is not an empty recovery slot. Refuse
+        /// replacement rather than losing a handoff whose value cannot be read.
+        static func getChecked(_ key: String) throws -> String? {
             var query = baseQuery(key)
             query[kSecReturnData as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -125,6 +147,7 @@ final class AuthStore: ObservableObject {
                   let str = String(data: data, encoding: .utf8) else {
                 if status != errSecItemNotFound {
                     AuthStore.log.error("Keychain read failed for \(key, privacy: .public): \(Int(status))")
+                    throw AnonymousAdoptionRecovery.RecoveryError.storage
                 }
                 return nil
             }
@@ -153,11 +176,14 @@ final class AuthStore: ObservableObject {
             return true
         }
 
-        static func remove(_ key: String) {
+        @discardableResult
+        static func remove(_ key: String) -> Bool {
             let status = SecItemDelete(baseQuery(key) as CFDictionary)
             if status != errSecSuccess && status != errSecItemNotFound {
                 AuthStore.log.error("Keychain delete failed for \(key, privacy: .public): \(Int(status))")
+                return false
             }
+            return true
         }
     }
 
@@ -212,9 +238,16 @@ final class AuthStore: ObservableObject {
                 object: nil, queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
-                Task { await self.refreshIfNeeded() }
+                Task {
+                    await self.refreshIfNeeded()
+                    await self.retryPendingAdoptionIfNeeded()
+                }
             }
-            Task { @MainActor [weak self] in self?.scheduleAutoRefresh() }
+            Task { @MainActor [weak self] in
+                self?.scheduleAutoRefresh()
+                await self?.refreshIfNeeded()
+                await self?.retryPendingAdoptionIfNeeded()
+            }
         }
     }
 
@@ -322,6 +355,7 @@ final class AuthStore: ObservableObject {
         Self.clearTokens()
         isSignedIn = Config.enableAuth ? false : true
         isIdentified = Config.enableAuth ? false : true
+        Task { await retryPendingAdoptionIfNeeded() } // status only when signed out; pending handoff survives
     }
 
     /// Remember the person's name (Apple returns `fullName` ONLY on the first
@@ -616,18 +650,28 @@ final class AuthStore: ObservableObject {
         guard let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) else {
             throw APIError.decoding
         }
-        // Grab the anonymous token BEFORE the new session overwrites it.
-        let priorAnonymous = Self.anonymousTokenForAdoption()
+        // A whole Keychain envelope commits before either active credential is
+        // replaced. Failure leaves this device's anonymous session intact.
+        // A Keychain read error must not masquerade as "no anonymous work".
+        // The legacy fallback is consulted only after a successful absent read.
+        let priorAccess = try SecureStore.getChecked(Keys.accessToken) ?? Self.storedAccessToken()
+        let priorAnonymous = priorAccess.flatMap { Self.tokenIsIdentified($0) ? nil : $0 }
+        if let priorAnonymous {
+            guard let recovery = adoptionRecovery else { throw APIError.notConfigured }
+            do {
+                let priorRefresh = try SecureStore.getChecked(Keys.refreshToken) ?? Self.storedRefreshToken()
+                try recovery.prepare(sourceAccess: priorAnonymous,
+                                     sourceRefresh: priorRefresh,
+                                     destinationAccess: session.accessToken)
+            } catch {
+                throw APIError.server(status: 409, code: "conflict",
+                    message: "Your original workspace could not be safely saved for transfer. It remains on this device. Please retry before switching accounts.")
+            }
+        }
         applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
-        if let priorAnonymous {
-            // Best effort: the sign-in itself has already succeeded, and a
-            // failed adoption must not read to the agent as a failed sign-in.
-            // `POST /adopt` is idempotent, so a retry next sign-in costs
-            // nothing.
-            await Self.adoptAnonymousWork(anonymousToken: priorAnonymous)
-        }
+        await retryPendingAdoptionIfNeeded()
     }
 
     // MARK: - Anonymous sessions (Guideline 5.1.1(v))
@@ -735,30 +779,17 @@ final class AuthStore: ObservableObject {
         return token
     }
 
-    /// Hand the anonymous session's workspace to the account that just signed
-    /// in. Everything hangs off `org_id`, so the server moves one membership row
-    /// and every listing, tour and disclosure comes with it.
-    private static func adoptAnonymousWork(anonymousToken: String) async {
-        guard let base = Config.apiBaseURL,
-              let token = await validAccessToken() else { return }
-        var req = URLRequest(url: base.appendingPathComponent("adopt"))
-        req.httpMethod = "POST"
-        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
-        req.httpBody = try? JSONSerialization.data(withJSONObject: ["anonymous_token": anonymousToken])
-        guard let (data, resp) = try? await URLSession.shared.data(for: req),
-              let http = resp as? HTTPURLResponse else {
-            await MainActor.run { Analytics.track("anonymous_adopt", ["ok": "false"]) }
-            return
-        }
-        struct AdoptDTO: Decodable { let ok: Bool?; let adopted: Bool? }
-        let dto = try? JSONDecoder().decode(AdoptDTO.self, from: data)
-        let ok = (200..<300).contains(http.statusCode) && (dto?.ok ?? false)
-        let adopted = (dto?.adopted ?? false) ? "true" : "false"
-        await MainActor.run {
-            Analytics.track("anonymous_adopt", ["ok": ok ? "true" : "false", "adopted": adopted])
-        }
+    /// Launch, foreground and optional sign-in all use one destination-fenced
+    /// recovery path. Logout preserves pending credentials but never uses them
+    /// as the active session. A receipt, not a 2xx/no-op, permits removal.
+    @MainActor
+    func retryPendingAdoptionIfNeeded() async {
+        guard Config.enableAuth, Config.useLiveBackend, let recovery = adoptionRecovery else { return }
+        let token = Self.storedAccessToken() ?? ""
+        let epoch = sessionEpoch
+        await recovery.retry(destinationAccess: token, isCurrent: { [weak self] in
+            self?.sessionEpoch == epoch && self?.isSignedIn == true
+        })
     }
 
     /// GoTrue error bodies vary (`{error, error_description}`, `{msg}`,

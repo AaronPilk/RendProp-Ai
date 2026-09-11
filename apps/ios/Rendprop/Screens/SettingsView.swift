@@ -268,6 +268,30 @@ struct SettingsView: View {
                 Text(accountFooter)
             }
 
+            if let message = auth.adoptionRecoveryMessage {
+                Section {
+                    Text(message)
+                        .font(.rpBody)
+                        .accessibilityIdentifier("settings.workspaceRecovery.status")
+                    Button {
+                        Task {
+                            await auth.refreshIfNeeded()
+                            await auth.retryPendingAdoptionIfNeeded()
+                        }
+                    } label: {
+                        Label("Retry workspace transfer", systemImage: "arrow.clockwise")
+                    }
+                    .accessibilityIdentifier("settings.workspaceRecovery.retry")
+                    Link(destination: Self.supportMailURL(subject: "Workspace recovery help")) {
+                        Label("Get recovery help", systemImage: "envelope")
+                    }
+                } header: {
+                    Text("Workspace recovery")
+                } footer: {
+                    Text("A saved transfer only retries for the account it was started with. Your other features remain available. No workspace is deleted by retrying.")
+                }
+            }
+
             if Config.useLiveBackend {
                 usageSection
             }
