@@ -133,6 +133,17 @@ paths were verified before the actual build above. Do not count that as a build.
   Do not reuse build3/4 walkthroughs as proof of these
   subsequent changes. No source-bound archive or upload is claimed.
 
+### Final UI gate completed September11,13:06Eastern
+
+Frozen build6, source2612c7c: **ReviewerWalk, MainWalk and spatial-entry walk all
+passed together (3/3, zero failures/skips/expected failures)**. Root independently
+read the completed xcresult summary. No rebuild or source mutation occurred during
+the run. Exact command, scope and live deployment gap:
+[`SPATIAL-DELIVERY-STATUS-20260911.md`](../../releases/SPATIAL-DELIVERY-STATUS-20260911.md).
+Result:`/tmp/rendprop-spatial-final-walks-20260911.2VD3vK/FinalWalks.xcresult`.
+This supersedes the historical build3/4 UI results for this source; it remains
+mock-backed, non-camera verification, not a trained-room or TestFlight claim.
+
 ## Real-room / deployment facts still open
 
 - Latest153-frame capture is privately validated/prepared, NOT reconstructed.
@@ -146,7 +157,7 @@ paths were verified before the actual build above. Do not count that as a build.
   USD6 reserved per attempt (oneL4 lifetime plus a bounded CPU controller), NOT a
   claim that typical rooms costUSD6 or that USD6 was spent. Actual provider costs
   require reconciliation. No subscription/plan gate was invented.
-- Need actual source-bound full app/UI tests, native background delivery test,
+- The selected source-bound final UI walks now pass; still need native background delivery test,
   first real cloud run, phone navigation/quality acceptance, region derivative
   processing, cleanup coverage and a release review before a finished-feature
   TestFlight upload. Pending App Review submission remains untouched.

@@ -8,6 +8,19 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+**Latest phone/billing correction:**
+[`SPATIAL-DELIVERY-STATUS-20260911.md`](../../releases/SPATIAL-DELIVERY-STATUS-20260911.md).
+Apple readback16:55:57UTC confirms newest uploaded build18 and unchanged pending
+App Review build16. The owner's newer Modal screenshot shows aUSD20 spend limit,
+zero current charges and apparent headroom; the earlier failed-run limit message
+does not establish a current billing block. Do not ask the owner to increase
+the limit again based solely on that historical failure. Final frozen-source
+walks passed3/3 at13:06Eastern, with zero failures/skips; no new archive, upload
+or real-room result is claimed.
+Fresh read-only Supabase inventory returned21 Edge Functions with no`spatial`
+function; migration history ends at0034, and a separate public spatial-table
+catalog query returned no rows. A new iOS binary alone cannot close this gap.
+
 **New source checkpoint:** [`SPATIAL-PRODUCT-BUILD.md`](SPATIAL-PRODUCT-BUILD.md)
 is the current engineering entry point on `feat/spatial-product-20260911` in
 `room-proof-next-block-20260910`. The Home card, listing-scoped capture/background
@@ -20,14 +33,15 @@ Latest completed checks: 31 offline worker tests; 29 diagnostic tests; 68 native
 client assertions with compiled negative controls; 69 actual PostgreSQL
 assertions with migration replay and three observed lock-contention cases;
 25 Edge tests plus output-digest negative control; 2,426 host assertions plus
-12 self-tests; 69 actual Chromium checks. Full reviewer walk passed on build3;
-main walk and spatial entry passed on build4. Build5 adds recovery controls and
-the revision-bound rendered-preview bridge; build6 adds the scan-time account/
-presentation fence. This final source needs its own complete UI run.
+12 self-tests; 69 actual Chromium checks. Final build6 source2612c7c passed
+ReviewerWalk, MainWalk and SpatialProductIntegration together:3/3, zero failures
+or skips, verified independently from the completed xcresult. Build5 adds recovery
+controls and the revision-bound rendered-preview bridge; build6 adds the scan-time
+account/presentation fence. Evidence and command are in the delivery report above.
 These synthetic/local fixtures do not prove real-room reconstruction or iPhone AR.
 
-Owner action: restore the existing Modal account's billing-cycle spend headroom,
-keeping the approved USD25 total one-room experiment ceiling. No need to rescan,
+Owner action: none currently established by the newer billing screenshot;
+keep the approved USD25 total one-room experiment ceiling. No need to rescan,
 operate a local GPU or alter Apple. Engineering still owes deployment cleanup
 integration, real region processing, cloud bootstrap/room acceptance and a
 source-bound internal TestFlight delivery. Account billing is not the only
