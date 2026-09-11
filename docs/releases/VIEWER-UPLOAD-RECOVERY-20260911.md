@@ -185,4 +185,34 @@ A root subprocess assertion also verifies that the old source-only invocation
 (manifest and model without a bundle argument) exits1 with the exact new usage
 error before any `PRIVATE_LOCAL_PREVIEW` listener announcement.
 
-Upload implementation and independent integration results remain pending.
+## Upload implementation — intermediate evidence, not a deployment
+
+Core iOS unit804f912 is integrated aseeb841b. Root ran
+`python3 tools/audit/run_upload_recovery.py` against that exact clean source:
+**96 assertions, ten successfully compiled mutants rejected for their intended
+runtime assertion, restored source passed**. Receipt:
+`/tmp/rendprop-upload-recovery-h62k9h93/receipt.json`.
+This executes the actual recovery/journal/uploader/manager with injected
+boundaries. It does not compile the whole LiveAPIClient or prove the UI.
+
+The first full-app compile in the iOS implementation worktree found a real
+transport-adapter error missed by that narrower native harness: the new restart
+method supplied a String where the request builder requires its Idempotency
+enum. That build exited65; it is not a pass. The fix and a repeated full build
+are pending integration below.
+
+Independent review also identified these follow-up cases, being corrected
+before final integration:
+
+- A killed app never enters the catch that sets a photo failure message; its
+  durable unfinished record must still appear in Settings recovery.
+- Initial video-ticket responses and actual OS dispatch need account-owner
+  checks, not only restart/reconciliation callbacks.
+- Cancel or starting another video while Restart awaits its response must not
+  discard the saved parent/intent and forget the server-created child.
+- An unreadable photo journal must not be overwritten with an empty record;
+  photo-success notices and failed provenance linking need truthful, separately
+  dismissible messages. The overwrite regression is in the96-assertion proof.
+
+Final combined server/client results remain pending. Do not treat intermediate
+core commits or an agent's in-progress build as release-ready.
