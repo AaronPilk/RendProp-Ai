@@ -354,6 +354,22 @@
     "distinctRequiredScreens": 5,
     "completedAt": "2026-09-10T23:40:24.974124+00:00"
   },
+  "followUpEdge": {
+    "sourceCommit": "7b60ada5cbfcadd22d97342af233d1fb33eb2489",
+    "testsPassed": 602,
+    "testsFailed": 0,
+    "testsIgnored": 0,
+    "entrypointsPassed": 21,
+    "sourceUnchanged": true,
+    "sourceManifestSHA256": "b692c79dd830ae3265a8d046fc30a100636c9821f13caaa6121963b84c9eac48",
+    "unitLogSHA256": "02a85a5ec9d5d7322831bd2263b9141a1b41396fb5c55ae3a685de84b7aa6dc0",
+    "localReceipt": "/tmp/rendprop-edge-audit-lszgf9yw/receipt.json",
+    "localReceiptSHA256": "11d3111cb9b1e51e18ae81d70c522ed0d19d538c5cff875070e2f7583485d183",
+    "hostedJob": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/34546017429/job/103098683585",
+    "hostedJobConclusion": "success",
+    "hostedWorkflowConclusion": "failure",
+    "negativeTurnstileDetected": true
+  },
   "rawReceiptHashes": {
     "edge": "9004739e7b7704eac9a91e5c3d71f1fcece057131d197c3bcb415a5c56ddb746",
     "database": "55f40085aa4844fea8c5fc861adbc1f86cf14ca3873c7580cb02098423875eab",
