@@ -32,28 +32,18 @@
 //   DELETE /me                  -> { ok, deletion_request_id, cleanup_complete, pending, warnings? }
 //   POST   /me/sweep-deletions  -> { ok, processed }   (service-role only; retry queue)
 //
-// Account deletion (audit P0-4) is DURABLE now:
-//   1. Every cleanup target — R2 objects, Stream UIDs, CRM lead contacts (each
-//      paired with the org whose TAG it must carry, never deleted by email
-//      alone — see cleanupGhlContactForTenant), the Apple refresh token, and
-//      this user's app_events/profile rows — is collected and written to a
-//      deletion_requests tombstone BEFORE anything is destroyed.
-//   2. Share links are revoked immediately (renders unpublished → tours 404).
-//   3. DB rows are purged, then EVERY item above (including analytics-forget
-//      and the profile row) is attempted inline through the same
-//      processPayload() the sweeper reuses.
-//   4. Whatever fails or exceeds inline caps STAYS in the tombstone and is
-//      retried by /me/sweep-deletions (wire it to a schedule — see runbook)
-//      until the payload is empty. `cleanup_complete` is computed AFTER every
-//      one of those steps has actually run, from their real outcome — never
-//      before — so it cannot be true while something is still queued.
-//   5. The auth record is deleted last; if THAT fails the request stays
-//      pending and the response is a 500, not a false success. `ok` is true
-//      once the auth record is gone regardless of `cleanup_complete`: the
-//      account itself is deleted either way, which is what Apple's
-//      requirement is actually about — but a caller that only checks `ok`
-//      instead of `cleanup_complete` will miss real, queued leftover work.
+// Deletion ownership is now DB-owned (0039), not an Edge enumeration followed
+// by later DELETEs. Under the same Auth/profile/org locks as adoption, SQL
+// snapshots verified listing keys, writes the intent, revokes/purges DB rows,
+// and returns a bound cleanup lease. Any SQL failure rolls everything back.
+// The handler and sweeper execute only that receipt; failed external work and
+// Auth deletion remain queued. Unbound legacy requests are manual-only and
+// cannot erase an adoption winner. A separate controlled old-handler drain
+// is required at rollout; a migration cannot retract a sent provider DELETE.
+// `ok` requires the Auth user to be gone; `cleanup_complete` additionally
+// requires all queued work done and no historical manual-review leftovers.
 
+import { deleteAccount, sweepAccounts } from "./deletion.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import {
   HttpError,
@@ -68,6 +58,7 @@ import {
 } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
 import {
+  abortMultipartUpload,
   deleteObjects,
   publicR2Url,
   R2_BUCKET_RENDERS,
@@ -95,12 +86,9 @@ import {
   userClient,
 } from "../_shared/supabase.ts";
 import {
-  chunk,
-  dbEmpty,
   decideGhlTagAction,
   type DeletionPayload,
   type GhlCleanupTarget,
-  payloadEmpty,
 } from "./logic.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -956,87 +944,13 @@ async function replayPendingNotifications(
 
 // ── DELETE /me ────────────────────────────────────────────────────────────────
 
-const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, agent: 2, marketing: 3 };
 const INLINE_R2_CAP = 5000;
 const INLINE_STREAM_CAP = 50;
 const INLINE_CRM_CAP = 50;
 
-// DeletionPayload, dbEmpty, payloadEmpty, chunk and decideGhlTagAction live in
+// DeletionPayload and decideGhlTagAction live in
 // ./logic.ts (imported above) so they can be unit-tested without pulling in
 // Deno.serve — see logic.ts's own header for what each one is responsible for.
-
-/**
- * Re-run the row deletions + share revocation for a tombstone. Idempotent:
- * every statement is a delete-by-id or an update to a terminal state, so
- * re-running after a partial success is safe.
- */
-// deno-lint-ignore no-explicit-any
-async function retryDbCleanup(admin: any, db: NonNullable<DeletionPayload["db"]>): Promise<string[]> {
-  const notes: string[] = [];
-  const run = async (label: string, fn: () => PromiseLike<{ error: { message: string } | null }>) => {
-    try {
-      const { error } = await fn();
-      if (error) notes.push(`${label}: ${error.message}`);
-    } catch (e) {
-      notes.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-  const listingIds = db.listing_ids ?? [];
-  const renderIds = db.render_ids ?? [];
-  const jobIds = db.job_ids ?? [];
-  const assetIds = db.asset_ids ?? [];
-
-  for (const ids of chunk(listingIds)) {
-    await run("revoke share links", () =>
-      admin.from("renders").update({ published_at: null }).in("listing_id", ids));
-  }
-  for (const orgId of db.org_ids ?? []) {
-    await run("metering (org)", () => admin.from("metering").delete().eq("org_id", orgId));
-    await run("leads (org)", () => admin.from("leads").delete().eq("org_id", orgId));
-    await run("cost_ledger (org)", () => admin.from("cost_ledger").delete().eq("org_id", orgId));
-  }
-  for (const ids of chunk(renderIds)) {
-    await run("metering (renders)", () => admin.from("metering").delete().in("render_id", ids));
-    await run("leads (renders)", () => admin.from("leads").delete().in("render_id", ids));
-  }
-  for (const ids of chunk(listingIds)) {
-    await run("leads (listings)", () => admin.from("leads").delete().in("listing_id", ids));
-  }
-  for (const ids of chunk(jobIds)) {
-    await run("cost_ledger (jobs)", () => admin.from("cost_ledger").delete().in("job_id", ids));
-  }
-  for (const ids of chunk(listingIds)) {
-    await run("renders", () => admin.from("renders").delete().in("listing_id", ids));
-    await run("render_jobs", () => admin.from("render_jobs").delete().in("listing_id", ids));
-  }
-  for (const ids of chunk(assetIds)) {
-    await run("capture_chapters", () => admin.from("capture_chapters").delete().in("asset_id", ids));
-  }
-  for (const ids of chunk(listingIds)) {
-    await run("capture_assets", () => admin.from("capture_assets").delete().in("listing_id", ids));
-    await run("photos", () => admin.from("photos").delete().in("listing_id", ids));
-  }
-  for (const orgId of db.org_ids ?? []) {
-    await run("listings", () => admin.from("listings").delete().eq("org_id", orgId));
-    await run("memberships", () => admin.from("memberships").delete().eq("org_id", orgId));
-    await run("org", () => admin.from("orgs").delete().eq("id", orgId));
-  }
-  return notes;
-}
-
-// deno-lint-ignore no-explicit-any
-async function collectIds(admin: any, table: string, column: string, filterColumn: string, filterIds: string[]): Promise<string[]> {
-  const out: string[] = [];
-  for (const ids of chunk(filterIds)) {
-    const { data, error } = await admin.from(table).select(column).in(filterColumn, ids);
-    if (error) throw new HttpError(500, `Deletion aborted — could not enumerate ${table}: ${error.message}`);
-    for (const row of (data ?? []) as Record<string, unknown>[]) {
-      const v = row[column];
-      if (typeof v === "string" && v) out.push(v);
-    }
-  }
-  return out;
-}
 
 /**
  * Reach every GHL contact matching an exact email, and do to EACH ONE only
@@ -1134,19 +1048,40 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
     apple_refresh_token: payload.apple_refresh_token ?? null,
     analytics_user_id: payload.analytics_user_id ?? null,
     profile_id: payload.profile_id ?? null,
+    auth_user_id: payload.auth_user_id ?? null,
+    provider_leases: [],
+    multipart_uploads: [],
+    unresolved_uploads: [...(payload.unresolved_uploads ?? [])],
+    unresolved_render_jobs: [...(payload.unresolved_render_jobs ?? [])],
+    storage_not_before: payload.storage_not_before ?? null,
   };
 
-  // Row deletions / share revocation that failed on an earlier pass.
-  if (!dbEmpty(payload.db)) {
-    const dbNotes = await retryDbCleanup(adminClient(), payload.db!);
-    if (dbNotes.length) {
-      notes.push(...dbNotes.map((n) => `db retry: ${n}`));
-      remaining.db = payload.db; // still failing — keep it queued
-    }
+  // Only the durable journal can prove a provider is finished with room files.
+  // It is intentionally independent of spatial_jobs, whose sidecars and
+  // manifests were already purged in the deletion transaction.
+  for (const [i, target] of (payload.provider_leases ?? []).entries()) {
+    if (i>=16) { remaining.provider_leases!.push(target); continue; }
+    try {
+      const {data,error}=await adminClient().rpc("account_deletion_provider_ready",
+        {p_job:target.job_id,p_lease:target.lease_token});
+      if(error || data!==true) remaining.provider_leases!.push(target);
+    } catch { remaining.provider_leases!.push(target); }
+  }
+  if(remaining.provider_leases!.length) notes.push("spatial: provider file removal and shutdown remain queued");
+  if(remaining.unresolved_uploads!.length) notes.push("uploads: ambiguous multipart allocation needs reconciliation; queued");
+  if(remaining.unresolved_render_jobs!.length) notes.push("renders: legacy worker output cleanup needs reconciliation; queued");
+  const storageDrained=!payload.storage_not_before || Date.parse(payload.storage_not_before)<=Date.now();
+  if(storageDrained) remaining.storage_not_before=null;
+  else notes.push("storage: waiting for previously issued writes to expire; queued");
+  for(const [i,target] of (payload.multipart_uploads??[]).entries()) {
+    if(!storageDrained || i>=16) {remaining.multipart_uploads!.push(target);continue;}
+    try { await abortMultipartUpload({bucket:target.bucket,key:target.key,uploadId:target.upload_id}); }
+    catch { remaining.multipart_uploads!.push(target);notes.push("multipart: abort failed; queued"); }
   }
 
   // R2 (bounded per pass; leftovers stay queued).
-  if (payload.r2.length) {
+  if (!storageDrained) remaining.r2.push(...payload.r2);
+  else if (payload.r2.length) {
     const batch = payload.r2.slice(0, INLINE_R2_CAP);
     const rest = payload.r2.slice(INLINE_R2_CAP);
     try {
@@ -1259,307 +1194,25 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
     }
   }
 
+  // Auth deletion is last and remains in the SAME durable payload on failure.
+  // 404 means this exact identity is already gone; other errors must retry.
+  if (payload.auth_user_id) {
+    try {
+      const { error } = await adminClient().auth.admin.deleteUser(payload.auth_user_id);
+      if (error && error.status !== 404) notes.push("auth: sign-in deletion failed; queued");
+      else remaining.auth_user_id = null;
+    } catch {
+      notes.push("auth: sign-in deletion unavailable; queued");
+    }
+  }
+
   return { remaining, notes };
 }
 
-async function handleDelete(userId: string, userEmail: string | null): Promise<Response> {
-  const admin = adminClient();
-  const warnings: string[] = [];
-
-  async function step(label: string, fn: () => PromiseLike<{ error: { message: string } | null }>) {
-    try {
-      const { error } = await fn();
-      if (error) warnings.push(`${label}: ${error.message}`);
-    } catch (e) {
-      warnings.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  async function deleteIn(label: string, table: string, column: string, ids: string[]) {
-    for (const part of chunk(ids)) {
-      await step(label, () => admin.from(table).delete().in(column, part));
-    }
-  }
-
-  // ── Phase 0: enumerate memberships. A failure here ABORTS (nothing touched).
-  const { data: myMemberships, error: memErr } = await admin
-    .from("memberships").select("org_id").eq("user_id", userId);
-  if (memErr) throw new HttpError(500, `Deletion aborted — membership lookup failed: ${memErr.message}`);
-
-  const orgIds = [...new Set((myMemberships ?? []).map((m) => m.org_id as string))];
-  const soloOrgs: string[] = [];
-  const sharedOrgs: string[] = [];
-  for (const orgId of orgIds) {
-    const { count, error } = await admin
-      .from("memberships").select("id", { count: "exact", head: true }).eq("org_id", orgId);
-    if (error) throw new HttpError(500, `Deletion aborted — member count failed for org ${orgId}: ${error.message}`);
-    ((count ?? 0) <= 1 ? soloOrgs : sharedOrgs).push(orgId);
-  }
-
-  // ── Phase 1: collect EVERY cleanup target before destroying anything.
-  const payload: DeletionPayload = { r2: [], stream_uids: [], ghl_targets: [], apple_refresh_token: null };
-  const allListingIds: string[] = [];
-  const allJobIds: string[] = [];
-  const allRenderIds: string[] = [];
-  const allAssetIds: string[] = [];
-
-  for (const orgId of soloOrgs) {
-    const listingIds = await collectIds(admin, "listings", "id", "org_id", [orgId]);
-    const jobIds = await collectIds(admin, "render_jobs", "id", "listing_id", listingIds);
-    const renderIds = await collectIds(admin, "renders", "id", "listing_id", listingIds);
-    const assetIds = await collectIds(admin, "capture_assets", "id", "listing_id", listingIds);
-    allListingIds.push(...listingIds);
-    allJobIds.push(...jobIds);
-    allRenderIds.push(...renderIds);
-    allAssetIds.push(...assetIds);
-
-    for (const ids of chunk(listingIds)) {
-      const { data: assets, error: aErr } = await admin
-        .from("capture_assets").select("storage_key, bucket").in("listing_id", ids);
-      if (aErr) throw new HttpError(500, `Deletion aborted — asset key enumeration failed: ${aErr.message}`);
-      for (const row of (assets ?? []) as { storage_key: string | null; bucket: string | null }[]) {
-        if (row.storage_key) {
-          payload.r2.push({
-            bucket: row.bucket === "renders" ? R2_BUCKET_RENDERS : R2_BUCKET_UPLOADS,
-            key: row.storage_key,
-          });
-        }
-      }
-      const { data: photos, error: pErr } = await admin
-        .from("photos").select("original_key, enhanced_key").in("listing_id", ids);
-      if (pErr) throw new HttpError(500, `Deletion aborted — photo key enumeration failed: ${pErr.message}`);
-      for (const row of (photos ?? []) as { original_key: string | null; enhanced_key: string | null }[]) {
-        if (row.original_key) payload.r2.push({ bucket: R2_BUCKET_UPLOADS, key: row.original_key });
-        if (row.enhanced_key) payload.r2.push({ bucket: R2_BUCKET_RENDERS, key: row.enhanced_key });
-      }
-      const { data: renders, error: rErr } = await admin
-        .from("renders").select("video_key, poster_key, stream_uid").in("listing_id", ids);
-      if (rErr) throw new HttpError(500, `Deletion aborted — render key enumeration failed: ${rErr.message}`);
-      for (const row of (renders ?? []) as { video_key: string | null; poster_key: string | null; stream_uid: string | null }[]) {
-        if (row.video_key) payload.r2.push({ bucket: R2_BUCKET_RENDERS, key: row.video_key });
-        if (row.poster_key) payload.r2.push({ bucket: R2_BUCKET_RENDERS, key: row.poster_key });
-        if (row.stream_uid) payload.stream_uids.push(row.stream_uid);
-      }
-    }
-
-    // CRM cleanup targets: the org's captured lead emails (pushed to GHL),
-    // paired with the org so cleanup can check THIS org's tag on the contact
-    // rather than deleting by email alone (cross-tenant deletion, audit).
-    const { data: leadRows, error: lErr } = await admin
-      .from("leads").select("email").eq("org_id", orgId).not("email", "is", null);
-    if (lErr) throw new HttpError(500, `Deletion aborted — lead enumeration failed: ${lErr.message}`);
-    for (const row of (leadRows ?? []) as { email: string | null }[]) {
-      if (row.email) payload.ghl_targets.push({ email: row.email, org_id: orgId });
-    }
-  }
-  // Dedupe by (org, email): the same lead can appear more than once for one
-  // org, but the same email across TWO of this user's own orgs still needs a
-  // cleanup pass each, since each carries its own tag on the shared contact.
-  {
-    const seen = new Set<string>();
-    payload.ghl_targets = payload.ghl_targets.filter((t) => {
-      const k = `${t.org_id}|${t.email.toLowerCase()}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
-
-  // Profile read failure is NOT ignorable: silently losing the Apple refresh
-  // token means the grant is never revoked and nothing records that (audit).
-  const { data: profile, error: profErr } = await admin
-    .from("profiles").select("apple_refresh_token, email").eq("id", userId).maybeSingle();
-  if (profErr) {
-    throw new HttpError(500, `Deletion aborted — profile lookup failed: ${profErr.message}`);
-  }
-  payload.apple_refresh_token = (profile?.apple_refresh_token as string | null) ?? null;
-
-  // These two run through processPayload alongside R2/Stream/CRM/Apple (Phase
-  // 6) so `cleanup_complete` — computed AFTER that phase — is honest about
-  // them too. Before this fix both ran later, unconditionally, with a failure
-  // recorded as a warning only; the tombstone had already been marked
-  // `completed` and the response could already say `cleanup_complete: true`
-  // by the time either one even ran (P0-4).
-  payload.analytics_user_id = userId;
-  payload.profile_id = userId;
-
-  // ── Phase 2: tombstone FIRST. If this fails, nothing has been destroyed.
-  const { data: tombstone, error: tErr } = await admin
-    .from("deletion_requests")
-    .insert({
-      user_id: userId,
-      email: userEmail ?? (profile?.email as string | null) ?? null,
-      status: "processing",
-      attempts: 1,
-      payload: payload as unknown as Record<string, unknown>,
-    })
-    .select("id")
-    .single();
-  if (tErr) throw new HttpError(500, `Deletion aborted — could not record the deletion request: ${tErr.message}`);
-  const requestId = tombstone.id as string;
-
-  // ── Phase 3: immediate share-link revocation (tours 404 from this moment).
-  for (const ids of chunk(allListingIds)) {
-    await step("revoke share links", () =>
-      admin.from("renders").update({ published_at: null }).in("listing_id", ids));
-  }
-
-  // ── Phase 4: shared orgs — reassign authored listings, drop membership.
-  for (const orgId of sharedOrgs) {
-    const { data: others, error } = await admin
-      .from("memberships").select("user_id, role").eq("org_id", orgId).neq("user_id", userId);
-    if (error || !others || others.length === 0) {
-      warnings.push(`org ${orgId}: no other member found to reassign listings to`);
-    } else {
-      others.sort((a, b) => (ROLE_RANK[a.role as string] ?? 9) - (ROLE_RANK[b.role as string] ?? 9));
-      const heir = others[0].user_id as string;
-      await step(`reassign listings in shared org ${orgId}`, () =>
-        admin.from("listings").update({ agent_id: heir }).eq("org_id", orgId).eq("agent_id", userId));
-    }
-    await step(`leave shared org ${orgId}`, () =>
-      admin.from("memberships").delete().eq("org_id", orgId).eq("user_id", userId));
-  }
-
-  // ── Phase 5: purge solo-org rows, children first (targets already collected).
-  for (const orgId of soloOrgs) {
-    await step("delete metering (org)", () => admin.from("metering").delete().eq("org_id", orgId));
-    await step("delete leads (org)", () => admin.from("leads").delete().eq("org_id", orgId));
-    await step("delete cost_ledger (org)", () => admin.from("cost_ledger").delete().eq("org_id", orgId));
-  }
-  await deleteIn("delete metering (renders)", "metering", "render_id", allRenderIds);
-  await deleteIn("delete leads (renders)", "leads", "render_id", allRenderIds);
-  await deleteIn("delete leads (listings)", "leads", "listing_id", allListingIds);
-  await deleteIn("delete cost_ledger (jobs)", "cost_ledger", "job_id", allJobIds);
-  await deleteIn("delete renders", "renders", "listing_id", allListingIds);
-  await deleteIn("delete render_jobs", "render_jobs", "listing_id", allListingIds);
-  await deleteIn("delete capture_chapters", "capture_chapters", "asset_id", allAssetIds);
-  await deleteIn("delete capture_assets", "capture_assets", "listing_id", allListingIds);
-  await deleteIn("delete photos", "photos", "listing_id", allListingIds);
-  for (const orgId of soloOrgs) {
-    await step("delete listings", () => admin.from("listings").delete().eq("org_id", orgId));
-    await step("delete memberships", () => admin.from("memberships").delete().eq("org_id", orgId));
-    await step(`delete org ${orgId}`, () => admin.from("orgs").delete().eq("id", orgId));
-  }
-
-  // ── Phase 6: external cleanup, inline attempt. Leftovers stay tombstoned.
-  const { remaining, notes } = await processPayload(payload);
-  warnings.push(...notes);
-
-  // Any row-deletion or share-revocation failure above becomes a RETRYABLE
-  // payload, not just a warning — the sweeper re-runs it until it drains
-  // (audit round 4: these were silently non-retryable while the response
-  // still reported ok:true).
-  if (warnings.length > 0) {
-    remaining.db = {
-      org_ids: soloOrgs,
-      listing_ids: allListingIds,
-      render_ids: allRenderIds,
-      job_ids: allJobIds,
-      asset_ids: allAssetIds,
-    };
-  }
-
-  // `cleanup_complete` is computed from the ACTUAL outcome of every
-  // destructive step, including analytics-forget and the profile row —
-  // both of which just ran inside processPayload() above, not after this
-  // point. Before this fix they ran later and unconditionally, past the
-  // tombstone write below: a failure there was recorded as a warning only,
-  // while the tombstone was already `completed` and the response could
-  // already say `cleanup_complete: true` (P0-4 — Apple requires that a
-  // reported deletion actually finished).
-  const cleanupComplete = payloadEmpty(remaining) && warnings.length === 0;
-  await step("update deletion request", () =>
-    admin.from("deletion_requests").update({
-      status: cleanupComplete ? "completed" : "pending",
-      payload: remaining as unknown as Record<string, unknown>,
-      last_error: warnings.length ? warnings.slice(0, 10).join(" | ").slice(0, 2000) : null,
-      completed_at: cleanupComplete ? new Date().toISOString() : null,
-    }).eq("id", requestId));
-
-  // ── Phase 7: the auth record. This MUST succeed — the account is not
-  // "deleted" while its sign-in record still exists, whatever else is still
-  // draining in the background. Deliberately unconditional: analytics/profile/
-  // R2/Stream/CRM/Apple leftovers stay queued for the sweeper (reported above
-  // and in `pending` below) rather than blocking the one step Apple's account-
-  // deletion requirement is actually about.
-  const { error: authErr } = await admin.auth.admin.deleteUser(userId);
-  if (authErr) {
-    return json({
-      ok: false,
-      deletion_request_id: requestId,
-      error: `Account data was removed but the sign-in record could not be deleted: ${authErr.message}`,
-      ...(warnings.length ? { warnings } : {}),
-    }, 500);
-  }
-
-  return json({
-    ok: true,
-    deletion_request_id: requestId,
-    deleted_orgs: soloOrgs.length,
-    left_orgs: sharedOrgs.length,
-    // Honest per P0-4: true only when payloadEmpty(remaining) — every
-    // destructive step, analytics and profile included, actually finished.
-    // `ok` stays true above regardless: the auth record — the account itself
-    // — is gone either way, which is what Apple's requirement is about.
-    cleanup_complete: cleanupComplete,
-    pending: {
-      r2_objects: remaining.r2.length,
-      stream_videos: remaining.stream_uids.length,
-      crm_contacts: remaining.ghl_targets.length,
-      apple_revocation: Boolean(remaining.apple_refresh_token),
-      analytics_cleanup: Boolean(remaining.analytics_user_id),
-      profile_row: Boolean(remaining.profile_id),
-    },
-    ...(warnings.length ? { warnings } : {}),
-  });
+async function handleDelete(userId: string, _userEmail: string | null): Promise<Response> {
+  return await deleteAccount(adminClient(), userId, processPayload);
 }
 
-// ── POST /me/sweep-deletions (service-role) ───────────────────────────────────
-// Retries pending tombstones until their payloads drain. Wire to a schedule
-// (Supabase cron → this endpoint with the service key) — see the runbook.
-
 async function sweepDeletions(): Promise<Response> {
-  const admin = adminClient();
-  // Pick up `pending` AND stranded `processing` rows. A tombstone is inserted
-  // as `processing` before any destruction; if the request then times out or
-  // the status update itself fails, the row would sit in `processing` forever
-  // and never be retried (audit: the sweeper only read `pending`). Anything
-  // still `processing` after 15 minutes is by definition stranded.
-  const stranded = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-  const { data: rows, error } = await admin
-    .from("deletion_requests")
-    .select("id, payload, attempts, status")
-    .or(`status.eq.pending,and(status.eq.processing,requested_at.lt.${stranded})`)
-    .order("requested_at", { ascending: true })
-    .limit(5);
-  if (error) throw new HttpError(500, `Sweep query failed: ${error.message}`);
-
-  let processed = 0;
-  for (const row of rows ?? []) {
-    const raw = (row.payload ?? {}) as Record<string, unknown>;
-    const rawGhlTargets = Array.isArray(raw.ghl_targets) ? raw.ghl_targets as unknown[] : [];
-    const payload: DeletionPayload = {
-      r2: Array.isArray(raw.r2) ? raw.r2 as R2Object[] : [],
-      stream_uids: Array.isArray(raw.stream_uids) ? raw.stream_uids as string[] : [],
-      ghl_targets: rawGhlTargets.filter((t): t is GhlCleanupTarget =>
-        Boolean(t) && typeof t === "object" &&
-        typeof (t as Record<string, unknown>).email === "string" &&
-        typeof (t as Record<string, unknown>).org_id === "string"
-      ),
-      apple_refresh_token: (raw.apple_refresh_token as string | null) ?? null,
-      analytics_user_id: (raw.analytics_user_id as string | null) ?? null,
-      profile_id: (raw.profile_id as string | null) ?? null,
-      db: (raw.db as DeletionPayload["db"]) ?? undefined,
-    };
-    const { remaining, notes } = await processPayload(payload);
-    const done = payloadEmpty(remaining);
-    await admin.from("deletion_requests").update({
-      status: done ? "completed" : "pending",
-      payload: remaining as unknown as Record<string, unknown>,
-      attempts: (row.attempts as number ?? 0) + 1,
-      last_error: notes.length ? notes.slice(0, 10).join(" | ").slice(0, 2000) : null,
-      completed_at: done ? new Date().toISOString() : null,
-    }).eq("id", row.id);
-    processed++;
-  }
-  return json({ ok: true, processed });
+  return await sweepAccounts(adminClient(), processPayload);
 }

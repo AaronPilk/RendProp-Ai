@@ -1,13 +1,12 @@
 // me/logic.ts — the pure decision logic behind DELETE /me and its sweeper,
-// split out of index.ts so it can be unit-tested (index.ts calls Deno.serve at
-// import time and cannot be imported by a test — same split as
-// events/schema.ts and apple-subscriptions/logic.ts).
+// split out so pure policy tests do not need a server fixture. deletion.test.ts
+// separately captures Deno.serve and tests the actual index.ts handler.
 //
 // Two audit findings live here:
 //
 //   P0-4  cleanup_complete must be TRUE only when every destructive step
 //         actually finished. payloadEmpty() is the single source of truth for
-//         that: index.ts computes `cleanupComplete` from it AFTER every step
+//         that: deletion.ts cross-checks the DB completion receipt AFTER every step
 //         (including the analytics-forget and profile-row steps, which used to
 //         run after the tombstone was already marked completed) has run, never
 //         before.
@@ -38,10 +37,19 @@ export interface DeletionPayload {
   analytics_user_id?: string | null;
   /** Set while the `profiles` row still needs deleting. */
   profile_id?: string | null;
-  /** Row deletions that FAILED and must be retried. Previously these were
-   * warnings only, so a failed row delete (or share-link revocation) was never
-   * retried while the response still said ok:true — data retained, nobody
-   * chasing it (audit round 4). */
+  /** Auth deletion is a durable target too; a failed admin delete must retry. */
+  auth_user_id?: string | null;
+  /** Frozen GPU leases: only durable provider removal + termination clears one. */
+  provider_leases?: { job_id: string; lease_token: string }[];
+  multipart_uploads?: { bucket: string; key: string; upload_id: string }[];
+  /** CREATE response lost before an upload ID was journaled. Never guess it gone. */
+  unresolved_uploads?: { operation_id: string; bucket: string; key: string }[];
+  /** Old render workers have no durable remote-lifetime/cleanup journal. */
+  unresolved_render_jobs?: string[];
+  /** Late presigned/claimed writes must expire before final object erasure. */
+  storage_not_before?: string | null;
+  /** Historical payload only. New receipt-driven cleanup rejects this field;
+   * legacy requests require manual ownership reconciliation, never raw IDs. */
   db?: {
     org_ids?: string[];
     listing_ids?: string[];
@@ -66,7 +74,9 @@ export function dbEmpty(d: DeletionPayload["db"]): boolean {
 export function payloadEmpty(p: DeletionPayload): boolean {
   return p.r2.length === 0 && p.stream_uids.length === 0 &&
     p.ghl_targets.length === 0 && !p.apple_refresh_token &&
-    !p.analytics_user_id && !p.profile_id && dbEmpty(p.db);
+    !p.analytics_user_id && !p.profile_id && !p.auth_user_id && dbEmpty(p.db) &&
+    !p.provider_leases?.length && !p.multipart_uploads?.length &&
+    !p.unresolved_uploads?.length && !p.unresolved_render_jobs?.length && !p.storage_not_before;
 }
 
 export function chunk<T>(items: T[], size = 200): T[][] {
