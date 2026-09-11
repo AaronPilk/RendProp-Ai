@@ -9,7 +9,7 @@ apt-get update
 apt-get install -y --no-install-recommends git build-essential libgl1 libglib2.0-0 ffmpeg
 git clone --depth 1 --branch v1.5.3 https://github.com/nerfstudio-project/gsplat.git /opt/gsplat-phase-a
 test "$(git -C /opt/gsplat-phase-a rev-parse HEAD)" = 937e29912570c372bed6747a5c9bf85fed877bae
-python -m pip install -r /opt/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==12.1.1 tyro==0.9.35 ninja
+python -m pip install --no-build-isolation -r /opt/gsplat-phase-a/examples/requirements.txt numpy==1.26.4 Pillow==12.1.1 tyro==0.9.35 ninja
 python -m pip install --no-build-isolation -e /opt/gsplat-phase-a
 python -m pip check
 python /opt/gsplat-phase-a/examples/simple_trainer.py --help >/opt/room-experiment/trainer-help.txt

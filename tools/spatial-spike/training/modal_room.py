@@ -13,7 +13,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import stat
+import subprocess
 import sys
 import time
 import uuid
@@ -130,25 +132,38 @@ def cleanup(sb, receipt_path, receipt):
     # This exact path is created only in this exact ephemeral sandbox. The user
     # authorized removal of the remote experiment, not any production objects.
     failures = []
+    handlers = {}
+    # Once cleanup starts, repeated user cancellation must not skip termination.
+    # SIGKILL/process loss still needs the independently enforced provider TTL.
+    def interrupted(signum, _frame):
+        failures.append(f"signal_{signum}")
+    for signum in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        handlers[signum] = signal.signal(signum, interrupted)
     try:
-        sb.filesystem.remove(REMOTE, recursive=True)
-        receipt["remote_copy_delete"] = {"path": REMOTE, "response": "success"}
-    except Exception as exc:
-        receipt["remote_copy_delete"] = {"path": REMOTE, "response": "failed", "error_type": type(exc).__name__}
-        failures.append("remote_copy_delete")
-    try:
-        result = sb.terminate(wait=True)
-        ended = sb.poll()
-        require(ended is not None, "provider still reports running")
-        receipt["terminate"] = {"call": "Sandbox.terminate(wait=True)", "response": result,
-                                "poll_exit_code": ended, "sandbox_id": sb.object_id}
-        record(receipt_path, receipt, "terminated")
-    except Exception as exc:
-        receipt["terminate"] = {"call": "Sandbox.terminate(wait=True)", "error_type": type(exc).__name__}
-        failures.append("terminate")
-        record(receipt_path, receipt, "cleanup_incomplete")
+        try:
+            sb.filesystem.remove(REMOTE, recursive=True)
+            receipt["remote_copy_delete"] = {"path": REMOTE, "response": "success"}
+        except BaseException as exc:
+            receipt["remote_copy_delete"] = {"path": REMOTE, "response": "failed", "error_type": type(exc).__name__}
+            failures.append("remote_copy_delete")
+        finally:
+            try:
+                result = sb.terminate(wait=True)
+                ended = sb.poll()
+                require(ended is not None, "provider still reports running")
+                receipt["terminate"] = {"call": "Sandbox.terminate(wait=True)", "response": result,
+                                        "poll_exit_code": ended, "sandbox_id": sb.object_id}
+                record(receipt_path, receipt, "terminated")
+            except BaseException as exc:
+                receipt["terminate"] = {"call": "Sandbox.terminate(wait=True)", "error_type": type(exc).__name__}
+                failures.append("terminate")
+                record(receipt_path, receipt, "cleanup_incomplete")
     finally:
-        sb.detach()
+        try:
+            sb.detach()
+        finally:
+            for signum, handler in handlers.items():
+                signal.signal(signum, handler)
     require(not failures, "cleanup requires follow-up: " + ",".join(failures))
 
 
@@ -156,11 +171,18 @@ def exec_to_log(sb, argv, timeout, logfile):
     process = sb.exec(*argv, timeout=timeout, text=True)
     # Drain both streams concurrently, without printing remote data or error
     # payloads into chat. These logs are local, private, and outside Git.
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    pool = ThreadPoolExecutor(max_workers=2)
+    completed = False
+    try:
         out = pool.submit(process.stdout.read)
         err = pool.submit(process.stderr.read)
         code = process.wait()
         logfile.write_text(out.result() + err.result())
+        completed = True
+    finally:
+        # On interruption, don't wait for a stalled read before reaching the
+        # caller's provider termination. Termination closes those remote streams.
+        pool.shutdown(wait=completed, cancel_futures=True)
     require(code == 0, f"remote stage failed (exit {code}); inspect private stage log")
 
 
@@ -192,14 +214,24 @@ def collect(sb, target):
     return results
 
 
+def source_binding():
+    source = Path(__file__).resolve().parent
+    repo = source.parents[2]
+    require(not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True).strip(),
+            "source must be committed and clean before rental")
+    return {"commit": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
+            "files": {name: sha(source / name) for name in (*SOURCE_FILES, "modal_room.py")}}
+
+
 def run(modal, dataset, state):
     require(not state.exists(), "experiment state exists; never silently rent again")
     require(state.parent.is_dir() and not state.parent.is_symlink(), "private state parent required")
     files = inventory(dataset)
+    binding = source_binding()
     require(not state.resolve().is_relative_to(dataset.resolve()), "state cannot modify dataset")
     state.mkdir(mode=0o700)
     receipt_path = state / "provider-receipt.json"
-    receipt = {"schema_version": 1, "run_id": str(uuid.uuid4()), "policy": policy(),
+    receipt = {"schema_version": 1, "run_id": str(uuid.uuid4()), "policy": policy(), "source": binding,
                "dataset_files": files, "transferred_files": [], "phase_a_acceptance_complete": False,
                "actual_charge_usd": None, "billing_status": "not_yet_measured"}
     receipt["sandbox_name"] = "room-proof-" + receipt["run_id"]
@@ -297,6 +329,10 @@ def main():
 
 
 if __name__ == "__main__":
+    def request_cleanup(signum, _frame):
+        raise InterruptedError(f"experiment interrupted by signal {signum}")
+    for experiment_signal in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(experiment_signal, request_cleanup)
     try:
         sys.exit(main())
     except Exception as exc:

@@ -138,6 +138,25 @@ class CleanupTests(unittest.TestCase):
         self.sb.terminate.assert_called_once_with(wait=True)
         self.assertEqual(json.loads(self.path.read_text())["remote_copy_delete"]["response"], "failed")
 
+    def test_interrupted_delete_still_terminates_and_restores_handlers(self):
+        import signal
+        original = signal.getsignal(signal.SIGTERM)
+        self.sb.filesystem.remove.side_effect = KeyboardInterrupt()
+        try:
+            with self.assertRaisesRegex(ValueError, "remote_copy_delete"):
+                room.cleanup(self.sb, self.path, self.receipt)
+        except KeyboardInterrupt:
+            self.fail("interrupted remote deletion skipped provider termination")
+        self.sb.terminate.assert_called_once_with(wait=True)
+        self.assertIs(signal.getsignal(signal.SIGTERM), original)
+
+    def test_repeated_signal_during_cleanup_does_not_skip_termination(self):
+        import signal
+        self.sb.filesystem.remove.side_effect = lambda *a, **kw: signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+        with self.assertRaisesRegex(ValueError, "signal_"):
+            room.cleanup(self.sb, self.path, self.receipt)
+        self.sb.terminate.assert_called_once_with(wait=True)
+
     def test_live_provider_readback_stays_failed(self):
         self.sb.poll.return_value = None
         with self.assertRaisesRegex(ValueError, "terminate"):
@@ -172,6 +191,9 @@ class OrchestrationTests(unittest.TestCase):
         self.sb.object_id = "sb-fixture"
         self.sb.terminate.return_value = 137
         self.sb.poll.return_value = 137
+        binding = patch.object(room, "source_binding", return_value={"commit": "synthetic-test"})
+        binding.start()
+        self.addCleanup(binding.stop)
 
     def test_real_run_orders_network_denial_before_data_and_always_terminates(self):
         order = []
@@ -219,6 +241,31 @@ class OrchestrationTests(unittest.TestCase):
         saved = json.loads((self.state / "provider-receipt.json").read_text())
         self.assertEqual(self.modal.Sandbox.from_name.call_args.args, (room.APP_NAME, saved["sandbox_name"]))
         recovered.terminate.assert_called_once_with(wait=True)
+
+
+class CollectionTests(unittest.TestCase):
+    def test_collects_real_contract_without_nonexistent_remote_wrapper_log(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sb = Mock()
+            sb.filesystem.list_files.return_value = []
+            sb.filesystem.stat.return_value.size = 7
+            def copy(remote, local):
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(b"fixture")
+            sb.filesystem.copy_to_local.side_effect = copy
+            result = room.collect(sb, Path(temp) / "download")
+            self.assertEqual(len(result), 4)
+            self.assertNotIn("wrapper.log", [r["path"] for r in result])
+            self.assertEqual(sum(r["bytes"] for r in result), 28)
+
+    def test_size_cap_is_checked_before_downloading(self):
+        with tempfile.TemporaryDirectory() as temp:
+            sb = Mock()
+            sb.filesystem.list_files.return_value = []
+            sb.filesystem.stat.return_value.size = room.MAX_DOWNLOAD
+            with self.assertRaisesRegex(ValueError, "512MiB"):
+                room.collect(sb, Path(temp))
+            sb.filesystem.copy_to_local.assert_not_called()
 
 
 if __name__ == "__main__":

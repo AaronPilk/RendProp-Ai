@@ -50,6 +50,24 @@ The room runner still needs its preflight tests, paid execution, dependency/GPU
 receipt, held-out visual review, pinned SOG conversion and real-phone evidence.
 Neither the GUI checkbox nor a local filename proves a real-room/device test.
 
+Pre-rental execution:17 initial offline tests passed; changing the actual
+creation request's timeout7200→86400 made the lifetime test fail, exit1.
+Independent review of frozen2765324 and installed Modal1.5.3 confirmed the
+provider lifetime, empty-list outbound-deny mode, stream-copy parent creation,
+and termination/readback semantics. It found a local-interruption cleanup gap:
+KeyboardInterrupt during remote deletion could skip the following terminate.
+The hardened version nests termination in cleanup's finally, defers repeated
+signals during cleanup, records source commit/file hashes, and does not let
+stalled log-drain threads postpone reaching termination.21 offline tests now
+pass, including interrupted cleanup and the actual collection contract. Tests
+use synthetic data and SDK doubles; no provider or real room execution is
+inferred. Logs: `/tmp/rendprop-modal-preflight.18BbOI/`.
+
+The actual prepared dataset was rehashed read-only:260 approved adapter files,
+147,134,678 bytes. The provenance file and original sidecars are excluded.
+The billing-report API was queried read-only and is accessible with the
+experiment profile; historical workspace rows were deliberately not emitted.
+
 ## Parallel ownership
 
 | Lane | Isolated branch | Scope |
