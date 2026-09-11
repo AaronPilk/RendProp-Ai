@@ -24,6 +24,12 @@ class RoomPolicyTests(unittest.TestCase):
         self.assertEqual(opts["encrypted_ports"] + opts["unencrypted_ports"] + opts["h2_ports"], [])
         self.assertIn("@sha256:", opts["image"])
 
+    def test_dynamic_network_controls_are_initialized_at_creation(self):
+        modal = SimpleNamespace(Image=SimpleNamespace(from_registry=lambda value: value))
+        opts = room.create_options(modal, "app", {"sandbox_name": "room-test", "run_id": "test"})
+        self.assertEqual(opts.get("outbound_cidr_allowlist"), ["0.0.0.0/0"])
+        self.assertEqual(opts.get("outbound_domain_allowlist"), ["*"])
+
     def test_budget_uses_sandbox_rates_and_not_actual_charge(self):
         p = room.policy()
         self.assertEqual(p["compute_upper_bound_usd"], "4.9110336000")
@@ -215,6 +221,21 @@ class OrchestrationTests(unittest.TestCase):
         self.assertFalse(saved["phase_a_acceptance_complete"])
         self.assertIsNone(saved["actual_charge_usd"])
         self.assertEqual(saved["transferred_files"], ["adapter-report.json"])
+        self.assertEqual([call.kwargs for call in self.sb._experimental_set_outbound_network_policy.call_args_list], [
+            {"outbound_cidr_allowlist": [], "outbound_domain_allowlist": []},
+            {"outbound_cidr_allowlist": ["0.0.0.0/0"], "outbound_domain_allowlist": ["*"]},
+            {"outbound_cidr_allowlist": [], "outbound_domain_allowlist": []},
+        ])
+
+    def test_unsupported_policy_stops_before_setup_or_dataset_transfer(self):
+        self.sb._experimental_set_outbound_network_policy.side_effect = RuntimeError("fixture")
+        self.sb.filesystem.stat.side_effect = FileNotFoundError("fixture")
+        with patch.object(room, "inventory", return_value=[]), patch.object(room, "exec_to_log") as execute:
+            with self.assertRaises(RuntimeError):
+                room.run(self.modal, self.dataset, self.state)
+        execute.assert_not_called()
+        self.sb.filesystem.copy_from_local.assert_not_called()
+        self.sb.terminate.assert_called_once_with(wait=True)
 
     def test_failed_setup_never_transfers_media_and_still_destroys_instance(self):
         self.sb.filesystem.stat.side_effect = FileNotFoundError("fixture")

@@ -123,6 +123,9 @@ def create_options(modal, app, receipt):
     return {"app": app, "name": receipt["sandbox_name"], "image": modal.Image.from_registry(IMAGE),
             "gpu": "L4", "cpu": (4.0, 4.0), "memory": (32768, 32768),
             "timeout": 7200, "region": "us", "volumes": {}, "secrets": [],
+            # Modal requires BOTH dimensions initialized at creation before its
+            # runtime policy API can narrow them. No media is present in setup.
+            "outbound_cidr_allowlist": ["0.0.0.0/0"], "outbound_domain_allowlist": ["*"],
             "encrypted_ports": [], "unencrypted_ports": [], "h2_ports": [],
             "env": {"MAX_JOBS": "4", "OMP_NUM_THREADS": "4", "CUDA_VISIBLE_DEVICES": "0"},
             "tags": {"experiment": "rendprop-one-room-20260910", "run": receipt["run_id"]}}
@@ -248,6 +251,11 @@ def run(modal, dataset, state):
         sb = modal.Sandbox.create(**create_options(modal, app, receipt))
         record(receipt_path, receipt, "allocated", sandbox_id=sb.object_id)
         sb.filesystem.make_directory(REMOTE)
+        # Exercise the provider's actual policy API before paying for dependency
+        # compilation. A local fake cannot prove this account/runtime supports it.
+        sb._experimental_set_outbound_network_policy(outbound_cidr_allowlist=[], outbound_domain_allowlist=[])
+        sb._experimental_set_outbound_network_policy(outbound_cidr_allowlist=["0.0.0.0/0"], outbound_domain_allowlist=["*"])
+        record(receipt_path, receipt, "network_policy_api_ready")
         source = Path(__file__).parent
         for name in SOURCE_FILES:
             sb.filesystem.copy_from_local(source / name, f"{REMOTE}/{name}")

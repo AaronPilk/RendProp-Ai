@@ -109,6 +109,31 @@ allocation may proceed only after preserving/reconciling the first marker;
 two full provider-lifetime compute bounds totalUSD9.8220672000, belowUSD25.
 There is no automatic retry or permission to keep tuning a completed bad room.
 
+### Second allocated host — setup passed, network-policy transition rejected
+
+Source a254e1f, private state `modal-room-20260910-03`; CLI exited1. The pinned
+GLM fix worked: CUDA compilation, pip check, actual trainer help, LPIPS weight
+cache and GPU check all completed. The recorded device is NVIDIA L4,23034MiB,
+driver580.95.05; Torch2.7.1+cu128. The subsequent provider policy call raised
+ConflictError **before any room transfer**. Modal's current networking guide
+requires each allowlist type to be specified at Sandbox creation before it can
+be updated dynamically. The original call omitted both. SDK method existence
+and a local mock did not establish that runtime prerequisite.
+
+Corrective request initializes both types, then exercises deny→reopen BEFORE
+dependency setup, then denies again before any room transfer. An actual-request
+negative test fails on the prior source;24 offline tests pass after correction,
+including refusal before setup/transfer if the provider rejects policy changes.
+See [provider dynamic-policy limitations](https://modal.com/docs/guide/sandbox-networking).
+
+Remote experiment removal succeeded; terminate and separate poll both returned
+137; exact-app provider list returned0 active. At01:46:44UTC the provider
+reported **USD0.49112346 cumulative metered usage for both hosts**, not an
+estimate and not a finalized invoice. Their markers/receipts stay preserved.
+A third bounded setup attempt remains withinUSD25 even reserving three full
+two-hour compute lifetimes (USD14.7331008000). No reconstruction has executed
+or been quality-tuned; further retries still require explicit reconciliation.
+
 ## Parallel ownership
 
 | Lane | Isolated branch | Scope |
