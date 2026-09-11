@@ -8,12 +8,24 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+**LATEST follow-up: deployed-browser failure independently reproduced, 23:38UTC.**
+[`VIEWER-UPLOAD-RECOVERY-20260911.md`](../../releases/VIEWER-UPLOAD-RECOVERY-20260911.md)
+is the current work log. Live `/spatial-viewer.js` returns200 but its manifest
+decoder throws `ReferenceError: __name is not defined`. The previous local
+room preview exercised the production **source through Deno**, not Wrangler's
+emitted Worker/browser bundle. Its successful render does not prove deployed
+viewer execution. That distinction corrects the wording below, not the observed
+local render or its unacceptable room quality. Viewer build regression and
+bounded, explicit interrupted-upload Restart are being implemented on separate
+branches. No new deployment, GPU run, budget change or Apple operation has
+occurred in this follow-up. Do not describe these in-progress fixes as shipped.
+
 **LATEST evening integration and real-room result:**
 [`SPATIAL-INTEGRATION-EVENING-20260911.md`](../../releases/SPATIAL-INTEGRATION-EVENING-20260911.md).
 Controlled live upload/publication passed. A fresh GPU allocation succeeded and
 the owner's153-frame room trained; actual model and held-out renders retrieved,
-remote-copy removal/termination confirmed. The model loads in the production
-viewer locally, but substantial blur means visual acceptance FAILS. Disabled,
+remote-copy removal/termination confirmed. The model loads through production
+viewer source in a local Deno preview, but substantial blur means visual acceptance FAILS. Disabled,
 unscheduled Modal controller now passes a real remote invocation after two
 deployment defects were fixed. Deletion0039/me/provider0041 and general upload
 recovery are integrated and regression-tested in source, not deployed. Spatial

@@ -3,6 +3,13 @@
 September 11, 2026. Integration branch `feat/spatial-release-integration-20260911`.
 Read this before older STATUS entries. **Not a whole-app GO or a new phone build.**
 
+**Correction, September11 23:38UTC:** the browser test below exercised the
+production TypeScript source via Deno, not Wrangler's emitted deployment bundle.
+Independent execution of the live browser asset now confirms a missing `__name`
+helper in the manifest decoder. The local room really rendered, but that result
+cannot establish that the deployed viewer works. See the newer
+[viewer/upload recovery work log](VIEWER-UPLOAD-RECOVERY-20260911.md).
+
 ## Actual outcomes
 
 1. **Live upload/publication proof passed.** Three synthetic files traversed
@@ -86,7 +93,7 @@ Added local-only acceptance tooling:
   PlayCanvas2.22.1 engine served locally instead of CDN. The viewer itself is
   unchanged. This server must never be deployed as production authorization.
 
-Real production viewer on that fixture passed size/digest/SOG checks and showed
+Production viewer source on that local Deno fixture passed size/digest/SOG checks and showed
 the room from the capture-derived starting position. Its actual canvas-draw
 gate changed status to "Private preview — not published." Forward controls
 and drag were exercised and the rendered viewpoint changed. Top-down toggled
