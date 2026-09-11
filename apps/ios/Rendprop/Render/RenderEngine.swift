@@ -580,58 +580,120 @@ enum RenderEngine {
         guard writer.canAdd(writerInput) else { throw RenderError.cannotBuild }
         writer.add(writerInput)
 
-        guard reader.startReading() else { throw reader.error ?? RenderError.cannotBuild }
-        guard writer.startWriting() else { throw writer.error ?? RenderError.cannotBuild }
-        writer.startSession(atSourceTime: .zero)
+        // Ownership transfers here. No caller touches these non-Sendable AV
+        // objects again; start, pump, cancellation and finish all use one queue.
+        try await EncodeSession(reader: reader, output: readerOutput, writer: writer,
+                                input: writerInput, queue: queue, cancelFlag: cancelFlag,
+                                duration: outDuration.seconds, progress: progress).run()
+    }
 
-        let totalSeconds = max(0.01, outDuration.seconds)
+    /// AVFoundation's ready/finish callbacks are Sendable, but its mutable
+    /// reader/writer objects are not. A blanket import annotation only hides
+    /// that mismatch. This owner instead confines ALL post-setup access to the
+    /// render's serial queue, including writer completion and error teardown.
+    /// `@unchecked` is justified by that confinement, not by assuming AV objects
+    /// are thread-safe. Entry preconditions make an accidental off-queue use
+    /// fail loudly. Only the existing lock-protected CancelFlag crosses queues.
+    private final class EncodeSession: @unchecked Sendable {
+        private enum Phase { case idle, reading, finishing, terminal }
+        private let reader: AVAssetReader
+        private let output: AVAssetReaderVideoCompositionOutput
+        private let writer: AVAssetWriter
+        private let input: AVAssetWriterInput
+        private let queue: DispatchQueue
+        private let cancelFlag: CancelFlag
+        private let duration: Double
+        private let progress: @Sendable (Double) -> Void
+        private var phase = Phase.idle
+        private var continuation: CheckedContinuation<Void, Error>?
 
-        do {
-            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                writerInput.requestMediaDataWhenReady(on: queue) {
-                    while writerInput.isReadyForMoreMediaData {
-                        if cancelFlag.isCancelled {
-                            reader.cancelReading(); writerInput.markAsFinished()
-                            cont.resume(throwing: RenderError.cancelled); return
+        init(reader: AVAssetReader, output: AVAssetReaderVideoCompositionOutput,
+             writer: AVAssetWriter, input: AVAssetWriterInput, queue: DispatchQueue,
+             cancelFlag: CancelFlag, duration: Double,
+             progress: @escaping @Sendable (Double) -> Void) {
+            self.reader = reader; self.output = output
+            self.writer = writer; self.input = input; self.queue = queue
+            self.cancelFlag = cancelFlag; self.duration = max(0.01, duration)
+            self.progress = progress
+        }
+
+        func run() async throws {
+            try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                    queue.async { self.start(cont) }
+                }
+            } onCancel: {
+                // Backpressure may stop ready callbacks entirely. Cancellation
+                // must wake the owner rather than wait for another media frame.
+                self.cancelFlag.cancel()
+                self.queue.async { self.finish(.failure(RenderError.cancelled)) }
+            }
+        }
+
+        private func start(_ cont: CheckedContinuation<Void, Error>) {
+            dispatchPrecondition(condition: .onQueue(queue))
+            precondition(phase == .idle, "An encode session may only start once")
+            continuation = cont
+            if cancelFlag.isCancelled { finish(.failure(RenderError.cancelled)); return }
+            guard reader.startReading() else { finish(.failure(reader.error ?? RenderError.cannotBuild)); return }
+            guard writer.startWriting() else { finish(.failure(writer.error ?? RenderError.cannotBuild)); return }
+            writer.startSession(atSourceTime: .zero)
+            phase = .reading
+            // run() retains the owner until completion; the input must not form
+            // a permanent owner -> input -> callback -> owner retain cycle.
+            input.requestMediaDataWhenReady(on: queue) { [weak self] in self?.pump() }
+        }
+
+        private func pump() {
+            dispatchPrecondition(condition: .onQueue(queue))
+            // Ready callbacks already enqueued before EOF/cancel may arrive
+            // later. They must not touch the writer or resume a second time.
+            guard phase == .reading else { return }
+            while phase == .reading && input.isReadyForMoreMediaData {
+                if cancelFlag.isCancelled { finish(.failure(RenderError.cancelled)); return }
+                autoreleasepool {
+                    if let sample = output.copyNextSampleBuffer() {
+                        let seconds = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+                        progress(min(1.0, seconds / duration))
+                        if !input.append(sample) { finish(.failure(writer.error ?? RenderError.cannotBuild)) }
+                    } else if reader.status == .cancelled || cancelFlag.isCancelled {
+                        // EOF after cancellation is not a completed tour.
+                        finish(.failure(RenderError.cancelled))
+                    } else if reader.status != .completed {
+                        finish(.failure(reader.error ?? RenderError.cannotBuild))
+                    } else {
+                        phase = .finishing
+                        input.markAsFinished()
+                        writer.finishWriting {
+                            // The completion callback has no promised executor.
+                            self.queue.async { self.writerFinished() }
                         }
-                        var didResume = false
-                        autoreleasepool {
-                            if let sample = readerOutput.copyNextSampleBuffer() {
-                                let pts = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-                                progress(min(1.0, pts / totalSeconds))
-                                if !writerInput.append(sample) {
-                                    reader.cancelReading(); writerInput.markAsFinished()
-                                    cont.resume(throwing: writer.error ?? RenderError.cannotBuild)
-                                    didResume = true
-                                }
-                            } else {
-                                writerInput.markAsFinished()
-                                if reader.status == .failed {
-                                    cont.resume(throwing: reader.error ?? RenderError.cannotBuild)
-                                } else if reader.status == .cancelled || cancelFlag.isCancelled {
-                                    // A cancelled reader hits EOF early — finishing
-                                    // the writer here would ship a TRUNCATED tour.
-                                    cont.resume(throwing: RenderError.cancelled)
-                                } else {
-                                    cont.resume(returning: ())
-                                }
-                                didResume = true
-                            }
-                        }
-                        if didResume { return }
                     }
                 }
             }
-        } catch {
-            // Tear down cleanly so the partial file can be deleted (the caller
-            // removes outURL) and AVFoundation doesn't dealloc a live writer.
-            if reader.status == .reading { reader.cancelReading() }
-            if writer.status == .writing { writer.cancelWriting() }
-            throw error
         }
 
-        await writer.finishWriting()
-        guard writer.status == .completed else { throw writer.error ?? RenderError.cannotBuild }
+        private func writerFinished() {
+            dispatchPrecondition(condition: .onQueue(queue))
+            guard phase == .finishing else { return }
+            if cancelFlag.isCancelled { finish(.failure(RenderError.cancelled)) }
+            else if writer.status == .completed { finish(.success(())) }
+            else { finish(.failure(writer.error ?? RenderError.cannotBuild)) }
+        }
+
+        private func finish(_ result: Result<Void, Error>) {
+            dispatchPrecondition(condition: .onQueue(queue))
+            // Cancellation can arrive before start installs its continuation;
+            // start observes CancelFlag. Late/duplicate callbacks are harmless.
+            guard let cont = continuation else { return }
+            continuation = nil
+            phase = .terminal
+            if case .failure = result {
+                if reader.status == .reading { reader.cancelReading() }
+                if writer.status == .writing { writer.cancelWriting() }
+            }
+            cont.resume(with: result)
+        }
     }
 
     // MARK: - Transform + smoothing helpers
