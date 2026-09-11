@@ -8,6 +8,12 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
+Latest intake: [`CAPTURE-INTAKE-20260911.md`](CAPTURE-INTAKE-20260911.md).
+The owner's new153-frame/76-second export passes full local input validation;
+all307 file hashes match the private working copy, and a9,226-seed dataset is
+prepared locally. Sampled frames expose blur risk. This is neither GPU training
+nor a phone walkthrough; the earlier256-frame experiment is preserved.
+
 Read [`PHONE-READINESS-20260911.md`](PHONE-READINESS-20260911.md) first for the
 fresh branch/provider readback. Latest recorded phone build18 captures/exports,
 but no real-room 3D walkthrough or new TestFlight binary is available. The GPU
