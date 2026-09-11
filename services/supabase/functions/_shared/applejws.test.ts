@@ -921,13 +921,14 @@ Deno.test("S1: productToPlan never resolves off Object.prototype", () => {
 
 Deno.test("S1: appAccountToken and a Unicode productId survive the decode intact", async () => {
   const chain = await buildChain();
-  const token = "0d1c8f8e-9a6b-4f1e-9d2c-7b3a5e6f0011";
+  // Deliberately synthetic UUID: valid shape, never a real customer/account.
+  const SYNTHETIC_APP_ACCOUNT_TOKEN = "00000000-0000-4000-8000-000000000001";
   const jws = await signJws(chain, transactionPayload({
-    appAccountToken: token,
+    appAccountToken: SYNTHETIC_APP_ACCOUNT_TOKEN,
     productId: "com.rendprop.app.prо.monthly", // Cyrillic 'о' — a homograph
   }));
   const decoded = decodeTransaction(await verifyAppleJWS(jws, { trustRoot: chain.rootDer }));
-  assertEquals(decoded.appAccountToken, token);
+  assertEquals(decoded.appAccountToken, SYNTHETIC_APP_ACCOUNT_TOKEN);
   // The homograph is NOT one of the six products we sell, so it maps to no
   // plan and POST /me/entitlement 400s it.
   assertEquals(productToPlan(decoded.productId), null);

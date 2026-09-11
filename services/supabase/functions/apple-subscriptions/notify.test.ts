@@ -290,7 +290,10 @@ Deno.test("a product this build does not sell maps to no plan at all", () => {
 // ── The stored summary ───────────────────────────────────────────────────────
 
 Deno.test("the stored notification summary carries no signed blob and no token", () => {
-  const f = facts({ transaction: tx({ appAccountToken: "0d1c8f8e-9a6b-4f1e-9d2c-7b3a5e6f0011" }) });
+  // Bind the sentinel and its absence check: this is synthetic, not redacted
+  // production data, and changing it cannot silently weaken the assertion.
+  const SYNTHETIC_APP_ACCOUNT_TOKEN = "00000000-0000-4000-8000-000000000001";
+  const f = facts({ transaction: tx({ appAccountToken: SYNTHETIC_APP_ACCOUNT_TOKEN }) });
   const summary = summariseNotification({
     notificationType: "DID_RENEW",
     notificationUUID: f.uuid,
@@ -310,6 +313,8 @@ Deno.test("the stored notification summary carries no signed blob and no token",
   assert(!serialized.includes("signedTransactionInfo"), "no signed transaction blob");
   assert(!serialized.includes("signedRenewalInfo"), "no signed renewal blob");
   assert(!serialized.includes("eyJ"), "no JWS of any kind");
+  assert(!serialized.includes(SYNTHETIC_APP_ACCOUNT_TOKEN), "no appAccountToken value");
+  assert(!serialized.includes("appAccountToken"), "no appAccountToken field");
   assertEquals(summary.notificationUUID, f.uuid);
   assertEquals(summary.environment, "Production");
 });
