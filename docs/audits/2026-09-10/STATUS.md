@@ -6,7 +6,29 @@ Read the standing brief first; its production-data, provider, Apple and frozen
 motion-prompt constraints remain in force. Never substitute an intended test
 for an executed result. Every later checkpoint must preserve open findings.
 
-## Latest integrated checkpoint — 20:30 Eastern
+## Read first: final tested and pushed code checkpoint
+
+- **Branch:** `audit/full-regression-20260910`, pushed to `AaronPilk/RendProp-Ai`.
+- **Latest tested code:** `a9b13b1f1b66fee1f52fdd566e7de82f8b272b3b`.
+  Subsequent commits update documentation only; do not confuse them with a new
+  application build or an additional test run.
+- **Latest completed hosted run:**
+  [34546654166](https://github.com/AaronPilk/RendProp-Ai/actions/runs/34546654166),
+  seven passing jobs and three failing jobs, overall FAILURE. Edge:602 tests;
+  host:2,266 assertions plus12 self-tests. Both database jobs retain the AI
+  headroom mismatch; the historical scanner findings remain classified/open.
+- **Product delivery:** source fixes and this handoff are on GitHub. No
+  production deployment, TestFlight upload or Apple review change was made.
+- **Spatial outcome:** the app is live, but build18 only captures/exports.
+  Hosted reconstruction of the owner's real room and a navigable viewer are
+  still unfinished. Do not tell the owner to operate a local GPU as the product.
+
+The detailed checkpoint history below preserves commands, corrections and
+evidence. Earlier counts and source commits are historical, not competing
+claims about the latest run. For the next engineer, continue with the ranked
+open-work list rather than repeating completed tests as unfinished work.
+
+## Integrated checkpoint history — September10 evening
 
 Base combined checkpoint: **`68f39a24c9d685cc198dee3c899bf15a672716cd`** on
 `audit/full-regression-20260910`. The app is live; these changes are source
@@ -41,7 +63,7 @@ Completed and independently reviewed in this branch:
   isolated PostgreSQL16 execution and seven-day receipt/log artifacts. No red
   invariant is skipped or converted into success. See `CI-PUBLICATION-GATES.md`.
 
-Latest root-executed edge run: **598 tests,0 failures/ignored;21/21 entrypoint
+Root-executed edge run on that base checkpoint: **598 tests,0 failures/ignored;21/21 entrypoint
 checks; actual Turnstile fail-open mutant rejected**. Clean source remained
 unchanged. Receipt `/tmp/rendprop-edge-audit-o5on_vp_/receipt.json`.
 Root also reran all ten worker scripts on this same clean checkpoint:
@@ -69,8 +91,8 @@ privacy/Terms reconciliation and device coverage. The ranked next-work list is
 below. Reports preserve those residuals instead of marking entire historical
 P0 categories FIXED based on these narrower publication repairs.
 
-The tested code and unit branches were pushed. Latest tested code is now
-**7b60ada**: the subsequent timer-type and lazy-Deno.serve descriptor fixture
+The tested code and unit branches were pushed. Intermediate tested code
+**7b60ada** contains the subsequent timer-type and lazy-Deno.serve descriptor fixture
 repairs are proven by actual GitHub run34546017429. **602 edge tests and all21
 entrypoints pass on hosted Deno2.9.6**, and the local same-source gate also
 passes602 with the Turnstile mutant detected. Its receipt is

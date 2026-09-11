@@ -34,7 +34,8 @@ web architecture/style contracts are not a shipped agent web app or a completed
 editing engine. Scope and evidence live in the current audit documents, not in
 aspirational descriptions of features.
 
-Latest verified code checkpoint: `7b60ada`.602 edge tests and21 entrypoint checks
+Latest verified code checkpoint: **`a9b13b1f1b66fee1f52fdd566e7de82f8b272b3b`**.
+Later commits are documentation-only.602 edge tests and21 entrypoint checks
 pass both locally and on hosted Deno2.9.6 after two fixture-compatibility fixes.
 180 local worker checks pass; the hosted Linux job passes199 including19 actual
 HDR assertions. Actual disposable
@@ -52,20 +53,22 @@ constraint;30.001→30.00 is the real scalar mismatch, now covered. Read the lat
 database report before interpreting older negative-control logs. Public
 privacy/Terms reconciliation remains a proposal, not published legal policy.
 
-Hosted CI has now actually run, not merely been wired: run34546017429 has7
+Hosted CI has now actually run, not merely been wired: final run34546654166 has7
 passing jobs/3 failing jobs, overall failure. Both database jobs retain the
 known headroom failure; the scanner has six historical hits with value-free
 classifications in CI-RUN-34544905277.md. See HOSTED-CI-20260910.md for run/job
 links and the repaired fixture failures; do not interpret a local pass as a
 green full workflow or a production release.
 
-Subsequent product fix: **a9b13b1**, public lead-form bounded confirmation. It
+Latest product fix: **a9b13b1**, public lead-form bounded confirmation. It
 preserves brand/inputs, prevents duplicate submit, requires an actual success
 envelope and UUID (except the intentional honeypot), and handles uncertain
 15-second timeout without automatically sending again. Root's integrated host
 typecheck,2,266 assertions/12 self-tests and2-file asset gate pass;418 assertions
-cover31 emitted-form scenarios. Current hosted follow-up is in STATUS and
-HOSTED-CI-20260910.md. This is source pushed to GitHub, not a Cloudflare deploy.
+cover31 emitted-form scenarios. The same-source hosted run also passed the
+host suite, clean install, typecheck, dry-run bundle and production dependency
+audit. Exact evidence is in STATUS and HOSTED-CI-20260910.md. This is source
+pushed to GitHub, not a Cloudflare deploy.
 
 ---
 
