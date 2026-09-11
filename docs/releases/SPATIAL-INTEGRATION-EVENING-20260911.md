@@ -146,6 +146,15 @@ Later integration changes are not automatically part of this deployed tag.
 The enabled scheduler, real queue polling and queued-job end-to-end processing
 have not been activated or proven.
 
+**Final disabled deployment supersedes tag22ad794:** clean source
+`2063d1ce1978b0984b557f0274739e1388dc6f9c`, tag2063d1c, deployment command exit0
+after41 worker tests. App remains`ap-3wHUEY2SsmWC9wsyqhfJ6e`. Real remote call
+`fc-01M296VCPS4NHJXT2RNHVE6PC6` returned exactly`{"status":"disabled"}`,
+asserted/exit0. This version includes the no-allocation receipt fix.
+The worker's explicit source-inventory fingerprint is
+`b53de07d41f00c0f2e1b2c5bd6a31ad59ab12e297815397602e5cfc5553e36fc`.
+Subsequent documentation-only changes do not alter those uploaded sources.
+
 ## Root's combined test runs
 
 From the integration worktree, not merely another agent's assertion:
@@ -187,7 +196,43 @@ evidence, not a new archive, UI walk or iPhone background-handover test.
 Pre-provider download/validation failure now journals `not_created` atomically
 without granting dispatch or overwriting an older ambiguous allocation. That
 source fix and spatial same-asset renewal are integrated. These later changes
-are not implied deployed by the earlier22ad794 cloud receipt.
+are covered by the final2063d1c disabled cloud receipt above, not the earlier
+22ad794 receipt. The Supabase0039/0041/handler rollout remains separate.
+
+### Final iOS combination
+
+- Actual general uploader harness: **69 assertions,7 compiled mutants caught**,
+  restore green; `/tmp/rendprop-upload-recovery-l6lfdwti/receipt.json`,17 commands.
+- Spatial native harness: **75 assertions,6 compiled mutants caught**, restore
+  green; `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-client-g_yv1yeq/receipt.json`,15 commands.
+- These receipts both assert`accepted:true`. The actual multipart manager is
+  now instantiated and its four-part Pause→settle→Resume behavior exercised,
+  not merely compiled or decoded as a state model.
+- Full generic simulator build on agent commit
+  `00ede93e63448b8b83433b7a4c5406d25f9a9b77` exited0; root read the completed
+  log`/tmp/rendprop-upload-rollout-spatial-pause-final-20260911.log` and verified
+  **zero diff for all `apps/ios` against that commit** after integration.
+  This establishes identical built app source; it is not another full UI walk.
+- Detailed source/tests/remaining caller gaps:
+  [`UPLOAD-PAUSE-RELIABILITY.md`](../audits/2026-09-11/UPLOAD-PAUSE-RELIABILITY.md)
+  and[`SPATIAL-UPLOAD-RENEWAL.md`](../audits/2026-09-11/SPATIAL-UPLOAD-RENEWAL.md).
+
+### Plain-language delivery status for Claude
+
+| Item | State |
+| --- | --- |
+| Controlled live v2 transfer/complete/publication | PASS, three synthetic fixtures; no customer tickets touched |
+| Outstanding ticket recovery | PARTIAL: same-ticket/legacy/general Pause fixed in source; expired-photo Restart and spatial Cancel→Resume still open |
+| Bounded Modal worker | DEPLOYED DISABLED; actual cloud entry passes; no schedule/service secret/production queue activation |
+| Old Modal billing refusal | NOT CURRENT: fresh allocation and training completed; no account limit change |
+| Owner's room | TRAINED and browser-rendered; **visual acceptance FAILED** because of blur/smearing |
+| Spatial/account deletion | Known transactional/spatial omissions fixed and tested in source; paired deployment and historical cleanup still pending |
+| Production generation budget | OFF; activation still requires explicit owner approval |
+| TestFlight/App Review | UNCHANGED by this work |
+
+All application fixes and this context are pushed on
+`feat/spatial-release-integration-20260911`; no merge/force-push to shared main
+or release branches. No room imagery, model or credentials were committed.
 
 ## Remaining work — do not erase these from the handoff
 

@@ -21,6 +21,9 @@ same-asset renewal and general Pause now also pass native regressions/build;
 expired-photo Restart, spatial Cancel→Resume, quality and phone delivery remain open.
 Production spatial budgets remain disabled/zero. No Apple change. Older entries
 below are dated history, not competing claims about current deployments.
+Final disabled worker tag2063d1c passes remote invocation; final iOS native
+checks69+75 assertions and13 compiled mutants pass, matching simulator-built
+app source. Full command receipts and source lineage are in the evening report.
 
 **LATEST controlled live proof,21:02–21:12UTC:**
 [`LIVE-UPLOAD-PROOF-20260911.md`](../../releases/LIVE-UPLOAD-PROOF-20260911.md).
