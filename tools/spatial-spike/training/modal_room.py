@@ -309,7 +309,7 @@ def source_binding():
     require(not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True).strip(),
             "source must be committed and clean before rental")
     return {"commit": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
-            "files": {name: sha(source / name) for name in (*SOURCE_FILES, "modal_room.py")}}
+            "files": {name: sha(source / name) for name in (*SOURCE_FILES, "modal_room.py", "modal_retry.py")}}
 
 
 def run(modal, dataset, state):
@@ -330,7 +330,7 @@ def run(modal, dataset, state):
     sb = None
     creation_attempted = False
     try:
-        app = modal.App.lookup(APP_NAME, create_if_missing=True)
+        app = modal.App.lookup(APP_NAME, create_if_missing=False)
         require(isinstance(app.app_id, str) and app.app_id.startswith("ap-"), "invalid experiment app ID")
         record(receipt_path, receipt, "creation_started", app_id=app.app_id)
         creation_attempted = True

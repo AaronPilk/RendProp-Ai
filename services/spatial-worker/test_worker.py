@@ -18,7 +18,7 @@ REVISION = "33333333-3333-4333-8333-333333333333"
 
 
 def job():
-    return {"id": JOB_ID, "lease_token": LEASE_ID, "room_label": "Living room",
+    return {"id": JOB_ID, "lease_token": LEASE_ID, "attempt_key": REVISION, "room_label": "Living room",
             "deadline_at": (datetime.now(timezone.utc) + timedelta(seconds=7200)).isoformat(),
             "max_seconds": 7200, "max_training_seconds": 900, "max_iterations": 3000, "max_gaussians": 500000, "max_cost_cents": 600,
             "manifest": {"frames": [f"frames/{i:06d}.json" for i in range(20)]},

@@ -9,6 +9,9 @@ import modal
 
 REPO = Path(__file__).resolve().parents[2]
 APP_NAME = "rendprop-spatial-worker"
+# A disabled deployment must stay disabled even if an existing named Secret has
+# an old ENABLED=true value. Runtime activation is a separate reviewed release.
+DEPLOYMENT_ENABLED = False
 app = modal.App(APP_NAME)
 # Reuse the experiment's content-addressed base rather than floating latest.
 image = (modal.Image.from_registry(
@@ -18,6 +21,8 @@ image = (modal.Image.from_registry(
 # receipt, .env file or exported room that somebody puts next to these scripts.
 for relative in (
     "services/spatial-worker/worker.py", "services/spatial-worker/modal_provider.py",
+    "services/spatial-worker/provider_journal.py",
+    "services/spatial-worker/app.py",
     "services/spatial-worker/setup_service.sh", "tools/spatial-spike/training/modal_room.py",
     "tools/spatial-spike/training/run_training.py", "tools/spatial-spike/training/prepare_capture.py",
     "tools/spatial-spike/training/modal_setup.sh", "tools/spatial-spike/viewer/package.json",
@@ -28,7 +33,7 @@ for relative in (
 
 @app.function(image=image, schedule=modal.Period(minutes=1), timeout=7500,
               cpu=(2.0, 2.0), memory=(4096, 4096), ephemeral_disk=8192, max_containers=1, retries=0,
-              region="us", secrets=[modal.Secret.from_name("rendprop-spatial-control-plane")])
+              region="us", secrets=[modal.Secret.from_name("rendprop-spatial-control-plane")] if DEPLOYMENT_ENABLED else [])
 def process_next():
     import sys
     sys.path.insert(0, "/workspace/services/spatial-worker")
@@ -36,7 +41,7 @@ def process_next():
     from modal_provider import ModalProvider
     # The control plane separately refuses queuing/claims when its durable
     # operational budget is disabled. This switch avoids even idle HTTP polls.
-    if os.environ.get("SPATIAL_WORKER_ENABLED") != "true":
+    if not DEPLOYMENT_ENABLED or os.environ.get("SPATIAL_WORKER_ENABLED") != "true":
         return {"status": "disabled"}
     hosts = set(os.environ.get("SPATIAL_INPUT_HOSTS", "").split(",")) - {""}
     require(bool(hosts), "missing_input_origin_allowlist")

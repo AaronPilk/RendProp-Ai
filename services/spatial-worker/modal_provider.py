@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from worker import JobFailure, MAX_OUTPUT_BYTES, TRAINING_ROOT, require
+from provider_journal import ProviderJournal
 
 
 def navigation_manifest(capture, room_label):
@@ -48,7 +49,8 @@ class ModalProvider:
         receipt_path = root / "provider-receipt.json"
         save = lambda: experiment.save(receipt_path, receipt)
         save()
-        sb, attempted = None, False
+        sb, attempted, planned = None, False, False
+        journal = ProviderJournal(lease, job)
         try:
             lease.check()
             remaining = (datetime.fromisoformat(job["deadline_at"].replace("Z", "+00:00"))
@@ -59,12 +61,18 @@ class ModalProvider:
             options = experiment.create_options(self.modal, self.app, receipt)
             options["timeout"] = min(7200, int(remaining) - 120)
             options["tags"] = {"product": "rendprop-spatial", "job": job["id"]}
+            journal.plan(self.app.name, receipt["sandbox_name"])
+            planned = True
+            lease.check()
             attempted = True
             lease.provider_stopped = False
             sb = self.modal.Sandbox.create(**options)
             receipt["sandbox_id"] = sb.object_id
             save()
             lease.abort = lambda: sb.terminate(wait=True)
+            # The ID must outlive this TemporaryDirectory BEFORE any source or
+            # room bytes reach the GPU. A failed acknowledgement triggers cleanup.
+            journal.created(sb.object_id)
             lease.check()
             sb.filesystem.make_directory(experiment.REMOTE)
             # As in the field-tested runner, prove the dynamic network-policy API
@@ -126,6 +134,7 @@ class ModalProvider:
                 # is only for terminating the uniquely named attempt if it exists.
                 try:
                     sb = self.modal.Sandbox.from_name(self.app.name, receipt["sandbox_name"])
+                    receipt["sandbox_id"] = sb.object_id
                 except Exception:
                     receipt["allocation_unresolved"] = True
             if sb is not None:
@@ -150,13 +159,35 @@ class ModalProvider:
                 finally:
                     try:
                         sb.terminate(wait=True)
-                        receipt["terminated"] = sb.poll() is not None
-                        require(receipt["terminated"], "provider_termination_unconfirmed")
-                        lease.provider_stopped = True
+                        receipt["exit_code"] = sb.poll()
+                        receipt["terminated"] = receipt["exit_code"] is not None
+                        if receipt["terminated"]:
+                            lease.provider_stopped = True
+                    except Exception as error:
+                        receipt["termination_error_type"] = type(error).__name__
                     finally:
-                        sb.detach()
+                        try:
+                            journal.cleanup(receipt)
+                            receipt["durable_cleanup_acknowledged"] = True
+                        except Exception as error:
+                            receipt["journal_error_type"] = type(error).__name__
+                        try:
+                            sb.detach()
+                        except Exception:
+                            pass
                         lease.abort = lambda: None
                         save()
                 if not active_failure:
+                    require(receipt.get("terminated"), "provider_termination_unconfirmed")
                     require(receipt.get("private_files_removed") and receipt.get("terminated"),
                             "provider_cleanup_unconfirmed")
+                    require(receipt.get("durable_cleanup_acknowledged"), "provider_journal_unconfirmed")
+            elif attempted or planned:
+                try:
+                    if attempted:
+                        journal.write("unknown", last_error_code="allocation_unknown")
+                    else:
+                        journal.write("not_created", proof="create_not_invoked")
+                except Exception as error:
+                    receipt["journal_error_type"] = type(error).__name__
+                save()

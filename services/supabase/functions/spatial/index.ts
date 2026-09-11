@@ -318,6 +318,7 @@ export async function handler(
         return json({
           job: {
             id: j.id,
+            attempt_key: j.attempt_key,
             listing_id: j.listing_id,
             room_label: j.room_label,
             lease_token: j.lease_token,
@@ -337,6 +338,14 @@ export async function handler(
       const id = uuid(parts[1]),
         lease = uuid(body.lease_token),
         action = parts[2];
+      if (action === "provider-attempt") {
+        assert(["plan", "created", "cleanup", "unknown", "not_created"].includes(String(body.action)),
+          400, "Unknown provider receipt transition");
+        return json(await rpc(d, "spatial_provider_attempt_update", {
+          p_job: id, p_lease: lease, p_attempt: uuid(body.attempt_key),
+          p_action: body.action, p_data: object(body.data),
+        }));
+      }
       if (action === "output-ticket") {
         integer(body.bytes, 1, MAX_OUTPUT_BYTES);
         assert(

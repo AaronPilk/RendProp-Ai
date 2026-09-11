@@ -203,6 +203,19 @@ const request = (
     headers: { "content-type": "application/json", ...headers },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+Deno.test("provider journal route remains service-only and preserves distinct paid attempt key", async () => {
+  const f = fixture(), body = { lease_token: lease, attempt_key: revision,
+    action: "cleanup", data: { sandbox_id: "sb-fixture1234", files_removed: true, terminated: true } };
+  a((await handler(request(`/worker/${id}/provider-attempt`, body), f.d)).status === 403);
+  a(f.calls.length === 0, "unauthorized receipt reached DB");
+  const result = await handler(request(`/worker/${id}/provider-attempt`, body, { "x-fixture-worker": "yes" }), f.d);
+  a(result.status === 200);
+  const call = f.calls[0];
+  a(call.name === "spatial_provider_attempt_update" && call.args.p_job === id
+    && call.args.p_lease === lease && call.args.p_attempt === revision && call.args.p_action === "cleanup");
+  a(JSON.stringify(call.args.p_data) === JSON.stringify(body.data));
+  a((await handler(request(`/worker/${id}/provider-attempt`, { ...body, action: "allocate_again" }, { "x-fixture-worker": "yes" }), f.d)).status === 400);
+});
 Deno.test("completed capture exact schema and coverage accepted", () =>
   a(captureManifest(capture(), id).session_id === id));
 for (

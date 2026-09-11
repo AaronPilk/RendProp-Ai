@@ -20,16 +20,23 @@ class ProviderTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.modal = Mock(); self.modal.__version__ = "1.5.3"
-        self.app = SimpleNamespace(name="fixture-app")
+        self.app = SimpleNamespace(name="rendprop-spatial-worker")
         self.sb = self.modal.Sandbox.create.return_value
-        self.sb.object_id = "sb-fixture"; self.sb.poll.return_value = 137
+        self.sb.object_id = "sb-fixture1234"; self.sb.poll.return_value = 137
         self.sb.filesystem.stat.return_value = SimpleNamespace(size=3)
         def copy(remote, local):
             local.parent.mkdir(parents=True, exist_ok=True)
             local.write_bytes(json.dumps({"status": "trained", "gaussian_count": 100}).encode()
                               if remote.endswith("run.json") else b"sog")
         self.sb.filesystem.copy_to_local.side_effect = copy
-        self.lease = SimpleNamespace(check=Mock(), stage=Mock(), abort=lambda: None, provider_stopped=True)
+        self.journal_rows = []
+        def journal_call(j, route, **fields):
+            self.assertEqual(route, "provider-attempt")
+            self.journal_rows.append(fields)
+            return {"ok": True, "job_id": j["id"], "lease_token": j["lease_token"],
+                    "attempt_key": j["attempt_key"], "dispatch": True, **fields["data"]}
+        self.api = SimpleNamespace(job_call=Mock(side_effect=journal_call))
+        self.lease = SimpleNamespace(check=Mock(), stage=Mock(), abort=lambda: None, provider_stopped=True, api=self.api)
         self.capture = {"frames": [{"pose": [[1,0,0,0],[0,1,0,1.6],[0,0,1,0],[0,0,0,1]]}],
                         "seeds": [{"position": [-1,0,-1]}, {"position": [1,2,1]}]}
         self.provider = ModalProvider(self.modal, self.app)
@@ -91,6 +98,7 @@ class ProviderTests(unittest.TestCase):
     def test_ambiguous_create_only_reconciles_named_attempt_never_creates_twice(self):
         self.modal.Sandbox.create.side_effect = TimeoutError()
         recovered = self.modal.Sandbox.from_name.return_value
+        recovered.object_id = "sb-recovered1234"
         recovered.poll.return_value = 137
         recovered.filesystem.stat.side_effect = FileNotFoundError()
         with patch.object(modal_room, "inventory", return_value=[]):
@@ -98,7 +106,7 @@ class ProviderTests(unittest.TestCase):
                 self.provider.reconstruct(job(), self.root, self.capture, self.lease)
         self.modal.Sandbox.create.assert_called_once()
         self.modal.Sandbox.from_name.assert_called_once()
-        self.assertEqual(self.modal.Sandbox.from_name.call_args.args[0], "fixture-app")
+        self.assertEqual(self.modal.Sandbox.from_name.call_args.args[0], "rendprop-spatial-worker")
         recovered.terminate.assert_called_once_with(wait=True)
 
     def test_lease_loss_stops_before_allocation(self):
@@ -122,6 +130,65 @@ class ProviderTests(unittest.TestCase):
                 patch.object(modal_room, "exec_to_log", side_effect=modal_room.StageFailure(137)), \
                 patch.object(modal_room, "provider_terminal", return_value={"reason": "billing_cycle_spend_limit"}):
             with self.assertRaisesRegex(JobFailure, "provider_billing_limit"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+
+    def test_no_allocation_without_durable_intent_acknowledgement(self):
+        self.api.job_call.side_effect = JobFailure("control_plane_unavailable")
+        with patch.object(modal_room, "inventory", return_value=[]):
+            with self.assertRaises(JobFailure):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.modal.Sandbox.create.assert_not_called()
+        self.sb.filesystem.copy_from_local.assert_not_called()
+
+    def test_identity_ack_failure_transfers_nothing_and_still_journals_cleanup(self):
+        original = self.api.job_call.side_effect
+        def deny_created(j, route, **fields):
+            if fields["action"] == "created":
+                raise JobFailure("control_plane_unavailable")
+            return original(j, route, **fields)
+        self.api.job_call.side_effect = deny_created
+        with patch.object(modal_room, "inventory", return_value=[]):
+            with self.assertRaises(JobFailure):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.sb.filesystem.copy_from_local.assert_not_called()
+        self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
+        self.assertIs(self.journal_rows[-1]["data"]["terminated"], True)
+        self.assertEqual(self.journal_rows[-1]["data"]["sandbox_id"], self.sb.object_id)
+
+    def test_receipts_survive_temporary_directory_removal_and_precede_transfers(self):
+        def create(**options):
+            self.assertEqual([r["action"] for r in self.journal_rows], ["plan"])
+            return self.sb
+        self.modal.Sandbox.create.side_effect = create
+        def copy(*args):
+            self.assertIn("created", [r["action"] for r in self.journal_rows])
+        self.sb.filesystem.copy_from_local.side_effect = copy
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"):
+            self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.temp.cleanup()
+        self.assertFalse(self.root.exists())
+        self.assertEqual([r["action"] for r in self.journal_rows], ["plan", "created", "cleanup"])
+        self.assertIs(self.journal_rows[-1]["data"]["files_removed"], True)
+        self.assertIs(self.journal_rows[-1]["data"]["terminated"], True)
+
+    def test_terminal_failure_cannot_skip_durable_pending_cleanup(self):
+        self.sb.terminate.side_effect = TimeoutError("private SDK message")
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"):
+            with self.assertRaisesRegex(JobFailure, "provider_termination_unconfirmed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
+        self.assertIs(self.journal_rows[-1]["data"]["terminated"], False)
+        self.assertEqual(self.journal_rows[-1]["data"]["last_error_code"], "termination_failed")
+
+    def test_completed_local_cleanup_without_durable_ack_is_not_success(self):
+        original = self.api.job_call.side_effect
+        def deny_cleanup(j, route, **fields):
+            if fields["action"] == "cleanup":
+                raise JobFailure("control_plane_unavailable")
+            return original(j, route, **fields)
+        self.api.job_call.side_effect = deny_cleanup
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"):
+            with self.assertRaisesRegex(JobFailure, "provider_journal_unconfirmed"):
                 self.provider.reconstruct(job(), self.root, self.capture, self.lease)
 
 

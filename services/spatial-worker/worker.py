@@ -105,7 +105,7 @@ class ControlPlane:
         self.opener = opener or build_opener(NoRedirect())
 
     def call(self, path, payload):
-        require(re.fullmatch(r"/worker/(claim|[0-9a-f-]{36}/(?:heartbeat|complete|fail|output-ticket))", path)
+        require(re.fullmatch(r"/worker/(claim|[0-9a-f-]{36}/(?:heartbeat|complete|fail|output-ticket|provider-attempt))", path)
                 is not None, "invalid_worker_path")
         request = Request(self.base_url + path, data=json_bytes(payload), method="POST", headers={
             "Authorization": "Bearer " + self.token, "Content-Type": "application/json"})
@@ -131,7 +131,8 @@ class ControlPlane:
 
 def validate_job(job, now=None):
     require(isinstance(job, dict) and canonical_uuid(job.get("id"))
-            and canonical_uuid(job.get("lease_token")), "invalid_job_identity")
+            and canonical_uuid(job.get("lease_token"))
+            and canonical_uuid(job.get("attempt_key")), "invalid_job_identity")
     require(integer(job.get("max_seconds"), 7200, 7200), "invalid_lifetime_ceiling")
     require(integer(job.get("max_training_seconds"), 1, 1800), "invalid_training_ceiling")
     require(integer(job.get("max_iterations"), 1, 7000), "invalid_iteration_ceiling")
