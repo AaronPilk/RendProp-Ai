@@ -1,5 +1,9 @@
 name = "rendprop-tour-host"
 main = "src/index.ts"
+# spatialModule serializes shared validators with Function.toString(). esbuild's
+# default keepNames inserts __name calls whose helper remains in the Worker,
+# not the emitted browser module. The built-byte gate executes both validators.
+keep_names = false
 # Bumped from the stale 2024-09-23 (release-audit finding, 2026-09-07) — no
 # compatibility_flags are set, so this date alone controls every default
 # runtime behaviour. Verified as a no-op for this Worker: `npm test` (892
