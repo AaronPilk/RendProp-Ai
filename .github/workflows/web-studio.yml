@@ -1,0 +1,72 @@
+name: Rendprop web Studio
+on:
+  push:
+    branches: [main, "feat/web-studio-*"]
+    paths:
+      [
+        "apps/studio/**",
+        "services/supabase/functions/studio/**",
+        "services/edge/tour-host/public/**",
+        "services/edge/tour-host/scripts/check-marketing.mjs",
+        ".github/workflows/web-studio.yml",
+      ]
+  pull_request:
+    paths:
+      [
+        "apps/studio/**",
+        "services/supabase/functions/studio/**",
+        "services/edge/tour-host/public/**",
+        "services/edge/tour-host/scripts/check-marketing.mjs",
+        ".github/workflows/web-studio.yml",
+      ]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: web-studio-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  studio:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/studio
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - name: Prove implementation symbols exist
+        run: |
+          set -euo pipefail
+          rg -q 'createStudioServices' src/data/services.ts
+          rg -q 'exportLocalVideo' src/editor/export.ts
+          rg -q 'scopeKey' src/workspace.ts
+      - run: npm run verify
+      - name: Browser and media toolchain
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          npx playwright install --with-deps chromium
+      - name: Built workspace interaction and recovery
+        run: node tests/browser-workspace.mjs --start-preview --base-url=http://127.0.0.1:4181
+      - name: Actual built video, audio and cancellation
+        run: node tests/browser-editor.mjs --start-preview --base-url=http://127.0.0.1:4182
+      - name: Cloudflare asset packaging (no deploy)
+        run: npx wrangler deploy --dry-run
+      - name: Public website content and schema
+        run: node ../../services/edge/tour-host/scripts/check-marketing.mjs
+  media-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
+        with:
+          deno-version: "2.9.6"
+      - run: deno check services/supabase/functions/studio/index.ts
+      - run: deno test --deny-net --deny-run --deny-write services/supabase/functions/studio/handler.test.ts

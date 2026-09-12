@@ -1,0 +1,41 @@
+{
+  "target": "http://127.0.0.1:4179",
+  "startedAt": "2026-09-12T16:21:51.281Z",
+  "artifacts": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-workspace-browser-fwxA6G",
+  "checks": [
+    "built preview, original brand asset and honest local mode",
+    "all five desktop pages navigate without horizontal overflow",
+    "sign-in modal Tab trap, Escape, inert background and trigger focus restoration",
+    "planner saves, reloads unchanged, and downloads a valid escaped UTC manual calendar reminder",
+    "planner edit preserves identity, channel filter selects correctly, removal can be cancelled or confirmed",
+    "planner refuses a nonexistent DST time and binds an explicitly selected repeated time to its UTC instant",
+    "editor imports a local photo and reloads saved title/caption/revision without overwriting",
+    "same-name/same-size altered media fails full-hash reselection; original media reconnects",
+    "malformed planner data neither prevents valid editor restoration nor overwrites its saved edit",
+    "cancelled retry preserves temporary edits; accepted retry remounts the repaired draft and preserves its identity on the next save",
+    "malformed editor data is write-locked while a valid planner restores independently",
+    "throwing getItem does not trigger empty-draft autosave or overwrite unread stored content",
+    "375px viewport: all five pages fit and every navigation target has an accessible name and 44px target",
+    "no uncaught browser errors and no external network requests"
+  ],
+  "pages": [
+    "desktop:Overview",
+    "desktop:Video editor",
+    "desktop:Content library",
+    "desktop:Content planner",
+    "desktop:Workspace",
+    "375px:Overview",
+    "375px:Video editor",
+    "375px:Content library",
+    "375px:Content planner",
+    "375px:Workspace"
+  ],
+  "externalRequests": [],
+  "consoleErrors": [],
+  "authVerification": "Not run. Fresh local unsigned fixtures only; no provider settings changed.",
+  "status": "passed",
+  "builtEntrySha256": "95d81d1cb69bb64d237e6cd4dbc884287b0e314d4f9d49b07aa988f8506fef05",
+  "buildMode": "existing frozen dist preview",
+  "browserVersion": "152.0.7977.83",
+  "finishedAt": "2026-09-12T16:22:03.694Z"
+}

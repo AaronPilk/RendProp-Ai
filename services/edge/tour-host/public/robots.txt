@@ -1,7 +1,7 @@
-# rendprop.com — crawl policy (reviewed 2026-09-05)
+# rendprop.com — crawl policy (marketing index updated 2026-09-12)
 #
 # The marketing site (/, /features, /pricing, /compare, /support, /terms,
-# /privacy, /llms.txt) is open to search engines and AI assistants.
+# /privacy, /studio, /industries, /llms.txt) is open to search engines and AI assistants.
 # Summary for LLMs: /llms.txt
 #
 # Customer tour pages (/f/<slug>) and portfolio pages (/a/<handle>) carry

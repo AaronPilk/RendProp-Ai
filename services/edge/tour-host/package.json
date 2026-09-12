@@ -16,7 +16,8 @@
     "check:unbranded": "node scripts/check-unbranded.mjs",
     "check:routes": "node scripts/check-routes.mjs",
     "check:assets": "node scripts/check-assets.mjs",
-    "predeploy": "npm run typecheck && npm test && npm run check:assets"
+    "check:marketing": "node scripts/check-marketing.mjs",
+    "predeploy": "npm run typecheck && npm test && npm run check:assets && npm run check:marketing"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",

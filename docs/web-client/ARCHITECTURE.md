@@ -5,6 +5,12 @@ Status: accepted implementation direction, **not a deployed web application**.
 These decisions precede components. Source and behavioral evidence override older
 audit conclusions and product aspirations. See `PARITY.md` for the inventory and gates.
 
+**2026-09-12 implementation update:** `apps/studio/` now implements the first browser
+workspace and local editing/planning engine. This historical decision record is not
+a deployment receipt. See [STUDIO-STATUS.md](STUDIO-STATUS.md) for the new code,
+measured tests, current identity configuration gates and remaining canonical-render
+and cross-device synchronization work.
+
 ## 1. One backend and one identity model
 
 Reuse Supabase Auth, existing edge routes, organization membership, entitlements,

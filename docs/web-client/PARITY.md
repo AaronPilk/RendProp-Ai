@@ -1,5 +1,11 @@
 # Parity inventory — before components
 
+**2026-09-12 implementation update:** the initial browser Studio is now in
+`apps/studio/`. [STUDIO-STATUS.md](STUDIO-STATUS.md) records the implemented local
+editor/planner and same-account adapter, proof and live configuration gaps. The
+historical inventory below remains a parity target, not a claim that those rows
+are all complete. Canonical cloud exports and automatic posting are still absent.
+
 Source baseline: `f14081d`. This is an inventory, **not verified parity**.
 Machine-readable truth: `packages/client-contracts/capabilities.json`. Its verifier
 compares every `APIClient` protocol method against the actual Swift file, detects missing,
