@@ -28,6 +28,23 @@ subscription becomes. `solo` is a legacy alias of `starter` — never sell it.
 Subscription group id (ASC): `rendprop_plans`. All three products in ONE group so
 upgrades/downgrades are Apple-managed.
 
+**2026-09-12 rework (owner-approved; prices above unchanged).** Monthly allowances are now:
+
+| plan | tour renders | AI photo edits | reel clips | AI aerial intros | drone-glide upscales | seats |
+|---|---|---|---|---|---|---|
+| starter | 4 | 100 | 6 | 2 | 0 | 1 |
+| pro | 10 | 200 | 12 | 4 | 0 | 1 |
+| team | 25 | 400 | 25 | 8 | 2 | 2 (was 3) |
+
+The **free week** (no card, no account, automatic on install — deliberately not called a
+"free trial" in the UI) is sized per industry: real estate = 3 tour renders, 60 photo edits,
+4 reel clips, 2 aerial intros; single-location businesses (event venue, restaurant/bar,
+retail/grocery, gym/studio, other) = 1 tour render, 60 photo edits, 4 reel clips, 1 aerial
+intro. After the week, `free` = 1 tour render a month. The 7-day introductory offer stays
+on every paid product, once per Apple ID. The metered unit is "reel clips" (never "reels" as
+a count) and "tour renders" wherever a number is stated on the web or in the App Store.
+Anything above this note that quotes the launch-day numbers is history, not the contract.
+
 ## Entitlement sync (P1 ↔ P2)
 
 ```

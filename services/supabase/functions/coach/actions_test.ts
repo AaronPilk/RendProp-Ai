@@ -187,10 +187,10 @@ Deno.test("sanitizeCoachOutput: spelling out a price in words also trips the bac
 
 Deno.test("sanitizeCoachOutput: an ordinary reply naming no price is untouched", () => {
   const out = sanitizeCoachOutput({
-    reply: "Pro includes 25 tour renders a month.",
+    reply: "Pro includes 10 tour renders a month.",
     actions: [{ type: "open_home", label: "Go home" }],
   }, IDS);
-  assertEquals(out.reply, "Pro includes 25 tour renders a month.");
+  assertEquals(out.reply, "Pro includes 10 tour renders a month.");
   assertEquals(out.actions[0].type, "open_home");
 });
 

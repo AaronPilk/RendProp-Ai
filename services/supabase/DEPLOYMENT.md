@@ -34,6 +34,20 @@ re-applied). To ship a new migration:
    publishing AI features, move them off `free`: `update orgs set plan='trial',
    trial_ends_at=now()+interval '7 days' where plan='free';` (or `'solo'`).
 
+**Plan rework + industry-aware trial (2026-09-12, `0044_plan_rework_and_industry_trial.sql`):**
+1. Apply the migration first. It re-sizes the paid rows in place (prices unchanged),
+   adds `plan_entitlement_overrides` + `org_entitlement(uuid)`, re-creates
+   `create_render_job` / `log_job_cost` to read it, and adds the `orgs.space_type`
+   CHECK — that last step **validates existing rows and fails loudly** on a stray value,
+   so check `select distinct space_type from orgs` on production first.
+2. `./deploy-functions.sh` — `me` (PATCH /me/brand `space_type`), `listings`, `coach`,
+   `admin` and everything importing `_shared/entitlements.ts` changed. The order is
+   tolerant either way: a function deployed BEFORE the migration falls back to the
+   plan-only lookup (it logs `org_entitlement is not deployed yet`), and the old
+   function versions keep working after it.
+3. Verify on a branch/copy: `psql ... -f tests/invariants.sql` (213 assertions; only the
+   documented kept-red astra ceiling stays red).
+
 ### How the live tour works now (base path — no Python worker)
 The on-device render IS the tour. On publish the app uploads its rendered mp4 to the
 **public renders bucket** (`/uploads role=render`) and calls `/renders/publish-app` to

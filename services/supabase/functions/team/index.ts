@@ -8,10 +8,10 @@
 //
 // WHY THIS EXISTS. `plan_entitlements.seats` was a number nothing enforced and
 // nobody could use: `memberships` was written only by the signup trigger,
-// adopt's one-row transfer, and account deletion. The paywall sold "3 seats"
-// that could not be occupied, and a 20-agent brokerage had no way to pay for 20
-// of anything. Seats are what makes per-seat pricing a product rather than a
-// price list.
+// adopt's one-row transfer, and account deletion. The paywall sold Team seats
+// (2 since migration 0044; 3 before it) that could not be occupied, and a
+// 20-agent brokerage had no way to pay for 20 of anything. Seats are what makes
+// per-seat pricing a product rather than a price list.
 //
 // ── THE INVITE IS THE TOKEN, NOT THE E-MAIL ─────────────────────────────────
 //
@@ -31,8 +31,8 @@
 //     require a real Sign in with Apple identity. This is the one place in the
 //     app where sign-in is genuinely required, and it is allowed precisely
 //     because a team seat IS an account-based feature.
-//   * A PENDING INVITE HOLDS A SEAT. Otherwise an owner on 3 seats sends thirty
-//     invites and the cap bites the fourth person to accept, which is the worst
+//   * A PENDING INVITE HOLDS A SEAT. Otherwise an owner on 2 seats sends thirty
+//     invites and the cap bites the second person to accept, which is the worst
 //     possible moment to discover it.
 //   * THE CAP IS CHECKED AGAIN ON ACCEPT. An invite created when there was room
 //     and accepted after the plan lapsed must not open a seat that no longer

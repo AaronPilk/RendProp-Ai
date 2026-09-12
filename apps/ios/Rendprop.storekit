@@ -24,7 +24,7 @@
           },
           "localizations": [
             {
-              "description": "80 tours, 600 photo edits, 3 seats monthly.",
+              "description": "25 tours, 400 photo edits, 2 seats a month.",
               "displayName": "Team Monthly",
               "locale": "en_US"
             }
@@ -50,7 +50,7 @@
           },
           "localizations": [
             {
-              "description": "80 tours, 600 photo edits, 3 seats monthly.",
+              "description": "25 tours, 400 photo edits, 2 seats a month.",
               "displayName": "Team Yearly",
               "locale": "en_US"
             }
@@ -76,7 +76,7 @@
           },
           "localizations": [
             {
-              "description": "25 tours, 300 photo edits, 20 reels monthly.",
+              "description": "10 tours, 200 photo edits, 12 reel clips a month.",
               "displayName": "Pro Monthly",
               "locale": "en_US"
             }
@@ -102,7 +102,7 @@
           },
           "localizations": [
             {
-              "description": "25 tours, 300 photo edits, 20 reels monthly.",
+              "description": "10 tours, 200 photo edits, 12 reel clips a month.",
               "displayName": "Pro Yearly",
               "locale": "en_US"
             }
@@ -128,7 +128,7 @@
           },
           "localizations": [
             {
-              "description": "8 tours, 150 photo edits, 8 reels monthly.",
+              "description": "4 tours, 100 photo edits, 6 reel clips a month.",
               "displayName": "Starter Monthly",
               "locale": "en_US"
             }
@@ -154,7 +154,7 @@
           },
           "localizations": [
             {
-              "description": "8 tours, 150 photo edits, 8 reels monthly.",
+              "description": "4 tours, 100 photo edits, 6 reel clips a month.",
               "displayName": "Starter Yearly",
               "locale": "en_US"
             }

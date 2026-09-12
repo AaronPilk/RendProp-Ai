@@ -20,11 +20,16 @@ import types
 import unittest
 from unittest.mock import patch
 
-NAMES = [
+# Exact inventory size of tests/invariants.sql (mirrors INVARIANT_COUNT in
+# run_database_regression.py; 213 since the 0044 plan-rework section).
+COUNT = 213
+REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free or trial tier',
     'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
-] + [f'synthetic invariant {n:03d}' for n in range(4, 199)]
+    'org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+]
+NAMES = REQUIRED + [f'synthetic invariant {n:03d}' for n in range(len(REQUIRED) + 1, COUNT + 1)]
 PAID_MARKER = ('PASS: exact paid-plan predicates registered 6 expected outcomes across baseline '
                'and 2 negative fixtures; all mutations rolled back.')
 TARGET = Path(__file__).with_name('run_database_regression.py')
@@ -104,7 +109,7 @@ class RunnerCase(unittest.TestCase):
                     phase = 'initial' if invariant_count == 1 else 'replayed'
                     output, rc = scenario.get(phase, (table(), 0))
                 else:
-                    states = ['t'] * 198
+                    states = ['t'] * COUNT
                     states[2] = 'f'
                     output, rc = table(states=states), 3
             elif sqlfile == 'negative_astra_paid_gates.sql':
@@ -210,34 +215,34 @@ class InventoryTests(RunnerCase):
     def test_publication_negative_sql_error_is_not_guard_proof(self):
         self.rejected(publication_negative=('ERROR: unrelated syntax failure', 3))
 
-    def test_full_198_suite_accepts(self):
+    def test_full_suite_accepts(self):
         result = self.invoke()
         self.assertIsNone(result.failure)
         self.assertTrue(result.receipt['accepted'])
         self.assertTrue(result.receipt['clusterStopped'])
-        self.assertEqual([row['count'] for row in result.receipt['invariantRuns']], [198, 198])
+        self.assertEqual([row['count'] for row in result.receipt['invariantRuns']], [COUNT, COUNT])
         self.assertEqual(result.receipt['invariantRuns'][0]['names'], NAMES)
 
-    def test_197_and_199_counts_reject(self):
+    def test_one_fewer_and_one_more_counts_reject(self):
         for names in (NAMES[:-1], NAMES + ['extra synthetic assertion']):
             with self.subTest(count=len(names)):
                 self.rejected(initial=(table(names=names), 0))
 
     def test_noncontiguous_sequence_rejects(self):
-        self.rejected(initial=(table(ids=list(range(1, 198)) + [199]), 0))
+        self.rejected(initial=(table(ids=list(range(1, COUNT)) + [COUNT + 1]), 0))
 
     def test_duplicate_name_rejects(self):
         self.rejected(initial=(table(names=NAMES[:-1] + [NAMES[-2]]), 0))
 
     def test_each_required_name_rejects_when_absent(self):
-        for index in range(3):
+        for index in range(len(REQUIRED)):
             names = NAMES.copy()
             names[index] = 'replacement synthetic assertion'
             with self.subTest(index=index):
                 self.rejected(initial=(table(names=names), 0))
 
     def test_null_result_is_retained_as_real_red(self):
-        states = ['t'] * 198
+        states = ['t'] * COUNT
         states[-1] = ''
         result = self.rejected(initial=(table(states=states), 3), replayed=(table(states=states), 3))
         self.assertEqual(len(result.receipt['invariantRuns']), 2)
@@ -245,12 +250,12 @@ class InventoryTests(RunnerCase):
         self.assertIn('paidGateNegativeControl', result.receipt)
 
     def test_null_with_green_exit_and_footer_rejects(self):
-        states = ['t'] * 198
+        states = ['t'] * COUNT
         states[-1] = ''
-        self.rejected(initial=(table(states=states, footer='All 198 invariants passed.'), 0))
+        self.rejected(initial=(table(states=states, footer=f'All {COUNT} invariants passed.'), 0))
 
     def test_false_result_with_zero_exit_rejects(self):
-        states = ['t'] * 198
+        states = ['t'] * COUNT
         states[-1] = 'f'
         self.rejected(initial=(table(states=states), 0))
 
@@ -260,7 +265,7 @@ class InventoryTests(RunnerCase):
                 self.rejected(initial=(table(), code))
 
     def test_failure_footer_count_mismatch_rejects(self):
-        states = ['t'] * 198
+        states = ['t'] * COUNT
         states[-1] = 'f'
         self.rejected(initial=(table(states=states, footer='INVARIANTS FAILED: 2 assertion(s)'), 3))
 

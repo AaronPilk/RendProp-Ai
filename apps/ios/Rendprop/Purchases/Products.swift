@@ -4,18 +4,25 @@ import Foundation
 //
 // ONE source of truth for the product ids, the plan they map to, and the
 // "what you get" lines. The numbers below are COPIED from
-// `services/supabase/migrations/0010_pricing_entitlements_and_spend_ceiling.sql`
-// (`plan_entitlements`), which is what the server actually enforces — if that
-// table changes, change these in the same commit or the paywall starts lying.
+// `services/supabase/migrations/0044_plan_rework_and_industry_trial.sql`
+// (`plan_entitlements`, the table 0010 introduced), which is what the server
+// actually enforces — if that table changes, change these in the same commit
+// or the paywall starts lying.
+//
+// The free week (server plan `trial`) is NOT here: it is sized per industry
+// (`orgs.space_type`) and the app reads its numbers from `GET /me` — see
+// `SpaceType.freeWeekLine` for the offline fallback.
 //
 // PRICES ARE NOT HERE, ON PURPOSE. Every price the user sees comes from
 // StoreKit (`Product.displayPrice`), so it is correct in their currency, on
 // their storefront, after any App Store price change — and there is nothing to
 // keep in sync. Never hardcode a price string in this app.
 //
-// `trial` is Apple's 7-day introductory offer on each product, not a product.
-// `free` is the lapsed floor (no product). `solo` is a legacy alias of
-// `starter` that is never sold.
+// Server plan `trial` is the FREE WEEK every new org starts on — no product,
+// no card, sized per industry (see above). It is a different thing from the
+// 7-day introductory offer Apple attaches to each paid product, which is the
+// only thing the app may call a "free trial". `free` is the lapsed floor (no
+// product). `solo` is a legacy alias of `starter` that is never sold.
 
 /// A sellable plan. Raw value === the `orgs.plan` / `plan_entitlements.plan`
 /// string the server uses, so `activePlan` and `/me` speak the same language.
@@ -94,18 +101,18 @@ enum RendpropPlan: String, CaseIterable, Identifiable, Sendable {
         return isSold(fallback) ? fallback : nil
     }
 
-    /// The server-enforced monthly allowances for this plan.
+    /// The server-enforced monthly allowances for this plan (migration 0044).
     var allowances: PlanAllowances {
         switch self {
         // plan_entitlements: renders, photo_edits, reels, aerials, topaz, seats
-        case .starter: return PlanAllowances(renders: 8,  photoEdits: 150, reels: 8,  aerials: 2,  topaz: 0, seats: 1)
-        case .pro:     return PlanAllowances(renders: 25, photoEdits: 300, reels: 20, aerials: 6,  topaz: 0, seats: 1)
-        case .team:    return PlanAllowances(renders: 80, photoEdits: 600, reels: 40, aerials: 15, topaz: 2, seats: 3)
+        case .starter: return PlanAllowances(renders: 4,  photoEdits: 100, reels: 6,  aerials: 2, topaz: 0, seats: 1)
+        case .pro:     return PlanAllowances(renders: 10, photoEdits: 200, reels: 12, aerials: 4, topaz: 0, seats: 1)
+        case .team:    return PlanAllowances(renders: 25, photoEdits: 400, reels: 25, aerials: 8, topaz: 2, seats: 2)
         }
     }
 
     /// 4–5 short lines for the plan card. Plain words, same nouns Settings →
-    /// Plan & usage already uses, so "8 of 8" there matches "8 tours" here.
+    /// Plan & usage already uses, so "4 of 4" there matches "4 tours" here.
     var benefits: [String] {
         allowances.benefitLines
     }
@@ -121,17 +128,22 @@ struct PlanAllowances: Hashable, Sendable {
     let topaz: Int
     let seats: Int
 
+    /// "2 seats" / "1 seat".
+    var seatsPhrase: String { "\(seats) \(seats == 1 ? "seat" : "seats")" }
+
     var benefitLines: [String] {
         var lines: [String] = [
             "\(renders) tour \(renders == 1 ? "render" : "renders") a month",
             "\(photoEdits) AI photo edits",
-            "\(reels) reel clips",
+            "\(reels) reel \(reels == 1 ? "clip" : "clips")",
             "\(aerials) aerial \(aerials == 1 ? "intro" : "intros")",
         ]
         if topaz > 0 {
-            lines.append("\(topaz) drone-glide upscales · \(seats) seats")
+            // Team: "2 drone-glide upscales · 2 seats"
+            lines.append("\(topaz) drone-glide \(topaz == 1 ? "upscale" : "upscales") · \(seatsPhrase)")
         } else {
-            lines.append(seats == 1 ? "1 seat · unlimited tours to share" : "\(seats) seats · unlimited tours to share")
+            // Starter / Pro: "1 seat · unlimited tours to share"
+            lines.append("\(seatsPhrase) · unlimited tours to share")
         }
         return lines
     }
@@ -267,6 +279,8 @@ enum PaywallLegal {
         "Renews automatically until cancelled. Cancel anytime in Settings → Apple ID → Subscriptions."
 
     /// Shown under a trial button so nobody is surprised by the first charge.
+    /// "At least 24 hours": Apple bills the first period unless the
+    /// subscription is cancelled at least a day before the offer ends.
     static let trialDisclosure =
-        "Free for 7 days, then the plan price. Cancel any time before it ends and you pay nothing."
+        "Free for 7 days, then the plan price. Cancel at least 24 hours before it ends and you pay nothing."
 }

@@ -1145,6 +1145,37 @@ interface Entitlement {
   price_cents: number;
 }
 
+/** A plan_entitlement_overrides row (migration 0044): the industry-aware
+ *  trial. NULL = inherit the base row, exactly as org_entitlement() reads it. */
+interface EntitlementOverride {
+  plan: string;
+  space_type: string;
+  renders_per_month: number | null;
+  photo_edits_per_month: number | null;
+  reels_per_month: number | null;
+  aerials_per_month: number | null;
+  topaz_per_month: number | null;
+  seats: number | null;
+  cogs_ceiling_cents: number | null;
+}
+
+const OVERRIDABLE: Array<Exclude<keyof EntitlementOverride, "plan" | "space_type">> = [
+  "renders_per_month", "photo_edits_per_month", "reels_per_month", "aerials_per_month",
+  "topaz_per_month", "seats", "cogs_ceiling_cents",
+];
+
+/** Mirrors org_entitlement() in TypeScript for the same reason effectivePlan()
+ *  does: hundreds of orgs per page, nothing is charged off the result. */
+function withOverride(base: Entitlement | undefined, over: EntitlementOverride | undefined): Entitlement | undefined {
+  if (!base || !over) return base;
+  const out: Entitlement = { ...base };
+  for (const f of OVERRIDABLE) {
+    const v = over[f];
+    if (typeof v === "number" && Number.isFinite(v)) out[f] = v;
+  }
+  return out;
+}
+
 /**
  * The org-keyed monthly meters, one prefix at a time.
  *
@@ -1188,14 +1219,17 @@ async function handleUsage(): Promise<Response> {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const monthStartIso = monthStart.toISOString();
 
-  const [orgsRes, entRes, meterRes, ledger, monthJobs, liveJobs] = await Promise.all([
-    pageAll<{ id: string; name: string; plan: string | null; trial_ends_at: string | null }>(
+  const [orgsRes, entRes, ovrRes, meterRes, ledger, monthJobs, liveJobs] = await Promise.all([
+    pageAll<{ id: string; name: string; plan: string | null; trial_ends_at: string | null; space_type: string | null }>(
       (from, to) =>
-        db.from("orgs").select("id, name, plan, trial_ends_at").is("deleted_at", null)
+        db.from("orgs").select("id, name, plan, trial_ends_at, space_type").is("deleted_at", null)
           .order("id", { ascending: true }).range(from, to),
       "Orgs",
     ),
     db.from("plan_entitlements").select("*"),
+    // 0044: the industry-aware trial. Read whole (five rows) and merged per org
+    // below, the way org_entitlement() does it in SQL.
+    db.from("plan_entitlement_overrides").select("*"),
     readMeters(db),
     readLedgerSince(db, monthStartIso),
     pageAll<{ id: string; listings: JoinedOrg }>(
@@ -1220,6 +1254,19 @@ async function handleUsage(): Promise<Response> {
   const entitlements = new Map<string, Entitlement>(
     ((entRes.data ?? []) as Entitlement[]).map((e) => [e.plan, e]),
   );
+  // A function deployed ahead of migration 0044 sees no override table
+  // (PGRST205 "not in the schema cache" / 42P01 undefined_table): show the
+  // plan-only caps rather than 500 the whole console. Any other failure is real.
+  const overrides = new Map<string, EntitlementOverride>();
+  if (ovrRes.error) {
+    const e = ovrRes.error as { code?: string; message: string };
+    if (!(e.code === "PGRST205" || e.code === "42P01" || /schema cache|does not exist/i.test(e.message))) {
+      throw new HttpError(500, `Entitlement override lookup failed: ${e.message}`);
+    }
+    console.warn("admin: plan_entitlement_overrides is not deployed yet (0044); caps are plan-only");
+  } else {
+    for (const o of (ovrRes.data ?? []) as EntitlementOverride[]) overrides.set(`${o.plan}:${o.space_type}`, o);
+  }
 
   const spendByOrg = new Map<string, number>();
   for (const r of ledger.rows) {
@@ -1267,7 +1314,10 @@ async function handleUsage(): Promise<Response> {
 
   const orgs = orgsRes.rows.map((o) => {
     const plan = effectivePlan(o.plan, o.trial_ends_at);
-    const ent = entitlements.get(plan) ?? entitlements.get("trial");
+    const ent = withOverride(
+      entitlements.get(plan) ?? entitlements.get("trial"),
+      overrides.get(`${plan}:${o.space_type ?? "real_estate"}`),
+    );
     const caps: Record<string, number> = {
       renders: ent?.renders_per_month ?? 0,
       photo_edits: ent?.photo_edits_per_month ?? 0,
@@ -1303,6 +1353,7 @@ async function handleUsage(): Promise<Response> {
       plan,
       plan_raw: o.plan ?? "trial",
       trial_ends_at: o.trial_ends_at ?? null,
+      space_type: o.space_type ?? "real_estate", // 0044: why a trial's caps may differ
       spend_cents_month: spend,
       cogs_ceiling_cents: ceiling,
       spend_share_of_ceiling: share(spend, ceiling),

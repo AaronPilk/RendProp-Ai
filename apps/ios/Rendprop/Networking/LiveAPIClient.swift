@@ -1913,6 +1913,11 @@ final class LiveAPIClient: APIClient {
             let name: String?
             let handle: String?
             let plan: String?
+            /// `space_type` — the industry the server sizes the free week by
+            /// (migration 0044). The app sends it (PATCH /me/brand, see
+            /// `AppModel.syncSpaceTypeIfNeeded`); decoded tolerantly here so a
+            /// server without the column changes nothing.
+            let spaceType: String?
             let brandKit: BrandKit?
         }
         struct Entitlement: Decodable {

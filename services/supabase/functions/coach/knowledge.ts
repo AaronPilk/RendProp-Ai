@@ -149,10 +149,13 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Free trial",
-    source: "description.txt",
+    source: "description.txt + migration 0044 (plan_entitlement_overrides)",
     fact:
       "Every plan starts with a 7-day free trial, available once per Apple ID. Any unused " +
-      "portion of a trial is forfeited if the person buys a subscription before it ends.",
+      "portion of a trial is forfeited if the person buys a subscription before it ends. The " +
+      "free week is sized to the business: a real-estate workspace can publish 3 tours during " +
+      "it; a single-location business (venue, restaurant, retail, gym or studio, other) can " +
+      "publish 1 tour. Photo edits, reels and the aerial intro are included in both.",
   },
   {
     topic: "Deleting an account",
@@ -202,9 +205,10 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
 
 /**
  * Monthly allowances by plan — COUNTS ONLY, never a price. Source:
- * description.txt "WHAT A PLAN INCLUDES". Seats is Team-only (solo/pro seat
- * count is implicitly 1 and not stated in copy, so it is left out rather than
- * guessed).
+ * description.txt "WHAT A PLAN INCLUDES", which mirrors plan_entitlements as
+ * migration 0044 (2026-09-12) sizes it — tests/invariants.sql pins the table.
+ * Seats is Team-only (starter/pro seat count is implicitly 1 and not stated in
+ * copy, so it is left out rather than guessed).
  */
 export const PLAN_ALLOWANCES: Array<{
   plan: string;
@@ -214,12 +218,12 @@ export const PLAN_ALLOWANCES: Array<{
   aerials: number;
   seats?: number;
 }> = [
-  { plan: "Starter", renders: 8, photoEdits: 150, reels: 8, aerials: 2 },
-  { plan: "Pro", renders: 25, photoEdits: 300, reels: 20, aerials: 6 },
-  { plan: "Team", renders: 80, photoEdits: 600, reels: 40, aerials: 15, seats: 3 },
+  { plan: "Starter", renders: 4, photoEdits: 100, reels: 6, aerials: 2 },
+  { plan: "Pro", renders: 10, photoEdits: 200, reels: 12, aerials: 4 },
+  { plan: "Team", renders: 25, photoEdits: 400, reels: 25, aerials: 8, seats: 2 },
 ];
 
-/** One line per plan, e.g. "Pro — 25 tour renders, 300 AI photo edits, 20 reels, 6 aerial intros a month." */
+/** One line per plan, e.g. "Pro — 10 tour renders, 200 AI photo edits, 12 reels, 4 aerial intros a month." */
 function allowanceLine(a: (typeof PLAN_ALLOWANCES)[number]): string {
   const seats = a.seats ? `, ${a.seats} seats` : "";
   return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} reels, ` +
@@ -238,7 +242,8 @@ export function knowledgeBlock(): string {
     facts,
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
-      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID. For " +
+      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID: 3 " +
+      "tours for a real-estate workspace, 1 tour for a single-location business. For " +
       "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
 }

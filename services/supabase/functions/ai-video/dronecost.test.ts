@@ -311,10 +311,10 @@ Deno.test("missing duration: the refusal is NOT a plan/quota error the app would
 // ── Composition with the EXISTING per-org monthly ceiling ────────────────────
 
 Deno.test("monthly ceiling: a team org with headroom passes", () => {
-  // team: cogs_ceiling_cents = 8200c ($82.00), topaz_per_month = 2.
+  // team: cogs_ceiling_cents = 6000c ($60.00, migration 0044), topaz_per_month = 2.
   assertMonthlyHeadroom({
     monthSpentCents: 1000,
-    ceilingCents: 8200,
+    ceilingCents: 6000,
     projectedCents: 2400,
     plan: "team",
     feature: "drone-glide render",
@@ -322,12 +322,12 @@ Deno.test("monthly ceiling: a team org with headroom passes", () => {
 });
 
 Deno.test("monthly ceiling: two maxed default taps still fit inside the team budget", () => {
-  // The sizing claim from dronecost.ts, asserted: 2 x $24.00 = $48.00 of $82.00.
+  // The sizing claim from dronecost.ts, asserted: 2 x $24.00 = $48.00 of $60.00.
   const tap = DRONE_MAX_SOURCE_SECONDS * DRONE_TIER_CENTS["4k30"];
   assertEquals(tap * 2, 4800);
   assertMonthlyHeadroom({
     monthSpentCents: tap,
-    ceilingCents: 8200,
+    ceilingCents: 6000,
     projectedCents: tap,
     plan: "team",
     feature: "drone-glide render",
@@ -336,15 +336,15 @@ Deno.test("monthly ceiling: two maxed default taps still fit inside the team bud
 
 Deno.test("monthly ceiling: the MONTH is what bounds a $48.00 tap, and it still does", () => {
   // Raising the per-tap ceiling to $48.00 did not raise monthly exposure: team
-  // gets 2 Topaz taps against an 8,200c ceiling, so a second maxed-out tap is
-  // 2 x 4,800 = 9,600c > 8,200c and is refused HERE. Max drone exposure per org
-  // per month stays ~$48-82, enforced by machinery that already existed.
+  // gets 2 Topaz taps against a 6,000c ceiling (0044), so a second maxed-out tap
+  // is 2 x 4,800 = 9,600c > 6,000c and is refused HERE. Max drone exposure per org
+  // per month stays ~$48-60, enforced by machinery that already existed.
   const worstTap = DRONE_MAX_SUBMISSION_CENTS;
   assertEquals(worstTap, 4800);
   // The first tap fits.
   assertMonthlyHeadroom({
     monthSpentCents: 0,
-    ceilingCents: 8200,
+    ceilingCents: 6000,
     projectedCents: worstTap,
     plan: "team",
     feature: "drone-glide render",
@@ -354,7 +354,7 @@ Deno.test("monthly ceiling: the MONTH is what bounds a $48.00 tap, and it still 
     () =>
       assertMonthlyHeadroom({
         monthSpentCents: worstTap,
-        ceilingCents: 8200,
+        ceilingCents: 6000,
         projectedCents: worstTap,
         plan: "team",
         feature: "drone-glide render",
@@ -369,8 +369,8 @@ Deno.test("monthly ceiling: a submission that would breach it is refused, 402 qu
   const err = assertThrows(
     () =>
       assertMonthlyHeadroom({
-        monthSpentCents: 7000,
-        ceilingCents: 8200,
+        monthSpentCents: 4800,
+        ceilingCents: 6000,
         projectedCents: 2400,
         plan: "team",
         feature: "drone-glide render",
@@ -381,18 +381,18 @@ Deno.test("monthly ceiling: a submission that would breach it is refused, 402 qu
   // reached" RP402 to, so the app's existing isQuota branch handles it.
   assertEquals(err.status, 402);
   assertEquals(err.code, "quota_exceeded");
-  assertStringIncludes(err.message, "$70.00");
-  assertStringIncludes(err.message, "$82.00");
+  assertStringIncludes(err.message, "$48.00");
+  assertStringIncludes(err.message, "$60.00");
   assertStringIncludes(err.message, "$24.00");
-  assertEquals(err.details?.spent_cents, 7000);
-  assertEquals(err.details?.ceiling_cents, 8200);
+  assertEquals(err.details?.spent_cents, 4800);
+  assertEquals(err.details?.ceiling_cents, 6000);
   assertEquals(err.details?.estimate_cents, 2400);
 });
 
 Deno.test("monthly ceiling: exactly reaching the ceiling is allowed; one cent over is not", () => {
   assertMonthlyHeadroom({
-    monthSpentCents: 5800,
-    ceilingCents: 8200,
+    monthSpentCents: 3600,
+    ceilingCents: 6000,
     projectedCents: 2400,
     plan: "team",
     feature: "drone-glide render",
@@ -400,8 +400,8 @@ Deno.test("monthly ceiling: exactly reaching the ceiling is allowed; one cent ov
   assertThrows(
     () =>
       assertMonthlyHeadroom({
-        monthSpentCents: 5801,
-        ceilingCents: 8200,
+        monthSpentCents: 3601,
+        ceilingCents: 6000,
         projectedCents: 2400,
         plan: "team",
         feature: "drone-glide render",

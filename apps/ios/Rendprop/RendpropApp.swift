@@ -30,6 +30,12 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
     }
 }
 
+extension Notification.Name {
+    /// Posted (main thread) by `AppModel.markSpaceTypeOutOfSync()`: the server
+    /// does not have this device's business type. `AppModel` re-sends it.
+    static let rendpropSpaceTypeOutOfSync = Notification.Name("RendpropSpaceTypeOutOfSync")
+}
+
 // MARK: - App state
 @MainActor
 final class AppModel: ObservableObject {
@@ -114,6 +120,10 @@ final class AppModel: ObservableObject {
     private var adoptionBindings: AdoptionLocalBindings?
     private var adoptionBindingsUnreadable = false
     private var uploadObserver: NSObjectProtocol?
+    private var spaceTypeObserver: NSObjectProtocol?
+    /// The `space.type` raw value a PATCH /me/brand is carrying right now, so
+    /// two sync points firing together send one request, not two.
+    private var spaceTypeSyncInFlight: String?
 
     init() {
         renderCoordinator.model = self
@@ -140,6 +150,14 @@ final class AppModel: ObservableObject {
                 await self?.handleUploadCompleted(assetID: assetID, serverListingID: serverListingID)
             }
         }
+        // Somebody found out the server does not have the business type (an
+        // account switch, `/me` naming a different industry) — send it again.
+        // See "Business type → server", below.
+        spaceTypeObserver = NotificationCenter.default.addObserver(
+            forName: .rendpropSpaceTypeOutOfSync, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.syncSpaceTypeIfNeeded() }
+        }
     }
 
     /// Clear every per-account server reference (called when the signed-in
@@ -162,6 +180,9 @@ final class AppModel: ObservableObject {
         // Published compliance originals belong to the previous account's org.
         publishedOriginalAssets.removeAll()
         publishedGalleryAssets.removeAll()
+        // The business type was synced to the OLD org; the new one has not
+        // heard it. This re-sends it once the new session has settled.
+        Self.markSpaceTypeOutOfSync()
         isRestoring = wasRestoring
         persist()
     }
@@ -335,6 +356,75 @@ final class AppModel: ObservableObject {
         guard hasLoaded else { return }   // load() seeds; seeding earlier would persist an empty snapshot
         let real = listings.filter { !$0.isSample }
         listings = real + SpaceType.current.sampleListings
+    }
+
+    // MARK: - Business type → server
+    //
+    // The free week (server plan `trial`) is sized per industry — migration
+    // 0044: real estate gets 3 tours and 2 aerial intros, a single-location
+    // business (venue, restaurant, store, gym, other) 1 tour and 1 aerial
+    // intro — and the server reads that from `orgs.space_type`. The phone is
+    // the only place the choice is made, so it has to tell the server.
+    //
+    // Best-effort, and quiet about it: it never blocks the UI and never shows
+    // an error. A missed sync leaves the server on its default, which is what
+    // the app assumed before this existed; the next sync point tries again.
+    //
+    // SYNC POINTS (all call `syncSpaceTypeIfNeeded`):
+    //   * a session change — `RendpropApp.onChange(of: isSignedIn)` (the
+    //     anonymous bootstrap landing on a cold launch, a sign-out and back)
+    //     and `onChange(of: userID)` (an Apple sign-in that is a NEW org);
+    //   * `RootTabView.task` — a warm launch, where the session already exists
+    //     when Home mounts, and the type picked in the intro before it did;
+    //   * `RootTabView.onChange(of: spaceTypeRaw)` — the one place a type
+    //     change lands (Home menu, Settings, a re-pick in the intro);
+    //   * `.rendpropSpaceTypeOutOfSync` — posted by `markSpaceTypeOutOfSync`
+    //     when an account switch or a `/me` answer (PlanBanner) shows the
+    //     server does not have it.
+    // It sends ONLY when the value differs from the last one the server
+    // accepted (`space.type.synced`), so calling it often costs nothing.
+
+    /// UserDefaults key: the raw `space.type` the server last accepted on this
+    /// device. Absent until the first successful PATCH.
+    private static let syncedSpaceTypeKey = "space.type.synced"
+
+    /// Forget that the server has the current type and ask for it to be sent
+    /// again — a new org (account switch), or `/me` reporting a different
+    /// industry than the one chosen here (PlanBanner). Static, because the
+    /// callers have no model in hand; the model hears the notification.
+    static func markSpaceTypeOutOfSync() {
+        UserDefaults.standard.removeObject(forKey: syncedSpaceTypeKey)
+        NotificationCenter.default.post(name: .rendpropSpaceTypeOutOfSync, object: nil)
+    }
+
+    /// PATCH /me/brand {space_type} when the selection differs from what the
+    /// server last accepted. Fire-and-forget: returns at once, and the
+    /// request neither blocks nor reports. Safe to call from every sync point
+    /// — nothing is sent without a session, before the intro has finished
+    /// (the choice is not final until then), while the same value is already
+    /// on its way, or when the server already has it.
+    func syncSpaceTypeIfNeeded() {
+        guard Config.useLiveBackend else { return }
+        guard UserDefaults.standard.bool(forKey: "hasOnboarded") else { return }
+        guard AuthStore.shared.isSignedIn else { return }
+        let raw = SpaceType.current.rawValue
+        guard UserDefaults.standard.string(forKey: Self.syncedSpaceTypeKey) != raw else { return }
+        guard spaceTypeSyncInFlight != raw else { return }
+        spaceTypeSyncInFlight = raw
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                // The mock client answers this with a no-op (offline dev, the
+                // UI walk), which counts as accepted: there is no server to tell.
+                try await self.api.updateBrand(["space_type": raw])
+                UserDefaults.standard.set(raw, forKey: Self.syncedSpaceTypeKey)
+            } catch {
+                // Offline, a 401 before the token settled, an older server that
+                // does not know the field: keep quiet, keep the marker clear,
+                // and the next sync point retries.
+            }
+            if self.spaceTypeSyncInFlight == raw { self.spaceTypeSyncInFlight = nil }
+        }
     }
 
     // MARK: - Mutations
@@ -2218,7 +2308,18 @@ struct RendpropApp: App {
                 Analytics.authChanged(signedIn)
                 // The very first launch has no session when the scene appears;
                 // ask again once one exists so the answer is not "unknown" all day.
-                if signedIn { model.refreshSpatialCapability() }
+                if signedIn {
+                    model.refreshSpatialCapability()
+                    // …and tell the new session which industry this is, so the
+                    // server sizes the free week for it (AppModel, "Business
+                    // type → server").
+                    model.syncSpaceTypeIfNeeded()
+                }
+            }
+            // A different account (an Apple sign-in after an anonymous week) is
+            // a different org, which has not heard the business type yet.
+            .onChange(of: analyticsAuth.userID) { _ in
+                model.syncSpaceTypeIfNeeded()
             }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.
@@ -2259,12 +2360,14 @@ struct RootTabView: View {
         .task {
             await model.load()        // idempotent
             model.reseedSamples()     // the intro may have changed the type before this mounted
+            model.syncSpaceTypeIfNeeded()   // …and the server has not heard about it yet
         }
         // Resolve the App Store storefront once. Informational only — no UI and
         // no purchase path is conditioned on it (see `Storefronts`, below).
         .resolveStorefront()
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
+            model.syncSpaceTypeIfNeeded()   // the free week is sized by industry, server-side
         }
         // Coach (docs/COACH-CONTRACT.md): the tab-switch half of acting on a
         // tapped action. HomeDashboardView's own `.onChange` (same value)

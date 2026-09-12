@@ -50,7 +50,7 @@ handlers see clean segments:
 | listings | JWT | `POST /` · `GET /?status=&space_type=` · `PATCH /:id` (validated `status`, `zillow_url`, `sold_at:null`) · `DELETE /:id` (soft + unpublish) |
 | uploads | JWT | `POST /` (`role:"capture"\|"render"`, `kind:"video"\|"photo"`; render+photo = poster) · `POST /batch` (photos) · `POST /:asset_id/part-urls` · `POST /:asset_id/complete` (idempotent) · `POST /:asset_id/abort` |
 | renders | JWT | `POST /publish-app` (`p_source:'app'`, `poster_asset_id?`) · `POST /` (worker job) · `GET /:job_id` · `POST /:job_id/publish` · `PATCH /:render_id/chapters` |
-| me | JWT | `GET /` · `PATCH /brand` (+ `handle`, `org_name`) · `POST /apple-code` · `DELETE /` · `POST /sweep-deletions` (service role) |
+| me | JWT | `GET /` · `PATCH /brand` (+ `handle`, `org_name`, `space_type`) · `POST /apple-code` · `DELETE /` · `POST /sweep-deletions` (service role) |
 | leads | public + JWT | `POST /` (public capture) · `GET /?listing_id=&since=&status=&limit=` · `PATCH /:id {status}` |
 | ai-photo | JWT | `POST /` (`edit`, `space_type`, `style`, `prompt`; `suggest` / `improve_prompt` are not metered) |
 | ai-video | JWT | `POST /drone` · `POST /declutter` · `POST /aerial` · `POST /reel-clip` · `POST /drift` (the generated clip's quality gate — judges the output frames against the source still on `judge.qc_drift` and answers `publishable`) · `GET /status?status_url=&response_url=` (a completed job carries an additive `drift` block that reads `unchecked` until the gate has run) |

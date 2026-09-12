@@ -98,7 +98,7 @@ struct TeamJoined: Decodable, Sendable {
 enum TeamAPI {
 
     /// The server's own words, which are written for a person. A route that
-    /// can say "your plan includes 3 seats and 3 are taken" must be allowed to
+    /// can say "your plan includes 2 seats and 2 are taken" must be allowed to
     /// say it — a generic "something went wrong" here would hide the one fact
     /// the owner needs.
     struct Failure: LocalizedError {

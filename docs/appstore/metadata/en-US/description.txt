@@ -20,13 +20,13 @@ NOT ONLY HOMES
 Rendprop ships with modes for real estate, event venues, restaurants, retail stores, and gyms. Pick your mode and the whole app matches what you sell: the fields you fill in, the words on screen, and the sample tour.
 
 WORKS WITHOUT AN ACCOUNT
-Record, build, and preview a tour without signing in. You only sign in with Apple when you want to publish a tour to the web, because that is the step that creates the hosted link and the contact form.
+Record, build, preview, and publish without signing in — nothing in the app needs an account. Sign in with Apple is optional: it carries your workspace to a new iPhone, and a Team seat needs it because a seat belongs to a person.
 
 WHAT A PLAN INCLUDES
 Rendprop is free to download and try. A subscription unlocks monthly allowances for tour renders and the AI features:
-• Starter — 8 tour renders, 150 AI photo edits, 8 reels, 2 aerial intros a month.
-• Pro — 25 tour renders, 300 AI photo edits, 20 reels, 6 aerial intros a month.
-• Team — 80 tour renders, 600 AI photo edits, 40 reels, 15 aerial intros, and 3 seats a month.
+• Starter — 4 tour renders, 100 AI photo edits, 6 reel clips, 2 aerial intros a month.
+• Pro — 10 tour renders, 200 AI photo edits, 12 reel clips, 4 aerial intros a month.
+• Team — 25 tour renders, 400 AI photo edits, 25 reel clips, 8 aerial intros a month, and 2 seats.
 
 SUBSCRIPTION DETAILS
 Rendprop sells auto-renewable subscriptions:

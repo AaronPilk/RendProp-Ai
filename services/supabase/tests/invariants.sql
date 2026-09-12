@@ -90,7 +90,7 @@ select 'server-only tables reject tenant writes',
 from unnest(array['public.render_jobs','public.renders','public.capture_assets',
                   'public.capture_chapters','public.cost_ledger','public.metering',
                   'public.rate_limits','public.deletion_requests','public.leads',
-                  'public.plan_entitlements']) t;
+                  'public.plan_entitlements','public.plan_entitlement_overrides']) t;
 
 insert into _inv(name, pass, note)
 select 'tenant RPCs are executable by authenticated, not by anon',
@@ -161,11 +161,16 @@ where (lat is not null and lat <> round(lat::numeric, 3))
    or (lng is not null and lng <> round(lng::numeric, 3));
 
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
+-- Paid sizes are the 2026-09-12 rework (migration 0044): prices unchanged,
+-- allowances 4/10/25 renders, 100/200/400 edits, 6/12/25 reels, 2/4/8 aerials,
+-- Team 2 seats + 2 Topaz. The base trial/free rows are still 0032's; the
+-- single-location trial override lives in plan_entitlement_overrides and is
+-- asserted in the 0044 section at the end of this file.
 
 insert into _inv(name, pass, note)
-select 'render caps match paid plans and 0032 signup trial/free (8/25/80; trial 3; free 1)',
-       plan_render_cap('solo') = 8 and plan_render_cap('starter') = 8
-       and plan_render_cap('pro') = 25 and plan_render_cap('team') = 80
+select 'render caps match paid plans and 0032 signup trial/free (4/10/25; trial 3; free 1)',
+       plan_render_cap('solo') = 4 and plan_render_cap('starter') = 4
+       and plan_render_cap('pro') = 10 and plan_render_cap('team') = 25
        and plan_render_cap('trial') = 3 and plan_render_cap('free') = 1,
        format('solo=%s starter=%s pro=%s team=%s trial=%s free=%s',
               plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('pro'),
@@ -183,10 +188,10 @@ from (
           (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
     from (values ('trial',   3,  60, 4,  2, 1, 1, 1200,     0),
                  ('free',    1,   5, 0,  0, 0, 1,  300,     0),
-                 ('starter', 8, 150, 8,  2, 0, 1, 1500,  4900),
-                 ('solo',    8, 150, 8,  2, 0, 1, 1500,  4900),
-                 ('pro',    25, 300,20,  6, 0, 1, 3200,  9900),
-                 ('team',   80, 600,40, 15, 2, 3, 8200, 24900))
+                 ('starter', 4, 100, 6,  2, 0, 1, 1200,  4900),
+                 ('solo',    4, 100, 6,  2, 0, 1, 1200,  4900),
+                 ('pro',    10, 200,12,  4, 0, 1, 2400,  9900),
+                 ('team',   25, 400,25,  8, 2, 2, 6000, 24900))
            as x(plan, renders, edits, reels, aerials, topaz, seats, cogs, price)
     left join plan_entitlements e on x.plan = e.plan
 ) s;
@@ -510,7 +515,7 @@ where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity
   and c.relname in ('profiles','orgs','memberships','listings','capture_assets',
                     'capture_chapters','photos','render_jobs','renders',
                     'cost_ledger','leads','metering','rate_limits','deletion_requests',
-                    'plan_entitlements');
+                    'plan_entitlements','plan_entitlement_overrides');
 
 -- ── MUTATING: rate limiter semantics (cleans up after itself) ────────────────
 
@@ -625,6 +630,9 @@ begin
   -- Exactly THREE cloud renders fit the 0032 trial quota. Finish each fixture
   -- job before asking for the next: leaving three in-flight would make #4 fail
   -- the independent RP429 guard first and would not test the monthly RP402 cap.
+  -- This org is the signup default (space_type = real_estate), so 0044's
+  -- industry-aware trial leaves it on the base row; the one-tour single-location
+  -- trial is exercised on its own fitness fixture in the 0044 section below.
   for v_n in 1..3 loop
     v_job := create_render_job(v_listing, v_asset, 'smooth', '{}',
                               '_inv-wrk-' || lpad(v_n::text, 6, '0'), 'worker');
@@ -1860,6 +1868,219 @@ begin
   delete from apple_subscriptions where original_transaction_id like '\_inv-OT-%';
   delete from orgs where id in (oA, oB, oM, oX);
 end $ap$;
+
+-- ── 0044: plan rework + the industry-aware free week ─────────────────────────
+--
+-- The paid matrix itself is pinned above ("plan_entitlements match paid plans").
+-- What 0044 adds is the ONE plan that reads orgs.space_type: a single-location
+-- business (venue, restaurant, retail, fitness, other) gets a 1-tour trial from
+-- plan_entitlement_overrides, real estate keeps the 0032 base row. Paid plans
+-- and free are not industry-aware. org_entitlement() is what
+-- create_render_job() and log_job_cost() now read; plan_entitlement(),
+-- plan_render_cap() and org_seats_allowed() stay plan-only. Deliberately placed
+-- after the kept-red astra ceiling assertion so that one keeps its number.
+
+insert into _inv(name, pass, note)
+select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/60/4/1/1, 1000¢)',
+       (select count(*) from plan_entitlement_overrides) = 5 and coalesce(bool_and(ok), false),
+       format('%s row(s) total; wrong or missing: %s',
+              (select count(*) from plan_entitlement_overrides),
+              coalesce(string_agg(space_type, ', ') filter (where not ok), 'none'))
+from (
+  select x.space_type,
+         ((o.plan, o.renders_per_month, o.photo_edits_per_month, o.reels_per_month,
+           o.aerials_per_month, o.topaz_per_month, o.seats, o.cogs_ceiling_cents)
+           is not distinct from
+          ('trial', 1, 60, 4, 1, 1, null::integer, 1000)) as ok
+    from unnest(array['venue','restaurant','retail','fitness','other']) as x(space_type)
+    left join plan_entitlement_overrides o on o.plan = 'trial' and o.space_type = x.space_type
+) s;
+
+-- Same posture as plan_entitlements (0010 §2): world-readable, tenant-unwritable.
+insert into _inv(name, pass, note)
+select 'plan_entitlement_overrides: RLS on, one SELECT-all policy, tenants read but never write',
+       (select relrowsecurity from pg_class where oid = 'public.plan_entitlement_overrides'::regclass)
+       and (select count(*) from pg_policy where polrelid = 'public.plan_entitlement_overrides'::regclass) = 1
+       and (select count(*) from pg_policy
+             where polrelid = 'public.plan_entitlement_overrides'::regclass
+               and polcmd = 'r' and pg_get_expr(polqual, polrelid) = 'true') = 1
+       and has_table_privilege('authenticated','public.plan_entitlement_overrides','SELECT')
+       and has_table_privilege('anon','public.plan_entitlement_overrides','SELECT')
+       and not (has_table_privilege('authenticated','public.plan_entitlement_overrides','INSERT')
+             or has_table_privilege('authenticated','public.plan_entitlement_overrides','UPDATE')
+             or has_table_privilege('authenticated','public.plan_entitlement_overrides','DELETE')
+             or has_table_privilege('anon','public.plan_entitlement_overrides','INSERT')
+             or has_table_privilege('anon','public.plan_entitlement_overrides','UPDATE')
+             or has_table_privilege('anon','public.plan_entitlement_overrides','DELETE')), '';
+
+-- Both space_type columns 0044 touches are constrained to the six industries
+-- functions/listings/index.ts and the iOS SpaceType know, and VALIDATED (the
+-- generic "all CHECK constraints are validated" assertion above covers the
+-- flag; this one pins the value set so a seventh industry is a deliberate edit).
+insert into _inv(name, pass, note)
+select 'orgs.space_type and plan_entitlement_overrides.space_type are CHECKed to the six industries',
+       count(*) = 2 and bool_and(convalidated)
+       and bool_and(pg_get_constraintdef(oid) like '%real_estate%' and pg_get_constraintdef(oid) like '%venue%'
+                and pg_get_constraintdef(oid) like '%restaurant%' and pg_get_constraintdef(oid) like '%retail%'
+                and pg_get_constraintdef(oid) like '%fitness%' and pg_get_constraintdef(oid) like '%other%'),
+       format('%s of 2: %s', count(*), coalesce(string_agg(conname || ' valid=' || convalidated, ', '), 'none'))
+from pg_constraint
+where contype = 'c'
+  and ((conrelid = 'public.orgs'::regclass and conname = 'orgs_space_type_check')
+    or (conrelid = 'public.plan_entitlement_overrides'::regclass
+        and conname = 'plan_entitlement_overrides_space_type_check'));
+
+-- Same shape as effective_plan() (0010 §3 / 0019 §5): invoker, pinned path,
+-- callable by authenticated and the service role, never by anon.
+insert into _inv(name, pass, note)
+select 'org_entitlement(uuid) mirrors effective_plan(): invoker, search_path pinned, authenticated + service_role only',
+       count(*) = 1
+       and bool_and(not prosecdef
+                and 'search_path=public' = any(coalesce(proconfig, array[]::text[]))
+                and provolatile = 's'
+                and has_function_privilege('authenticated', oid, 'EXECUTE')
+                and has_function_privilege('service_role', oid, 'EXECUTE')
+                and not has_function_privilege('anon', oid, 'EXECUTE')),
+       format('%s overload(s)', count(*))
+from pg_proc
+where pronamespace = 'public'::regnamespace and proname = 'org_entitlement';
+
+-- The two enforcement points read the org-aware row. The plan-only helpers
+-- (and seats, which are NOT industry-aware) never touch the override table.
+insert into _inv(name, pass, note)
+select 'create_render_job and log_job_cost read org_entitlement(); the plan-only helpers ignore the override table',
+       (select count(*) from pg_proc where proname = 'create_render_job'
+         and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_render_cap(%') = 1
+       and (select count(*) from pg_proc where proname = 'log_job_cost'
+             and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_entitlement(v_plan)%') = 1
+       and (select count(*) from pg_proc
+             where pronamespace = 'public'::regnamespace
+               and proname in ('plan_entitlement', 'plan_render_cap', 'org_seats_allowed', 'effective_plan')
+               and prosrc like '%plan_entitlement_overrides%') = 0, '';
+
+-- ── MUTATING: what a single-location workspace is actually allowed to spend ──
+-- Three throwaway orgs prove the lookup; one throwaway user (through the real
+-- signup trigger) proves the enforcement — the render cap in create_render_job
+-- and the spend ceiling in log_job_cost — the same way the 0032 real-estate
+-- fixture above does for three tours. Cleans up after itself.
+
+do $ind$
+declare
+  u4 uuid := '0f1e2d3c-4b5a-4968-8776-655443322113';
+  oRE uuid; oFit uuid; v_org uuid; v_listing uuid; v_asset uuid;
+  e plan_entitlements; v_job render_jobs; v_cost numeric; msg text; ok boolean; n int;
+begin
+  -- Defensive cleanup from an aborted earlier run.
+  delete from cost_ledger where meta->>'_inv' = 'industry';
+  delete from orgs where id in (select org_id from memberships where user_id = u4);
+  delete from auth.users where id = u4;
+  delete from orgs where name like '\_inv industry %';
+
+  -- (a) the lookup. A real-estate org (the signup default) reads the 0032 base
+  -- row; a fitness org on the same plan reads the single-location override.
+  insert into orgs (name, plan, plan_source) values ('_inv industry RE', 'trial', 'trial') returning id into oRE;
+  insert into orgs (name, plan, plan_source, space_type)
+    values ('_inv industry FIT', 'trial', 'trial', 'fitness') returning id into oFit;
+
+  e := org_entitlement(oRE);
+  insert into _inv(name, pass, note)
+    values ('org_entitlement on a real-estate trial org is the 0032 base row (3/60/4/2/1, 1 seat, 1200¢)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+              is not distinct from ('trial', 3, 60, 4, 2, 1, 1, 1200, 0),
+            e::text);
+
+  e := org_entitlement(oFit);
+  insert into _inv(name, pass, note)
+    values ('org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+              is not distinct from ('trial', 1, 60, 4, 1, 1, 1, 1000, 0),
+            e::text);
+
+  -- Only the trial is industry-aware: an expired single-location trial is
+  -- plain free, and a paid single-location org is the plain paid row.
+  update orgs set trial_ends_at = now() - interval '1 day' where id = oFit;
+  e := org_entitlement(oFit);
+  insert into _inv(name, pass, note)
+    values ('an expired single-location trial reads the plain free row (the override does not follow it)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents)
+              is not distinct from ('free', 1, 5, 0, 0, 0, 1, 300),
+            e::text);
+  update orgs set plan = 'pro', plan_source = 'manual', trial_ends_at = null where id = oFit;
+  e := org_entitlement(oFit);
+  insert into _inv(name, pass, note)
+    values ('a paid single-location org reads the plain paid row (paid plans are not industry-aware)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+              is not distinct from ('pro', 10, 200, 12, 4, 0, 1, 2400, 9900),
+            e::text);
+
+  -- (b) the column is a real enum now.
+  ok := false; msg := null;
+  begin
+    insert into orgs (name, plan, plan_source, space_type) values ('_inv industry BAD', 'trial', 'trial', 'spa');
+  exception when check_violation then ok := true; msg := sqlerrm;
+  end;
+  insert into _inv(name, pass, note)
+    values ('orgs.space_type rejects a value outside the six industries (spa)',
+            ok and msg like '%orgs_space_type_check%', coalesce(msg, 'NO ERROR RAISED'));
+
+  -- (c) enforcement. A fitness workspace through the real signup trigger:
+  -- exactly ONE cloud render fits, the second is the same RP402 the app already
+  -- handles, and an app publish is still free at the cap.
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u4, 'inv-fixture4@example.com', '{"full_name":"Gym Fixture"}');
+  select m.org_id into v_org from memberships m where m.user_id = u4;
+  update orgs set space_type = 'fitness' where id = v_org;
+  perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
+
+  insert into listings (org_id, agent_id, address) values (v_org, u4, '1 Gym Way') returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/gym.mp4', 1000, true, 30) returning id into v_asset;
+
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000001', 'worker');
+  insert into _inv(name, pass, note)
+    values ('worker job #1 fits the single-location (fitness) trial cap', v_job.source = 'worker', v_job.source);
+  update render_jobs set status = 'ready', progress = 1, finished_at = now() where id = v_job.id;
+  begin
+    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000002', 'worker');
+    insert into _inv(name, pass, note)
+      values ('worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)', false, 'no error raised');
+  exception when others then
+    insert into _inv(name, pass, note)
+      values ('worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)',
+              sqlerrm like 'RP402%' and sqlerrm like '%trial plan (1 of 1)%', sqlerrm);
+  end;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000003', 'app');
+  insert into _inv(name, pass, note)
+    values ('an app publish is still free on a single-location trial at its render cap', v_job.source = 'app', '');
+
+  -- The spend ceiling is the override's 1000¢, not the base trial's 1200¢: a
+  -- 1001¢ line (fine under 1200¢) is refused, a 999¢ line lands.
+  select rj.* into v_job from render_jobs rj where rj.idem_key = '_inv-fit-000001';
+  ok := false; msg := null;
+  begin
+    perform log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1001, '{"_inv":"industry"}'::jsonb, 5000);
+  exception when others then msg := sqlerrm; ok := msg like 'RP402: monthly AI spend ceiling reached for the trial plan (0¢ of 1000¢)%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('log_job_cost enforces the single-location trial ceiling (1000¢, not the base 1200¢)',
+            ok, coalesce(msg, 'NO ERROR RAISED'));
+  v_cost := log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 999, '{"_inv":"industry"}'::jsonb, 5000);
+  select count(*) into n from cost_ledger where meta->>'_inv' = 'industry';
+  insert into _inv(name, pass, note)
+    values ('and a line inside that ceiling is recorded', v_cost = 999 and n = 1, format('total=%s rows=%s', v_cost, n));
+
+  -- Cleanup (children cascade from listings/orgs; profiles cascade from
+  -- auth.users; cost_ledger only SET NULLs on org/job deletion).
+  perform set_config('request.jwt.claims', '', true);
+  delete from cost_ledger where meta->>'_inv' = 'industry';
+  delete from listings where id = v_listing;
+  delete from orgs where id in (oRE, oFit, v_org);
+  delete from auth.users where id = u4;
+end $ind$;
 
 drop table if exists _inv_tasks;
 

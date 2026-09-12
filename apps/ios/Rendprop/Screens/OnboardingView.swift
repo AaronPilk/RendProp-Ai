@@ -156,11 +156,18 @@ struct OnboardingView: View {
             // entitlements. Deliberately NOT called a "7-day free trial": the
             // paywall's StoreKit introductory offer is called that, and two
             // different things under one name is how a 3.1.2 problem starts.
+            //
+            // The week is sized per industry (migration 0044): an agent gets
+            // 3 tours, a single-location business 1. The line reads the LIVE
+            // selection above — tap "Event venue" and it says "1 tour" — so
+            // the promise a person reads is the one the server will keep for
+            // the type they picked. The title stays word for word: the
+            // screenshot walk finds this screen by it.
             VStack(spacing: 3) {
                 Text("Your first week is on us")
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.ink)
-                Text("3 tours, 60 photo edits and 4 reel clips, free. No card, no account.")
+                Text("\((SpaceType(rawValue: spaceTypeRaw) ?? .realEstate).freeWeekLine), free. No card, no account.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)

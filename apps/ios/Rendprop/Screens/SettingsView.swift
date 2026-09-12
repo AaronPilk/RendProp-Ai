@@ -665,7 +665,10 @@ struct SettingsView: View {
         if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
             if let ends = e.trialEndsAt, ends > Date() {
-                LabeledContent("Trial ends", value: ends.formatted(date: .abbreviated, time: .omitted))
+                // "Free week", never "trial": the paywall's StoreKit
+                // introductory offer is the "7-day free trial", and the server
+                // week must not share its name (see OnboardingView).
+                LabeledContent("Free week ends", value: ends.formatted(date: .abbreviated, time: .omitted))
             }
             usageRow("Tour renders", used: e.used["renders"], cap: e.rendersPerMonth)
             usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth)
@@ -704,6 +707,8 @@ struct SettingsView: View {
     private static func planLabel(_ e: Entitlements) -> String {
         let name = e.plan.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return "—" }
+        // The server calls the week `trial`; the person is told "free week".
+        if name.lowercased() == "trial" { return "Free week" }
         return name.replacingOccurrences(of: "_", with: " ").capitalized
     }
 

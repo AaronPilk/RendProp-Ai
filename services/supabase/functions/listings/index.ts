@@ -15,6 +15,7 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
@@ -43,7 +44,8 @@ const WRITABLE = [
 // draft|uploading|processing|ready|expired; the server additionally knows
 // capturing|archived.
 const STATUSES = ["draft", "capturing", "uploading", "processing", "ready", "expired", "archived"];
-const SPACE_TYPES = ["real_estate", "venue", "restaurant", "retail", "fitness", "other"];
+// SPACE_TYPES comes from _shared/spacetypes.ts — the same six values PATCH
+// /me/brand accepts for orgs.space_type and the 0044 DB CHECK enforces.
 const SOURCES = ["manual", "url", "mls"];
 const MAX_DETAILS_BYTES = 16_000;
 const MAX_TEXT = 500;
@@ -63,7 +65,7 @@ function validate(patch: Record<string, unknown>, orgId: string, listingId: stri
       `status must be one of ${STATUSES.join(", ")}`);
   }
   if ("space_type" in patch) {
-    assert(typeof patch.space_type === "string" && SPACE_TYPES.includes(patch.space_type), 400,
+    assert(typeof patch.space_type === "string" && (SPACE_TYPES as readonly string[]).includes(patch.space_type), 400,
       `space_type must be one of ${SPACE_TYPES.join(", ")}`);
   }
   if ("source" in patch) {

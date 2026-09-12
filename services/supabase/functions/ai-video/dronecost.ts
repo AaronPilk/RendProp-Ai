@@ -126,12 +126,13 @@ export const DRONE_TIER_CENTS: Record<string, number> = {
  * ── Why $48.00 a tap is still bounded ────────────────────────────────────────
  *
  * The monthly wall does the bounding, and it is unchanged. Sanity against the
- * plan table (migration 0010): `team` is the only plan with topaz_per_month > 0
- * (2 taps/month) and its cogs_ceiling_cents is 8,200¢ = $82.00. Two maxed-out
- * taps would be $96.00, so assertMonthlyHeadroom() refuses the SECOND one —
- * max drone exposure stays ~$48-82 per org per month, enforced by machinery
- * that already existed. What the worst single tap costs went from $25.00 to
- * $48.00; what a MONTH can cost did not move.
+ * plan table (migration 0010, sizes reworked by 0044): `team` is the only paid
+ * plan with topaz_per_month > 0 (2 taps/month) and its cogs_ceiling_cents is
+ * 6,000¢ = $60.00. Two maxed-out taps would be $96.00, so
+ * assertMonthlyHeadroom() refuses the SECOND one — max drone exposure stays
+ * ~$48-60 per org per month, enforced by machinery that already existed. What
+ * the worst single tap costs went from $25.00 to $48.00; what a MONTH can cost
+ * did not move.
  *
  * Sanity against the product, so this refuses as little real work as possible:
  * the master handed to this route is normally ≤ 300 s already (see above). The

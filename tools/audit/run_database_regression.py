@@ -34,6 +34,12 @@ KEPT_RED = {
     "each astra ceiling clears its route's visible answer and stays under the code clamp",
 }
 
+# Exact size of the tests/invariants.sql inventory. A suite that prints fewer
+# rows is rejected even when its footer agrees with itself, so this number has
+# to move in the same change that adds or removes an assertion (213 since the
+# 0044 plan-rework / industry-trial section; 198 before it).
+INVARIANT_COUNT = 213
+
 
 def require(ok, message):
     if not ok:
@@ -64,18 +70,19 @@ def invariant_rows(output, exit_code):
     # The independent inventory prevents a shortened table from becoming a
     # green suite merely because its printed footer matches the shorter count.
     rows = re.findall(r"^\s*(\d+) \| (.*?) \|\s*(t|f)?\s*\|", output, re.MULTILINE)
-    require(len(rows) == 198 and [int(row[0]) for row in rows] == list(range(1, 199)),
-            "Missing/incomplete invariant inventory: expected 198 assertions")
+    require(len(rows) == INVARIANT_COUNT and [int(row[0]) for row in rows] == list(range(1, INVARIANT_COUNT + 1)),
+            f"Missing/incomplete invariant inventory: expected {INVARIANT_COUNT} assertions")
     names = [name.strip() for _, name, _ in rows]
     require(len(set(names)) == len(names), "Duplicate invariant names")
     required = {
         "all three explicit Astra writing seats keep their 0030/0034 paid-plan gates",
         "no gpt-6-astra row is reachable on the free or trial tier",
         "plan_entitlements match paid plans and 0032 trial/free for every metered feature",
+        "org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)",
     }
     require(required.issubset(names), "Required paid-plan/entitlement gates absent")
     failed = [name.strip() for _, name, passed in rows if passed != "t"]
-    require((not failed and exit_code == 0 and "All 198 invariants passed." in output)
+    require((not failed and exit_code == 0 and f"All {INVARIANT_COUNT} invariants passed." in output)
             or (failed and exit_code == 3 and f"INVARIANTS FAILED: {len(failed)} assertion(s)" in output),
             "Invariant exit/status disagrees with actual assertions")
     return names, failed

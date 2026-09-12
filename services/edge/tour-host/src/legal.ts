@@ -182,7 +182,7 @@ and they are what you are charged.</p>
 <ul>
   <li><b>Free trial.</b> Each plan starts with a 7-day free trial. Apple grants that trial
   <b>once per Apple ID</b> across all Rendprop plans, so changing plans does not start a second
-  one. Cancel before it ends and you pay nothing.</li>
+  one. Cancel at least 24 hours before it ends and you pay nothing.</li>
   <li><b>Auto-renewal.</b> Payment is charged to your Apple ID at confirmation of purchase. The
   subscription <b>renews automatically for the same period unless you cancel at least 24 hours
   before the current period ends</b>, and Apple charges the renewal within the 24 hours before

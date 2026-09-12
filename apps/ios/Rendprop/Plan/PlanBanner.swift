@@ -100,11 +100,17 @@ struct PlanBanner: View {
             if let forced = Config.uiTestPlanBanner {
                 let day: TimeInterval = 86_400
                 let iso = ISO8601DateFormatter()
+                // Fixed numbers, so the screenshot is the same on every run:
+                // the real-estate free week for the trial states, and the Pro
+                // literals from Products.swift for the paid one.
+                let week = Allowances(renders: 3, photoEdits: 60, reels: 4)
+                let pro = RendpropPlan.pro.allowances
+                let paid = Allowances(renders: pro.renders, photoEdits: pro.photoEdits, reels: pro.reels)
                 switch forced {
-                case "trial":  state = PlanBanner.state(plan: "trial", trialEndsAt: iso.string(from: Date().addingTimeInterval(5 * day)), now: Date())
-                case "ending": state = PlanBanner.state(plan: "trial", trialEndsAt: iso.string(from: Date().addingTimeInterval(1.5 * day)), now: Date())
-                case "ended":  state = PlanBanner.state(plan: "free", trialEndsAt: nil, now: Date())
-                case "paid":   state = PlanBanner.state(plan: "pro", trialEndsAt: nil, now: Date())
+                case "trial":  state = PlanBanner.state(plan: "trial", trialEndsAt: iso.string(from: Date().addingTimeInterval(5 * day)), allowances: week, now: Date())
+                case "ending": state = PlanBanner.state(plan: "trial", trialEndsAt: iso.string(from: Date().addingTimeInterval(1.5 * day)), allowances: week, now: Date())
+                case "ended":  state = PlanBanner.state(plan: "free", trialEndsAt: nil, allowances: nil, now: Date())
+                case "paid":   state = PlanBanner.state(plan: "pro", trialEndsAt: nil, allowances: paid, now: Date())
                 default:       state = nil
                 }
                 return
@@ -128,7 +134,20 @@ struct PlanBanner: View {
                 // exclusive — MeSlice declares none, so `trial_ends_at` maps.
                 d.keyDecodingStrategy = .convertFromSnakeCase
                 guard let me = try? d.decode(MeSlice.self, from: data) else { return }
-                state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt, now: Date())
+                // The server's own numbers for THIS org — the free week is sized
+                // per industry from `orgs.space_type`, so these, not a literal
+                // in the app, are the promise the server will actually keep.
+                state = PlanBanner.state(plan: me.plan, trialEndsAt: me.trialEndsAt,
+                                         allowances: me.entitlement?.allowances, now: Date())
+                // The server sizing the week for a different industry than the
+                // one chosen on this phone means the last sync never landed
+                // (or landed on another org). Forget that it did, so the next
+                // sync point — a type change, a session change, the next
+                // foreground — sends it again. Nothing is shown for it.
+                if let serverType = me.org?.spaceType?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !serverType.isEmpty, serverType != SpaceType.current.rawValue {
+                    AppModel.markSpaceTypeOutOfSync()
+                }
                 return
             }
             // Every attempt failed: say nothing rather than guess at somebody's
@@ -136,11 +155,42 @@ struct PlanBanner: View {
         }
     }
 
-    /// Only the two fields this banner needs. A narrow shape cannot break when
-    /// /me grows a field.
+    /// The monthly numbers the banner can quote, as `GET /me` reports them
+    /// (`entitlement.*_per_month`). nil = not known (offline, an older server),
+    /// in which case the copy falls back to the app's own literals.
+    struct Allowances: Equatable {
+        let renders: Int
+        let photoEdits: Int
+        let reels: Int
+    }
+
+    /// Only the fields this banner needs. A narrow shape cannot break when
+    /// /me grows a field; every field is optional so a missing one cannot
+    /// break it either.
     private struct MeSlice: Decodable {
+        struct Entitlement: Decodable {
+            // `LenientInt` (the same tolerant number LiveAPIClient's own /me
+            // decode uses) never throws: a count arriving as `3.0`, `"3"` or
+            // null must not silence the whole banner.
+            let rendersPerMonth: LiveAPIClient.LenientInt?
+            let photoEditsPerMonth: LiveAPIClient.LenientInt?
+            let reelsPerMonth: LiveAPIClient.LenientInt?
+
+            /// All three, or nothing — a half-known set of numbers would quote
+            /// one server figure next to one literal.
+            var allowances: Allowances? {
+                guard let r = rendersPerMonth?.value, let e = photoEditsPerMonth?.value,
+                      let c = reelsPerMonth?.value else { return nil }
+                return Allowances(renders: r, photoEdits: e, reels: c)
+            }
+        }
+        struct Org: Decodable {
+            let spaceType: String?
+        }
         let plan: String?
         let trialEndsAt: String?
+        let entitlement: Entitlement?
+        let org: Org?
     }
 
     @ViewBuilder
@@ -212,24 +262,42 @@ struct PlanBanner: View {
     }
 
     /// Pure, so the copy can be tested without a network.
-    static func state(plan: String?, trialEndsAt: String?, now: Date) -> PlanState? {
+    ///
+    /// `allowances` are the server's numbers for this org when `/me` had them;
+    /// nil falls back to the app's own: `RendpropPlan.allowances` for a paid
+    /// plan (the one copy of those literals, Products.swift) and the industry's
+    /// free week (`SpaceType.freeWeekLine`) for the trial. `space` is the
+    /// business type the copy addresses — the current one, unless a test says
+    /// otherwise.
+    static func state(plan: String?, trialEndsAt: String?, allowances: Allowances?, now: Date,
+                      space: SpaceType = .current) -> PlanState? {
+        // "Your free week has ended" is said in two places below; one string.
+        let ended = PlanState(kind: .ended,
+                              title: "Your free week has ended",
+                              detail: "You're on the free plan — one tour a month. Your \(space.spaceNounPlural) and tours are all still here.")
         switch (plan ?? "").lowercased() {
-        case "pro":              return PlanState(kind: .paid, title: "Pro", detail: "25 tours a month, 300 photo edits, 20 reel clips.")
-        case "team":             return PlanState(kind: .paid, title: "Team", detail: "Your whole workspace, on the Team plan.")
-        case "starter", "solo":  return PlanState(kind: .paid, title: "Starter", detail: "8 tours a month, 150 photo edits, 8 reel clips.")
+        case "pro":
+            return PlanState(kind: .paid, title: "Pro", detail: paidDetail(allowances, fallback: RendpropPlan.pro))
+        case "team":
+            return PlanState(kind: .paid, title: "Team", detail: "Your whole workspace, on the Team plan.")
+        case "starter", "solo":
+            return PlanState(kind: .paid, title: "Starter", detail: paidDetail(allowances, fallback: RendpropPlan.starter))
         case "free":
-            return PlanState(kind: .ended,
-                             title: "Your free week has ended",
-                             detail: "You're on the free plan — one tour a month. Your homes and tours are all still here.")
+            return ended
         case "trial":
+            // What the week gives, in the server's numbers when it sent them —
+            // the week is sized per industry (`orgs.space_type`), and the
+            // server's figure is the one it enforces.
+            let week = allowances.map {
+                SpaceType.makeFreeWeekLine(tours: $0.renders, photoEdits: $0.photoEdits, reelClips: $0.reels)
+            } ?? space.freeWeekLine
             let days = daysLeft(trialEndsAt, now: now)
             guard let days else {
                 return PlanState(kind: .trial, title: "Your first week is on us",
-                                 detail: "3 tours, 60 photo edits and 4 reel clips, free.")
+                                 detail: "\(week), free.")
             }
             if days <= 0 {
-                return PlanState(kind: .ended, title: "Your free week has ended",
-                                 detail: "You're on the free plan — one tour a month. Your homes and tours are all still here.")
+                return ended
             }
             if days <= 2 {
                 return PlanState(kind: .endingSoon,
@@ -238,10 +306,23 @@ struct PlanBanner: View {
             }
             return PlanState(kind: .trial,
                              title: "Your first week is on us",
-                             detail: "3 tours, 60 photo edits and 4 reel clips — \(days) days left.")
+                             detail: "\(week) — \(days) days left.")
         default:
             return nil          // unknown plan: say nothing at all
         }
+    }
+
+    /// "10 tours a month, 200 photo edits, 12 reel clips." — from the server's
+    /// numbers when known, else the plan's literals in Products.swift.
+    static func paidDetail(_ allowances: Allowances?, fallback plan: RendpropPlan) -> String {
+        let a = plan.allowances
+        let renders = allowances?.renders ?? a.renders
+        let edits = allowances?.photoEdits ?? a.photoEdits
+        let clips = allowances?.reels ?? a.reels
+        let tourNoun = renders == 1 ? "tour" : "tours"
+        let editNoun = edits == 1 ? "edit" : "edits"
+        let clipNoun = clips == 1 ? "clip" : "clips"
+        return "\(renders) \(tourNoun) a month, \(edits) photo \(editNoun), \(clips) reel \(clipNoun)."
     }
 
     static func daysLeft(_ raw: String?, now: Date) -> Int? {

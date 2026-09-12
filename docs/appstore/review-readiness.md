@@ -177,8 +177,8 @@ Each `description.txt` claim traced to shipped code. No claim is unsupported.
 | Branded page + separate unbranded MLS link | Yes. `Models/Listing.swift:98` (`/f/`) and `:119` (`/u/`); UI at `RenderStatusView.swift:331`, `FlythroughDetailView.swift:353-359`. |
 | Agent card on every tour | Yes. `AgentCard`, `SettingsView.swift:~1440`. |
 | Five business modes re-theme the app | Yes. `SpaceType` (`Models/Listing.swift:597+`), switcher at `RendpropApp.swift:1621`. |
-| Works without an account; sign-in only to publish | Yes. `Config.enableAuth` gates publish-time actions only; capture, render, AI tools and preview all run signed out. |
-| Plan allowances (8/150/8/2, 25/300/20/6, 80/600/40/15+3 seats) | Server-enforced, and the same numbers are asserted in `services/supabase/tests/invariants.sql:165,174`. Displayed in-app from `/me`, never hardcoded. |
+| Works without an account; sign-in only to publish | Yes, as audited on 2026-09-05. *2026-09-12 rework:* publishing no longer needs an account either — the app opens an anonymous session itself; Sign in with Apple is optional (it carries a workspace to a new device) and only a Team seat requires it, because a seat belongs to a person. The store copy now says exactly that. |
+| Plan allowances (8/150/8/2, 25/300/20/6, 80/600/40/15+3 seats) | Server-enforced, and the same numbers are asserted in `services/supabase/tests/invariants.sql:165,174`. Displayed in-app from `/me`, never hardcoded. *2026-09-12 rework (prices unchanged):* Starter 4/100/6/2, Pro 10/200/12/4, Team 25/400/25/8 + **2 seats**; free week per industry (real estate 3 tour renders, 60 photo edits, 4 reel clips, 2 aerial intros; single-location businesses 1/60/4/1), then the free plan at 1 tour render a month. The description, review notes, website and ASC product descriptions were rewritten to these numbers the same day; re-check the invariants assertion lines when the migration lands. |
 | Prices `$49 / $490 / $99 / $990 / $249` | Listed in the description only. The **app** shows `Product.displayPrice` exclusively — grep confirms no subscription price string is compiled into the binary. |
 
 ---

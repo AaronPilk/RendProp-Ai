@@ -363,6 +363,53 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
     var spaceNounCap: String { spaceNoun.prefix(1).uppercased() + spaceNoun.dropFirst() }
+    /// "homes" / "venues" / "places" / "stores" / "studios" / "spaces".
+    var spaceNounPlural: String { spaceNoun + "s" }
+
+    // MARK: Free week (server plan `trial`, sized per industry)
+    //
+    // The server enforces the week's allowances from `orgs.space_type`
+    // (migration 0044): an agent lists several homes at once and gets 3 tours;
+    // a venue, restaurant, store, gym or other business is ONE location and
+    // gets 1. Photo edits (60) and reel clips (4) are the same everywhere. The
+    // app SENDS its type to the server (`AppModel.syncSpaceTypeIfNeeded`) and
+    // READS the live numbers from `GET /me` wherever it can (`PlanBanner`);
+    // these are the offline / pre-session fallback and the onboarding copy.
+
+    /// A business with one location to tour, as opposed to an agent with a
+    /// changing set of listings.
+    var isSingleLocation: Bool { self != .realEstate }
+
+    /// Tour renders in the free week.
+    var trialTourCount: Int { isSingleLocation ? 1 : 3 }
+
+    /// Aerial intros in the free week.
+    var trialAerialCount: Int { isSingleLocation ? 1 : 2 }
+
+    /// AI photo edits in the free week — the same for every industry.
+    static let trialPhotoEditCount = 60
+
+    /// Reel clips in the free week — the same for every industry.
+    static let trialReelClipCount = 4
+
+    /// "3 tours, 60 photo edits and 4 reel clips" / "1 tour, 60 photo edits
+    /// and 4 reel clips". The free-week sentence, minus its ending, so
+    /// onboarding ("…, free. No card, no account.") and the Home banner
+    /// ("… — 5 days left.") say the same thing.
+    var freeWeekLine: String {
+        Self.makeFreeWeekLine(tours: trialTourCount,
+                              photoEdits: Self.trialPhotoEditCount,
+                              reelClips: Self.trialReelClipCount)
+    }
+
+    /// The same sentence from live numbers (`GET /me` → `entitlement`), so a
+    /// server-side change to the week shows up without an app release.
+    static func makeFreeWeekLine(tours: Int, photoEdits: Int, reelClips: Int) -> String {
+        let tourNoun = tours == 1 ? "tour" : "tours"
+        let editNoun = photoEdits == 1 ? "edit" : "edits"
+        let clipNoun = reelClips == 1 ? "clip" : "clips"
+        return "\(tours) \(tourNoun), \(photoEdits) photo \(editNoun) and \(reelClips) reel \(clipNoun)"
+    }
 
     /// The trade, for copy that addresses the business rather than the space
     /// ("For a busy gym or studio…"). Real estate is the agent; callers that

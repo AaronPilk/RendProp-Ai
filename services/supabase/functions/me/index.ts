@@ -8,9 +8,12 @@
 //                                  entitlement = the plan_entitlements row the server enforces,
 //                                  usage.by_feature = this window's consumption per meter
 //                                  (audit F-supabase-16 / F-E-15; decision B4).
-//   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle }, portfolio_url }
+//   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle, space_type }, portfolio_url }
 //                                  brand-kit fields + `handle` (public portfolio slug,
 //                                  unique → 409) + `org_name` (business name; never an email)
+//                                  + `space_type` (the workspace's industry, one of the six
+//                                  the app knows; 400 otherwise — 0044 reads it for the
+//                                  industry-aware trial)
 //   GET    /me/compliance       -> { org_id, from, to, count, truncated, rows[] }
 //                                  ?from=&to=&listing_id=&limit=&format=csv
 //                                  The BROKER-EXPORTABLE AI audit log: every
@@ -64,6 +67,7 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
+import { isSpaceType, SPACE_TYPES } from "../_shared/spacetypes.ts";
 import {
   abortMultipartUpload,
   deleteObjects,
@@ -286,10 +290,16 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
 // (0005) restrict the update to orgs the caller may edit, and `plan` stays
 // untouchable.
 //
-// Also accepts the two org columns the card needs (audit F-supabase-15/06):
-//   handle    public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
-//             not a reserved word, unique (→ 409). null/"" clears it.
-//   org_name  the business name shown on the portfolio page (never an email).
+// Also accepts the org columns the card needs (audit F-supabase-15/06):
+//   handle      public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
+//               not a reserved word, unique (→ 409). null/"" clears it.
+//   org_name    the business name shown on the portfolio page (never an email).
+//   space_type  the workspace's industry — exactly one of _shared/spacetypes.ts
+//               (real_estate | venue | restaurant | retail | fitness | other), 400
+//               otherwise; the DB CHECK (0044) refuses anything else too. It is
+//               what org_entitlement() reads for the industry-aware trial, so the
+//               app should send it as soon as the person picks their business
+//               type. Never cleared: the column is NOT NULL (default real_estate).
 // When `name` (the card name) is set and the org still carries a placeholder
 // name ("My business" or an email left by the old trigger), the org is named
 // after the card so the portfolio page heals without a second call.
@@ -353,12 +363,18 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
     assert(!n.includes("@"), 400, "org_name must be a business name, not an email address");
     orgPatch.name = n;
   }
+  if ("space_type" in body) {
+    const v = body.space_type;
+    const s = typeof v === "string" ? v.trim().toLowerCase() : v;
+    assert(isSpaceType(s), 400, `space_type must be one of ${SPACE_TYPES.join(", ")}`);
+    orgPatch.space_type = s;
+  }
 
   assert(Object.keys(patch).length + Object.keys(orgPatch).length > 0, 400,
-    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name`);
+    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name, space_type`);
 
   const { data: org, error: oErr } = await db
-    .from("orgs").select("id, name, handle, brand_kit").eq("id", orgId).maybeSingle();
+    .from("orgs").select("id, name, handle, space_type, brand_kit").eq("id", orgId).maybeSingle();
   if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
   if (!org) throw new HttpError(404, "Org not found");
 
@@ -378,11 +394,16 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   if (Object.keys(patch).length > 0) update.brand_kit = merged;
 
   const { data: updated, error: upErr } = await db
-    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, brand_kit").maybeSingle();
+    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, space_type, brand_kit").maybeSingle();
   if (upErr) {
     // 23505 = unique_violation on orgs.handle.
     if ((upErr as { code?: string }).code === "23505" || /duplicate key|orgs_handle_key/i.test(upErr.message)) {
       throw new HttpError(409, "That handle is already taken — choose another", "conflict");
+    }
+    // 23514 = check_violation: orgs_space_type_check (0044). Unreachable past
+    // the allowlist above unless the two lists drift — say so, not "500".
+    if ((upErr as { code?: string }).code === "23514" || /orgs_space_type_check/i.test(upErr.message)) {
+      throw new HttpError(400, `space_type must be one of ${SPACE_TYPES.join(", ")}`);
     }
     throw new HttpError(500, `Brand update failed: ${upErr.message}`);
   }
@@ -393,7 +414,7 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   return json({
     ok: true,
     brand_kit: updated.brand_kit ?? merged,
-    org: { name: updated.name, handle },
+    org: { name: updated.name, handle, space_type: updated.space_type ?? org.space_type ?? null },
     portfolio_url: handle ? `${TOUR_BASE}/a/${handle}` : null,
   });
 }
