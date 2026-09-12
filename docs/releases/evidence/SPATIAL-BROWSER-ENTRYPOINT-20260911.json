@@ -1,0 +1,779 @@
+{
+  "schema_version": 1,
+  "source_commit": "c391bb95b3a36b1ca99a306cd19465950abd1656",
+  "base_commit": "259bfad4fe953e4f68c4f50b7ec346d79d15789d",
+  "branch": "fix/spatial-browser-entrypoint-20260911",
+  "scope": "Source and synthetic verification only; no production deploy, real-room quality acceptance, Apple upload, runtime budget changes or provider spending.",
+  "source_snapshot": [
+    {
+      "path": "package-lock.json",
+      "sha256": "ded9c5dd0e5518121e4e69607a29cf69bf40fa0223e02161628b6ae0663cf39a"
+    },
+    {
+      "path": "package.json",
+      "sha256": "3434861d1ca43e435f141805d28cadfde2a0ae121240803d75dc0f5d5353f9e1"
+    },
+    {
+      "path": "public/.assetsignore",
+      "sha256": "4dd1e1e73faed61d2ca81155bee26dabc8d805f9a53e26ad564dd317d1b6f6e2"
+    },
+    {
+      "path": "public/GEAR-README.md",
+      "sha256": "4de65bd2afca4495cd105df4f0122158726d7465afe93ada08954f5c3f5e7f1f"
+    },
+    {
+      "path": "public/_headers",
+      "sha256": "c4a6a58b3327d0f2012820de0239128d17e7f61456b6b30eac24cb39c3f9ddc1"
+    },
+    {
+      "path": "public/assets/agent-headshot.webp",
+      "sha256": "e322c53c4b6711901b9b266b1bdca29f5b029d5b8257c65303397201bc28856e"
+    },
+    {
+      "path": "public/assets/ai-wave-dark.webp",
+      "sha256": "1c4c60d7ce94c5701bdcc4918d83cdc2c2e518561ae0b576855943a019c55d73"
+    },
+    {
+      "path": "public/assets/apple-touch-icon.png",
+      "sha256": "c00f47c8dce95f55d85fe86c56aa85116079c67c2a7d33637f8bb392661295fb"
+    },
+    {
+      "path": "public/assets/construction-site-framing.webp",
+      "sha256": "d05e50bd6f9fb850205c7538215f1cf5b344949370715e66961b50b4d8ad7cbb"
+    },
+    {
+      "path": "public/assets/demo-g1.webp",
+      "sha256": "8b7106de3fb113dcb99e4477376b95d532267147d480a27d85fea91b89511848"
+    },
+    {
+      "path": "public/assets/demo-g2.webp",
+      "sha256": "491d5f24eaff7415af499433e77a8e565578a77ee3407a5600582ce43c785efb"
+    },
+    {
+      "path": "public/assets/demo-g3.webp",
+      "sha256": "e91aa2c5be72a2649c82a8369bc7ad2c7550ce9364a1db76760e1d420c8f9592"
+    },
+    {
+      "path": "public/assets/demo-g4.webp",
+      "sha256": "7ec6bb18dd4e59f9506ba9251413f4a1c1fc6285b1567231366fd15c62238753"
+    },
+    {
+      "path": "public/assets/demo-g5.webp",
+      "sha256": "d6d2c4f240e34a2b681f91b90bd7092c02042fa17b6e9fcdc4d50ecd9e2d5bc9"
+    },
+    {
+      "path": "public/assets/demo-g6.webp",
+      "sha256": "115f5d390db74c781b18b08da6fcb8f10e73fc44210a74d7233febc7bb6be273"
+    },
+    {
+      "path": "public/assets/demo-poster.webp",
+      "sha256": "3d85cdfb102b0b20cddb71cb2f7f4f7c3e979a6493ec70fbef907b5cce774436"
+    },
+    {
+      "path": "public/assets/demo-reel.mp4",
+      "sha256": "5e43b7194f25be3d79fa97c66397ebc955cc7c0fda08379b34df5f77b46593c1"
+    },
+    {
+      "path": "public/assets/demo-tour.mp4",
+      "sha256": "775209174667be1776ad4028cbf1e09ef7180aff9fb113d10d78d0ed7b698a05"
+    },
+    {
+      "path": "public/assets/example-staging-after.webp",
+      "sha256": "ba429b3341a73e495a56acc01f6074b34ececc614f70aec59169c8853a9be8e4"
+    },
+    {
+      "path": "public/assets/example-staging-before.webp",
+      "sha256": "411d36de24ec4e62b1197007e62eccfd6e3191a23aa0da0d19bd790aeb6b4dac"
+    },
+    {
+      "path": "public/assets/example-twilight-after.webp",
+      "sha256": "91135d3c70db7d4c3839def4c8eb16a87784f235ea44fe91f8ae1e0af807f0a0"
+    },
+    {
+      "path": "public/assets/example-twilight-before.webp",
+      "sha256": "5453160ae7b5cc642b99ff7a609165d30b55e577d8e962f9a9e56bd8083e241a"
+    },
+    {
+      "path": "public/assets/glass-house-exterior.webp",
+      "sha256": "0b3232b4aa277a3e97b1493b01d5a0111395fa47e1c799de16f92c74deb824f9"
+    },
+    {
+      "path": "public/assets/hero-twilight-modern-home-1280.webp",
+      "sha256": "986cadf66fa4c9fd078ac36c1965181d10edab71692298a614cf093f2efe8a83"
+    },
+    {
+      "path": "public/assets/hero-twilight-modern-home.webp",
+      "sha256": "24bb73222b0e0e27b5f734707ebe1e473552d473fac9ef22b6a1e805e8982046"
+    },
+    {
+      "path": "public/assets/hospitality-spa-detail.webp",
+      "sha256": "5cf59902028d2a27d78e7c065fc9ce62573eafbae9d5501ef3e7b3fca146a6c6"
+    },
+    {
+      "path": "public/assets/living-room-walkthrough.webp",
+      "sha256": "837ffefe26aec5b2e737a2a48688ef7eca6a8033846438470d33cc92eea282b2"
+    },
+    {
+      "path": "public/assets/luxury-kitchen-interior.webp",
+      "sha256": "594948dd592cf12a033689b88928e16874ee163be84fcc2a6af5f52af35c8c30"
+    },
+    {
+      "path": "public/assets/modern-home-exterior-tour.webp",
+      "sha256": "50e602250d5f792fe6179e4f16901c6a3c9ad33ca3821f4fe096fc06f47ea0ac"
+    },
+    {
+      "path": "public/assets/og.jpg",
+      "sha256": "38c3e5943385cf128740dc0d15afa3241da59e60271b281614babe3259cd7761"
+    },
+    {
+      "path": "public/assets/rendprop-mark.svg",
+      "sha256": "7d53d0d2b3dce39bd990080749a0cbab365fecb83d4b59b347fbedb663f03f81"
+    },
+    {
+      "path": "public/assets/site.css",
+      "sha256": "8911ddb6320a308c66df6dc05ea2c887f4ee7d170dba1a7f12ee117fcf41942b"
+    },
+    {
+      "path": "public/assets/site.js",
+      "sha256": "4ab8b41f120ef6d3d63b5ae06f3d2b0462e51c41494e4e4e1601c48722c0dfa4"
+    },
+    {
+      "path": "public/assets/tract-word-dark.png",
+      "sha256": "35dcbf91e9339ae2c07f9031629cf366239cce5c5272981e7d1ffa86d638c45e"
+    },
+    {
+      "path": "public/assets/tract-word-light.png",
+      "sha256": "effee304226708349a3c250fa040d89f3df6b0e8def4597fef7c3a45fa52a362"
+    },
+    {
+      "path": "public/assets/wml-mark.png",
+      "sha256": "0ef57123e0f9e3bdea68fa24742413597192234315aa5d0815195f54176f4bcd"
+    },
+    {
+      "path": "public/compare.html",
+      "sha256": "97de7c5493b4bfb541638e3c0456ea65d6ce8bc5d1017a842ad29c2933a5fde7"
+    },
+    {
+      "path": "public/favicon.svg",
+      "sha256": "ca256c7b1d54bff6f7244f57d38564a21741dad4adb7945d044d912a615734cd"
+    },
+    {
+      "path": "public/features.html",
+      "sha256": "b41b39ec5aaad0949cb77da371be7f1e297a9fc6daab1c380b518d7b75dff4f9"
+    },
+    {
+      "path": "public/gear.json",
+      "sha256": "1ccae8de74be8eab64fefae7217d562928702af3ca95f3bb978535a3336f408e"
+    },
+    {
+      "path": "public/index.html",
+      "sha256": "76d2f75e2f4b9a4ab1420e4a5b4595a8e1f8bbd9a6df49f1751867b31d92f603"
+    },
+    {
+      "path": "public/llms.txt",
+      "sha256": "27dc48d34f6ec8f896e2613a632ba4f9e67faae8eddce0f86e2b6407904cc69f"
+    },
+    {
+      "path": "public/pricing.html",
+      "sha256": "0b23af82f8bddd9b6a97a04ba2e3c04071bf947b918c9110fecbbcbd7448c829"
+    },
+    {
+      "path": "public/robots.txt",
+      "sha256": "199ac610ee4de012dbc039154f5fded55774c362e16e2b2247fac649b5130d58"
+    },
+    {
+      "path": "public/sitemap.xml",
+      "sha256": "a03ef791e5507cc7e78421ee63fe390a166747f5fcec31bb474e7afbc84da5d1"
+    },
+    {
+      "path": "public/support.html",
+      "sha256": "4e97b5ff5492222ed5e1437c4a4cdba26505375b09ad58f4f338f0c272dd2b33"
+    },
+    {
+      "path": "scripts/build-spatial-browser.mjs",
+      "sha256": "f62257e739703122501be1ad6aaa997c2a283879b851c32f17128ea934c285a0"
+    },
+    {
+      "path": "scripts/build-src.mjs",
+      "sha256": "a32baf6be9a73fe828ac16e03e36e7108e2fcbdd6389367881ebc6f88fc9f3ab"
+    },
+    {
+      "path": "scripts/check-assets.mjs",
+      "sha256": "13f3e8e76a3ba32d6c4da05cab08f62a343da68f556b4c8f6f3a6b7088e9f0b7"
+    },
+    {
+      "path": "scripts/check-lead-form.mjs",
+      "sha256": "439cdd1fa618b52a6a5657a063f5bfe33181e86e7e48c05c1d67d73e3b0ce341"
+    },
+    {
+      "path": "scripts/check-legal.mjs",
+      "sha256": "55a9600ecb53f9c60662454af1a0643b4d912703b26d79e684c621669b9bf4dd"
+    },
+    {
+      "path": "scripts/check-routes.mjs",
+      "sha256": "a275b2f1da58a4caf0e17b9a5e8bb7ef3be54563561b823696593c64660edb08"
+    },
+    {
+      "path": "scripts/check-spatial-browser.mjs",
+      "sha256": "3a64efaada204c2a2401deb64624bf32341378fc924d10f7514a7850c1162d8f"
+    },
+    {
+      "path": "scripts/check-spatial-built.mjs",
+      "sha256": "a4e634266b1cda98310aa420bd950e61362f0f0136b6234aa9b98c153fbf68da"
+    },
+    {
+      "path": "scripts/check-spatial.mjs",
+      "sha256": "320ed489bc1619bde3a232f3cb12c60bc0e55b0fa8f0d76df73361d807271008"
+    },
+    {
+      "path": "scripts/check-unbranded.mjs",
+      "sha256": "aabe811cf486eb35628827f396bc3b795fe1ba0ffd6c25d994a622c66ff11f9f"
+    },
+    {
+      "path": "scripts/check-upstream.mjs",
+      "sha256": "f5d1691fbdb584c09a6326e9a2fdcead56f918940efcb99f91c570f72e814402"
+    },
+    {
+      "path": "scripts/preview-spatial.mjs",
+      "sha256": "809a8c0c04e134efd7e2c37a70d8a96477f074833144a8662b067d6bd05ef95a"
+    },
+    {
+      "path": "scripts/reproduce-cache-revocation.mjs",
+      "sha256": "0ccd2193897d59d1186d9d06bf1a3a98d98f925f228894f477559ec7699b19f3"
+    },
+    {
+      "path": "scripts/spatial-built-fixture.mjs",
+      "sha256": "a6de13e7c8f1c98996ec2342e69cd76fba42a393db6608264867b63a8d5247d2"
+    },
+    {
+      "path": "src/browser/spatial-viewer.js",
+      "sha256": "08a33857f5303068abd79ce7e8383c55409569495a77d366989c875a0ed43d7f"
+    },
+    {
+      "path": "src/demo.ts",
+      "sha256": "9771d7bb1907732f0e8930de0cb1c60857b51fc2745fe1d26f3917a3f524fb44"
+    },
+    {
+      "path": "src/html.ts",
+      "sha256": "60448cb8c47e33f45cb62e11a668cef6e68b7f3620512e7c53b308e4ecc01b89"
+    },
+    {
+      "path": "src/index.ts",
+      "sha256": "24435d45f4c6bf1a10eb19434466c3098b1c031da0c06020cd020ed1ef494e19"
+    },
+    {
+      "path": "src/legal.ts",
+      "sha256": "2e5768e4ae3a732f6e965ba18ff17dc9e7ed4c7d8cfe05075a957873da17afe5"
+    },
+    {
+      "path": "src/player.ts",
+      "sha256": "10e19093f4dc898a44b0ff8a013fd1ef125d908718358832bbc864e69c2f1165"
+    },
+    {
+      "path": "src/portfolio.ts",
+      "sha256": "828d43df89238ff5dee1966a10526430af67982cd436466c3b45a8f1b3cbe490"
+    },
+    {
+      "path": "src/spatial-browser.generated.json",
+      "sha256": "163f6a43dde1c094ab9061e1ccb9926124c18677f8c56db613f1b53e746776d9"
+    },
+    {
+      "path": "src/spatial-browser.generated.ts",
+      "sha256": "1786e8d4af28728878cd8f5a12f027931e25e6eb56232ed5c122fb85cde5e04c"
+    },
+    {
+      "path": "src/spatial-manifest.ts",
+      "sha256": "996f7720e9278456c58ebc2eff69c9ce7cbf26e27d4c626a1c1e25162956d3ca"
+    },
+    {
+      "path": "src/spatial-runtime.ts",
+      "sha256": "bc34e6f0a76e7ae73455cf1f187a603a9ac9bca7b5f25936a0e6c896546fe666"
+    },
+    {
+      "path": "src/spatial-sog.ts",
+      "sha256": "f4a75590d0dbb3020a3a988161677a4005971b3604dff8a7169dfd794de054ae"
+    },
+    {
+      "path": "src/spatial-values.ts",
+      "sha256": "88d015b4cbb1c69a6e06d0cf18251952e1d85ea091b7dd491c868d716e933982"
+    },
+    {
+      "path": "src/spatial.ts",
+      "sha256": "13fe28f1f0759e48b72b52d130830799a1e44eb9056c5a353e88908ea2b12544"
+    },
+    {
+      "path": "src/types.ts",
+      "sha256": "b99d43ee77366bcebd129a598eff21ecb5085ad13eaff0c7b1fe188c7bbaed73"
+    },
+    {
+      "path": "src/upstream.ts",
+      "sha256": "f0d5fbe2bbeba6a473af0ce6e7c2bc2b83d405af626f5cc4627ab83f46b273fb"
+    },
+    {
+      "path": "tsconfig.json",
+      "sha256": "1245e3ccad5b485ee1ad7a7d312bfa7fd0680b5bfff915a7029e02415129cf75"
+    },
+    {
+      "path": "wrangler.toml",
+      "sha256": "2d419e9054e92a6cb97e8af647ed24ef11f9a902cb85d0bf4f79b6078f9f9afe"
+    }
+  ],
+  "canonical_browser": {
+    "schema_version": 1,
+    "entry": "src/browser/spatial-viewer.js",
+    "tool": {
+      "name": "esbuild",
+      "version": "0.28.1"
+    },
+    "options": {
+      "entryPoints": [
+        "src/browser/spatial-viewer.js"
+      ],
+      "bundle": true,
+      "platform": "browser",
+      "format": "esm",
+      "target": [
+        "es2022"
+      ],
+      "minify": false,
+      "keepNames": false,
+      "splitting": false,
+      "sourcemap": false,
+      "legalComments": "none",
+      "charset": "utf8",
+      "treeShaking": true,
+      "tsconfigRaw": {
+        "compilerOptions": {}
+      },
+      "define": {
+        "process.env.NODE_ENV": "\"production\""
+      },
+      "outfile": "spatial-viewer.js"
+    },
+    "package_sha256": "3434861d1ca43e435f141805d28cadfde2a0ae121240803d75dc0f5d5353f9e1",
+    "lock_sha256": "ded9c5dd0e5518121e4e69607a29cf69bf40fa0223e02161628b6ae0663cf39a",
+    "build_script_sha256": "f62257e739703122501be1ad6aaa997c2a283879b851c32f17128ea934c285a0",
+    "inputs": [
+      {
+        "path": "src/browser/spatial-viewer.js",
+        "bytes": 20057,
+        "sha256": "08a33857f5303068abd79ce7e8383c55409569495a77d366989c875a0ed43d7f"
+      },
+      {
+        "path": "src/spatial-manifest.ts",
+        "bytes": 4271,
+        "sha256": "996f7720e9278456c58ebc2eff69c9ce7cbf26e27d4c626a1c1e25162956d3ca"
+      },
+      {
+        "path": "src/spatial-sog.ts",
+        "bytes": 4205,
+        "sha256": "f4a75590d0dbb3020a3a988161677a4005971b3604dff8a7169dfd794de054ae"
+      },
+      {
+        "path": "src/spatial-values.ts",
+        "bytes": 357,
+        "sha256": "88d015b4cbb1c69a6e06d0cf18251952e1d85ea091b7dd491c868d716e933982"
+      }
+    ],
+    "browser_bytes": 26665,
+    "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211"
+  },
+  "npm_ci": {
+    "command": [
+      "npm",
+      "ci",
+      "--no-audit",
+      "--no-fund"
+    ],
+    "cwd": "/Users/pilksclaes/Rendprop AI/spatial-browser-entrypoint-20260911/services/edge/tour-host",
+    "exit": 0,
+    "stdout": "\nadded 41 packages in 1s\n",
+    "execution_session": 3780,
+    "source": "Exact exec_command/write_stdin output; no deployment performed"
+  },
+  "predeploy": {
+    "command": [
+      "npm",
+      "run",
+      "predeploy"
+    ],
+    "node_version": "v25.9.0",
+    "started_at": "2026-09-12T02:47:40.526Z",
+    "finished_at": "2026-09-12T02:47:53.422Z",
+    "exit": 0,
+    "source_unchanged": true,
+    "log_sha256": "f35509573edbd8cef8ea6b860f546c16223c118c17ed68df32eb2a10cf794e53",
+    "summaries": [
+      "✔ unbranded check passed — 557 assertions over 15 renders (real_estate, venue, legacy, embed, demo, tours-shape, cdn-host, notice page, index opt-in x3, promo opt-in x3, original-only) + 12 gate self-tests.",
+      "✔ route check passed — 584 assertions (malformed paths, error boundary, upstream failures, customer revocation/cache bypass, synthetic demo caching, indexing headers, ordinary routes, canonical origin, favicon/legal pages, safeUrl scheme allowlist).",
+      "PASS upstream checks: 707 assertions / 75 cases / 0 skipped",
+      "PASS lead form: 418 assertions / 31 cases / 0 skipped / 0 real network requests",
+      "Legal-page check: 57 assertions, 0 failed, 0 skipped; actual emitted HTML, no provider calls",
+      "Spatial product: 103 assertions, 0 skipped; actual decoder/proxy/rendered HTML; synthetic fixtures, no room or production proof.",
+      "✔ asset preflight passed — 2 demo media files present and under the 25 MiB cap."
+    ]
+  },
+  "built_gate": {
+    "command": [
+      "node",
+      "--experimental-vm-modules",
+      "scripts/check-spatial-built.mjs",
+      "--self-test"
+    ],
+    "status": "passed",
+    "assertions": 279,
+    "positive_suites": [
+      {
+        "name": "canonical-browser",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+        "browser_bytes": 26665
+      },
+      {
+        "name": "worker-names-false-minify-false",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+        "browser_bytes": 26665
+      },
+      {
+        "name": "browser-names-false-minify-false",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+        "browser_bytes": 26665
+      },
+      {
+        "name": "worker-names-false-minify-true",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+        "browser_bytes": 26665
+      },
+      {
+        "name": "browser-names-false-minify-true",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "afddad03ce93b2a9630e928d336bec4a180130a90ff29b0343287bdfe85c7546",
+        "browser_bytes": 17444
+      },
+      {
+        "name": "worker-names-true-minify-false",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+        "browser_bytes": 26665
+      },
+      {
+        "name": "browser-names-true-minify-false",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "56652444ef943906928b12143c182a368552565d54716f141dbe7a7bb24f0cf0",
+        "browser_bytes": 28048
+      },
+      {
+        "name": "worker-names-true-minify-true",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+        "browser_bytes": 26665
+      },
+      {
+        "name": "browser-names-true-minify-true",
+        "contract_assertions": 25,
+        "count_control_assertions": 1,
+        "browser_sha256": "3aa2c51c65dbfd273d19b3f78e2d60b9bdb9ffb97bd980fc6e5da80f203319a7",
+        "browser_bytes": 18068
+      }
+    ],
+    "freshness_controls": [
+      {
+        "name": "missing-generated-json",
+        "exit": 1,
+        "dry_run_rejected": true
+      },
+      {
+        "name": "missing-generated-ts",
+        "exit": 1,
+        "dry_run_rejected": true
+      },
+      {
+        "name": "stale-generated",
+        "exit": 1,
+        "dry_run_rejected": true
+      },
+      {
+        "name": "stale-helper",
+        "exit": 1,
+        "dry_run_rejected": true
+      },
+      {
+        "name": "stale-builder",
+        "exit": 1,
+        "dry_run_rejected": true
+      },
+      {
+        "name": "stale-lock",
+        "exit": 1,
+        "dry_run_rejected": true
+      }
+    ],
+    "detached_failure": {
+      "name": "ReferenceError",
+      "message": "isBoundedSpatialNumber is not defined"
+    },
+    "unmatched_failure": {
+      "name": "AssertionError",
+      "message": "Unverified browser asset differs from this source build; supplied JavaScript was not executed"
+    },
+    "symlink_cli": {
+      "name": "cli-source-alias",
+      "command": [
+        "/opt/homebrew/Cellar/node/25.9.0_2/bin/node",
+        "/tmp/rendprop-spatial-built-gFGXbP/cli-source-alias/scripts/build-spatial-browser.mjs",
+        "--write"
+      ],
+      "exit": 0,
+      "log": "/tmp/rendprop-spatial-built-gFGXbP/cli-alias-write.log",
+      "check": {
+        "command": [
+          "/opt/homebrew/Cellar/node/25.9.0_2/bin/node",
+          "/tmp/rendprop-spatial-built-gFGXbP/cli-source-alias/scripts/build-spatial-browser.mjs",
+          "--check"
+        ],
+        "exit": 0,
+        "log": "/tmp/rendprop-spatial-built-gFGXbP/cli-alias-check.log"
+      },
+      "generated_browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211"
+    },
+    "worker_builds": [
+      {
+        "name": "build-canonical",
+        "exit": 0,
+        "worker_sha256": "55e6004280152c2c92cd8d01b7b26df4ac8f4f80575c62b2cd51f2857739e0ce",
+        "source_map_sha256": "085563a6edaa23b62c587b56a7d6aadae8158cc764254e06783831ff9eb16ae0",
+        "source_inputs": [
+          "src/demo.ts",
+          "src/html.ts",
+          "src/legal.ts",
+          "src/spatial-values.ts",
+          "src/spatial-manifest.ts",
+          "src/player.ts",
+          "src/portfolio.ts",
+          "src/upstream.ts",
+          "src/spatial-browser.generated.ts",
+          "src/spatial.ts",
+          "src/index.ts"
+        ]
+      },
+      {
+        "name": "build-worker-names-false-minify-false",
+        "exit": 0,
+        "worker_sha256": "884242367d55cf7120c8997c0ec9f90d5408b36adeee2de3af23b8970888ab2f",
+        "source_map_sha256": "30be9564263b9b7694e5df450f6def1f6d066c19c7d871eae8dbf421550f36f2",
+        "source_inputs": [
+          "src/demo.ts",
+          "src/html.ts",
+          "src/legal.ts",
+          "src/spatial-values.ts",
+          "src/spatial-manifest.ts",
+          "src/player.ts",
+          "src/portfolio.ts",
+          "src/upstream.ts",
+          "src/spatial-browser.generated.ts",
+          "src/spatial.ts",
+          "src/index.ts"
+        ]
+      },
+      {
+        "name": "build-worker-names-false-minify-true",
+        "exit": 0,
+        "worker_sha256": "3f02340335039b398e36660c83ce58fb4b6de5c5ddb6005a343643237510abb1",
+        "source_map_sha256": "49f2118063cad9de0ead5a71cdfa43eca7071828783102c2382d44c85386a7f8",
+        "source_inputs": [
+          "src/demo.ts",
+          "src/html.ts",
+          "src/legal.ts",
+          "src/spatial-values.ts",
+          "src/spatial-manifest.ts",
+          "src/player.ts",
+          "src/portfolio.ts",
+          "src/upstream.ts",
+          "src/spatial-browser.generated.ts",
+          "src/spatial.ts",
+          "src/index.ts"
+        ]
+      },
+      {
+        "name": "build-worker-names-true-minify-false",
+        "exit": 0,
+        "worker_sha256": "8b86fe80091a935277d4948842277516114c66e4ad089d0b94ad088282ce97f2",
+        "source_map_sha256": "010d94e5c608fcc2043c537594951ad099b3e7a8b25a95a18cbcc3639318e83f",
+        "source_inputs": [
+          "src/demo.ts",
+          "src/html.ts",
+          "src/legal.ts",
+          "src/spatial-values.ts",
+          "src/spatial-manifest.ts",
+          "src/player.ts",
+          "src/portfolio.ts",
+          "src/upstream.ts",
+          "src/spatial-browser.generated.ts",
+          "src/spatial.ts",
+          "src/index.ts"
+        ]
+      },
+      {
+        "name": "build-worker-names-true-minify-true",
+        "exit": 0,
+        "worker_sha256": "99fa3449ff60893768a7e7867b437c47f292f3d6202c77be418fee5746b5d640",
+        "source_map_sha256": "41988afff2a9491de4366a2e9331e85dc35a954081f994e82a063913629fefe1",
+        "source_inputs": [
+          "src/demo.ts",
+          "src/html.ts",
+          "src/legal.ts",
+          "src/spatial-values.ts",
+          "src/spatial-manifest.ts",
+          "src/player.ts",
+          "src/portfolio.ts",
+          "src/upstream.ts",
+          "src/spatial-browser.generated.ts",
+          "src/spatial.ts",
+          "src/index.ts"
+        ]
+      },
+      {
+        "name": "build-detached-helper-build",
+        "exit": 0,
+        "worker_sha256": "ae26f24e331fc7bbeb3661f82e11fb250ef7d028494927d9f6bae4fab8907a50",
+        "source_map_sha256": "4a2892ea0dd6db49071a09e7b01516ab6e473d999997bb240d48c52a8e52d32c",
+        "source_inputs": [
+          "src/demo.ts",
+          "src/html.ts",
+          "src/legal.ts",
+          "src/spatial-values.ts",
+          "src/spatial-manifest.ts",
+          "src/player.ts",
+          "src/portfolio.ts",
+          "src/upstream.ts",
+          "src/spatial-browser.generated.ts",
+          "src/spatial.ts",
+          "src/index.ts"
+        ]
+      }
+    ]
+  },
+  "browser": {
+    "command": [
+      "node",
+      "scripts/check-spatial-browser.mjs",
+      "<bundled-playwright-index.mjs>"
+    ],
+    "status": "passed",
+    "ui_assertions": 69,
+    "artifact_assertions": 7,
+    "module_hashes": [
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211"
+    ],
+    "synthetic_beacons": 1,
+    "screenshot": {
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-browser-5JMCif/spatial-product-mobile.png",
+      "sha256": "b5a0cfabff54948a943d4911a7c936867c54ccc35532de75a97ada5cc76ddb5b"
+    },
+    "preview": {
+      "worker_sha256": "55e6004280152c2c92cd8d01b7b26df4ac8f4f80575c62b2cd51f2857739e0ce",
+      "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+      "model_sha256": "713bbf8711d137d54678ff02ac63557481651bb336cea26982b0c69591f5297e",
+      "engine_sha256": "115983998d6cdea9126a7a782f2579a3b98401531abd06e852ad415438508d17",
+      "video_sha256": "29d3fe34e96b1b3feb05435ecb50efec0c738524e1165a0dd5763d424059a535"
+    },
+    "negative_control": {
+      "exit": 1,
+      "expected": true,
+      "failure": {
+        "name": "AssertionError",
+        "message": "no native ready message before model transfer"
+      },
+      "ui_assertions": 1,
+      "artifact_assertions": 4,
+      "mutant_hashes": [
+        "27777968d64dc8666b67b0ca9bcafb9fd4fc2d755ae93c102c789f379f101fdd"
+      ]
+    }
+  },
+  "live_read_only": {
+    "observed_at": "2026-09-12T02:49:30.801Z",
+    "http_status": 200,
+    "browser_sha256": "cfc2a3ed5da478101618382ca23bd7ec12cc2ff635011ddb09e9999822ea66a5",
+    "expected_browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+    "exit": 1,
+    "failure": {
+      "name": "AssertionError",
+      "message": "Unverified browser asset differs from this source build; supplied JavaScript was not executed"
+    },
+    "worker_inventory_observed_at": "2026-09-12T02:49:34.386Z",
+    "active_version": "0e6b2f90-5911-4e77-934f-8575c9d982e2",
+    "active_percentage": 100,
+    "deployment_id": "059d77b1-fb00-4f34-8c87-2f4c855a51a6"
+  },
+  "hosted_ci": {
+    "run_id": 34668769211,
+    "url": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/34668769211",
+    "source_commit": "c391bb95b3a36b1ca99a306cd19465950abd1656",
+    "overall_conclusion": "failure",
+    "passed_jobs": 6,
+    "failed_jobs": 4,
+    "worker_job_id": 103485972321,
+    "worker_conclusion": "success",
+    "node_version": "v22.23.2",
+    "built_gate_assertions": 279,
+    "canonical_browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211",
+    "failures": [
+      {
+        "job_id": 103485972199,
+        "cause": "Web API inventory lacks ten spatial method mappings; expected method/declaration counts are 41/42 rather than actual 51/52.",
+        "source_unchanged_from_8263e25": true,
+        "local_reproduction_exit": 1
+      },
+      {
+        "job_id": 103485972229,
+        "cause": "Invariant 155 requires agent-reel ceiling greater than visible output; seed ceiling and requested visible output both equal 700.",
+        "source_unchanged_from_8263e25": true,
+        "failed_invariants": 1
+      },
+      {
+        "job_id": 103485972257,
+        "cause": "The same output-headroom invariant fails in both initial and replay runs; no separate SQL failure identified.",
+        "source_unchanged_from_8263e25": true,
+        "artifact_id": 10290375337,
+        "migrations_applied": 41,
+        "migrations_replayed": 33,
+        "invariants_per_run": 198,
+        "accepted": false,
+        "cluster_stopped": true
+      },
+      {
+        "job_id": 103485972288,
+        "cause": "Six historical secret-scan fingerprints from commits bcba804 and 4e4776d; raw matched values not printed or copied into this receipt.",
+        "historical_fingerprints": 6,
+        "fresh_private_provenance_disposition_performed": false,
+        "none_in_sixteen_host_patch_files": true
+      }
+    ],
+    "limits": "Worker job green is not whole-repository CI acceptance. Documentation-only follow-up commits are not represented as additional tested code."
+  },
+  "limits": [
+    "Synthetic WebGL fixture, not owner room",
+    "Chromium, not iPhone Safari/WebKit",
+    "MP4 restoration, not live HLS",
+    "Complete app workflow is not green",
+    "No production deployment or Apple operation"
+  ]
+}
