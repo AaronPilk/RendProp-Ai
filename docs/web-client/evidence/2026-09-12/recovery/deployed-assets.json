@@ -1,0 +1,67 @@
+{
+  "gate": "studio-deployed-application-bytes",
+  "origin": "https://studio.rendprop.com",
+  "readAt": "2026-09-12T18:15:04.743Z",
+  "status": "passed",
+  "files": [
+    {
+      "path": "/",
+      "bytes": 867,
+      "sha256": "e6a17672ab77fd351dca338ee6e36e394af5045234cbfa5fa76d1aaa9b527d48",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/robots.txt",
+      "bytes": 1862,
+      "sha256": "88be9851380141c6e5a1679253ecc58594d53545f62780d263a1b89908d1c4cc",
+      "status": 200,
+      "transformation": {
+        "kind": "known-cloudflare-managed-robots-prefix",
+        "prefixSha256": "842b34303164ead41bccb7c05d1707422e98d108753b397b6dcc19683eb02101",
+        "originSha256": "331ea9090db0c9f6f597bd9840fd5b171830f6e0b3ba1cb24dfa91f0c95aedc1"
+      }
+    },
+    {
+      "path": "/rendprop-mark.svg",
+      "bytes": 21252,
+      "sha256": "18c5edd6e6801cc33754b41619f167d28b8da33c5604776e70faf76311a31199",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/VideoEditor-B3BfZ8G-.css",
+      "bytes": 10278,
+      "sha256": "d3157336f79b2581ea23c2d45a5a4d913d07511fb5c01594cab585e8854d6808",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/VideoEditor-amQ36dzj.js",
+      "bytes": 31213,
+      "sha256": "87c4fcaed00878b0cf87c64514014ab4eb5313d9834ea40ebd56f01782bb5c58",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/index-1rfMPs1m.css",
+      "bytes": 24135,
+      "sha256": "59eaa2d641025f643ec17c21300f70f18f7c621593f473b6d0fd6c2622eb1459",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/index-B9B1eijr.js",
+      "bytes": 509095,
+      "sha256": "baa0bd35cd397e5b1c273d0f8f3ce9cc3e15693eddc728911bc02b5ec86ca596",
+      "status": 200,
+      "transformation": null
+    }
+  ],
+  "spaFallback": true,
+  "accountLoginVerified": false,
+  "robotsCrawlBlockingVerified": false,
+  "warnings": [
+    "Cloudflare managed robots prepends wildcard Allow, which can conflict with origin Disallow. Crawl blocking is NOT verified. X-Robots-Tag and HTML meta noindex remain enabled. No zone crawler setting was changed."
+  ]
+}

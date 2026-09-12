@@ -24,7 +24,7 @@ root integration; editor and refresh changes received independent cross-review.
    500,000-character reader could never reopen.
 3. **Connected refresh:** refreshing a verified same-account workspace no longer
    unmounts its editor and discards in-memory sources. Only typed network/timeouts,
-   HTTP429 and5xx may retain the snapshot; errors that imply access loss or invalid
+   HTTP 429 and 5xx may retain the snapshot; errors that imply access loss or invalid
    responses clear it. Identity/org render-time fences remain. Retry remounts the
    planner as well as editor under the restore-attempt scope. Duplicate global
    editor completion announcements removed.
@@ -43,9 +43,48 @@ root integration; editor and refresh changes received independent cross-review.
 
 ## Independently executed integrated checks
 
+Code anchors at runtime commit `d87e60c`:
+
+| Change | Source |
+| --- | --- |
+| Fresh-revision Undo/Redo and grouped edits | `apps/studio/src/editor/history.ts:44`, `:54` |
+| Validated backup parsing and confirmed import | `apps/studio/src/workspace.ts:234`; `apps/studio/src/Planner.tsx:232`, `:249` |
+| Same-scope refresh retention and transient-only policy | `apps/studio/src/App.tsx:212`; `apps/studio/src/workspace-refresh.ts:7` |
+| Initial and pre-return authorization | `services/supabase/functions/studio/handler.ts:121`, `:249` |
+| Real scoped query adapter | `services/supabase/functions/studio/repository.ts:20` |
+
+Reproduce from the worktree (build once before browser gates):
+
+```sh
+cd apps/studio
+npm run verify
+node tests/browser-workspace.mjs --start-preview --base-url=http://127.0.0.1:4181
+node tests/browser-editor.mjs --start-preview --base-url=http://127.0.0.1:4182
+node tests/browser-connected.mjs
+node tests/browser-connected-control.mjs
+node node_modules/wrangler/bin/wrangler.js deploy --dry-run
+```
+
+On this Mac the browser commands used
+`STUDIO_BROWSER_EXECUTABLE=/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`
+(quote the value when entering a shell command). Deno commands from repo root:
+
+```sh
+deno test --deny-net --deny-run --deny-write services/supabase/functions/studio/handler.test.ts services/supabase/functions/studio/repository.test.ts
+deno check --deny-import --frozen services/supabase/functions/studio/index.ts
+```
+
+Actual pinned runtime used here: `/tmp/rendprop-deno296.EyhIbB/deno` (2.9.6).
+Run `deno check` with normal import access on a clean machine to prime the pinned
+imports before the fully offline check. Do not treat a cold-cache refusal as a pass.
+The live suites add `--deployed-preview --base-url=https://studio.rendprop.com`;
+they use isolated local browser storage and forbid provider/write requests.
+All reported test commands exited0 except the deliberately mutated child, which
+exited1 at its expected assertion and was verified by the control wrapper.
+
 - `npm run verify`: **154 tests passed**, zero failed/cancelled/skipped; TS and Vite
   production build passed. Built gate: **165,228 gzip bytes**, original mark identical.
-  Vite still warns about the509,095-byte minified entry (147kB gzip); not hidden by
+  Vite still warns about the 509,095-byte minified entry (147 kB gzip); not hidden by
   raising a warning threshold. Further code splitting is a performance follow-up.
 - Deno `handler.test.ts repository.test.ts`: **29 passed**, zero failed; frozen
   offline `deno check` for `studio/index.ts` passed.
@@ -54,12 +93,12 @@ root integration; editor and refresh changes received independent cross-review.
  recovery, file-hash rejection, focus trap and responsive layout. No external
  requests or console errors.
 - Built editor browser: **18 grouped checks**, **seven real video downloads**.
- MP4 H.264/AAC and WebM VP8/Opus decoded with ffprobe/ffmpeg; actual440Hz audio,
+ MP4 H.264/AAC and WebM VP8/Opus decoded with ffprobe/ffmpeg; actual 440 Hz audio,
  trims, captions, ordered photo/video cuts, silent/muted tracks and cancellation.
  Undo/Redo tested around edits, completed outputs, removal/reselection and active
  recording. Exactly one completion announcement per output. Zero skips/errors.
 - Separately built connected fixture: **six grouped browser checks**, including
- in-flight refresh,503 preservation,403 clearing/recovery, and org/account switches.
+ in-flight refresh, 503 preservation, 403 clearing/recovery, and org/account switches.
  The deliberate `setWorkspace(null)` mutant failed at `REFRESH_BINDING_REGRESSION`.
  Initial harness selector/mutation-hook errors were fixed; those unrelated failures
  were not counted as successful negative controls.
@@ -67,17 +106,22 @@ root integration; editor and refresh changes received independent cross-review.
 
 These counts are not additive coverage percentages or proof every application
 path is correct. The media fixtures do not use customer files, and the connected
-fixture is NOT live Apple OAuth/private R2 proof. Source tests include12 planner
-source mutants and20-step history coverage; zero ignored tests.
+fixture is NOT live Apple OAuth/private R2 proof. Source tests include 12 planner
+source mutants and 20-step history coverage; zero ignored tests.
 
 ## Deployment and evidence
 
-This source iteration is tested locally; deployment status and exact source commit
-are recorded in the status file and dedicated `evidence/2026-09-12/recovery/`
-receipts. Historical initial-release receipts are retained unchanged.
+**Deployed and verified:** source `d87e60c8abea65f2b2b54731e095e8217ac82dea`, Worker
+version `1ad1d0ab-b1a1-49ba-a9e1-4ccbeead04a1`, 100% at 18:12:58 UTC. Actual HTTPS
+editor and workspace suites passed again: 18 + 17 grouped checks, seven real video
+downloads, zero skips/errors/forbidden requests. JSON/ICS downloads, plan restore,
+quota recovery and mobile navigation ran against the actual deployed application.
+The separate asset/header gate passed; known managed-robots exception remains.
+Dedicated `evidence/2026-09-12/recovery/` receipts bind the source and tested bytes.
+Historical initial-release receipts are retained unchanged.
 
 Before deployment, GET read-back still showed Studio version
-`2df1ea6d-b3a1-44ff-bc02-9ef66887dacb` at100%, no bindings. Thus no concurrent Studio
+`2df1ea6d-b3a1-44ff-bc02-9ef66887dacb` at 100%, no bindings. Thus no concurrent Studio
 deployment had been overwritten at that check. Existing main-domain workers are
 outside this deployment lane.
 
@@ -93,7 +137,7 @@ outside this deployment lane.
 - Live R2 cache headers are not controlled by Studio's own `no-store`. Signed
   URLs remain usable until expiry; offset pagination is not a snapshot under
   concurrent inserts/deletes. See STUDIO-AUTH for those explicit limitations.
-- GitHub write integration previously returned403. No alternate credentials or
+- GitHub write integration previously returned 403. No alternate credentials or
   tool route used to bypass it. Commits remain local until write access is resolved;
   no claim that remote CI ran. Claude can inspect this worktree/branch now.
 - Safari/Firefox, real phone encoding/HEVC, limit-length media, full accessibility

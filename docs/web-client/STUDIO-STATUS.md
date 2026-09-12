@@ -8,31 +8,34 @@ His intervening change touches only the two iOS project/version files; no web
 source or built asset changed. This preserves his current submission source.
 Workspace: `/Users/pilksclaes/Rendprop AI/web-studio-20260912`.
 
-## Latest iteration — 18:12 UTC
+## Latest iteration — deployed and verified 18:15 UTC
 
 Implemented Undo/Redo, portable JSON content-plan backup/restore, connected-refresh
 file retention, single editor completion notices and stricter scoped media reads.
-Integrated verification passed:154 unit tests,29 Deno tests,17 workspace browser
-checks,18 editor browser checks/seven real video downloads, six connected-fixture
+Integrated verification passed: 154 unit tests, 29 Deno tests, 17 workspace browser
+checks, 18 editor browser checks/seven real video downloads, six connected-fixture
 checks and a deliberate refresh regression caught at its specific browser assertion.
 Type checks, exact built assets and Studio-only deploy dry-run passed.
 
-This iteration is locally verified and ready for the dedicated Studio deployment.
-Live preview below still describes the prior version until a new deployment receipt
-is recorded. [Full changes, reproduction, limits and Claude handoff](STUDIO-RECOVERY-2026-09-12.md).
+This iteration is now deployed from `d87e60c8abea65f2b2b54731e095e8217ac82dea`.
+Both browser suites passed again against actual HTTPS: 17 workspace checks,
+18 editor checks and seven decoded video downloads, zero skips/errors or external
+requests. [Full changes, reproduction, limits and Claude handoff](STUDIO-RECOVERY-2026-09-12.md).
+[New source-bound receipts](evidence/2026-09-12/recovery/README.md) preserve older evidence separately.
 No iOS, Apple, paid-provider or existing production service changes were made.
 
 ## Delivered preview — read this first
 
 **https://studio.rendprop.com is live** as a local-editor/content-planner preview.
 Cloudflare Worker `rendprop-studio`, version
-`2df1ea6d-b3a1-44ff-bc02-9ef66887dacb`, deployed from source
-`98a6da6820f22c144dc024278b959bcd1db020a4`. Core implementation commit:
+`1ad1d0ab-b1a1-49ba-a9e1-4ccbeead04a1`, deployed from source
+`d87e60c8abea65f2b2b54731e095e8217ac82dea`. Initial implementation commit:
 `74153def832b088190390552f950afb8baf2be49`.
 
-Actual HTTPS browser verification passed at 16:31 UTC: 13 grouped editor checks,
-seven real downloads, no skips, no external/disallowed requests or browser errors.
-The browser-received entry HTML and four JS/CSS assets matched the local build.
+Actual HTTPS browser verification passed at 18:13–18:15 UTC: 18 grouped editor
+checks plus 17 workspace checks, seven real video downloads, no skips, no
+external/disallowed requests or browser errors. The browser-received entry HTML
+and four JS/CSS assets matched the local build.
 The separate deployed-assets gate also verified the original logo, headers and
 SPA deep route. Receipts are linked below; these are not localhost claims.
 
@@ -48,7 +51,7 @@ baseline; do not replace that Worker with a historical branch indiscriminately.
 Apple/iOS submission, existing tour-host, upload gateway, database, customer data
 and paid provider routes were not changed by this Studio deployment.
 
-All source is committed locally on `feat/web-studio-20260912`. GitHub write access
+All source is committed locally on `feat/web-studio-recovery-20260912`. GitHub write access
 returned 403, so this branch is **not pushed**. Claude can inspect the local branch
 or worktree immediately; a remote build link is not proof that GitHub has its source.
 

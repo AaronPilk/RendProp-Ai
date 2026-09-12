@@ -168,10 +168,10 @@ without mutating the history. The browser runner now additionally asserts restor
 trims/captions/order/ratio, missing-file recovery after Undo removal (including a
 wrong-file rejection), active-export cancellation by Undo, and exactly one
 editor-owned completion announcement for every actual export. **Fresh integrated
-browser proof passed at18:08 UTC:18 checks, seven real exports, zero skips/errors.**
+browser proof passed at 18:08 UTC: 18 checks, seven real exports, zero skips/errors.**
 It includes the new Undo/Redo UI and checks exact served build bytes. See
 [the recovery iteration](STUDIO-RECOVERY-2026-09-12.md) and its dedicated receipts.
-The older13-check evidence below is preserved as history, not reused as new proof.
+The older 13-check evidence below is preserved as history, not reused as new proof.
 
 Executed locally on 2026-09-12 against the final frozen production build:
 

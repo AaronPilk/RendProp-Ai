@@ -8,8 +8,8 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chromium, expect } from "@playwright/test";
 
-// Run only against an already-built preview. All customer-like data is generated
-// in a fresh isolated browser context; external network requests are blocked.
+// Run against an already-built preview. An explicit flag permits only our own
+// deployed Studio origin; fixtures remain in a fresh isolated browser context.
 const args = process.argv.slice(2);
 const baseArg = args
   .find((argument) => argument.startsWith("--base-url="))
@@ -17,26 +17,31 @@ const baseArg = args
 assert.ok(
   args.every(
     (argument) =>
-      argument === "--start-preview" || argument.startsWith("--base-url="),
+      argument === "--start-preview" || argument === "--deployed-preview" || argument.startsWith("--base-url="),
   ),
-  "Supported arguments: --start-preview --base-url=http://127.0.0.1:4179",
+  "Supported arguments: --start-preview --base-url=http://127.0.0.1:4179, or --deployed-preview --base-url=https://studio.rendprop.com",
 );
 const base = new URL(
   baseArg ?? process.env.STUDIO_BASE_URL ?? "http://127.0.0.1:4179",
 );
-assert.ok(
-  ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname),
-  "Browser verification must target a local preview.",
-);
+const deployedPreview = args.includes("--deployed-preview");
+assert.ok(deployedPreview
+  ? base.origin === "https://studio.rendprop.com"
+  : base.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname),
+  "Use a local HTTP origin, or explicitly select the exact deployed Studio origin.");
+assert.ok(!(deployedPreview && args.includes("--start-preview")), "A deployed test cannot start a local preview.");
+assert.ok(base.pathname === "/" && !base.username && !base.password && !base.search && !base.hash, "Use only an origin without credentials or query.");
 const artifacts = await mkdtemp(join(tmpdir(), "rendprop-workspace-browser-"));
 const receipt = {
   target: base.origin,
+  deployedPreview,
   startedAt: new Date().toISOString(),
   artifacts,
   checks: [],
   pages: [],
   externalRequests: [],
   consoleErrors: [],
+  disallowedRequests: [],
   authVerification:
     "Not run. Fresh local unsigned fixtures only; no provider settings changed.",
   status: "running",
@@ -67,16 +72,20 @@ function check(name) {
 async function isolatedContext(options = {}) {
   const context = await browser.newContext({
     acceptDownloads: true,
+    serviceWorkers: "block",
     timezoneId: "America/New_York",
     ...options,
   });
   context.setDefaultTimeout(10000);
   await context.route("**/*", (route) => {
     const url = new URL(route.request().url());
-    if (url.origin === base.origin) return route.continue();
+    const request = route.request();
+    if (url.origin === base.origin && ["GET", "HEAD"].includes(request.method()) && !request.redirectedFrom()) return route.continue();
+    receipt.disallowedRequests.push(`${request.method()} ${url.origin}${url.pathname}`);
     receipt.externalRequests.push(`${url.origin}${url.pathname}`);
     return route.abort("blockedbyclient");
   });
+  await context.routeWebSocket("**/*", (socket) => { receipt.disallowedRequests.push("WebSocket"); socket.close(); });
   context.on("page", (page) => {
     page.on("pageerror", (error) => {
       receipt.consoleErrors.push(error.message);
@@ -696,6 +705,7 @@ try {
     [],
     "Browser console and uncaught runtime errors must remain clear.",
   );
+  assert.deepEqual(receipt.disallowedRequests, [], "No write, redirect or WebSocket request is permitted.");
   check("no uncaught browser errors and no external network requests");
   receipt.status = "passed";
   await context.close();

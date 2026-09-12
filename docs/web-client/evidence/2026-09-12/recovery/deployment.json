@@ -1,0 +1,39 @@
+{
+  "worker": "rendprop-studio",
+  "origin": "https://studio.rendprop.com",
+  "sourceCommit": "d87e60c8abea65f2b2b54731e095e8217ac82dea",
+  "sourceBranch": "feat/web-studio-recovery-20260912",
+  "cleanBeforeDeploy": true,
+  "versionId": "1ad1d0ab-b1a1-49ba-a9e1-4ccbeead04a1",
+  "deploymentId": "ef5c6cc2-e599-4197-9f4c-27f225d1cb0c",
+  "deployedAt": "2026-09-12T18:12:58.98321Z",
+  "percentage": 100,
+  "previousVersionId": "2df1ea6d-b3a1-44ff-bc02-9ef66887dacb",
+  "distManifestSha256": "13c1b47a1a77b7b4254ded70e7797da1dd53815683e9e570b48b5c76514f7729",
+  "deployedAssetGateReadAt": "2026-09-12T18:15:04.743Z",
+  "tests": {
+    "unit": 154,
+    "deno": 29,
+    "localWorkspaceGroups": 17,
+    "localEditorGroups": 18,
+    "connectedOfflineGroups": 6,
+    "connectedRegressionControl": "failed at expected assertion; wrapper passed",
+    "liveWorkspaceGroups": 17,
+    "liveEditorGroups": 18,
+    "liveActualDownloads": 7,
+    "skipped": 0
+  },
+  "accountLoginVerified": false,
+  "mediaBridgeDeployed": false,
+  "cloudSyncImplemented": false,
+  "socialPublishingImplemented": false,
+  "robotsCrawlBlockingVerified": false,
+  "githubPushed": false,
+  "remoteCIExecuted": false,
+  "changesOutsideStudioDeployment": false,
+  "notes": [
+    "Existing Cloudflare managed robots prefix is pinned and reported; index exclusion remains via noindex, not a crawl-blocking claim.",
+    "Raw browser media/screenshots remain in OS temp directories; receipts are durable, raw exports are not.",
+    "Test/docs-only follow-up commit does not change runtime bytes."
+  ]
+}
