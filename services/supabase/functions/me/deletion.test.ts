@@ -19,7 +19,13 @@ Deno.env.set("R2_ACCESS_KEY_ID", "synthetic-only-access");
 Deno.env.set("R2_SECRET_ACCESS_KEY", "synthetic-only-secret");
 let handler!: (req: Request) => Promise<Response>;
 const serve = Object.getOwnPropertyDescriptor(Deno, "serve")!;
-Object.defineProperty(Deno, "serve", { ...serve, value: (fn: typeof handler) => { handler = fn; return {}; } });
+// Deno 2.9 exposes serve through an accessor. Spreading that descriptor and
+// adding value creates an invalid accessor/data hybrid before any test runs.
+// Install a fresh data descriptor, then restore the exact runtime descriptor.
+Object.defineProperty(Deno, "serve", {
+  configurable: true, enumerable: serve.enumerable,
+  value: (fn: typeof handler) => { handler = fn; return {}; },
+});
 try { await import("./index.ts"); } finally { Object.defineProperty(Deno, "serve", serve); }
 if (!handler) throw new Error("Actual /me handler was not captured");
 
