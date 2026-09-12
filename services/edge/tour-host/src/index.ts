@@ -9,6 +9,8 @@
 //   GET /a/:handle   an org's portfolio grid  (renders GET /portfolio/:handle)
 //   GET /terms       Terms of Service   (static; linked from the iOS app)
 //   GET /privacy     Privacy Policy     (static; linked from the iOS app)
+//   GET /sitemap.xml the crawl index (src/sitemap.ts). Served here, not from
+//                    ./public, so it can grow with what is actually published.
 //
 // Customer pages are server-rendered with no-store and a fresh upstream lookup
 // on every request so old edge HTML cannot outlive publication revocation.
@@ -20,19 +22,23 @@
 //
 // Routing (wrangler.toml): the Worker owns the whole apex, `rendprop.com/*`.
 // Requests that exactly match a file under ./public (the marketing site,
-// /assets/*, robots.txt, sitemap.xml, llms.txt) are answered by Static Assets
-// before this script runs; everything else lands in fetch() below.
+// /assets/*, robots.txt, llms.txt) are answered by Static Assets before this
+// script runs; everything else lands in fetch() below. That precedence is why
+// public/sitemap.xml had to be deleted when /sitemap.xml became a route: a
+// file under ./public wins, and the handler would never have been reached.
 //
 // Every response is branded: malformed paths (`/f/%`) 404, and any exception
 // the handler throws is caught and answered with errorPage() + no-store — a
 // viewer must never see Cloudflare's raw "Worker threw exception" page.
 
 import type { Env, Portfolio, Tour } from "./types";
+import { appStoreUrl } from "./attribution";
 import { buildDemoPortfolio, buildDemoTour, demoSpaceFrom, isDemoHandle, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
+import { sitemapXml } from "./sitemap";
 import { fetchUpstreamJSON } from "./upstream";
 import { spatialData, spatialModule, spatialPage } from "./spatial";
 
@@ -354,14 +360,18 @@ async function handleTour(
   }
 }
 
-async function handlePortfolio(handle: string, req: Request, env: Env): Promise<Response> {
+async function handlePortfolio(handle: string, req: Request, url: URL, env: Env): Promise<Response> {
   if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
+
+  // The canonical and the structured data are absolute-URL affordances, so the
+  // renderer needs the handle this page was served at and the request origin.
+  const renderOpts = { handle, origin: url.origin };
 
   // The demo agent is fictional, so no org answers for the handle. Served
   // from here for the same reason the demo TOUR is, and before the upstream
   // lookup so it never depends on an upstream that cannot know about it.
   if (isDemoHandle(handle)) {
-    const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio()), 200, {
+    const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio(), renderOpts), 200, {
       "Cache-Control": "public, max-age=300",
     });
     return req.method === "HEAD" ? new Response(null, resp) : resp;
@@ -378,11 +388,40 @@ async function handlePortfolio(handle: string, req: Request, env: Env): Promise<
   if (upstream.kind === "error") return upstreamError(upstream.status);
   if (!isPortfolio(upstream.value)) return upstreamError(502);
   try {
-    const resp = htmlResponse(renderPortfolioPage(upstream.value), 200, { "Cache-Control": "no-store" });
+    const resp = htmlResponse(renderPortfolioPage(upstream.value, renderOpts), 200, { "Cache-Control": "no-store" });
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   } catch {
     return upstreamError(502);
   }
+}
+
+/**
+ * GET /sitemap.xml — served by the Worker, not by Static Assets.
+ *
+ * `public/sitemap.xml` (a hand-maintained eight-URL file that never once named
+ * a real tour) was DELETED as part of this route: an exact file match under
+ * ./public is answered by Static Assets before this script runs, so leaving it
+ * in place would have made this handler unreachable.
+ *
+ * What it can and cannot enumerate today, and the upstream endpoint that would
+ * let it list real tours, are documented in src/sitemap.ts. Both of that file's
+ * hard rules — no `/u/` URL, and no tour that is not opted into indexing — are
+ * enforced by construction: this handler passes no tours at all, because there
+ * is no endpoint that can tell it which ones qualify.
+ *
+ * Cached for an hour at the edge and in the browser. A sitemap is polled by
+ * crawlers, not by people, and an hour is short enough that a newly published
+ * tour appears the same day once the upstream index exists.
+ */
+function sitemapResponse(url: URL): Response {
+  return new Response(sitemapXml(url.origin), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      "Cache-Control": "public, max-age=3600, s-maxage=3600",
+      "X-Content-Type-Options": "nosniff",
+    },
+  });
 }
 
 async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -444,7 +483,12 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   if (aMatch) {
     const handle = safeDecode(aMatch[1]);
     if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "no-store" });
-    return handlePortfolio(handle, req, env);
+    return handlePortfolio(handle, req, url, env);
+  }
+
+  if (path === "/sitemap.xml") {
+    const resp = sitemapResponse(url);
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
   // Legal pages — static HTML, cacheable for an hour.
@@ -539,7 +583,7 @@ function landingPage(): string {
   <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
   photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
   <div>
-    <a class="pill" href="https://apps.apple.com/us/app/id6808982413">Download on the App Store</a>
+    <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
     <span class="soon">Free on iPhone · iOS 16 or later</span>
   </div>
   <footer>

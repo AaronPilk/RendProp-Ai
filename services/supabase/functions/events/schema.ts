@@ -112,6 +112,34 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   // A file the agent saved out of the FILES section to their own camera roll.
   // `kind` is the closed set of things a listing can hold — never a filename.
   file_saved:         ["kind", "ok"],
+  // ── 2026-09-12: four names the shipped app already emits ──────────────────
+  //
+  // These were emitted by apps/ios but were in neither vocabulary, so the
+  // client dropped them before the network and the server would have refused
+  // the whole batch that carried one. The prop keys below are exactly what the
+  // call sites pass — nothing was invented, and nothing was widened:
+  //
+  //   ai_clip_rejected   Screens/FlythroughDetailView.swift — the AI drift
+  //                      check refused a generated clip. `kind` is the closed
+  //                      generator enum ("animate"), `status` the verdict slug.
+  //                      The refusal TEXT is deliberately not carried: it is
+  //                      written for a person and can quote the listing.
+  //   tour_viewer_opened Screens/TourViewerView.swift — `kind` is "tour" or
+  //                      "portfolio". No slug, no URL, no listing id: the link
+  //                      itself is the join key back to an address.
+  //   listing_link_used  Screens/NewListingView.swift — `source` is the parser
+  //                      that recognised the pasted link (its own enum), never
+  //                      the link.
+  //   property_lookup    Screens/NewListingView.swift — `ok` whether the
+  //                      records service answered, `filled` HOW MANY fields it
+  //                      populated (a count, never which or what), `cached`
+  //                      whether the answer came from our cache. The app sends
+  //                      all three as strings; the whitelist is about keys, and
+  //                      the scrubber handles values either way.
+  ai_clip_rejected:   ["kind", "status"],
+  tour_viewer_opened: ["kind"],
+  listing_link_used:  ["source"],
+  property_lookup:    ["ok", "filled", "cached"],
   // Stability (MetricKit summaries — see Analytics/CrashReporter.swift)
   crash:              ["kind", "signal", "exception_type", "termination_reason", "top_frame", "app_version", "os"],
   error:              ["category", "code", "step", "detail", "launch_time_ms", "hang_ms", "app_version", "os"],

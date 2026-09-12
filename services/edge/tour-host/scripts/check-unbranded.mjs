@@ -99,6 +99,31 @@ const FORBIDDEN_TOKENS = [
   'name="twitter:',
   '"/terms"',
   '"/privacy"',
+  // --- acquisition surfaces (all branded-page-only by construction) --------
+  // Structured data: the block names the agent, the brokerage, the phone
+  // number and rendprop.com, in the one format built to be read and reused by
+  // machines. It is also an indexing affordance on a page that is `noindex`.
+  'type="application/ld+json"',
+  "schema.org",
+  "realestatelisting",
+  "videoobject",
+  "breadcrumblist",
+  // The share control — a "hand this page to a social app" button is the
+  // social affordance the unbranded rules ban, and the URL it shares is a
+  // rendprop.com one.
+  'id="share"',
+  "navigator.share",
+  "share-lbl",
+  // App Store campaign tokens (src/attribution.ts). `apps.apple.com` above
+  // catches the link; these catch a token that appears on its own — in a data
+  // attribute, in the inline config, in a script.
+  "ct=tour",
+  "ct=portfolio",
+  "ct=site",
+  "mt=8",
+  // The `?ref=` tag on an outbound rendprop.com link.
+  "ref=tour",
+  "ref=portfolio",
 ];
 
 const AGENT_CARD = {
@@ -296,6 +321,11 @@ function auditUnbranded(html, label, tour, player) {
   // (f) the beacon is flagged as unbranded traffic, and no lead handoff exists
   mustContain(html, label, "beacon unbranded flag", '"unbranded":true');
   mustContain(html, label, "no CTA handoff", '"handoffUrl":""');
+  // (g) the inline config carries no branded URL for a share control to use.
+  // The markup guards are not enough on their own: window.__CFG__ is JSON in a
+  // <script>, so a rendprop.com URL there would be invisible to a reader and
+  // still reachable by any script on the page.
+  mustContain(html, label, "no share URL in the config", '"shareUrl":""');
 }
 
 async function main() {
@@ -349,6 +379,18 @@ async function main() {
     ["App Store smart banner", '<meta name="apple-itunes-app" content="app-id=6808982413">'],
     ["app CTA section", 'id="getapp"'],
     ["App Store link", "https://apps.apple.com/us/app/id6808982413"],
+    // Install attribution (src/attribution.ts): the App Store link carries the
+    // surface AND the slug, so a download can be traced to the page that
+    // produced it. `pt` is absent on purpose — the owner has to supply it.
+    ["App Store campaign token", "?ct=tour-sentinelqx7&amp;mt=8"],
+    // Outbound attribution on the two "Made with Rendprop" links.
+    ["watermark ref param", '<a class="chrome" id="wm" href="https://rendprop.com/?ref=tour"'],
+    ["footer ref param", '<a href="https://rendprop.com/?ref=tour"'],
+    // Share affordance.
+    ["share control", '<button type="button" class="chrome" id="share"'],
+    ["share is keyboard-reachable", 'aria-label="Share this tour"'],
+    ["share uses the OS sheet first", "navigator.share"],
+    ["share falls back to the clipboard", "navigator.clipboard"],
     ["canonical", 'rel="canonical"'],
     ["og:title", 'property="og:title"'],
     ["disclosure section", 'id="disclosure"'],
@@ -377,6 +419,115 @@ async function main() {
   if (player.renderTourPage(optIn2, FN, "anon", "site-key", {}).includes('name="robots"')) {
     fail("[opt-in details /f/] details.allow_indexing must opt the page in");
   } else ok("opt-in /f/: details.allow_indexing honoured");
+
+  // ---- structured data rides the SAME opt-in as the robots tag ------------
+  // A tour page names the owner, their phone, their email and a street
+  // address. Handing a crawler a machine-readable copy of exactly that on a
+  // page we simultaneously told it not to index would be worse than pointless,
+  // so JSON-LD is gated on `allowsIndexing`, not merely on `!unbranded`.
+  const LD_RE = /<script type="application\/ld\+json">([\s\S]*?)<\/script>/;
+  checks++;
+  if (LD_RE.test(reBr)) fail("[noindex /f/] a noindex tour must carry NO JSON-LD");
+  else ok("noindex /f/: no structured data on a page that is not indexed");
+  for (const [label, html] of [
+    ["opt-in embed /f/", player.renderTourPage(optIn, FN, "anon", "site-key", { embed: true, origin: "https://rendprop.com" })],
+    ["opt-in /u/", optInUn],
+  ]) {
+    checks++;
+    if (LD_RE.test(html)) fail(`[${label}] must carry NO JSON-LD`);
+    else ok(`${label}: no structured data`);
+  }
+  // …and the opted-in branded page must carry a graph that is real JSON with
+  // real values in it.
+  checks++;
+  const ldMatch = LD_RE.exec(optInBr);
+  if (!ldMatch) {
+    fail("[opt-in /f/] an indexable tour must carry a JSON-LD graph");
+  } else {
+    let graph = null;
+    checks++;
+    try { graph = JSON.parse(ldMatch[1]); }
+    catch (err) { fail(`[opt-in /f/] JSON-LD does not parse: ${err.message}`); }
+    if (graph) {
+      const nodes = Array.isArray(graph["@graph"]) ? graph["@graph"] : [];
+      const byType = (t) => nodes.find((n) => [].concat(n["@type"]).includes(t));
+      checks++;
+      if (graph["@context"] !== "https://schema.org") fail("[opt-in /f/] JSON-LD @context must be https://schema.org");
+      for (const t of ["RealEstateListing", "VideoObject", "BreadcrumbList", "Offer", "Person"]) {
+        checks++;
+        if (!byType(t)) fail(`[opt-in /f/] JSON-LD graph is missing a ${t} node`);
+      }
+      const residence = nodes.find((n) => [].concat(n["@type"]).includes("Residence"));
+      checks++;
+      if (!residence) fail("[opt-in /f/] JSON-LD graph is missing the Residence/Accommodation node");
+      else {
+        checks++;
+        if (residence.numberOfBedrooms !== 5 || residence.numberOfBathroomsTotal !== 6) {
+          fail("[opt-in /f/] room counts must come from the payload (5 bd / 6 ba)");
+        }
+        checks++;
+        if (!residence.floorSize || residence.floorSize.value !== 6200 || residence.floorSize.unitCode !== "FTK") {
+          fail("[opt-in /f/] floorSize must be the payload's sqft with an explicit unit");
+        }
+        checks++;
+        if (residence.address?.streetAddress !== "1180 Crestline Ridge") {
+          fail("[opt-in /f/] the address must be the listing's own");
+        }
+      }
+      const video = byType("VideoObject");
+      checks++;
+      if (video && (video.thumbnailUrl !== "https://cdn.example.com/poster.jpg" || video.contentUrl !== "https://cdn.example.com/tour.mp4")) {
+        fail("[opt-in /f/] VideoObject must point at the tour's real poster and mp4");
+      }
+      checks++;
+      if (video && video.duration !== "PT2M17S") fail(`[opt-in /f/] duration must be the payload's 137s, got ${video.duration}`);
+      // NO PLACEHOLDERS. An empty string, a null, an empty array or an empty
+      // object anywhere in the graph means a builder emitted a field it had no
+      // value for — the one thing structured data must never do.
+      const placeholders = [];
+      (function walk(node, path) {
+        if (Array.isArray(node)) {
+          if (!node.length) placeholders.push(`${path} (empty array)`);
+          node.forEach((v, i) => walk(v, `${path}[${i}]`));
+          return;
+        }
+        if (node && typeof node === "object") {
+          const keys = Object.keys(node);
+          if (!keys.length) placeholders.push(`${path} (empty object)`);
+          for (const k of keys) walk(node[k], path ? `${path}.${k}` : k);
+          return;
+        }
+        if (node === null || node === undefined) placeholders.push(`${path} (null)`);
+        else if (typeof node === "string" && !node.trim()) placeholders.push(`${path} (empty string)`);
+        else if (typeof node === "string" && /^(tbd|n\/a|unknown|null|undefined|example\.com)$/i.test(node.trim())) {
+          placeholders.push(`${path} (placeholder ${JSON.stringify(node)})`);
+        }
+        else if (typeof node === "number" && !Number.isFinite(node)) placeholders.push(`${path} (non-finite)`);
+      })(graph, "");
+      checks++;
+      if (placeholders.length) fail(`[opt-in /f/] JSON-LD carries empty/placeholder values: ${placeholders.join(", ")}`);
+      // The `</script>` escape: an owner-entered string must not be able to
+      // close the block. The raw text is checked, not the parsed object.
+      checks++;
+      if (/<\/script/i.test(ldMatch[1]) || /</.test(ldMatch[1])) {
+        fail("[opt-in /f/] JSON-LD must escape '<' so no owner-entered string can close the script");
+      }
+      // A tour with nothing to price emits no Offer rather than a $0 one.
+      const noPrice = realEstateTour();
+      noPrice.agent_card = { ...AGENT_CARD, allow_indexing: true };
+      noPrice.listing.price_cents = 0;
+      noPrice.listing.price = "";
+      const noPriceLd = LD_RE.exec(player.renderTourPage(noPrice, FN, "anon", "site-key", { origin: "https://rendprop.com" }));
+      checks++;
+      if (!noPriceLd) fail("[no-price /f/] an indexable tour must still carry a graph");
+      else {
+        checks++;
+        const hasOffer = JSON.parse(noPriceLd[1])["@graph"].some((n) => [].concat(n["@type"]).includes("Offer"));
+        if (hasOffer) fail("[no-price /f/] a listing with no price must emit NO Offer, not a $0 one");
+      }
+      ok("opt-in /f/: structured data parses, carries real values and no placeholders");
+    }
+  }
 
   // ---- F-H-17: the house promotions are the owner's call ------------------
   // Default: NO lender CTA on someone else's listing page (RESPA exposure is
@@ -487,6 +638,11 @@ async function main() {
     ["smart banner", "apple-itunes-app"],
     ["App Store link", "apps.apple.com"],
     ["app CTA section", 'id="getapp"'],
+    // The share control is guarded on the same `embed || unbranded`: the
+    // in-app card is already inside an app with a system share sheet, and a
+    // second one over a hero video is chrome nobody asked for.
+    ["share control", 'id="share"'],
+    ["share script", "navigator.share"],
   ]) mustNotContain(emBr, "embed /f/", what, needle);
   // …and an owner who wants it gone can switch it off.
   const noApp = realEstateTour();
@@ -656,6 +812,11 @@ async function main() {
   for (const [what, sample] of [
     ["a link to the vendor site", '<a href="https://rendprop.com">Home</a>'],
     ["a visible wordmark", "<p>Made with Rendprop</p>"],
+    ["a JSON-LD block", '<script type="application/ld+json">{"@type":"Place"}</script>'],
+    ["a share control", '<button id="share">Share</button>'],
+    ["a share script", "<script>navigator.share({url:x});</script>"],
+    ["an App Store campaign token", '<a href="https://x.example/app?ct=tour-abc&mt=8">Get it</a>'],
+    ["a ref-tagged outbound link", '<a href="https://x.example/?ref=tour">More</a>'],
     ["a lead form", '<form id="leadform"><input name="email"></form>'],
     ["a mailto link", '<a href="mailto:a@b.com">Email</a>'],
     ["a phone link", '<a href="tel:5550100">Call</a>'],
@@ -695,7 +856,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`✔ unbranded check passed — ${checks} assertions over 15 renders (real_estate, venue, legacy, embed, demo, tours-shape, cdn-host, notice page, index opt-in x3, promo opt-in x3, original-only) + 12 gate self-tests.`);
+  console.log(`✔ unbranded check passed — ${checks} assertions over 17 renders (real_estate, venue, legacy, embed, demo, tours-shape, cdn-host, notice page, index opt-in x3, opt-in embed, no-price, promo opt-in x3, original-only) + 19 gate self-tests, including the structured data, the share control and the App Store / ref campaign tokens.`);
 }
 
 main().catch((err) => {

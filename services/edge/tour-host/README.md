@@ -7,6 +7,7 @@ Serves Rendprop's **public** pages at the edge:
 | `GET /f/:slug` | the scroll-scrub **tour player** — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
 | `GET /u/:slug` | the **same tour, unbranded** — MLS-safe | the same payload |
 | `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
+| `GET /sitemap.xml` | the crawl index — marketing + legal + the demo tour and portfolio | `src/sitemap.ts` (no upstream yet — see TODO 5) |
 
 Each request is server-rendered to a **self-contained HTML page** (no build step, no
 client framework). Customer pages check upstream on every request and return
@@ -30,6 +31,9 @@ Every tour has **two** URLs off the same slug and the same payload:
 | Zillow + secondary links, house partners, financing | yes | **no** |
 | "Made with Rendprop", wordmark, `rendprop.com` links | yes | **no** |
 | `og:*` / `twitter:` cards, `rel=canonical` | yes | **no** |
+| JSON-LD structured data | yes — **only when the owner opted that tour into indexing** | **no** |
+| Share control (`navigator.share` / copy link) | yes | **no** |
+| App Store CTA + `ct=` campaign, `?ref=` on outbound links | yes | **no** |
 | Property media, address, details, floor plan, chapters | yes | yes |
 | **AI disclosure block** (`#disclosure`) | yes | **yes** — it is property information |
 | Robots | indexable, self-canonical | `noindex` meta **and** `X-Robots-Tag`, never in the sitemap |
@@ -136,9 +140,11 @@ routes = [
 Requirements:
 - `rendprop.com` must be an **active zone** on the same Cloudflare account (nameservers on Cloudflare).
 - The Worker owns the whole apex. Requests that exactly match a file under `./public` (the marketing
-  site, `/assets/*`, `robots.txt`, `sitemap.xml`, `llms.txt`) are served by Workers Static Assets
-  before the script runs; `/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`, `/healthz` and every unknown path
-  land in `src/index.ts`, which always answers with a branded page (404/500 included).
+  site, `/assets/*`, `robots.txt`, `llms.txt`) are served by Workers Static Assets
+  before the script runs; `/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`, `/sitemap.xml`, `/healthz` and every
+  unknown path land in `src/index.ts`, which always answers with a branded page (404/500 included).
+  That precedence is why **`public/sitemap.xml` is deleted**: a file there wins over the route, so
+  leaving it in place would make `src/sitemap.ts` unreachable. Do not re-add it.
 - `workers_dev = false`: there is no `*.workers.dev` hostname in production (duplicate content +
   an un-branded URL). For a pre-DNS smoke test, temporarily set it to `true` and comment the
   `routes` block out.
@@ -157,6 +163,45 @@ brand kit. A crawler has to be able to *fetch* the page to read that tag, which 
 not `Disallow`ed for `*`. A non-opted-in tour sends `X-Robots-Tag: noindex, nofollow` as well as the meta tag, so a crawler
 that never parses the body gets the same answer. `?embed=1` and `/u/*` are always `noindex`, and
 every branded tour page carries a canonical link to its `share_url`.
+
+**Structured data follows that same opt-in.** `src/jsonld.ts` emits one
+`<script type="application/ld+json">` per page: on `/f/<slug>` only when `allowsIndexing(tour)`
+is true (a `RealEstateListing` — or `EventVenue`/`Restaurant`/`Store`/`ExerciseGym`/`LocalBusiness`
+per `space_type` — plus the space, a `VideoObject` for the flythrough, an `Offer` where there is a
+price, the agent and a `BreadcrumbList`), and on `/a/<handle>` unconditionally (`ProfilePage` +
+the agent + an `ItemList` mirroring the visible grid). **Never on `/u/*` or `?embed=1`** — it names
+the agent, their phone and rendprop.com, so `unbrandedViolations()` lists `application/ld+json` and
+fails an unbranded page closed if a guard is ever broken. Every field is dropped when there is no
+real value for it; nothing is ever emitted as a placeholder.
+
+`/a/<handle>` is **indexable by default** and `/f/<slug>` is not, on purpose: a portfolio is a
+public profile at a handle its owner chose and publishing it *is* the opt-in, whereas a tour page
+puts an owner's name, phone and email beside a specific street address.
+
+### Acquisition attribution
+
+Outbound links carry where they came from — see `src/attribution.ts`, which is the only place that
+builds one:
+
+- **App Store**: `?ct=<surface>&mt=8`, with `<surface>` one of `tour-<slug>`, `portfolio`, `site`.
+  Shows up in App Store Connect → App Analytics → Acquisition → Sources, dimension *Campaign*.
+  `pt` (the provider token) is **not in this repo** — it is an account-level value the owner has to
+  copy out of App Store Connect into `APPLE_PROVIDER_TOKEN`; the links work without it and start
+  filing under the Campaigns report once it is set. See the TODO in that file.
+- **rendprop.com**: `?ref=tour` / `?ref=portfolio` on the "Made with Rendprop" links.
+  `public/assets/site.js` deliberately does **not** read it — no cookie, no `localStorage`, no
+  pixel, no third-party script. The privacy policy's "no third-party analytics SDK, no advertising
+  SDK, no advertising identifier (IDFA), and no tracking pixel" stays literally true.
+
+Neither parameter exists on `/u/*`: both are in `UNBRANDED_FORBIDDEN` and in the CI gate.
+
+### Sharing
+
+The branded tour page carries a small **Share** control over the stage (`#share`): `navigator.share`
+where the browser has it, clipboard otherwise, with an explicit "Link copied" / "Press Ctrl+C"
+state so a silent failure is impossible. It is a real `<button>` (tab + Enter/Space for free), makes
+no network call and stores nothing. Absent from `/u/*` **and** from `?embed=1`, in the markup *and*
+in the emitted script.
 
 ### Checks
 
@@ -245,3 +290,14 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
 4. **`streamed_minutes`** is reported once as `≈ duration` per session (honest "delivery"
    accounting since the clip is downloaded once for scrubbing). Revisit if Stream billing
    should reflect re-buffered bytes.
+5. **`GET /tours/index` does not exist**, so `/sitemap.xml` lists only what this Worker can know
+   on its own: the marketing pages, the legal pages, `/f/estate-demo` and `/a/meridian`. Nothing in
+   `services/supabase/functions` can enumerate published tours — `tours/` answers one slug and
+   `portfolio/` answers one handle. The exact shape the sitemap needs (slug, `published_at`, the
+   **server-resolved** `allow_indexing`, the org handle, a cursor) is specified at the top of
+   `src/sitemap.ts`; `sitemapXml()` already takes it. Until it ships, no tour of a real customer is
+   in the sitemap — which is correct, not a gap to paper over: an entry is a *request to index*, and
+   only the owner's opt-in may put one there.
+6. **`APPLE_PROVIDER_TOKEN` is empty** (`src/attribution.ts`). Campaign tokens ride on every App
+   Store link already; `pt` is what files them under this provider in App Store Connect's Campaigns
+   report. One paste, no code change.

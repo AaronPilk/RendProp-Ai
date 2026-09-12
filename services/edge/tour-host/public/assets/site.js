@@ -1,4 +1,29 @@
 /* Rendprop site JS — theme, motion, sliders. No dependencies. */
+
+/* ---------------------------------------------------------------------------
+   `?ref=` — READ DELIBERATELY NOWHERE.
+
+   Tour pages (`/f/<slug>`) and portfolio pages (`/a/<handle>`) link back here
+   as `https://rendprop.com/?ref=tour` and `?ref=portfolio`
+   (services/edge/tour-host/src/attribution.ts `siteUrl`). It exists so the
+   surface that sent a visitor is present in the request — in a server log and
+   in a same-site referrer — and so there is ONE spelling of it already in the
+   wild when the owner ever wants the number.
+
+   This file does not read it, and must not start. No cookie, no localStorage,
+   no beacon, no third-party script: the privacy policy says in as many words
+   that there is "no third-party analytics SDK, no advertising SDK, no
+   advertising identifier (IDFA), and no tracking pixel", and reading a
+   campaign parameter into any kind of per-visitor store is how that sentence
+   stops being true. If this ever needs a number, count it server-side from the
+   Worker's own logs, where no identifier is involved.
+
+   (Apple's `ct=` on the App Store links below is a different thing entirely:
+   it is a query parameter on an OUTBOUND link, read by Apple in App Store
+   Connect, never by us and never stored on the device. The JSON-LD
+   `installUrl`/`downloadUrl` values on index.html and pricing.html stay
+   parameter-free on purpose — they identify the app, they are not a click.)
+   --------------------------------------------------------------------------- */
 (function () {
   "use strict";
   document.documentElement.classList.add("js");

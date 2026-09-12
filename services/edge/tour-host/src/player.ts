@@ -44,6 +44,8 @@
 
 import type { AlteredMedium, Cta, SecondaryLink, Tour, TourListing } from "./types";
 import { spatialAnchor } from "./spatial-manifest";
+import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
+import { tourJsonLd } from "./jsonld";
 import {
   type AgentModel,
   absolutize,
@@ -74,8 +76,11 @@ const HLS_SRI = "sha384-V5ruNBgmYcC3SJRUQeNykAAAgde5gOFq/Hu0CZj7bygDP0yRIhkvX8+w
 // property", and an App Store link is exactly that. `apps.apple.com` and
 // `apple-itunes-app` are in UNBRANDED_FORBIDDEN at the bottom of this file, so
 // a leak fails the CI check before it can ever fail a page closed in prod.
-const APP_STORE_ID = "6808982413";
-const APP_STORE_URL = `https://apps.apple.com/us/app/id${APP_STORE_ID}`;
+//
+// The id and the link builder now live in src/attribution.ts — the App Store
+// URL carries a campaign token (`ct=tour-<slug>`) so a download can be traced
+// back to the page that produced it. See that file for the App Store Connect
+// report it lands in and for the one value the owner still has to supply.
 
 // ---------------------------------------------------------------------------
 // Listing state helpers (sold / archived, price, counts)
@@ -521,6 +526,11 @@ interface HeaderModel {
   ogTitle: string;
   ogDesc: string;
   chipHtml: string;
+  /** The bare name of the THING this page is about — the street address, or the
+   *  business name for every other space type. `ogTitle` decorates it for a
+   *  social card ("… — $4,250,000", "… — Sold"); structured data must not, and
+   *  `pageTitle` carries the vendor suffix, so neither is reusable there. */
+  entityName: string;
 }
 
 function buildHeader(tour: Tour, unbranded = false): HeaderModel {
@@ -555,6 +565,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
       pageTitle: `${titleText}${sold ? " (Sold)" : ""}${suffix}`,
       ogTitle: titleText + (sold ? " — Sold" : price ? " — " + price : ""),
       ogDesc,
+      entityName: titleText,
       chipHtml: `${pill}${primary}${lines.map((x) => `<div class="meta">${escapeHtml(x)}</div>`).join("")}`,
     };
   }
@@ -569,6 +580,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
     pageTitle: `${title}${suffix}`,
     ogTitle: title,
     ogDesc: sold ? `${archiveLabel(tour)}. ${ogDesc}` : ogDesc,
+    entityName: title,
     chipHtml: `${pill}<div class="price">${escapeHtml(title)}</div>${lines.map((x) => `<div class="meta">${escapeHtml(x)}</div>`).join("")}`,
   };
 }
@@ -1008,6 +1020,29 @@ const PLAYER_CSS = `${TOKENS_CSS}
   #wm { left: 16px; bottom: calc(14px + var(--floor, 0px)); font-size: 10.5px; color: rgba(255,255,255,.45); letter-spacing: .06em; text-decoration: none; }
   #wm b { color: rgba(255,255,255,.72); font-weight: 600; }
 
+  /* ===== Share =====
+     A tour is a link someone sends to a buyer, a seller or a group chat, and
+     until now the only way to send it was to find the address bar. This is a
+     real <button> (so it is tabbable and works on Enter/Space for free), in
+     the one free corner: #brand sits at 14px top-left, #listing is top-right,
+     #rail runs down the right edge from 96px, and the whole bottom band is
+     spoken for by #wm, #staged, #hint and #roomstrip. Same smoked-glass
+     treatment as #staged, because it is the same kind of thing: small chrome
+     over live video that still has to be readable on a white kitchen.
+     BRANDED, NON-EMBED ONLY — see the render guard; on /u/ this element is not
+     built at all, and "share" is a social affordance an MLS field forbids. */
+  #share { top: calc(42px + env(safe-area-inset-top)); left: 16px; display: inline-flex;
+    align-items: center; gap: 6px; appearance: none; cursor: pointer; font-family: inherit;
+    font-size: 11px; font-weight: 600; letter-spacing: .04em; line-height: 1;
+    color: rgba(255,255,255,.78); padding: 6px 11px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.2); background: rgba(11,13,16,.5);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: color .2s ease, border-color .2s ease; }
+  #share svg { flex: 0 0 auto; }
+  #share:hover { color: #fff; border-color: rgba(255,255,255,.42); }
+  #share:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-height: 430px) { #share { top: calc(38px + env(safe-area-inset-top)); } }
+
   /* Virtual-staging disclosure (MLS compliance) */
   #staged { right: 16px; bottom: calc(14px + var(--floor, 0px)); display: none; align-items: center; gap: 5px; font-size: 10.5px; color: rgba(255,255,255,.65); letter-spacing: .04em; padding: 5px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; background: rgba(11,13,16,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; }
   #staged.on { display: flex; }
@@ -1295,6 +1330,8 @@ const ENGINE_CORE_JS = `
   }
 
     /*__APPLINK__*/
+
+    /*__SHARE__*/
 
 /* ---- Unavailable: the video can't be delivered. Say so; count nothing. ---- */
   function showUnavailable(){
@@ -1773,14 +1810,96 @@ const ENGINE_APPLINK_JS = `
   })();
 `;
 
-/** The client engine. `unbranded` drops the lead-form AND the app-link halves. */
-function engineJs(unbranded: boolean): string {
+/**
+ * BRANDED PAGES ONLY, for the same reason as the two blocks above: sharing a
+ * link IS the social affordance an MLS unbranded field forbids, and the URL it
+ * shares is a rendprop.com one.
+ *
+ * `navigator.share` opens the OS share sheet — the Messages / WhatsApp / email
+ * row a seller actually uses — and it is the only correct API here: it must be
+ * called synchronously inside the click, and it exists on every iOS Safari the
+ * app targets. Where it does not exist (most desktop Firefox, older Chrome)
+ * the fallback is the clipboard, then a hidden textarea + execCommand for the
+ * browsers whose async clipboard is gated on permissions. Whatever happens,
+ * the button SAYS what happened: a copy that silently did nothing is the worst
+ * outcome of the three.
+ *
+ * NO NETWORK, NO STORAGE, NO ANALYTICS. The shared URL is the page's own
+ * canonical, already in the config; nothing is recorded and nothing is sent.
+ */
+const SHARE_SLOT = "/*__SHARE__*/";
+const ENGINE_SHARE_JS = `
+  (function(){
+    var btn = document.getElementById('share');
+    if (!btn) return;
+    var url = (CFG && CFG.shareUrl) ? String(CFG.shareUrl) : '';
+    // Nothing to share (no canonical) is not a button worth showing.
+    if (!url) { btn.hidden = true; return; }
+    var label = btn.querySelector('.share-lbl');
+    var resetTimer;
+    function say(text){
+      if (label) label.textContent = text;
+      btn.setAttribute('aria-label', text === 'Share' ? 'Share this tour' : text);
+      clearTimeout(resetTimer);
+      if (text !== 'Share') resetTimer = setTimeout(function(){ say('Share'); }, 2600);
+    }
+    function legacyCopy(){
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        say(copied ? 'Link copied' : 'Press Ctrl+C');
+      } catch (e) { say('Press Ctrl+C'); }
+    }
+    function copy(){
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(url).then(function(){ say('Link copied'); }, legacyCopy);
+          return;
+        }
+      } catch (e) {}
+      legacyCopy();
+    }
+    btn.addEventListener('click', function(){
+      if (navigator.share){
+        try {
+          // A dismissed share sheet rejects with AbortError. That is the person
+          // changing their mind, not a failure to report.
+          var p = navigator.share({ title: document.title, url: url });
+          if (p && p.catch) p.catch(function(){});
+          return;
+        } catch (e) {}
+      }
+      copy();
+    });
+  })();
+`;
+
+/**
+ * The client engine. `unbranded` drops the lead-form and app-link halves;
+ * `embed` additionally drops the share half.
+ *
+ * Why share is the stricter of the two: the share block is the only one whose
+ * GUARD IS ITS MARKUP. The lead form and the app-link nudge look for elements
+ * the embed does not render and return, which is inert but does ship the code;
+ * the share block would ship `navigator.share` into the in-app webview, where
+ * an install-adjacent affordance next to the system share sheet is exactly the
+ * duplication the embed exists to avoid. Dropping it keeps the emitted script
+ * and the emitted markup in agreement, which is what the CI gate asserts.
+ */
+function engineJs(unbranded: boolean, embed = false): string {
   // ENGINE_CORE_JS opens with `(function(){` and the tail closes it, so the
   // lead-form block is spliced in at the marker inside the same IIFE.
   return unbranded
-    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
+    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "").replace(SHARE_SLOT, "")
     : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
-        .replace(APPLINK_SLOT, ENGINE_APPLINK_JS);
+        .replace(APPLINK_SLOT, ENGINE_APPLINK_JS)
+        .replace(SHARE_SLOT, embed ? "" : ENGINE_SHARE_JS);
 }
 
 // ===========================================================================
@@ -2368,7 +2487,7 @@ function renderFooter(prefs: PromoPrefs): string {
     : "";
   return `<footer class="lp-foot"><div class="lp-wrap">
     ${strip}
-    <div class="lp-madeby"><a href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
+    <div class="lp-madeby"><a href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
     <div class="lp-legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></div>
   </div></footer>`;
 }
@@ -2406,26 +2525,60 @@ function renderFooter(prefs: PromoPrefs): string {
  * is the vendor's own product, the same category as the "Made with Rendprop"
  * attribution, not a paid third-party placement — but an owner who wants it
  * gone can set `show_app_cta: false` in details / brand_kit.
+ *
+ * SHARED WITH `/a/<handle>`. The portfolio page had no way to get the app at
+ * all, which is the surface an AGENT is most likely to be looking at (it is
+ * their own page). It renders this exact markup rather than a second copy —
+ * `opts.campaign` is the only thing that differs, so the two surfaces can be
+ * told apart in App Store Connect but can never drift in copy. The portfolio
+ * page ships the band's CSS by embedding EDITORIAL_CSS (see src/portfolio.ts).
  */
-function renderGetAppSection(tour: Tour): string {
-  if (prefFlag(tour, "show_app_cta", "showAppCta") === false) return "";
+export interface GetAppOpts {
+  /** Which page is rendering the band. Picks the campaign token AND the one
+   *  sentence of lede that has to be true of the page you are on — "the
+   *  flythrough you just scrolled" is a lie on a grid of twelve of them. */
+  surface: "tour" | "portfolio";
+  /** Tour slug, so one listing's page can be credited for the download. */
+  slug?: string;
+  /** The owner switched the band off (`show_app_cta: false`). */
+  off?: boolean;
+}
+
+export function renderGetAppSection(opts: GetAppOpts): string {
+  if (opts.off) return "";
+  const tourSurface = opts.surface === "tour";
+  const heading = tourSurface
+    ? "This tour was filmed on a phone."
+    : "Every tour here was filmed on a phone.";
+  const lede = tourSurface
+    ? `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
+    Rendprop renders the flythrough you just scrolled — plus the photos, the floor plan and this link —
+    the same day. If you list property, that is your next shoot done before lunch.`
+    : `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
+    Rendprop renders the flythrough — plus the photos, the floor plan and the link —
+    the same day. If you list property, that is your next shoot done before lunch.`;
   return `<section class="lp-sec" id="getapp"><div class="lp-wrap">
     <div class="lp-eyebrow">The app behind this page</div>
-    <h2 class="lp-h">This tour was filmed on a phone.</h2>
-    <p class="lp-tag">No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
-    Rendprop renders the flythrough you just scrolled — plus the photos, the floor plan and this link —
-    the same day. If you list property, that is your next shoot done before lunch.</p>
-    <a class="lp-btn" id="getapp-store" href="${escapeAttr(APP_STORE_URL)}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
-    <a class="lp-btn lp-btn-ghost" id="getapp-open" hidden>Open this tour in the app</a>
+    <h2 class="lp-h">${heading}</h2>
+    <p class="lp-tag">${lede}</p>
+    <a class="lp-btn" id="getapp-store" href="${escapeAttr(appStoreUrl(opts.surface, opts.slug))}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
+    ${tourSurface ? `<a class="lp-btn lp-btn-ghost" id="getapp-open" hidden>Open this tour in the app</a>` : ""}
     <p class="lp-fine">Free on iPhone · iOS 16 or later. Rendprop is the software behind this page, not a
-    service offered by the owner of this listing.</p>
+    service offered by the ${tourSurface ? "owner of this listing" : "agent whose page this is"}.</p>
   </div></section>`;
 }
 
 // Editorial CSS — Rendprop purple system layered over the player tokens. The
 // :root override flips the player's default accent (gold) to brand purple; a
 // per-agent accent override (injected after this) still wins when set.
-const EDITORIAL_CSS = `
+//
+// Exported because `/a/<handle>` renders `renderGetAppSection()` — the same
+// markup, which is styled entirely out of this sheet's `.lp-*` vocabulary.
+// Embedding the sheet whole is what keeps the band byte-identical on both
+// pages; a hand-copied subset in portfolio.ts is exactly the drift that a
+// shared renderer exists to prevent. Nothing else in here matches anything the
+// portfolio page renders, so it is inert there.
+export const EDITORIAL_CSS = `
   :root {
     --accent:#9b6dff; --accent-2:#7c3aed; --accent-3:#c4a8ff;
     --accent-soft:rgba(155,109,255,.12);
@@ -2718,6 +2871,12 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     unbranded,
     chapters: chapters.map((c) => ({ t: c.t_ms / 1000, label: c.label })),
     handoffUrl: ctaBlock.handoffUrl,
+    // What the share control puts on the clipboard / into the OS share sheet:
+    // the BRANDED canonical, never the /u/ twin. `shareUrl` is already "" when
+    // unbranded (it is not computed for that page at all); the explicit guard
+    // is what stops a future refactor from putting a rendprop.com URL inside
+    // the MLS page's inline config, where markup guards would not catch it.
+    shareUrl: unbranded ? "" : shareUrl,
     hlsSrc: HLS_SRC,
     hlsSri: HLS_SRI,
   };
@@ -2741,11 +2900,50 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // "Get the app" — see renderGetAppSection() for the placement argument.
   // `embed` is excluded as well as `unbranded`: the in-app preview is already
   // inside the app it would be advertising.
-  const getAppHtml = embed || unbranded ? "" : renderGetAppSection(tour);
+  const getAppHtml = embed || unbranded
+    ? ""
+    : renderGetAppSection({
+        surface: "tour",
+        slug: tour.slug,
+        off: prefFlag(tour, "show_app_cta", "showAppCta") === false,
+      });
   // iOS Safari's smart banner. Same two guards, same reason. This is the half
   // of the CTA that lands ABOVE the fold, for free, on the exact device the
   // download targets — which is why the visible band can afford to sit low.
   const appBanner = embed || unbranded ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
+
+  // STRUCTURED DATA — see src/jsonld.ts for the three rules that gate it.
+  // `indexable` is already `!embed && !unbranded && allowsIndexing(tour)`, so
+  // this is the SAME predicate as the robots tag by construction: a page that
+  // is asked not to be indexed never hands a crawler a machine-readable copy
+  // of the owner's name, phone, email and the listing address.
+  const jsonLdHtml = indexable
+    ? tourJsonLd({
+        tour,
+        agent,
+        canonical: shareUrl,
+        name: header.entityName,
+        description: header.ogDesc,
+        poster: ogPoster,
+        videoUrl: scrubUrl,
+        // priceText() already returns "" for 0 / absent; price_cents is the
+        // only numeric source, so a listing with a display price but no cents
+        // emits no Offer rather than an Offer with a parsed guess in it.
+        priceValue: priceText(tour) && pos(tour.listing?.price_cents)
+          ? Number(tour.listing.price_cents) / 100
+          : null,
+        sold: isSoldOrArchived(tour),
+      })
+    : "";
+
+  // Share control — branded, non-embed only. `/u/` must not offer a social
+  // affordance at all, and the in-app embed already has the system share sheet.
+  const shareHtml = embed || unbranded
+    ? ""
+    : `<button type="button" class="chrome" id="share" aria-label="Share this tour">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15V3m0 0L8 7m4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="share-lbl">Share</span>
+    </button>`;
 
   const isRE = isRealEstate(tour);
   const unavailHtml = `<div id="unavail" role="status">
@@ -2772,7 +2970,8 @@ ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(share
 <meta property="og:type" content="website">
 ${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
 <meta name="twitter:card" content="summary_large_image">
-${ogImage}`}
+${ogImage}
+${jsonLdHtml}`}
 <style>${PLAYER_CSS}${unbranded ? "" : FORM_CSS}
 ${EDITORIAL_CSS}</style>
 ${accentOverride}
@@ -2796,6 +2995,8 @@ ${accentOverride}
 
     ${unbranded ? "" : `<div class="chrome" id="brand">RENDPROP</div>`}
 
+    ${shareHtml}
+
     <div class="chrome" id="listing">${header.chipHtml}</div>
 
     ${roomHtml}
@@ -2812,7 +3013,7 @@ ${accentOverride}
          every progress event); "Still loading" is the part worth hearing. -->
     <div class="chrome" id="bufwait" role="status">Still loading<span aria-hidden="true"> · <span class="n">0%</span></span></div>
 
-    ${unbranded ? "" : `<a class="chrome" id="wm" href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
+    ${unbranded ? "" : `<a class="chrome" id="wm" href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
 
     ${stagedHtml}
 
@@ -2826,7 +3027,7 @@ ${getAppHtml}
 ${footerHtml}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
-<script>${engineJs(unbranded)}</script>
+<script>${engineJs(unbranded, embed)}</script>
 </body>
 </html>`;
 }
@@ -2919,6 +3120,24 @@ const UNBRANDED_FORBIDDEN: Array<{ id: string; re: RegExp; hosts?: true }> = [
   { id: "og-meta", re: /(^|[^a-z])og:/ },
   { id: "twitter-meta", re: /twitter:/ },
   { id: "canonical", re: /rel="canonical"/ },
+  // Structured data (src/jsonld.ts). Never emitted on /u/ by construction —
+  // the block names the agent, the brokerage and rendprop.com, and it is an
+  // indexing affordance on a page that is `noindex`. Listed here so a broken
+  // guard fails CI (and, in prod, fails the page closed) rather than shipping
+  // an MLS-facing page with the agent's phone number in machine-readable form.
+  { id: "ld+json", re: /application\/ld\+json/ },
+  // The share control. "social media profiles" and links to additional content
+  // are what the unbranded rules ban; a button whose whole job is to hand the
+  // page to a social app is the same thing with a different spelling.
+  { id: "share-control", re: /id="share"/ },
+  { id: "navigator.share", re: /navigator\.share/ },
+  // App Store campaign parameters (src/attribution.ts). `apps.apple.com` above
+  // already catches the link itself; this catches the token on its own, so a
+  // stray `ct=tour-…` in a data attribute or an inline script is caught too.
+  { id: "app-store-campaign", re: /[?&]ct=(tour|portfolio|site)/ },
+  // The `?ref=` tag on an outbound rendprop.com link. `rendprop.com` above
+  // already catches those links; this is the same defence in depth.
+  { id: "ref-param", re: /[?&]ref=(tour|portfolio|site)/ },
 ];
 
 /** Every forbidden token that appears in `html`. Empty array = clean. */

@@ -2082,6 +2082,294 @@ begin
   delete from auth.users where id = u4;
 end $ind$;
 
+-- ── 0046: commercial telemetry (activation, cohorts, churn) ─────────────────
+--
+-- Appended at the END on purpose: every assertion above keeps its number, so
+-- the one the owner keeps red (#155, the agent-reel ceiling) is still #155 and
+-- KEPT_RED in tools/audit/run_database_regression.py still names it by string.
+
+insert into _inv(name, pass, note)
+select 'orgs.first_tour_published_at exists, is timestamptz and is nullable',
+       count(*) = 1, coalesce(string_agg(data_type || '/' || is_nullable, ', '), '(missing)')
+from information_schema.columns
+where table_schema = 'public' and table_name = 'orgs'
+  and column_name = 'first_tour_published_at'
+  and data_type = 'timestamp with time zone' and is_nullable = 'YES';
+
+insert into _inv(name, pass, note)
+select 'apple_subscriptions.cancelled_at / cancel_reason exist and are nullable',
+       count(*) = 2, coalesce(string_agg(column_name || '=' || data_type || '/' || is_nullable, ', '), '(missing)')
+from information_schema.columns
+where table_schema = 'public' and table_name = 'apple_subscriptions'
+  and column_name in ('cancelled_at', 'cancel_reason')
+  and is_nullable = 'YES';
+
+-- Both publish paths are live (functions/renders/index.ts -> publish_render,
+-- services/worker/worker.py -> publish_worker_render). A later migration that
+-- re-creates either one from an older body would silently stop stamping half
+-- the activations, and every cohort number would quietly drop with it.
+insert into _inv(name, pass, note)
+select 'both publish paths stamp orgs.first_tour_published_at',
+       count(*) = 2, coalesce(string_agg(proname, ', '), '(missing)')
+from pg_proc
+where proname in ('publish_render', 'publish_worker_render')
+  and prosrc like '%first_tour_published_at%';
+
+insert into _inv(name, pass, note)
+select 'apply_apple_entitlement records the cancellation and clears it on a win-back',
+       count(*) = 1, ''
+from pg_proc
+where proname = 'apply_apple_entitlement'
+  and prosrc like '%cancelled_at%' and prosrc like '%cancel_reason%';
+
+insert into _inv(name, pass, note)
+select 'admin_cohorts / admin_churn / org_is_real are service_role-only definers',
+       coalesce(bool_and(
+         prosecdef
+         and 'search_path=public' = any(coalesce(proconfig, array[]::text[]))
+         and not has_function_privilege('authenticated', oid, 'execute')
+         and not has_function_privilege('anon', oid, 'execute')
+         and has_function_privilege('service_role', oid, 'execute')), false)
+         and count(*) = 3,
+       coalesce(string_agg(proname, ', '), '(missing)')
+from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('admin_cohorts', 'admin_churn', 'org_is_real');
+
+insert into _inv(name, pass, note)
+select 'exactly one overload of each 0046 RPC (no PostgREST ambiguity)',
+       coalesce(bool_and(n = 1), false), coalesce(string_agg(proname || '=' || n, ', '), '(missing)')
+from (select proname, count(*) as n
+        from pg_proc
+       where pronamespace = 'public'::regnamespace
+         and proname in ('admin_cohorts', 'admin_churn', 'org_is_real')
+       group by proname) s;
+
+-- ── MUTATING: activation, the orphan predicate, cancellation and both reports ─
+-- Three throwaway users through the REAL signup trigger (so the orphan under
+-- test has the owner membership handle_new_user() always gives it), one org
+-- known only by an upload reservation, and real publish_render() /
+-- apply_apple_entitlement() calls. Cleans up after itself.
+
+do $tel$
+declare
+  u5 uuid := '0f1e2d3c-4b5a-4968-8776-655443322114';
+  u6 uuid := '0f1e2d3c-4b5a-4968-8776-655443322115';
+  u7 uuid := '0f1e2d3c-4b5a-4968-8776-655443322116';
+  oA uuid; oB uuid; oOrphan uuid; oUP uuid; oRN uuid;
+  v_listing uuid; v_asset uuid; v_listing_b uuid;
+  v_job render_jobs; v_render renders;
+  v_exp timestamptz := date_trunc('second', now()) + interval '30 days';
+  v_stamp timestamptz; v_first timestamptz; v_cancel timestamptz;
+  v_created_a timestamptz; v_created_b timestamptz;
+  r jsonb; b jsonb; s public.apple_subscriptions%rowtype;
+  msg text; ok boolean; n bigint;
+begin
+  -- Defensive cleanup from an aborted earlier run.
+  delete from apple_subscriptions where original_transaction_id like '\_inv-CO-%';
+  delete from upload_reservations where org_id in (select id from orgs where name like '\_inv cohort %');
+  delete from orgs where id in (select org_id from memberships where user_id in (u5, u6, u7));
+  delete from auth.users where id in (u5, u6, u7);
+  delete from orgs where name like '\_inv cohort %';
+
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u5, 'inv-cohort-a@example.com', '{"full_name":"Cohort A"}');
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u6, 'inv-cohort-b@example.com', '{"full_name":"Cohort B"}');
+  -- The orphan shape the audit found: an Apple sign-in mints a NEW user, so
+  -- handle_new_user() creates a FRESH org with an owner membership, and
+  -- adopt_anonymous_org() re-points the ANONYMOUS org's membership instead —
+  -- leaving this one owned but empty forever.
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u7, 'inv-cohort-orphan@example.com', '{"full_name":"Cohort Orphan"}');
+  select m.org_id into oA      from memberships m where m.user_id = u5;
+  select m.org_id into oB      from memberships m where m.user_id = u6;
+  select m.org_id into oOrphan from memberships m where m.user_id = u7;
+
+  -- (a) a REAL publish stamps the activation fact, and a second one cannot move it.
+  perform set_config('request.jwt.claims', json_build_object('sub', u5, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oA, u5, '1 Cohort Way') returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/cohort.mp4', 1000, true, 30) returning id into v_asset;
+
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-co-000001', 'app');
+  v_render := publish_render(v_job.id, 30, 2.0, '[]', null);
+  select first_tour_published_at into v_stamp from orgs where id = oA;
+  insert into _inv(name, pass, note)
+    values ('a real publish stamps orgs.first_tour_published_at with the render''s publish time',
+            v_stamp is not null and v_stamp = v_render.published_at,
+            coalesce(v_stamp::text, '<null>') || ' vs render ' || coalesce(v_render.published_at::text, '<null>'));
+
+  v_first := v_stamp;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-co-000002', 'app');
+  perform publish_render(v_job.id, 30, 2.0, '[]', null);
+  select first_tour_published_at into v_stamp from orgs where id = oA;
+  insert into _inv(name, pass, note)
+    values ('a second publish does NOT move first_tour_published_at',
+            v_stamp = v_first, coalesce(v_stamp::text, '<null>'));
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (b) the orphan predicate. The orphan HAS its owner membership — that is the
+  -- whole point: a membership test would not exclude it, emptiness does.
+  insert into orgs (name, plan, plan_source) values ('_inv cohort uploads-only', 'trial', 'trial')
+    returning id into oUP;
+  insert into upload_reservations (asset_id, org_id, listing_id, actor_id, day, spec, held_bytes)
+    values (gen_random_uuid(), oUP, gen_random_uuid(), gen_random_uuid(), current_date, '{}'::jsonb, 0);
+  insert into listings (org_id, agent_id, address) values (oB, u6, '2 Cohort Way') returning id into v_listing_b;
+
+  insert into _inv(name, pass, note)
+    values ('org_is_real excludes an empty org that still holds its owner membership',
+            org_is_real(oOrphan) = false
+              and exists (select 1 from memberships m where m.org_id = oOrphan and m.role = 'owner'),
+            'is_real=' || org_is_real(oOrphan)::text);
+  insert into _inv(name, pass, note)
+    values ('org_is_real includes a working workspace and one known only by an upload reservation',
+            org_is_real(oA) and org_is_real(oB) and org_is_real(oUP),
+            format('A=%s B=%s upload-only=%s', org_is_real(oA), org_is_real(oB), org_is_real(oUP)));
+
+  -- (c) the cancellation fact. oA buys and keeps paying; oB buys and lapses.
+  r := apply_apple_entitlement(oA, null, '_inv-CO-1', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
+  insert into _inv(name, pass, note)
+    values ('an active subscription carries no cancelled_at', s.cancelled_at is null, coalesce(s.cancelled_at::text, '<null>'));
+
+  -- Same expiry, so this is a genuine second delivery and not the stale arm.
+  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T2',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
+  v_cancel := s.cancelled_at;
+  insert into _inv(name, pass, note)
+    values ('the first transition to expired stamps cancelled_at and cancel_reason',
+            s.cancelled_at is not null and s.cancel_reason = 'EXPIRED',
+            coalesce(s.cancelled_at::text, '<null>') || ' / ' || coalesce(s.cancel_reason, '<null>'));
+
+  -- The REASON is the discriminator here, not the clock: now() is transaction
+  -- time, so a re-stamp inside this fixture would keep the same timestamp but
+  -- would carry GRACE_PERIOD_EXPIRED instead of the EXPIRED that got there first.
+  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T3',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
+  insert into _inv(name, pass, note)
+    values ('a later terminal signal does NOT move cancelled_at',
+            s.cancelled_at = v_cancel and s.cancel_reason = 'EXPIRED',
+            coalesce(s.cancelled_at::text, '<null>') || ' / ' || coalesce(s.cancel_reason, '<null>'));
+
+  -- Auto-renew off while STILL entitled is a cancellation too — the number a
+  -- retention effort needs before the subscription actually ends.
+  insert into orgs (name, plan, plan_source) values ('_inv cohort renew-off', 'trial', 'trial')
+    returning id into oRN;
+  r := apply_apple_entitlement(oRN, null, '_inv-CO-4', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, false,
+        'DID_CHANGE_RENEWAL_STATUS');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-4';
+  insert into _inv(name, pass, note)
+    values ('auto_renew turned off is a cancellation even while the status is still active',
+            s.status = 'active' and s.cancelled_at is not null
+              and s.cancel_reason = 'DID_CHANGE_RENEWAL_STATUS',
+            format('%s / %s / %s', s.status, coalesce(s.cancelled_at::text, '<null>'),
+                   coalesce(s.cancel_reason, '<null>')));
+  -- A second subscription in billing grace, for admin_churn's in_grace count.
+  r := apply_apple_entitlement(oRN, null, '_inv-CO-5', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW');
+
+  -- A win-back clears both columns, so they always describe the CURRENT state.
+  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T2',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
+  ok := s.cancelled_at is not null;
+  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T3',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
+  insert into _inv(name, pass, note)
+    values ('a win-back clears cancelled_at and cancel_reason',
+            ok and s.cancelled_at is null and s.cancel_reason is null,
+            format('stamped=%s now=%s/%s', ok, coalesce(s.cancelled_at::text, '<null>'),
+                   coalesce(s.cancel_reason, '<null>')));
+
+  -- (d) the cohort table. Age the two workspaces into two different buckets and
+  -- give A a known 2-hour time-to-activate, so the arithmetic is checkable
+  -- rather than merely present. Only the dates move; the facts above stand.
+  v_created_a := date_trunc('second', now()) - interval '40 days';
+  v_created_b := date_trunc('second', now()) - interval '10 days';
+  update orgs set created_at = v_created_a,
+                  first_tour_published_at = v_created_a + interval '2 hours' where id = oA;
+  update orgs set created_at = v_created_b where id = oB;
+  update orgs set created_at = v_created_b where id = oOrphan;
+
+  r := admin_cohorts(interval '90 days', 'week');
+  select e into b from jsonb_array_elements(r->'buckets') e
+   where e->>'bucket_start' = to_char(date_trunc('week', v_created_a) at time zone 'UTC',
+                                      'YYYY-MM-DD"T"HH24:MI:SS"Z"');
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts reports the activated+paying cohort exactly (1 org, activated in 2h, paying)',
+            b is not null
+              and (b->>'orgs')::bigint = 1 and (b->>'activated')::bigint = 1
+              and (b->>'activated_within_24h')::bigint = 1 and (b->>'activated_within_7d')::bigint = 1
+              and (b->>'median_hours_to_activate')::numeric = 2.0
+              and (b->>'ever_paid')::bigint = 1 and (b->>'paying_now')::bigint = 1
+              and (b->>'churned')::bigint = 0 and (b->>'partial')::boolean = false,
+            coalesce(b::text, '(bucket missing)'));
+
+  select e into b from jsonb_array_elements(r->'buckets') e
+   where e->>'bucket_start' = to_char(date_trunc('week', v_created_b) at time zone 'UTC',
+                                      'YYYY-MM-DD"T"HH24:MI:SS"Z"');
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts reports the never-activated, lapsed cohort exactly (1 org, 0 activated, churned)',
+            b is not null
+              and (b->>'orgs')::bigint = 1 and (b->>'activated')::bigint = 0
+              and b->>'median_hours_to_activate' is null
+              and (b->>'ever_paid')::bigint = 1 and (b->>'paying_now')::bigint = 0
+              and (b->>'churned')::bigint = 1,
+            coalesce(b::text, '(bucket missing)'));
+
+  select count(*) into n from orgs o
+   where o.created_at >= now() - interval '90 days' and o.created_at <= now() and org_is_real(o.id);
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts counts exactly the REAL orgs in the window and reports the orphans it excluded',
+            (r->'summary'->>'orgs')::bigint = n
+              and (r->'summary'->>'orphan_orgs_excluded')::bigint >= 1
+              and (r->'summary'->>'activated')::bigint >= 1,
+            format('summary=%s independent_real_count=%s', r->'summary', n));
+
+  ok := false; msg := null;
+  begin
+    r := admin_cohorts(interval '90 days', 'fortnight');
+  exception when others then msg := sqlerrm; ok := msg like 'RP400%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts refuses a bucket outside day/week/month', ok, coalesce(msg, 'NO ERROR RAISED'));
+
+  -- (e) the churn report.
+  r := admin_churn(interval '30 days');
+  insert into _inv(name, pass, note)
+    values ('admin_churn counts the cancellation and groups it by plan and by reason',
+            (r->>'cancellations')::bigint >= 2
+              and r->'by_plan'   @> '[{"plan":"starter"}]'::jsonb
+              and r->'by_reason' @> '[{"reason":"EXPIRED"}]'::jsonb
+              and r->'by_reason' @> '[{"reason":"DID_CHANGE_RENEWAL_STATUS"}]'::jsonb,
+            r::text);
+  insert into _inv(name, pass, note)
+    values ('admin_churn reports the grace count and the preceding window with a delta',
+            (r->>'in_grace')::bigint >= 1
+              and r->'previous' ? 'cancellations' and r->'previous' ? 'by_plan'
+              and r->'previous' ? 'from' and r->'previous' ? 'to'
+              and (r->>'delta_total')::bigint
+                    = (r->>'cancellations')::bigint - (r->'previous'->>'cancellations')::bigint,
+            r::text);
+
+  -- Cleanup (listings/renders/jobs cascade from orgs; apple_subscriptions only
+  -- SET NULLs its org_id, and upload_reservations has no cascading FK at all).
+  delete from apple_subscriptions where original_transaction_id like '\_inv-CO-%';
+  delete from upload_reservations where org_id = oUP;
+  delete from orgs where id in (oA, oB, oOrphan, oUP, oRN);
+  delete from auth.users where id in (u5, u6, u7);
+end $tel$;
+
 drop table if exists _inv_tasks;
 
 select seq, name, pass, note from _inv order by seq;

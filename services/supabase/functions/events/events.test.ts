@@ -151,17 +151,45 @@ Deno.test("whitelist: no schema key can hold a person, a place or a file", () =>
 
 Deno.test("vocabulary: exactly the names in the launch contract", () => {
   assertEquals([...ALLOWED_EVENT_NAMES].sort(), [
-    "aerial_made", "ai_photo_edit", "ai_prompt_improved", "ai_script_written",
+    "aerial_made", "ai_clip_rejected", "ai_photo_edit", "ai_prompt_improved",
+    "ai_script_written",
     "anonymous_adopt", "anonymous_session_failed", "anonymous_session_started",
     "app_open", "capture_finished", "capture_started",
     "coach_action_tapped", "coach_message_sent", "coach_opened",
     "crash", "error", "file_saved", "gear_item_tapped", "gear_opened",
-    "guide_completed", "guide_step_tapped", "home_created", "paywall_viewed",
+    "guide_completed", "guide_step_tapped", "home_created",
+    "listing_link_used", "paywall_viewed", "property_lookup",
     "purchase_completed", "purchase_failed", "purchase_started",
     "reel_made", "reel_planned",
     "render_finished", "restore", "review_prompt_shown", "signin", "signup",
-    "tour_published", "voiceover_added",
+    "tour_published", "tour_viewer_opened", "voiceover_added",
   ]);
+});
+
+// The four names the shipped iOS build already emits (2026-09-12). Each case
+// is the payload the real call site passes, so the whitelist cannot drift away
+// from the app without this failing.
+Deno.test("vocabulary: the four shipped iOS events keep exactly their own props", () => {
+  const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+    // FlythroughDetailView.swift: ["kind": "animate", "status": verdict.rawValue]
+    ["ai_clip_rejected", { kind: "animate", status: "unavailable" },
+     { kind: "animate", status: "unavailable" }],
+    // TourViewerView.swift: ["kind": leadSlug == nil ? "portfolio" : "tour"]
+    ["tour_viewer_opened", { kind: "tour" }, { kind: "tour" }],
+    // NewListingView.swift: ["source": parsed.source.rawValue]
+    ["listing_link_used", { source: "zillow" }, { source: "zillow" }],
+    // NewListingView.swift: ["ok", "filled", "cached"] — all sent as strings.
+    ["property_lookup", { ok: "true", filled: "3", cached: "false" },
+     { ok: "true", filled: "3", cached: "false" }],
+  ];
+  for (const [name, sent, kept] of cases) {
+    assert(isAllowedEvent(name), `${name} is not in the vocabulary`);
+    assertEquals(sanitizeProps(name, sent).props, kept);
+    // An unknown key is still dropped silently, never a 400.
+    const extra = sanitizeProps(name, { ...sent, address: "1600 Pennsylvania Ave" });
+    assertEquals(extra.dropped, 1);
+    assertEquals(extra.props, kept);
+  }
 });
 
 Deno.test("vocabulary: anything else is refused", () => {

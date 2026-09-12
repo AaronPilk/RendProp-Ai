@@ -21,8 +21,9 @@ import unittest
 from unittest.mock import patch
 
 # Exact inventory size of tests/invariants.sql (mirrors INVARIANT_COUNT in
-# run_database_regression.py; 213 since the 0044 plan-rework section).
-COUNT = 213
+# run_database_regression.py; 234 since the 0046 commercial-telemetry section,
+# 213 for the 0044 plan-rework section).
+COUNT = 234
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free or trial tier',

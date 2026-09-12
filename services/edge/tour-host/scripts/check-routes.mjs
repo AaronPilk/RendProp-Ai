@@ -20,7 +20,9 @@
 //
 // Run: npm test
 
-import { buildSrc } from "./build-src.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildSrc, ROOT } from "./build-src.mjs";
 
 const load = buildSrc("routes-check");
 
@@ -170,6 +172,53 @@ function assertUnbrandedBody(label, body) {
   }
 }
 
+/**
+ * Structured data is only worth shipping if a machine can read it. This parses
+ * the emitted block as JSON — the way a crawler does — and then walks the whole
+ * graph for the one failure mode that matters: a field emitted with nothing in
+ * it. An empty string, a null, an empty array/object or a "TBD" in structured
+ * data is a claim made to a machine that will repeat it.
+ */
+function assertValidJsonLd(label, body, requiredTypes = []) {
+  const blocks = [...body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+  expect(blocks.length === 1, `[${label}] want exactly one JSON-LD block, got ${blocks.length}`);
+  if (blocks.length !== 1) return null;
+  const raw = blocks[0][1];
+  // The `</script>` escape: no owner-entered string may close the block.
+  expect(!raw.includes("<"), `[${label}] JSON-LD must escape '<' so no owner-entered string can close the script`);
+  let graph;
+  checks++;
+  try { graph = JSON.parse(raw); }
+  catch (err) { fail(`[${label}] JSON-LD does not parse: ${err.message}`); return null; }
+  expect(graph["@context"] === "https://schema.org", `[${label}] JSON-LD @context must be https://schema.org`);
+  const nodes = Array.isArray(graph["@graph"]) ? graph["@graph"] : [];
+  expect(nodes.length > 0, `[${label}] JSON-LD @graph must not be empty`);
+  for (const t of requiredTypes) {
+    expect(nodes.some((n) => [].concat(n["@type"]).includes(t)), `[${label}] JSON-LD graph is missing a ${t} node`);
+  }
+  const bad = [];
+  (function walk(node, path) {
+    if (Array.isArray(node)) {
+      if (!node.length) bad.push(`${path} (empty array)`);
+      node.forEach((v, i) => walk(v, `${path}[${i}]`));
+      return;
+    }
+    if (node && typeof node === "object") {
+      const keys = Object.keys(node);
+      if (!keys.length) bad.push(`${path} (empty object)`);
+      for (const k of keys) walk(node[k], path ? `${path}.${k}` : k);
+      return;
+    }
+    if (node === null || node === undefined) bad.push(`${path} (null)`);
+    else if (typeof node === "string" && !node.trim()) bad.push(`${path} (empty string)`);
+    else if (typeof node === "string" && /^(tbd|tba|n\/a|none|unknown|null|undefined|placeholder|example\.com)$/i.test(node.trim())) {
+      bad.push(`${path} (placeholder ${JSON.stringify(node)})`);
+    } else if (typeof node === "number" && !Number.isFinite(node)) bad.push(`${path} (non-finite)`);
+  })(graph, "");
+  expect(bad.length === 0, `[${label}] JSON-LD carries empty/placeholder values: ${bad.join(", ")}`);
+  return graph;
+}
+
 /** No response may ever show a viewer our internals. */
 function assertNoStack(label, body) {
   for (const token of ["at Object.", "at async ", ".ts:", "/src/", "URIError", "simulated cache failure", "Error:"]) {
@@ -238,6 +287,20 @@ async function main() {
   expect(demo.h("strict-transport-security") === "max-age=31536000; includeSubDomains",
     `[/f/estate-demo] want HSTS on the first page a viewer ever opens, got ${demo.h("strict-transport-security")}`);
   expect(!demo.body.includes('name="robots"'), "[/f/estate-demo] the demo opts into indexing");
+  // …and because it is indexable, it is the one tour route that ships
+  // structured data. Parsed here the way a crawler parses it.
+  assertValidJsonLd("/f/estate-demo", demo.body, [
+    "RealEstateListing", "VideoObject", "Offer", "Person", "BreadcrumbList",
+  ]);
+  expect(demo.body.includes('<button type="button" class="chrome" id="share"'),
+    "[/f/estate-demo] want the share control on the branded page");
+  expect(demo.body.includes("apps.apple.com/us/app/id6808982413?ct=tour-estate-demo&amp;mt=8"),
+    "[/f/estate-demo] want the App Store link tagged with the tour surface and slug");
+  expect(demo.body.includes('href="https://rendprop.com/?ref=tour"'),
+    "[/f/estate-demo] want the outbound attribution on the Made-with links");
+  const demoEmbed = await get(worker, "/f/estate-demo?embed=1");
+  expect(!demoEmbed.body.includes("application/ld+json") && !demoEmbed.body.includes('id="share"'),
+    "[/f/estate-demo?embed=1] the in-app hero carries neither structured data nor the share control");
 
   const demoUn = await get(worker, "/u/estate-demo");
   expect(demoUn.status === 200, `[/u/estate-demo] want 200, got ${demoUn.status}`);
@@ -397,6 +460,119 @@ async function main() {
   expect(!unbrandedDemo.body.includes("favicon"), "[/u/estate-demo] the MLS page must not carry the Rendprop favicon");
   ok("favicon + canonical on branded pages only");
 
+  // ---- /a/<handle>: canonical, structured data, app CTA ---------------------
+  // The portfolio page is indexable by DEFAULT — it is a profile at a handle
+  // its owner chose, not a listing carrying someone's address — so unlike /f/
+  // it carries its canonical and its structured data unconditionally. It had
+  // neither, plus no way at all to get the app, which is the page an AGENT is
+  // likeliest to be looking at.
+  {
+    const p = await get(worker, "/a/meridian");
+    expect(p.status === 200, `[/a/meridian] want 200, got ${p.status}`);
+    expect(p.body.includes('<link rel="canonical" href="https://rendprop.com/a/meridian">'),
+      "[/a/meridian] want a canonical built from the requested handle and origin");
+    expect(!p.h("x-robots-tag"), `[/a/meridian] a portfolio is indexable by default, got ${p.h("x-robots-tag")}`);
+    expect(!p.body.includes('name="robots"'), "[/a/meridian] no robots meta on a portfolio");
+    expect(p.body.includes('id="getapp"') && p.body.includes("apps.apple.com/us/app/id6808982413?ct=portfolio&amp;mt=8"),
+      "[/a/meridian] want the shared app CTA, tagged as the portfolio surface");
+    expect(p.body.includes('href="https://rendprop.com/?ref=portfolio"'),
+      "[/a/meridian] want the outbound attribution on the Made-with link");
+    assertValidJsonLd("/a/meridian", p.body, ["ProfilePage", "ItemList"]);
+    // A payload the renderer cannot place (no handle, no origin) must emit no
+    // canonical and no graph rather than guessing an origin.
+    const { renderPortfolioPage } = await load("portfolio");
+    const { buildDemoPortfolio } = await load("demo");
+    const bare = renderPortfolioPage(buildDemoPortfolio());
+    expect(!bare.includes('rel="canonical"') && !bare.includes("application/ld+json"),
+      "[portfolio, no origin] must emit no canonical and no JSON-LD rather than a guessed origin");
+  }
+  ok("/a/<handle> carries a canonical, ProfilePage + ItemList structured data and the app CTA");
+
+  // ---- /sitemap.xml ---------------------------------------------------------
+  // Served by the WORKER now (public/sitemap.xml is deleted — an exact file
+  // match under ./public is answered by Static Assets before this script runs,
+  // so the file would have shadowed the route). Two rules are non-negotiable:
+  // never an unbranded URL, and never a tour that is not opted into indexing.
+  {
+    const sm = await get(worker, "/sitemap.xml");
+    expect(sm.status === 200, `[/sitemap.xml] want 200, got ${sm.status}`);
+    expect((sm.h("content-type") || "").includes("application/xml"),
+      `[/sitemap.xml] want application/xml, got ${sm.h("content-type")}`);
+    expect((sm.h("cache-control") || "").includes("max-age=3600"),
+      `[/sitemap.xml] want an hour at the edge, got ${sm.h("cache-control")}`);
+    expect(sm.body.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), "[/sitemap.xml] want an XML declaration");
+    expect(sm.body.includes('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'), "[/sitemap.xml] want a urlset");
+
+    const locs = [...sm.body.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]);
+    expect(locs.length >= 9, `[/sitemap.xml] want at least the pages the old static file had, got ${locs.length}`);
+    for (const must of [
+      "https://rendprop.com/",
+      "https://rendprop.com/features",
+      "https://rendprop.com/pricing",
+      "https://rendprop.com/compare",
+      "https://rendprop.com/support",
+      "https://rendprop.com/terms",
+      "https://rendprop.com/privacy",
+      "https://rendprop.com/f/estate-demo",
+      // New: the demo agent's portfolio. Rendprop's own content, and the one
+      // /a/ page that existed and was never offered to a crawler.
+      "https://rendprop.com/a/meridian",
+    ]) expect(locs.includes(must), `[/sitemap.xml] missing ${must}`);
+
+    // RULE 1 — never an unbranded URL. /u/ is noindex by construction and /f/
+    // is its canonical; asking a crawler to index it would be the one thing
+    // that page exists not to be.
+    for (const loc of locs) {
+      expect(!/\/u\//.test(loc), `[/sitemap.xml] MUST NOT list an unbranded URL: ${loc}`);
+      expect(loc.startsWith("https://rendprop.com/"), `[/sitemap.xml] every loc must be on the canonical origin: ${loc}`);
+      expect(!/[?#]/.test(loc), `[/sitemap.xml] no query or fragment in a sitemap URL: ${loc}`);
+    }
+    expect(new Set(locs).size === locs.length, "[/sitemap.xml] no duplicate URLs");
+
+    // RULE 2 — never a tour that is not opted into indexing. Every /f/ URL in
+    // the sitemap must actually render WITHOUT a noindex tag; a sitemap entry
+    // is a request to index, and a page we tell the crawler to drop must not
+    // be in one. This fetches each listed tour through the real handler.
+    for (const loc of locs.filter((l) => /\/f\//.test(l))) {
+      const page = await get(worker, loc.replace("https://rendprop.com", ""));
+      expect(page.status === 200, `[/sitemap.xml] listed tour ${loc} must render, got ${page.status}`);
+      expect(!page.h("x-robots-tag"), `[/sitemap.xml] listed tour ${loc} must not be noindex (header)`);
+      expect(!page.body.includes('name="robots"'), `[/sitemap.xml] listed tour ${loc} must not be noindex (meta)`);
+    }
+
+    // Every lastmod is a real W3C date, not a placeholder.
+    for (const d of [...sm.body.matchAll(/<lastmod>([^<]*)<\/lastmod>/g)].map((m) => m[1])) {
+      expect(/^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(Date.parse(d)),
+        `[/sitemap.xml] lastmod must be a real date, got ${JSON.stringify(d)}`);
+    }
+
+    // The builder's own two rules, exercised directly: a malformed slug/handle
+    // never reaches a <loc>, and the two generators cannot be asked for a /u/.
+    const { sitemapXml } = await load("sitemap");
+    const built = sitemapXml(
+      "https://rendprop.com",
+      [{ slug: "goodslug", publishedAt: "2026-05-04T11:00:00Z" }, { slug: "../u/leak" }, { slug: "" }],
+      [{ handle: "goodhandle", updatedAt: "2026-05-04T11:00:00Z" }, { handle: "bad handle" }],
+    );
+    expect(built.includes("<loc>https://rendprop.com/f/goodslug</loc>"), "[sitemapXml] a valid tour is listed");
+    expect(built.includes("<lastmod>2026-05-04</lastmod>"), "[sitemapXml] lastmod comes from the publish timestamp");
+    expect(built.includes("<loc>https://rendprop.com/a/goodhandle</loc>"), "[sitemapXml] a valid handle is listed");
+    expect(!built.includes("leak") && !/\/u\//.test(built), "[sitemapXml] a malformed slug never reaches a <loc>");
+    expect(!built.includes("bad handle") && !built.includes("bad%20handle"), "[sitemapXml] a malformed handle never reaches a <loc>");
+    // A tour with no real publish timestamp gets no lastmod rather than today.
+    const noDate = sitemapXml("https://rendprop.com", [{ slug: "undated" }]);
+    const undated = noDate.slice(noDate.indexOf("/f/undated"));
+    expect(undated.slice(0, undated.indexOf("</url>")).indexOf("<lastmod>") < 0,
+      "[sitemapXml] a tour with no publish timestamp must get NO lastmod, not an invented one");
+
+    // robots.txt still points at this exact URL.
+    const robots = readFileSync(join(ROOT, "public", "robots.txt"), "utf8");
+    expect(robots.includes("Sitemap: https://rendprop.com/sitemap.xml"), "[robots.txt] must still point at /sitemap.xml");
+    expect(!existsSync(join(ROOT, "public", "sitemap.xml")),
+      "[public/sitemap.xml] the static file must stay deleted — Static Assets answer before the Worker, so it would shadow the route");
+  }
+  ok("/sitemap.xml is Worker-served, lists no /u/ URL and no non-indexable tour");
+
   // ---- the legal pages match the launch line-up ------------------------------
   const terms = await get(worker, "/terms");
   expect(/Starter and Pro, billed monthly\s+or yearly, and Team, billed monthly/.test(terms.body),
@@ -439,6 +615,37 @@ async function main() {
     ok("safeUrl rejects control-character-obfuscated javascript: URLs");
   }
 
+  // ── App Store campaign tokens (src/attribution.ts) ───────────────────────
+  // An attribution number is only worth having if it is right. Two different
+  // tours must never file under one campaign, and a token must never exceed
+  // App Store Connect's 40 characters (which would be silently truncated into
+  // exactly that collision).
+  {
+    const { appStoreUrl, campaignToken, APPLE_PROVIDER_TOKEN } = await load("attribution");
+    expect(appStoreUrl("tour", "estate-demo") === "https://apps.apple.com/us/app/id6808982413?ct=tour-estate-demo&mt=8",
+      `[attribution] tour link, got ${appStoreUrl("tour", "estate-demo")}`);
+    expect(appStoreUrl("portfolio").endsWith("?ct=portfolio&mt=8"), "[attribution] portfolio campaign");
+    expect(appStoreUrl("site").endsWith("?ct=site&mt=8"), "[attribution] marketing-site campaign");
+    // Slugs are nanoid/base64url: case and `_` carry meaning and must survive.
+    expect(campaignToken("tour", "Ab_9-Zz") === "tour-Ab_9-Zz",
+      `[attribution] a slug must round-trip, got ${campaignToken("tour", "Ab_9-Zz")}`);
+    expect(campaignToken("tour", "Ab_9-Zz") !== campaignToken("tour", "ab-9-zz"),
+      "[attribution] two different slugs must never collapse into one campaign");
+    // Over Apple's cap, fall back to the surface rather than truncate.
+    const long = campaignToken("tour", "x".repeat(64));
+    expect(long === "tour", `[attribution] an over-long token falls back to the surface, got ${long}`);
+    expect(campaignToken("tour", "y".repeat(64)) === long, "[attribution] …and does so identically, so the fallback is one campaign");
+    for (const t of [["tour", "a".repeat(60)], ["portfolio"], ["site"], ["tour", "estate-demo"]]) {
+      expect(campaignToken(...t).length <= 40, `[attribution] ct must fit App Store Connect's 40 chars: ${campaignToken(...t)}`);
+    }
+    // The one value the owner still has to supply. If this stops being empty,
+    // the link builder starts emitting `pt` — which is the intended change, so
+    // this assertion documents the state rather than pinning it forever.
+    expect(typeof APPLE_PROVIDER_TOKEN === "string",
+      "[attribution] APPLE_PROVIDER_TOKEN must exist (empty until the owner pastes it from App Store Connect)");
+    ok("App Store campaign tokens are collision-free and inside Apple's 40-character cap");
+  }
+
   if (failures.length) {
     console.error(`\n✖ route check FAILED — ${failures.length} problem(s) across ${checks} assertions:\n`);
     for (const f of failures) console.error("  - " + f);
@@ -446,7 +653,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`✔ route check passed — ${checks} assertions (malformed paths, error boundary, upstream failures, customer revocation/cache bypass, synthetic demo caching, indexing headers, ordinary routes, canonical origin, favicon/legal pages, safeUrl scheme allowlist).`);
+  console.log(`✔ route check passed — ${checks} assertions (malformed paths, error boundary, upstream failures, customer revocation/cache bypass, synthetic demo caching, indexing headers, ordinary routes, canonical origin, favicon/legal pages, safeUrl scheme allowlist, portfolio canonical + structured data + app CTA, Worker-served sitemap with no /u/ and no non-indexable URL, JSON-LD parsed as JSON with no empty or placeholder field).`);
 }
 
 main().catch((err) => {

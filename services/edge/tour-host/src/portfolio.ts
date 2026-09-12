@@ -9,6 +9,9 @@
 // rather than the absolute share_url, so it works on workers.dev too.
 
 import type { Portfolio, PortfolioTour } from "./types";
+import { siteUrl } from "./attribution";
+import { portfolioJsonLd } from "./jsonld";
+import { EDITORIAL_CSS, renderGetAppSection } from "./player";
 import {
   absolutize,
   escapeAttr,
@@ -76,7 +79,14 @@ function renderCard(t: PortfolioTour): string {
     </a>`;
 }
 
-const PORTFOLIO_CSS = `${TOKENS_CSS}
+// EDITORIAL_CSS comes from the tour page and is here for exactly one reason:
+// this page renders the SAME "Get the app" band (player.ts
+// `renderGetAppSection`), which is styled entirely out of that sheet's `.lp-*`
+// vocabulary. Importing the sheet rather than copying the handful of rules is
+// what guarantees the band cannot look like two different components on two
+// pages. None of its other selectors (#listing-page, .disc-*, .plan-*,
+// footer.lp-foot) match anything this page renders.
+const PORTFOLIO_CSS = `${TOKENS_CSS}${EDITORIAL_CSS}
   .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 20px calc(64px + env(safe-area-inset-bottom)); }
   .brandmark { font-size: 12px; letter-spacing: .35em; text-transform: uppercase; color: var(--ink-dim); margin-bottom: 26px; }
   .phead { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
@@ -98,13 +108,37 @@ const PORTFOLIO_CSS = `${TOKENS_CSS}
   .cardbody .t { font-size: 14.5px; font-weight: 600; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
   .cardbody .m { font-size: 12.5px; color: var(--ink-dim); margin-top: 4px; }
   .empty { color: var(--ink-dim); font-size: 15px; padding: 30px 0; }
+  /* The shared "Get the app" band sits inside this page's own .wrap, which
+     already supplies the side gutter and the column width — so its .lp-wrap
+     contributes neither, and the band lines up with the tour grid above it. */
+  #getapp .lp-wrap { max-width: none; padding: 0; }
+  #getapp.lp-sec { padding-bottom: 0; }
   .foot { margin-top: 40px; font-size: 11px; color: rgba(242,243,245,.4); }
   .foot a { color: rgba(242,243,245,.6); text-decoration: none; }
 `;
 
-export function renderPortfolioPage(data: Portfolio): string {
+export interface PortfolioOpts {
+  /** The handle from the URL — `/a/<handle>`. Needed for the canonical, which
+   *  cannot be derived from the payload (the agent card's own handle may be
+   *  absent, and only the requested one is the URL this page was served at). */
+  handle?: string;
+  /** Request origin (`https://rendprop.com`). Without it no canonical and no
+   *  structured data is emitted: both are absolute-URL-only affordances and a
+   *  guessed origin is worse than none. */
+  origin?: string;
+}
+
+/** `https://rendprop.com/a/<handle>`, or "" when either half is missing. */
+function canonicalFor(handle: string | undefined, origin: string | undefined): string {
+  const o = String(origin || "").replace(/\/+$/, "");
+  if (!handle || !o || !/^https?:\/\//i.test(o)) return "";
+  return `${o}/a/${encodeURIComponent(handle)}`;
+}
+
+export function renderPortfolioPage(data: Portfolio, opts: PortfolioOpts = {}): string {
   const agent = extractAgent(data.agent_card || {});
   const tours = normalizeTours(data);
+  const canonical = canonicalFor(opts.handle, opts.origin);
 
   // extractAgent already scheme-checks the photo (safeUrl) and refuses an
   // email-looking name. og:image must be absolute for scrapers, so resolve a
@@ -137,6 +171,30 @@ export function renderPortfolioPage(data: Portfolio): string {
     ? `<div class="grid">${tours.map(renderCard).join("")}</div>`
     : `<div class="empty">No published tours yet.</div>`;
 
+  // INDEXING POSTURE — deliberately different from `/f/<slug>`, and this is
+  // why. A tour page is a LISTING: it carries the owner's name, phone and email
+  // beside a specific street address, so it is `noindex, nofollow` until its
+  // owner opts that listing in (player.ts `allowsIndexing`). `/a/<handle>` is
+  // the opposite kind of object — a public profile at a handle its owner chose,
+  // whose whole purpose is to be the one link an agent hands out. Publishing it
+  // IS the opt-in; there is no per-page decision left to make. So this page
+  // keeps its default-indexable posture, gets a canonical, and carries its
+  // structured data unconditionally rather than behind a predicate.
+  const jsonLd = portfolioJsonLd({
+    agent,
+    canonical,
+    name,
+    description: desc,
+    isRealEstate: (data.org?.space_type || data.space_type || "real_estate") === "real_estate",
+    // The ItemList mirrors the visible grid, card for card and in page order.
+    tours: tours.map((t) => ({ slug: t.slug, name: cardTitle(t), poster: t.poster })),
+  });
+
+  // The same band the tour page renders (player.ts). An agent looking at their
+  // OWN portfolio is the likeliest person on this domain to want the app, and
+  // this page had no way to get it. `ct=portfolio` tells the two apart.
+  const getApp = renderGetAppSection({ surface: "portfolio" });
+
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -145,11 +203,15 @@ export function renderPortfolioPage(data: Portfolio): string {
 <meta name="theme-color" content="#0b0d10">
 <title>${escapeHtml(title)}</title>
 <meta name="description" content="${escapeAttr(desc)}">
+${canonical ? `<link rel="canonical" href="${escapeAttr(canonical)}">` : ""}
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="${escapeAttr(name)}">
 <meta property="og:description" content="${escapeAttr(desc)}">
 <meta property="og:type" content="profile">
+${canonical ? `<meta property="og:url" content="${escapeAttr(canonical)}">` : ""}
 <meta name="twitter:card" content="summary">
 ${ogPhoto ? `<meta property="og:image" content="${escapeAttr(ogPhoto)}">` : ""}
+${jsonLd}
 ${accentOverride}
 <style>${PORTFOLIO_CSS}</style>
 </head>
@@ -167,7 +229,8 @@ ${accentOverride}
     </header>
     ${socialRow}
     ${grid}
-    <div class="foot">Made with <a href="https://rendprop.com" target="_blank" rel="noopener">Rendprop</a></div>
+    ${getApp}
+    <div class="foot">Made with <a href="${escapeAttr(siteUrl("portfolio"))}" target="_blank" rel="noopener">Rendprop</a></div>
   </div>
 </body>
 </html>`;

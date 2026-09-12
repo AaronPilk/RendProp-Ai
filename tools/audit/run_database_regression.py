@@ -36,9 +36,11 @@ KEPT_RED = {
 
 # Exact size of the tests/invariants.sql inventory. A suite that prints fewer
 # rows is rejected even when its footer agrees with itself, so this number has
-# to move in the same change that adds or removes an assertion (213 since the
-# 0044 plan-rework / industry-trial section; 198 before it).
-INVARIANT_COUNT = 213
+# to move in the same change that adds or removes an assertion (234 since the
+# 0046 commercial-telemetry section — activation stamp, org_is_real, cancelled_at,
+# admin_cohorts/admin_churn; 213 for the 0044 plan-rework / industry-trial
+# section; 198 before that).
+INVARIANT_COUNT = 234
 
 
 def require(ok, message):
