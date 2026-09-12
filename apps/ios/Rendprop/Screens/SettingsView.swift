@@ -401,7 +401,11 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.settings)
         .task { await loadUsage(); await uploads.refreshPhotoRecovery() }
-        .onChange(of: auth.userID) { _ in Task { await uploads.refreshPhotoRecovery() } }
+        .onChange(of: auth.userID) { _ in
+            confirmVideoRestart = false
+            photoToRestart = nil
+            Task { await uploads.refreshPhotoRecovery() }
+        }
         .refreshable { await loadUsage() }
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
@@ -518,7 +522,13 @@ struct SettingsView: View {
     private var uploadsSection: some View {
         Section {
             Toggle("Ask before uploading on cellular", isOn: $askBeforeCellularUploads)
-            if let state = uploads.state { currentUploadRows(state) }
+            if let state = uploads.state {
+                if uploads.currentUploadOwnerMismatch {
+                    Text("This upload belongs to another workspace. Return to that workspace to resume or restart it. Your original and saved progress are kept.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                currentUploadRows(state).disabled(uploads.currentUploadOwnerMismatch)
+            }
             photoRecoveryNotices
             ForEach(uploads.pendingPhotos) { photo in photoRecoveryRow(photo) }
         } header: {

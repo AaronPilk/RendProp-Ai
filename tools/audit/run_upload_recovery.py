@@ -101,6 +101,12 @@ def main():
              "self.photoBatchID == batchID", "Photo batch account change stops new files and stale completion notification", 1),
             ("restart-keeps-resume-guard", files[4], "restartingUpload = false\n                resume()",
              "resume()", "Confirmed video Restart enters uploading and clears stale failure without another Resume", 1),
+            ("photo-read-error-forgets-owner", files[4], 'guard credentialOwner == owner else { return }\n            photoRecoveryError = "Saved photo upload progress',
+             'photoRecoveryError = "Saved photo upload progress',
+             "Late old-owner photo read failure cannot overwrite new workspace recovery UI", 1),
+            ("photo-read-success-clears-new-owner", files[4], 'guard credentialOwner == owner else { return }\n            pendingPhotos = records',
+             'guard credentialOwner == owner else { pendingPhotos = []; return }\n            pendingPhotos = records',
+             "Late old-owner photo success cannot clear current workspace receipts", 1),
         ]
         for name, path, needle, replacement, expected_message, expected_count in mutations:
             text = path.read_text()

@@ -495,5 +495,39 @@ import Foundation
               "Photo batch account change stops new files and stale completion notification")
         NotificationCenter.default.removeObserver(observer)
         AuthStore.currentAccessToken = "offline-fixture-only"
+
+        let otherOwner = AuthStore.jwtSubject("other-owner-fixture")!
+        let otherPhoto = DirectUploadJournal.PendingPhoto(id: "other-owner-receipt",
+            source: .init(ownerID: otherOwner, relativePath: "other-original.jpg", listingID: UUID(),
+                role: "capture", contentType: "image/jpeg", keyPrefix: "photo", bytes: 10,
+                sha256: String(repeating: "b", count: 64)), message: "Upload interrupted", needsRestart: false, restartGeneration: nil)
+        var heldPhotoRead: CheckedContinuation<[DirectUploadJournal.PendingPhoto], Error>?
+        let recoveryManager = UploadManager(api: RecoveryAPI(), session: RecoverySession(), recovering: newState,
+            pendingPhotos: { requestedOwner in
+                if requestedOwner == owner { return try await withCheckedThrowingContinuation { heldPhotoRead = $0 } }
+                return [otherPhoto]
+            }, persistState: { _ in true })
+        check(!recoveryManager.currentUploadOwnerMismatch, "Original workspace keeps video controls available")
+        let oldRead = Task { await recoveryManager.refreshPhotoRecovery() }
+        await until("Old-owner photo journal read is actually waiting") { heldPhotoRead != nil }
+        AuthStore.currentAccessToken = "other-owner-fixture"
+        check(recoveryManager.currentUploadOwnerMismatch, "Different workspace identifies owner-only video controls")
+        await recoveryManager.refreshPhotoRecovery()
+        heldPhotoRead?.resume(throwing: CocoaError(.fileReadNoPermission))
+        await oldRead.value
+        check(recoveryManager.pendingPhotos.map(\.id) == [otherPhoto.id] && recoveryManager.photoRecoveryError == nil,
+              "Late old-owner photo read failure cannot overwrite new workspace recovery UI")
+
+        AuthStore.currentAccessToken = "offline-fixture-only"
+        heldPhotoRead = nil
+        let oldSuccess = Task { await recoveryManager.refreshPhotoRecovery() }
+        await until("Old-owner successful photo read is actually waiting") { heldPhotoRead != nil }
+        AuthStore.currentAccessToken = "other-owner-fixture"
+        await recoveryManager.refreshPhotoRecovery()
+        heldPhotoRead?.resume(returning: [])
+        await oldSuccess.value
+        check(recoveryManager.pendingPhotos.map(\.id) == [otherPhoto.id],
+              "Late old-owner photo success cannot clear current workspace receipts")
+        AuthStore.currentAccessToken = "offline-fixture-only"
     }
 }

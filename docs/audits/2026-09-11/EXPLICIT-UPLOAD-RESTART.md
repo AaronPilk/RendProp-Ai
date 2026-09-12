@@ -173,6 +173,34 @@ The strengthened actual-manager test requires uploading with no stale error,
 then waits for exactly one started native session fixture task naming the
 persisted child, without another Resume call. A new compiled mutant omits the
 guard release and must fail this exact assertion. Frozen run receipt:
-`/tmp/rendprop-upload-recovery-nolpu2du/receipt.json`; baseline **122 assertions
-passed**, final 16-control mutation loop still pending at this commit. This is
-injected transport evidence, not an iPhone or live-service upload claim.
+`/tmp/rendprop-upload-recovery-nolpu2du/receipt.json`: **122 assertions passed**,
+**16 compiled mutants rejected**, restored pass and unchanged source hashes.
+Implementation commit: `2416e9d`. This is injected transport evidence, not an
+iPhone or live-service upload claim.
+
+## Workspace-switch recovery UI
+
+The next narrow follow-up leaves all upload journals intact. Settings shows an
+explicit return-to-original-workspace explanation and disables only that
+retained video's controls when its recorded owner differs from the current
+credential. Unowned legacy receipts retain metadata-only ownership recovery;
+there is no new identified-sign-in requirement. Changing auth.userID dismisses
+pending video/photo restart confirmations and refreshes the recovery list.
+
+Both successful and failed asynchronous photo-journal reads now check their
+captured owner before changing UI. The earlier success branch cleared the list
+on a mismatch, which could erase a newer owner's already-loaded receipts; the
+catch branch could install the previous owner's delayed read-error banner.
+Neither stale result now mutates the current workspace's recovery UI.
+
+Actual-manager tests inject only the journal-read boundary, hold an old-owner
+read, load the new owner's receipts, then release the older request with both
+failure and success. The new receipts and empty error state must survive.
+They also test the computed owner-mismatch control state. Settings uses that
+state to disable only currentUploadRows and retains every other Settings action.
+The native baseline passes **128 assertions**. Frozen receipt:
+`/tmp/rendprop-upload-recovery-iwsnitk9/receipt.json`; its **18-control** mutation
+loop is in progress at this source commit. The two additional mutants recreate
+the stale error and stale-success clearing paths and must fail their specific
+assertions. Actual on-screen wrong-owner interaction remains separate from
+these native boundary tests.

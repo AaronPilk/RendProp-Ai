@@ -149,6 +149,7 @@ final class UploadManager: NSObject, ObservableObject {
     @Published private(set) var photoProgress: PhotoProgress?
     private var photoBatchID: UUID?
     private var injectedBatchUpload: (@MainActor (URL, UUID) async throws -> String)?
+    private var injectedPendingPhotos: (@MainActor (String) async throws -> [DirectUploadJournal.PendingPhoto])?
     /// Set when a large upload wants to start on cellular — UI shows a prompt.
     @Published var pendingCellularConfirmation: Bool = false
     /// The most recent terminal/transient failure message (mirrors
@@ -162,6 +163,10 @@ final class UploadManager: NSObject, ObservableObject {
 
     private var credentialOwner: String? { AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) }
     private var photoRecoveryOwner: String?
+    var currentUploadOwnerMismatch: Bool {
+        guard Config.useLiveBackend, let owner = state?.ownerID else { return false }
+        return credentialOwner != owner
+    }
 
     /// Optional completion callback (server assetID). NotificationCenter also
     /// fires `didCompleteNotification`. Consumers must avoid retaining `self`.
@@ -275,11 +280,13 @@ final class UploadManager: NSObject, ObservableObject {
     /// shipping singleton continues to use its OS session and durable store.
     init(api: APIClient, session: URLSession, recovering state: State,
          batchUpload: (@MainActor (URL, UUID) async throws -> String)? = nil,
+         pendingPhotos: (@MainActor (String) async throws -> [DirectUploadJournal.PendingPhoto])? = nil,
          persistState: @escaping (State?) -> Bool) {
         self.api = api
         self.persistState = persistState
         self.state = state
         self.injectedBatchUpload = batchUpload
+        self.injectedPendingPhotos = pendingPhotos
         super.init()
         self.backgroundSession = session
     }
@@ -614,10 +621,17 @@ final class UploadManager: NSObject, ObservableObject {
         }
         guard let owner = credentialOwner else { pendingPhotos = []; return }
         do {
-            let records = try await DirectUploadJournal.shared.pendingPhotos(ownerID: owner)
-            guard credentialOwner == owner else { pendingPhotos = []; return }
+            let records: [DirectUploadJournal.PendingPhoto]
+            if let loader = injectedPendingPhotos { records = try await loader(owner) }
+            else { records = try await DirectUploadJournal.shared.pendingPhotos(ownerID: owner) }
+            // An old read cannot clear or replace the current owner's list,
+            // nor may its error install a stale attention banner after sign-in.
+            guard credentialOwner == owner else { return }
             pendingPhotos = records
-        } catch { photoRecoveryError = "Saved photo upload progress could not be read. Originals are preserved." }
+        } catch {
+            guard credentialOwner == owner else { return }
+            photoRecoveryError = "Saved photo upload progress could not be read. Originals are preserved."
+        }
     }
 
     @MainActor func retryPhoto(_ item: DirectUploadJournal.PendingPhoto, confirmRestart: Bool) async {
