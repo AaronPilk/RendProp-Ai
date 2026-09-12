@@ -8,21 +8,39 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
-**LATEST follow-up: deployed-browser failure independently reproduced, 23:38UTC.**
+**LATEST follow-up: viewer and explicit-upload-restart fixes integrated, final UI verification running.**
 [`VIEWER-UPLOAD-RECOVERY-20260911.md`](../../releases/VIEWER-UPLOAD-RECOVERY-20260911.md)
-is the current work log. Live `/spatial-viewer.js` returns200 but its manifest
-decoder throws `ReferenceError: __name is not defined`. The previous local
-room preview exercised the production **source through Deno**, not Wrangler's
-emitted Worker/browser bundle. Its successful render does not prove deployed
-viewer execution. That distinction corrects the wording below, not the observed
-local render or its unacceptable room quality. **Viewer fix and actual emitted-
-bundle gate are now integrated/pushed at16b219f.** Root's full predeploy passes,
-34 new assertions pass and the deliberately broken config fails for the exact
-missing helper. The actual owner room also rendered through that fixed built
-Worker in a local browser; visual quality still fails. The live asset still
-fails the new gate at23:46UTC. Bounded, explicit interrupted-upload Restart is
-being implemented on separate branches. No new deployment, GPU run, budget change or Apple operation has
-occurred in this follow-up. Do not describe these in-progress fixes as shipped.
+is the authoritative work log on `fix/spatial-upload-release-recovery-20260911`.
+Final application source `3063eb481b079ef9d44312e4331581b61c1a9d58` compiles as
+a full iOS app/test target. Root independently passed753 Edge tests/22 entrypoint
+checks,40 real PostgreSQL cases,128 actual native upload assertions/18 compiled
+mutants,41 API wire assertions/5 controls,12 spatial coordinator and75 spatial
+model assertions. Upload122 is a subset of Edge753. Viewer predeploy passes
+36 built-byte assertions and exact failing controls. The actual room renders
+through the fixed emitted Worker locally, including a phone-sized viewport,
+but visual quality still fails.
+
+The former source-only preview claim is corrected in the work log. Live viewer
+bytes still match the known-broken26,442-byte asset at00:30:36UTC September12
+(September11 evening Eastern). The strengthened gate now rejects those bytes
+against the reviewed build hash **before executing them**. The initial23:38UTC
+reproduction invoked the live decoder and got the exact missing-`__name` error.
+No production fix is claimed from a local source or bundle pass.
+
+Bounded explicit Restart now preserves completion winners, parent/child links,
+consent/UUID across lost replies, spent bytes, originals and owner fences. Final
+peer-review fixes also start the admitted video automatically, explain disabled
+wrong-workspace controls, dismiss stale confirmations, and reject stale photo
+read results. The paired deployment order is0042→uploads handler→iOS; do not
+deploy every tip function indiscriminately. The separate0039/me and0041 worker
+pairings, live recovery acceptance, photo attachment retry, anonymous-adoption
+actor binding, room quality and phone delivery remain open.
+
+The earlier `2ed7a8a` app passed the spatial product and main UI walks; its
+reviewer walk is running. Final-source UI evidence must replace that historical
+coverage before a new release claim. **No new deployment, GPU allocation,
+budget enablement or Apple operation in this follow-up. Source is not an update
+to the owner's installed TestFlight app.**
 
 **LATEST evening integration and real-room result:**
 [`SPATIAL-INTEGRATION-EVENING-20260911.md`](../../releases/SPATIAL-INTEGRATION-EVENING-20260911.md).
