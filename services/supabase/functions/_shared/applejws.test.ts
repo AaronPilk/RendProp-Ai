@@ -231,6 +231,8 @@ interface ChainOptions {
   intermediateNotCa?: boolean;
   /** Expire the leaf (notAfter one hour in the past). */
   expiredLeaf?: boolean;
+  /** Make the two base64 alphabets observably different without corrupting DER. */
+  distinctBase64Alphabet?: boolean;
 }
 
 async function buildChain(o: ChainOptions = {}): Promise<Chain> {
@@ -275,7 +277,17 @@ async function buildChain(o: ChainOptions = {}): Promise<Chain> {
     serial: 3,
     notBefore: from,
     notAfter: o.expiredLeaf ? new Date(now.getTime() - HOUR) : to,
-    extensions: [...(o.omitLeafMarker ? [] : [markerExtension(OID_LEAF_MARKER)])],
+    extensions: [
+      ...(o.omitLeafMarker ? [] : [markerExtension(OID_LEAF_MARKER)]),
+      // Four consecutive 0xff bytes guarantee a '/' base64 digit regardless of
+      // their byte alignment. Random keys/signatures alone do not: occasionally
+      // their encoding uses only the two alphabets' shared characters. A signed,
+      // noncritical test extension keeps that distinction deterministic without
+      // making the negative test fail because of invalid DER or a bad signature.
+      ...(o.distinctBase64Alphabet
+        ? [extension("1.3.6.1.4.1.55555.1", false, octet(new Uint8Array([255, 255, 255, 255])))]
+        : []),
+    ],
   });
 
   return { rootDer, intermediateDer, leafDer, leafKey };
@@ -952,9 +964,18 @@ Deno.test("S1: a chain valid an hour ago is refused once `now` moves past it", a
 Deno.test("S1: an x5c entry in base64URL rather than base64 is refused", async () => {
   // x5c is standard base64 per RFC 7515. Accepting base64url as well would be a
   // second decoding path into the certificate parser for no reason.
-  const chain = await buildChain();
-  const jws = await signJws(chain, transactionPayload(), {
-    x5c: [b64url(chain.leafDer), b64(chain.intermediateDer), b64(chain.rootDer)],
+  const chain = await buildChain({ distinctBase64Alphabet: true });
+  const encodedLeaf = b64url(chain.leafDer);
+  assert(/[-_]/.test(encodedLeaf), "The negative fixture must contain a URL-only base64 digit");
+  assert(encodedLeaf !== b64(chain.leafDer));
+  // Prove the exact same signed certificate is valid when encoded correctly;
+  // only the x5c text encoding changes in the negative case below.
+  const payload = transactionPayload();
+  const standardJws = await signJws(chain, payload);
+  const verified = await verifyAppleJWS(standardJws, { trustRoot: chain.rootDer });
+  assertEquals(verified.transactionId, payload.transactionId);
+  const jws = await signJws(chain, payload, {
+    x5c: [encodedLeaf, b64(chain.intermediateDer), b64(chain.rootDer)],
   });
-  await expectUnauthorized(() => verifyAppleJWS(jws, { trustRoot: chain.rootDer }));
+  await expectUnauthorized(() => verifyAppleJWS(jws, { trustRoot: chain.rootDer }), "certificate parse");
 });
