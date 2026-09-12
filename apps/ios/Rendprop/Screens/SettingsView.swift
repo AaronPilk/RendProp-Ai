@@ -390,6 +390,12 @@ struct SettingsView: View {
     }
 
     var body: some View {
+        localDataSettings
+    }
+
+    // Preserve modifier order, but give the type checker an opaque boundary
+    // between lifecycle, account and destructive-confirmation responsibilities.
+    private var lifecycleSettings: some View {
         uploadConfirmedForm
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
@@ -416,6 +422,10 @@ struct SettingsView: View {
                 adminProbeDone = false
             }
         }
+    }
+
+    private var signInSettings: some View {
+        lifecycleSettings
         .sheet(isPresented: $showSignIn) {
             // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
             // the user that registering will enable them to access the purchased
@@ -443,6 +453,10 @@ struct SettingsView: View {
         } message: {
             Text("A video is uploading. It keeps going in the background, but you'll lose the progress screen.")
         }
+    }
+
+    private var deletionPromptSettings: some View {
+        signInSettings
         .alert("Delete account?", isPresented: $showDeleteConfirm) {
             Button("Delete", role: .destructive) { Task { await deleteAccount() } }
             Button("Cancel", role: .cancel) {}
@@ -458,6 +472,10 @@ struct SettingsView: View {
         } message: {
             Text("Your published tours and leads belong to your Rendprop account. Sign in with Apple first so we can delete them — or clear just this phone.")
         }
+    }
+
+    private var deletionResultSettings: some View {
+        deletionPromptSettings
         .alert("Couldn't delete account", isPresented: $showDeleteError) {
             Button("Retry") { Task { await deleteAccount() } }
             Button("Cancel", role: .cancel) {}
@@ -471,6 +489,10 @@ struct SettingsView: View {
                  ? "Your account is deleted and your tour links are down. Remaining media cleanup finishes automatically in the background."
                  : "Your account and data have been removed.")
         }
+    }
+
+    private var localDataSettings: some View {
+        deletionResultSettings
         .alert("Clear data on this phone?", isPresented: $showClearDataConfirm) {
             Button("Clear", role: .destructive) { clearLocalDataTapped() }
             Button("Cancel", role: .cancel) {}

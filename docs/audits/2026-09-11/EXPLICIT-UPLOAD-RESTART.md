@@ -142,3 +142,13 @@ account recovery actions and dismissal behavior are retained.
 `xcrun swiftc -frontend -parse apps/ios/Rendprop/Screens/SettingsView.swift`
 and `git diff --check` pass. Parsing is not type-checking or an app build;
 the parent reruns the integrated app build/UI test against this patch.
+
+The next integrated attempt still exited **65**, now at the final local-data
+alert message (`SettingsView.swift:484` before the next split). Log:
+`/tmp/rendprop-upload-recovery-app.kRcexp/build-corrected.log`.
+The second narrow follow-up splits the unchanged modifier chain into opaque
+lifecycle, sign-in/sign-out, deletion-prompt, deletion-result and local-data
+stages. Their order and every action/message remain unchanged. No `AnyView`,
+compiler-limit adjustment, missing alert, or weakened guard is used. Frontend
+parse and diff checks pass; integrated type-check/build remains the parent's
+next verification step.
