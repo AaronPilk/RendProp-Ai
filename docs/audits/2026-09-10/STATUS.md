@@ -8,7 +8,7 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
-**LATEST follow-up: viewer and explicit-upload-restart fixes integrated, final UI verification running.**
+**LATEST follow-up: viewer and explicit-upload-restart source fixes verified; final UI3/3 and iPhone Release compile pass. Hosted CI follow-up below.**
 [`VIEWER-UPLOAD-RECOVERY-20260911.md`](../../releases/VIEWER-UPLOAD-RECOVERY-20260911.md)
 is the authoritative work log on `fix/spatial-upload-release-recovery-20260911`.
 Final application source `3063eb481b079ef9d44312e4331581b61c1a9d58` compiles as
@@ -36,9 +36,21 @@ deploy every tip function indiscriminately. The separate0039/me and0041 worker
 pairings, live recovery acceptance, photo attachment retry, anonymous-adoption
 actor binding, room quality and phone delivery remain open.
 
-The earlier `2ed7a8a` app passed the spatial product and main UI walks; its
-reviewer walk is running. Final-source UI evidence must replace that historical
-coverage before a new release claim. **No new deployment, GPU allocation,
+Final-source MainWalk, ReviewerWalk and SpatialProductIntegration all passed:
+3 total,0 failures/skips,645.313seconds,27 attachments. The internal spatial
+project was regenerated to include current sources, then its unsigned
+generic-iPhone Release compile passed. The generated spec still says build18;
+this is not an archive or new upload. Current Swift application source remains
+3063eb4; later changes include the generated project and test/inventory fixes.
+
+Actual hosted CI run34662282586 found a Deno2.9 accessor-descriptor test bug and
+12 unmapped web-contract methods, now repaired locally. A fresh local edge run
+passes753; descriptor-shape controls and16 web-contract tests plus three CLI
+negative controls pass. Two DB jobs fail the same pre-existing agent-reel
+700-token ceiling/headroom invariant; no spending cap was silently increased.
+The exact historical scanner findings and new hosted-run outcome are recorded
+in the release handoff as their checks finish. This is not a whole-app GO.
+**No new deployment, GPU allocation,
 budget enablement or Apple operation in this follow-up. Source is not an update
 to the owner's installed TestFlight app.**
 

@@ -2,7 +2,8 @@
 
 September 11, 2026. Base commit `71f9eb77d866554d9902610f519ef0092cc019d4`.
 Integration branch `fix/spatial-upload-release-recovery-20260911`.
-**Integrated source fixes under final review. Not deployed, not a new TestFlight
+**Viewer/upload source fixes implemented and locally verified, including the
+full app and three non-camera UI walks. Not deployed, not a new TestFlight
 build, not a whole-app GO.** Read the final checkpoint below before relying on
 historical intermediate counts or failures in this chronological work log.
 
@@ -389,11 +390,12 @@ and the repeated final-source app build must be recorded before handoff.
 
 ### Final source fixes and independent reruns
 
-Application source is frozen at
+The final iOS Swift application source is frozen at
 `3063eb481b079ef9d44312e4331581b61c1a9d58` (tree
-`0ecaf4c8063dad045bb547b516157e7418902e5c`). Subsequent context commits are
-documentation only; the root-directory Git diff over apps/ios,services,tests,
-tools is empty against this source commit. All integrated source/context through
+`0ecaf4c8063dad045bb547b516157e7418902e5c`). At this historical checkpoint,
+subsequent commits were documentation only. Later corrections below regenerate
+the internal TestFlight project and repair test/inventory files; do not extend
+the earlier all-source equality claim to those later commits. All source/context through
 `2ca9c7a6219393845382928fb448d6bead7d4a51` was pushed normally to GitHub and
 the remote branch SHA read back exactly. No shared history was overwritten.
 
@@ -465,3 +467,120 @@ without executing supplied code. Receipt:
 6. Reconstruction quality is a separate acceptance failure. No25000-step
    training, clamp increase, GPU spend or runtime/budget enablement happened in
    this pass. The existing real-room render is still not an acceptable tour.
+
+## Final non-camera app verification and hosted CI follow-up
+
+At20:45:40Eastern on September11, the **final-source** simulator run completed:
+`FinalUI.xcresult` reports `Passed`,3 total,3 passed,0 failed,0 skipped. Root
+checked those fields with `xcresulttool`, not merely the last line of a log.
+The three selected tests are MainWalk (`RendpropUITests/testWalk`),
+`ReviewerWalk/testReviewerWalk`, and `SpatialProductIntegrationTests`.
+Elapsed test time645.313seconds. This supersedes the intermediate app walks
+above; they are not extra distinct test cases to add to the count.
+
+Exact final invocation, run from `apps/ios`:
+
+```sh
+xcodebuild test-without-building \
+  -project Rendprop.xcodeproj -scheme Rendprop -configuration Debug \
+  -destination 'platform=iOS Simulator,id=8D787CFB-B1F3-4950-854E-463126A68F92' \
+  -derivedDataPath /tmp/rendprop-upload-recovery-app.kRcexp/FinalDerivedData \
+  -resultBundlePath /tmp/rendprop-upload-recovery-app.kRcexp/FinalUI.xcresult \
+  -only-testing:RendpropUITests/RendpropUITests/testWalk \
+  -only-testing:RendpropUITests/ReviewerWalk/testReviewerWalk \
+  -only-testing:RendpropUITests/SpatialProductIntegrationTests \
+  -parallel-testing-enabled NO -test-timeouts-enabled YES \
+  -default-test-execution-time-allowance 480 \
+  -maximum-test-execution-time-allowance 600 CODE_SIGNING_ALLOWED=NO
+```
+
+Receipt/log: `/tmp/rendprop-upload-recovery-app.kRcexp/final-ui.log` and
+`FinalUI.xcresult`. The27 exported attachments and their name map are in
+`/tmp/rendprop-upload-recovery-app.kRcexp/final-shots/manifest.json`.
+Root visually inspected the final Settings, Home 3D card and room empty state.
+Purple branding, the Home entry and disabled unsupported-device scan control
+are visible. This does **not** test a camera, real phone, real network, live
+backend, populated restart-error UI, provider, or actual account destruction.
+The walks use MockAPI and generated synthetic photos; deletion confirmation is
+cancelled. Do not relabel that as a real deletion or authentication test.
+
+One small UX finding remains: `apps/ios/Rendprop/Screens/SpatialTourView.swift:29`
+uses the `view.3d` symbol beside the text `3D walkthrough`; this SDK renders the
+symbol as the literal `3D`, making the hero read `3D 3D walkthrough`. Replace the
+hero symbol with a non-text room/cube glyph in the next UI polish unit and
+snapshot it. It is not a reconstruction or navigation failure. It was not
+silently patched after the final-source tests.
+
+The generated internal project was stale: it omitted current recovery/spatial
+source references. `xcodegen generate --spec project-spatial-testflight.yml`
+regenerated it in `abc6824`; only the generated project changed. Root checked
+the diff, required symbols and `plutil -lint`. No version, deployment-target,
+signing, team, entitlement or compiler-condition change was made.
+
+The following additional build exited0 with `BUILD SUCCEEDED` at20:46:04Eastern:
+
+```sh
+xcodebuild build -project RendpropSpatialTestFlight.xcodeproj \
+  -scheme RendpropSpatialTestFlight -configuration Release \
+  -destination 'generic/platform=iOS' \
+  -derivedDataPath /tmp/rendprop-upload-recovery-app.kRcexp/LabReleaseDerivedData \
+  -resultBundlePath /tmp/rendprop-upload-recovery-app.kRcexp/LabReleaseCompile.xcresult \
+  CODE_SIGNING_ALLOWED=NO
+```
+
+Log: `/tmp/rendprop-upload-recovery-app.kRcexp/lab-release-compile.log`.
+**This is an unsigned compile, not an archive, install, upload or delivery.**
+The internal spec still says build18. The last known uploaded build is19;
+an authorized release operator must read current Apple state and allocate a
+new build number before archiving. Nothing here overwrites the current review.
+
+### Real hosted CI exposed environment and inventory gaps
+
+Root dispatched the existing test-only workflow against pushed commit
+`2ca9c7a6219393845382928fb448d6bead7d4a51`:
+
+```sh
+gh workflow run ci.yml --repo AaronPilk/RendProp-Ai \
+  --ref fix/spatial-upload-release-recovery-20260911
+```
+
+[Run34662282586](https://github.com/AaronPilk/RendProp-Ai/actions/runs/34662282586)
+failed5 of10 jobs. It did not deploy anything. Passing jobs were the real
+Cloudflare Worker gate on Node22, Python render worker, offline source/consent
+audit, style policy, and iOS static guard. The five failures were inspected:
+
+1. **Edge:** Deno2.9.6 exposes `Deno.serve` with an accessor descriptor. The
+   deletion fixture spread that descriptor and added `value`, an invalid
+   accessor/data hybrid. All22 entrypoints passed;726 tests passed but the
+  27-test deletion module failed to load. Commit `3eea3a0` replaces only that
+   test descriptor and restores the original exactly. Production handler
+   behavior was not changed. Local descriptor-shape harness passes27 tests
+   each for data/accessor shapes and rejects2 specific mutants, then passes
+  27 restored. Receipt `/tmp/rendprop-deletion-descriptor-rwbp61ga/receipt.json`.
+   This shape simulation is not itself a claim of running hosted Deno2.9.6.
+2. **Web inventory:**12 protocol methods were unmapped;11 were already missing
+   at base71f9 (10 spatial methods and renewal), and this unit adds Restart.
+   Commit `085d649` maps all12 honestly as planned web work, not built browser
+   parity. Root passes16 inventory/contrast tests; all three CLI controls
+   (`missing-upload`, `low-contrast`, `no-op-validator`) exit1 for their
+   intended cause. There remain0 verified browser-parity/live tests.
+3. **Database migrations:** every fresh migration, including0042, applied.
+   One of198 global invariants fails: agent-reel Astra output ceiling700
+   equals visible-answer allowance700, leaving no reasoning headroom.
+   `services/supabase/tests/invariants.sql:1417–1433` deliberately preserves
+   strict `ceiling > visible`; this predates this unit and is the owner's
+   already-open provider-token decision. No cap increase or weaker assertion.
+4. **Disposable PostgreSQL publication:** the same global invariant fails
+   fresh and replay. Migration replay and publication positive/negative/
+   restored cases pass, and the owned cluster stops. This is a second red job
+   from the same token-configuration issue, not a new0042 migration failure.
+5. **History scanner:** six historical matches need exact classification;
+   subsequent scanner checkpoint below records the narrow handling and real
+   control results. Do not interpret an uninspected match as a leaked credential.
+
+After the descriptor and inventory repair, root reran the full local edge
+command at085d649: **753 tests passed,0 failed/skipped,22 entrypoints passed,
+intended Turnstile fail-open mutant rejected.** Receipt:
+`/tmp/rendprop-edge-audit-sl4kplo_/receipt.json`. This includes the122 upload
+tests; do not add them again. A fresh hosted run against the repaired commit,
+not a rerun of the old SHA, is required for hosted-environment acceptance.
