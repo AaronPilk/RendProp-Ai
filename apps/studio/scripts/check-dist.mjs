@@ -39,7 +39,7 @@ assert.equal(
 const headers = await read("_headers");
 for (const required of [
   "X-Robots-Tag: noindex",
-  "Cache-Control: no-store",
+  "Cache-Control: no-store, no-transform",
   "script-src 'self'",
   "frame-ancestors 'none'",
   "object-src 'none'",

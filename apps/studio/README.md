@@ -49,3 +49,11 @@ See [the complete implementation and deployment handoff](../../docs/web-client/S
 The static Worker is separate from the public tour-host. Its configuration does not
 replace any existing tour, upload domain, or iOS backend. An upload dry-run is only
 packaging evidence; deployed functionality requires a separate read-back receipt.
+
+`Cache-Control: no-store, no-transform` is deliberate. Cloudflare's zone-level
+JavaScript Detection injected an extra inline script into the first live HTML,
+breaking exact-byte verification and conflicting with the strict CSP. The
+[documented no-transform response directive](https://developers.cloudflare.com/cloudflare-challenges/challenge-types/javascript-detections/)
+prevents that injection for Studio responses only. It does not change zone-wide
+bot/WAF settings or other hostnames; JSD signals will be missing for these responses.
+Do not remove it or permit inline scripts simply to make a browser test green.

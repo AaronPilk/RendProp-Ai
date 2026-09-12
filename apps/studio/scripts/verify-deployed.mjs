@@ -16,6 +16,7 @@ for(const file of files){
   assert.equal(response.status,200,`${pathname} must serve successfully`);
   assert.match(response.headers.get('x-robots-tag')??'',/noindex/);
   assert.match(response.headers.get('cache-control')??'',/no-store/);
+  assert.match(response.headers.get('cache-control')??'',/no-transform/);
   assert.equal(response.headers.get('x-content-type-options'),'nosniff');
   assert.equal(response.headers.get('referrer-policy'),'no-referrer');
   const csp=response.headers.get('content-security-policy')??'';
