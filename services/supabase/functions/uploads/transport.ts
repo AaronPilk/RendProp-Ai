@@ -82,19 +82,29 @@ export async function planOperation(
   kind: string,
   part = 0,
 ) {
-  const op = row(
-    await uploadRPC(admin, "plan_upload_operation", {
-      p_asset: asset,
-      p_kind: kind,
-      p_part: part,
-    }),
-  );
-  return ["dispatching", "uncertain"].includes(String(op.state))
-    ? await recoverRecordedOperation(admin, op)
-    : op;
+  const plan = async () =>
+    row(
+      await uploadRPC(admin, "plan_upload_operation", {
+        p_asset: asset,
+        p_kind: kind,
+        p_part: part,
+      }),
+    );
+  let op = await plan();
+  if (["dispatching", "uncertain"].includes(String(op.state))) {
+    op = await recoverRecordedOperation(admin, op);
+    // A transfer the server observed absent comes back `rejected` (0042); the
+    // same plan call re-issues it in place: same row, same key, one more attempt.
+    if (op.state === "rejected") op = await plan();
+  }
+  return op;
 }
 /** Only read the server-journaled identity. Missing/ambiguous storage never
- * creates another write or refunds the spent byte authority. */
+ * creates another write or refunds the spent byte authority. For the
+ * client-driven single/part transfers a clean miss on the registered key/part
+ * is itself the observation the journal needs: past the write deadline it
+ * retires the dispatch as `rejected`, which plan may then re-issue. Recorded
+ * init/copy/assemble operations never take that path. */
 export async function recoverRecordedOperation(
   admin: UploadAdmin,
   op: UploadRow,
@@ -104,7 +114,8 @@ export async function recoverRecordedOperation(
     : R2_BUCKET_UPLOADS;
   let etag: string | null = null,
     uploadId: string | null = null,
-    contentType: string | null = null;
+    contentType: string | null = null,
+    absent = false;
   if (op.kind === "init") {
     uploadId = await recoverMultipartInitialization(
       bucket,
@@ -119,6 +130,9 @@ export async function recoverRecordedOperation(
       part: Number(op.part),
       bytes: Number(op.bytes),
     });
+    // A listed part of the wrong size throws inside the helper; only an
+    // unlisted part number is a miss.
+    absent = etag === null;
   } else if (["single", "copy", "assemble"].includes(String(op.kind))) {
     const head = await headObject(bucket, String(op.object_key));
     contentType = baseMediaType(head.contentType);
@@ -127,6 +141,7 @@ export async function recoverRecordedOperation(
       : op.bucket === "renders"
       ? ["image/jpeg", "image/png", "image/webp"]
       : ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"];
+    absent = !head.exists;
     if (
       head.exists && head.bytes === Number(op.expected_bytes) &&
       allowed.includes(contentType) &&
@@ -134,6 +149,18 @@ export async function recoverRecordedOperation(
     ) etag = head.etag;
   } else throw new HttpError(503, "Unknown recovery operation");
   if (!etag) {
+    if (absent && ["single", "part"].includes(String(op.kind))) {
+      const retired = row(
+        await uploadRPC(admin, "recover_upload_operation", {
+          p_operation: op.id,
+          p_etag: null,
+          p_upload_id: null,
+          p_content_type: null,
+        }),
+      );
+      // Still inside its write window: the row comes back unchanged.
+      if (retired.state === "rejected") return retired;
+    }
     throw new HttpError(
       503,
       "Stored receipt is not yet provable; retry later or cancel. No new write was issued.",
@@ -156,6 +183,14 @@ export async function transferURL(
 ) {
   const { origin, secret } = transportConfiguration(),
     op = await planOperation(admin, asset, kind, part);
+  if (op.state === "rejected" && op.attempts_exhausted === true) {
+    // Terminal for this ticket by design: the journal refused another attempt.
+    // A 409 tells the client to abort and re-ticket instead of polling a 503.
+    throw new HttpError(
+      409,
+      "This upload used all of its transfer attempts — abort it and create a new ticket",
+    );
+  }
   if (!["planned", "stored"].includes(String(op.state))) {
     throw new HttpError(
       503,

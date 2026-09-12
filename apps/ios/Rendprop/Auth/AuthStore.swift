@@ -79,7 +79,8 @@ final class AuthStore: ObservableObject {
                 return (bytes, http)
             }, changed: { [weak self] message in self?.adoptionRecoveryMessage = message },
             prepareLocal: { [weak self] pending in self?.onPrepareAdoption?(pending) == true },
-            finishLocal: { [weak self] pending, orgID in self?.onConfirmAdoption?(pending, orgID) == true })
+            finishLocal: { [weak self] pending, orgID in self?.onConfirmAdoption?(pending, orgID) == true },
+            discardLocal: { [weak self] operationID in self?.onDiscardAdoption?(operationID) })
     }()
 
     /// Fired (main thread) when a DIFFERENT account signs in than the one that
@@ -88,6 +89,12 @@ final class AuthStore: ObservableObject {
     var onPrepareAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending) -> Bool)?
     var onConfirmAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending, UUID) -> Bool)?
     var onAdoptionStorageReady: (@MainActor () -> Bool)?
+    /// Fired (main thread) after a pending handoff's Keychain record was
+    /// discarded without a receipt (sign-out, clear/delete, or a stale record
+    /// found at sign-in), with its operation id when it could still be read.
+    /// The app releases the local bindings it captured for that operation so
+    /// its listings are no longer held for a transfer that will never finish.
+    var onDiscardAdoption: (@MainActor (UUID?) -> Void)?
 
     /// Single-flight guard so concurrent callers share one network refresh.
     @MainActor private var refreshInFlight: Task<Bool, Never>?
@@ -348,6 +355,13 @@ final class AuthStore: ObservableObject {
     /// display name and account id stay so re-signing into the SAME account
     /// keeps its listings' server ids; a different account triggers
     /// `onAccountChanged` on its first session.
+    ///
+    /// A pending workspace handoff goes too. The next activation mints a fresh
+    /// anonymous user, so the handoff's saved source could never match again —
+    /// left behind (as it used to be), it made every later Apple sign-in on
+    /// this phone fail with a 409 conflict, for good. Dropping it also drops
+    /// the stale anonymous refresh token it carried. The same applies to the
+    /// forced sign-out on a revoked refresh token, which comes through here.
     @MainActor
     func signOut() {
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
@@ -362,9 +376,9 @@ final class AuthStore: ObservableObject {
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
         Self.clearTokens()
+        discardPendingAdoption()
         isSignedIn = Config.enableAuth ? false : true
         isIdentified = Config.enableAuth ? false : true
-        Task { await retryPendingAdoptionIfNeeded() } // status only when signed out; pending handoff survives
     }
 
     /// Remember the person's name (Apple returns `fullName` ONLY on the first
@@ -672,9 +686,25 @@ final class AuthStore: ObservableObject {
             guard let recovery = adoptionRecovery else { throw APIError.notConfigured }
             do {
                 let priorRefresh = try SecureStore.getChecked(Keys.refreshToken) ?? Self.storedRefreshToken()
-                try recovery.prepare(sourceAccess: priorAnonymous,
-                                     sourceRefresh: priorRefresh,
-                                     destinationAccess: session.accessToken)
+                do {
+                    try recovery.prepare(sourceAccess: priorAnonymous,
+                                         sourceRefresh: priorRefresh,
+                                         destinationAccess: session.accessToken)
+                } catch AnonymousAdoptionRecovery.RecoveryError.conflict,
+                        AnonymousAdoptionRecovery.RecoveryError.malformed {
+                    // A saved handoff for an anonymous user this phone no
+                    // longer holds — sign-out has since minted a fresh one, and
+                    // builds before this one left the record behind on sign-out
+                    // — or one too broken to read. It can never match again;
+                    // rejecting the sign-in over it (the old behaviour) locked
+                    // the person out of their own Apple ID for good. Drop it,
+                    // then hand off THIS session's work as usual. A Keychain
+                    // that refuses the delete still fails closed below.
+                    guard recovery.discard() else { throw AnonymousAdoptionRecovery.RecoveryError.storage }
+                    try recovery.prepare(sourceAccess: priorAnonymous,
+                                         sourceRefresh: priorRefresh,
+                                         destinationAccess: session.accessToken)
+                }
             } catch {
                 throw APIError.server(status: 409, code: "conflict",
                     message: "Your original workspace could not be safely saved for transfer. It remains on this device. Please retry before switching accounts.")
@@ -806,6 +836,20 @@ final class AuthStore: ObservableObject {
         await recovery.retry(destinationAccess: token, isCurrent: { [weak self] in
             self?.sessionEpoch == epoch && self?.isSignedIn == true
         })
+    }
+
+    /// Drop a saved workspace handoff without a receipt: sign-out (explicit or
+    /// forced), "Clear local data" and "Delete account" all end the session it
+    /// was waiting on, and the next activation's fresh anonymous user could
+    /// never match it. The record — the only copy of the old anonymous
+    /// session's tokens — leaves the Keychain; nothing is copied anywhere.
+    /// Returns false only when the Keychain refused the delete (logged by
+    /// status code), in which case the record is still there.
+    @MainActor
+    @discardableResult
+    func discardPendingAdoption() -> Bool {
+        guard let recovery = adoptionRecovery else { return SecureStore.remove(Keys.pendingAdoption) }
+        return recovery.discard()
     }
 
     @MainActor

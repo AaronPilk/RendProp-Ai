@@ -16,8 +16,12 @@ concurrency:
 
 jobs:
   audit-harnesses:
-    name: Offline audit evidence and consent source gates
-    runs-on: ubuntu-latest
+    name: Offline audit evidence, consent and adoption source gates
+    # macOS on purpose: three of the tests/phase1/*.test.mjs gates compile
+    # production Swift (Foundation + Combine) with /usr/bin/swiftc and assert on
+    # the binary, and the glob below is meant to pick up every new gate without
+    # anyone editing this file. There is no Linux toolchain for those sources.
+    runs-on: macos-latest
     permissions:
       contents: read
     steps:
@@ -29,10 +33,11 @@ jobs:
         run: python3 tools/audit/test_database_runner.py
       - name: Invariant source registration contracts
         run: python3 tools/audit/test_database_invariant_sources.py
-      - name: Consent selector contracts (not a UI runtime test)
-        run: node --test tests/phase1/consent-contract.test.mjs
-      - name: Ask AI label source contract (not a screenshot test)
-        run: node --test tests/phase1/ask-ai-label.test.mjs
+      # Every Phase 1 node gate, discovered by glob: consent selector and Ask AI
+      # label source contracts, adoption source/mutant/local-binding gates and
+      # the consent persistence gate. None of them is a UI runtime test.
+      - name: Phase 1 source and executable-Swift gates (tests/phase1/*.test.mjs)
+        run: node --test tests/phase1/*.test.mjs
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -117,6 +122,29 @@ jobs:
       - name: Audit production dependencies
         run: npm audit --omit=dev --audit-level=high
 
+  upload-gateway:
+    name: Cloudflare Worker (upload-gateway, deno check + tests)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          # Same exact pin as edge-functions.
+          deno-version: "2.9.6"
+      # The adapter and its tests import local sources plus the pinned std
+      # assert module only. No network at runtime, no subprocess, no writes.
+      - name: Run the gateway tests
+        run: deno test --no-config --no-lock --deny-net --deny-run --deny-write --allow-read --allow-env services/edge/upload-gateway/
+      # worker-configuration.d.ts is wrangler's generated Cloudflare runtime
+      # typing and collides with Deno's own DOM lib, so the gateway's tsconfig
+      # (lib: ES2022) has to be the config in force for the check to mean
+      # anything; a wrong Env binding fails it, a Deno/Worker lib clash must not.
+      - name: Typecheck the Worker entrypoint
+        working-directory: services/edge/upload-gateway
+        run: deno check --config tsconfig.json --no-lock --node-modules-dir=auto index.ts
+
   edge-functions:
     name: Supabase edge functions (deno check + tests)
     runs-on: ubuntu-latest
@@ -147,19 +175,38 @@ jobs:
           done
           exit $fail
 
-      # 216 hermetic unit tests across all 11 *.test.ts / *_test.ts files:
-      # router policy, provider redaction/circuit-breaker, fair-housing +
-      # chapter postprocessing, Apple JWS/notification verdicts, coach output
-      # sanitization, event scrubbing/whitelisting, admin probe/funnel SQL
-      # shaping. No Supabase project, no live provider keys, no DB, no network
+      # 743 hermetic unit tests across all 33 *.test.ts / *_test.ts files
+      # (731 before the deletion escalation/503 tests; the SUMMARY line the
+      # step prints is the count that actually ran): router policy, provider
+      # redaction/circuit-breaker, fair-housing + chapter postprocessing,
+      # Apple JWS/notification verdicts, coach output sanitization, event
+      # scrubbing/whitelisting, admin probe/funnel SQL shaping, upload
+      # transport/publication, spatial routes and the account-deletion
+      # handler. No Supabase project, no live provider keys, no DB, no network
       # beyond Deno's own fetch-and-cache of the std@0.224.0 / jsr:@std/assert
-      # imports every file uses — verified with a throwaway DENO_DIR (forcing
-      # that fetch from a cold cache) and still 216 passed / 0 failed.
-      # --node-modules-dir=auto (a flag, not a committed deno.json) is enough
-      # for the couple of source files with type-only `npm:` specifiers.
+      # imports and the npm:@supabase/supabase-js package the shared client
+      # needs — verified with a throwaway DENO_DIR (forcing that fetch from a
+      # cold cache) and still every test passed / 0 failed.
+      # --node-modules-dir=auto (a flag, not a committed deno.json) lays out
+      # node_modules for the `npm:` specifiers.
       - name: Run edge function tests
         working-directory: services/supabase/functions
-        run: deno test --allow-all --node-modules-dir=auto .
+        env:
+          NO_COLOR: "1"
+        run: |
+          set -o pipefail
+          deno test --allow-all --node-modules-dir=auto . 2>&1 | tee /tmp/edge-function-tests.log
+          summary=$(grep -E '^(ok|FAILED) \| [0-9]+ passed \| [0-9]+ failed' /tmp/edge-function-tests.log | tail -n 1)
+          echo "SUMMARY: ${summary:-no Deno summary line found}"
+          test -n "$summary"
+
+      # The upload fixtures live in tools/audit (they double as offline audit
+      # evidence) and reach this suite through three-line registration files
+      # in uploads/. Run them directly too, by glob, so a fixture without a
+      # registration file — renewal today, whatever comes next — still runs.
+      - name: Run the tools/audit upload fixtures directly
+        working-directory: services/supabase/functions
+        run: deno test --allow-all --node-modules-dir=auto ../../../tools/audit/uploads_*_test.ts
 
   db-migrations:
     name: Supabase migrations (fresh replay + invariants)
@@ -221,8 +268,24 @@ jobs:
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
       # exercises signup → publish → quota → chapters → leads → delete.
-      - name: Invariants
-        run: psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql
+      - name: Invariants (kept-red #155 tolerated by exact name)
+        run: |
+          # invariants.sql raises when any assertion is red. Exactly one is red
+          # on purpose — #155, the agent-reel token headroom the owner has not
+          # decided yet (see the comment above that assertion in invariants.sql
+          # and KEPT_RED in tools/audit/run_database_regression.py). Accept that
+          # one by its exact name and nothing else.
+          set +e
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql > /tmp/invariants.out 2>&1
+          status=$?
+          set -e
+          cat /tmp/invariants.out
+          red=$(grep -E '^ *[0-9]+ \|.*\| f +\|' /tmp/invariants.out | grep -vF "each astra ceiling clears its route's visible answer and stays under the code clamp" || true)
+          if [ -n "$red" ]; then echo "::error::unexpected red invariant(s):"; echo "$red"; exit 1; fi
+          if [ "$status" -ne 0 ] && ! grep -q 'INVARIANTS FAILED: 1 assertion' /tmp/invariants.out; then
+            echo "::error::invariants exited $status with something other than the one kept-red assertion"; exit 1
+          fi
+          echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
 
       # Production already has every migration applied. Anything that may be
       # re-applied there — the re-committed 0005b/0008b and everything from 0009
@@ -238,22 +301,52 @@ jobs:
           done
 
       - name: Invariants after the replay (same answers, one overload per RPC)
-        run: psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql
+        run: |
+          # invariants.sql raises when any assertion is red. Exactly one is red
+          # on purpose — #155, the agent-reel token headroom the owner has not
+          # decided yet (see the comment above that assertion in invariants.sql
+          # and KEPT_RED in tools/audit/run_database_regression.py). Accept that
+          # one by its exact name and nothing else.
+          set +e
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/invariants.sql > /tmp/invariants.out 2>&1
+          status=$?
+          set -e
+          cat /tmp/invariants.out
+          red=$(grep -E '^ *[0-9]+ \|.*\| f +\|' /tmp/invariants.out | grep -vF "each astra ceiling clears its route's visible answer and stays under the code clamp" || true)
+          if [ -n "$red" ]; then echo "::error::unexpected red invariant(s):"; echo "$red"; exit 1; fi
+          if [ "$status" -ne 0 ] && ! grep -q 'INVARIANTS FAILED: 1 assertion' /tmp/invariants.out; then
+            echo "::error::invariants exited $status with something other than the one kept-red assertion"; exit 1
+          fi
+          echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
 
   db-publication-regression:
-    name: Disposable PostgreSQL publication and invariant regression
+    name: Disposable PostgreSQL publication, invariant and deletion regression
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 25
     permissions:
       contents: read
-    # Do not reuse db-migrations' TCP service/database. The unchanged runner
-    # owns initdb, a private Unix socket and rendprop_audit, verifies identity,
-    # discards inherited PG credentials, and stops only its own cluster.
+    # Do not reuse db-migrations' TCP service/database. Every runner below
+    # owns its own initdb, a private Unix socket and database, verifies
+    # identity, discards inherited PG credentials, and stops only its own
+    # cluster. The invariant the owner keeps red on purpose (the agent-reel
+    # ceiling headroom assertion, #155 today) is accepted only because
+    # run_database_regression.py declares it in KEPT_RED, and is printed
+    # loudly; any other red assertion still fails the job.
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # run_deletion_handler_regression.py proves its test catches the
+          # pre-0039 handler by checking that handler out of git history; a
+          # depth-1 checkout does not have that commit.
+          fetch-depth: 0
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.12"
+      - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed # v2.0.5
+        with:
+          # Same exact pin as edge-functions; the handler and spatial edge
+          # regressions run the real Deno test files offline.
+          deno-version: "2.9.6"
       - name: Install explicit PostgreSQL 16 binaries
         shell: bash
         run: |
@@ -266,6 +359,19 @@ jobs:
             [[ "$pg_version" == "$tool (PostgreSQL) 16."* ]]
             printf '%s\n' "$pg_version"
           done
+      # Some of the audit runners were written on a Mac and still open
+      # /opt/homebrew/opt/postgresql@17/bin by absolute path. Give that path
+      # the same PostgreSQL 16 tools as a symlink farm so they run unmodified
+      # here; the runners that discover tools from PATH never touch it.
+      - name: Provide the Homebrew postgresql@17 path the older runners hardcode
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /opt/homebrew/opt/postgresql@17
+          sudo ln -s /usr/lib/postgresql/16/bin /opt/homebrew/opt/postgresql@17/bin
+          for tool in initdb pg_ctl psql createdb; do
+            test -x "/opt/homebrew/opt/postgresql@17/bin/$tool"
+          done
       - name: Run actual SQL fixtures, replay and deliberately broken guards
         id: database
         shell: bash
@@ -273,22 +379,50 @@ jobs:
           set -euo pipefail
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 tools/audit/run_database_regression.py
+      # The spatial edge regression runs --cached-only without preparing its
+      # own cache (the deletion runners do), so fill the Deno cache with every
+      # first-party edge module's pinned std/npm imports first. This is the
+      # only step here that may reach the network for Deno.
+      - name: Warm the Deno cache for the offline edge regressions
+        shell: bash
+        run: |
+          set -euo pipefail
+          deno install --no-config --no-lock --node-modules-dir=none --entrypoint \
+            $(find services/supabase/functions -name '*.ts' -not -path '*/node_modules/*' | sort)
+      # Deletion intent/spatial overlap, adoption recovery, spatial jobs,
+      # provider journal, the real /me handler, the spatial edge handler and
+      # the upload transport SQL — each against its own disposable cluster or
+      # fixture doubles, never a shared or hosted database.
+      - name: Deletion, adoption, spatial, handler and upload transport regressions
+        id: fixtures
+        shell: bash
+        run: |
+          set -euo pipefail
+          export PATH="/usr/lib/postgresql/16/bin:$PATH"
+          python3 tools/audit/run_deletion_regression.py --provider-commit "$GITHUB_SHA"
+          python3 tools/audit/run_adoption_regression.py
+          python3 tools/audit/run_spatial_regression.py
+          python3 tools/audit/run_spatial_provider_regression.py
+          python3 tools/audit/run_deletion_handler_regression.py
+          python3 tools/audit/run_spatial_edge_regression.py
+          python3 tools/audit/test_upload_transport_db.py
       # A real red invariant suite still runs positive/negative publication
       # fixtures before exiting nonzero. Preserve its evidence, not a green
       # override. Preflight can fail before the runner creates any evidence.
-      - name: Retain database receipt and logs, including failure evidence
+      # Every runner above writes /tmp/rendprop-<fixture>-*/receipt.json.
+      - name: Retain database receipts and logs, including failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: disposable-database-regression-${{ github.run_attempt }}
           path: |
-            /tmp/rendprop-db-audit-*/receipt.json
-            /tmp/rendprop-db-audit-*/*.log
+            /tmp/rendprop-*/receipt.json
+            /tmp/rendprop-*/*.log
           retention-days: 7
           if-no-files-found: ${{ steps.database.outcome == 'success' && 'error' || 'warn' }}
 
   python-worker:
-    name: Render worker (python)
+    name: Python workers (render, spatial, training adapter)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -296,9 +430,9 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Byte-compile worker + pipeline
+      - name: Byte-compile worker, pipeline, spatial worker and training adapter
         run: |
-          python -m compileall -q services/worker services/pipeline
+          python -m compileall -q services/worker services/pipeline services/spatial-worker tools/spatial-spike/training
 
       # requirements.txt is pinned (audit round 4); a stray `>=` reintroduces
       # non-reproducible images.
@@ -349,6 +483,23 @@ jobs:
           python3 services/worker/tests/test_r2_timeouts.py
           python3 services/worker/tests/test_resource_limits.py
           python3 services/worker/tests/test_hdr_tonemap.py
+
+      # The spatial worker (Modal controller + provider journal) and the Phase A
+      # training adapter (capture handoff, COLMAP export, retry/room modules)
+      # keep their tests next to the code as test_*.py and use unittest, so
+      # discovery picks up new files with no edit here. Pinned exactly, the
+      # versions the adapter README records as verified: modal for the
+      # controller import (importing app.py starts nothing and allocates no
+      # GPU), Pillow for the JPEG decode, numpy + tyro for the trainer CLI
+      # parsing. Nothing here contacts Modal, a GPU or any provider.
+      - name: Install spatial worker + training adapter deps (pinned)
+        run: pip install --disable-pip-version-check modal==1.5.3 Pillow==12.1.1 numpy==1.26.4 tyro==0.9.35
+
+      - name: Run spatial worker tests (unittest discovery)
+        run: python3 -m unittest discover -s services/spatial-worker -p 'test_*.py'
+
+      - name: Run training adapter tests (unittest discovery)
+        run: python3 -m unittest discover -s tools/spatial-spike/training -p 'test_*.py'
 
   ios-static:
     name: iOS static gates

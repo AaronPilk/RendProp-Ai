@@ -4,7 +4,8 @@
   "claim": "inventory-only; no browser parity is verified",
   "api": [
     {"id":"listings","methods":["listings","createListing","updateListing","deleteListing"],"web":"Bulk listing workspace; same routes, no production deletion tests","status":"planned"},
-    {"id":"uploads","methods":["requestUpload","fetchPartURLs","completeUpload","abortUpload","requestPhotoBatch"],"web":"Resumable chunked uploader; completion overloads share one server asset identity","status":"planned"},
+    {"id":"uploads","methods":["requestUpload","fetchPartURLs","completeUpload","abortUpload","renewUpload","requestPhotoBatch"],"web":"Resumable chunked uploader; completion overloads share one server asset identity; renewal re-signs only the existing reservation","status":"planned"},
+    {"id":"spatial","methods":["spatialCapability","spatialJobs","spatialJob","createSpatialJob","attachSpatialInputs","startSpatialJob","reviewSpatialJob","publishSpatialJob","retrySpatialJob","cancelSpatialJob","resumeSpatialJob"],"web":"Inventory only: 3D room job lifecycle (create, attach inputs, start, review, publish, retry, cancel, resume) against the same /spatial routes; spatialCapability is the server capability read, no browser capture or viewer parity is verified","status":"planned"},
     {"id":"render","methods":["createRender","renderStatus","publishApp","updateChapters"],"web":"Timeline, fenced canonical export, shared immutable artifact and chapter editor","status":"planned"},
     {"id":"account","methods":["me","updateBrand"],"web":"Same entitlement summary and agent card; server brand precedence pending","status":"planned"},
     {"id":"leads","methods":["leads"],"web":"Org/listing lead inbox with roles enforced in DB","status":"planned"},

@@ -17,10 +17,47 @@ import subprocess
 import sys
 import tempfile
 
+# Assertions the owner has decided to keep red on purpose. Each entry is the
+# exact `name` string tests/invariants.sql prints for that row, and the
+# assertion's own comment there is the authority on why it stays visible
+# instead of being weakened. A run whose ONLY failing assertions are in this
+# set is accepted (exit 0) and announced loudly; any other failing assertion
+# still exits 1. An entry that starts passing is a stale exception and also
+# exits 1, so the list has to be trimmed in the same change that fixes it.
+KEPT_RED = {
+    # tests/invariants.sql, "each astra ceiling clears its route's visible
+    # answer": the 0034 agent-reel seed sets max_output_tokens to 700, equal
+    # to the visible MAX_AGENT_REEL_TOKENS answer, and that comment says to
+    # keep the failure visible rather than enlarge the provider budget or
+    # weaken > to >=. Owner decision: neither the invariant nor the ceiling
+    # changes.
+    "each astra ceiling clears its route's visible answer and stays under the code clamp",
+}
+
 
 def require(ok, message):
     if not ok:
         raise RuntimeError(message)
+
+
+def classify_failures(names, failed):
+    """Split one invariant run's failures into the documented kept-red set and
+    everything else. `stale` lists kept-red assertions that are present in the
+    inventory but no longer fail."""
+    kept = [name for name in failed if name in KEPT_RED]
+    unexpected = [name for name in failed if name not in KEPT_RED]
+    stale = sorted(name for name in KEPT_RED if name in names and name not in failed)
+    return kept, unexpected, stale
+
+
+def announce_kept_red(phase, names, kept):
+    print("=" * 72, flush=True)
+    print(f"KEPT-RED ({phase}): {len(kept)} assertion(s) failed and are accepted by owner decision", flush=True)
+    for name in kept:
+        print(f"  #{names.index(name) + 1} {name}", flush=True)
+    print("  rationale: the assertion's own comment in services/supabase/tests/invariants.sql;", flush=True)
+    print("  the exception list is KEPT_RED at the top of tools/audit/run_database_regression.py", flush=True)
+    print("=" * 72, flush=True)
 
 
 def invariant_rows(output, exit_code):
@@ -125,7 +162,12 @@ def main():
             names, failed_names = invariant_rows(output, exit_code)
             if receipt["invariantRuns"]:
                 require(names == receipt["invariantRuns"][0]["names"], "Assertion identities changed on replay")
-            receipt["invariantRuns"].append({"phase": phase, "count": len(names), "names": names, "failed": failed_names})
+            kept, unexpected, stale = classify_failures(names, failed_names)
+            if kept:
+                announce_kept_red(phase, names, kept)
+            receipt["invariantRuns"].append({"phase": phase, "count": len(names), "names": names, "failed": failed_names,
+                                             "keptRedFailures": kept, "unexpectedFailures": unexpected,
+                                             "staleKeptRed": stale})
             counts.append(len(names))
         require(counts[0] == counts[1], "Invariant count changed on replay")
         paid = run("negative-paid-gates", psql + ["-f", str(sqlroot / "tests/negative_astra_paid_gates.sql")])
@@ -203,7 +245,15 @@ def main():
                 "Negative control did not detect the deliberately corrupted team entitlement")
         require(all(hashlib.sha256(p.read_bytes()).hexdigest() == receipt["sourceHashes"][str(p.relative_to(root))]
                     for p in sources), "SQL sources changed during run")
-        receipt.update({"accepted": all(not phase["failed"] for phase in receipt["invariantRuns"]),
+        # Only the documented kept-red set may be red. Anything else failing,
+        # or a kept-red entry that has quietly started passing, is a real
+        # result the receipt must not paper over.
+        stale_kept_red = sorted({name for phase in receipt["invariantRuns"] for name in phase["staleKeptRed"]})
+        receipt.update({"accepted": all(not phase["unexpectedFailures"] for phase in receipt["invariantRuns"])
+                                    and not stale_kept_red,
+                        "keptRed": sorted(KEPT_RED),
+                        "keptRedFailures": sorted({name for phase in receipt["invariantRuns"] for name in phase["keptRedFailures"]}),
+                        "staleKeptRed": stale_kept_red,
                         "appliedMigrations": len(migrations), "invariantsEachRun": counts[0],
                         "negativeControl": "Actual team entitlement corrupted; real invariant gate exited 3"})
     except BaseException as error:
@@ -223,8 +273,16 @@ def main():
                 signal.signal(sig, handler)
             receipt["finishedAt"] = datetime.now(timezone.utc).isoformat()
             (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")
-    require(receipt["accepted"], f"Database assertions remain red; full replay/negative evidence: {out / 'receipt.json'}")
+    if receipt.get("staleKeptRed"):
+        require(False, "Kept-red assertions now pass; remove them from KEPT_RED in the same change: "
+                       + ", ".join(receipt["staleKeptRed"]))
+    unexpected = sorted({name for phase in receipt["invariantRuns"] for name in phase["unexpectedFailures"]})
+    require(receipt["accepted"], "Database assertions remain red outside the documented kept-red set ("
+                                 + ", ".join(unexpected) + f"); full replay/negative evidence: {out / 'receipt.json'}")
+    kept = receipt["keptRedFailures"]
     print("PASS: migrations, replay, actual invariants and negative control;", out / "receipt.json", flush=True)
+    if kept:
+        print(f"PASS WITH {len(kept)} KEPT-RED ASSERTION(S) still failing by owner decision: " + "; ".join(kept), flush=True)
 
 
 if __name__ == "__main__":

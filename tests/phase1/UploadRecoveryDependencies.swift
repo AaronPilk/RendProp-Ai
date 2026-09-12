@@ -61,6 +61,15 @@ final class RecoveryAPI: APIClient {
     var rollback = false
     var failAbortOnce = false
     var completionFailure: APIError?
+    /// `/renew` keeps answering "cannot plan a transfer" (503) even though the
+    /// PUT itself would go through — the rejected-transfer shape.
+    var refuseRenewal = false
+    /// The server accepts an abort of the ORIGINAL v2 ticket (not only a
+    /// legacy one), the way `POST /uploads/:id/abort` does for any reservation.
+    var abortable = false
+    /// The original row is gone: complete/renew/abort all 404 it, and a
+    /// fresh reservation gets the new id.
+    var missing = false
 
     func ticket(_ id: String? = nil) -> UploadTicket {
         UploadTicket(assetID: id ?? oldID, mode: .single,
@@ -70,18 +79,24 @@ final class RecoveryAPI: APIClient {
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
         log.append("create"); creates += 1; keys.append(idempotencyKey ?? "missing")
-        var result = ticket(aborted ? newID : oldID)
+        var result = ticket((aborted || missing) ? newID : oldID)
         result.replayed = legacy
         return result
     }
     func renewUpload(assetID: String) async throws -> UploadTicket {
         log.append("renew"); renews += 1
+        if missing && assetID == oldID { throw APIError.server(status: 404, code: "not_found", message: "Asset not found") }
         if uncertain { throw APIError.server(status: 503, code: "UPSTREAM", message: "Receipt not yet provable") }
+        if refuseRenewal {
+            throw APIError.server(status: 503, code: "UPSTREAM",
+                                  message: "Transfer needs recovery or cancellation; no second physical write is authorized")
+        }
         return ticket(assetID)
     }
     func completeUpload(assetID: String, parts: [(number: Int, etag: String)]?, metadata: UploadMetadata) async throws {
         log.append("complete")
         if let completionFailure { throw completionFailure }
+        if missing && assetID == oldID { throw APIError.server(status: 404, code: "not_found", message: "Asset not found") }
         if completed { return }
         if aborted && assetID == oldID {
             throw APIError.server(status: 409, code: "CONFLICT", message: "This upload was aborted — create a new ticket")
@@ -97,7 +112,8 @@ final class RecoveryAPI: APIClient {
     }
     func abortUpload(assetID: String) async throws {
         log.append("cancel"); cancels += 1
-        guard assetID == oldID && legacy else { throw APIError.badResponse(409) }
+        if missing && assetID == oldID { throw APIError.server(status: 404, code: "not_found", message: "Asset not found") }
+        guard assetID == oldID && (legacy || abortable) else { throw APIError.badResponse(409) }
         aborted = true; legacy = false
         if failAbortOnce { failAbortOnce = false; throw URLError(.networkConnectionLost) }
     }
@@ -153,18 +169,30 @@ final class MultipartRecoveryAPI: APIClient {
     var renews = 0
     var creates = 0
     var completes = 0
+    var aborts = 0
+    var keys: [String] = []
     var confirmed: [UploadTicket.ConfirmedPart] = []
     var acceptedParts: [(number: Int, etag: String)]?
     var delayedRenewal: CheckedContinuation<UploadTicket, Error>?
     var waitForRenewal = false
+    /// Every `/part-urls` call answers this instead of URLs (the rejected
+    /// transfer's "cannot plan" 503). The calls are still recorded.
+    var partURLFailure: APIError?
+    /// What a fresh `POST /uploads` hands back after Start over; nil keeps the
+    /// original behaviour of refusing to reserve (500).
+    var freshTicket: UploadTicket?
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
-        creates += 1; throw APIError.badResponse(500)
+        creates += 1; keys.append(idempotencyKey ?? "missing")
+        if let freshTicket { return freshTicket }
+        throw APIError.badResponse(500)
     }
     func renewUpload(assetID: String) async throws -> UploadTicket {
         renews += 1
         if waitForRenewal { return try await withCheckedThrowingContinuation { delayedRenewal = $0 } }
-        return UploadTicket(assetID: self.assetID, mode: .multipart, uploadID: "fixture-session",
+        // Renewal names the ticket it was asked about (the original, or the
+        // replacement Start over reserved), never a different one.
+        return UploadTicket(assetID: assetID, mode: .multipart, uploadID: "fixture-session",
             partSize: 16, partCount: 4, transportVersion: 2, uploaded: false, confirmedParts: confirmed)
     }
     func completeUpload(assetID: String, parts: [(number: Int, etag: String)]?, metadata: UploadMetadata) async throws {
@@ -174,9 +202,10 @@ final class MultipartRecoveryAPI: APIClient {
         }
         acceptedParts = parts
     }
-    func abortUpload(assetID: String) async throws { throw APIError.badResponse(500) }
+    func abortUpload(assetID: String) async throws { aborts += 1; throw APIError.badResponse(500) }
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
         partRequests.append(numbers)
+        if let partURLFailure { throw partURLFailure }
         return Dictionary(uniqueKeysWithValues: numbers.map { ($0, URL(string:
             "https://upload.invalid/v2/11111111-1111-4111-8111-111111111111?expires=1893456000&signature=" + String(repeating: "a", count: 64))!) })
     }

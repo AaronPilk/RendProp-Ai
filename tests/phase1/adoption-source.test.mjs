@@ -20,10 +20,14 @@ test('Settings exposes labeled non-secret recovery and support, without gating f
   assert.ok(section.includes('Label("Get recovery help"'));
   assert.ok(!section.includes('token') && !section.includes('userID'));
 });
-test('launch and foreground retry durable handoff without deleting it on sign-out', () => {
+test('launch and foreground retry the durable handoff; sign-out discards it through the recovery object', () => {
   const init = auth.slice(auth.indexOf('    init()'), auth.indexOf('// MARK: - Token access'));
   assert.equal(init.split('retryPendingAdoptionIfNeeded()').length - 1, 2);
+  // A signed-out phone has no anonymous source left to hand off; keeping the
+  // record made the next Apple sign-in 409 forever. Sign-out must drop it, and
+  // only the recovery object may touch the Keychain record (no inline deletes).
   const signOut = auth.slice(auth.indexOf('func signOut()'), auth.indexOf('func setDisplayName'));
+  assert.ok(signOut.includes('discardPendingAdoption()'));
   assert.ok(!signOut.includes('Keys.pendingAdoption'));
 });
 test('pending Keychain read fails closed and callbacks retain session generation fence', () => {

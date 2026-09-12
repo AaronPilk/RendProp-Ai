@@ -34,6 +34,19 @@ MAX_FRAMES = 400
 MIN_COST_RESERVATION_CENTS = 600  # GPU full TTL plus bounded CPU controller.
 WORKER_USER_AGENT = "Rendprop-Spatial-Worker/1.0"
 TRAINING_ROOT = Path(__file__).resolve().parents[2] / "tools/spatial-spike/training"
+# spatial_claim/heartbeat in migration 0040 grant two minutes per accepted beat.
+DB_LEASE_SECONDS = 120
+HEARTBEAT_INTERVAL_SECONDS = 30
+HEARTBEAT_RETRY_SECONDS = 5
+# The control plane said no (403/409/410) or the job deadline passed. No retry
+# can make such a lease current again, so these end an attempt immediately.
+DEFINITIVE_LEASE_CODES = frozenset({"lease_lost", "job_deadline_exceeded"})
+# Failures of the transport or of the response shape, never of our own payload.
+TRANSIENT_CONTROL_PLANE_CODES = frozenset({"control_plane_unavailable", "control_plane_rejected",
+                                           "invalid_service_response", "response_too_large"})
+# Pauses before each retry of the terminal `complete` call. Every pause is
+# shorter than a DB lease, and each retry is preceded by a fresh heartbeat.
+COMPLETE_RETRY_DELAYS = (5, 10, 20, 30, 30)
 
 
 class JobFailure(Exception):
@@ -215,13 +228,22 @@ def download_capture(job, destination, allowed_hosts, *, opener=None, check=lamb
 
 
 class Lease:
-    def __init__(self, api, job, *, interval=30):
+    def __init__(self, api, job, *, interval=HEARTBEAT_INTERVAL_SECONDS, lease_seconds=DB_LEASE_SECONDS,
+                 retry_interval=HEARTBEAT_RETRY_SECONDS, clock=time.monotonic):
         self.api, self.job, self.interval = api, job, interval
+        self.lease_seconds, self.retry_interval, self.clock = lease_seconds, retry_interval, clock
         self.stop = threading.Event()
         self.error = None
         self.progress = 0.05
         self.lock = threading.Lock()
         self.abort: Callable[[], None] = lambda: None
+        # The claim itself granted the first lease window; every accepted beat
+        # restarts it. Local elapsed time since then is the only thing this
+        # process may reason about: it never extends anything by itself.
+        self.confirmed_at = clock()
+        self.failed_beats = 0
+        self.last_beat_error = None  # JobFailure code or exception type; never a body.
+        self.abort_failure_type = None
         # True initially because no provider allocation has been attempted. The
         # provider flips this BEFORE CREATE, including an ambiguous timeout, and
         # restores it only after a terminal poll. A retry must not overlap a GPU
@@ -231,35 +253,112 @@ class Lease:
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self):
-        while not self.stop.wait(self.interval):
+        delay = self.interval
+        while not self.stop.wait(delay):
             try:
                 self.beat()
-            except Exception:
-                self.error = JobFailure("lease_lost")
-                # Losing authorization must stop compute, not merely prevent the
-                # final result from being saved while the GPU keeps billing.
-                try:
-                    self.abort()
-                except Exception as error:
-                    # The provider TTL remains the last resort. Do not let a
-                    # daemon-thread traceback print arbitrary SDK error bodies.
-                    self.abort_failure_type = type(error).__name__
+                delay = self.interval
+            except Exception as error:
+                if self.tolerable(error):
+                    # A blip on one beat must not stop a paid GPU. Retry at a
+                    # faster cadence while the DB lease still has room.
+                    delay = self.retry_interval
+                    continue
+                self.lose()
                 return
+
+    def since_confirmed(self):
+        return self.clock() - self.confirmed_at
+
+    def tolerable(self, error):
+        # A definitive rejection cannot be retried into validity. Anything else
+        # is tolerated only until the lease is actually within reach: once more
+        # than half the DB window has elapsed with no accepted beat, one more
+        # 45s control-plane timeout could outlive the lease, so compute stops
+        # while the lease is still provably ours rather than after it is gone.
+        if isinstance(error, JobFailure) and error.code in DEFINITIVE_LEASE_CODES:
+            return False
+        return self.since_confirmed() <= self.lease_seconds / 2
+
+    def lose(self):
+        self.error = JobFailure("lease_lost")
+        # Losing authorization must stop compute, not merely prevent the
+        # final result from being saved while the GPU keeps billing.
+        try:
+            self.abort()
+        except Exception as error:
+            # The provider TTL remains the last resort. Do not let a
+            # daemon-thread traceback print arbitrary SDK error bodies.
+            self.abort_failure_type = type(error).__name__
 
     def check(self):
         if self.error:
             raise self.error
         deadline = datetime.fromisoformat(self.job["deadline_at"].replace("Z", "+00:00"))
         require(datetime.now(timezone.utc) < deadline, "job_deadline_exceeded")
+        # Hard rule, independent of what the heartbeat thread is stuck on: a
+        # lease nobody renewed within its whole DB lifetime is gone.
+        if self.since_confirmed() >= self.lease_seconds:
+            self.error = JobFailure("lease_lost")
+            raise self.error
 
     def beat(self):
-        self.check()
         with self.lock:
+            self._beat_locked()
+
+    def _beat_locked(self):
+        self.check()
+        try:
             self.api.job_call(self.job, "heartbeat", progress=self.progress, cost_cents=0)
+        except Exception as error:
+            self.failed_beats += 1
+            self.last_beat_error = error.code if isinstance(error, JobFailure) else type(error).__name__
+            raise
+        self.confirmed_at = self.clock()
+        self.failed_beats = 0
 
     def stage(self, progress):
         self.progress = max(self.progress, min(progress, 0.95))
-        self.beat()
+        self.check()
+        try:
+            self.beat()
+        except JobFailure as error:
+            if error.code in DEFINITIVE_LEASE_CODES:
+                raise
+            # Progress is advisory. The heartbeat thread keeps retrying and is
+            # the one that enforces the lease window; one failed report must
+            # not abort the GPU it is describing.
+
+    def finish(self, call, *, delays=None, sleep=None):
+        """Run the terminal control-plane call once the heartbeat thread is quiet.
+
+        The artifact is already stored; burning it over one 503 would cost the
+        whole reservation again. Transient failures are retried while this
+        lease can still be current: each retry follows a pause shorter than a
+        DB lease and a fresh heartbeat, a definitive rejection ends the attempt,
+        and a lease nobody renewed within its full lifetime is not tried again.
+        """
+        delays = COMPLETE_RETRY_DELAYS if delays is None else delays
+        sleep = time.sleep if sleep is None else sleep
+        self.stop.set()
+        with self.lock:
+            # Holding the lock after stop is set means any in-flight heartbeat
+            # has returned and the thread will not send another one.
+            for delay in (*delays, None):
+                self.check()
+                try:
+                    return call()
+                except JobFailure as error:
+                    if delay is None or error.code not in TRANSIENT_CONTROL_PLANE_CODES:
+                        raise
+                sleep(delay)
+                try:
+                    self._beat_locked()
+                except JobFailure as error:
+                    if error.code in DEFINITIVE_LEASE_CODES:
+                        raise
+                    # Still unreachable. The next attempt lets the DB decide,
+                    # unless check() proves the lease has run out by then.
 
     def __enter__(self):
         self.beat()
@@ -281,7 +380,7 @@ def load_adapter():
     return prepare_capture
 
 
-def upload_output(api, job, path, manifest, lease=None):
+def upload_output(api, job, path, manifest, lease=None, *, sleep=None):
     size = path.stat().st_size
     require(0 < size <= MAX_OUTPUT_BYTES, "sog_output_too_large")
     data = path.read_bytes()  # Hard32MiB bound, unlike the unbounded capture.
@@ -315,11 +414,11 @@ def upload_output(api, job, path, manifest, lease=None):
     if lease is None:
         return complete()
     # Keep the heartbeat alive through the potentially120s output upload. Only
-    # stop it at the actual terminal call, serialized with an in-flight heartbeat.
-    lease.stop.set()
-    with lease.lock:
-        lease.check()
-        return complete()
+    # stop it at the actual terminal call, serialized with an in-flight
+    # heartbeat, and retry that call through transient control-plane failures
+    # while the lease holds: the bytes are stored, so a 503 here must not
+    # forfeit them and the reservation with them.
+    return lease.finish(complete, sleep=sleep)
 
 
 def run_one(api, provider, allowed_input_hosts, *, scratch_parent=None):

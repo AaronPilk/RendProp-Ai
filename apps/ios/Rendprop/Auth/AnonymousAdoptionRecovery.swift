@@ -27,6 +27,7 @@ final class AnonymousAdoptionRecovery {
     private let changed: (String?) -> Void
     private let prepareLocal: (Pending) -> Bool
     private let finishLocal: (Pending, UUID) -> Bool
+    private let discardLocal: (UUID?) -> Void
     private var running = false
 
     init(apiBase: URL, authBase: URL, anonKey: String,
@@ -34,11 +35,13 @@ final class AnonymousAdoptionRecovery {
          remove: @escaping () -> Bool, send: @escaping Transport,
          changed: @escaping (String?) -> Void = { _ in },
          prepareLocal: @escaping (Pending) -> Bool = { _ in false },
-         finishLocal: @escaping (Pending, UUID) -> Bool = { _, _ in false }) {
+         finishLocal: @escaping (Pending, UUID) -> Bool = { _, _ in false },
+         discardLocal: @escaping (UUID?) -> Void = { _ in }) {
         self.apiBase = apiBase; self.authBase = authBase; self.anonKey = anonKey
         self.read = read; self.write = write; self.remove = remove
         self.send = send; self.changed = changed
         self.prepareLocal = prepareLocal; self.finishLocal = finishLocal
+        self.discardLocal = discardLocal
     }
 
     static func identity(_ token: String) -> (id: UUID, anonymous: Bool)? {
@@ -98,6 +101,26 @@ final class AnonymousAdoptionRecovery {
         try save(value)
         guard prepareLocal(value) else { throw RecoveryError.storage }
         changed("Your original workspace is waiting to be connected to this account.")
+    }
+
+    /// Ends a saved handoff without a receipt. The session it was waiting on
+    /// is gone — sign-out (explicit, or forced by a revoked refresh token),
+    /// "Clear local data", "Delete account" — or sign-in found a record for an
+    /// anonymous user this phone no longer holds. Either way its source can
+    /// never match `prepare` again, and left behind it turned every later
+    /// Apple sign-in on this phone into a conflict. Removes the Keychain
+    /// envelope (the only copy of that source's tokens) and lets the app
+    /// release the local bindings it captured for the operation. A record too
+    /// broken to read is removed just the same — it poisons the same paths.
+    /// Returns false when the Keychain refused the delete: the record is then
+    /// still there and the caller must not pretend otherwise.
+    @discardableResult
+    func discard() -> Bool {
+        let operationID = (try? pending())?.operationID
+        if !remove() { return false }
+        discardLocal(operationID)
+        changed(nil)
+        return true
     }
 
     private func request(_ url: URL, body: [String: Any], bearer: String? = nil) throws -> URLRequest {

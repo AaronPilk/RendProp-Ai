@@ -17,6 +17,17 @@ actor MockAPIClient: APIClient {
     func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
     func cancelSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
     func resumeSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    // The offline demo plays a switched-on service so the UI walk exercises the
+    // real product screen (the simulator still reports it cannot capture and the
+    // library stays empty — nothing is faked). `-ui.spatial disabled` plays the
+    // switched-off backend so a walk can prove the Home tile disappears.
+    func spatialCapability() async throws -> SpatialCapability {
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-ui.spatial"), i + 1 < args.count, args[i + 1] == "disabled" {
+            return SpatialCapability(enabled: false, reason: "mock")
+        }
+        return SpatialCapability(enabled: true, reason: "ok")
+    }
     private var renders: [UUID: (render: Render, startedAt: Date)] = [:]
     /// Listings created/updated offline, keyed by id — so `listings()` and
     /// `updateListing` round-trip like a real server would.

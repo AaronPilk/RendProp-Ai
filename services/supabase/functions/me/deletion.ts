@@ -11,6 +11,16 @@ const object = (v: unknown): v is Record<string, unknown> => !!v && typeof v ===
 function requireReceipt(ok: unknown): asserts ok {
   if (!ok) throw new HttpError(502, "Deletion was not confirmed; no unverified cleanup was started", "upstream");
 }
+// An `RPnnn:` message is the SQL boundary refusing the request on purpose and
+// keeps its own copy. Anything else — a deadlock, a lock timeout, a missing
+// overload, a dropped connection — is the database being unavailable: log it,
+// answer 503 "retry", and never echo text that names a function signature or a
+// table to the caller (the same split spatial/index.ts makes).
+function throwDatabase(message: string | undefined, action: string): never {
+  if (/RP\d{3}:/.test(message ?? "")) throwRpc(message);
+  console.error(`${action} failed:`, message ?? "(no message)");
+  throw new HttpError(503, "Account deletion could not be confirmed — retry", "upstream");
+}
 type Lease = { request: string; user: string; token: string; payload: DeletionPayload;
   solo: string[]; shared: string[]; manual: boolean };
 type Cleanup = (payload: DeletionPayload) => Promise<{ remaining: DeletionPayload; notes: string[] }>;
@@ -60,22 +70,29 @@ async function finish(admin: SupabaseClient, work: Lease, cleanup: Cleanup) {
     p_request: work.request, p_token: work.token, p_remaining: remaining,
     p_notes: notes.slice(0, 10).join(" | ").slice(0, 2000),
   });
-  if (error) throwRpc(error.message);
+  if (error) throwDatabase(error.message, "finish_account_deletion");
   requireReceipt(object(data) && data.ok === true && data.request_id === work.request &&
     data.source_user_id === work.user && typeof data.cleanup_complete === "boolean" &&
-    typeof data.manual_review_required === "boolean");
+    typeof data.manual_review_required === "boolean" &&
+    (data.escalation_reason == null || typeof data.escalation_reason === "string"));
   requireReceipt(!data.cleanup_complete || (payloadEmpty(remaining) && !data.manual_review_required));
+  // The DB parks a request that no sweep can finish (twelve passes without
+  // progress, or a GPU lease with no provider journal a day later) and says
+  // why. It leaves the due queue at that point; surface the reason instead
+  // of silently dropping the account from the sweep.
+  const escalation = typeof data.escalation_reason === "string" ? data.escalation_reason : null;
   const authGone = !remaining.auth_user_id;
-  return { remaining, notes, authGone, done: data.cleanup_complete, manual: data.manual_review_required };
+  return { remaining, notes, authGone, done: data.cleanup_complete, manual: data.manual_review_required, escalation };
 }
 
 export async function deleteAccount(admin: SupabaseClient, user: string, cleanup: Cleanup): Promise<Response> {
   const { data, error } = await admin.rpc("prepare_account_deletion", {
     p_user: user, p_upload_bucket: R2_BUCKET_UPLOADS, p_render_bucket: R2_BUCKET_RENDERS,
   });
-  if (error) throwRpc(error.message);
+  if (error) throwDatabase(error.message, "prepare_account_deletion");
   const work = lease(data, user);
   const result = await finish(admin, work, cleanup);
+  const warnings = [...result.notes, ...(result.escalation ? [`escalated for manual review: ${result.escalation}`] : [])];
   return json({ ok: result.authGone, deletion_request_id: work.request,
     deleted_orgs: work.solo.length, left_orgs: work.shared.length,
     cleanup_complete: result.done, manual_review_required: result.manual,
@@ -88,20 +105,23 @@ export async function deleteAccount(admin: SupabaseClient, user: string, cleanup
       unverified_render_jobs: result.remaining.unresolved_render_jobs?.length ?? 0,
       waiting_for_storage_writes: !!result.remaining.storage_not_before },
     ...(!result.authGone ? { error: "The sign-in record could not be deleted; cleanup remains queued." } : {}),
-    ...(result.notes.length ? { warnings: result.notes } : {}),
+    ...(warnings.length ? { warnings } : {}),
   }, result.authGone ? 200 : 500);
 }
 
 export async function sweepAccounts(admin: SupabaseClient, cleanup: Cleanup): Promise<Response> {
   // Backoff belongs to each request, not the first five oldest accounts. An
   // unresolved provider must not starve all newer users' deletion requests.
+  // A request the DB has parked for manual review is not due any more: the
+  // filter below is what ends its five-minute loop, and the DB row records
+  // the reason (escalation_reason) for whoever picks it up.
   const due = new Date().toISOString();
   const { data: rows, error } = await admin.from("deletion_requests").select("id")
     .eq("manual_review_required", false)
     .in("status", ["pending", "processing"]).lte("next_cleanup_at", due)
     .order("next_cleanup_at", { ascending: true }).limit(5);
   if (error) throw new HttpError(503, "Deletion queue is temporarily unavailable", "upstream");
-  let processed = 0, manual = 0, deferred = 0;
+  let processed = 0, manual = 0, deferred = 0, escalated = 0;
   for (const row of rows ?? []) {
     requireReceipt(id(row.id));
     const { data, error: claimError } = await admin.rpc("claim_account_deletion", { p_request: row.id });
@@ -111,8 +131,12 @@ export async function sweepAccounts(admin: SupabaseClient, cleanup: Cleanup): Pr
     }
     if (object(data) && data.ok === false && data.request_id === row.id && data.completed === true) continue;
     const work = lease(data, undefined, row.id);
-    await finish(admin, work, cleanup);
+    const result = await finish(admin, work, cleanup);
     processed++;
+    if (result.escalation) {
+      escalated++;
+      console.warn(`deletion request ${row.id} escalated for manual review: ${result.escalation}`);
+    }
   }
-  return json({ ok: true, processed, manual_review: manual, deferred });
+  return json({ ok: true, processed, manual_review: manual, deferred, escalated });
 }

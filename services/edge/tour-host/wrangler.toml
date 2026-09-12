@@ -11,6 +11,9 @@ compatibility_date = "2026-09-07"
 # No *.workers.dev hostname in prod (duplicate content + un-branded URL) — the
 # apex route below is the only public entry.
 workers_dev = false
+# src/spatial.ts ships Function.toString() of the spatial decoders to browsers;
+# keepNames injects a `__name` helper that the served module doesn't have.
+keep_names = false
 
 # ---------------------------------------------------------------------------
 # Routes — bind the public paths on the apex domain to this Worker.

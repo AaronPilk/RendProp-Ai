@@ -70,6 +70,34 @@ final class AppModel: ObservableObject {
     /// state a relaunch should ever restore.
     @Published var coachRoute: CoachRoute?
 
+    /// What the server last said about its 3D-walkthrough pipeline
+    /// (`GET /spatial/capability`) — one flag for every user alike. nil until
+    /// a fetch has succeeded in this process. Not persisted: the Home tile is
+    /// HIDDEN whenever this is nil or `enabled` is false, so an offline or
+    /// unanswered launch shows no 3D tile rather than one that scans a room,
+    /// uploads every frame and then fails at `/start` because the pipeline is
+    /// switched off (App Review 2.1 — no dead features on Home). Refreshed
+    /// once per foreground by `RendpropApp`; a failed refresh keeps the last
+    /// answer rather than yanking a tile mid-session.
+    @Published private(set) var spatialCapability: SpatialCapability?
+    private var spatialCapabilityFetch: Task<Void, Never>?
+
+    /// True only once the server has said the 3D walkthrough is on.
+    var isSpatialWalkthroughAvailable: Bool { spatialCapability?.enabled == true }
+
+    /// Ask the server once (coalesced while a fetch is in flight). Called on
+    /// every return to the foreground and again when a session lands, since
+    /// the first launch of all may not have one yet when the scene appears.
+    func refreshSpatialCapability() {
+        guard spatialCapabilityFetch == nil else { return }
+        spatialCapabilityFetch = Task { [weak self] in
+            let answer = try? await self?.api.spatialCapability()
+            guard let self else { return }
+            if let answer { self.spatialCapability = answer }
+            self.spatialCapabilityFetch = nil
+        }
+    }
+
     // Mock by default (offline dev); LiveAPIClient when Config.useLiveBackend.
     let api: APIClient = Config.makeAPIClient()
 
@@ -99,6 +127,7 @@ final class AppModel: ObservableObject {
         AuthStore.shared.onAdoptionStorageReady = { [weak self] in
             self?.hasLoaded == true && self?.adoptionBindingsUnreadable == false
         }
+        AuthStore.shared.onDiscardAdoption = { [weak self] in self?.discardLocalAdoption(operationID: $0) }
         // A publish upload that outlived the process (killed mid-upload, resumed
         // by UploadManager on relaunch) completes here; nobody else is waiting
         // for it, so finish the publish with the completed asset (F-B-01 e).
@@ -185,15 +214,36 @@ final class AppModel: ObservableObject {
     private func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool {
         if adoptionBindingsUnreadable { return true }
         guard let journal = adoptionBindings else { return false }
-        if journal.confirmedOrgID != nil, !journal.appliedToCurrentState {
+        if !journal.appliedToCurrentState {
             // A fully completed transfer is historical metadata, not a gate
-            // on the next unrelated account. Conversely, a Keychain read error
+            // on the next unrelated account. An UNFINISHED one whose Keychain
+            // record is gone (discarded at sign-out, or lost with a device
+            // restore) can never finish either — holding its listings for it
+            // would block them forever. Conversely, a Keychain read error
             // must not discard an unfinished rebind after a failed clear.
             do {
                 if try !AuthStore.shared.hasPendingAdoption(operationID: journal.operationID) { return false }
             } catch { return true }
         }
         return journal.blocks(id, currentUserID: AuthStore.shared.userID.flatMap(UUID.init(uuidString:)))
+    }
+
+    /// The handoff's Keychain record was discarded without a receipt (sign-out,
+    /// clear/delete, or a stale record found at sign-in). Release the bindings
+    /// captured for it so its listings stop waiting on a transfer that will
+    /// never complete; a confirmed journal is history and stays. The listings
+    /// keep their local media and simply publish afresh under whoever signs
+    /// in next — the old anonymous org keeps the copies it already has.
+    func discardLocalAdoption(operationID: UUID?) {
+        guard let journal = adoptionBindings, journal.confirmedOrgID == nil else { return }
+        if let operationID, journal.operationID != operationID { return }
+        let previous = adoptionBindings
+        adoptionBindings = nil
+        if persist() { return }
+        // A write failure keeps the journal on disk, so keep it in memory too;
+        // the Keychain check in `pendingAdoptionBlocksServerListing` still
+        // unblocks its listings, because the record itself is gone.
+        adoptionBindings = previous
     }
 
     func load() async {
@@ -542,17 +592,42 @@ final class AppModel: ObservableObject {
     ///
     /// Best effort: nil when there is no live backend, the file is gone, or the
     /// upload failed. The edit still runs; it is simply logged without a
-    /// "before", which the compliance card then shows in amber.
+    /// "before", which the compliance card then shows in amber — and the
+    /// failure is no longer swallowed: it lands on the listing's own
+    /// `lastError` line (Home card + detail banner), the app's one
+    /// non-blocking error surface, so a missing "View original" link has a
+    /// visible reason and an obvious retry (edit again).
     func publishOriginalForDisclosure(listingServerID: UUID, fileURL: URL) async -> String? {
         guard Config.useLiveBackend else { return nil }
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0 else { return nil }
         let memo = "\(FileStore.relativePath(for: fileURL))|\(bytes)"
         if let known = publishedOriginalAssets[memo] { return known }
-        guard let assetID = try? await UploadManager.shared.uploadOriginal(
-            fileURL: fileURL, listingID: listingServerID) else { return nil }
-        publishedOriginalAssets[memo] = assetID
-        return assetID
+        do {
+            let assetID = try await UploadManager.shared.uploadOriginal(fileURL: fileURL, listingID: listingServerID)
+            publishedOriginalAssets[memo] = assetID
+            return assetID
+        } catch {
+            noteUploadProblem("The untouched original of this edit didn't reach the tour, so its \"View original\" link will be missing. "
+                              + "Edit the photo again to retry. \(Self.userMessage(for: error))",
+                              listingServerID: listingServerID, error: error)
+            return nil
+        }
+    }
+
+    /// Route a best-effort upload failure to the listing's `lastError` line —
+    /// the warning the Home card and the detail screen already show — instead
+    /// of dropping it. Never an alert: nothing here blocks the feature the
+    /// person asked for. A cancellation (sign-out, task cancelled) is not a
+    /// failure and is left alone.
+    private func noteUploadProblem(_ message: String, listingLocalID: UUID, error: Error) {
+        if error is CancellationError { return }
+        setLastError(message, for: listingLocalID)
+    }
+
+    private func noteUploadProblem(_ message: String, listingServerID: UUID, error: Error) {
+        guard let id = listings.first(where: { $0.serverID == listingServerID && !$0.isSample })?.id else { return }
+        noteUploadProblem(message, listingLocalID: id, error: error)
     }
 
     /// Publish the ALTERED result of an AI photo edit and attach it to its
@@ -566,11 +641,18 @@ final class AppModel: ObservableObject {
         guard Config.useLiveBackend, !provenanceID.isEmpty else { return }
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { return }
-        guard let assetID = try? await UploadManager.shared.uploadAlteredPhoto(
-            fileURL: fileURL, listingID: listingServerID) else { return }
-        try? await api.attachProvenanceMedia(provenanceID: provenanceID,
-                                             originalAssetID: nil,
-                                             alteredAssetID: assetID)
+        do {
+            let assetID = try await UploadManager.shared.uploadAlteredPhoto(fileURL: fileURL, listingID: listingServerID)
+            try await api.attachProvenanceMedia(provenanceID: provenanceID,
+                                                originalAssetID: nil,
+                                                alteredAssetID: assetID)
+        } catch {
+            // Still best effort — the edit is already on screen — but said out
+            // loud on the listing rather than swallowed.
+            noteUploadProblem("The edited photo didn't reach the tour's before/after record. "
+                              + "Edit the photo again to retry. \(Self.userMessage(for: error))",
+                              listingServerID: listingServerID, error: error)
+        }
     }
 
     /// Every gallery photo already uploaded, memoised by
@@ -587,16 +669,22 @@ final class AppModel: ObservableObject {
     /// thing that ever creates one. Without this call the gallery is an empty
     /// array on every tour ever published.
     ///
-    /// BEST EFFORT AND SILENT. A publish must not fail because a photo did not
-    /// upload, and an agent must not get an error about a feature they did not
-    /// ask for. Bounded to the newest 40 and to photos under the ceiling.
-    /// Sequential on purpose: seventeen concurrent multi-megabyte PUTs from a
-    /// phone on cellular is how you turn a working publish into a stall.
+    /// BEST EFFORT, NOT SILENT. A publish must not fail because a photo did not
+    /// upload — but "the gallery is empty and nobody knows why" was the defect,
+    /// so a photo that does not make it is reported on the listing's own
+    /// `lastError` line (Home card + detail banner) with the count and the
+    /// server's reason, and "Publish again" is the retry: the memo skips what
+    /// already landed. Bounded to the newest 40 and to photos under the
+    /// ceiling. Sequential on purpose: seventeen concurrent multi-megabyte
+    /// PUTs from a phone on cellular is how you turn a working publish into a
+    /// stall.
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
         guard Config.useLiveBackend else { return }
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
         guard let l = listings.first(where: { $0.id == listingLocalID }), !l.isSample else { return }
         let photos = EnhancedPhoto.loadAll(listingID: listingLocalID).prefix(40)
+        var failures = 0
+        var lastProblem: Error?
         for photo in photos {
             if Task.isCancelled { return }
             let url = photo.enhancedURL
@@ -604,9 +692,21 @@ final class AppModel: ObservableObject {
             guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { continue }
             let memo = "\(FileStore.relativePath(for: url))|\(bytes)"
             if publishedGalleryAssets[memo] != nil { continue }
-            guard let assetID = try? await UploadManager.shared.uploadGalleryPhoto(
-                fileURL: url, listingID: listingServerID) else { continue }
-            publishedGalleryAssets[memo] = assetID
+            do {
+                publishedGalleryAssets[memo] = try await UploadManager.shared.uploadGalleryPhoto(
+                    fileURL: url, listingID: listingServerID)
+            } catch is CancellationError {
+                return   // signed out or cancelled mid-sync: not a failure to report
+            } catch {
+                failures += 1
+                lastProblem = error
+            }
+        }
+        if let lastProblem, failures > 0 {
+            let count = failures == 1 ? "1 photo" : "\(failures) photos"
+            noteUploadProblem("\(count) didn't reach the tour page's gallery. Publish again to retry. "
+                              + Self.userMessage(for: lastProblem),
+                              listingLocalID: listingLocalID, error: lastProblem)
         }
     }
 
@@ -654,12 +754,22 @@ final class AppModel: ObservableObject {
             let serverID = try await ensureServerListing(listing)
 
             // 2. First-frame poster → og:image / video poster on the hosted page.
-            //    Best effort: publishing still works without it.
+            //    Best effort: publishing still works without it — but a poster
+            //    that fails to upload is said on the listing once the publish
+            //    lands (step 5), not swallowed into a page with no preview.
             var posterAssetID: String? = nil
             var posterFile: URL? = nil
+            var posterProblem: String? = nil
             if let poster = await PosterMaker.makePoster(from: renderOutputURL, listingID: id) {
                 posterFile = poster
-                posterAssetID = try? await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+                do {
+                    posterAssetID = try await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+                } catch is CancellationError {
+                    // Same as before: a cancelled poster is skipped, not reported.
+                } catch {
+                    posterProblem = "The tour's preview image didn't upload, so link previews show no picture. "
+                        + "Publish again to add it. \(Self.userMessage(for: error))"
+                }
             }
 
             // 3. Upload the rendered mp4 to the PUBLIC renders bucket (or reuse).
@@ -697,7 +807,9 @@ final class AppModel: ObservableObject {
                     l.unbrandedShareURL = unbranded
                 }
                 if let rid = published.renderID { l.publishedRenderID = rid }
-                l.lastError = nil
+                // The publish succeeded; the only thing left to say is a
+                // poster that didn't make it (nil when it did).
+                l.lastError = posterProblem
                 l.status = .ready
                 listings[i] = l   // persists via didSet
             }
@@ -2064,6 +2176,10 @@ struct RendpropApp: App {
             // session already exists — including a real Apple one.
             .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
             .task { SpatialUploadCoordinator.shared.reconnect() }
+            // Whether Home may offer the 3D walkthrough at all: one server flag
+            // for everyone, asked once per foreground (and again below when a
+            // session lands). Unknown means hidden.
+            .task { model.refreshSpatialCapability() }
             // A previous launch's Apple authorizationCode submission may have
             // been interrupted (killed mid-flight, offline, timeout) — give it
             // exactly one more try now that the app is back up (audit finding
@@ -2075,7 +2191,10 @@ struct RendpropApp: App {
                 Analytics.sceneChanged(phase)
                 // A launch with no network leaves the device sessionless.
                 // Retry on the way back rather than stranding it.
-                if phase == .active { AuthStore.shared.signInAnonymouslyIfNeeded() }
+                if phase == .active {
+                    AuthStore.shared.signInAnonymouslyIfNeeded()
+                    model.refreshSpatialCapability()
+                }
             }
             // Universal Links. `onContinueUserActivity` is the https path (a
             // tap in Messages, Mail, Safari); `onOpenURL` catches the
@@ -2095,7 +2214,12 @@ struct RendpropApp: App {
                 TourViewerView(link: link)
                     .environmentObject(model)
             }
-            .onChange(of: analyticsAuth.isSignedIn) { signedIn in Analytics.authChanged(signedIn) }
+            .onChange(of: analyticsAuth.isSignedIn) { signedIn in
+                Analytics.authChanged(signedIn)
+                // The very first launch has no session when the scene appears;
+                // ask again once one exists so the answer is not "unknown" all day.
+                if signedIn { model.refreshSpatialCapability() }
+            }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.
             .onAppear { PaywallEvents.sink = Analytics.externalSink }
@@ -2491,7 +2615,14 @@ struct HomeDashboardView: View {
             case .floorPlan:
                 FloorPlanView(listing: route.listing)
             case .spatial:
-                SpatialTourView(listing: route.listing)
+                // Same gate as the tile: the product only opens while the
+                // server says its pipeline is on. A route that arrives anyway
+                // (a coach action, a stale push) lands on the home itself.
+                if model.isSpatialWalkthroughAvailable {
+                    SpatialTourView(listing: route.listing)
+                } else {
+                    FlythroughDetailView(listing: route.listing)
+                }
             case .tour:
                 tourDestination(route.listing)
             case .aerial:
@@ -2658,7 +2789,13 @@ struct HomeDashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                             GridItem(.flexible(), spacing: 12)], spacing: 12) {
             featureButton(.tour)
-            featureButton(.spatial)
+            // Only while the server says the 3D pipeline is on — for everyone,
+            // the same flag. Until a fetch has said so (offline, unknown, or
+            // switched off) there is no tile: a tile that scans a room, uploads
+            // every frame and then fails at /start is a dead feature on Home.
+            if model.isSpatialWalkthroughAvailable {
+                featureButton(.spatial)
+            }
             featureButton(.photos)
             featureButton(.photoStudio)
             featureButton(.reel)
@@ -3392,7 +3529,9 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var systemImage: String {
         switch self {
         case .tour:      return "video.fill"
-        case .spatial:   return "view.3d"
+        // Not `view.3d`: that glyph IS the letters "3D", so stacked over the
+        // title the tile read "3D 3D walkthrough" on iOS 26.
+        case .spatial:   return "rotate.3d"
         case .photos:    return "photo.stack"
         case .photoStudio: return "wand.and.stars"
         case .reel:      return "film.stack"

@@ -69,4 +69,37 @@ final class SpatialProductIntegrationTests: XCTestCase {
         app.navigationBars["3D walkthrough"].buttons.firstMatch.tap()
         XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 5), "Product must have a working Home exit")
     }
+
+    /// The server switch is the only thing that puts the 3D tile on Home. When
+    /// it says the pipeline is off, Home renders without the tile and nothing
+    /// else changes — a reviewer never meets a feature that cannot finish.
+    func testHomeCardIsHiddenWhenTheServiceIsOff() throws {
+        continueAfterFailure = false
+        #if !targetEnvironment(simulator)
+        throw NSError(domain: "SpatialProductTests", code: 1,
+                      userInfo: [NSLocalizedDescriptionKey: "Use a synthetic simulator for the non-camera product walk"])
+        #endif
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiTesting", "-hasOnboarded", "YES", "-appearance", "light",
+                               "-space.type", "real_estate", "-ui.spatial", "disabled"]
+        app.launch()
+        let home = app.tabBars.buttons["Home"]
+        XCTAssertTrue(home.waitForExistence(timeout: 15))
+        home.tap()
+        // The tour tile proves Home itself rendered; the 3D tile must not.
+        let tourCard = app.buttons["home.feature.tour"]
+        for _ in 0..<8 {
+            if tourCard.exists { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(tourCard.exists, "Home must still render its other feature tiles")
+        let spatialCard = app.buttons["home.feature.spatial"]
+        for _ in 0..<8 {
+            if spatialCard.exists { break }
+            app.swipeUp()
+        }
+        XCTAssertFalse(spatialCard.exists, "The 3D tile must not appear while the server says the pipeline is off")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "spatial-home-card-hidden"; shot.lifetime = .keepAlways; add(shot)
+    }
 }

@@ -1,5 +1,6 @@
 """Ephemeral Modal implementation of the cloud worker's provider boundary."""
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_CEILING
 import json
 import math
 import os
@@ -7,7 +8,43 @@ from pathlib import Path
 import sys
 
 from worker import JobFailure, MAX_OUTPUT_BYTES, TRAINING_ROOT, require
-from provider_journal import ProviderJournal
+from provider_journal import ProviderJournal, sandbox_name
+
+# Published Modal Sandbox rates (September 10, 2026), USD per second. These are
+# the same figures `policy()` in tools/spatial-spike/training/modal_room.py
+# multiplies out for the approved experiment; they are copied rather than
+# imported so this module's pricing never depends on the experiment CLI, and
+# test_modal_provider cross-checks the two so they cannot drift apart silently.
+# CPU/RAM are Sandbox rates, NOT the cheaper Function rates. The region factor
+# is the broad "us" multiplier. This is a full-lifetime ceiling, not an invoice.
+GPU_USD_PER_SECOND = {"L4": Decimal("0.000222")}
+CPU_USD_PER_CORE_SECOND = Decimal("0.00003942")
+MEMORY_USD_PER_GIB_SECOND = Decimal("0.00000667")
+REGION_MULTIPLIER = {"us": Decimal("1.15")}
+
+
+def compute_bound_cents(options):
+    """Whole cents (rounded up) that one CREATE request can bill over its full TTL.
+
+    Reads exactly the arguments about to be sent to `Sandbox.create`, so the
+    figure covers what the provider will actually run, not a hoped-for shape.
+    Anything this table cannot price is refused rather than assumed free.
+    """
+    gpu, region, timeout = options.get("gpu"), options.get("region"), options.get("timeout")
+    cpu, memory = options.get("cpu"), options.get("memory")
+    require(gpu in GPU_USD_PER_SECOND and region in REGION_MULTIPLIER, "unpriced_provider_resources")
+    require(type(timeout) is int and 0 < timeout <= 7200, "invalid_provider_ttl")
+    # Request and limit must agree: Modal bills the reservation, and a limit
+    # above the request would make the ceiling below depend on scheduling luck.
+    require(isinstance(cpu, tuple) and len(cpu) == 2 and cpu[0] == cpu[1]
+            and type(cpu[1]) in (int, float) and math.isfinite(cpu[1]) and 0 < cpu[1] <= 64,
+            "unpriced_provider_resources")
+    require(isinstance(memory, tuple) and len(memory) == 2 and memory[0] == memory[1]
+            and type(memory[1]) is int and 0 < memory[1] <= 262144, "unpriced_provider_resources")
+    per_second = (GPU_USD_PER_SECOND[gpu] + Decimal(str(cpu[1])) * CPU_USD_PER_CORE_SECOND
+                  + Decimal(memory[1]) / 1024 * MEMORY_USD_PER_GIB_SECOND)
+    usd = per_second * timeout * REGION_MULTIPLIER[region]
+    return int((usd * 100).to_integral_value(rounding=ROUND_CEILING))
 
 
 def navigation_manifest(capture, room_label):
@@ -44,7 +81,7 @@ class ModalProvider:
         import modal_room as experiment
         manifest = navigation_manifest(capture, job["room_label"])
         dataset_files = experiment.inventory(root / "dataset")
-        receipt = {"job_id": job["id"], "sandbox_name": "spatial-" + job["id"] + "-" + job["lease_token"],
+        receipt = {"job_id": job["id"], "sandbox_name": sandbox_name(job),
                    "run_id": job["lease_token"], "stages": {}, "artifacts": [], "cleanup_complete": False}
         receipt_path = root / "provider-receipt.json"
         save = lambda: experiment.save(receipt_path, receipt)
@@ -61,6 +98,13 @@ class ModalProvider:
             options = experiment.create_options(self.modal, self.app, receipt)
             options["timeout"] = min(7200, int(remaining) - 120)
             options["tags"] = {"product": "rendprop-spatial", "job": job["id"]}
+            # The DB reserved max_cost_cents for this attempt. Prove, from the
+            # exact CREATE arguments, that the provider's full TTL fits inside
+            # it BEFORE intent is journaled: a request that cannot be afforded
+            # is never planned, never created, and leaves no ambiguous receipt.
+            receipt["compute_bound_cents"] = compute_bound_cents(options)
+            require(receipt["compute_bound_cents"] <= job["max_cost_cents"], "provider_cost_bound_exceeded")
+            save()
             journal.plan(self.app.name, receipt["sandbox_name"])
             planned = True
             lease.check()

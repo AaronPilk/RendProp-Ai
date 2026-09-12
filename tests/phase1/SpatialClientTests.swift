@@ -220,6 +220,135 @@ import Foundation
             } catch { denied = true }
             try check(denied, "Malformed or different completed renewal never attaches another asset")
         }
+
+        // Capability: the pinned two-field contract, decoded exactly, with the
+        // reason mapped to a sentence the screen can show.
+        let capabilityOff = try JSONDecoder().decode(SpatialCapability.self, from: #"{"enabled":false,"reason":"not_configured"}"#.data(using: .utf8)!)
+        try check(!capabilityOff.enabled && capabilityOff.reason == "not_configured", "Capability decodes the pinned wire fields")
+        try check(capabilityOff.explanation.contains("isn't switched on") && !capabilityOff.explanation.contains("not_configured"), "Known reason slug maps to a sentence, not the slug")
+        try check(capabilityOff == SpatialCapability(enabled: false, reason: "not_configured"), "Capability is value-comparable")
+        try check(SpatialCapability(enabled: false, reason: "mock").explanation.contains("offline preview"), "The mock's reason reads as the offline preview")
+        try check(SpatialCapability(enabled: false, reason: "provider_paused").explanation == "Provider paused.", "Unknown slugs are humanised, never shown raw")
+        try check(SpatialCapability(enabled: false, reason: "Turned off for the weekend").explanation == "Turned off for the weekend.", "A server sentence is shown as written")
+        let capabilityOn = try JSONDecoder().decode(SpatialCapability.self, from: #"{"enabled":true,"reason":""}"#.data(using: .utf8)!)
+        try check(capabilityOn.enabled && capabilityOn.explanation == "3D rooms are available.", "Enabled capability decodes with an empty reason")
+        try rejects("A capability without the enabled field must fail") {
+            _ = try JSONDecoder().decode(SpatialCapability.self, from: #"{"reason":"x"}"#.data(using: .utf8)!)
+        }
+
+        // Spatial's Wi-Fi switch is its own key with its own default; it no
+        // longer shares Settings' "Ask before uploading on cellular" key.
+        try check(SpatialUploadPreferences.wifiOnlyKey == "spatialWifiOnlyUploads" && SpatialUploadPreferences.wifiOnlyKey != "wifiOnlyUploads",
+                  "Spatial persists its Wi-Fi-only choice under its own key")
+        try check(SpatialUploadPreferences.wifiOnlyDefault && SpatialUploadPreferences.wifiOnly(stored: nil), "Wi-Fi-only defaults to on when the key was never written")
+        try check(!SpatialUploadPreferences.wifiOnly(stored: false) && SpatialUploadPreferences.wifiOnly(stored: true), "An explicit choice is honoured")
+        try check(!SpatialUploadPreferences.wifiOnly(stored: NSNumber(value: false)), "A plist-typed value reads the same way")
+        try check(SpatialUploadPreferences.wifiOnly(stored: "garbage"), "An unreadable value falls back to the safe default, never to cellular")
+
+        // Pruning: the retention rule the coordinator applies at enqueue, on
+        // reconnect and after each job refresh. Photos are released only for a
+        // room the server has fully taken; never on the way in.
+        let pendingRoom = try makeRecord().validated()
+        try check(pendingRoom.retention(captureExists: true, server: .unknown) == .keep, "A live room with its capture is kept")
+        try check(pendingRoom.retention(captureExists: false, server: .unknown) == .forget, "A room whose capture vanished has nothing left to upload")
+        var createdRoom = pendingRoom; createdRoom.jobID = id
+        try check(createdRoom.retention(captureExists: true, server: .missing) == .forget, "A job the server no longer lists is dropped")
+        try check(pendingRoom.retention(captureExists: true, server: .missing) == .keep, "A room without a job yet is not judged by the server list")
+        let uploadingJob = try decode(payload(status: "uploading", progress: 0))
+        let queuedJob = try decode(payload(status: "queued", progress: 0.25))
+        let readyJob = try decode(payload(status: "ready", privacy: "approved", share: "https://tour.example.invalid/shared"))
+        try check(createdRoom.retention(captureExists: true, server: .job(uploadingJob)) == .keep, "An uploading job keeps its record")
+        try check(createdRoom.retention(captureExists: true, server: .job(queuedJob)) == .forget, "A queued job with unconfirmed frames is dropped without touching files")
+        var takenRoom = createdRoom
+        for index in takenRoom.frames.indices { takenRoom.frames[index].ticketID = id.uuidString; takenRoom.frames[index].phase = .attached }
+        try check(takenRoom.isFullyConfirmed && !createdRoom.isFullyConfirmed, "Full confirmation means every frame attached")
+        try check(takenRoom.retention(captureExists: true, server: .job(queuedJob)) == .cleanUpAndForget, "A queued job with every frame confirmed releases the local photos")
+        try check(takenRoom.retention(captureExists: true, server: .job(readyJob)) == .cleanUpAndForget, "A ready room releases the local photos")
+        var startedRoom = takenRoom; startedRoom.queued = true
+        try check(startedRoom.retention(captureExists: true, server: .unknown) == .cleanUpAndForget, "The local /start receipt alone is enough to release photos")
+        var cancelledPayload = payload(status: "failed"); cancelledPayload["can_resume"] = true; cancelledPayload["failure_code"] = "user_cancelled"
+        let cancelledJob = try decode(cancelledPayload)
+        try check(takenRoom.retention(captureExists: true, server: .job(cancelledJob)) == .keep, "A resumable cancelled room keeps its record and photos")
+        var retryPayload = payload(status: "failed"); retryPayload["can_retry"] = true
+        let retryableJob = try decode(retryPayload)
+        try check(takenRoom.retention(captureExists: true, server: .job(retryableJob)) == .cleanUpAndForget, "A retryable failure reuses the server's inputs; local photos go")
+        let deadJob = try decode(payload(status: "failed"))
+        try check(createdRoom.retention(captureExists: true, server: .job(deadJob)) == .forget, "A terminal failure with unconfirmed frames is dropped, files untouched")
+        try check(SpatialUploadRecord.liveRoomLimit == 32, "The cap is a live-room cap")
+
+        // Expired tickets: a dead reservation reports `.expired` instead of
+        // throwing into a Resume loop, and the frame buys a fresh ticket under
+        // a NEW idempotency key a bounded number of times.
+        renewCount = 0
+        let deadReservation = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
+            probe: { .needsReconciliation }, renew: { _ in
+                renewCount += 1
+                throw APIError.server(status: 409, code: "conflict", message: "upload is terminal or expired")
+            })
+        if case .expired = deadReservation { try check(renewCount == 1, "Expiry is learned from one renewal") }
+        else { throw Failure(detail: "A dead reservation must report expiry, not loop") }
+        let abortedAtProbe = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
+            probe: { throw APIError.server(status: 409, code: "conflict", message: "This upload was aborted — create a new ticket") },
+            renew: { originalID in renewCount += 1; return ticket(originalID) })
+        if case .expired = abortedAtProbe { try check(renewCount == 1, "An aborted asset is not renewed") }
+        else { throw Failure(detail: "An aborted reservation must report expiry") }
+        denied = false
+        do {
+            _ = try await SpatialUploadRecovery.reconcile(ticketID: id.uuidString,
+                probe: { .needsReconciliation }, renew: { _ in
+                    throw APIError.server(status: 409, code: "conflict", message: "Completion must match the server-confirmed part receipts")
+                })
+        } catch { denied = true }
+        try check(denied, "An unrelated conflict still fails closed")
+        try check(!SpatialUploadRecovery.isTerminalReservation(APIError.server(status: 503, code: "upstream", message: "upload is terminal or expired")),
+                  "Only a 409 carries the terminal verdict")
+        var deadFrame = makeRecord()
+        deadFrame.frames[0].ticketID = id.uuidString; deadFrame.frames[0].phase = .uploaded; deadFrame.frames[0].reconciliations = 2
+        try check(deadFrame.ticketKey(index: 0) == "spatial:\(id.uuidString):0", "The first ticket keeps the historical replay key")
+        try check(deadFrame.reissueTicket(index: 0), "A dead reservation can be reissued")
+        try check(deadFrame.frames[0].ticketID == nil && deadFrame.frames[0].putURL == nil && deadFrame.frames[0].taskID == nil
+                  && deadFrame.frames[0].phase == .pending && deadFrame.frames[0].reconciliations == 0 && deadFrame.frames[0].reissueCount == 1,
+                  "Reissue forgets the dead ticket so the next pump requests a fresh one")
+        try check(deadFrame.ticketKey(index: 0) == "spatial:\(id.uuidString):0:r1", "A reissued frame buys under a new idempotency key")
+        try check(deadFrame.ticketKey(index: 1) == "spatial:\(id.uuidString):1", "Other frames keep their keys")
+        let reissued = try JSONDecoder().decode(SpatialUploadRecord.self, from: JSONEncoder().encode(deadFrame)).validated()
+        try check(reissued.frames[0].reissueCount == 1 && reissued.ticketKey(index: 0).hasSuffix(":r1"), "The reissue count survives relaunch")
+        for _ in 1..<SpatialUploadRecord.maximumReissues { deadFrame.reissueTicket(index: 0) }
+        try check(!deadFrame.reissueTicket(index: 0) && deadFrame.frames[0].reissueCount == SpatialUploadRecord.maximumReissues, "Reissues are bounded")
+        _ = try deadFrame.validated()
+        var overflow = deadFrame; overflow.frames[0].reissues = SpatialUploadRecord.maximumReissues + 1
+        try rejects("An impossible reissue count is an unreadable journal") { _ = try overflow.validated() }
+        var attachedFrame = makeRecord(); attachedFrame.frames[0].ticketID = id.uuidString; attachedFrame.frames[0].phase = .attached
+        try check(!attachedFrame.reissueTicket(index: 0) && attachedFrame.frames[0].phase == .attached, "An attached frame is never reissued")
+
+        // Stale PUT capability: a ticketed frame renews before any transfer
+        // once its `expires` claim is inside the margin; dispatched frames
+        // reconcile through /complete instead.
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let signature = String(repeating: "a", count: 64)
+        let freshURL = URL(string: "https://upload.example.invalid/v2/11111111-1111-4111-8111-111111111111?expires=1800003600&signature=" + signature)!
+        let spentURL = URL(string: "https://upload.example.invalid/v2/11111111-1111-4111-8111-111111111111?expires=1800000100&signature=" + signature)!
+        try check(SpatialUploadRecovery.capabilityIsUsable(freshURL, at: now), "A capability with an hour left is used as-is")
+        try check(!SpatialUploadRecovery.capabilityIsUsable(spentURL, at: now), "A capability inside the renewal margin renews first")
+        try check(!SpatialUploadRecovery.capabilityIsUsable(nil, at: now), "No capability, no transfer")
+        try check(!SpatialUploadRecovery.capabilityIsUsable(URL(string: "https://upload.example.invalid/v2/11111111-1111-4111-8111-111111111111?signature=" + signature)!, at: now),
+                  "A capability without an expiry is not trusted")
+        try check(SpatialUploadRecovery.capabilityExpiry(freshURL) == Date(timeIntervalSince1970: 1_800_003_600), "Expiry is read from the signed claim")
+        var staleFrame = makeRecord()
+        staleFrame.frames[0].ticketID = id.uuidString; staleFrame.frames[0].phase = .ticketed; staleFrame.frames[0].putURL = spentURL
+        try check(staleFrame.needsRenewal(index: 0, at: now), "A ticketed frame with a spent capability renews before any PUT")
+        staleFrame.frames[0].putURL = freshURL
+        try check(!staleFrame.needsRenewal(index: 0, at: now), "A fresh capability is not renewed")
+        staleFrame.frames[0].phase = .sending
+        try check(!staleFrame.needsRenewal(index: 0, at: now), "Renewal-by-age applies to undispatched tickets only")
+
+        // Honest states survive relaunch and older journals decode without them.
+        var unavailable = makeRecord(); unavailable.serviceUnavailable = true; unavailable.failure = "3D rooms aren't available yet"
+        let unavailableReplay = try JSONDecoder().decode(SpatialUploadRecord.self, from: JSONEncoder().encode(unavailable)).validated()
+        try check(unavailableReplay.isServiceUnavailable && !unavailableReplay.isTerminalFailure, "Not-configured state is remembered and is not a dead record")
+        var dead = makeRecord(); dead.terminal = true; dead.failure = "This room capture could not be verified."
+        try check(dead.isTerminalFailure, "A terminal failure is recognised")
+        try check(!oldRecord.isServiceUnavailable && !oldRecord.isTerminalFailure && oldRecord.frames[0].reissueCount == 0, "Journals without the new fields read as ordinary live records")
         print("PASS SpatialClientTests \(count) assertions")
     }
 }

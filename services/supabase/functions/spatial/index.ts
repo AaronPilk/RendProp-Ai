@@ -14,6 +14,8 @@ import {
   getBearer,
   getUser,
   isServiceRole,
+  orgForUser,
+  preferredOrg,
 } from "../_shared/supabase.ts";
 import {
   bytesLimited,
@@ -36,7 +38,14 @@ import { getOutput, readURL, storedOutput, storeOutput } from "./storage.ts";
 // service client proves PostgreSQL locks or actual R2 writes.
 export interface Dependencies {
   admin: ReturnType<typeof adminClient>;
-  user: (req: Request) => Promise<{ id: string }>;
+  // `is_anonymous` comes straight from GoTrue. An anonymous session is a
+  // session, not a person (team/index.ts says the same), and every one of them
+  // owns a workspace with its own monthly window, so the spending routes below
+  // refuse it while every read stays open.
+  user: (req: Request) => Promise<{ id: string; is_anonymous?: boolean }>;
+  // The workspace the caller acts in (active org, or X-Org-Id when they are a
+  // member of it) — only the capability read needs it.
+  org: (req: Request, userId: string) => Promise<string>;
   service: (req: Request) => boolean;
   sign: typeof signCapability;
   verify: typeof verifyCapability;
@@ -61,6 +70,7 @@ function defaults(): Dependencies {
   return {
     admin: adminClient(),
     user: getUser,
+    org: (req, userId) => orgForUser(userId, preferredOrg(req)),
     service: isServiceRole,
     sign: signCapability,
     verify: verifyCapability,
@@ -77,16 +87,99 @@ function defaults(): Dependencies {
       `${origin(Deno.env.get("SUPABASE_URL"), "3D service")}/functions/v1`,
   };
 }
+// Every database failure that is not a deliberate RPnnn refusal is a 503 with
+// our own copy, never a 400 carrying PostgREST's text. A missing RPC gets its
+// own message: the migration set can be deployed in steps (0041's provider
+// journal lands before the runtime is enabled), and a partial deploy must fail
+// closed and say so, not look like the worker sent a bad request.
+function missingRpc(error: { code?: string; message?: string }): boolean {
+  return error.code === "PGRST202" || error.code === "42883" ||
+    /could not find the function|function .* does not exist/i.test(
+      error.message ?? "",
+    );
+}
 async function rpc(d: Dependencies, name: string, args: Row): Promise<unknown> {
   const { data, error } = await d.admin.rpc(name, args);
   if (error) {
-    const match = /RP(400|403|404|409|429|503):\s*(.*)/.exec(error.message);
-    throw new HttpError(
-      match ? Number(match[1]) : 503,
-      match ? match[2] : "3D state could not be confirmed — retry",
-    );
+    const match = /RP(4\d\d|5\d\d):\s*([\s\S]*)/.exec(error.message ?? "");
+    if (match) throw new HttpError(Number(match[1]), match[2].trim());
+    if (missingRpc(error)) {
+      throw new HttpError(
+        503,
+        name === "spatial_provider_attempt_update"
+          ? "Provider journal not available — the 3D service is only partly deployed"
+          : "3D service is only partly deployed — retry later",
+      );
+    }
+    throw new HttpError(503, "3D state could not be confirmed — retry");
   }
   return data;
+}
+// A person, not a phone: the routes that create a room or can end up buying
+// GPU time refuse anonymous sessions the way team seats do. `reason` is the
+// stable key the app branches on; `code` stays inside the shared set.
+function identified(user: { id: string; is_anonymous?: boolean }): void {
+  if (user.is_anonymous === true) {
+    throw new HttpError(
+      403,
+      "Sign in to build 3D rooms — a 3D room belongs to an account, not to one phone.",
+      "forbidden",
+      { reason: "sign_in_required" },
+    );
+  }
+}
+const SPENDING_ACTIONS = new Set(["inputs", "start", "retry", "resume"]);
+// Budget windows are keyed the way spatial_start keys them: the UTC day for the
+// global window and the first of the UTC month for the workspace window.
+function budgetWindows(now = new Date()): { day: string; month: string } {
+  const day = now.toISOString().slice(0, 10);
+  return { day, month: `${day.slice(0, 7)}-01` };
+}
+// Read-only mirror of spatial_start's admission checks, so the app can hide
+// the capture entry point instead of discovering RP503/RP429 after a capture.
+// No RPC, no lock, at most two selects. Describes the runtime and the
+// budgets only: an anonymous session gets the same answer and is still
+// refused by the spending routes.
+async function capability(
+  d: Dependencies,
+  req: Request,
+  actor: string,
+): Promise<Row> {
+  const runtime = await d.admin.from("spatial_runtime").select(
+    "enabled,daily_budget_cents,org_monthly_budget_cents,job_cap_cents",
+  ).eq("singleton", true).maybeSingle();
+  assert(
+    !runtime.error && runtime.data,
+    503,
+    "3D capability could not be read",
+  );
+  const c = object(runtime.data),
+    daily = Number(c.daily_budget_cents),
+    monthly = Number(c.org_monthly_budget_cents),
+    cap = Number(c.job_cap_cents);
+  if (c.enabled !== true || !(daily > 0) || !(monthly > 0)) {
+    return { enabled: false, reason: "runtime_disabled" };
+  }
+  const org = await d.org(req, actor),
+    scope = `org:${org}`,
+    { day, month } = budgetWindows();
+  const { data, error } = await d.admin.from("spatial_budget_windows").select(
+    "scope,window_start,committed_cents",
+  ).in("scope", ["global", scope]).in("window_start", [day, month]);
+  assert(!error && Array.isArray(data), 503, "3D capability could not be read");
+  const committed = (s: string, start: string) =>
+    Number(
+      data.map(object).find((w) =>
+        w.scope === s && String(w.window_start) === start
+      )?.committed_cents ?? 0,
+    );
+  if (committed("global", day) + cap > daily) {
+    return { enabled: false, reason: "daily_budget_exhausted" };
+  }
+  if (committed(scope, month) + cap > monthly) {
+    return { enabled: false, reason: "org_budget_exhausted" };
+  }
+  return { enabled: true, reason: "ok" };
 }
 async function job(d: Dependencies, id: string): Promise<Row> {
   const { data, error } = await d.admin.from("spatial_jobs").select("*").eq(
@@ -417,7 +510,13 @@ export async function handler(
         deadline_at: j.deadline_at,
       });
     }
-    const actor = uuid((await d.user(req)).id);
+    const user = await d.user(req), actor = uuid(user.id);
+    if (parts.length === 1 && parts[0] === "capability") {
+      assert(method === "GET", 405, "Use GET");
+      return json(await capability(d, req, actor), 200, {
+        "cache-control": "no-store",
+      });
+    }
     if (parts.length === 0 && method === "GET") {
       const listing = uuid(url.searchParams.get("listing_id"));
       await rpc(d, "spatial_access", {
@@ -436,6 +535,7 @@ export async function handler(
       });
     }
     if (parts.length === 0 && method === "POST") {
+      identified(user);
       const body = object(await readJsonLimited(req, 128 * 1024)),
         capture = uuid(body.capture_id);
       const label = roomLabel(body.room_label);
@@ -456,7 +556,12 @@ export async function handler(
       404,
       "Spatial route not found",
     );
-    const id = uuid(parts[0]), j = await job(d, id);
+    const id = uuid(parts[0]);
+    // Refuse before the job is even read: nothing below should run, lock or
+    // spend for a session that cannot own the result. Cancel stays open so an
+    // anonymous session can still hand back anything it already holds.
+    if (method === "POST" && SPENDING_ACTIONS.has(parts[1])) identified(user);
+    const j = await job(d, id);
     await access(d, actor, j, method !== "GET");
     if (parts.length === 1 && method === "GET") {
       if (j.status === "processing") {

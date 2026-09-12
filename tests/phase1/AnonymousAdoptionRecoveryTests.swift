@@ -20,6 +20,7 @@ struct AnonymousAdoptionRecoveryTests {
         var raw: String?; var failRead = false; var failWrite = false; var failRemove = false
         var writes = 0; var removals = 0; var messages: [String?] = []
         var failPrepareLocal = false; var failFinishLocal = false; var finishes = 0
+        var discards: [UUID?] = []
     }
     static func make(_ store: Store, send: @escaping AnonymousAdoptionRecovery.Transport) -> AnonymousAdoptionRecovery {
         AnonymousAdoptionRecovery(apiBase: URL(string: "https://fixture.invalid/functions/v1")!,
@@ -29,7 +30,8 @@ struct AnonymousAdoptionRecoveryTests {
             remove: { store.removals += 1; if store.failRemove { return false }; store.raw = nil; return true },
             send: send, changed: { store.messages.append($0) },
             prepareLocal: { _ in !store.failPrepareLocal },
-            finishLocal: { _, _ in store.finishes += 1; return !store.failFinishLocal })
+            finishLocal: { _, _ in store.finishes += 1; return !store.failFinishLocal },
+            discardLocal: { store.discards.append($0) })
     }
     static func prepared(_ value: AnonymousAdoptionRecovery, expired: Bool = false) throws {
         try value.prepare(sourceAccess: token(source, anonymous: true, expired: expired), sourceRefresh: "synthetic-source-refresh",
@@ -181,5 +183,56 @@ struct AnonymousAdoptionRecoveryTests {
         try prepared(reentrant)
         await reentrant.retry(destinationAccess: token(destination, anonymous: false), isCurrent: { true })
         check(reentrantCalls == 1 && reentrantStore.raw == nil, "reentrant client shares one attempt")
+
+        // Sign-out (explicit or forced), "Clear local data" and "Delete account"
+        // discard the saved handoff. The next activation mints a NEW anonymous
+        // user, so the record's source could never match again; left behind it
+        // made every later sign-in to the same Apple ID a conflict, for good.
+        let signedOut = Store()
+        let ending = make(signedOut, send: noNetwork)
+        try prepared(ending)
+        let endingOp = try ending.pending()!.operationID
+        check(ending.discard() && signedOut.raw == nil && signedOut.removals == 1,
+              "sign-out discards the saved handoff and the source tokens inside it")
+        check(signedOut.discards == [endingOp] && signedOut.messages.count == 2 && signedOut.messages[1] == nil,
+              "discard releases the local bindings for that exact operation and clears the status")
+        check(try ending.pending() == nil, "nothing is pending after discard")
+        try ending.prepare(sourceAccess: token(other, anonymous: true), sourceRefresh: "fresh-anonymous-refresh",
+                           destinationAccess: token(destination, anonymous: false))
+        check(try ending.pending()?.sourceUserID == other && ending.pending()?.operationID != endingOp,
+              "the fresh anonymous user minted after sign-out hands off to the same Apple ID as a new operation")
+
+        // The deadlock itself: a record left behind for a source this phone no
+        // longer holds. `prepare` still refuses to evict it on its own; the
+        // sign-in path discards it and completes with the current source.
+        let stale = Store()
+        let conflicted = make(stale, send: noNetwork)
+        try prepared(conflicted)
+        let staleOp = try conflicted.pending()!.operationID
+        rejects("stale handoff for a source this phone no longer holds conflicts") {
+            try conflicted.prepare(sourceAccess: token(other, anonymous: true), sourceRefresh: "new",
+                                   destinationAccess: token(destination, anonymous: false))
+        }
+        check(stale.raw != nil && stale.removals == 0 && stale.discards.isEmpty, "prepare itself never evicts the stale record")
+        check(conflicted.discard(), "the sign-in path drops the stale record")
+        try conflicted.prepare(sourceAccess: token(other, anonymous: true), sourceRefresh: "new",
+                               destinationAccess: token(destination, anonymous: false))
+        check(try conflicted.pending()?.sourceUserID == other && conflicted.pending()?.operationID != staleOp,
+              "conflict completes sign-in with a fresh handoff for the current anonymous source")
+        check(stale.discards == [staleOp] && stale.writes == 2 && stale.removals == 1, "exactly one discard, one new envelope")
+
+        let stuckKeychain = Store(); stuckKeychain.failRemove = true
+        let held = make(stuckKeychain, send: noNetwork)
+        try prepared(held)
+        check(!held.discard() && stuckKeychain.raw != nil && stuckKeychain.discards.isEmpty,
+              "a refused Keychain delete keeps the record and the local bindings, and says so")
+
+        let junk = Store(); junk.raw = "not-json"
+        let broken = make(junk, send: noNetwork)
+        rejects("malformed record refuses prepare") { try prepared(broken) }
+        check(broken.discard() && junk.raw == nil && junk.discards == [nil], "a malformed record is discarded without an operation id")
+        try prepared(broken)
+        check(try broken.pending() != nil, "sign-in proceeds once the broken record is gone")
+        check(make(Store(), send: noNetwork).discard(), "discarding nothing is a quiet success")
     }
 }

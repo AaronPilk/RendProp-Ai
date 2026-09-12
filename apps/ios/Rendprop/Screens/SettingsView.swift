@@ -182,6 +182,16 @@ struct SettingsView: View {
                     } else if s.status == .paused || s.status == .failed {
                         Button("Resume upload") { uploads.resume() }
                     }
+                    // The engine ran its own bounded recovery on this upload
+                    // ticket dry. Resume stays (the server may have re-planned
+                    // the transfer by now); Start over is the guaranteed way
+                    // out — the same video again under a fresh ticket.
+                    if s.canStartOver {
+                        Button("Start over") { uploads.startOver() }
+                            .accessibilityIdentifier("settings.upload.startOver")
+                        Text("Recovery on this upload's ticket ran out. Resume checks the same ticket once more; Start over sends the video again under a new upload ticket. Your original stays on this phone either way.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
                     if s.status == .paused {
                         Text("Transfers already in progress can finish. No new parts start until you resume.")
                             .font(.rpCaption).foregroundStyle(Theme.inkDim)
@@ -460,7 +470,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your \(localItemNoun)s, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again.")
+            Text(signOutMessage)
         }
         .alert("Upload in progress", isPresented: $showIntroConfirm) {
             Button("Watch anyway", role: .destructive) { hasOnboarded = false }
@@ -514,6 +524,16 @@ struct SettingsView: View {
     }
 
     // MARK: - Small labels
+
+    /// Sign-out now also drops a workspace transfer that is still waiting
+    /// (AuthStore.signOut), so the confirmation says so when there is one.
+    private var signOutMessage: String {
+        var text = "Your \(localItemNoun)s, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again."
+        if auth.adoptionRecoveryMessage != nil {
+            text += " The workspace transfer that is still waiting will be cancelled; those tours stay on this phone and can be published again."
+        }
+        return text
+    }
 
     private func uploadStatusLabel(_ status: UploadManager.Status) -> String {
         switch status {
@@ -848,6 +868,8 @@ struct SettingsView: View {
         }
 
         // 2. Local erasure: session, listings + videos + tours, profile cards.
+        //    signOut() also drops any saved workspace-transfer handoff (and the
+        //    anonymous refresh token inside it) — the account it was for is gone.
         if uploads.state != nil { uploads.cancel() }
         auth.signOut()
         wipeLocalData()
@@ -864,6 +886,11 @@ struct SettingsView: View {
         // published tours survive, and for an anonymous workspace the token is
         // the ONLY key to them. Delete account is the honest way to end one.
         if auth.isIdentified { auth.signOut() }
+        // A saved workspace-transfer handoff is data on this phone too, and it
+        // can only ever have belonged to an identified session that is now
+        // gone (or, from an older build, to an anonymous user this phone no
+        // longer holds). Left behind, it made every later Apple sign-in fail.
+        auth.discardPendingAdoption()
         wipeLocalData()
         Haptics.success()
         showDataCleared = true
@@ -904,7 +931,13 @@ struct SettingsView: View {
     /// WKWebsiteDataStore        cookies/localStorage from hosted tour pages     (step 4)
     /// UserDefaults              agent cards, brand bookkeeping, aerial job records,
     ///                           AI-processing consent (step 5)
-    /// Keychain                  auth tokens — cleared by AuthStore.signOut() before this runs;
+    /// Keychain                  auth tokens — cleared by AuthStore.signOut(), which Delete
+    ///                           account always runs first and Clear local data runs only for
+    ///                           an identified session (an anonymous session keeps its token:
+    ///                           it is the only key to that workspace's published tours);
+    ///                           the saved workspace-transfer handoff (+ the anonymous refresh
+    ///                           token inside it) — AuthStore.signOut() / discardPendingAdoption(),
+    ///                           both paths, before this runs;
     ///                           analytics device id — Analytics.resetDeviceIdentity() (step 6)
     /// UserDefaults              analytics device id fallback — same call, step 6
     /// ──────────────────────────────────────────────────────────────────────────────

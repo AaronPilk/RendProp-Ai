@@ -46,6 +46,10 @@ export class Fixture {
     transport_version: 2,
   };
   objects = new Map<string, ObjectBytes>([[`_staging/${TICKET}`, object()]]);
+  /** The default asset's open reservation: a single transfer holds 2N (ingress
+   * plus promotion copy). Claims move held → spent; a 0042 re-plan of a
+   * rejected transfer hands exactly its bytes back; settlement releases held. */
+  budget = { held: 8, spent: 0 };
   copies: string[] = [];
   copyHeaders: Headers[] = [];
   deletes: string[] = [];
@@ -100,9 +104,23 @@ export class Fixture {
       state: kind === "init" && a.upload_id ? "stored" : "planned",
       etag: kind === "init" ? "multipart-initialized" : null,
       claim: null,
+      attempt: 1,
+      write_deadline: null,
     };
     this.operations.set(id, op);
     return op;
+  }
+  /** A write window that has already closed (0042 finish sets it at the
+   * moment the gateway reports; a silent dispatch keeps claim + 15 minutes). */
+  static closedDeadline(minutesAgo = 1) {
+    return new Date(Date.now() - minutesAgo * 60000).toISOString();
+  }
+  static openDeadline(minutes = 15) {
+    return new Date(Date.now() + minutes * 60000).toISOString();
+  }
+  private deadlinePassed(op: Row) {
+    return typeof op.write_deadline === "string" &&
+      new Date(op.write_deadline).getTime() <= Date.now();
   }
   confirmed() {
     const a = this.asset!;
@@ -165,13 +183,41 @@ export class Fixture {
         transport_version: 2,
         ...assets[0],
       };
+      for (const a of assets) {
+        this.budget.held += Number(a.bytes) * (a.parts_total != null ? 1 : 2);
+      }
       return json(
         assets.map((a) => ({ ...this.asset, ...a, replayed: false })),
       );
     }
     if (name === "confirmed_upload_transfers") return json(this.confirmed());
     if (name === "plan_upload_operation") {
-      return json(this.operation(String(args.p_kind), Number(args.p_part)));
+      const planned = this.operation(String(args.p_kind), Number(args.p_part));
+      // 0042: a rejected single/part whose write window closed is re-issued in
+      // place; its rejected claim's bytes go back to the same reservation.
+      if (
+        planned.state === "rejected" &&
+        ["single", "part"].includes(String(planned.kind)) &&
+        planned.etag == null &&
+        (planned.write_deadline == null || this.deadlinePassed(planned))
+      ) {
+        if (Number(planned.attempt) >= 5) {
+          return json({ ...planned, attempts_exhausted: true });
+        }
+        if (planned.claim != null) {
+          this.budget.held += Number(planned.bytes);
+          this.budget.spent -= Number(planned.bytes);
+        }
+        // The old claim stays (cleanup reads it as "a write was authorized").
+        Object.assign(planned, {
+          state: "planned",
+          attempt: Number(planned.attempt) + 1,
+          etag: null,
+          write_deadline: null,
+          expires_at: new Date(Date.now() + 3600000).toISOString(),
+        });
+      }
+      return json(planned);
     }
     if (name === "claim_upload_operation") {
       if (!op) return reject(404, "operation missing");
@@ -182,8 +228,30 @@ export class Fixture {
       if (op.state !== "planned") {
         return reject(503, "dispatch already claimed");
       }
-      Object.assign(op, { state: "dispatching", claim: args.p_claim });
+      // Bookkeeping only; the real held-authority guard is the SQL's (tests
+      // resize assets in place, so the fixture never refuses on balance).
+      this.budget.held -= Number(op.bytes);
+      this.budget.spent += Number(op.bytes);
+      Object.assign(op, {
+        state: "dispatching",
+        claim: args.p_claim,
+        write_deadline: Fixture.openDeadline(),
+      });
       return json({ ...op, dispatch: true });
+    }
+    if (name === "recover_upload_operation" && args.p_etag == null) {
+      // 0042: the trusted server observed the registered key/part absent.
+      if (!op) return reject(404, "operation missing");
+      if (this.asset!.upload_aborted) return reject(409, "terminal recovery");
+      if (op.state === "stored") return reject(409, "recovery receipt changed");
+      if (!["single", "part"].includes(String(op.kind))) {
+        return reject(409, "no uncertain recorded dispatch to recover");
+      }
+      if (
+        ["dispatching", "uncertain"].includes(String(op.state)) &&
+        op.claim != null && this.deadlinePassed(op)
+      ) Object.assign(op, { state: "rejected", etag: null });
+      return json({ ...op });
     }
     if (
       name === "finish_upload_operation" || name === "recover_upload_operation"
@@ -201,6 +269,10 @@ export class Fixture {
         upload_id: args.p_upload_id ?? op.upload_id,
         content_type: args.p_content_type ?? op.content_type,
       });
+      // 0042: a failure verdict closes the write window when it is reported.
+      if (["uncertain", "rejected"].includes(String(args.p_result))) {
+        op.write_deadline = Fixture.closedDeadline(0);
+      }
       if (op.kind === "init") this.asset!.upload_id = op.upload_id;
       if (
         this.asset!.upload_aborted &&
@@ -249,6 +321,8 @@ export class Fixture {
           !["part", "assemble"].includes(String(item.kind))
         ) this.cleanup.add(String(item.id));
       }
+      // Settlement releases only what is still held; spent bytes stay spent.
+      this.budget.held = 0;
       if (complete && this.loseCommitResponse) {
         this.loseCommitResponse = false;
         return json({ message: "synthetic lost commit acknowledgement" }, 503);
@@ -286,6 +360,7 @@ export class Fixture {
     };
     this.objects.clear();
     this.assemblyBytes = bytes; // metadata-only 12 GiB fixture, not allocated
+    this.budget = { held: bytes, spent: 0 }; // multipart reserves N, not 2N
     this.operation("init").claim = "fixture-init-dispatched";
   }
   async request(action: string, body: Row = {}) {

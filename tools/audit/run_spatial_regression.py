@@ -15,8 +15,12 @@ import time
 
 def main():
     root=Path(__file__).resolve().parents[2]
-    bins=Path('/opt/homebrew/opt/postgresql@17/bin')
-    assert all((bins/n).is_file() for n in ('initdb','pg_ctl','psql','createdb'))
+    # Discover a single PostgreSQL bin dir from PATH (CI ubuntu, this Mac) with
+    # the Homebrew @17 location as the fallback the original runner hardcoded.
+    import shutil
+    found=shutil.which('initdb')
+    bins=Path(found).resolve().parent if found else Path('/opt/homebrew/opt/postgresql@17/bin')
+    assert all((bins/n).is_file() for n in ('initdb','pg_ctl','psql','createdb')),f'PostgreSQL binaries not found near {bins}'
     out=Path(tempfile.mkdtemp(prefix='rendprop-spatial-db-',dir='/tmp'))
     cluster=out/'cluster'; socket=out/'socket';socket.mkdir(mode=0o700)
     env={'PATH':'/usr/bin:/bin','LC_ALL':'C','TZ':'UTC'}
@@ -31,6 +35,15 @@ def main():
     connection=['-h',socket,'-p','55447','-U','postgres']
     psql=[bins/'psql','-X','--no-password',*connection,'-d','rendprop_spatial_audit','-v','ON_ERROR_STOP=1']
     target=root/'services/supabase/migrations/0040_spatial_jobs.sql'; test=root/'services/supabase/tests/spatial_jobs.sql'
+    # 0041 (provider journal) and 0043 (cancel refund / expiry / tolerant cancel
+    # access) replace 0040 functions with the same signatures; the suite asserts
+    # the 0043 shapes, so they are applied after 0040 and re-applied after every
+    # restore of 0040 (which would otherwise resurrect 0040's bodies).
+    followups=[root/'services/supabase/migrations/0041_spatial_provider_attempts.sql',
+               root/'services/supabase/migrations/0043_spatial_hardening.sql']
+    EXPECT='PASS: 114 spatial SQL assertions'
+    def apply_followups(tag):
+        for m in followups: run(f'{tag}-'+m.stem[:4],psql+['-q','-1','-f',m])
     started=False
     try:
         run('initdb',[bins/'initdb','-D',cluster,'-U','postgres','-A','trust','--no-locale','--encoding=UTF8'])
@@ -43,17 +56,18 @@ def main():
         for migration in sorted((root/'services/supabase/migrations').glob('*.sql')):
             if migration.name<'0040':run('apply-'+migration.stem,psql+['-q','-1','-f',migration])
         assert 'spatial assertion failed: durable spatial table exists' in run('before',psql+['-f',test],3)
-        run('apply-0040',psql+['-q','-1','-f',target])
+        run('apply-0040',psql+['-q','-1','-f',target]); apply_followups('apply')
         for phase in ('after','replayed'):
-            if phase=='replayed':run('replay-0040',psql+['-q','-1','-f',target])
-            output=run(phase,psql+['-f',test]);assert 'PASS: 69 spatial SQL assertions' in output
+            if phase=='replayed':run('replay-0040',psql+['-q','-1','-f',target]); apply_followups('replay')
+            output=run(phase,psql+['-f',test]);assert EXPECT in output, output[-600:]
         definition=run('publish-definition',psql+['-Atc',"select pg_get_functiondef('spatial_publish(uuid,uuid)'::regprocedure);"])
         needle="if j.status not in ('review','ready') or not j.approved or j.excluded or j.review_revision is distinct from j.artifact_revision"
         assert definition.count(needle)==1
         mutant=definition.replace(needle,"if false and (j.status not in ('review','ready') or not j.approved or j.excluded or j.review_revision is distinct from j.artifact_revision").replace("or j.redactions<>'[]'::jsonb then","or j.redactions<>'[]'::jsonb) then")
         run('mutate-publish',psql,input_text=mutant)
         assert 'wrong failure for publication without review rejected: fixture accepted forbidden operation' in run('reject-mutant',psql+['-f',test],3)
-        run('restore',psql+['-q','-1','-f',target]);assert 'PASS: 69 spatial SQL assertions' in run('restored',psql+['-f',test])
+        run('restore',psql+['-q','-1','-f',target]); apply_followups('restore')
+        assert EXPECT in run('restored',psql+['-f',test])
         # Two real sessions contend on the same ownership/budget locks. Observing
         # wait_event_type=Lock prevents a merely sequential run claiming a race.
         user='a0409000-0000-4000-8000-000000000001'

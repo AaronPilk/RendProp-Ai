@@ -139,6 +139,61 @@ struct SpatialCaptureHandoff: Identifiable {
     }
 }
 
+/// `GET /spatial/capability`. Asked before anyone is offered a scan button: a
+/// phone that scans, uploads every frame and then learns at `/start` that the
+/// service is switched off has wasted the owner's afternoon. `reason` is a
+/// short server slug; `explanation` turns it into a sentence for the screen.
+struct SpatialCapability: Codable, Sendable, Equatable {
+    let enabled: Bool
+    let reason: String
+
+    /// Plain copy for the disabled state. Known slugs get a real sentence; an
+    /// unknown slug is shown humanised rather than raw, and a reason the
+    /// server already wrote as a sentence is shown as-is.
+    var explanation: String {
+        let raw = reason.trimmingCharacters(in: .whitespacesAndNewlines)
+        switch raw.lowercased() {
+        case "", "enabled", "ok", "ready":
+            return enabled ? "3D rooms are available." : "The 3D service is switched off right now."
+        case "mock", "offline", "offline_preview", "no_live_service":
+            return "This offline preview has no cloud service, so no room can be generated."
+        case "not_configured", "unconfigured", "disabled", "runtime_disabled", "service_disabled":
+            return "The 3D service isn't switched on for this workspace yet."
+        case "budget", "no_budget", "budget_exhausted", "daily_budget_exhausted", "org_budget_exhausted",
+             "capacity", "capacity_reached", "quota", "quota_exceeded":
+            return "3D generation has reached its capacity for now. Try again later."
+        case "maintenance":
+            return "The 3D service is down for maintenance."
+        case "unsupported_plan", "plan_required":
+            return "3D rooms aren't included in this workspace's plan."
+        default:
+            // A sentence from the server is already readable; a slug is not.
+            if raw.contains(" ") { return raw.hasSuffix(".") ? raw : raw + "." }
+            let spaced = raw.replacingOccurrences(of: "_", with: " ").replacingOccurrences(of: "-", with: " ")
+            return spaced.prefix(1).uppercased() + spaced.dropFirst() + "."
+        }
+    }
+}
+
+/// The spatial screen's own Wi-Fi preference. It used to share `wifiOnlyUploads`
+/// with Settings, where the same key is labelled "Ask before uploading on
+/// cellular" — a prompt, not a hard block. Spatial hard-blocks cellular, so it
+/// needs its own switch with its own default, and both places must agree on
+/// what a missing key means.
+enum SpatialUploadPreferences {
+    static let wifiOnlyKey = "spatialWifiOnlyUploads"
+    static let wifiOnlyDefault = true
+
+    static func wifiOnly(in defaults: UserDefaults = .standard) -> Bool {
+        wifiOnly(stored: defaults.object(forKey: wifiOnlyKey))
+    }
+    /// The rule itself, separated so it can be checked without a defaults
+    /// store: an absent or unreadable value means the default, never `false`.
+    static func wifiOnly(stored value: Any?) -> Bool {
+        (value as? Bool) ?? (value as? NSNumber)?.boolValue ?? wifiOnlyDefault
+    }
+}
+
 struct SpatialCreateRequest: Codable, Sendable {
     let listingID: UUID
     let roomLabel: String
@@ -174,6 +229,7 @@ struct SpatialReviewRequest: Codable, Sendable {
 enum SpatialClientError: LocalizedError {
     case invalidResponse, noLiveService, accountChanged, unreadableJournal
     case invalidCapture, uploadUncertain, rejectedTransport, uploadPaused
+    case tooManyRooms, ticketRetired
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "The 3D service returned an incomplete response. Your capture is still saved."
@@ -184,6 +240,8 @@ enum SpatialClientError: LocalizedError {
         case .uploadUncertain: return "The server has not confirmed this photo yet. Tap Resume upload to check again; your capture is safe."
         case .rejectedTransport: return "The upload service rejected this photo. Your capture is saved; retry after reconnecting."
         case .uploadPaused: return "Upload is stopped on this phone. Your capture is saved. Resume the room below when you are ready."
+        case .tooManyRooms: return "This phone is already uploading \(SpatialUploadRecord.liveRoomLimit) rooms. Let one finish, or stop one, before scanning another. Your new scan is saved."
+        case .ticketRetired: return "The upload service kept retiring this photo's ticket. Your capture is saved; tap Resume upload later, ideally on Wi-Fi."
         }
     }
 }

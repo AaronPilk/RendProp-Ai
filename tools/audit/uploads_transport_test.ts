@@ -2,7 +2,7 @@ import {
   assert,
   assertEquals,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import { fixture, object, TICKET } from "./upload_route_fixture.ts";
+import { Fixture, fixture, object, TICKET } from "./upload_route_fixture.ts";
 
 Deno.test("missing durable reservation never falls back to a memory counter or presigned PUT", () =>
   fixture(async (f) => {
@@ -130,4 +130,169 @@ Deno.test("completed winner is excluded from journaled sweep", () =>
     assertEquals((await f.sweep()).status, 200);
     assertEquals(f.objects.get(String(winner.storage_key))?.body, "AAAA");
     assertEquals(f.deletes.includes(String(winner.storage_key)), false);
+  }));
+
+// ── 0042: a cut transfer stays on its ticket ──────────────────────────────────
+/** The gateway claimed this transfer, the body was cut, and its verdict was
+ * `rejected`: bytes spent, no receipt, write window closed. */
+function cutTransfer(f: Fixture, kind = "single", part = 0) {
+  const op = f.operation(kind, part);
+  Object.assign(op, {
+    state: "rejected",
+    claim: "fixture-cut",
+    write_deadline: Fixture.closedDeadline(),
+  });
+  f.budget = { held: f.budget.held - 4, spent: f.budget.spent + 4 };
+  return op;
+}
+Deno.test("cut single transfer renews the same ticket, retries once and completes", () =>
+  fixture(async (f) => {
+    const op = cutTransfer(f), before = { ...f.budget };
+    f.objects.clear();
+    const response = await f.request("renew");
+    assertEquals(response.status, 200, await response.clone().text());
+    const ticket = await response.json();
+    assertEquals(ticket.asset_id, "fixture-asset");
+    assertEquals(new URL(ticket.put_url).pathname, `/v2/${op.id}`);
+    assertEquals([op.state, op.attempt, op.claim, op.write_deadline], [
+      "planned",
+      2,
+      "fixture-cut",
+      null,
+    ]);
+    // The rejected claim's bytes are back on the same reservation: no second
+    // reservation, no refund to the day window, nothing paid twice.
+    assertEquals(f.budget, { held: before.held + 4, spent: before.spent - 4 });
+    assertEquals(f.charges, []);
+    assertEquals(f.operations.size, 1);
+    // The retry: the gateway claims the SAME operation and stores the body.
+    const retry = await (await f.rpc("claim_upload_operation", {
+      p_operation: op.id,
+      p_claim: "fixture-retry",
+    })).json();
+    assertEquals(retry.dispatch, true);
+    assertEquals(f.budget, before);
+    await f.rpc("finish_upload_operation", {
+      p_operation: op.id,
+      p_claim: "fixture-retry",
+      p_result: "stored",
+      p_etag: '"AAAA"',
+    });
+    f.objects.set(`_staging/${TICKET}`, object());
+    const winner = await f.ok();
+    assertEquals(f.copies.length, 1);
+    assertEquals(f.objects.get(String(winner.storage_key))?.body, "AAAA");
+    assertEquals(f.budget, { held: 0, spent: 8 });
+  }));
+Deno.test("attempt cap answers 409, keeps the reservation charged and needs an abort", () =>
+  fixture(async (f) => {
+    const op = cutTransfer(f);
+    op.attempt = 5;
+    const before = { ...f.budget };
+    const response = await f.request("renew");
+    assertEquals(response.status, 409);
+    assert(
+      String((await response.json()).error).includes("transfer attempts"),
+    );
+    assertEquals([op.state, op.attempt], ["rejected", 5]);
+    assertEquals(f.budget, before);
+    assertEquals(f.charges, []);
+    await f.ok("abort");
+    assertEquals(f.budget, { held: 0, spent: before.spent });
+  }));
+Deno.test("uncertain transfer observed absent past its write window is re-planned", () =>
+  fixture(async (f) => {
+    const op = f.operation("single");
+    Object.assign(op, {
+      state: "uncertain",
+      claim: "fixture-cut",
+      write_deadline: Fixture.closedDeadline(),
+    });
+    f.budget = { held: 4, spent: 4 };
+    f.objects.clear();
+    const response = await f.request("renew");
+    assertEquals(response.status, 200, await response.clone().text());
+    assertEquals(
+      new URL((await response.json()).put_url).pathname,
+      `/v2/${op.id}`,
+    );
+    assertEquals([op.state, op.attempt, op.claim], [
+      "planned",
+      2,
+      "fixture-cut",
+    ]);
+    assertEquals(f.budget, { held: 8, spent: 0 });
+    assertEquals(f.copies, []);
+    // Abandoned after the re-plan: the journal still owns the staging key, so
+    // the sweep issues its DELETE instead of assuming no write ever happened.
+    await f.ok("abort");
+    assertEquals((await f.sweep()).status, 200);
+    assertEquals(f.deletes, [`_staging/${TICKET}`]);
+  }));
+Deno.test("uncertain transfer inside its write window stays unprovable and unrefunded", () =>
+  fixture(async (f) => {
+    const op = f.operation("single");
+    Object.assign(op, {
+      state: "uncertain",
+      claim: "fixture-cut",
+      write_deadline: Fixture.openDeadline(),
+    });
+    f.budget = { held: 4, spent: 4 };
+    f.objects.clear();
+    assertEquals((await f.request("renew")).status, 503);
+    assertEquals([op.state, op.attempt], ["uncertain", 1]);
+    assertEquals(f.budget, { held: 4, spent: 4 });
+  }));
+Deno.test("uncertain transfer whose object landed is recovered, never re-uploaded", () =>
+  fixture(async (f) => {
+    const op = f.operation("single");
+    Object.assign(op, {
+      state: "uncertain",
+      claim: "fixture-cut",
+      write_deadline: Fixture.closedDeadline(),
+    });
+    f.budget = { held: 4, spent: 4 };
+    const response = await f.request("renew");
+    assertEquals(response.status, 200);
+    assertEquals([op.state, op.attempt, op.etag], ["stored", 1, '"AAAA"']);
+    assertEquals(f.budget, { held: 4, spent: 4 });
+  }));
+Deno.test("cut multipart part is re-planned by part-urls on the same session", () =>
+  fixture(async (f) => {
+    f.multipart();
+    const op = cutTransfer(f, "part", 1);
+    const response = await f.request("part-urls", { numbers: [1] });
+    assertEquals(response.status, 200, await response.clone().text());
+    const { urls } = await response.json();
+    assertEquals(new URL(urls[0].url).pathname, `/v2/${op.id}`);
+    assertEquals([op.state, op.attempt, op.upload_id], [
+      "planned",
+      2,
+      "fixture-upload",
+    ]);
+    assertEquals(f.budget, { held: 4, spent: 0 });
+    assertEquals(f.physicalParts.size, 0);
+    // The cap applies per part: a fifth cut answers 409 through part-urls too.
+    Object.assign(op, {
+      state: "rejected",
+      claim: "fixture-cut",
+      attempt: 5,
+      write_deadline: Fixture.closedDeadline(),
+    });
+    assertEquals((await f.request("part-urls", { numbers: [1] })).status, 409);
+    assertEquals([op.state, op.attempt], ["rejected", 5]);
+  }));
+Deno.test("rejected promotion copy is never re-planned or re-copied", () =>
+  fixture(async (f) => {
+    f.confirmed();
+    const copy = f.operation("copy");
+    Object.assign(copy, {
+      state: "rejected",
+      claim: "fixture-cut",
+      write_deadline: Fixture.closedDeadline(),
+    });
+    assertEquals((await f.request("complete")).status, 503);
+    assertEquals([copy.state, copy.attempt], ["rejected", 1]);
+    assertEquals(f.copies, []);
+    assertEquals(f.asset!.uploaded, false);
   }));

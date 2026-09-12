@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Offline edge regression: real tests, exact receipts, no inherited credentials.
 
-This never starts an API server or permits test network access. Dependency
-resolution must use the existing Deno cache; a cache miss is a reported failure,
-not permission to send a request. Logs stay in a fresh retained /tmp directory.
+This never starts an API server or permits test network access. The runner
+prepares its own dependencies first: one `deno install` pass, with the network
+allowed for that step alone, resolves the pinned std/npm imports into the Deno
+cache and the functions' node_modules directory. Every test and typecheck
+afterwards runs --cached-only / --deny-import; a cache miss there is a reported
+failure, not permission to send a request. Logs stay in a fresh retained /tmp
+directory.
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -16,6 +20,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+
+# Network plumbing the preparation step may inherit. Proxies and CA bundles
+# are how a sandbox reaches deno.land and npm at all; none of them is a
+# service credential, and the test/check steps never see them.
+PREPARATION_ENV_PASSTHROUGH = (
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+    "DENO_CERT", "DENO_TLS_CA_STORE", "SSL_CERT_FILE", "NPM_CONFIG_REGISTRY",
+)
 
 
 def require(condition, message):
@@ -35,6 +47,12 @@ def summary_counts(output):
     return passed, failed, int(ignored.group(1)) if ignored else 0
 
 
+def first_party(path):
+    # node_modules is Deno's managed npm mirror, created by the preparation
+    # step. It is neither a test source nor part of the bound source manifest.
+    return "node_modules" not in path.parts
+
+
 def main():
     root = Path(__file__).resolve().parents[2]
     def clean_source():
@@ -52,14 +70,20 @@ def main():
         "DENO_DIR": info["denoDir"],
         "NO_COLOR": "1", "DENO_NO_PROMPT": "1",
     }
+    preparation_environment = dict(environment)
+    for name in PREPARATION_ENV_PASSTHROUGH:
+        if name in os.environ:
+            preparation_environment[name] = os.environ[name]
     out = Path(tempfile.mkdtemp(prefix="rendprop-edge-audit-", dir="/tmp"))
-    tests = sorted(p for p in functions.rglob("*.ts") if p.name.endswith((".test.ts", "_test.ts")))
-    entrypoints = sorted(p for p in functions.glob("*/index.ts") if p.parent.name != "_shared")
+    tests = sorted(p for p in functions.rglob("*.ts")
+                   if first_party(p.relative_to(functions)) and p.name.endswith((".test.ts", "_test.ts")))
+    entrypoints = sorted(p for p in functions.glob("*/index.ts") if p.parent.name not in ("_shared", "node_modules"))
     require(tests and entrypoints, "Missing real tests or route entrypoints")
     def source_manifest():
         # Tests and entrypoints alone omit the shared adapters being repaired.
         # Bind all first-party edge code and SQL fixtures, not only test names.
-        paths = set(functions.rglob("*.ts")) | set((root / "services/supabase").glob("*/*.sql"))
+        paths = {p for p in functions.rglob("*.ts") if first_party(p.relative_to(functions))}
+        paths.update((root / "services/supabase").glob("*/*.sql"))
         # The upload test registration files import actual-handler fixtures
         # from tools/audit. Bind those bodies, not just their three-line imports.
         paths.update((root / "tools/audit").glob("*.ts"))
@@ -68,14 +92,19 @@ def main():
         return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest()
                 for p in sorted(paths) if p.is_file()}
     manifest = source_manifest()
-    common = ["--no-config", "--no-lock", "--cached-only", "--node-modules-dir=manual"]
+    # auto, not manual: manual expects somebody else to have populated
+    # node_modules and fails a cold checkout with "Could not find a matching
+    # package for 'npm:@supabase/supabase-js@2'". auto reuses the directory the
+    # preparation step below populates, and --cached-only still refuses any
+    # download during the tests themselves.
+    common = ["--no-config", "--no-lock", "--cached-only", "--node-modules-dir=auto"]
     permissions = ["--deny-net", "--deny-run", "--deny-write", "--allow-env",
                    f"--allow-read={root}", "--no-prompt"]
 
-    def run(name, command, cwd=functions):
+    def run(name, command, cwd=functions, env=environment):
         started = datetime.now(timezone.utc).isoformat()
         try:
-            result = subprocess.run(command, cwd=cwd, env=environment, text=True,
+            result = subprocess.run(command, cwd=cwd, env=env, text=True,
                                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                     timeout=300, check=False)
             code, output = result.returncode, result.stdout
@@ -92,6 +121,24 @@ def main():
                   "logSHA256": hashlib.sha256(path.read_bytes()).hexdigest()}
         return record, output
 
+    # Preparation: the only step that may touch the network. `deno install
+    # --entrypoint` walks exactly the module graphs the tests and route
+    # entrypoints import, caches the pinned std/jsr/npm dependencies and lays
+    # out node_modules; it executes no test or route code. Idempotent on a
+    # warm cache (the log then says "Downloaded 0 packages").
+    preparation, preparation_output = run(
+        "prepare-dependencies",
+        [deno, "install", "--no-config", "--no-lock", "--node-modules-dir=auto", "--entrypoint",
+         *[str(p.relative_to(functions)) for p in tests + entrypoints]],
+        env=preparation_environment)
+    preparation["networkPermitted"] = True
+    preparation["inheritedEnvironment"] = sorted(name for name in PREPARATION_ENV_PASSTHROUGH
+                                                 if name in preparation_environment)
+    preparation["nodeModulesDir"] = str(functions / "node_modules")
+    preparation["accepted"] = preparation["exit"] == 0 and (functions / "node_modules").is_dir()
+    print(f"prepare-dependencies: exit={preparation['exit']}, accepted={preparation['accepted']}", flush=True)
+    require(preparation["accepted"], f"Dependency preparation failed; see {preparation['log']}")
+
     unit, output = run("edge-unit", [deno, "test", *common, *permissions,
                                      *[str(p.relative_to(functions)) for p in tests]])
     try:
@@ -106,9 +153,10 @@ def main():
     def check_entrypoint(path):
         record, _ = run("check-" + path.parent.name,
                         # check has no --cached-only in Deno 2.7.13. Denying
-                        # imports permits existing cache use without downloads.
+                        # imports permits existing cache use without downloads;
+                        # the npm side resolves from the prepared node_modules.
                         [deno, "check", "--no-config", "--no-lock",
-                         "--node-modules-dir=manual", "--deny-import",
+                         "--node-modules-dir=auto", "--deny-import",
                          str(path.relative_to(functions))])
         return record
 
@@ -139,13 +187,15 @@ def main():
     unchanged = source_manifest() == manifest and clean_source() == source
     report = {
         "sourceCommit": source, "denoVersion": info["denoVersion"],
-        "environment": "cleared; PATH, discovered DENO_DIR, NO_COLOR and DENO_NO_PROMPT only",
+        "environment": "cleared; PATH, discovered DENO_DIR, NO_COLOR and DENO_NO_PROMPT only "
+                       "(the preparation step additionally inherits proxy/CA variables, listed in preparation)",
         "sourceManifestSHA256": hashlib.sha256(json.dumps(manifest, sort_keys=True).encode()).hexdigest(),
-        "sourceFiles": manifest, "unit": unit, "entrypointChecks": checks,
+        "sourceFiles": manifest, "preparation": preparation, "unit": unit, "entrypointChecks": checks,
         "negativeControl": negative, "runtimeNetworkPermitted": False,
         "sourceUnchanged": unchanged,
         "liveRoutesTested": 0, "productionMutations": 0,
-        "passed": unchanged and unit["accepted"] and all(c["exit"] == 0 for c in checks) and negative["accepted"],
+        "passed": unchanged and preparation["accepted"] and unit["accepted"]
+                  and all(c["exit"] == 0 for c in checks) and negative["accepted"],
     }
     (out / "receipt.json").write_text(json.dumps(report, indent=2) + "\n")
     print("Retained evidence:", out / "receipt.json", flush=True)

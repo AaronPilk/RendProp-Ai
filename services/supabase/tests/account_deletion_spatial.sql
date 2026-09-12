@@ -43,11 +43,20 @@ end $$;
 create function pg_temp.prepare(n integer) returns jsonb language sql as $$
   select public.prepare_account_deletion(s,'fixture-uploads','fixture-renders') from _fixture where _fixture.n=$1
 $$;
+-- One sweeper pass that removes nothing: reclaim, then hand back the whole
+-- leased payload unchanged.
+create function pg_temp.sweep(n integer) returns jsonb language plpgsql as $$
+declare request uuid; claimed jsonb; begin
+  select (receipt->>'request_id')::uuid into strict request from _fixture where _fixture.n=sweep.n;
+  claimed:=public.claim_account_deletion(request);
+  if claimed->>'ok' is distinct from 'true' then return claimed; end if;
+  return public.finish_account_deletion(request,(claimed->>'lease_token')::uuid,claimed->'payload','sweep: nothing removed');
+end $$;
 grant select,insert on _checks to service_role;
 grant select,update on _fixture to service_role;
 do $$ declare ns text; begin select nspname into ns from pg_namespace where oid=pg_my_temp_schema();
   execute format('grant usage on schema %I to service_role',ns); end $$;
-grant execute on function pg_temp.a(boolean,text),pg_temp.denied(text,text,text),pg_temp.prepare(integer) to service_role;
+grant execute on function pg_temp.a(boolean,text),pg_temp.denied(text,text,text),pg_temp.prepare(integer),pg_temp.sweep(integer) to service_role;
 
 -- A previous failed copy is still personal data, even when never published.
 insert into public.spatial_attempt_history(job_id,attempt_key,attempt_number,snapshot)
@@ -132,6 +141,12 @@ select pg_temp.denied('select public.finish_account_deletion((receipt->>''reques
   jsonb_set(receipt->''payload'',''{r2}'',''[]''),'''') from _fixture where n=4','RP409: storage writes have not drained','early object-delete success rejected');
 select pg_temp.denied('select public.finish_account_deletion((receipt->>''request_id'')::uuid,(receipt->>''lease_token'')::uuid,
   jsonb_set(receipt->''payload'',''{storage_not_before}'',''null''),'''') from _fixture where n=4','RP409: storage writes have not drained','deadline cannot be bypassed by null');
+-- Passes that only wait for that window are not stalled sweeps: however many
+-- run before the deadline, the request stays automated and uncounted.
+select pg_temp.a((select (public.finish_account_deletion((receipt->>'request_id')::uuid,(receipt->>'lease_token')::uuid,receipt->'payload','waiting')
+    ->>'stalled_sweeps')::int=0 from _fixture where n=4)
+  and (select bool_and((s->>'stalled_sweeps')::int=0 and not (s->>'manual_review_required')::boolean and s->'escalation_reason'='null'::jsonb)
+    from (select pg_temp.sweep(4) s from generate_series(1,13)) x),'waiting for a storage write window is never a stalled sweep');
 reset role;
 select pg_temp.a((select not exists(select 1 from public.upload_reservations where asset_id=f.a) and
   not exists(select 1 from public.upload_operations where asset_id=f.a) from _fixture f where n=4),'obsolete upload journals purged only after identities preserved');
@@ -179,7 +194,10 @@ create table if not exists public.spatial_provider_attempts(
   deadline_at timestamptz,source_sha256 text,reason_code text,exit_code integer,last_error_code text
 );
 insert into public.spatial_provider_attempts(lease_token,job_id,attempt_key,app_name,sandbox_name,sandbox_id,source_sha256,allocation_state,deadline_at,files_removed,terminated)
-  select lease,j,gen_random_uuid(),'rendprop-spatial-worker','spatial-'||j||'-'||lease,'sb-fixture00000001',repeat('a',64),'created',clock_timestamp(),false,true from _fixture where n=1;
+  -- 0041 names the sandbox after the lease alone (Modal caps names at 64
+  -- chars; the old job+lease form was 81 and could never allocate). The
+  -- fixture must satisfy the real check constraint when 0041 is present.
+  select lease,j,gen_random_uuid(),'rendprop-spatial-worker','spatial-'||lease,'sb-fixture00000001',repeat('a',64),'created',clock_timestamp(),false,true from _fixture where n=1;
 set local role service_role;
 select pg_temp.a(not public.account_deletion_provider_ready((select j from _fixture where n=1),(select lease from _fixture where n=1)),
   'termination alone does not prove private-file removal');
@@ -209,6 +227,31 @@ reset role;
 select pg_temp.a((select next_cleanup_at>clock_timestamp()+interval '4 minutes' and status='pending' and cleanup_token is null
   from public.deletion_requests where user_id=(select s from _fixture where n=1)),
   'pending provider backoff does not monopolize due queue');
-select pg_temp.a((select count(*)=29 from _checks),'exact spatial assertion count');
-select 'PASS: 30 spatial deletion SQL assertions; all fixtures rolled back.';
+select pg_temp.a((select not manual_review_required and escalation_reason is null and stalled_sweeps=0
+  from public.deletion_requests where user_id=(select s from _fixture where n=1)),'unjournaled lease younger than a day stays automated');
+-- The historical lease has no journal row and its job is gone: nobody will
+-- ever confirm it. A day after the request the sweeper hands it to a person,
+-- naming the lease, and keeps the target in the payload.
+update public.deletion_requests set requested_at=clock_timestamp()-interval '25 hours' where user_id=(select s from _fixture where n=1);
+set local role service_role;
+select pg_temp.a((select (s->>'manual_review_required')::boolean and s->>'cleanup_complete'='false'
+  and s->>'escalation_reason' like 'provider lease without a cleanup journal 24 hours after the request%'
+  and s->>'escalation_reason' like '%lease b0397000-0000-4000-8000-000000000001%' and (s->>'stalled_sweeps')::int=1 from pg_temp.sweep(1) s),
+  'unjournaled provider lease escalates after a day with the lease named');
+reset role;
+select pg_temp.a((select d.manual_review_required and d.status='pending' and d.escalated_at is not null
+  and d.payload->'provider_leases'=jsonb_build_array(jsonb_build_object('job_id',f.j,'lease_token','b0397000-0000-4000-8000-000000000001'))
+  from public.deletion_requests d join _fixture f on d.user_id=f.s where f.n=1),'escalated lease is retained, not erased');
+-- Without any provider journal installed (0041 absent) the same day-old lease
+-- is escalated instead of being polled forever. The drop rolls back below.
+drop table public.spatial_provider_attempts cascade;
+update public.deletion_requests set requested_at=clock_timestamp()-interval '25 hours' where user_id=(select s from _fixture where n=6);
+set local role service_role;
+select pg_temp.a((select (res->>'manual_review_required')::boolean and res->>'escalation_reason' like 'provider lease without a cleanup journal%'
+  and res->>'escalation_reason' like ('%job '||f.j||' lease '||f.lease||'%')
+  from _fixture f,public.finish_account_deletion((f.receipt->>'request_id')::uuid,(f.receipt->>'lease_token')::uuid,f.receipt->'payload','') res where f.n=6),
+  'missing provider journal table escalates a day-old lease instead of polling forever');
+reset role;
+select pg_temp.a((select count(*)=34 from _checks),'exact spatial assertion count');
+select 'PASS: 35 spatial deletion SQL assertions; all fixtures rolled back.';
 rollback;

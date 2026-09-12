@@ -84,6 +84,61 @@ import Foundation
         check(revoked.transfers == 1 && revoked.renews == 0 && revoked.cancels == 0,
               "Permission failure never authorizes another physical write")
 
+        // A ticket whose rounds all ran dry used to be probed forever: every
+        // later attempt reconciled the same dead reservation under the same
+        // content key and failed the same way, so that photo could never be
+        // uploaded again. The first call still never replaces anything on its
+        // own; it journals the exhaustion, and only the NEXT explicit attempt
+        // may retire the ticket and reserve afresh.
+        let stuck = RecoveryAPI()
+        stuck.completionFailure = .server(status: 503, code: "UPSTREAM", message: "Stored receipt is not yet provable")
+        stuck.refuseRenewal = true
+        await expectFailure("A call whose rounds all fail reports the failure") { _ = try await upload(stuck, "stuck") }
+        check(stuck.physicalWrites == 1 && stuck.creates == 1 && stuck.cancels == 0 && stuck.renews == 2,
+              "First call never retires or replaces the reservation on its own")
+        let contentKey = "\(AuthStore.jwtSubject("fixture")!)|photo:"
+            + DirectUploader.sha256Hex("\(listing.uuidString)|capture|\(original!)|\(bytes.count)")
+        let stuckJournal = try await DirectUploadJournal(directory: root.appendingPathComponent("stuck")).load(contentKey)
+        check(stuckJournal?.recoveryExhausted == true && stuckJournal?.dispatched == true
+              && stuckJournal?.ticket?.assetID == stuck.oldID,
+              "Exhaustion is journaled without forgetting the dispatch or the ticket")
+        // The server caught up (its bounded re-plan proved the receipt): the
+        // same ticket completes — no abort, no second reservation.
+        stuck.completionFailure = nil
+        check(try await upload(stuck, "stuck") == stuck.oldID, "Later attempt completes the same ticket once the server can prove it")
+        check(stuck.creates == 1 && stuck.cancels == 0 && stuck.physicalWrites == 1, "A ticket that recovered is never replaced")
+
+        let dead = RecoveryAPI()
+        dead.completionFailure = .server(status: 503, code: "UPSTREAM", message: "Stored receipt is not yet provable")
+        dead.refuseRenewal = true
+        await expectFailure("Exhausted first call fails") { _ = try await upload(dead, "dead") }
+        check(dead.cancels == 0 && dead.creates == 1, "Exhaustion alone does not abort anything")
+        // Still no receipt and still no re-plan on the deliberate retry: retire
+        // the ticket (durable intent, then abort) and send under a fresh one.
+        dead.completionFailure = nil; dead.stored = false; dead.abortable = true
+        check(try await upload(dead, "dead") == dead.newID, "Deliberate retry after exhaustion replaces an unplannable ticket")
+        check(dead.cancels == 1 && dead.creates == 2 && Set(dead.keys).count == 1,
+              "Exactly one abort and one replacement, under the same content key")
+        check(dead.physicalWrites == 2 && dead.log.suffix(6) == ["complete", "renew", "cancel", "create", "put", "complete"],
+              "Replacement probes, cancels, reserves and only then writes once more")
+
+        let vanished = RecoveryAPI()
+        vanished.completionFailure = .server(status: 404, code: "not_found", message: "Asset not found")
+        await expectFailure("A vanished reservation fails the call that finds it gone") { _ = try await upload(vanished, "vanished") }
+        check(vanished.transfers == 1 && vanished.renews == 0 && vanished.cancels == 0 && vanished.creates == 1,
+              "A gone row stops the rounds at once, without a silent replacement")
+        vanished.completionFailure = nil; vanished.missing = true
+        check(try await upload(vanished, "vanished") == vanished.newID, "Deliberate retry reserves afresh for a vanished row")
+        check(vanished.cancels == 0 && vanished.creates == 2, "Nothing is aborted when the row is already gone")
+
+        let refused = RecoveryAPI()
+        refused.completionFailure = .server(status: 413, code: "payload_too_large", message: "That file is too large to send.")
+        await expectFailure("Request-side rejection fails at once") { _ = try await upload(refused, "refused") }
+        refused.completionFailure = nil; refused.stored = false; refused.refuseRenewal = true; refused.abortable = true
+        await expectFailure("Unplannable ticket still fails without a prior exhausted call") { _ = try await upload(refused, "refused") }
+        check(refused.cancels == 0 && refused.creates == 1,
+              "A request-side rejection never licenses a replacement on the next attempt")
+
         check(UploadRecovery.sameAsset(legacy.oldID, legacy.oldID.uppercased()), "UUID case differences refer to same ticket")
         check(!UploadRecovery.sameAsset("token-A", "token-a"), "Opaque identity case is preserved")
         check(UploadRecovery.isLegacyRetired(APIError.server(status: 409, code: "CONFLICT",
@@ -146,7 +201,166 @@ import Foundation
         check(DirectUploader.sha256(of: file) == original && finalBytes == bytes,
               "Original media remains byte-identical after every recovery")
         try await multipartRuntimeTests(root: root)
+        try await boundedRecoveryTests(root: root)
         print("PASS UploadRecoveryTests \(assertions) assertions")
+    }
+
+    @MainActor static func until(_ message: String, _ predicate: () -> Bool) async {
+        for _ in 0..<200 {
+            if predicate() { check(true, message); return }
+            try? await Task.sleep(nanoseconds: 5_000_000)
+        }
+        check(false, message)
+    }
+
+    /// The engine's recovery must be bounded and its dead ends must offer a
+    /// real way out. Part-URL refusals used to loop every five seconds forever
+    /// with nothing on screen; per-part transport failures used to spend one
+    /// whole-upload budget between them; and an exhausted ticket had only a
+    /// Resume that failed the same way. Real manager, fixture session.
+    @MainActor static func boundedRecoveryTests(root: URL) async throws {
+        FileStore.documents = root
+        let originalURL = root.appendingPathComponent("bounded.mov")
+        let originalBytes = Data(repeating: 98, count: 64)
+        try originalBytes.write(to: originalURL)
+        func state(_ api: MultipartRecoveryAPI) -> UploadManager.State {
+            var record = UploadManager.State(filePath: "bounded.mov", bytesTotal: 64,
+                status: .paused, mode: "multipart", assetID: api.assetID,
+                uploadID: "fixture-session", partSize: 16, partCount: 4)
+            record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
+            record.transportVersion = 2
+            record.ticketKey = "immutable-batch-fixture"
+            return record
+        }
+        func running(_ session: RecoverySession, _ api: MultipartRecoveryAPI, part n: Int) -> RecoveryTask? {
+            session.fixtureTasks.last { $0.taskDescription == "part:\(api.assetID):\(n)" && $0.fixtureState == .running }
+        }
+        func drop(_ manager: UploadManager, _ session: RecoverySession, _ task: RecoveryTask?) {
+            guard let task else { check(false, "Expected an in-flight fixture task to fail"); return }
+            task.fixtureState = .completed
+            manager.urlSession(session, task: task, didCompleteWithError: URLError(.networkConnectionLost))
+        }
+        func land(_ manager: UploadManager, _ session: RecoverySession, _ task: RecoveryTask?, _ etag: String) {
+            guard let task else { check(false, "Expected an in-flight fixture task to land"); return }
+            task.fixtureResponse = HTTPURLResponse(url: URL(string: "https://fixture.invalid/")!,
+                statusCode: 200, httpVersion: nil, headerFields: ["ETag": etag])
+            task.fixtureState = .completed
+            manager.urlSession(session, task: task, didCompleteWithError: nil)
+        }
+
+        // 1. Storage keeps refusing to plan parts: eight bounded retries with
+        //    backoff, then a visible failed state that offers Start over and
+        //    keeps the ticket (a regained network may still finish it).
+        let refusing = MultipartRecoveryAPI()
+        refusing.partURLFailure = .server(status: 503, code: "upstream",
+            message: "Transfer needs recovery or cancellation; no second physical write is authorized")
+        let refusingSession = RecoverySession()
+        var refusingPersisted: UploadManager.State?
+        let refusingManager = UploadManager(api: refusing, session: refusingSession, recovering: state(refusing),
+                                            persistState: { refusingPersisted = $0; return true })
+        refusingManager.retryDelayScale = 0.0002
+        refusingManager.resume()
+        await until("Part-URL refusals end in a visible failure, not an endless five-second loop") {
+            refusingManager.state?.status == .failed
+        }
+        check(refusing.partRequests.count == 9, "Eight bounded retries after the first refusal, then it stops")
+        check(refusingManager.state?.recoveryExhausted == true && refusingManager.state?.canStartOver == true,
+              "Exhausted part-URL recovery offers Start over")
+        check(refusingManager.state?.terminalError == nil && refusingManager.state?.assetID == refusing.assetID,
+              "The exhausted record keeps its ticket and stays resumable on a network regain")
+        check(refusingManager.state?.failureMessage?.contains("Start over") == true, "The failure says what to do next")
+        check(refusingPersisted?.recoveryExhausted == true, "Exhaustion survives a relaunch")
+        check(refusingSession.fixtureTasks.isEmpty && refusing.creates == 0, "Nothing was dispatched or re-reserved without a planned URL")
+
+        // 2. Start over: retire that ticket, reserve afresh under a NEW
+        //    operation key, and send from part one. The original is untouched.
+        let freshID = UUID().uuidString
+        refusing.partURLFailure = nil
+        refusing.freshTicket = UploadTicket(assetID: freshID, mode: .multipart, uploadID: "fixture-session",
+            partSize: 16, partCount: 4, transportVersion: 2, uploaded: false, replayed: false)
+        refusingManager.startOver()
+        await until("Start over reserves afresh and dispatches the first parts") { refusingSession.fixtureTasks.count == 3 }
+        await until("Start over retires the old ticket exactly once") { refusing.aborts == 1 }
+        check(refusing.creates == 1 && refusing.keys.last?.hasPrefix("ticket:") == true
+              && refusing.keys.last != "immutable-batch-fixture",
+              "One replacement reservation, under a new operation key rather than the retired one")
+        check(refusingManager.state?.assetID == freshID && refusingManager.state?.status == .uploading
+              && refusingManager.state?.recoveryExhausted == nil
+              && refusingManager.state?.ticketKey != "immutable-batch-fixture",
+              "The record now belongs to the replacement ticket")
+        check(refusing.partRequests.last == [1, 2, 3], "The fresh ticket starts from part one")
+        check(refusingPersisted?.assetID == freshID, "Replacement identity is durable before dispatch")
+        check(try Data(contentsOf: originalURL) == originalBytes, "Start over never touches the original")
+
+        // 3. Per-part accounting: seven transport failures spread over parts 1
+        //    and 3, with parts 2 and 4 landing in between. The old whole-upload
+        //    budget failed this at the fifth; each part now carries its own.
+        let flaky = MultipartRecoveryAPI()
+        let flakySession = RecoverySession()
+        let flakyManager = UploadManager(api: flaky, session: flakySession, recovering: state(flaky), persistState: { _ in true })
+        flakyManager.resume()
+        await until("Flaky-link fixture dispatches three parts") { flakySession.fixtureTasks.count == 3 }
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 1))
+        await until("Part 1 relaunches after its first failure") { flakySession.fixtureTasks.count == 4 }
+        land(flakyManager, flakySession, running(flakySession, flaky, part: 2), "e2")
+        await until("Part 4 dispatches once part 2 lands") { flakySession.fixtureTasks.count == 5 }
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 3))
+        await until("Part 3 relaunches") { flakySession.fixtureTasks.count == 6 }
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 1))
+        await until("Part 1 relaunches a second time") { flakySession.fixtureTasks.count == 7 }
+        land(flakyManager, flakySession, running(flakySession, flaky, part: 4), "e4")
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 3))
+        await until("Part 3 relaunches a second time") { flakySession.fixtureTasks.count == 8 }
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 1))
+        await until("Part 1 relaunches a third time") { flakySession.fixtureTasks.count == 9 }
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 3))
+        await until("Part 3 relaunches a third time") { flakySession.fixtureTasks.count == 10 }
+        drop(flakyManager, flakySession, running(flakySession, flaky, part: 1))
+        await until("Part 1 relaunches a fourth time") { flakySession.fixtureTasks.count == 11 }
+        check(flakyManager.state?.status == .uploading,
+              "Seven part failures across two parts are not five strikes against the upload")
+        check(flakyManager.state?.parts.map(\.retryCount) == [4, 0, 3, 0], "Each part carries only its own failures")
+        land(flakyManager, flakySession, running(flakySession, flaky, part: 1), "e1")
+        land(flakyManager, flakySession, running(flakySession, flaky, part: 3), "e3")
+        await until("Upload completes once every part has landed") { flakyManager.state?.status == .done }
+        check(flaky.acceptedParts?.map(\.etag) == ["e1", "e2", "e3", "e4"] && flaky.creates == 0,
+              "Completion carries every receipt and never a new reservation")
+
+        // 4. One part failing its own transfer six times, with progress
+        //    elsewhere, fails the upload as that part's problem — resumable,
+        //    not exhausted — and an explicit Resume relaunches only that part.
+        let stubborn = MultipartRecoveryAPI()
+        let stubbornSession = RecoverySession()
+        let stubbornManager = UploadManager(api: stubborn, session: stubbornSession, recovering: state(stubborn), persistState: { _ in true })
+        stubbornManager.resume()
+        await until("Stubborn-part fixture dispatches three parts") { stubbornSession.fixtureTasks.count == 3 }
+        for round in 1...3 {
+            drop(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 1))
+            await until("Part 1 relaunches (\(round))") { stubbornSession.fixtureTasks.count == 3 + round }
+        }
+        land(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 2), "s2")
+        await until("Part 4 dispatches after part 2 lands") { stubbornSession.fixtureTasks.count == 7 }
+        for round in 4...5 {
+            drop(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 1))
+            await until("Part 1 relaunches (\(round))") { stubbornSession.fixtureTasks.count == 4 + round }
+        }
+        drop(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 1))
+        await until("The sixth failure of one part fails the upload") { stubbornManager.state?.status == .failed }
+        check(stubbornManager.state?.parts.first?.status == .failed
+              && stubbornManager.state?.failureMessage?.contains("Part 1") == true,
+              "The failure names the part that kept failing")
+        check(stubbornManager.state?.recoveryExhausted == nil && stubbornManager.state?.canStartOver == false
+              && stubbornManager.state?.terminalError == nil,
+              "A part's own exhaustion is resumable, not a dead ticket")
+        stubbornManager.resume()
+        await until("Resume relaunches only the failed part") { stubbornSession.fixtureTasks.count == 10 }
+        check(stubborn.partRequests.last == [1] && stubborn.creates == 0, "Resume keeps the ticket and the landed receipts")
+        land(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 1), "s1")
+        land(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 3), "s3")
+        land(stubbornManager, stubbornSession, running(stubbornSession, stubborn, part: 4), "s4")
+        await until("Stubborn upload completes after Resume") { stubbornManager.state?.status == .done }
+        check(stubborn.acceptedParts?.map(\.etag) == ["s1", "s2", "s3", "s4"], "Every retained receipt reaches completion")
+        check(try Data(contentsOf: originalURL) == originalBytes, "Bounded recovery preserves original bytes")
     }
 
     @MainActor static func multipartRuntimeTests(root: URL) async throws {

@@ -15,10 +15,22 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[2]
 OUT = Path(tempfile.mkdtemp(prefix="rendprop-upload-pg-", dir="/tmp"))
-ENV = {"PATH": "/opt/homebrew/opt/postgresql@17/bin:/usr/bin:/bin", "LC_ALL": "C", "TZ": "UTC"}
-PG = "/opt/homebrew/opt/postgresql@17/bin/"
+HOMEBREW_PG = "/opt/homebrew/opt/postgresql@17/bin"
+
+def postgres_bin():
+    """One PostgreSQL distribution from the caller's PATH (PG16 in CI, PG17 on
+    the Mac); the Homebrew @17 keg stays the fallback. All three binaries must
+    come from the same directory so a stray psql never pairs with another
+    server's initdb."""
+    for candidate in [*(Path(p).parent for p in [shutil.which("initdb")] if p), Path(HOMEBREW_PG)]:
+        if all((candidate / name).is_file() for name in ("initdb", "pg_ctl", "psql")):
+            return candidate
+    raise RuntimeError("No PostgreSQL distribution with initdb/pg_ctl/psql on PATH or at " + HOMEBREW_PG)
+
+PG = str(postgres_bin()) + "/"
+ENV = {"PATH": PG.rstrip("/") + ":/usr/bin:/bin", "LC_ALL": "C", "TZ": "UTC"}
 DATA, SOCKET = OUT / "cluster", OUT / "socket"
-RECEIPT = {"accepted": False, "network": "Unix socket only", "commands": [], "evidence": str(OUT)}
+RECEIPT = {"accepted": False, "network": "Unix socket only", "commands": [], "evidence": str(OUT), "postgres": PG}
 
 def run(name, args, source=None, expected=0):
     result = subprocess.run(args, input=source, text=True, env=ENV, cwd=ROOT,
@@ -254,6 +266,98 @@ class UploadDatabase(unittest.TestCase):
         self.assertEqual(self.balances(),[1,0,33554436])
         self.assertEqual(sql(f"select count(*) from upload_operations where asset_id='{asset['id']}' and state<>'retained';"),"0")
 
+    # ── 0042: a cut transfer is re-plannable on the same ticket ──────────────
+    def reservation(self, asset):
+        return sql(f"select held_bytes||':'||spent_bytes from upload_reservations where asset_id='{asset['id']}';")
+
+    def rejected(self, asset, kind="single", part=0):
+        op=call("plan_upload_operation",asset["id"],kind,part);claim=str(uuid.uuid4())
+        call("claim_upload_operation",op["id"],claim)
+        return call("finish_upload_operation",op["id"],claim,"rejected",None,None)
+
+    def test_rejected_transfer_replans_in_place_and_spends_its_bytes_once(self):
+        asset=self.reserve();op=self.rejected(asset)
+        self.assertEqual([op["state"],op["attempt"]],["rejected",1])
+        self.assertEqual(self.balances(),[1,4,4]) # the verdict itself refunds nothing
+        again=self.operation(asset)
+        # Same row and key, one more attempt, receipt and window cleared. The
+        # old claim stays: cleanup reads it as "a write was authorized here".
+        self.assertEqual([again["id"],again["object_key"],again["state"],again["attempt"],again["claim"],again["etag"],again["write_deadline"]],
+                         [op["id"],op["object_key"],"planned",2,op["claim"],None,None])
+        self.assertEqual(self.balances(),[1,8,0]);self.assertEqual(self.reservation(asset),"8:0")
+        self.assertEqual(self.operation(asset)["attempt"],2) # re-planning is not repeated for a planned row
+        claim=str(uuid.uuid4());self.assertTrue(call("claim_upload_operation",op["id"],claim)["dispatch"])
+        self.assertEqual(self.balances(),[1,4,4]);self.assertEqual(self.reservation(asset),"4:4")
+        call("finish_upload_operation",op["id"],claim,"stored",'"fixture"')
+        self.assertEqual(self.operation(asset)["state"],"stored");self.assertEqual(self.balances(),[1,4,4])
+        self.assertEqual(sql(f"select count(*) from upload_operations where asset_id='{asset['id']}' and kind='single';"),"1")
+
+    def test_attempt_cap_keeps_rejected_until_cancellation(self):
+        asset=self.reserve()
+        for attempt in range(1,5):
+            self.assertEqual(self.rejected(asset)["attempt"],attempt)
+            self.assertEqual([self.operation(asset)["state"],self.operation(asset)["attempt"]],["planned",attempt+1])
+        op=self.rejected(asset);self.assertEqual(op["attempt"],5)
+        final=self.operation(asset)
+        self.assertEqual([final["state"],final["attempt"],final.get("attempts_exhausted")],["rejected",5,True])
+        self.assertIn("RP503",call("claim_upload_operation",op["id"],str(uuid.uuid4()),expected=3))
+        self.assertEqual(self.balances(),[1,4,4]) # the fifth dispatch stays charged
+        self.assertTrue(call("settle_upload_reservation",asset["id"],False)["upload_aborted"])
+        self.assertEqual(self.balances(),[1,0,4])
+        self.assertIn("RP409",call("plan_upload_operation",asset["id"],"single",0,expected=3))
+
+    def test_absent_uncertain_transfer_retires_then_replans(self):
+        asset=self.reserve();op=self.operation(asset);claim=str(uuid.uuid4())
+        call("claim_upload_operation",op["id"],claim)
+        self.assertEqual(call("finish_upload_operation",op["id"],claim,"uncertain",None,None)["state"],"uncertain")
+        self.assertEqual(sql(f"select write_deadline<=clock_timestamp() from upload_operations where id='{op['id']}';"),"t")
+        retired=call("recover_upload_operation",op["id"],None)
+        self.assertEqual([retired["state"],retired["etag"],retired["claim"]],["rejected",None,claim])
+        self.assertEqual(call("recover_upload_operation",op["id"],None)["state"],"rejected")
+        self.assertEqual(self.balances(),[1,4,4])
+        again=self.operation(asset);self.assertEqual([again["state"],again["attempt"]],["planned",2])
+        self.assertEqual(self.balances(),[1,8,0])
+        # A present receipt still wins over a later absence claim.
+        claim=str(uuid.uuid4());call("claim_upload_operation",op["id"],claim)
+        call("finish_upload_operation",op["id"],claim,"stored",'"fixture"')
+        self.assertIn("RP409",call("recover_upload_operation",op["id"],None,expected=3))
+        self.assertEqual(self.operation(asset)["state"],"stored")
+
+    def test_silent_dispatch_is_not_retired_before_its_write_deadline(self):
+        asset=self.reserve();op=self.operation(asset);claim=str(uuid.uuid4())
+        call("claim_upload_operation",op["id"],claim)
+        self.assertEqual(call("recover_upload_operation",op["id"],None)["state"],"dispatching")
+        self.assertEqual(self.operation(asset)["state"],"dispatching")
+        self.assertEqual(self.balances(),[1,4,4])
+        sql(f"update upload_operations set write_deadline=clock_timestamp()-interval '1 second' where id='{op['id']}';")
+        self.assertEqual(call("recover_upload_operation",op["id"],None)["state"],"rejected")
+        self.assertEqual([self.operation(asset)["state"],self.operation(asset)["attempt"]],["planned",2])
+        self.assertEqual(self.balances(),[1,8,0])
+
+    def test_rejected_promotion_copy_is_never_replanned(self):
+        asset=self.reserve();self.stored(asset);op=self.rejected(asset,"copy")
+        again=self.operation(asset,"copy")
+        self.assertEqual([again["id"],again["state"],again["attempt"]],[op["id"],"rejected",1])
+        self.assertNotIn("attempts_exhausted",again)
+        self.assertIn("RP409",call("recover_upload_operation",op["id"],None,expected=3))
+        self.assertIn("RP503",call("claim_upload_operation",op["id"],str(uuid.uuid4()),expected=3))
+        self.assertEqual(self.balances(),[1,0,8])
+
+    def test_concurrent_replan_and_claim_keep_single_dispatch(self):
+        asset=self.reserve();op=self.rejected(asset)
+        commands=[f"set role service_role; select plan_upload_operation('{asset['id']}','single',0); "
+                  f"select claim_upload_operation('{op['id']}','{uuid.uuid4()}');" for _ in range(8)]
+        def direct(command):
+            p=subprocess.run(PSQL,input=command,text=True,env=ENV,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,timeout=10)
+            return p.returncode,p.stdout
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as pool:
+            results=list(pool.map(direct,commands))
+        self.assertEqual(sum(code==0 for code,_ in results),1)
+        self.assertTrue(all(code==0 or code==3 and "RP503" in out for code,out in results))
+        winner=self.operation(asset)
+        self.assertEqual([winner["state"],winner["attempt"]],["dispatching",2])
+        self.assertEqual(self.balances(),[1,4,4]);self.assertEqual(self.reservation(asset),"4:4")
+
 def main():
     if shutil.disk_usage(OUT).free < 1024**3: raise RuntimeError("Need 1 GiB disk headroom")
     SOCKET.mkdir(mode=0o700)
@@ -275,28 +379,39 @@ def main():
         for source in sources: run(source.stem, PSQL+["-1", "-f", str(source)])
         result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(UploadDatabase))
         RECEIPT.update(tests=result.testsRun, failed=len(result.failures)+len(result.errors), skipped=len(result.skipped))
-        if not result.wasSuccessful() or result.skipped or result.testsRun != 20: raise RuntimeError("Database regression gate failed")
-        migration=ROOT/"services/supabase/migrations/0037_upload_transport_budget.sql"
-        source=migration.read_text()
-        mutants=[("dispatch", "or op.state <> 'planned'", "or false /* deliberate missing dispatch fence */",
+        if not result.wasSuccessful() or result.skipped or result.testsRun != 26: raise RuntimeError("Database regression gate failed")
+        # 0042 replaces three 0037 functions with the same signatures. Replaying
+        # 0037 (mutated or restored) therefore reverts them, so every restore
+        # re-applies 0042 on top; the stack under test is always 0037 + 0042.
+        budget=ROOT/"services/supabase/migrations/0037_upload_transport_budget.sql"
+        recovery=ROOT/"services/supabase/migrations/0042_upload_operation_recovery.sql"
+        mutants=[("dispatch", budget, "or op.state <> 'planned'", "or false /* deliberate missing dispatch fence */",
                   "test_concurrent_claim_dispatches_once"),
-                 ("spent-refund", "set held_bytes=held_bytes-r.held_bytes where org_id=r.org_id and day=r.day;",
+                 ("spent-refund", budget, "set held_bytes=held_bytes-r.held_bytes where org_id=r.org_id and day=r.day;",
                   "set held_bytes=held_bytes-r.held_bytes,spent_bytes=greatest(0,spent_bytes-r.spent_bytes) where org_id=r.org_id and day=r.day;",
-                  "test_cancel_is_single_settlement_after_uncertain_write")]
+                  "test_cancel_is_single_settlement_after_uncertain_write"),
+                 ("replan-release", recovery, "update public.upload_reservations set held_bytes=held_bytes+op.bytes, spent_bytes=spent_bytes-op.bytes where asset_id=a.id;",
+                  "/* deliberate: re-plan keeps the rejected claim's bytes spent */",
+                  "test_rejected_transfer_replans_in_place_and_spends_its_bytes_once"),
+                 ("attempt-cap", recovery, "if op.attempt >= 5 then return", "if false then return",
+                  "test_attempt_cap_keeps_rejected_until_cancellation")]
         RECEIPT["negativeControls"]=[]
-        for name,old,new,test in mutants:
-            if old not in source: raise RuntimeError("Negative mutation anchor missing")
+        for name,migration,old,new,test in mutants:
+            source=migration.read_text()
+            if old not in source: raise RuntimeError("Negative mutation anchor missing: "+name)
             run("mutate-"+name,PSQL,source.replace(old,new))
             try:
                 output=io.StringIO();broken=unittest.TextTestRunner(stream=output,verbosity=2).run(UploadDatabase(test))
                 (OUT/("negative-"+name+".log")).write_text(output.getvalue())
                 if len(broken.failures)!=1 or broken.errors or broken.skipped:
                     raise RuntimeError("Mutation was not caught by its intended assertion: "+name)
-                RECEIPT["negativeControls"].append({"name":name,"assertionFailures":1,"test":test})
-            finally: run("restore-"+name,PSQL,source)
+                RECEIPT["negativeControls"].append({"name":name,"migration":migration.name,"assertionFailures":1,"test":test})
+            finally:
+                run("restore-"+name,PSQL,source)
+                run("restack-0042-"+name,PSQL,recovery.read_text())
             restored=unittest.TextTestRunner(verbosity=2).run(UploadDatabase(test))
             if not restored.wasSuccessful(): raise RuntimeError("Restored source still failed")
-        RECEIPT["restoredTests"]=2
+        RECEIPT["restoredTests"]=len(mutants)
         RECEIPT["accepted"] = True
     finally:
         try:

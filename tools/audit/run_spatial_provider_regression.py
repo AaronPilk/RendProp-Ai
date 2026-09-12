@@ -3,19 +3,39 @@
 from pathlib import Path
 import json
 import os
+import shutil
 import subprocess
 import tempfile
+
+PROVIDER_SQL_ASSERTIONS = 25
+HOMEBREW_POSTGRES = Path('/opt/homebrew/opt/postgresql@17/bin')
+TOOLS = ('initdb', 'pg_ctl', 'createdb', 'psql')
+
+
+def postgres_bin():
+    """One directory holding every server tool: PATH first, then the Mac's Homebrew PG17.
+
+    The suite runs on Linux CI with PostgreSQL 16 on PATH and on the owner's
+    Mac with Homebrew PostgreSQL 17 off it. Mixing tools from two installs
+    would let a PATH psql talk to a differently versioned cluster, so the four
+    tools must come from the same directory.
+    """
+    found = shutil.which('pg_ctl')
+    for candidate in ([Path(found).resolve().parent] if found else []) + [HOMEBREW_POSTGRES]:
+        if all((candidate / tool).is_file() and os.access(candidate / tool, os.X_OK) for tool in TOOLS):
+            return candidate
+    raise SystemExit(f'PostgreSQL server tools {TOOLS} not found on PATH or in {HOMEBREW_POSTGRES}')
 
 
 def main():
     root = Path(__file__).resolve().parents[2]
-    bins = Path('/opt/homebrew/opt/postgresql@17/bin')
+    bins = postgres_bin()
     out = Path(tempfile.mkdtemp(prefix='rendprop-provider-db-', dir='/tmp'))
     cluster, socket = out / 'cluster', out / 'socket'
     socket.mkdir(mode=0o700)
     env = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'TZ': 'UTC'}
-    receipt = {'accepted': False, 'commands': [], 'cluster_stopped': False}
-    print('EVIDENCE:', out, flush=True)
+    receipt = {'accepted': False, 'commands': [], 'cluster_stopped': False, 'postgres_bin': str(bins)}
+    print('EVIDENCE:', out, 'postgres_bin:', bins, flush=True)
 
     def run(name, command, expected=0, stdin=None):
         p = subprocess.run(list(map(str, command)), cwd=root, env=env, input=stdin,
@@ -46,14 +66,14 @@ def main():
         assert 'provider assertion failed: durable provider table exists' in run('before', psql + ['-f', test], 3)
         for phase in ('after', 'replayed'):
             run('apply-' + phase, psql + ['-q', '-1', '-f', target])
-            assert 'PASS: 23 provider SQL assertions' in run(phase, psql + ['-f', test])
+            assert f'PASS: {PROVIDER_SQL_ASSERTIONS} provider SQL assertions' in run(phase, psql + ['-f', test])
         definition = run('definition', psql + ['-Atc', "select pg_get_functiondef('spatial_provider_attempt_update(uuid,uuid,uuid,text,jsonb)'::regprocedure);"])
         needle = "'dispatch',dispatch"
         assert definition.count(needle) == 1
         run('mutate', psql, stdin=definition.replace(needle, "'dispatch',true"))
         assert 'provider assertion failed: plan replay never grants another dispatch' in run('reject-mutant', psql + ['-f', test], 3)
         run('restore', psql + ['-q', '-1', '-f', target])
-        assert 'PASS: 23 provider SQL assertions' in run('restored', psql + ['-f', test])
+        assert f'PASS: {PROVIDER_SQL_ASSERTIONS} provider SQL assertions' in run('restored', psql + ['-f', test])
         receipt['accepted'] = True
     finally:
         if started:

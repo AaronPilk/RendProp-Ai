@@ -33,12 +33,14 @@ def main():
         return p.stdout
     try:
         baseline=run('baseline',functions/'spatial',0)
-        # A new provider-journal route added the 26th test. Keep exact counts so
+        # 26 tests through the provider-journal route; the 0043 hardening added
+        # nine more (capability reasons, the anonymous spending gate, legible
+        # 503s for a partly deployed migration set). Keep exact counts so
         # missing/skipped tests cannot make a partial run look green; normalize
         # terminal coloring, not assertions or failures.
         plain=re.sub(r'\x1b\[[0-9;]*m','',baseline)
         summary=re.search(r'ok \| (\d+) passed \| (\d+) failed(?: \| (\d+) ignored)?',plain)
-        assert summary and tuple(int(x or 0) for x in summary.groups())==(26,0,0)
+        assert summary and tuple(int(x or 0) for x in summary.groups())==(35,0,0)
         file=copy/'spatial/index.ts';source=file.read_text();needle='await digest(bytes) === j.output_sha256'
         assert source.count(needle)==1,'output hash mutation target missing or ambiguous'
         file.write_text(source.replace(needle,'true /* deliberate copied-source negative control */'))
@@ -49,7 +51,7 @@ def main():
         (out/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
         print(f'EVIDENCE: {out}',flush=True)
     assert receipt['accepted']
-    print('PASS: 26 Edge tests, 0 ignored; copied-source output-hash mutant rejected.')
+    print('PASS: 35 Edge tests, 0 ignored; copied-source output-hash mutant rejected.')
 
 
 if __name__=='__main__':main()

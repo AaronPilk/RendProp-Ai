@@ -14,21 +14,41 @@ import subprocess
 import tempfile
 import time
 
+POSTGRES_TOOLS = ('initdb', 'pg_ctl', 'psql', 'createdb')
+# The Homebrew keg this fixture was first written against, kept as the
+# fallback for a Mac without the server tools on PATH. CI puts
+# /usr/lib/postgresql/16/bin first on PATH and is found through that.
+HOMEBREW_POSTGRES = Path('/opt/homebrew/opt/postgresql@17/bin')
+
+
+def postgres_binaries():
+    """One directory holding all four server/client tools, so the cluster this
+    run creates and the psql that drives it come from the same build."""
+    candidates = []
+    on_path = shutil.which('initdb')
+    if on_path:
+        candidates.append(Path(on_path).resolve().parent)
+    candidates.append(HOMEBREW_POSTGRES)
+    for directory in candidates:
+        if all((directory / name).is_file() for name in POSTGRES_TOOLS):
+            return directory
+    raise SystemExit('PostgreSQL tools (' + ', '.join(POSTGRES_TOOLS) + ') were not found together on PATH '
+                     f'or in {HOMEBREW_POSTGRES}; put a server bin directory such as /usr/lib/postgresql/16/bin first on PATH')
+
 
 def main():
     parser=argparse.ArgumentParser()
     parser.add_argument('--provider-commit',help='Optional exact local commit for the sibling0041 migration; no checkout or remote fetch')
     args=parser.parse_args()
     root = Path(__file__).resolve().parents[2]
-    binaries = Path('/opt/homebrew/opt/postgresql@17/bin')
-    assert all((binaries / name).is_file() for name in ['initdb', 'pg_ctl', 'psql', 'createdb'])
+    binaries = postgres_binaries()
     assert shutil.disk_usage('/tmp').free >= 1024**3, 'Need 1 GiB free; no cleanup performed'
     out = Path(tempfile.mkdtemp(prefix='rendprop-deletion-db-', dir='/tmp'))
     cluster, socket = out / 'cluster', out / 'socket'
     socket.mkdir(mode=0o700)
     env = {'PATH': '/usr/bin:/bin', 'LC_ALL': 'C', 'TZ': 'UTC'}
     receipt = {'accepted': False, 'commands': [], 'sourceHashes': {}, 'clusterStopped': False,
-               'concurrentCases': []}
+               'concurrentCases': [], 'postgresBinaries': str(binaries)}
     migrations = sorted((root / 'services/supabase/migrations').glob('*.sql'))
     target = root / 'services/supabase/migrations/0039_account_deletion_intent.sql'
     test = root / 'services/supabase/tests/account_deletion_intent.sql'
@@ -120,8 +140,8 @@ rollback;
             if name == 'replayed':
                 run('replay-0039', psql + ['-q', '-1', '-f', str(target)])
             output = run(name, psql + ['-f', str(test)])
-            assert 'PASS: 32 deletion SQL assertions; all fixtures rolled back.' in output
-            assert 'PASS: 30 spatial deletion SQL assertions; all fixtures rolled back.' in run(name+'-spatial',psql+['-f',str(spatial_test)])
+            assert 'PASS: 41 deletion SQL assertions; all fixtures rolled back.' in output
+            assert 'PASS: 35 spatial deletion SQL assertions; all fixtures rolled back.' in run(name+'-spatial',psql+['-f',str(spatial_test)])
 
         # A genuine changed-authority mutant, not a printed negative control:
         # disable the object-prefix guard in this disposable function only.
@@ -134,7 +154,7 @@ rollback;
         output = run('reject-ownership-mutant', psql + ['-f', str(test)], expected=3)
         assert 'wrong failure for foreign photo reference fails before destruction: fixture accepted forbidden operation' in output
         run('restore-0039', psql + ['-q', '-1', '-f', str(target)])
-        assert 'PASS: 32 deletion SQL assertions; all fixtures rolled back.' in run('restored', psql + ['-f', str(test)])
+        assert 'PASS: 41 deletion SQL assertions; all fixtures rolled back.' in run('restored', psql + ['-f', str(test)])
         provider_definition=run('provider-proof-definition',psql+['-Atc',
             "select pg_get_functiondef('public.account_deletion_provider_ready(uuid,uuid)'::regprocedure);"])
         assert provider_definition.count('return false;')==1 and provider_definition.count('return coalesce(ready,false);')==1
@@ -144,7 +164,7 @@ rollback;
         broken=run('reject-provider-proof-mutant',psql+['-f',str(spatial_test)],expected=3)
         assert 'missing provider proof is not cleanup success' in broken
         run('restore-provider-proof',psql+['-q','-1','-f',str(target)])
-        assert 'PASS: 30 spatial deletion SQL assertions; all fixtures rolled back.' in run('restored-spatial',psql+['-f',str(spatial_test)])
+        assert 'PASS: 35 spatial deletion SQL assertions; all fixtures rolled back.' in run('restored-spatial',psql+['-f',str(spatial_test)])
 
         for number, case, first_action, end in [
             (1, 'adoption-commits-first', 'adopt', 'commit'),

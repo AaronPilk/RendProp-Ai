@@ -8,6 +8,14 @@ alter table public.deletion_requests add column if not exists cleanup_token uuid
 alter table public.deletion_requests add column if not exists cleanup_lease_until timestamptz;
 alter table public.deletion_requests add column if not exists manual_review_required boolean not null default false;
 alter table public.deletion_requests add column if not exists next_cleanup_at timestamptz not null default clock_timestamp();
+-- Retained work that no sweep can finish (an unjournaled GPU lease, an
+-- ambiguous multipart allocation, a legacy render worker) must not stay a
+-- pending row the sweeper re-runs every five minutes forever. Consecutive
+-- sweeps that change nothing are counted here; the bounded escalation below
+-- parks the row for a person and records why, and never erases a target.
+alter table public.deletion_requests add column if not exists stalled_sweeps integer not null default 0;
+alter table public.deletion_requests add column if not exists escalation_reason text;
+alter table public.deletion_requests add column if not exists escalated_at timestamptz;
 create index if not exists deletion_work_queue on public.deletion_requests(status,requested_at)
   where not manual_review_required;
 create index if not exists deletion_due_queue on public.deletion_requests(next_cleanup_at)
@@ -25,14 +33,24 @@ begin
   if current_setting('role',true) is distinct from 'service_role' then raise insufficient_privilege using message='service role required'; end if;
   select * into r from public.deletion_requests where id=p_request for update;
   if not found then raise exception 'RP404: deletion request not found'; end if;
-  if r.snapshot_version<>2 or r.manual_review_required then
+  if r.snapshot_version<>2 then
     -- Legacy payloads often contain bare keys but no original ownership map.
     -- Inferring ownership now could erase an adoption winner. Keep every byte
     -- for manual reconciliation; never classify the retained work as complete.
     update public.deletion_requests set status='pending',manual_review_required=true,
-      last_error='Unverified legacy ownership snapshot: manual reconciliation required',cleanup_token=null,cleanup_lease_until=null
+      last_error='Unverified legacy ownership snapshot: manual reconciliation required',
+      escalation_reason=coalesce(escalation_reason,'Unverified legacy ownership snapshot: manual reconciliation required'),
+      escalated_at=coalesce(escalated_at,clock_timestamp()),cleanup_token=null,cleanup_lease_until=null
       where id=r.id;
-    return jsonb_build_object('ok',false,'request_id',r.id,'manual_review_required',true);
+    return jsonb_build_object('ok',false,'request_id',r.id,'manual_review_required',true,
+      'escalation_reason','Unverified legacy ownership snapshot: manual reconciliation required');
+  end if;
+  if r.manual_review_required then
+    -- A v2 row parked by finish_account_deletion keeps its own recorded
+    -- reason; a claim must neither relabel it as legacy nor lease it out.
+    update public.deletion_requests set status='pending',cleanup_token=null,cleanup_lease_until=null where id=r.id;
+    return jsonb_build_object('ok',false,'request_id',r.id,'manual_review_required',true,
+      'escalation_reason',r.escalation_reason);
   end if;
   if r.status='completed' then return jsonb_build_object('ok',false,'request_id',r.id,'completed',true); end if;
   if r.cleanup_lease_until>clock_timestamp() then raise exception 'RP409: deletion cleanup is already running'; end if;
@@ -266,9 +284,27 @@ begin
   return coalesce(ready,false);
 end $$;
 
+-- Whether the provider journal knows this lease AT ALL. The worker journals a
+-- lease before it allocates anything, so a lease that still has no row a day
+-- after the request (its parent job is already purged) will never be
+-- confirmed by anyone; the sweeper must hand it to a person instead of
+-- polling account_deletion_provider_ready forever. A missing table (0041 not
+-- installed) is the same situation: nothing can journal into it.
+create or replace function public.account_deletion_provider_journaled(p_job uuid,p_lease uuid)
+returns boolean language plpgsql security definer set search_path='' as $$
+declare journaled boolean;
+begin
+  if current_setting('role',true) is distinct from 'service_role' then raise insufficient_privilege using message='service role required'; end if;
+  if to_regclass('public.spatial_provider_attempts') is null then return false; end if;
+  execute 'select exists(select 1 from public.spatial_provider_attempts where job_id=$1 and lease_token=$2)'
+    into journaled using p_job,p_lease;
+  return coalesce(journaled,false);
+end $$;
+
 create or replace function public.finish_account_deletion(p_request uuid,p_token uuid,p_remaining jsonb,p_notes text)
 returns jsonb language plpgsql security definer set search_path='' as $$
 declare r public.deletion_requests%rowtype; field text; done boolean; manual boolean; target jsonb;
+  waiting boolean; stalled integer; reason text; unjournaled text; retained text;
 begin
   if current_setting('role',true) is distinct from 'service_role' then raise insufficient_privilege using message='service role required'; end if;
   select* into r from public.deletion_requests where id=p_request for update;
@@ -321,17 +357,48 @@ begin
     jsonb_array_length(p_remaining->'unresolved_uploads')+jsonb_array_length(p_remaining->'unresolved_render_jobs')=0 and p_remaining->'storage_not_before'='null'::jsonb
     and p_remaining->'apple_refresh_token'='null'::jsonb and p_remaining->'analytics_user_id'='null'::jsonb
     and p_remaining->'profile_id'='null'::jsonb and p_remaining->'auth_user_id'='null'::jsonb;
-  select exists(select 1 from public.deletion_requests where user_id=r.user_id and manual_review_required) into manual;
+  -- Bounded retries. A pass that changed nothing, while nothing was merely
+  -- waiting for a storage write window to drain, is a stalled sweep. Twelve
+  -- in a row (an hour at the five-minute cadence), or a GPU lease that still
+  -- has no provider journal a day after the request, parks the row for
+  -- manual reconciliation: manual_review_required drops it out of the due
+  -- queue and escalation_reason says why. Every retained target is kept
+  -- byte-for-byte; escalation is never a shortcut to 'completed'.
+  waiting:=r.payload->>'storage_not_before' is not null and (r.payload->>'storage_not_before')::timestamptz>clock_timestamp();
+  stalled:=case when done or waiting or p_remaining<>r.payload then 0 else r.stalled_sweeps+1 end;
+  if not done and stalled>=12 then
+    select string_agg(category||'='||amount,', ' order by category) into retained from (
+      select k category,jsonb_array_length(p_remaining->k)::text amount
+        from unnest(array['r2','stream_uids','ghl_targets','provider_leases','multipart_uploads','unresolved_uploads','unresolved_render_jobs']) k
+       where jsonb_array_length(p_remaining->k)>0
+      union all
+      select k,'pending' from unnest(array['apple_refresh_token','analytics_user_id','profile_id','auth_user_id','storage_not_before']) k
+       where p_remaining->k<>'null'::jsonb) s;
+    reason:=format('no cleanup progress in %s consecutive sweeps; retained for manual reconciliation: %s',stalled,coalesce(retained,'(none)'));
+  elsif not done and jsonb_array_length(p_remaining->'provider_leases')>0 and clock_timestamp()-r.requested_at>=interval '24 hours' then
+    select string_agg(format('job %s lease %s',t->>'job_id',t->>'lease_token'),', ') into unjournaled
+      from jsonb_array_elements(p_remaining->'provider_leases') t
+     where not public.account_deletion_provider_journaled((t->>'job_id')::uuid,(t->>'lease_token')::uuid);
+    if unjournaled is not null then
+      reason:=format('provider lease without a cleanup journal 24 hours after the request; no worker can confirm file removal for %s',unjournaled);
+    end if;
+  end if;
   update public.deletion_requests set payload=p_remaining,status=case when done then'completed'else'pending'end,
+    stalled_sweeps=stalled,manual_review_required=manual_review_required or reason is not null,
+    escalation_reason=coalesce(escalation_reason,reason),
+    escalated_at=case when reason is not null then coalesce(escalated_at,clock_timestamp()) else escalated_at end,
     cleanup_token=null,cleanup_lease_until=null,next_cleanup_at=clock_timestamp()+interval '5 minutes',
     last_error=nullif(left(p_notes,2000),''),completed_at=case when done then now()else null end where id=r.id;
+  select exists(select 1 from public.deletion_requests where user_id=r.user_id and manual_review_required) into manual;
   return jsonb_build_object('ok',true,'request_id',r.id,'source_user_id',r.user_id,
-    'cleanup_complete',done and not manual,'manual_review_required',manual);
+    'cleanup_complete',done and not manual,'manual_review_required',manual,
+    'stalled_sweeps',stalled,'escalation_reason',reason);
 end;
 $$;
 revoke execute on function public.claim_account_deletion(uuid) from public,anon,authenticated;
 revoke execute on function public.prepare_account_deletion(uuid,text,text) from public,anon,authenticated;
 revoke execute on function public.finish_account_deletion(uuid,uuid,jsonb,text) from public,anon,authenticated;
 revoke execute on function public.account_deletion_provider_ready(uuid,uuid) from public,anon,authenticated;
+revoke execute on function public.account_deletion_provider_journaled(uuid,uuid) from public,anon,authenticated;
 grant execute on function public.claim_account_deletion(uuid),public.prepare_account_deletion(uuid,text,text),public.finish_account_deletion(uuid,uuid,jsonb,text),
-  public.account_deletion_provider_ready(uuid,uuid) to service_role;
+  public.account_deletion_provider_ready(uuid,uuid),public.account_deletion_provider_journaled(uuid,uuid) to service_role;

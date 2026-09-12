@@ -4,6 +4,11 @@ import ARKit
 /// The product path is listing-scoped and separate from the diagnostic export
 /// lab. Captures flow to a durable uploader; opening 3D waits for a real server
 /// artifact, never a timer or a synthetic "completed" placeholder.
+///
+/// Before a scan button is offered the screen asks the server whether 3D rooms
+/// can be generated at all. A phone that scans, uploads every frame and only
+/// then learns at `/start` that the service is switched off has wasted the
+/// owner's afternoon, so "not available" is shown plainly up front.
 struct SpatialTourView: View {
     let listing: Listing
     @EnvironmentObject private var model: AppModel
@@ -13,19 +18,33 @@ struct SpatialTourView: View {
     @State private var jobs: [SpatialJob] = []
     @State private var roomLabel = "Living room"
     @State private var captureHandoff: SpatialCaptureHandoff?
+    @State private var captureOpenedAt: Date?
+    @State private var captureOwner: String?
+    @State private var captureHandedOff = false
+    @State private var limitNotice: SpatialLimitNotice?
+    @State private var capability: SpatialCapability?
+    @State private var capabilityError: String?
+    @State private var checkingCapability = false
     @State private var viewer: SpatialViewerPresentation?
     @State private var reviewing: SpatialJob?
     @State private var message: String?
     @State private var loading = false
     @State private var preparing = false
     @State private var mutation = false
-    @AppStorage("wifiOnlyUploads") private var wifiOnly = true
+    // Spatial's own switch. It hard-blocks cellular, unlike the Settings key
+    // `wifiOnlyUploads`, which only asks before a cellular upload.
+    @AppStorage(SpatialUploadPreferences.wifiOnlyKey) private var wifiOnly = SpatialUploadPreferences.wifiOnlyDefault
+    // The last server answer. Lets a phone that was confirmed once still scan
+    // while offline; a phone never confirmed (or last told "no") waits.
+    @AppStorage("spatialCapabilityConfirmed") private var capabilityConfirmedBefore = false
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 VStack(alignment: .leading, spacing: 9) {
-                    Label("3D walkthrough", systemImage: "view.3d")
+                    // A non-textual glyph: `view.3d` draws the characters "3D",
+                    // which read as "3D 3D walkthrough" next to this title.
+                    Label("3D walkthrough", systemImage: "cube.transparent")
                         .font(.rpTitle).foregroundStyle(.white)
                     Text("Scan rooms. Walk through them.")
                         .font(.rpBody).foregroundStyle(.white.opacity(0.92))
@@ -35,37 +54,15 @@ struct SpatialTourView: View {
                 .padding(20).background(RPGradient.drone)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radius + 4))
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Capture a room").font(.rpHeadline).foregroundStyle(Theme.ink)
-                    Text("Room photos and measured camera positions upload automatically for private cloud generation. You can leave this screen while photos upload. Nothing is shared until you review and publish it.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    TextField("Room name", text: $roomLabel)
-                        .textFieldStyle(.roundedBorder).textInputAutocapitalization(.words)
-                        .accessibilityIdentifier("spatial.roomName")
-                    Toggle("Upload on Wi-Fi only", isOn: $wifiOnly)
-                        .font(.rpBody).tint(Theme.accent)
-                        .accessibilityIdentifier("spatial.wifiOnly")
-                    Text("Keep the phone steady, walk slowly, and avoid people, mirrors and personal documents. Scan each room separately.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    Button {
-                        message = nil
-                        captureHandoff = .init(id: UUID(), ownerID: auth.userID)
-                    } label: {
-                        Label("Scan a room", systemImage: "camera.viewfinder")
-                            .frame(maxWidth: .infinity, minHeight: 46)
-                    }
-                    .buttonStyle(.borderedProminent).tint(Theme.accent)
-                    .disabled(!ARWorldTrackingConfiguration.isSupported || trimmedLabel.isEmpty || preparing)
-                    .accessibilityIdentifier("spatial.capture")
-                    if !ARWorldTrackingConfiguration.isSupported {
-                        Text("Scanning needs an iPhone that supports AR world tracking. You can still open your completed 3D walkthroughs on this device.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                            .accessibilityIdentifier("spatial.capture.unsupported")
-                    }
-                    if preparing {
-                        ProgressView("Verifying capture and preparing upload…").font(.rpCaption)
-                    }
-                }.card()
+                if let capability, !capability.enabled {
+                    disabledCard(capability)
+                } else if capability == nil, capabilityError != nil, !capabilityConfirmedBefore {
+                    unknownCapabilityCard
+                } else {
+                    captureCard
+                }
+
+                if let notice = limitNotice { limitCard(notice) }
 
                 if let error = message ?? uploads.recoveryError {
                     VStack(alignment: .leading, spacing: 8) {
@@ -76,26 +73,7 @@ struct SpatialTourView: View {
                     }.card().accessibilityIdentifier("spatial.error")
                 }
 
-                ForEach(uploads.records(for: listing.id)) { record in
-                    VStack(alignment: .leading, spacing: 10) {
-                        Label(record.roomLabel, systemImage: "arrow.up.circle").font(.rpHeadline)
-                        ProgressView(value: record.uploadProgress)
-                            .tint(Theme.accent)
-                            .accessibilityLabel("Verified photo upload progress")
-                        Text("\(record.confirmedCount) of \(record.frames.count) photos confirmed by the server")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        if let failure = record.failure {
-                            Text(failure).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                            if !record.isUserPaused {
-                                Button("Resume upload") { uploads.retry(record.id) }
-                                    .tint(Theme.accent).accessibilityIdentifier("spatial.upload.resume")
-                            }
-                        } else {
-                            Text(record.allowCellular ? "Uploading in the background. Your original capture stays saved." : "Uploads wait for Wi-Fi. Your original capture stays saved.")
-                                .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        }
-                    }.card().accessibilityIdentifier("spatial.upload.\(record.id)")
-                }
+                ForEach(uploads.records(for: listing.id)) { record in uploadCard(record) }
 
                 HStack {
                     Text("Your rooms").font(.rpHeadline)
@@ -116,9 +94,17 @@ struct SpatialTourView: View {
         .navigationTitle("3D walkthrough")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("spatial.product.root")
-        .sheet(item: $captureHandoff) { handoff in
+        .sheet(item: $captureHandoff, onDismiss: {
+            // Closed without a verified room: was the last attempt cut off by
+            // the recorder's limit? Say so in plain words instead of silence.
+            guard !captureHandedOff, let since = captureOpenedAt else { captureOpenedAt = nil; return }
+            let owner = captureOwner
+            captureOpenedAt = nil
+            Task { await inspectCaptures(since: since, owner: owner) }
+        }) { handoff in
             SpatialProductCapture(roomLabel: trimmedLabel) { url in
                 guard handoff.accepts(presentationID: captureHandoff?.id, currentOwner: auth.userID) else { return }
+                captureHandedOff = true
                 captureHandoff = nil
                 Task { await enqueue(url, capturedOwner: handoff.ownerID) }
             }
@@ -139,7 +125,9 @@ struct SpatialTourView: View {
         }
         .task(id: auth.userID) {
             jobs = [] // No previous workspace's room survives an account switch.
+            capability = nil
             uploads.reconnect()
+            await checkCapability()
             await refresh()
             while !Task.isCancelled {
                 do { try await Task.sleep(nanoseconds: 8_000_000_000) } catch { return }
@@ -156,17 +144,174 @@ struct SpatialTourView: View {
             viewer = nil
             reviewing = nil
             captureHandoff = nil
+            limitNotice = nil
             message = nil
         }
     }
 
     private var trimmedLabel: String { roomLabel.trimmingCharacters(in: .whitespacesAndNewlines) }
     private var liveListing: Listing { model.listings.first(where: { $0.id == listing.id }) ?? listing }
+    private var canScan: Bool {
+        ARWorldTrackingConfiguration.isSupported && !trimmedLabel.isEmpty && !preparing && !checkingCapability
+            && (capability?.enabled == true || (capability == nil && capabilityConfirmedBefore))
+    }
+
+    // MARK: Capture
+
+    private var captureCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Capture a room").font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Room photos and measured camera positions upload automatically for private cloud generation. You can leave this screen while photos upload. Nothing is shared until you review and publish it.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            TextField("Room name", text: $roomLabel)
+                .textFieldStyle(.roundedBorder).textInputAutocapitalization(.words)
+                .accessibilityIdentifier("spatial.roomName")
+            Toggle("Upload on Wi-Fi only", isOn: $wifiOnly)
+                .font(.rpBody).tint(Theme.accent)
+                .accessibilityIdentifier("spatial.wifiOnly")
+            Text("Keep the phone steady, walk slowly, and avoid people, mirrors and personal documents. Scan each room separately. A scan stops by itself after 400 photos or 10 minutes, so keep each room short.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button {
+                message = nil
+                limitNotice = nil
+                captureHandedOff = false
+                captureOpenedAt = Date()
+                captureOwner = auth.userID
+                captureHandoff = .init(id: UUID(), ownerID: auth.userID)
+            } label: {
+                Label("Scan a room", systemImage: "camera.viewfinder")
+                    .frame(maxWidth: .infinity, minHeight: 46)
+            }
+            .buttonStyle(.borderedProminent).tint(Theme.accent)
+            .disabled(!canScan)
+            .accessibilityIdentifier("spatial.capture")
+            if checkingCapability {
+                ProgressView("Checking whether 3D rooms are available…").font(.rpCaption)
+            } else if capability == nil, let capabilityError {
+                Text("Couldn't confirm 3D availability just now (\(capabilityError)). Scanning still works because this phone was confirmed before; uploads wait for a connection.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .accessibilityIdentifier("spatial.capability.stale")
+            }
+            if !ARWorldTrackingConfiguration.isSupported {
+                Text("Scanning needs an iPhone that supports AR world tracking. You can still open your completed 3D walkthroughs on this device.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .accessibilityIdentifier("spatial.capture.unsupported")
+            }
+            if preparing {
+                ProgressView("Verifying capture and preparing upload…").font(.rpCaption)
+            }
+        }.card()
+    }
+
+    /// The server says no. No scan button, no room name, no toggle — just the
+    /// reason in plain words and a way to check again later.
+    private func disabledCard(_ capability: SpatialCapability) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "cube.transparent").foregroundStyle(Theme.accent)
+                Text("3D rooms aren't available yet")
+                    .font(.rpHeadline).foregroundStyle(Theme.ink)
+                    .accessibilityIdentifier("spatial.disabled.title")
+            }
+            Text(capability.explanation)
+                .font(.rpBody).foregroundStyle(Theme.inkDim)
+                .accessibilityIdentifier("spatial.disabled.reason")
+            Text("Nothing has been uploaded or generated. Your completed rooms, if any, still open below.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button("Check again") { Task { await checkCapability() } }
+                .tint(Theme.accent).disabled(checkingCapability)
+                .accessibilityIdentifier("spatial.disabled.check")
+            if checkingCapability { ProgressView().tint(Theme.accent) }
+        }.card().accessibilityIdentifier("spatial.disabled")
+    }
+
+    /// We could not ask, and this phone was never told yes. Waiting is more
+    /// honest than a scan that may upload a whole room for nothing.
+    private var unknownCapabilityCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Couldn't check whether 3D rooms are available", systemImage: "wifi.exclamationmark")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                .accessibilityIdentifier("spatial.capability.unknown")
+            Text(capabilityError ?? "The 3D service did not answer.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Text("Scanning waits until the service confirms it can generate rooms, so a scan is never uploaded for nothing.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button("Check again") { Task { await checkCapability() } }
+                .tint(Theme.accent).disabled(checkingCapability)
+                .accessibilityIdentifier("spatial.capability.check")
+            if checkingCapability { ProgressView().tint(Theme.accent) }
+        }.card()
+    }
+
+    /// The recorder stopped a scan at its own ceiling (400 photos / 10 min).
+    /// Today it never marks such a capture exportable, so the honest answer is
+    /// "scan again, shorter"; if a later recorder does mark it exportable the
+    /// owner may continue with what was saved.
+    private func limitCard(_ notice: SpatialLimitNotice) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Your scan reached the limit", systemImage: "hourglass.bottomhalf.filled")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+            if let usable = notice.usableCapture {
+                Text("Scans stop by themselves after 400 photos or 10 minutes, and this one did. Everything up to that point was saved and checked, so you can upload this room as it is, or scan it again with a shorter walk.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button("Upload this room as it is") {
+                    limitNotice = nil
+                    Task { await enqueue(usable, capturedOwner: notice.ownerID) }
+                }.tint(Theme.accent).disabled(preparing).accessibilityIdentifier("spatial.limit.upload")
+                Button("Scan again instead") { limitNotice = nil }.tint(Theme.accent)
+            } else {
+                Text("Scans stop by themselves after 400 photos or 10 minutes, and this one did. The photos are saved on this phone, but a scan that hits the limit can't be uploaded, so please scan this room again with a shorter, slower walk.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button("OK") { limitNotice = nil }.tint(Theme.accent)
+            }
+        }.card().accessibilityIdentifier("spatial.limit")
+    }
+
+    private func uploadCard(_ record: SpatialUploadRecord) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label(record.roomLabel, systemImage: "arrow.up.circle").font(.rpHeadline)
+            ProgressView(value: record.uploadProgress)
+                .tint(Theme.accent)
+                .accessibilityLabel("Verified photo upload progress")
+            Text("\(record.confirmedCount) of \(record.frames.count) photos confirmed by the server")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if record.isServiceUnavailable {
+                // Same honest state as the capture card: a Resume button
+                // here would only fail at `/start` the same way again.
+                Text("3D rooms aren't available yet").font(.rpBody).foregroundStyle(Theme.ink)
+                    .accessibilityIdentifier("spatial.upload.unavailable")
+                Text(record.failure ?? "Every photo is uploaded and your capture is saved on this phone.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                Button("Check again") { Task { await retryIfAvailable(record) } }
+                    .tint(Theme.accent).disabled(checkingCapability)
+                    .accessibilityIdentifier("spatial.upload.check")
+            } else if let failure = record.failure {
+                Text(failure).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                if record.isTerminalFailure {
+                    Button("Clear this upload") { uploads.forget(record.id) }
+                        .tint(Theme.accent).accessibilityIdentifier("spatial.upload.clear")
+                    Text("Your saved scan stays on this phone. Scan the room again to try a fresh upload.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                } else if !record.isUserPaused {
+                    Button("Resume upload") { uploads.retry(record.id) }
+                        .tint(Theme.accent).accessibilityIdentifier("spatial.upload.resume")
+                }
+            } else {
+                Text(record.allowCellular ? "Uploading in the background. Your original capture stays saved." : "Uploads wait for Wi-Fi. Your original capture stays saved.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+        }.card().accessibilityIdentifier("spatial.upload.\(record.id)")
+    }
 
     private func roomCard(_ job: SpatialJob) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // The server still says "uploading" for a room whose every photo is
+        // there but whose /start was refused as not configured. Say what is
+        // actually happening rather than contradicting the upload card above.
+        let stalled = uploads.records.contains { $0.jobID == job.id && $0.isServiceUnavailable }
+        return VStack(alignment: .leading, spacing: 10) {
             Text(job.roomLabel).font(.rpHeadline).foregroundStyle(Theme.ink)
-            Text(job.status.title).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Text(stalled ? "Uploaded — waiting for the 3D service to be switched on" : job.status.title)
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
             if job.status.isGenerating {
                 ProgressView().tint(Theme.accent)
                 Text("Cloud generation continues when you leave the app. We will show the room here when the server confirms it is ready.")
@@ -197,7 +342,7 @@ struct SpatialTourView: View {
             }
             if job.status == .review || job.status == .ready {
                 Button { Task { await open(job) } } label: {
-                    Label("Open 3D walkthrough", systemImage: "view.3d")
+                    Label("Open 3D walkthrough", systemImage: "cube.transparent")
                         .frame(maxWidth: .infinity, minHeight: 44)
                 }.buttonStyle(.borderedProminent).tint(Theme.accent).disabled(mutation)
                     .accessibilityIdentifier("spatial.open.\(job.id)")
@@ -215,6 +360,30 @@ struct SpatialTourView: View {
         }.card()
     }
 
+    // MARK: Actions
+
+    @MainActor private func checkCapability() async {
+        guard !checkingCapability else { return }
+        checkingCapability = true
+        defer { checkingCapability = false }
+        let owner = auth.userID
+        do {
+            let result = try await model.api.spatialCapability()
+            guard auth.userID == owner, !Task.isCancelled else { return }
+            capability = result
+            capabilityError = nil
+            capabilityConfirmedBefore = result.enabled
+        } catch {
+            guard auth.userID == owner, !Task.isCancelled else { return }
+            capabilityError = error.localizedDescription
+        }
+    }
+    /// Re-ask before waking a room that stopped at "not configured"; only a
+    /// confirmed yes turns into another `/start`.
+    @MainActor private func retryIfAvailable(_ record: SpatialUploadRecord) async {
+        await checkCapability()
+        if capability?.enabled == true { uploads.retry(record.id) }
+    }
     @MainActor private func refresh(silent: Bool = false) async {
         guard !loading else { return }
         guard let serverID = liveListing.serverID else { jobs = []; return }
@@ -226,6 +395,7 @@ struct SpatialTourView: View {
             guard !Task.isCancelled, auth.userID == owner else { return }
             guard result.allSatisfy({ $0.listingID == serverID }) else { throw SpatialClientError.invalidResponse }
             jobs = result
+            uploads.observeServerJobs(result, listingID: serverID)
             if !silent { message = nil }
         } catch {
             guard auth.userID == owner, !Task.isCancelled else { return }
@@ -243,6 +413,32 @@ struct SpatialTourView: View {
                                       roomLabel: trimmedLabel, allowCellular: !wifiOnly)
             await refresh()
         } catch { message = error.localizedDescription }
+    }
+    /// After the capture sheet closes without a verified room, look at what
+    /// the recorder saved since it opened. Only a limit-stopped scan gets a
+    /// notice; interrupted or failed attempts already told the owner on the
+    /// capture screen.
+    @MainActor private func inspectCaptures(since: Date, owner: String?) async {
+        let found = await Task.detached(priority: .utility) { () -> (usable: URL?, hit: Bool) in
+            guard let archive = try? CaptureArchive.local() else { return (nil, false) }
+            var newest: CaptureArchiveEntry?
+            var offset = 0
+            while offset < 10 * CaptureArchive.pageSize {
+                guard let page = try? archive.page(offset: offset) else { break }
+                for entry in page.entries {
+                    guard let created = entry.createdAt, created >= since.addingTimeInterval(-2) else { continue }
+                    if newest.flatMap(\.createdAt).map({ created > $0 }) ?? true { newest = entry }
+                }
+                guard page.hasMore else { break }
+                offset += CaptureArchive.pageSize
+            }
+            guard let newest, newest.status == "limit_reached" else { return (nil, false) }
+            // Exportable only if the recorder says so; today it never does for
+            // a limit-stopped scan, and this must not second-guess it.
+            return (try? archive.validateForExport(id: newest.id), true)
+        }.value
+        guard found.hit, auth.userID == owner else { return }
+        limitNotice = SpatialLimitNotice(usableCapture: found.usable, ownerID: owner)
     }
     @MainActor private func open(_ job: SpatialJob) async {
         mutation = true
@@ -293,6 +489,13 @@ struct SpatialTourView: View {
     private func replace(_ job: SpatialJob) {
         if let i = jobs.firstIndex(where: { $0.id == job.id }) { jobs[i] = job }
     }
+}
+
+/// A scan the recorder stopped at its ceiling. `usableCapture` is set only
+/// when the archive re-verified it for export.
+private struct SpatialLimitNotice {
+    let usableCapture: URL?
+    let ownerID: String?
 }
 
 private struct SpatialViewerPresentation: Identifiable {

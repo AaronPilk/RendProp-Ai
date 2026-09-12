@@ -41,6 +41,12 @@ enum DirectUploader {
         do {
             var record = try await store.load(journalKey) ?? UploadRecovery.Journal()
             let explicitResume = record.ticket != nil
+            // A ticket that already ran a whole call dry may be retired and
+            // replaced on THIS later, explicit attempt — once. The flag is
+            // cleared in memory now so a ticket saved by this call starts with
+            // a clean slate; a failed call below sets it again.
+            let allowReplacement = record.recoveryExhausted == true
+            record.recoveryExhausted = nil
             if record.ticket == nil { record.ticket = try await create(); try await store.save(record, for: journalKey) }
             guard let initial = record.ticket, initial.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
             if record.completed { try checkOwner(); await store.release(journalKey); return initial.assetID }
@@ -53,6 +59,7 @@ enum DirectUploader {
                     if record.dispatched || record.ticket?.replayed != false {
                         let result = try await UploadRecovery.reconcile(journal: record,
                             allowLegacyCancellation: explicitResume,
+                            allowRetiredReplacement: allowReplacement,
                             persistCancellation: { id in
                                 try checkOwner()
                                 record.cancellationAuthorizedFor = id
@@ -91,10 +98,26 @@ enum DirectUploader {
                     if error is UploadRecovery.Failure { throw error }
                     // Retry means reconcile on the next iteration, never reuse
                     // this PUT URL. A service rollout may legitimately pause it.
+                    // These are the request's own fault (or the session's), not
+                    // the ticket's: they stop the call without marking the
+                    // ticket exhausted, so the next attempt reconciles it as
+                    // usual instead of paying for a replacement.
                     if let status = (error as? APIError)?.status,
-                       [400, 401, 402, 404, 405, 413].contains(status) { throw error }
+                       [400, 401, 402, 405, 413].contains(status) { throw error }
+                    // The row is gone or the server aborted the ticket: no
+                    // further round on it can help, so stop paying for them.
+                    if UploadRecovery.isRetired(error) { break }
                 }
             }
+            // Every round on this reservation ran dry, or the server retired it.
+            // `dispatched` stays as it is — the next attempt must still probe
+            // `/complete` before anything else — but that next, explicit attempt
+            // is now allowed to abort this ticket and reserve afresh. Before
+            // this mark, a dead ticket under a content key made the same photo
+            // impossible to upload ever again. The error itself is thrown so the
+            // caller can say what happened.
+            record.recoveryExhausted = true
+            try? await store.save(record, for: journalKey)
             throw lastError
         } catch {
             await store.release(journalKey)

@@ -15,7 +15,11 @@ create table if not exists public.spatial_provider_attempts (
   last_error_code text check(last_error_code in ('allocation_unknown','files_remove_failed','termination_failed','journal_unavailable')),
   created_at timestamptz not null default clock_timestamp(), updated_at timestamptz not null default clock_timestamp(),
   unique(job_id,attempt_key),
-  check(sandbox_name='spatial-'||job_id::text||'-'||lease_token::text),
+  -- The provider name is the lease token alone (44 chars). Modal 1.5.3 rejects
+  -- Sandbox names over 64 characters locally, before any CREATE RPC, so the
+  -- earlier 'spatial-<job>-<lease>' form (81 chars) could never allocate.
+  -- lease_token is this table's key, so the name still identifies one attempt.
+  check(sandbox_name='spatial-'||lease_token::text and length(sandbox_name)<=64),
   check(allocation_state<>'created' or sandbox_id is not null),
   check(allocation_state<>'not_created' or (sandbox_id is null and files_removed and terminated))
 );
@@ -45,7 +49,7 @@ begin
       or j.deadline_at<=clock_timestamp() or j.lease_expires_at<=clock_timestamp() then
       raise exception 'RP409: provider lease is not current'; end if;
     if p_data->>'app_name' is distinct from 'rendprop-spatial-worker'
-      or p_data->>'sandbox_name' is distinct from 'spatial-'||p_job::text||'-'||p_lease::text
+      or p_data->>'sandbox_name' is distinct from 'spatial-'||p_lease::text
       or (p_data->>'source_sha256') is null or (p_data->>'source_sha256') !~ '^[a-f0-9]{64}$' then
       raise exception 'RP400: invalid provider identity'; end if;
     if initial_absence and p_data->>'proof' is distinct from 'create_not_invoked' then

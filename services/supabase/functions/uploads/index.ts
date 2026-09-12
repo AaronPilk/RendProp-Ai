@@ -3,6 +3,10 @@
 // Requires 0037 + configured gateway and drained legacy URLs before rollout.
 // Cancellation releases only undispatched held bytes; cleanup is journaled,
 // asynchronous, and does not refund physical writes or promise zero ingress cost.
+// With 0042 a cut single/part transfer stays on its ticket: renew/part-urls
+// re-issue the same journaled operation (bounded attempts) once the gateway
+// rejected it or the server observed its key/part absent; a 409 marks the
+// attempt cap, 503 stays reserved for state that cannot be proven yet.
 
 import { handleOptions } from "../_shared/cors.ts";
 import {

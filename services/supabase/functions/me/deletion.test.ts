@@ -24,7 +24,9 @@ try { await import("./index.ts"); } finally { Object.defineProperty(Deno, "serve
 if (!handler) throw new Error("Actual /me handler was not captured");
 
 type Options = { prepareError?: boolean; receiptPatch?: Record<string, unknown>; finishError?: boolean; finishPatch?: Record<string, unknown>; authError?: boolean; sweep?: boolean; legacy?: boolean;
-  payloadPatch?: Record<string, unknown>; providerReady?: boolean; providerError?: boolean; storageError?: boolean };
+  payloadPatch?: Record<string, unknown>; providerReady?: boolean; providerError?: boolean; storageError?: boolean;
+  // Non-RPnnn PostgREST failures (deadlock, lock timeout, missing overload): the exact text the DB would send.
+  prepareDbError?: string; finishDbError?: string; claimEscalated?: boolean };
 async function invoke(opts: Options = {}) {
   const prior = globalThis.fetch;
   let owner = USER, winnerDeleted = false, authDeleted = false;
@@ -54,14 +56,18 @@ async function invoke(opts: Options = {}) {
       // Adoption commits before the deletion transaction obtains its lock.
       // The real SQL gate proves that this yields no owned-org target.
       owner = DEST;
+      if (opts.prepareDbError) return json({ code: "40P01", message: opts.prepareDbError }, 500);
       return opts.prepareError ? json({ message: "RP409: synthetic snapshot failure" }, 400) : json(receipt());
     }
     if (url.pathname === "/rest/v1/rpc/claim_account_deletion") {
+      if (opts.claimEscalated) return json({ ok: false, manual_review_required: true, request_id: REQUEST,
+        escalation_reason: "no cleanup progress in 12 consecutive sweeps; retained for manual reconciliation: provider_leases=1" });
       return json(opts.legacy ? { ok: false, manual_review_required: true, request_id: REQUEST } : receipt());
     }
     if (url.pathname === "/rest/v1/rpc/finish_account_deletion") {
       const remaining=(body as {p_remaining:Record<string,unknown>}).p_remaining;
       const complete=Object.values(remaining).every(x=>x===null || (Array.isArray(x)&&x.length===0));
+      if (opts.finishDbError) return json({ code: "55P03", message: opts.finishDbError }, 500);
       return opts.finishError ? json({ message: "RP409: synthetic stale lease" }, 400)
         : json({ ok: true, request_id: REQUEST, source_user_id: USER,
           cleanup_complete: authDeleted&&complete, manual_review_required: false, ...opts.finishPatch });
@@ -205,4 +211,66 @@ Deno.test("provider per-pass cap retains every unvisited lease",async()=>{
 Deno.test("legacy active render worker cannot disappear from cleanup",async()=>{
   const out=await invoke({payloadPatch:{unresolved_render_jobs:[LISTING]}});
   assertEquals(out.body.cleanup_complete,false);assertEquals(remaining(out).unresolved_render_jobs,[LISTING]);
+});
+
+// A database that cannot answer is not a client mistake. Deadlocks, lock
+// timeouts and a missing overload used to reach throwRpc and come back as
+// 400 "validation" carrying the raw Postgres text.
+for (const [label, message] of [
+  ["deadlock", "deadlock detected"],
+  ["lock timeout", "canceling statement due to lock timeout"],
+  ["missing overload", "function public.prepare_account_deletion(uuid, text, text) does not exist"],
+] as const) {
+  Deno.test(`snapshot ${label} is a 503 retry that never echoes database text`, async () => {
+    const out = await invoke({ prepareDbError: message });
+    assertEquals(out.status, 503); assertEquals(out.body.code, "upstream");
+    assertEquals(JSON.stringify(out.body).includes("prepare_account_deletion"), false);
+    assertEquals(JSON.stringify(out.body).includes(message), false);
+    assertEquals(out.calls.some(c => c.method === "DELETE" || c.method === "PATCH"), false);
+  });
+}
+Deno.test("RPnnn refusals from the snapshot keep their own status", async () => {
+  const out = await invoke({ prepareError: true });
+  assertEquals(out.status, 409); assertEquals(out.body.code, "conflict");
+});
+Deno.test("final CAS database outage is a 503 and never a reported deletion", async () => {
+  const out = await invoke({ finishDbError: "deadlock detected" });
+  assertEquals(out.status, 503); assertEquals(out.body.code, "upstream"); assertEquals(out.body.ok, undefined);
+  assertEquals(JSON.stringify(out.body).includes("deadlock"), false);
+});
+Deno.test("sweep database outage on the final CAS is a 503, not a 400", async () => {
+  const out = await invoke({ sweep: true, finishDbError: "canceling statement due to lock timeout" });
+  assertEquals(out.status, 503); assertEquals(out.body.code, "upstream");
+});
+
+// Retained work the DB has parked for a person is reported, not hidden.
+const ESCALATION = "provider lease without a cleanup journal 24 hours after the request; no worker can confirm file removal for job "+LISTING+" lease "+LEASE;
+Deno.test("escalated request reports manual review and the recorded reason", async () => {
+  const out = await invoke({ payloadPatch: { provider_leases: [GPU] }, finishPatch: { manual_review_required: true, escalation_reason: ESCALATION } });
+  assertEquals(out.status, 200); assertEquals(out.body.ok, true); assertEquals(out.body.cleanup_complete, false);
+  assertEquals(out.body.manual_review_required, true);
+  assertEquals((out.body.warnings as string[]).includes(`escalated for manual review: ${ESCALATION}`), true);
+  assertEquals(remaining(out).provider_leases, [GPU]);
+});
+Deno.test("false completed envelope cannot hide an escalation", async () => {
+  const out = await invoke({ finishPatch: { cleanup_complete: true, manual_review_required: true, escalation_reason: ESCALATION } });
+  assertEquals(out.status, 502); assertEquals(out.body.ok, undefined);
+});
+Deno.test("malformed escalation reason rejects the completion receipt", async () => {
+  const out = await invoke({ finishPatch: { escalation_reason: 42 } });
+  assertEquals(out.status, 502);
+});
+Deno.test("sweep counts a request the DB parked during this pass", async () => {
+  const out = await invoke({ sweep: true, payloadPatch: { provider_leases: [GPU] }, finishPatch: { manual_review_required: true, escalation_reason: ESCALATION } });
+  assertEquals(out.status, 200); assertEquals(out.body.processed, 1); assertEquals(out.body.escalated, 1);
+  assertEquals(remaining(out).provider_leases, [GPU]);
+});
+Deno.test("sweep leaves an already escalated request alone", async () => {
+  const out = await invoke({ sweep: true, claimEscalated: true });
+  assertEquals(out.status, 200); assertEquals(out.body.manual_review, 1); assertEquals(out.body.processed, 0); assertEquals(out.body.escalated, 0);
+  assertEquals(out.calls.some(c => c.method === "DELETE" || c.method === "PATCH" || c.path.endsWith("/finish_account_deletion")), false);
+});
+Deno.test("sweep without escalations reports zero", async () => {
+  const out = await invoke({ sweep: true });
+  assertEquals(out.body.escalated, 0); assertEquals(out.body.processed, 1);
 });

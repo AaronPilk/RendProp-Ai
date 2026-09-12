@@ -140,8 +140,10 @@ class FoundationTests(unittest.TestCase):
 
     def test_complete_inventory(self):
         result = validate_capabilities(self.cap, SWIFT)
-        self.assertEqual(result["apiMethods"], 41)
-        self.assertEqual(result["apiDeclarations"], 42)
+        # 41/42 before the spatial + renew methods landed (11 spatial incl.
+        # spatialCapability, plus renewUpload); bump deliberately with the protocol.
+        self.assertEqual(result["apiMethods"], 53)
+        self.assertEqual(result["apiDeclarations"], 54)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
 

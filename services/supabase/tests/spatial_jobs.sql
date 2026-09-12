@@ -115,10 +115,14 @@ select pg_temp.a((select spatial_recover(actor,job,'retry','a0408000-0000-4000-8
 select pg_temp.denied('select spatial_recover(actor,job,''retry'',''a0408000-0000-4000-8000-000000000099'') from _fixture','RP409:%','competing retry key cannot replace queued attempt');
 select pg_temp.a((select sum(committed_cents)=2400 from spatial_budget_windows),'explicit retry reserves exactly once');
 select pg_temp.a((select spatial_recover(actor,job,'cancel')->>'failure_code'='user_cancelled' from _fixture),'queued attempt cancellation commits without deletion');
+-- 0043: the second attempt never reached a worker, so its reservation comes
+-- back; the first attempt ran and keeps its charge.
+select pg_temp.a((select sum(committed_cents)=1200 from spatial_budget_windows) and (select reserved_at is null from spatial_jobs where id=(select job from _fixture)),'cancelling the never-claimed retry attempt releases only that attempt');
 select pg_temp.a((select spatial_recover(actor,job,'cancel')->>'failure_code'='user_cancelled' from _fixture),'cancel replay is idempotent');
+select pg_temp.a((select sum(committed_cents)=1200 from spatial_budget_windows),'cancel replay releases nothing further');
 select pg_temp.a((select spatial_recover(actor,job,'resume')->>'status'='uploading' from _fixture),'cancelled queued capture resumes same attempt');
 select pg_temp.a((select spatial_start(actor,job)->>'status'='queued' from _fixture),'resumed attempt can return to queue');
-select pg_temp.a((select sum(committed_cents)=2400 from spatial_budget_windows),'resume never charges previously reserved undispatched attempt again');
+select pg_temp.a((select sum(committed_cents)=2400 from spatial_budget_windows),'resumed attempt reserves again exactly once, never twice for one queue');
 select pg_temp.a((spatial_claim('a0402000-0000-4000-8000-000000000002')->>'status')='processing','retry can obtain a fresh worker lease');
 select pg_temp.denied('select spatial_worker_update(job,lease,''output_claim'',''{}'') from _fixture','RP409:%','previous attempt lease cannot write retry output');
 select spatial_worker_update(id,lease_token,'fail','{"failure_code":"provider_failed","cost_cents":600,"provider_stopped":true}') from spatial_jobs where id=(select job from _fixture);
@@ -136,6 +140,141 @@ select pg_temp.a((select spatial_expire(listing)=1 from _fixture),'independent s
 select pg_temp.a((select status='failed' and failure_code='worker_lease_expired' and not provider_stopped from spatial_jobs where id=(select job from _fixture)),'lease expiry is failure not a termination receipt');
 select pg_temp.a(spatial_claim('a0402000-0000-4000-8000-000000000004') is null,'disabled runtime does not claim after sweep');
 select pg_temp.a((select sum(committed_cents)=3600 from spatial_budget_windows),'expiry does not refund uncertain spend');
+reset role;
+-- ── 0043 hardening: reservations come back, binned/stale rooms leave the active set ──
+-- Needs the full stack (0040, 0041 for the provider journal, 0043). The ledger
+-- starts where the audit above left it: 3600 cents committed, nothing active.
+select pg_temp.a(to_regclass('public.spatial_provider_attempts') is not null,'0041 provider journal present for allocation receipts');
+select pg_temp.a(to_regprocedure('spatial_release_reservation(uuid)') is not null and to_regprocedure('spatial_cancel_access(uuid,uuid)') is not null,'0043 spatial hardening applied');
+select pg_temp.a(not has_function_privilege('authenticated','spatial_release_reservation(uuid)','EXECUTE') and not has_function_privilege('anon','spatial_cancel_access(uuid,uuid)','EXECUTE'),'0043 helpers are not member callable');
+select pg_temp.denied('select spatial_release_reservation(job) from _fixture','RP403:%','release helper is service-only');
+create temp table _rooms(name text primary key,id uuid not null);
+insert into _rooms values('listing2','a0400000-0000-4000-8000-000000000006');
+insert into listings(id,org_id,agent_id) select r.id,f.org,f.actor from _rooms r,_fixture f where r.name='listing2';
+update spatial_runtime set enabled=true,daily_budget_cents=100000,org_monthly_budget_cents=100000;
+create function pg_temp.room(n text) returns uuid language sql as $$ select id from _rooms where name=n $$;
+create function pg_temp.committed() returns bigint language sql as $$ select sum(committed_cents) from spatial_budget_windows $$;
+create function pg_temp.active() returns bigint language sql as $$ select count(*) from spatial_jobs where org_id=(select org from _fixture) and status in ('uploading','queued','processing') $$;
+create function pg_temp.state(n text) returns text language sql as $$ select status||'/'||coalesce(failure_code,'-')||'/'||(reserved_at is not null)::text from spatial_jobs where id=pg_temp.room(n) $$;
+create function pg_temp.manifest_for(cap uuid) returns jsonb language sql as $$ select jsonb_build_object('status','complete','session_id',cap,'image_bytes',2000,'feature_point_observations',20,'frames',(select jsonb_agg('frames/'||lpad(i::text,6,'0')||'.json') from generate_series(1,20)g(i))) $$;
+create function pg_temp.frame_for(ticket uuid,i integer,cap uuid) returns jsonb language sql as $$select jsonb_build_array(jsonb_build_object('ticket_id',ticket,'relative_path','images/'||lpad(i::text,6,'0')||'.jpg','frame',jsonb_build_object('session_id',cap,'image','images/'||lpad(i::text,6,'0')||'.jpg','timestamp',i,'raw_feature_points',jsonb_build_array(jsonb_build_object('id','1','position',jsonb_build_array(0,0,-1))),'tracking_state',jsonb_build_object('state','normal'))))$$;
+-- A room with a complete, privately uploaded capture, queued through the real
+-- RPCs so it holds one genuine worst-case reservation.
+create function pg_temp.queued_room(n text,lst uuid,cap uuid) returns uuid language plpgsql as $$
+declare f record; job uuid; ticket uuid; i integer;
+begin
+  select * into f from _fixture;
+  job:=(spatial_create(f.actor,lst,cap,cap,'Room '||n,pg_temp.manifest_for(cap))->>'id')::uuid;
+  for i in 1..20 loop
+    insert into capture_assets(listing_id,kind,storage_key,bytes,bucket,uploaded,transport_version,content_type)
+      values(lst,'photo','uploads/'||f.org||'/'||lst||'/'||cap||'-'||i||'.jpg',100,'uploads',true,2,'image/jpeg') returning id into ticket;
+    insert into upload_reservations(asset_id,org_id,listing_id,actor_id,day,spec,held_bytes,spent_bytes,state,settled_at)
+      values(ticket,f.org,lst,f.actor,current_date,'{}',0,200,'completed',clock_timestamp());
+    perform spatial_attach_inputs(f.actor,job,pg_temp.frame_for(ticket,i,cap));
+  end loop;
+  if spatial_start(f.actor,job)->>'status'<>'queued' then raise exception 'fixture room % did not queue',n; end if;
+  insert into _rooms values(n,job); return job;
+end $$;
+create function pg_temp.uploading_room(n text,lst uuid,cap uuid) returns uuid language plpgsql as $$
+declare f record; job uuid;
+begin
+  select * into f from _fixture;
+  job:=(spatial_create(f.actor,lst,cap,cap,'Room '||n,pg_temp.manifest_for(cap))->>'id')::uuid;
+  insert into _rooms values(n,job); return job;
+end $$;
+grant select,insert,update on _rooms to service_role;
+grant execute on all functions in schema pg_temp to service_role;
+set local role service_role;
+select pg_temp.a(pg_temp.committed()=3600 and pg_temp.active()=0,'hardening scenarios start from the audited ledger');
+-- Cancel before any worker touched the attempt: the money comes back, once.
+select pg_temp.queued_room('A',listing,'a0403000-0000-4000-8000-000000000001') from _fixture;
+select pg_temp.a(pg_temp.committed()=4800 and pg_temp.state('A')='queued/-/true','never-claimed queued room holds one reservation');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'cancel')->>'failure_code'='user_cancelled' from _fixture),'never-claimed queued room cancels');
+select pg_temp.a(pg_temp.committed()=3600 and pg_temp.state('A')='failed/user_cancelled/false','cancel before allocation releases both windows and clears the reservation');
+select pg_temp.a((select bool_and(committed_cents=1800) and count(*)=2 from spatial_budget_windows),'release lands on exactly the two charged windows');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'cancel')->>'failure_code'='user_cancelled' from _fixture) and pg_temp.committed()=3600,'cancel replay does not release twice');
+select pg_temp.a(pg_temp.active()=0,'cancelled room leaves the active set');
+-- The released authority is gone for good: resuming re-runs the budget check.
+reset role;
+update spatial_runtime set daily_budget_cents=1800;
+set local role service_role;
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'resume')->>'status'='uploading' from _fixture),'cancelled never-claimed room resumes');
+select pg_temp.denied('select spatial_start(actor,pg_temp.room(''A'')) from _fixture','RP429:%','a released reservation is not reused: start re-checks the daily window');
+select pg_temp.a(pg_temp.committed()=3600 and pg_temp.state('A')='uploading/-/false','refused re-reservation charges nothing');
+reset role;
+update spatial_runtime set daily_budget_cents=100000;
+set local role service_role;
+select pg_temp.a((select spatial_start(actor,pg_temp.room('A'))->>'status'='queued' from _fixture) and pg_temp.committed()=4800,'resumed room reserves again exactly once');
+-- Once a worker held the attempt the charge stays, whatever happens next.
+select pg_temp.a((spatial_claim('a0402000-0000-4000-8000-000000000005')->>'id')::uuid=pg_temp.room('A'),'worker claims the re-reserved room');
+select spatial_worker_update(id,lease_token,'fail','{"failure_code":"provider_failed","cost_cents":600,"provider_stopped":true}') from spatial_jobs where id=pg_temp.room('A');
+select pg_temp.a(pg_temp.committed()=4800 and pg_temp.state('A')='failed/provider_failed/true','allocated attempt keeps its charge after failure');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'retry','a0408000-0000-4000-8000-000000000005')->>'attempt_number'='2' from _fixture) and pg_temp.committed()=6000,'explicit retry reserves a second attempt');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'cancel')->>'failure_code'='user_cancelled' from _fixture) and pg_temp.committed()=4800,'cancel after an allocated attempt releases only the never-claimed attempt');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'resume')->>'status'='uploading' from _fixture) and (select spatial_start(actor,pg_temp.room('A'))->>'status'='queued' from _fixture) and pg_temp.committed()=6000,'second attempt resumes and reserves again');
+reset role;
+update spatial_jobs set started_at=clock_timestamp(),lease_token=gen_random_uuid() where id=pg_temp.room('A');
+set local role service_role;
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('A'),'cancel')->>'failure_code'='user_cancelled' from _fixture) and pg_temp.committed()=6000 and pg_temp.state('A')='failed/user_cancelled/true','a queued row that already held a lease keeps its charge on cancel');
+-- A journaled provider allocation (0041) is an allocation even when the job row
+-- itself shows no lease: the receipt, not the row, is what the money follows.
+select pg_temp.queued_room('B',pg_temp.room('listing2'),'a0403000-0000-4000-8000-000000000002');
+reset role;
+do $$ declare j spatial_jobs; l uuid:=gen_random_uuid(); n text; begin
+  select * into j from spatial_jobs where id=pg_temp.room('B');
+  -- 0041 owns the sandbox naming rule (job+lease first, lease-only later). The
+  -- release rule never reads the name, only that a receipt exists for this
+  -- attempt, so build whichever form the live check constraint asks for.
+  select case when bool_or(pg_get_constraintdef(oid) like '%job_id%') then 'spatial-'||j.id||'-'||l else 'spatial-'||l end into n
+    from pg_constraint where conrelid='public.spatial_provider_attempts'::regclass and contype='c' and pg_get_constraintdef(oid) like '%sandbox_name%';
+  insert into spatial_provider_attempts(lease_token,job_id,attempt_key,app_name,sandbox_name,sandbox_id,source_sha256,allocation_state,deadline_at)
+    values(l,j.id,j.attempt_key,'rendprop-spatial-worker',n,'sb-fixture12345678',repeat('a',64),'created',clock_timestamp()+interval '1 hour');
+end $$;
+set local role service_role;
+select pg_temp.a(pg_temp.committed()=7200 and (select spatial_recover(actor,pg_temp.room('B'),'cancel')->>'failure_code'='user_cancelled' from _fixture) and pg_temp.committed()=7200,'a journaled provider allocation keeps the charge on cancel');
+-- A binned listing: only the owner's cancel gets through, and the sweep frees
+-- the slot its pending upload was holding.
+select pg_temp.queued_room('C',pg_temp.room('listing2'),'a0403000-0000-4000-8000-000000000003');
+select pg_temp.uploading_room('D',pg_temp.room('listing2'),'a0403000-0000-4000-8000-000000000004');
+select pg_temp.uploading_room('E',listing,'a0403000-0000-4000-8000-000000000005') from _fixture;
+select pg_temp.a(pg_temp.committed()=8400 and pg_temp.active()=3,'three pending rooms fill the workspace cap');
+select pg_temp.denied('select pg_temp.uploading_room(''F'',listing,''a0403000-0000-4000-8000-000000000006'') from _fixture','RP429:%','fourth room refused at the cap');
+reset role;
+update listings set deleted_at=clock_timestamp() where id=pg_temp.room('listing2');
+set local role service_role;
+select pg_temp.denied('select spatial_access(actor,pg_temp.room(''listing2''),false) from _fixture','RP403:%','reads of a binned listing stay denied');
+select pg_temp.denied('select spatial_start(actor,pg_temp.room(''D'')) from _fixture','RP403:%','start on a binned listing stays denied');
+select pg_temp.denied('select spatial_attach_inputs(actor,pg_temp.room(''D''),pg_temp.frame_for(gen_random_uuid(),1,''a0403000-0000-4000-8000-000000000004'')) from _fixture','RP403:%','attaching inputs on a binned listing stays denied');
+select pg_temp.denied('select spatial_recover(actor,pg_temp.room(''C''),''resume'') from _fixture','RP403:%','resume on a binned listing stays denied');
+select pg_temp.denied('select spatial_recover(actor,pg_temp.room(''C''),''retry'',''a0408000-0000-4000-8000-000000000006'') from _fixture','RP403:%','retry on a binned listing stays denied');
+select pg_temp.denied('select spatial_recover(marketing,pg_temp.room(''C''),''cancel'') from _fixture','RP403:%','marketing cannot cancel on a binned listing');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('C'),'cancel')->>'failure_code'='user_cancelled' from _fixture) and pg_temp.committed()=7200,'owner cancels a queued room on a binned listing and its reservation comes back');
+select pg_temp.uploading_room('F',listing,'a0403000-0000-4000-8000-000000000006') from _fixture;
+select pg_temp.a(pg_temp.active()=3,'cancelled room on a binned listing gave its slot back');
+select pg_temp.denied('select pg_temp.uploading_room(''H'',listing,''a0403000-0000-4000-8000-000000000008'') from _fixture','RP429:%','the binned listing''s pending upload still holds a slot until swept');
+select pg_temp.a(spatial_expire()=1 and pg_temp.state('D')='failed/listing_deleted/false' and pg_temp.committed()=7200,'sweep expires the pending upload of a binned listing without touching the ledger');
+select pg_temp.a(pg_temp.active()=2,'binned listing no longer holds a slot');
+select pg_temp.uploading_room('H',listing,'a0403000-0000-4000-8000-000000000008') from _fixture;
+select pg_temp.a(pg_temp.state('H')='uploading/-/false','freed slot admits a new room');
+-- 48 hours without progress: uploads are dropped, queued reservations returned.
+reset role;
+update spatial_jobs set updated_at=clock_timestamp()-interval '49 hours' where id=pg_temp.room('E');
+set local role service_role;
+select pg_temp.a((select spatial_expire(listing)=1 from _fixture) and pg_temp.state('E')='failed/capture_expired/false','listing sweep expires a 48h-stale upload');
+select pg_temp.a(pg_temp.state('F')='uploading/-/false' and pg_temp.state('H')='uploading/-/false','fresh pending rooms survive the sweep');
+select pg_temp.queued_room('G',listing,'a0403000-0000-4000-8000-000000000007') from _fixture;
+select pg_temp.a(pg_temp.committed()=8400 and spatial_expire()=0,'a fresh queued room is not stale');
+reset role;
+update spatial_jobs set updated_at=clock_timestamp()-interval '49 hours' where id=pg_temp.room('G');
+set local role service_role;
+select pg_temp.a(spatial_expire()=1 and pg_temp.state('G')='failed/capture_expired/false' and pg_temp.committed()=7200,'stale queued room expires and gives its reservation back');
+select pg_temp.a((select spatial_recover(actor,pg_temp.room('G'),'retry','a0408000-0000-4000-8000-000000000007')->>'status'='queued' from _fixture) and pg_temp.committed()=8400,'expired queued capture retries explicitly with a fresh reservation');
+-- A binned workspace is the same class of dead end.
+reset role;
+update orgs set deleted_at=clock_timestamp() where id=(select org from _fixture);
+set local role service_role;
+select pg_temp.a(spatial_expire()=3 and pg_temp.state('F')='failed/listing_deleted/false' and pg_temp.state('H')='failed/listing_deleted/false' and pg_temp.state('G')='failed/listing_deleted/false' and pg_temp.committed()=7200,'sweep expires every pending room of a binned workspace and returns its reservation');
+select pg_temp.a(pg_temp.active()=0 and spatial_expire()=0,'nothing pending is left for the sweep');
 reset role;
 select 'PASS: '||count(*)||' spatial SQL assertions; all fixtures rolled back.' from _checks;
 rollback;

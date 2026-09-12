@@ -89,8 +89,27 @@ function manifest(hash: string): Row {
     privacy_reviewed: true,
   };
 }
-function fixture(initial: Partial<Row> = {}) {
+// Optional knobs for the doubles: an anonymous caller, the runtime row and
+// budget windows the capability read sees, and RPCs that should fail the way
+// PostgREST/Postgres fail (a missing function, a raw SQL error, an RPnnn).
+interface FixtureOptions {
+  anonymous?: boolean;
+  runtime?: Partial<Row>;
+  windows?: Row[];
+  rpcErrors?: Record<string, { code: string; message: string }>;
+}
+function fixture(initial: Partial<Row> = {}, options: FixtureOptions = {}) {
   const calls: Array<{ name: string; args: Row }> = [],
+    reads: string[] = [],
+    filters: Array<{ table: string; column: string; values: unknown[] }> = [],
+    runtime: Row = {
+      enabled: true,
+      daily_budget_cents: 1200,
+      org_monthly_budget_cents: 1200,
+      job_cap_cents: 600,
+      ...options.runtime,
+    },
+    windows: Row[] = options.windows ?? [],
     j: Row = {
       id,
       actor_id: actor,
@@ -120,6 +139,8 @@ function fixture(initial: Partial<Row> = {}) {
   const admin = {
     rpc(name: string, args: Row) {
       calls.push({ name, args });
+      const failure = options.rpcErrors?.[name];
+      if (failure) return Promise.resolve({ data: null, error: failure });
       if (name === "spatial_access") {
         return Promise.resolve({ data: j.org_id, error: null });
       }
@@ -142,6 +163,7 @@ function fixture(initial: Partial<Row> = {}) {
       return Promise.resolve({ data: { ...j }, error: null });
     },
     from(table: string) {
+      reads.push(table);
       const q = {
         select() {
           return q;
@@ -150,6 +172,10 @@ function fixture(initial: Partial<Row> = {}) {
           return q;
         },
         is() {
+          return q;
+        },
+        in(column: string, values: unknown[]) {
+          filters.push({ table, column, values });
           return q;
         },
         order() {
@@ -167,9 +193,21 @@ function fixture(initial: Partial<Row> = {}) {
                 deleted_at: null,
                 orgs: { deleted_at: null },
               }
+              : table === "spatial_runtime"
+              ? runtime
               : j,
             error: null,
           });
+        },
+        // A filter chain awaited without a terminal (the budget-window read).
+        then(
+          resolve: (v: { data: Row[]; error: null }) => unknown,
+          reject: (e: unknown) => unknown,
+        ) {
+          return Promise.resolve({
+            data: table === "spatial_budget_windows" ? windows : [j],
+            error: null,
+          }).then(resolve, reject);
         },
       };
       return q;
@@ -177,7 +215,8 @@ function fixture(initial: Partial<Row> = {}) {
   };
   const d: Dependencies = {
     admin: admin as unknown as Dependencies["admin"],
-    user: async () => ({ id: actor }),
+    user: async () => ({ id: actor, is_anonymous: options.anonymous }),
+    org: () => Promise.resolve(actor),
     service: (r) => r.headers.get("x-fixture-worker") === "yes",
     sign: (p) => signCapability(p, secret),
     verify: (t, k) => verifyCapability(t, k, secret),
@@ -191,7 +230,7 @@ function fixture(initial: Partial<Row> = {}) {
     tourOrigin: () => "https://tour.invalid",
     functionOrigin: () => "https://functions.invalid/functions/v1",
   };
-  return { d, j, calls, stored: () => stored };
+  return { d, j, calls, reads, filters, stored: () => stored };
 }
 const request = (
   path: string,
@@ -215,6 +254,134 @@ Deno.test("provider journal route remains service-only and preserves distinct pa
     && call.args.p_lease === lease && call.args.p_attempt === revision && call.args.p_action === "cleanup");
   a(JSON.stringify(call.args.p_data) === JSON.stringify(body.data));
   a((await handler(request(`/worker/${id}/provider-attempt`, { ...body, action: "allocate_again" }, { "x-fixture-worker": "yes" }), f.d)).status === 400);
+});
+// The same keys spatial_start reserves under: UTC day, first of the UTC month.
+const today = new Date().toISOString().slice(0, 10), month = `${today.slice(0, 7)}-01`;
+async function capabilityOf(f: ReturnType<typeof fixture>) {
+  const r = await handler(request("/capability"), f.d);
+  a(r.status === 200 && r.headers.get("cache-control") === "no-store");
+  return await r.json();
+}
+Deno.test("capability reports a disabled runtime before reading budgets or the workspace", async () => {
+  for (const runtime of [{ enabled: false }, { daily_budget_cents: 0 }, { org_monthly_budget_cents: 0 }]) {
+    const f = fixture({}, { runtime, windows: [{ scope: "global", window_start: today, committed_cents: 0 }] }),
+      body = await capabilityOf(f);
+    a(body.enabled === false && body.reason === "runtime_disabled", JSON.stringify(body));
+    a(f.calls.length === 0 && f.reads.join(",") === "spatial_runtime", "disabled runtime still touched budgets");
+  }
+});
+Deno.test("capability reports an exhausted global daily window", async () => {
+  const f = fixture({}, { windows: [{ scope: "global", window_start: today, committed_cents: 700 }] }),
+    body = await capabilityOf(f);
+  a(body.enabled === false && body.reason === "daily_budget_exhausted", JSON.stringify(body));
+  a(f.calls.length === 0, "capability must not call an RPC");
+});
+Deno.test("capability reports an exhausted workspace monthly window", async () => {
+  const f = fixture({}, {
+      windows: [
+        { scope: "global", window_start: today, committed_cents: 600 },
+        { scope: `org:${actor}`, window_start: month, committed_cents: 700 },
+      ],
+    }),
+    body = await capabilityOf(f);
+  a(body.enabled === false && body.reason === "org_budget_exhausted", JSON.stringify(body));
+});
+Deno.test("capability is ok exactly while one more worst-case reservation fits, keyed like spatial_start", async () => {
+  const f = fixture({}, {
+      windows: [
+        { scope: "global", window_start: today, committed_cents: 600 },
+        { scope: `org:${actor}`, window_start: month, committed_cents: 600 },
+      ],
+    }),
+    body = await capabilityOf(f);
+  a(body.enabled === true && body.reason === "ok", JSON.stringify(body));
+  a(Object.keys(body).sort().join(",") === "enabled,reason", "capability shape is pinned");
+  const scope = f.filters.find((x) => x.table === "spatial_budget_windows" && x.column === "scope"),
+    start = f.filters.find((x) => x.table === "spatial_budget_windows" && x.column === "window_start");
+  a(scope?.values.join(",") === `global,org:${actor}` && start?.values.join(",") === `${today},${month}`);
+  a(f.calls.length === 0 && f.reads.join(",") === "spatial_runtime,spatial_budget_windows");
+  // A stale row for another day or workspace is never counted.
+  const g = fixture({}, {
+    windows: [
+      { scope: "global", window_start: "2000-01-01", committed_cents: 100000 },
+      { scope: "org:someone-else", window_start: month, committed_cents: 100000 },
+    ],
+  });
+  a((await capabilityOf(g)).enabled === true);
+});
+Deno.test("capability is open to anonymous sessions and is GET only", async () => {
+  const f = fixture({}, { anonymous: true });
+  a((await capabilityOf(f)).reason === "ok");
+  a((await handler(request("/capability", {}), f.d)).status === 405);
+});
+Deno.test("anonymous session is refused on every spending route before any read or RPC", async () => {
+  const create = { listing_id: listing, capture_id: id, room_label: "Room", manifest: capture() },
+    attempts: Array<[string, unknown, Record<string, string>]> = [
+      ["", create, { "idempotency-key": revision }],
+      [`/${id}/inputs`, { files: [input()] }, {}],
+      [`/${id}/start`, {}, {}],
+      [`/${id}/retry`, {}, { "idempotency-key": revision }],
+      [`/${id}/resume`, {}, {}],
+    ];
+  for (const [path, body, headers] of attempts) {
+    const f = fixture({ status: "uploading" }, { anonymous: true }),
+      r = await handler(request(path, body, headers), f.d),
+      answer = await r.json();
+    a(r.status === 403 && answer.code === "forbidden" && answer.reason === "sign_in_required", `${path}: ${r.status} ${JSON.stringify(answer)}`);
+    a(/sign in to build 3D rooms/i.test(answer.error), answer.error);
+    a(f.calls.length === 0 && f.reads.length === 0, `${path} reached the database`);
+  }
+  // A signed-in person on the same routes is not affected by the gate.
+  const f = fixture({ status: "uploading" }),
+    r = await handler(request(`/${id}/start`, {}), f.d);
+  a(r.status === 200 && f.calls.some((c) => c.name === "spatial_start"));
+});
+Deno.test("anonymous session keeps its reads and can still cancel", async () => {
+  const f = fixture({ status: "queued" }, { anonymous: true });
+  a((await handler(request(`?listing_id=${listing}`), f.d)).status === 200);
+  a((await handler(request(`/${id}`), f.d)).status === 200);
+  const cancel = await handler(request(`/${id}/cancel`, {}), f.d);
+  a(cancel.status === 200);
+  a(f.calls.some((c) => c.name === "spatial_recover" && c.args.p_action === "cancel" && c.args.p_actor === actor));
+});
+Deno.test("missing provider journal RPC is a legible 503, never a 400 validation", async () => {
+  const f = fixture({}, {
+      rpcErrors: {
+        spatial_provider_attempt_update: {
+          code: "PGRST202",
+          message: "Could not find the function public.spatial_provider_attempt_update(p_action, p_attempt, p_data, p_job, p_lease) in the schema cache",
+        },
+      },
+    }),
+    r = await handler(
+      request(`/worker/${id}/provider-attempt`, {
+        lease_token: lease,
+        attempt_key: revision,
+        action: "plan",
+        data: { app_name: "rendprop-spatial-worker" },
+      }, { "x-fixture-worker": "yes" }),
+      f.d,
+    ),
+    body = await r.json();
+  a(r.status === 503 && body.code === "upstream", `${r.status} ${JSON.stringify(body)}`);
+  a(/provider journal not available/i.test(body.error) && !/PGRST|schema cache/.test(body.error), body.error);
+});
+Deno.test("raw database failures are 503 with our copy while RPnnn refusals keep their status", async () => {
+  const cases: Array<[FixtureOptions["rpcErrors"], string, unknown, number, RegExp]> = [
+    [{ spatial_expire: { code: "42883", message: "function public.spatial_expire(p_listing => uuid) does not exist" } },
+      `?listing_id=${listing}`, undefined, 503, /partly deployed/],
+    [{ spatial_create: { code: "42P01", message: 'relation "spatial_jobs" does not exist' } },
+      "", { listing_id: listing, capture_id: id, room_label: "Room", manifest: capture() }, 503, /could not be confirmed/],
+    [{ spatial_start: { code: "P0001", message: "RP429: 3D generation capacity is reached; your capture is saved" } },
+      `/${id}/start`, {}, 429, /^3D generation capacity is reached; your capture is saved$/],
+  ];
+  for (const [rpcErrors, path, body, status, copy] of cases) {
+    const f = fixture({ status: "uploading" }, { rpcErrors }),
+      r = await handler(request(path, body, { "idempotency-key": revision }), f.d),
+      answer = await r.json();
+    a(r.status === status && copy.test(answer.error), `${path}: ${r.status} ${JSON.stringify(answer)}`);
+    a(!/does not exist|relation|42P01/.test(answer.error), "raw database text leaked");
+  }
 });
 Deno.test("completed capture exact schema and coverage accepted", () =>
   a(captureManifest(capture(), id).session_id === id));

@@ -28,6 +28,8 @@ export interface GatewayDependencies {
   allowedOrigin: string | undefined;
   secret: string | undefined;
   now(): number;
+  /** Fixture seam only: production keeps the contract's 10-minute deadline. */
+  deadlineMs?: number;
   claim(id: string, claim: string): Promise<unknown>;
   finish(
     id: string,
@@ -106,12 +108,40 @@ function response(status: number, message: string) {
   return Response.json({ error: message }, { status, headers });
 }
 
+/** How long a lost body race waits for the storage write to report before the
+ * journal is told anything. A sink that already took every byte settles in
+ * well under this; one whose stream was aborted rejects at once. */
+const STORAGE_SETTLE_MS = 2000;
+async function settledEtag(
+  storage: Promise<string> | undefined,
+  ms: number,
+): Promise<string | null> {
+  if (!storage) return null;
+  let grace: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const etag = await Promise.race([
+      storage.then((value) => value, () => null),
+      new Promise<null>((done) => grace = setTimeout(() => done(null), ms)),
+    ]);
+    return typeof etag === "string" && etag.length > 0 && etag.length <= 256
+      ? etag
+      : null;
+  } finally {
+    if (grace !== undefined) clearTimeout(grace);
+  }
+}
+
 /** Actual HTTP behavior, tested with fixture services; no production fallback. */
 export async function handleUpload(
   request: Request,
   services: GatewayDependencies,
 ): Promise<Response> {
   let op: GatewayOperation | undefined, claim: string | undefined;
+  // Set once the body pump is created: from then on bytes may have reached the
+  // sink, and only the sink's own verdict or a later read-only observation can
+  // say whether an object exists. `reported` marks the stored receipt attempt.
+  let bodyStarted = false, reported = false;
+  let storage: Promise<string> | undefined;
   const cancellation = new AbortController();
   const interrupted = () =>
     cancellation.abort(new TransportError(408, "Upload interrupted"));
@@ -164,6 +194,11 @@ export async function handleUpload(
         headers: { ...headers, ETag: op.etag },
       });
     }
+    // The reservation-dependent header checks. The gateway's only journal verbs
+    // are claim and finish (index.ts wiring), so the exact length/type can only
+    // be known after the claim; they are settled here before a single body byte
+    // is read, and a mismatch closes as a pre-body `rejected` verdict that 0042
+    // re-plans on the same ticket at no net byte cost.
     if (length !== null && Number(length) !== op.bytes) {
       throw new TransportError(
         400,
@@ -188,12 +223,19 @@ export async function handleUpload(
       }
       op.content_type = type;
     }
-    timer = setTimeout(interrupted, TRANSFER_DEADLINE_MS);
-    if (request.signal.aborted) interrupted();
+    // A client that is already gone has sent nothing to storage yet.
+    if (request.signal.aborted) {
+      throw new TransportError(408, "Upload interrupted");
+    }
+    timer = setTimeout(
+      interrupted,
+      services.deadlineMs ?? TRANSFER_DEADLINE_MS,
+    );
     const fixed = services.fixedStream(op.bytes);
     // Both promises are observed immediately. forwardExactBody holds the last
     // byte until EOF, so even a sink that commits at exactly Content-Length
     // cannot accept an oversized body's prefix.
+    bodyStarted = true;
     const pump = forwardExactBody(
       request.body,
       fixed.writable,
@@ -201,7 +243,8 @@ export async function handleUpload(
       cancellation.signal,
       (error) => cancellation.abort(error),
     );
-    const storage = services.write(op, fixed.readable).catch((error) => {
+    storage = services.write(op, fixed.readable);
+    const guarded = storage.catch((error) => {
       cancellation.abort(error);
       throw error;
     });
@@ -211,7 +254,7 @@ export async function handleUpload(
           reject(cancellation.signal.reason), { once: true });}
     });
     const results = await Promise.race([
-      Promise.allSettled([pump, storage]),
+      Promise.allSettled([pump, guarded]),
       aborted,
     ]);
     if (results[0].status === "rejected") throw results[0].reason;
@@ -220,6 +263,7 @@ export async function handleUpload(
     if (!etag || etag.length > 256) {
       throw new TransportError(502, "Storage returned no valid ETag");
     }
+    reported = true;
     await services.finish(op.id, claim, "stored", etag, op.content_type);
     return new Response(null, {
       status: 200,
@@ -228,17 +272,43 @@ export async function handleUpload(
   } catch (error) {
     cancellation.abort(error);
     if (op?.dispatch && claim) {
-      // A timeout/lost reply may already have written bytes. Never release its
-      // reservation, never send a second storage write from this handler.
+      // The race can be lost a hair after the sink took the whole body (the
+      // deadline or the client's abort firing while storage finalizes). Let the
+      // write report for a bounded moment: a receipt it returns is as good as
+      // one from the happy path, and it is never followed by a second write.
+      const landed = bodyStarted && !reported
+        ? await settledEtag(storage, STORAGE_SETTLE_MS)
+        : null;
+      if (landed) {
+        try {
+          await services.finish(
+            op.id,
+            claim,
+            "stored",
+            landed,
+            op.content_type,
+          );
+          return new Response(null, {
+            status: 200,
+            headers: { ...headers, ETag: landed },
+          });
+        } catch {
+          /* The receipt exists in storage; a later HEAD recovers it. */
+        }
+      }
+      // Verdict for the journal. `rejected` means no object can exist: nothing
+      // was pumped yet, or the pump itself refused the body (short/oversized)
+      // while still holding the final byte back from the sink. Everything else
+      // after bytes started flowing (a cut, the deadline, storage/service
+      // errors) may have landed and stays `uncertain` for read-only recovery.
+      // Neither verdict releases the reservation or sends a second write here.
+      const verdict = !bodyStarted ||
+          error instanceof TransportError &&
+            (error.status === 400 || error.status === 413)
+        ? "rejected"
+        : "uncertain";
       try {
-        await services.finish(
-          op.id,
-          claim,
-          error instanceof TransportError && error.status < 500
-            ? "rejected"
-            : "uncertain",
-          null,
-        );
+        await services.finish(op.id, claim, verdict, null);
       } catch {
         /* The pre-dispatch journal survives even if this update fails. */
       }

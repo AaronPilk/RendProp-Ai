@@ -31,6 +31,12 @@ enum UploadRecovery {
         var cancellationAuthorizedFor: String?
         var dispatched = false
         var completed = false
+        /// A whole call's rounds ran dry on `ticket` (or the server retired it).
+        /// `dispatched` stays true — the next attempt still reconciles first —
+        /// but that next, explicit attempt may retire and replace the ticket
+        /// instead of reconciling a corpse forever. Optional so journals written
+        /// before this field existed still decode.
+        var recoveryExhausted: Bool? = nil
     }
 
     static func sameAsset(_ lhs: String, _ rhs: String) -> Bool {
@@ -52,6 +58,25 @@ enum UploadRecovery {
         guard let api = error as? APIError, api.status == 409,
               case .server(_, _, let text) = api else { return false }
         return text.lowercased() == "this upload was aborted — create a new ticket"
+    }
+
+    /// The server retired THIS reservation for good: its row is gone, or it was
+    /// aborted without our durable authorization. No renewal can revive it, so
+    /// a later, explicit attempt reserves afresh instead of probing it forever.
+    static func isRetired(_ error: Error) -> Bool {
+        guard let api = error as? APIError, let status = api.status else { return false }
+        return status == 404 || status == 410 || isAborted(error)
+    }
+
+    /// Renewal answers that justify retiring a reservation ourselves — only on
+    /// a later explicit attempt, after an earlier one already ran dry: the
+    /// server still cannot plan a transfer (5xx, or the receipt/rejected
+    /// conflicts). Sign-in, plan, permission and rate limits are never the
+    /// ticket's fault and stay plain retries. Being offline is not an answer.
+    static func mayRetire(_ error: Error) -> Bool {
+        guard let api = error as? APIError, let status = api.status else { return false }
+        if [401, 402, 403, 429].contains(status) { return false }
+        return status >= 500 || status == 409
     }
 
     static func mayReconcile(_ error: Error, incompleteMultipart: Bool) -> Bool {
@@ -113,8 +138,16 @@ enum UploadRecovery {
         return ticket
     }
 
+    /// `allowRetiredReplacement` is the second-attempt consent for a v2 ticket
+    /// whose earlier call ran every round dry (`Journal.recoveryExhausted`):
+    /// this call may then answer a retired or still-unplannable ticket with an
+    /// abort (durable intent first) and ONE fresh reservation for the same
+    /// file. A first call never replaces a reservation on its own — the
+    /// existing tests pin that — so budget is only ever spent on a deliberate
+    /// retry, never in a loop.
     static func reconcile(journal: Journal, allowLegacyCancellation: Bool,
                           incompleteMultipart: Bool = false,
+                          allowRetiredReplacement: Bool = false,
                           persistCancellation: (String) async throws -> Void,
                           complete: (String) async throws -> Void,
                           renew: (String) async throws -> UploadTicket,
@@ -149,9 +182,44 @@ enum UploadRecovery {
                 let replacement = try await create()
                 return .ticket(try validatedReplacement(replacement, retired: existing))
             }
+            if allowRetiredReplacement, isRetired(error) {
+                // The row is gone or the server aborted it behind our back, and
+                // an earlier attempt already ran dry on it. There is nothing to
+                // cancel; the deliberate retry gets a fresh reservation.
+                let replacement = try await create()
+                return .ticket(try validatedReplacement(replacement, retired: existing))
+            }
             guard mayReconcile(error, incompleteMultipart: incompleteMultipart) else { throw error }
         }
-        let renewed = try validatedRenewal(try await renew(existing.assetID), previous: existing)
+        let renewed: UploadTicket
+        do {
+            renewed = try validatedRenewal(try await renew(existing.assetID), previous: existing)
+        } catch {
+            // Renewal is what re-plans a rejected transfer. When it still cannot,
+            // on a deliberate retry after an exhausted one, retire the ticket
+            // ourselves: durable cancellation intent, abort, fresh reservation.
+            // A validation failure (rollback, changed ticket) is never a reason
+            // to abort — the replacement would fail the same checks.
+            guard allowRetiredReplacement, !(error is Failure) else { throw error }
+            if isRetired(error) {
+                let replacement = try await create()
+                return .ticket(try validatedReplacement(replacement, retired: existing))
+            }
+            guard mayRetire(error) else { throw error }
+            try await persistCancellation(existing.assetID)
+            do { try await cancel(existing.assetID) }
+            catch {
+                // Same rule as the legacy path: a completion that won the race
+                // is publishable and must not be replaced.
+                if let api = error as? APIError, api.isAlreadyComplete {
+                    try await complete(existing.assetID)
+                    return .complete(existing.assetID)
+                }
+                throw error
+            }
+            let replacement = try await create()
+            return .ticket(try validatedReplacement(replacement, retired: existing))
+        }
         return renewed.uploaded == true ? .complete(renewed.assetID) : .ticket(renewed)
     }
 }

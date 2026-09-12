@@ -34,6 +34,18 @@ class Response(BytesIO):
         self.headers = headers if headers is not None else {"Content-Length": str(len(content))}
 
 
+class FakeClock:
+    """Monotonic seconds the test advances by hand; nothing here sleeps for real."""
+    def __init__(self):
+        self.now = 0.0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
+
+
 class ContractTests(unittest.TestCase):
     def test_control_plane_identifies_actual_worker_without_default_urllib_agent(self):
         opener = Mock(); opener.open.return_value = Response(b'{"job":null}')
@@ -192,6 +204,109 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(lease.abort_failure_type, "RuntimeError")
         with self.assertRaisesRegex(w.JobFailure, "lease_lost"): lease.check()
 
+    def test_one_transient_heartbeat_failure_does_not_terminate_a_paid_gpu(self):
+        clock, api, settled = FakeClock(), Mock(), threading.Event()
+        outcomes = [w.JobFailure("control_plane_unavailable"), None, OSError("reset"), None, None]
+        def heartbeat(j, action, **fields):
+            self.assertEqual(action, "heartbeat")
+            clock.now += 5
+            outcome = outcomes.pop(0) if outcomes else None
+            if not outcomes:
+                settled.set()
+            if outcome is not None:
+                raise outcome
+            return {"ok": True}
+        api.job_call.side_effect = heartbeat
+        lease = w.Lease(api, job(), interval=.001, retry_interval=.001, clock=clock)
+        aborted = threading.Event(); lease.abort = aborted.set
+        lease.thread.start()
+        self.assertTrue(settled.wait(2))
+        lease.stop.set(); lease.thread.join(2)
+        self.assertFalse(aborted.is_set())
+        self.assertIsNone(lease.error)
+        self.assertEqual(lease.failed_beats, 0)  # reset by the accepted beat that followed
+        self.assertEqual(lease.last_beat_error, "OSError")  # a type name, never a body
+        lease.check()
+
+    def test_transient_failures_are_retried_until_the_db_lease_is_within_reach(self):
+        clock, api, beats = FakeClock(), Mock(), []
+        def heartbeat(j, action, **fields):
+            beats.append(clock.now)
+            clock.now += 10  # every failed beat burns ten seconds of the two-minute DB lease
+            raise w.JobFailure("control_plane_unavailable")
+        api.job_call.side_effect = heartbeat
+        lease = w.Lease(api, job(), interval=.001, retry_interval=.001, clock=clock)
+        aborted = threading.Event(); lease.abort = aborted.set
+        lease.thread.start()
+        self.assertTrue(aborted.wait(2))
+        lease.thread.join(2)
+        # Retried at 0,10,...,60s while at most half the lease had elapsed; the
+        # failure ending at 70s is the first past that line, so compute stopped
+        # with 50s of provably valid lease left, not on the first blip.
+        self.assertEqual(beats, [0, 10, 20, 30, 40, 50, 60])
+        self.assertEqual(lease.failed_beats, 7)
+        with self.assertRaisesRegex(w.JobFailure, "lease_lost"):
+            lease.check()
+
+    def test_definitive_rejection_is_not_retried_even_when_the_lease_has_time_left(self):
+        clock, api = FakeClock(), Mock()
+        api.job_call.side_effect = w.JobFailure("lease_lost")  # 403/409/410 from the control plane
+        lease = w.Lease(api, job(), interval=.001, retry_interval=.001, clock=clock)
+        aborted = threading.Event(); lease.abort = aborted.set
+        lease.thread.start()
+        self.assertTrue(aborted.wait(2)); lease.thread.join(2)
+        self.assertEqual(api.job_call.call_count, 1)
+        self.assertEqual(clock.now, 0)
+
+    def test_a_lease_nobody_renewed_for_its_whole_lifetime_is_lost_even_when_quiet(self):
+        clock, api = FakeClock(), Mock()
+        lease = w.Lease(api, job(), clock=clock)
+        clock.now = 119.9
+        lease.check()
+        clock.now = 120
+        with self.assertRaisesRegex(w.JobFailure, "lease_lost"):
+            lease.check()
+        api.job_call.assert_not_called()
+
+    def test_progress_report_failure_is_advisory_unless_definitive(self):
+        api = Mock(); lease = w.Lease(api, job(), clock=FakeClock())
+        api.job_call.side_effect = w.JobFailure("control_plane_unavailable")
+        lease.stage(0.5)
+        self.assertEqual(lease.progress, 0.5)
+        self.assertEqual(lease.failed_beats, 1)
+        api.job_call.side_effect = w.JobFailure("lease_lost")
+        with self.assertRaisesRegex(w.JobFailure, "lease_lost"):
+            lease.stage(0.6)
+
+    def test_transient_complete_failure_does_not_burn_the_stored_artifact(self):
+        api, provider, adapter = Mock(), Mock(), Mock()
+        api.claim.return_value = job()
+        api.service_host = "api.example"; api.base_url = "https://api.example/functions/v1/spatial"
+        api.opener.open.return_value = Response(b'{"ok":true}')
+        actions, completes = [], [w.JobFailure("control_plane_unavailable"), {"status": "review"}]
+        def job_call(j, action, **fields):
+            actions.append(action)
+            if action == "output-ticket":
+                return {"method": "PUT", "bytes": 3, "content_type": "application/octet-stream",
+                        "upload_url": f"{api.base_url}/worker/{JOB_ID}/output", "upload_token": "fixture-token",
+                        "artifact_revision": REVISION}
+            if action == "complete":
+                outcome = completes.pop(0)
+                if isinstance(outcome, Exception):
+                    raise outcome
+                return outcome
+            return {"ok": True}
+        api.job_call.side_effect = job_call
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.sog"; path.write_bytes(b"sog")
+            provider.reconstruct.return_value = (path, {})
+            with patch.object(w, "download_capture"), patch.object(w, "load_adapter", return_value=adapter), \
+                    patch.object(w, "COMPLETE_RETRY_DELAYS", (0,)):
+                self.assertEqual(w.run_one(api, provider, {"storage.example"}), {"status": "review", "job_id": JOB_ID})
+        self.assertNotIn("fail", actions)
+        self.assertEqual(actions[-3:], ["complete", "heartbeat", "complete"])
+        self.assertEqual(api.opener.open.call_count, 1)  # the bytes went over exactly once
+
     def test_success_uses_server_terminal_receipt_not_provider_return_alone(self):
         api, provider, adapter = Mock(), Mock(), Mock()
         api.claim.return_value = job()
@@ -237,6 +352,81 @@ class OutputTests(unittest.TestCase):
             self.assertFalse(completed["manifest"]["privacy_reviewed"])
             self.assertEqual(completed["manifest"]["bytes"], 16)
             self.assertEqual(completed["manifest"]["sha256"], w.hashlib.sha256(b"synthetic-output").hexdigest())
+
+    def stored_output(self, complete_outcomes, heartbeat=None):
+        """An API whose PUT already succeeded; only `complete` misbehaves as scripted."""
+        api = Mock(); api.service_host = "api.example"; api.base_url = "https://api.example/functions/v1/spatial"
+        api.opener.open.return_value = Response(b'{"ok":true}')
+        actions = []
+        def job_call(j, action, **fields):
+            actions.append(action)
+            if action == "output-ticket":
+                return {"method": "PUT", "bytes": 3, "content_type": "application/octet-stream",
+                        "upload_url": f"{api.base_url}/worker/{JOB_ID}/output", "upload_token": "fixture-token",
+                        "artifact_revision": REVISION}
+            if action == "heartbeat":
+                if heartbeat is not None:
+                    raise heartbeat
+                return {"ok": True}
+            self.assertEqual(action, "complete")
+            outcome = complete_outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        api.job_call.side_effect = job_call
+        return api, actions
+
+    def test_complete_is_retried_through_transient_failures_with_fresh_heartbeats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.sog"; path.write_bytes(b"sog")
+            api, actions = self.stored_output([w.JobFailure("control_plane_unavailable"),
+                                               w.JobFailure("invalid_service_response"), {"status": "review"}])
+            clock, sleeps = FakeClock(), []
+            def sleep(seconds):
+                sleeps.append(seconds); clock.sleep(seconds)
+            lease = w.Lease(api, job(), clock=clock)
+            self.assertEqual(w.upload_output(api, job(), path, {}, lease, sleep=sleep), {"status": "review"})
+        self.assertEqual(sleeps, [5, 10])
+        self.assertEqual(actions, ["output-ticket", "complete", "heartbeat", "complete", "heartbeat", "complete"])
+        self.assertEqual(api.opener.open.call_count, 1)
+        self.assertTrue(lease.stop.is_set())
+
+    def test_complete_retries_are_bounded_and_the_last_failure_is_reported_honestly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.sog"; path.write_bytes(b"sog")
+            api, actions = self.stored_output([w.JobFailure("control_plane_unavailable")] * 6)
+            clock = FakeClock()
+            with self.assertRaisesRegex(w.JobFailure, "control_plane_unavailable"):
+                w.upload_output(api, job(), path, {}, w.Lease(api, job(), clock=clock), sleep=clock.sleep)
+        self.assertEqual(actions.count("complete"), len(w.COMPLETE_RETRY_DELAYS) + 1)
+        self.assertEqual(actions.count("heartbeat"), len(w.COMPLETE_RETRY_DELAYS))
+        self.assertEqual(clock.now, sum(w.COMPLETE_RETRY_DELAYS))
+
+    def test_definitive_complete_rejection_is_not_retried(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.sog"; path.write_bytes(b"sog")
+            for code in ("lease_lost", "invalid_json"):
+                with self.subTest(code=code):
+                    api, actions = self.stored_output([w.JobFailure(code)])
+                    sleep = Mock()
+                    with self.assertRaisesRegex(w.JobFailure, code):
+                        w.upload_output(api, job(), path, {}, w.Lease(api, job(), clock=FakeClock()), sleep=sleep)
+                    self.assertEqual(actions, ["output-ticket", "complete"])
+                    sleep.assert_not_called()
+
+    def test_complete_is_not_retried_against_a_lease_that_certainly_expired(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "model.sog"; path.write_bytes(b"sog")
+            api, actions = self.stored_output([w.JobFailure("control_plane_unavailable")] * 6,
+                                              heartbeat=w.JobFailure("control_plane_unavailable"))
+            clock = FakeClock()
+            def slow_outage(seconds):
+                clock.sleep(seconds + 100)  # each pause plus a hung control plane eats most of a lease
+            with self.assertRaisesRegex(w.JobFailure, "lease_lost"):
+                w.upload_output(api, job(), path, {}, w.Lease(api, job(), clock=clock), sleep=slow_outage)
+        # 105s in: the renewal fails but the lease may still hold, so one more
+        # attempt is allowed; 215s in it certainly expired, so no more attempts.
+        self.assertEqual(actions, ["output-ticket", "complete", "heartbeat", "complete"])
 
     def test_navigation_estimate_is_not_reported_as_measured_floor(self):
         pose = [[1, 0, 0, 0], [0, 1, 0, 1.6], [0, 0, 1, 0], [0, 0, 0, 1]]

@@ -72,7 +72,7 @@ final class UploadManager: NSObject, ObservableObject {
         var parts: [PartState] = []       // multipart per-part state (persisted → resumable)
 
         var sha256: String? = nil
-        var retryCount: Int = 0           // single-mode whole-upload retries
+        var retryCount: Int = 0           // single mode: failed transfers of its one PUT (multipart counts per part)
         /// Owning listing — sent as listing_id when requesting the upload. For a
         /// role=render publish this is the SERVER listing id.
         var listingID: UUID? = nil
@@ -105,6 +105,12 @@ final class UploadManager: NSObject, ObservableObject {
         var legacyRecoveryApproved: Bool? = nil
         var legacyCancellationAssetID: String? = nil
         var singleTaskID: Int? = nil
+        /// The client's own bounded recovery on THIS ticket ran out: the
+        /// part-URL retries, the reconciliation rounds, or the single PUT's
+        /// attempts. The ticket may well be dead server-side. Auto-resume can
+        /// still try it once more on a network regain; the user-visible way
+        /// forward is `startOver()` — a fresh reservation for the same file.
+        var recoveryExhausted: Bool? = nil
 
         var fractionComplete: Double {
             bytesTotal > 0 ? Double(bytesSent) / Double(bytesTotal) : 0
@@ -118,6 +124,11 @@ final class UploadManager: NSObject, ObservableObject {
         var isAutoResumable: Bool { status == .failed && terminalError == nil }
         /// True when a user-facing Resume can reconcile retained progress.
         var canResume: Bool { status == .failed || status == .paused }
+        /// True when this failed record has a ticket the engine gave up on, so
+        /// "Start over" (retire it, reserve afresh, send again) is the honest
+        /// offer. Never true for a record that has no ticket yet — a plain
+        /// Resume simply asks for one.
+        var canStartOver: Bool { status == .failed && assetID != nil && recoveryExhausted == true }
 
         mutating func prepareForExplicitResume() {
             // The server decides whether the original can finish. Clearing
@@ -126,6 +137,7 @@ final class UploadManager: NSObject, ObservableObject {
             legacyRecoveryApproved = true
             status = .uploading
             retryCount = 0
+            recoveryExhausted = nil
             failureMessage = nil
             for i in parts.indices where parts[i].status == .failed {
                 parts[i].status = .pending
@@ -192,6 +204,27 @@ final class UploadManager: NSObject, ObservableObject {
     private var isRequestingTicket = false
     private var isCompleting = false
     private var recoveryAttempt: UUID?
+    /// Consecutive `/part-urls` failures with nothing else moving. Used to
+    /// have no bound at all: a 503 every five seconds, forever, with nothing
+    /// on screen. Reset when a batch of URLs arrives and on every explicit
+    /// (re)start.
+    private var partURLFailures = 0
+    /// Consecutive reconciliation rounds (`/complete` probe → `/renew`) that
+    /// produced no progress — no part landed, no upload finished. Reset the
+    /// moment a part's receipt lands. This is the bound `retryCount` used to
+    /// carry for the WHOLE upload, which made three parts tripping over one
+    /// network blip count as three strikes against the file.
+    private var reconcileRounds = 0
+    /// Bounds. Part-URL retries back off 5 s → 30 s and give up after eight
+    /// (about three minutes of a storage that cannot plan a transfer);
+    /// reconciliation gives up after five rounds without progress; a part
+    /// (or the single PUT) after five failed transfers of its own.
+    private static let maxPartURLAttempts = 8
+    private static let maxReconcileRounds = 5
+    private static let maxTransferAttemptsPerPart = 5
+    /// Multiplier on the part-URL backoff. 1 in the app; the receipt/dispatch
+    /// tests compress it so the bounded loop runs in milliseconds, not minutes.
+    var retryDelayScale: Double = 1
 
     // Mock by default; LiveAPIClient when Config.useLiveBackend.
     private var api: APIClient = Config.makeAPIClient()
@@ -301,6 +334,8 @@ final class UploadManager: NSObject, ObservableObject {
         partNextTry.removeAll()
         isRequestingTicket = false
         isCompleting = false
+        partURLFailures = 0
+        reconcileRounds = 0
 
         var newState = State(filePath: FileStore.relativePath(for: fileURL),
                              bytesTotal: bytes,
@@ -356,6 +391,11 @@ final class UploadManager: NSObject, ObservableObject {
         if let s = state, s.status == .failed, s.filePath == relPath,
            s.listingID == listingID, s.role == role {
             // Retry the recorded upload, not a new request with forgotten parts.
+            // Unless the engine already gave up on that record's ticket: then a
+            // "Retry publish" tap is the explicit go-ahead to retire it and
+            // send the file again under a fresh reservation, instead of the
+            // same dead Resume failing again a minute later.
+            if s.canStartOver { return try await awaitEngine { self.startOver() } }
             return try await awaitEngine { self.resume() }
         }
         // One active upload at a time — don't clobber an in-flight capture.
@@ -522,11 +562,77 @@ final class UploadManager: NSObject, ObservableObject {
     /// names it retired and acknowledges that exact ticket's cancellation.
     func resume() {
         guard var s = state, s.status != .done else { return }
+        // A Resume on a ticket the engine already gave up on is the user asking
+        // for one more full try at it (Start over sits right next to it), so
+        // it gets a fresh round budget. A Resume on an ordinary failure just
+        // continues the same bounded budget: five dead Resumes in a row
+        // converge on the exhausted state instead of cycling forever.
+        if s.recoveryExhausted == true { reconcileRounds = 0 }
         s.prepareForExplicitResume()
         state = s
         lastFailureMessage = nil
         partNextTry.removeAll()
+        partURLFailures = 0
         guard persistBeforeDispatch() else { return }
+        startOrResume()
+    }
+
+    /// The user's answer to a ticket the engine gave up on (`canStartOver`):
+    /// retire that reservation and send the SAME file again under a fresh one.
+    /// This is the one place a replacement reservation is minted for a video
+    /// without the server first retiring the old ticket itself — it costs a
+    /// reservation, which is why only an explicit tap (or an explicit "Retry
+    /// publish" through `upload(...)`) gets here, never a timer.
+    ///
+    /// Only this ticket's OS tasks are stopped; the abort is best effort (a
+    /// dead ticket often 404s or 409s it) and its slices are dropped. The new
+    /// record keeps the listing, role, metadata, declared content type and the
+    /// already-computed digest, and gets a NEW operation key (a replayed key
+    /// would hand back the very reservation we are leaving). Like Resume it
+    /// does not re-ask about cellular: this upload was approved (or on Wi-Fi)
+    /// when it started, and an awaiting `upload()` must not be parked.
+    /// Nothing on this phone is deleted.
+    func startOver() {
+        guard let s = state, s.canStartOver, let retiredID = s.assetID else { return }
+        guard FileStore.fileSize(s.fileURL) > 0 else {
+            // Nothing left to send. Leave `.failed` for a moment so the
+            // failure below is a real transition — that is what resolves an
+            // awaiting `upload()` (`mutate` only notifies on failed's edge).
+            mutate { $0.status = .uploading }
+            fail("The video to upload is no longer on this phone.", terminal: true)
+            return
+        }
+        simulateTimer?.invalidate()
+        backgroundSession.getAllTasks { tasks in
+            for task in tasks where task.taskDescription == "single:\(retiredID)" ||
+                task.taskDescription?.hasPrefix("part:\(retiredID):") == true { task.cancel() }
+        }
+        inFlightBytes.removeAll()
+        partNextTry.removeAll()
+        isRequestingTicket = false
+        isCompleting = false
+        recoveryAttempt = nil
+        partURLFailures = 0
+        reconcileRounds = 0
+        DirectUploader.cleanSlices(for: retiredID)
+        if Config.useLiveBackend {
+            Task { [weak self] in try? await self?.api.abortUpload(assetID: retiredID) }
+        }
+
+        var fresh = State(filePath: s.filePath, bytesTotal: s.bytesTotal,
+                          mode: Config.useLiveBackend ? "pending" : "simulate")
+        fresh.listingID = s.listingID
+        fresh.listingLocalID = s.listingLocalID
+        fresh.role = s.role
+        fresh.metadata = s.metadata
+        fresh.contentType = s.contentType
+        fresh.sha256 = s.sha256
+        fresh.ticketKey = "ticket:\(fresh.id.uuidString.lowercased())"
+        fresh.status = .uploading
+        state = fresh
+        lastFailureMessage = nil
+        guard persistBeforeDispatch() else { return }
+        if fresh.sha256 == nil { computeHashInBackground(fileURL: fresh.fileURL, uploadID: fresh.id) }
         startOrResume()
     }
 
@@ -539,6 +645,8 @@ final class UploadManager: NSObject, ObservableObject {
         partNextTry.removeAll()
         isRequestingTicket = false
         isCompleting = false
+        partURLFailures = 0
+        reconcileRounds = 0
         if let assetID { DirectUploader.cleanSlices(for: assetID) }
         // Best-effort: tear down the server-side R2 multipart session.
         if Config.useLiveBackend, let assetID, isMultipart {
@@ -559,6 +667,8 @@ final class UploadManager: NSObject, ObservableObject {
         partNextTry.removeAll()
         isRequestingTicket = false
         isCompleting = false
+        partURLFailures = 0
+        reconcileRounds = 0
         state = nil
         _ = persistState(nil)
     }
@@ -627,6 +737,10 @@ final class UploadManager: NSObject, ObservableObject {
             mutate { st in
                 st.status = .uploading
                 st.retryCount = 0
+                // A regained network earns the ticket one more bounded run;
+                // if that runs dry too, the exhausted state (and Start over)
+                // simply come back.
+                st.recoveryExhausted = nil
                 st.failureMessage = nil
                 for i in st.parts.indices where st.parts[i].status == .failed {
                     st.parts[i].status = .pending
@@ -634,6 +748,8 @@ final class UploadManager: NSObject, ObservableObject {
                 }
             }
             partNextTry.removeAll()
+            partURLFailures = 0
+            reconcileRounds = 0
             startOrResume()
         default:
             break
@@ -783,8 +899,15 @@ final class UploadManager: NSObject, ObservableObject {
         let httpStatus = (task.response as? HTTPURLResponse)?.statusCode ?? 0
         if error != nil || !(200..<300).contains(httpStatus) {
             guard s.status == .uploading else { return }   // paused/cancelled → leave resumable
-            guard s.retryCount < 5 else {
-                fail(httpStatus > 0 ? "Storage returned status \(httpStatus) while uploading." : nil)
+            // Single mode has exactly one part, so `retryCount` IS that part's
+            // transfer count — it is no longer also spent by every
+            // reconciliation round (see `reconcileRounds`). Five failed PUTs of
+            // the same file against freshly renewed URLs means this ticket is
+            // not going to take the bytes: say so, and offer a fresh one.
+            guard s.retryCount < Self.maxTransferAttemptsPerPart else {
+                fail((httpStatus > 0 ? "Storage returned status \(httpStatus) while uploading." : "The upload kept failing before storage accepted it.")
+                     + " Your original is safe — tap Start over to send it again under a new upload ticket.",
+                     exhausted: true)
                 return
             }
             mutate { $0.retryCount += 1 }
@@ -865,8 +988,10 @@ final class UploadManager: NSObject, ObservableObject {
                    api.isValidation || api.isNotFound || api.isForbidden || api.isUnauthorized || api.isConflict {
                     // The server refuses this upload session (e.g. 409 "not a
                     // multipart upload" after an abort, 404 asset gone, signed
-                    // out) — don't spin on it every 5 s; the user resumes.
-                    self.fail(api.localizedDescription, terminal: true)
+                    // out) — don't spin on it every 5 s; the user resumes. A
+                    // ticket that is simply gone is also marked exhausted, so
+                    // the offer is Start over rather than a Resume that 404s.
+                    self.fail(api.localizedDescription, terminal: true, exhausted: UploadRecovery.isRetired(api))
                 } else {
                     self.scheduleMultipartRetry()
                 }
@@ -876,6 +1001,8 @@ final class UploadManager: NSObject, ObservableObject {
 
         // 2. Snapshot each part's byte range on the main actor (state is main-isolated).
         let (fileURL, specs): (URL?, [PartSpec]) = await MainActor.run {
+            // Storage planned a batch: the part-URL failure streak is over.
+            self.partURLFailures = 0
             guard let s = self.state, s.status == .uploading, s.assetID == assetID else {
                 self.revertToPending(numbers); return (nil, [])   // paused/cancelled mid-fetch
             }
@@ -960,11 +1087,29 @@ final class UploadManager: NSObject, ObservableObject {
                 }
                 return
             }
+            // The failure counts against THIS part, never the whole upload:
+            // three parts tripping over one network blip is one bad moment,
+            // not three strikes against the file. A part that has failed its
+            // own transfer five times marks the upload failed (resumable — a
+            // regained network resets it), exactly like an exhausted slice.
+            let attempts = part.retryCount + 1
+            guard attempts <= Self.maxTransferAttemptsPerPart else {
+                mutate { st in
+                    if let i = st.parts.firstIndex(where: { $0.number == n }) { st.parts[i].status = .failed }
+                    st.failureMessage = "Part \(n) of the upload kept failing. It will resume when the connection recovers."
+                    st.status = .failed
+                }
+                updateProgress()
+                return
+            }
             // Fetching fresh part URLs is the recovery operation: v2 resolves a
             // recorded uncertain dispatch or refuses it, never another write.
             // Probe complete first so a lost final acknowledgement wins.
             mutate { st in
-                if let i = st.parts.firstIndex(where: { $0.number == n }) { st.parts[i].status = .pending }
+                if let i = st.parts.firstIndex(where: { $0.number == n }) {
+                    st.parts[i].status = .pending
+                    st.parts[i].retryCount = attempts
+                }
             }
             reconcileTicket(expectedAssetID: assetID)
             updateProgress()
@@ -982,6 +1127,7 @@ final class UploadManager: NSObject, ObservableObject {
             }
         }
         partNextTry[n] = nil
+        reconcileRounds = 0   // a receipt landed: real progress, the round budget starts over
         updateProgress()
         if state?.parts.allSatisfy({ $0.status == .done }) == true {
             finishMultipart()
@@ -1025,8 +1171,21 @@ final class UploadManager: NSObject, ObservableObject {
         for n in numbers { inFlightBytes[n] = nil }
     }
 
+    /// `/part-urls` failed for a transient-looking reason (5xx, offline). Try
+    /// again with backoff — 5 s doubling to a 30 s ceiling — but only
+    /// `maxPartURLAttempts` times in a row. Then it is a real, visible failure
+    /// with Start over on offer, not a silent five-second loop for the rest of
+    /// the day. The counter resets whenever a batch of URLs does arrive.
     private func scheduleMultipartRetry() {
-        DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in self?.pumpMultipart() }
+        partURLFailures += 1
+        guard partURLFailures <= Self.maxPartURLAttempts else {
+            partURLFailures = 0
+            fail("Storage kept refusing to plan the next parts of this upload. Your original is safe — "
+                 + "tap Start over to send it again under a new upload ticket.", exhausted: true)
+            return
+        }
+        let delay = min(30.0, 5.0 * pow(2.0, Double(partURLFailures - 1))) * retryDelayScale
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in self?.pumpMultipart() }
     }
 
     private func finishMultipart() {
@@ -1069,11 +1228,19 @@ final class UploadManager: NSObject, ObservableObject {
     private func reconcileTicket(expectedAssetID assetID: String) {
         guard !isCompleting else { return }
         guard let snapshot = state, snapshot.status == .uploading, snapshot.assetID == assetID else { return }
-        guard snapshot.retryCount < 5 else {
-            fail("Upload recovery is still waiting for a storage receipt. Your original is safe. Tap Resume to check again.")
+        // Rounds are counted here, transiently, and reset the moment a part's
+        // receipt lands. They used to be charged to the persisted per-upload
+        // `retryCount`, which every failing part also consumed — so a big
+        // multipart upload on a flaky link "ran out of retries" after a handful
+        // of part hiccups spread across different parts. This guard catches
+        // the loops where every round SUCCEEDS yet nothing lands (a renewed
+        // ticket whose part URLs keep 409ing); the catch below counts the
+        // rounds that throw.
+        guard reconcileRounds < Self.maxReconcileRounds else {
+            fail(Self.reconciliationExhaustedMessage, exhausted: true)
             return
         }
-        mutate { $0.retryCount += 1 }
+        reconcileRounds += 1
         isCompleting = true
         let attemptID = UUID()
         recoveryAttempt = attemptID
@@ -1147,10 +1314,28 @@ final class UploadManager: NSObject, ObservableObject {
                 let status = (error as? APIError)?.status
                 let terminal = error is UploadRecovery.Failure ||
                     (status.map { (400..<500).contains($0) && $0 != 429 && $0 != 408 } ?? false)
-                self.fail(error.localizedDescription, terminal: terminal)
+                // A transient answer (5xx, offline, 429) leaves the record
+                // resumable as before — but each such round is counted, so five
+                // of them in a row end in the exhausted state with Start over
+                // on offer instead of "Tap Resume to check again" forever. A
+                // ticket the server retired outright (gone, or aborted behind
+                // our back) is terminal AND exhausted: no Resume can revive it,
+                // only a fresh reservation. The legacy-consent failure stays a
+                // plain terminal so its explicit Resume path is untouched.
+                let retired = UploadRecovery.isRetired(error)
+                let ranDry = !terminal && self.reconcileRounds >= Self.maxReconcileRounds
+                if ranDry {
+                    self.fail(Self.reconciliationExhaustedMessage, exhausted: true)
+                } else {
+                    self.fail(error.localizedDescription, terminal: terminal, exhausted: retired)
+                }
             }
         }
     }
+
+    private static let reconciliationExhaustedMessage =
+        "Upload recovery couldn't get a storage receipt for this upload ticket after several tries. "
+        + "Your original is safe — tap Start over to send it again under a new ticket, or Resume to check this one once more."
 
     private func markDone(assetID: String) {
         guard let s = state, s.assetID == assetID || s.mode == "simulate" else { return }
@@ -1163,6 +1348,8 @@ final class UploadManager: NSObject, ObservableObject {
         DirectUploader.cleanSlices(for: assetID)
         inFlightBytes.removeAll()
         partNextTry.removeAll()
+        partURLFailures = 0
+        reconcileRounds = 0
         lastFailureMessage = nil
         Haptics.success()
         emitCompletion(assetID: assetID, from: s)
@@ -1186,12 +1373,16 @@ final class UploadManager: NSObject, ObservableObject {
     /// Single choke point for failures: records the message, flips to `.failed`
     /// (which notifies any awaiting `upload()` via `mutate`), and marks server
     /// rejections terminal so the auto-resume paths leave them alone.
-    private func fail(_ message: String?, terminal: Bool = false) {
+    /// `exhausted` marks a ticket the engine's own bounded recovery gave up
+    /// on: still auto-resumable once on a network regain, but from now on the
+    /// record offers Start over (`State.canStartOver`).
+    private func fail(_ message: String?, terminal: Bool = false, exhausted: Bool = false) {
         let text = message?.trimmingCharacters(in: .whitespacesAndNewlines)
         lastFailureMessage = (text?.isEmpty == false) ? text : nil
         mutate { st in
             st.failureMessage = (text?.isEmpty == false) ? text : nil
             if terminal { st.terminalError = (text?.isEmpty == false) ? text : "The server rejected this upload." }
+            if exhausted { st.recoveryExhausted = true }
             st.status = .failed
         }
     }
@@ -1360,7 +1551,8 @@ extension UploadManager.State {
              uploadID, partSize, partCount, parts, sha256, retryCount, listingID, role, metadata,
              contentType, listingLocalID, putURL, putURLIssuedAt, singlePutDone,
              failureMessage, terminalError, transportVersion, ticketKey,
-             legacyRecoveryApproved, legacyCancellationAssetID, singleTaskID
+             legacyRecoveryApproved, legacyCancellationAssetID, singleTaskID,
+             recoveryExhausted
     }
 
     init(from decoder: Decoder) throws {
@@ -1398,6 +1590,7 @@ extension UploadManager.State {
         legacyRecoveryApproved = try c.decodeIfPresent(Bool.self, forKey: .legacyRecoveryApproved)
         legacyCancellationAssetID = try c.decodeIfPresent(String.self, forKey: .legacyCancellationAssetID)
         singleTaskID = try c.decodeIfPresent(Int.self, forKey: .singleTaskID)
+        recoveryExhausted = try c.decodeIfPresent(Bool.self, forKey: .recoveryExhausted)
     }
 }
 

@@ -19,8 +19,10 @@ insert into listings(id,org_id,agent_id) select 'a0410000-0000-4000-8000-0000000
 insert into spatial_jobs(id,org_id,listing_id,actor_id,capture_id,idem_key,attempt_key,room_label,capture_manifest,status,lease_token,lease_expires_at,deadline_at)
  select f.job,l.org_id,l.id,l.agent_id,f.job,f.job,f.attempt,'Fixture','{}','processing',f.lease,clock_timestamp()+interval '2 minutes',clock_timestamp()+interval '2 hours' from _fixture f cross join listings l where l.id='a0410000-0000-4000-8000-000000000002';
 create function pg_temp.call(action text,data jsonb) returns jsonb language sql as $$select spatial_provider_attempt_update(job,lease,attempt,action,data) from _fixture$$;
-create function pg_temp.plan() returns jsonb language sql as $$select pg_temp.call('plan',jsonb_build_object('app_name','rendprop-spatial-worker','sandbox_name','spatial-'||job::text||'-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$$;
-create function pg_temp.no_allocation() returns jsonb language sql as $$select pg_temp.call('not_created',jsonb_build_object('origin','before_provider_entry','proof','create_not_invoked','app_name','rendprop-spatial-worker','sandbox_name','spatial-'||job::text||'-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$$;
+-- 'spatial-'||lease is the only accepted provider name: 44 characters, within
+-- Modal 1.5.3's 64-character Sandbox name limit. The worker builds the same.
+create function pg_temp.plan() returns jsonb language sql as $$select pg_temp.call('plan',jsonb_build_object('app_name','rendprop-spatial-worker','sandbox_name','spatial-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$$;
+create function pg_temp.no_allocation() returns jsonb language sql as $$select pg_temp.call('not_created',jsonb_build_object('origin','before_provider_entry','proof','create_not_invoked','app_name','rendprop-spatial-worker','sandbox_name','spatial-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$$;
 do $$ declare ns text;begin select nspname into ns from pg_namespace where oid=pg_my_temp_schema();execute format('grant usage on schema %I to service_role,anon,authenticated',ns);end $$;
 grant select,insert,update on _checks,_fixture to service_role,anon,authenticated;
 grant execute on all functions in schema pg_temp to service_role,anon,authenticated;
@@ -36,10 +38,14 @@ select pg_temp.a(pg_temp.no_allocation()->>'dispatch'='false','early failure gra
 select pg_temp.a((select allocation_state='not_created' and files_removed and terminated and sandbox_id is null from spatial_provider_attempts),'early failure has durable no-allocation proof');
 reset role;
 delete from spatial_provider_attempts where lease_token=(select lease from _fixture);
+-- The table itself refuses the retired 'spatial-<job>-<lease>' form (81 chars):
+-- a receipt for a name the provider cannot allocate must not become durable.
+select pg_temp.denied($q$insert into spatial_provider_attempts(lease_token,job_id,attempt_key,app_name,sandbox_name,source_sha256,deadline_at) select lease,job,attempt,'rendprop-spatial-worker','spatial-'||job::text||'-'||lease::text,repeat('a',64),clock_timestamp()+interval '1 hour' from _fixture$q$,'new row for relation "spatial_provider_attempts" violates check constraint%','durable identity refuses a name Modal cannot allocate');
 set local role service_role;
+select pg_temp.denied($q$select pg_temp.call('plan',jsonb_build_object('app_name','rendprop-spatial-worker','sandbox_name','spatial-'||job::text||'-'||lease::text,'source_sha256',repeat('a',64))) from _fixture$q$,'RP400:%','legacy job-plus-lease provider name is not a plan');
 select pg_temp.a(pg_temp.plan()->>'dispatch'='true','first durable plan grants one dispatch');
 select pg_temp.a(pg_temp.plan()->>'dispatch'='false','plan replay never grants another dispatch');
-select pg_temp.denied('select spatial_provider_attempt_update(job,gen_random_uuid(),attempt,''plan'',jsonb_build_object(''app_name'',''rendprop-spatial-worker'',''sandbox_name'',''spatial-''||job::text||''-''||lease::text,''source_sha256'',repeat(''a'',64))) from _fixture','RP409:%','stale lease cannot plan allocation');
+select pg_temp.denied('select spatial_provider_attempt_update(job,gen_random_uuid(),attempt,''plan'',jsonb_build_object(''app_name'',''rendprop-spatial-worker'',''sandbox_name'',''spatial-''||lease::text,''source_sha256'',repeat(''a'',64))) from _fixture','RP409:%','stale lease cannot plan allocation');
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"files_removed":true,"terminated":true}'')','RP409:%','unknown identity cannot claim cleanup');
 select pg_temp.call('unknown','{"last_error_code":"allocation_unknown"}');
 select pg_temp.a((select allocation_state='unknown' and not terminated and not files_removed from spatial_provider_attempts),'ambiguous allocation remains pending');
@@ -62,6 +68,6 @@ select pg_temp.a((select files_removed and terminated from spatial_provider_atte
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"files_removed":null}'')','RP400:%','null proof rejected');
 select pg_temp.denied('select pg_temp.call(''cleanup'',''{"reason_code":"raw provider body with credentials"}'')','new row for relation "spatial_provider_attempts" violates check constraint%','arbitrary provider error body not retained');
 reset role;
-select pg_temp.a((select count(*)=22 from _checks),'all expected provider assertions executed');
+select pg_temp.a((select count(*)=24 from _checks),'all expected provider assertions executed');
 select 'PASS: '||count(*)||' provider SQL assertions' from _checks;
 rollback;

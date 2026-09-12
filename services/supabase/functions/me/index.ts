@@ -30,7 +30,8 @@
 //                                  the StoreKit 2 JWS the app holds after a verified
 //                                  purchase or restore. See §"Entitlement sync" below.
 //   DELETE /me                  -> { ok, deletion_request_id, cleanup_complete, pending, warnings? }
-//   POST   /me/sweep-deletions  -> { ok, processed }   (service-role only; retry queue)
+//   POST   /me/sweep-deletions  -> { ok, processed, manual_review, deferred, escalated }
+//                                  (service-role only; retry queue)
 //
 // Deletion ownership is now DB-owned (0039), not an Edge enumeration followed
 // by later DELETEs. Under the same Auth/profile/org locks as adoption, SQL
@@ -42,6 +43,12 @@
 // is required at rollout; a migration cannot retract a sent provider DELETE.
 // `ok` requires the Auth user to be gone; `cleanup_complete` additionally
 // requires all queued work done and no historical manual-review leftovers.
+// Retained work no sweep can finish does not loop forever: after twelve
+// passes without progress, or a GPU lease still unjournaled a day later, the
+// DB parks the row (manual_review_required + escalation_reason) and the
+// sweeper stops picking it up; nothing is erased to force completion.
+// A non-`RPnnn` database failure on either RPC is a 503 "retry", never a 400
+// that echoes the error text.
 
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
 import { handleOptions } from "../_shared/cors.ts";

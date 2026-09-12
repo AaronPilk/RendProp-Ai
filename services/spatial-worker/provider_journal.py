@@ -1,8 +1,30 @@
 """Small durable control-plane receipts; never upload logs or room data here."""
 import hashlib
 from pathlib import Path
+import re
 
-from worker import require
+from worker import canonical_uuid, require
+
+APP_NAME = "rendprop-spatial-worker"
+# Modal 1.5.3 validates every Sandbox name locally (`check_object_name`) before
+# the CREATE RPC: at most 64 characters of [A-Za-z0-9._-], never an App ID
+# shape. The lease token is already the attempt's primary key, so it alone
+# identifies the attempt; "spatial-<job>-<lease>" was 81 characters and the SDK
+# rejected it before any GPU existed. Keep this regex in step with the SDK rule
+# so a bad name fails here, before intent is journaled or anything is billed.
+MODAL_OBJECT_NAME = re.compile(r"(?!ap-[A-Za-z0-9]{22}$)[A-Za-z0-9._-]{1,64}")
+
+
+def sandbox_name(job):
+    # Must stay byte-identical to the check constraint and identity check in
+    # migration 0041 (`'spatial-'||lease_token::text`, a uuid column); the DB
+    # refuses any other spelling, so only a canonical token can be named.
+    token = job.get("lease_token")
+    require(canonical_uuid(token), "invalid_sandbox_name")
+    name = "spatial-" + token
+    require(MODAL_OBJECT_NAME.fullmatch(name) is not None, "invalid_sandbox_name")
+    return name
+
 
 SOURCE_FILES = (
     "services/spatial-worker/app.py",
@@ -53,8 +75,7 @@ class ProviderJournal:
         # entry yet. Record the absence atomically; never rewrite an older intent
         # that could represent another controller's ambiguous CREATE.
         result = self.write("not_created", origin="before_provider_entry", proof="create_not_invoked",
-                            app_name="rendprop-spatial-worker",
-                            sandbox_name="spatial-" + self.job["id"] + "-" + self.job["lease_token"],
+                            app_name=APP_NAME, sandbox_name=sandbox_name(self.job),
                             source_sha256=source_fingerprint())
         require(result.get("allocation_state") == "not_created"
                 and result.get("files_removed") is True and result.get("terminated") is True,

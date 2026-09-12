@@ -749,6 +749,12 @@ protocol APIClient: Sendable {
     func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob
     func cancelSpatialJob(id: UUID) async throws -> SpatialJob
     func resumeSpatialJob(id: UUID) async throws -> SpatialJob
+    /// GET /spatial/capability — whether this deployment can generate 3D rooms
+    /// at all, and a short reason when it cannot. Read BEFORE offering a scan:
+    /// the alternative is a room that uploads every frame and fails at
+    /// `/start` with "not configured". `enabled == false` is a state to show
+    /// plainly, not an error to retry.
+    func spatialCapability() async throws -> SpatialCapability
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
     /// PATCH `listings/<serverID>` (falls back to the local id only when the

@@ -21,7 +21,7 @@ create function pg_temp.denied(command text,expected text,label text) returns vo
   perform pg_temp.a(true,label);
 end $$;
 do $$ declare s uuid; d uuid; o uuid; l uuid; a uuid; j uuid; r uuid; prefix text; begin
-  for n in 1..8 loop
+  for n in 1..10 loop
     s:=('a0390000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     d:=('a0391000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
     l:=('a0392000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid;
@@ -46,9 +46,18 @@ end $$;
 create function pg_temp.prepare(n integer) returns jsonb language sql as $$
   select public.prepare_account_deletion(source,'fixture-uploads','fixture-renders') from _fixture where _fixture.n=$1
 $$;
+-- One sweeper pass: reclaim the parked request, then report exactly what the
+-- caller says remains (the whole leased payload when nothing was removed).
+create function pg_temp.sweep(n integer,remaining jsonb default null) returns jsonb language plpgsql as $$
+declare request uuid; claimed jsonb; begin
+  select (receipt->>'request_id')::uuid into strict request from _fixture where _fixture.n=sweep.n;
+  claimed:=public.claim_account_deletion(request);
+  if claimed->>'ok' is distinct from 'true' then return claimed; end if;
+  return public.finish_account_deletion(request,(claimed->>'lease_token')::uuid,coalesce(remaining,claimed->'payload'),'sweep: nothing removed');
+end $$;
 grant select,insert on _checks to service_role,anon,authenticated;
 grant select,update on _fixture to service_role,anon,authenticated;
-grant execute on function pg_temp.a(boolean,text),pg_temp.denied(text,text,text),pg_temp.prepare(integer) to service_role,anon,authenticated;
+grant execute on function pg_temp.a(boolean,text),pg_temp.denied(text,text,text),pg_temp.prepare(integer),pg_temp.sweep(integer,jsonb) to service_role,anon,authenticated;
 do $$ declare ns text; begin
   select nspname into ns from pg_namespace where oid=pg_my_temp_schema();
   execute format('grant usage on schema %I to service_role,anon,authenticated',ns);
@@ -170,6 +179,41 @@ update _fixture set receipt=pg_temp.prepare(8) where n=8;
 reset role;
 select pg_temp.a((select jsonb_array_length(receipt->'payload'->'r2')=1008 and
   not exists(select 1 from public.photos where listing_id=f.listing) from _fixture f where n=8),'over-1000-row snapshot loses no media');
-select pg_temp.a((select count(*)=31 from _checks),'exact registered assertion count');
-select 'PASS: 32 deletion SQL assertions; all fixtures rolled back.';
+-- Retained work that never shrinks must not be re-swept every five minutes
+-- forever. Twelve identical passes park the row for a person with every
+-- target intact and a recorded reason; a pass that removes something resets
+-- the count. Escalation is never a shortcut to 'completed'.
+set local role service_role;
+update _fixture set receipt=pg_temp.prepare(9) where n=9;
+select pg_temp.a((select (public.finish_account_deletion((receipt->>'request_id')::uuid,(receipt->>'lease_token')::uuid,receipt->'payload','nothing removed')
+  ->>'stalled_sweeps')::int=1 from _fixture where n=9),'a pass that removes nothing counts as one stalled sweep');
+select pg_temp.a((select bool_and(not (s->>'manual_review_required')::boolean and (s->>'stalled_sweeps')::int=g+1 and s->'escalation_reason'='null'::jsonb)
+  from (select g,pg_temp.sweep(9) s from generate_series(1,10) g) x),'ten more unchanged sweeps stay automated and are counted');
+select pg_temp.a((select (s->>'manual_review_required')::boolean and s->>'cleanup_complete'='false'
+  and s->>'escalation_reason' like 'no cleanup progress in 12 consecutive sweeps%' from pg_temp.sweep(9) s),
+  'twelfth unchanged sweep escalates to manual review, never to completion');
+select pg_temp.a((select c->>'ok'='false' and (c->>'manual_review_required')::boolean and c->>'escalation_reason' like 'no cleanup progress%'
+  from _fixture f,public.claim_account_deletion((f.receipt->>'request_id')::uuid) c where f.n=9),
+  'escalated request cannot be leased again and keeps its reason');
+reset role;
+select pg_temp.a((select d.manual_review_required and d.status='pending' and d.stalled_sweeps=12 and d.escalated_at is not null
+  and d.cleanup_token is null and d.payload=f.receipt->'payload' and d.escalation_reason like '%retained for manual reconciliation: %r2=7%'
+  and d.escalation_reason not like 'Unverified legacy%'
+  from public.deletion_requests d join _fixture f on d.id=(f.receipt->>'request_id')::uuid where f.n=9),'escalated row keeps every target and records why');
+set local role service_role;
+update _fixture set receipt=pg_temp.prepare(10) where n=10;
+select public.finish_account_deletion((receipt->>'request_id')::uuid,(receipt->>'lease_token')::uuid,receipt->'payload','nothing removed') from _fixture where n=10;
+select pg_temp.a((select max((s->>'stalled_sweeps')::int)=6 from (select pg_temp.sweep(10) s from generate_series(1,5)) x)
+  and (select (s->>'stalled_sweeps')::int=0 and not (s->>'manual_review_required')::boolean
+    from _fixture f,pg_temp.sweep(10,jsonb_set(f.receipt->'payload','{r2}',(f.receipt->'payload'->'r2')-0)) s where f.n=10),
+  'a sweep that removes something resets the stalled count');
+select pg_temp.a((select bool_and(not (s->>'manual_review_required')::boolean) and max((s->>'stalled_sweeps')::int)=11
+  from (select pg_temp.sweep(10) s from generate_series(1,11)) x),'eleven unchanged sweeps after progress stay automated');
+select pg_temp.a((select (s->>'manual_review_required')::boolean and (s->>'stalled_sweeps')::int=12 from pg_temp.sweep(10) s),
+  'escalation is reached only after twelve consecutive stalled sweeps');
+reset role;
+select pg_temp.a((select jsonb_array_length(payload->'r2')=6 and manual_review_required from public.deletion_requests d join _fixture f
+  on d.id=(f.receipt->>'request_id')::uuid where f.n=10),'escalation retains the shrunk payload exactly');
+select pg_temp.a((select count(*)=40 from _checks),'exact registered assertion count');
+select 'PASS: 41 deletion SQL assertions; all fixtures rolled back.';
 rollback;

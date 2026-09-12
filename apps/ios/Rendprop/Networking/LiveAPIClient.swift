@@ -346,6 +346,12 @@ final class LiveAPIClient: APIClient {
     func resumeSpatialJob(id: UUID) async throws -> SpatialJob {
         try await spatialWrite([id.uuidString, "resume"], body: [:])
     }
+    func spatialCapability() async throws -> SpatialCapability {
+        // Same auth/headers as every other spatial GET; the body is the two
+        // pinned fields, decoded exactly (no key rewriting).
+        let data = try await execute(makeRequest(url: url(["spatial", "capability"])))
+        return try decodeExact(data)
+    }
 
     func listings() async throws -> [Listing] {
         let data = try await execute(makeRequest(url: url(["listings"])))

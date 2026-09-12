@@ -31,6 +31,9 @@ class Fixture implements GatewayDependencies {
   failClaim = false;
   failFinish = false;
   failWrite = false;
+  deadlineMs?: number;
+  /** Milliseconds the sink keeps "finalizing" after it has every byte. */
+  finalizeMs = 0;
   beforeWrite?: () => Promise<void>;
   op: GatewayOperation = {
     id: ID,
@@ -82,6 +85,9 @@ class Fixture implements GatewayDependencies {
         // before EOF. Even this sink must never commit an invalid body's prefix.
         if (this.bytes === 4) this.commits++;
       }
+      if (this.finalizeMs) {
+        await new Promise((done) => setTimeout(done, this.finalizeMs));
+      }
       return '"fixture"';
     } finally {
       await reader.cancel().catch(() => {});
@@ -91,17 +97,20 @@ class Fixture implements GatewayDependencies {
   async request(
     chunks: number[],
     headers: Record<string, string> = { "content-type": "video/quicktime" },
+    options: { stall?: boolean; signal?: AbortSignal } = {},
   ) {
     const body = new ReadableStream<Uint8Array>({
       start(c) {
         for (const n of chunks) c.enqueue(new Uint8Array(n));
-        c.close();
+        // A stalled body never reaches EOF: the connection is simply cut.
+        if (!options.stall) c.close();
       },
     });
     return new Request(await uploadCapability(ORIGIN, SECRET, ID, 2000), {
       method: "PUT",
       headers,
       body,
+      signal: options.signal,
     });
   }
 }
@@ -127,6 +136,9 @@ for (const chunks of [[5], [4, 1], [3, 2], [3], []]) {
       4,
       "Uncertain external work is never refunded by the HTTP handler",
     );
+    // The pump's own verdict: the withheld final byte never reached the sink,
+    // so no object can exist and the journal may re-plan this exact transfer.
+    assertEquals(f.finishCalls, ["rejected"]);
     assertEquals((await handleUpload(await f.request([4]), f)).status, 503);
     assertEquals(f.writes, 1);
   });
@@ -186,16 +198,91 @@ Deno.test("gateway invalid configuration or signature reaches no state or storag
   }
 });
 Deno.test("gateway bounds Content-Length and rejects compressed/mismatched media before storage", async () => {
-  const cases: Record<string, string>[] = [
-    { "content-length": "67108865" },
-    { "content-length": "5" },
-    { "content-encoding": "gzip" },
-    { "content-type": "text/html" },
+  // [headers, claims]: the transfer limit and encoding need no reservation and
+  // are refused before the claim. The exact length/type live on the claimed
+  // operation (claim and finish are the gateway's only journal verbs), so a
+  // mismatch is settled after the claim but before any body byte: a pre-body
+  // `rejected` verdict, never a write, and 0042 re-plans it on the same ticket.
+  const cases: [Record<string, string>, number][] = [
+    [{ "content-length": "67108865" }, 0],
+    [{ "content-length": "5" }, 1],
+    [{ "content-encoding": "gzip" }, 0],
+    [{ "content-type": "text/html" }, 1],
+    [{}, 1],
   ];
-  for (const headers of cases) {
+  for (const [headers, claims] of cases) {
     const f = new Fixture(),
       response = await handleUpload(await f.request([4], headers), f);
     assert([400, 413].includes(response.status));
-    assertEquals(f.writes, 0);
+    assertEquals([f.claims, f.writes, f.bytes], [claims, 0, 0]);
+    assertEquals(f.finishCalls, claims ? ["rejected"] : []);
+    assertEquals(f.state, claims ? "rejected" : "planned");
   }
+});
+Deno.test("gateway cut after bytes started flowing is uncertain, not rejected", async () => {
+  // The client's connection drops mid-body: the request signal aborts while the
+  // pump still waits for more bytes. The sink may hold a partial body, so the
+  // handler neither refunds nor rules out an object; only recovery may.
+  const f = new Fixture(), controller = new AbortController();
+  const body = new ReadableStream<Uint8Array>({
+    start(c) {
+      c.enqueue(new Uint8Array(2));
+    },
+    pull() {
+      controller.abort();
+    },
+  });
+  const request = new Request(
+    await uploadCapability(ORIGIN, SECRET, ID, 2000),
+    {
+      method: "PUT",
+      headers: { "content-type": "video/quicktime" },
+      body,
+      signal: controller.signal,
+    },
+  );
+  const response = await handleUpload(request, f);
+  assertEquals(response.status, 408);
+  assertEquals([f.writes, f.commits, f.spent], [1, 0, 4]);
+  assertEquals(f.finishCalls, ["uncertain"]);
+  assertEquals(f.state, "uncertain");
+});
+Deno.test("gateway deadline on a stalled body is uncertain and never a second write", async () => {
+  const f = new Fixture();
+  f.deadlineMs = 5;
+  const response = await handleUpload(
+    await f.request([2], undefined, { stall: true }),
+    f,
+  );
+  assertEquals(response.status, 408);
+  assertEquals([f.writes, f.commits, f.spent], [1, 0, 4]);
+  assertEquals(f.finishCalls, ["uncertain"]);
+  assertEquals(f.state, "uncertain");
+  assertEquals((await handleUpload(await f.request([4]), f)).status, 503);
+  assertEquals(f.writes, 1);
+});
+Deno.test("gateway client gone before the body starts is a re-plannable rejection", async () => {
+  const f = new Fixture(), controller = new AbortController();
+  controller.abort();
+  const response = await handleUpload(
+    await f.request([4], undefined, { signal: controller.signal }),
+    f,
+  );
+  assertEquals(response.status, 408);
+  assertEquals([f.claims, f.writes, f.bytes], [1, 0, 0]);
+  assertEquals(f.finishCalls, ["rejected"]);
+});
+Deno.test("gateway deadline that fires while storage finalizes still returns the stored receipt", async () => {
+  // Every byte reached the sink before the deadline; the sink was still
+  // finalizing. Waiting for its report turns a would-be uncertain dispatch into
+  // the same receipt the happy path returns, without any additional write.
+  const f = new Fixture();
+  f.deadlineMs = 5;
+  f.finalizeMs = 40;
+  const response = await handleUpload(await f.request([4]), f);
+  assertEquals(response.status, 200);
+  assertEquals(response.headers.get("etag"), '"fixture"');
+  assertEquals([f.writes, f.commits, f.spent], [1, 1, 4]);
+  assertEquals(f.finishCalls, ["stored"]);
+  assertEquals(f.state, "stored");
 });

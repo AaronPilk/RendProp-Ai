@@ -78,8 +78,16 @@ export async function spatialData(request: Request, env: Env, scene: string, kin
   } catch { end(); return failure(503); }
 }
 
+/** The decoders reach browsers as Function.toString() text. esbuild's keepNames
+ * (wrangler's default) rewrites their inner arrows to `__name(fn, "name")` and
+ * defines `__name` once per bundle, so the served copy threw ReferenceError on
+ * its first call and no 3D room opened. This no-op makes the served module
+ * self-contained whatever the bundler emits; wrangler.toml `keep_names = false`
+ * is the second guard, and scripts/check-bundle.mjs checks the built output. */
+const SPATIAL_MODULE_SHIM = "const __name = (fn) => fn;";
+
 export function spatialModule(): Response {
-  return new Response(`const decodeSpatialManifest = ${decodeSpatialManifest.toString()};\nconst inspectSpatialSog = ${inspectSpatialSog.toString()};\n${SPATIAL_RUNTIME}`, {
+  return new Response(`${SPATIAL_MODULE_SHIM}\nconst decodeSpatialManifest = ${decodeSpatialManifest.toString()};\nconst inspectSpatialSog = ${inspectSpatialSog.toString()};\n${SPATIAL_RUNTIME}`, {
     headers: { ...SPATIAL_HEADERS, "Content-Type": "text/javascript; charset=utf-8" },
   });
 }
