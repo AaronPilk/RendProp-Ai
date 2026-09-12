@@ -373,10 +373,12 @@ import Foundation
             var s = UploadManager.State(filePath: "original.jpg", bytesTotal: FileStore.fileSize(root.appendingPathComponent("original.jpg")),
                 status: .failed, mode: "single", assetID: api.oldID)
             s.ownerID = owner; s.restartRequired = true; s.transportVersion = 2
+            s.failureMessage = "Previous transfer failed"
+            s.terminalError = "Previous terminal error"
             return s
         }
         func until(_ message: String, _ predicate: () -> Bool) async {
-            for _ in 0..<300 {
+            for _ in 0..<1_000 {
                 if predicate() { check(true, message); return }
                 try? await Task.sleep(nanoseconds: 5_000_000)
             }
@@ -402,6 +404,14 @@ import Foundation
         check(!writes.drop(while: { $0?.restartIntent == nil }).contains(where: {
             $0 == nil || ($0?.assetID == delayed.oldID && $0?.restartIntent == nil)
         }), "Video receipt never clears intent before child identity is durable")
+        check(manager.state?.status == .uploading && manager.state?.failureMessage == nil &&
+              manager.state?.terminalError == nil && manager.lastFailureMessage == nil && !manager.restartingUpload,
+              "Confirmed video Restart enters uploading and clears stale failure without another Resume")
+        await until("Confirmed video Restart automatically dispatches its admitted child") {
+            session.fixtureTasks.count == 1 && session.fixtureTasks[0].starts == 1
+        }
+        check(session.fixtureTasks[0].taskDescription == "single:\(delayed.newID)",
+              "Automatic restart dispatch uses the persisted child, not its parent")
         manager.pause()
         check(delayed.creates == 0 && delayed.replacements == 1, "Video restart never calls fresh reserve")
 

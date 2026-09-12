@@ -99,6 +99,8 @@ def main():
              "Active photo transfer is not falsely labelled interrupted", 1),
             ("batch-forgets-owner", files[4], "self.photoBatchID == batchID && self.credentialOwner == owner",
              "self.photoBatchID == batchID", "Photo batch account change stops new files and stale completion notification", 1),
+            ("restart-keeps-resume-guard", files[4], "restartingUpload = false\n                resume()",
+             "resume()", "Confirmed video Restart enters uploading and clears stale failure without another Resume", 1),
         ]
         for name, path, needle, replacement, expected_message, expected_count in mutations:
             text = path.read_text()

@@ -592,7 +592,15 @@ final class UploadManager: NSObject, ObservableObject {
             if replacement.retryAfterSeconds != nil { return }
             if replacement.restartRequired == true {
                 fail(UploadRecovery.RestartRequired(ticket: replacement).localizedDescription, terminal: true)
-            } else { resume() }
+            } else {
+                // The child and consumed intent are durable now. Release only
+                // this completed restart transaction before invoking Resume;
+                // otherwise Resume's duplicate-operation guard leaves a valid
+                // child paused forever. There is no await between releasing
+                // the guard and resuming, and dispatch keeps its owner fences.
+                restartingUpload = false
+                resume()
+            }
         } catch {
             guard state?.id == saved.id else { return }
             fail(error.localizedDescription, terminal: true)

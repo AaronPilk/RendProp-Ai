@@ -152,3 +152,27 @@ stages. Their order and every action/message remain unchanged. No `AnyView`,
 compiler-limit adjustment, missing alert, or weakened guard is used. Frontend
 parse and diff checks pass; integrated type-check/build remains the parent's
 next verification step.
+
+## Confirmed video restart handoff correction
+
+Fresh peer review identified a real gap in the earlier native proof:
+`restartConfirmed()` durably adopted a valid child, but called `resume()` while
+`restartingUpload` was still true. Resume correctly rejected the duplicate
+operation; the child therefore stayed paused with the old error until a second
+user tap. The prior test checked identity and then itself paused the manager,
+so it did not prove automatic transfer continuation.
+
+The correction releases only the finished restart guard **after** the child
+and consumed intent are persisted, then synchronously invokes the existing
+Resume path. There is no intervening await. In-flight/lost-response intent,
+Cancel/new-upload guards, owner checks, completion winner handling and all
+no-new-reservation rules remain unchanged. Resume clears the old failure and
+terminal error as it enters uploading.
+
+The strengthened actual-manager test requires uploading with no stale error,
+then waits for exactly one started native session fixture task naming the
+persisted child, without another Resume call. A new compiled mutant omits the
+guard release and must fail this exact assertion. Frozen run receipt:
+`/tmp/rendprop-upload-recovery-nolpu2du/receipt.json`; baseline **122 assertions
+passed**, final 16-control mutation loop still pending at this commit. This is
+injected transport evidence, not an iPhone or live-service upload claim.
