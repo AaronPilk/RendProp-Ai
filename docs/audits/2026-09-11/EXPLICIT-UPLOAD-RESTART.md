@@ -126,3 +126,19 @@ build is claimed here; the parent is running the corrected integrated source.
 - Real iPhone Wi-Fi loss, suspension/termination delivery, and a live linked
   restart against the deployed backend are not executed by these fixtures.
 - No camera test, TestFlight upload or App Review mutation occurred in this unit.
+
+## Settings compiler follow-up
+
+The parent's corrected integrated full build found a separate SwiftUI
+type-checking timeout in Settings' inline photo-confirmation Binding at
+`SettingsView.swift:467` (pre-refactor line). Log:
+`/tmp/rendprop-upload-recovery-app.kRcexp/build.log`; build exit **65**.
+The follow-up changes only Settings view decomposition and this receipt note:
+explicit `Binding<Bool>`, typed photo-confirmation actions, separate Uploads
+section/current-video/photo-notice/photo-row builders, and opaque form/dialog
+boundaries. All consent text, generation limits, persisted-intent guards,
+account recovery actions and dismissal behavior are retained.
+
+`xcrun swiftc -frontend -parse apps/ios/Rendprop/Screens/SettingsView.swift`
+and `git diff --check` pass. Parsing is not type-checking or an app build;
+the parent reruns the integrated app build/UI test against this patch.

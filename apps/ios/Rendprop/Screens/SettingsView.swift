@@ -100,7 +100,7 @@ struct SettingsView: View {
             : "AI tools are off. The next time you open one, Rendprop asks again before sending anything to an outside AI provider."
     }
 
-    var body: some View {
+    private var settingsForm: some View {
         Form {
 #if SPATIAL_CAPTURE_LAB
             Section {
@@ -168,73 +168,7 @@ struct SettingsView: View {
                 }
             }
 
-            Section {
-                Toggle("Ask before uploading on cellular", isOn: $askBeforeCellularUploads)
-                if let s = uploads.state {
-                    HStack {
-                        Text("Current upload")
-                        Spacer()
-                        Text("\(uploadStatusLabel(s.status)) · \(s.fractionComplete.formatted(.percent.precision(.fractionLength(0))))")
-                            .foregroundStyle(s.status == .done ? Theme.good : Theme.inkDim)
-                    }
-                    if s.status == .queued && uploads.pendingCellularConfirmation {
-                        Button("Start on cellular now") { uploads.confirmCellularAndStart() }
-                    } else if s.status == .uploading {
-                        Button("Pause upload") { uploads.pause() }
-                    } else if s.status == .paused || s.status == .failed {
-                        Button("Resume upload") { uploads.resume() }
-                            .disabled(uploads.restartingUpload || s.restartIntent != nil)
-                    }
-                    if s.status == .paused {
-                        Text("Transfers already in progress can finish. No new parts start until you resume.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    }
-                    if let message = s.failureMessage, !message.isEmpty {
-                        Text(message).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    }
-                    if s.restartRequired == true || s.restartIntent != nil {
-                        if (s.restartGeneration ?? 0) < 3 {
-                            Button(s.restartIntent == nil ? "Restart upload…" : "Continue saved restart…") { confirmVideoRestart = true }
-                                .disabled(uploads.restartingUpload)
-                        } else {
-                            Link("Contact support", destination: Self.supportMailURL(subject: "Upload restart help"))
-                        }
-                    }
-                    // No cancel once it's finished — nothing left to cancel.
-                    if s.status != .done {
-                        Button("Cancel upload", role: .destructive) { uploads.cancel() }
-                            .disabled(uploads.restartingUpload || s.restartIntent != nil)
-                    }
-                }
-                if let message = uploads.photoRecoveryError {
-                    Text(message).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    Button("Dismiss notice") { uploads.dismissPhotoRecoveryMessage() }
-                }
-                if let notice = uploads.photoRecoveryNotice {
-                    Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                    Button("Dismiss notice") { uploads.dismissPhotoRecoveryMessage() }
-                }
-                ForEach(uploads.pendingPhotos) { photo in
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label(URL(fileURLWithPath: photo.source.relativePath).lastPathComponent, systemImage: "photo")
-                            .font(.rpBody).lineLimit(2)
-                        Text(photo.message).font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        if photo.needsRestart {
-                            if (photo.restartGeneration ?? 0) < 3 {
-                                Button("Restart photo upload…") { photoToRestart = photo }
-                            } else {
-                                Link("Contact support", destination: Self.supportMailURL(subject: "Photo upload restart help"))
-                            }
-                        } else {
-                            Button("Retry photo upload") { Task { await uploads.retryPhoto(photo, confirmRestart: false) } }
-                        }
-                    }.disabled(uploads.recoveringPhotoID != nil)
-                }
-            } header: {
-                Text("Uploads")
-            } footer: {
-                Text("Videos over 500 MB always ask. Waiting uploads start on their own once you're back on Wi-Fi.")
-            }
+            uploadsSection
 
             Section {
                 NavigationLink {
@@ -453,23 +387,15 @@ struct SettingsView: View {
                 Text("Standard capture is 4K · 30fps. Your finished tour is rendered at 60fps either way; 4K · 60 doubles the file size and warms the phone faster.")
             }
         }
+    }
+
+    var body: some View {
+        uploadConfirmedForm
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.settings)
         .task { await loadUsage(); await uploads.refreshPhotoRecovery() }
         .onChange(of: auth.userID) { _, _ in Task { await uploads.refreshPhotoRecovery() } }
-        .confirmationDialog("Restart this upload?", isPresented: $confirmVideoRestart) {
-            Button("Restart upload") { Task { await uploads.restartConfirmed() } }
-            Button("Keep original", role: .cancel) { }
-        } message: {
-            Text("Your original stays on this phone. We'll check whether the upload already finished first. Otherwise one new upload attempt uses your upload allowance; previous usage is not refunded. At most three restarts are allowed.")
-        }
-        .confirmationDialog("Restart this photo upload?", isPresented: Binding(get: { photoToRestart != nil }, set: { if !$0 { photoToRestart = nil } }), presenting: photoToRestart) { photo in
-            Button("Restart photo upload") { Task { await uploads.retryPhoto(photo, confirmRestart: true) }; photoToRestart = nil }
-            Button("Keep original", role: .cancel) { photoToRestart = nil }
-        } message: { _ in
-            Text("Keep the original on this phone. We'll check for completed bytes first. A replacement uses a new upload allowance, with at most three restarts. A lost response reuses the saved restart request.")
-        }
         .refreshable { await loadUsage() }
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
@@ -560,6 +486,118 @@ struct SettingsView: View {
                  ? "Everything stored on this phone was removed. Your account and published tours are unchanged."
                  : "Everything stored on this phone was removed.")
         }
+    }
+
+    // MARK: - Upload recovery views
+
+    // Opaque boundaries keep SwiftUI from solving every conditional recovery
+    // row and every Settings dialog as one enormous generic expression. They
+    // do not erase state, validation or the user's explicit restart consent.
+    private var uploadsSection: some View {
+        Section {
+            Toggle("Ask before uploading on cellular", isOn: $askBeforeCellularUploads)
+            if let state = uploads.state { currentUploadRows(state) }
+            photoRecoveryNotices
+            ForEach(uploads.pendingPhotos) { photo in photoRecoveryRow(photo) }
+        } header: {
+            Text("Uploads")
+        } footer: {
+            Text("Videos over 500 MB always ask. Waiting uploads start on their own once you're back on Wi-Fi.")
+        }
+    }
+
+    @ViewBuilder private func currentUploadRows(_ s: UploadManager.State) -> some View {
+        HStack {
+            Text("Current upload")
+            Spacer()
+            Text("\(uploadStatusLabel(s.status)) · \(s.fractionComplete.formatted(.percent.precision(.fractionLength(0))))")
+                .foregroundStyle(s.status == .done ? Theme.good : Theme.inkDim)
+        }
+        if s.status == .queued && uploads.pendingCellularConfirmation {
+            Button("Start on cellular now") { uploads.confirmCellularAndStart() }
+        } else if s.status == .uploading {
+            Button("Pause upload") { uploads.pause() }
+        } else if s.status == .paused || s.status == .failed {
+            Button("Resume upload") { uploads.resume() }
+                .disabled(uploads.restartingUpload || s.restartIntent != nil)
+        }
+        if s.status == .paused {
+            Text("Transfers already in progress can finish. No new parts start until you resume.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+        if let message = s.failureMessage, !message.isEmpty {
+            Text(message).font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }
+        if s.restartRequired == true || s.restartIntent != nil {
+            if (s.restartGeneration ?? 0) < 3 {
+                Button(s.restartIntent == nil ? "Restart upload…" : "Continue saved restart…") { confirmVideoRestart = true }
+                    .disabled(uploads.restartingUpload)
+            } else {
+                Link("Contact support", destination: Self.supportMailURL(subject: "Upload restart help"))
+            }
+        }
+        // No cancel once it's finished — nothing left to cancel.
+        if s.status != .done {
+            Button("Cancel upload", role: .destructive) { uploads.cancel() }
+                .disabled(uploads.restartingUpload || s.restartIntent != nil)
+        }
+    }
+
+    @ViewBuilder private var photoRecoveryNotices: some View {
+        if let message = uploads.photoRecoveryError {
+            Text(message).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button("Dismiss notice") { uploads.dismissPhotoRecoveryMessage() }
+        }
+        if let notice = uploads.photoRecoveryNotice {
+            Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button("Dismiss notice") { uploads.dismissPhotoRecoveryMessage() }
+        }
+    }
+
+    private func photoRecoveryRow(_ photo: DirectUploadJournal.PendingPhoto) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(URL(fileURLWithPath: photo.source.relativePath).lastPathComponent, systemImage: "photo")
+                .font(.rpBody).lineLimit(2)
+            Text(photo.message).font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if photo.needsRestart {
+                if (photo.restartGeneration ?? 0) < 3 {
+                    Button("Restart photo upload…") { photoToRestart = photo }
+                } else {
+                    Link("Contact support", destination: Self.supportMailURL(subject: "Photo upload restart help"))
+                }
+            } else {
+                Button("Retry photo upload") { Task { await uploads.retryPhoto(photo, confirmRestart: false) } }
+            }
+        }.disabled(uploads.recoveringPhotoID != nil)
+    }
+
+    private var uploadConfirmedForm: some View {
+        settingsForm
+            .confirmationDialog("Restart this upload?", isPresented: $confirmVideoRestart) {
+                Button("Restart upload") { Task { await uploads.restartConfirmed() } }
+                Button("Keep original", role: .cancel) { }
+            } message: {
+                Text("Your original stays on this phone. We'll check whether the upload already finished first. Otherwise one new upload attempt uses your upload allowance; previous usage is not refunded. At most three restarts are allowed.")
+            }
+            .confirmationDialog("Restart this photo upload?", isPresented: photoRestartPresented, presenting: photoToRestart) { photo in
+                photoRestartActions(photo)
+            } message: { _ in
+                Text("Keep the original on this phone. We'll check for completed bytes first. A replacement uses a new upload allowance, with at most three restarts. A lost response reuses the saved restart request.")
+            }
+    }
+
+    private var photoRestartPresented: Binding<Bool> {
+        Binding<Bool>(get: { photoToRestart != nil }, set: { presented in
+            if !presented { photoToRestart = nil }
+        })
+    }
+
+    @ViewBuilder private func photoRestartActions(_ photo: DirectUploadJournal.PendingPhoto) -> some View {
+        Button("Restart photo upload") {
+            Task { await uploads.retryPhoto(photo, confirmRestart: true) }
+            photoToRestart = nil
+        }
+        Button("Keep original", role: .cancel) { photoToRestart = nil }
     }
 
     // MARK: - Small labels
