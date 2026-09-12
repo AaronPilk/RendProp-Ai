@@ -8,7 +8,7 @@ for an executed result. Every later checkpoint must preserve open findings.
 
 ## Current phone delivery status — September 11
 
-**LATEST follow-up: viewer and explicit-upload-restart source fixes verified; final UI3/3 and iPhone Release compile pass. Hosted CI follow-up below.**
+**LATEST follow-up: viewer and explicit-upload-restart source fixes pushed; final UI3/3 and iPhone Release compile pass. Hosted CI8/10; two DB jobs retain the existing token-headroom finding.**
 [`VIEWER-UPLOAD-RECOVERY-20260911.md`](../../releases/VIEWER-UPLOAD-RECOVERY-20260911.md)
 is the authoritative work log on `fix/spatial-upload-release-recovery-20260911`.
 Final application source `3063eb481b079ef9d44312e4331581b61c1a9d58` compiles as
@@ -43,18 +43,25 @@ generic-iPhone Release compile passed. The generated spec still says build18;
 this is not an archive or new upload. Current Swift application source remains
 3063eb4; later changes include the generated project and test/inventory fixes.
 
-Actual hosted CI run34662282586 found a Deno2.9 accessor-descriptor test bug and
-12 unmapped web-contract methods, now repaired locally. A fresh local edge run
-passes753; descriptor-shape controls and16 web-contract tests plus three CLI
-negative controls pass. Two DB jobs fail the same pre-existing agent-reel
-700-token ceiling/headroom invariant; no spending cap was silently increased.
-The exact historical scanner findings and new hosted-run outcome are recorded
-in the release handoff as their checks finish. This is not a whole-app GO.
+Final pushed source `ce15713ecd741a7c53fe6c35140b12c293b09785` passed the
+viewer, Edge, Python worker, web inventory, scanner, offline evidence/consent,
+style and iOS static jobs in hosted run34663756381 (8/10). Full local Edge
+also passes753/22 on CI's exact Deno2.9.6. Intermediate CI caught and drove
+fixes for a deletion-fixture accessor descriptor,12 unmapped web methods, and
+a randomized certificate-alphabet test. The last fix changes only tests, not
+production verification;100 fresh-chain trials and three mutants pass.
+Both remaining DB jobs fail the same pre-existing agent-reel700-token
+ceiling/headroom invariant (197/198 pass). All fresh migrations and full
+disposable replay pass. No spending cap was silently increased or test waived.
+The six historical scanner matches are narrowly classified with exact
+fingerprints, not blanket exceptions; new same-path findings still fail.
+Detailed receipts, source changes and rollout instructions are in the release
+handoff. This is not a whole-app GO.
 **No new deployment, GPU allocation,
 budget enablement or Apple operation in this follow-up. Source is not an update
 to the owner's installed TestFlight app.**
 
-**LATEST evening integration and real-room result:**
+**Earlier evening integration and real-room result (superseded by the follow-up above):**
 [`SPATIAL-INTEGRATION-EVENING-20260911.md`](../../releases/SPATIAL-INTEGRATION-EVENING-20260911.md).
 Controlled live upload/publication passed. A fresh GPU allocation succeeded and
 the owner's153-frame room trained; actual model and held-out renders retrieved,

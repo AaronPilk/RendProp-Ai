@@ -7,6 +7,14 @@ full app and three non-camera UI walks. Not deployed, not a new TestFlight
 build, not a whole-app GO.** Read the final checkpoint below before relying on
 historical intermediate counts or failures in this chronological work log.
 
+**Final checkpoint:** source `ce15713ecd741a7c53fe6c35140b12c293b09785` is
+pushed. [Hosted CI34663756381](https://github.com/AaronPilk/RendProp-Ai/actions/runs/34663756381)
+passed8/10 jobs, including the actual Worker bundle and all753 Edge tests.
+The two red DB jobs retain one pre-existing agent-reel token-headroom finding;
+neither a schema failure nor an upload-restart failure is being hidden.
+The deployed viewer was still the broken bundle at00:55:22UTC. Use the narrow
+rollout instructions below; this GitHub push is not a production/phone update.
+
 ## Independently established
 
 At `2026-09-11T23:38:11.419Z`, root fetched the public asset
@@ -616,3 +624,110 @@ HTTP200,26,442 bytes, the same known-bad SHA256. The source-bound gate exited1
 at identity mismatch before executing supplied code. Receipt:
 `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-VR4F2N/receipt.json`.
 No tour-host deployment, iOS delivery, Apple change or budget enablement occurred.
+
+### Deterministic fixture repair and final-source local proof
+
+Integrated `ce15713ecd741a7c53fe6c35140b12c293b09785` fixes only the Apple JWS
+test fixture, adds its asserting harness, and documents the finding. Production
+`applejws.ts` is unchanged. The official Deno2.9.6 executable was checksum
+verified, not installed over the system runtime. Both2.9.6 and2.7.13 reject
+URL-only alphabet digits and accept the shared-alphabet unpadded control.
+The failed CI certificate was not retained, so its exact bytes are not
+replayable; the faulty random-fixture precondition is established from source.
+
+The test now signs a valid, noncritical extension carrying four0xff bytes,
+which guarantee a URL-only digit after URL encoding at any alignment. It
+asserts that precondition and verifies the **same chain/payload** in standard
+base64 before requiring the URL-encoded certificate to fail specifically at
+certificate parsing. It does not regenerate until green or weaken verification.
+Detailed explanation and source:
+[EDGE-CI-APPLE-X5C-FIXTURE.md](../audits/2026-09-11/EDGE-CI-APPLE-X5C-FIXTURE.md).
+
+Root independently ran after integration:
+
+```sh
+env PATH="/tmp/rendprop-deno296.EyhIbB:$PATH" \
+  python3 tools/audit/run_edge_regression.py
+python3 tools/audit/run_apple_x5c_fixture.py \
+  --deno /tmp/rendprop-deno296.EyhIbB/deno
+```
+
+- Edge: **753 passed,0 failures/skips;22 entrypoint checks passed; deliberate
+  Turnstile fail-open rejected**. Receipt `/tmp/rendprop-edge-audit-brjjpje8/receipt.json`.
+- Certificate fixture: **37 actual tests pass,100 fresh-chain repetitions
+  pass,3 actual-source mutants fail for the intended reason, restored37 pass**.
+  Receipt `/tmp/rendprop-apple-x5c-9or6pf74/receipt.json`.
+- The100 repetitions are a separate determinism harness, not100 new Edge cases.
+  The37 certificate tests are already included in753.
+- Final iOS application/UI source equality against3063eb4 remains verified by
+  a root-directory diff of `apps/ios/Rendprop`, `RendpropUITests`, the main
+  project and `project.yml`. The regenerated internal project was separately
+  Release-built as recorded above. No later iOS edit invalidated those results.
+
+Sourcece15713 was pushed normally and its exact remote SHA verified before a
+fresh workflow dispatch. Final hosted-run outcome is recorded below.
+
+### Independent hosted database artifact verification
+
+The second run's `disposable-database-regression-1` artifact10287967170 was
+downloaded and inspected independently at
+`/tmp/rendprop-ci-db-artifact-ma3izw/rendprop-db-audit-85i0m988/`.
+All110 log SHA256 values match the receipt; no command timed out. All44
+fresh migration commands and36 replays exit0. Fresh and replay invariant logs
+each contain198 rows:197 true, only155 false with `copy.agent_reel ceiling=700
+visible=700`. Both exit3. Worker publication22 checks pass in four positive/
+restored runs; upload publication19 checks pass in two positive/restored runs.
+Four distinct deliberately broken publication/input cases exit3 at the
+intended errors; restores pass. Shutdown exits0 and logs `server stopped`.
+Receipt correctly remains `accepted:false`, `clusterStopped:true`.
+
+Qualification: the legacy migration job stopped after its initial invariant
+failure and skipped replay. Full replay evidence comes from the separate
+disposable regression job, not that skipped step. No schema, token budget,
+provider or runtime switch was changed to manufacture a green result.
+
+## Final hosted outcome and handoff
+
+[Run34663756381](https://github.com/AaronPilk/RendProp-Ai/actions/runs/34663756381)
+completed against exact pushed source
+`ce15713ecd741a7c53fe6c35140b12c293b09785`:
+
+- **PASS:** Supabase Edge (753 tests,22 entrypoints), actual emitted Cloudflare
+  Worker gate, Python render worker, web inventory/contrast contracts, offline
+  evidence/consent gates, reel-style contracts, iOS static gates, history scanner.
+- **FAIL:** fresh migration/global invariants and disposable PostgreSQL
+  publication/global invariants. The first logs exactly the agent-reel700/700
+  headroom violation; the second reports the same invariant-stage failures
+  with0042 replay successful and owned-cluster stop successful. The detailed
+  independently hashed previous-run DB artifact above covers unchanged DB
+  source; the last code change was test-only Apple certificate fixture work.
+- No tests were disabled, scanner rules removed, production signature checks
+  relaxed, or provider budgets changed to reach those eight green jobs.
+
+Independent peer review of the final certificate fixture confirms that the
+four-byte alphabet guarantee is alignment-independent, the extension is signed,
+and the same-chain positive control prevents invalid-certificate false greens.
+The rejection checks401/`unauthorized` plus the `certificate parse` substring,
+not equality of the complete error string.
+
+### Next operator actions, in order
+
+1. Fetch `fix/spatial-upload-release-recovery-20260911`. Review actual source
+   diff from71f9eb7 rather than implementing a second copy from prose.
+2. Release the viewer fix after predeploy and require the **live source-bound
+   asset gate** to pass; a200 shell is insufficient. This does not need a new
+   iOS build or spatial budget enablement.
+3. Release **0042 + matching uploads handler** together, then run the bounded
+   live interrupted-transfer/linked-child/replay fixture. Do not bulk-abort.
+4. Prepare the paired internal phone build only after that backend acceptance.
+   Freshly read Apple state, allocate a new build number, keep App Review
+   unchanged, and test actual Wi-Fi loss/force quit/relaunch on the owner's phone.
+5. Keep the separate open work explicit: agent-reel token headroom,0039/me and
+  0041 worker rollout pairing, actual spatial cleanup, photo attachment retry,
+   anonymous-adoption actor binding and the unacceptable real-room visual
+   quality. No25000-step training or new GPU budget was authorized/executed here.
+
+All final source changes are pushed on the isolated branch; documentation
+commits afterce15713 do not change the source evaluated by the final hosted run.
+No deployment, archive, TestFlight upload, App Review modification, new GPU
+allocation or spatial runtime/budget enablement occurred during this follow-up.
