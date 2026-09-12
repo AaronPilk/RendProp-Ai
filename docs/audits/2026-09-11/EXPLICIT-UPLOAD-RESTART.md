@@ -84,12 +84,15 @@ visibility, video integration and spatial-frame restart/pause semantics.
   has a separate dismissible notice. A disclosure-link failure truthfully says
   the bytes uploaded and linking failed, rather than claiming transfer failed.
 
-Final frozen native run is in progress at
-`/tmp/rendprop-upload-recovery-tzgkflkl/receipt.json`. It includes full actual
-UploadManager runtime tests and fifteen compiled mutation controls. The prior
-native snapshot executed 119 assertions; its run was correctly rejected when
-a source edit occurred during a later mutant compile, so that partial run is
-not the final proof.
+Final frozen native run **passed** at
+`/tmp/rendprop-upload-recovery-tzgkflkl/receipt.json`: **119 assertions**, all
+**15 successfully compiled mutants rejected**, restored production pass, and
+all source hashes unchanged through the run. It includes full actual
+UploadManager runtime tests. There are two fixture-only deprecated URLSession
+subclass initializer warnings and zero production-source native warnings.
+An earlier run was correctly rejected when a source edit occurred during a
+mutant compile; that partial run is not used as final proof. Executable source
+and tests are frozen at `d51714b` (following core `804f912`).
 
 Additional focused proof already passed:
 
@@ -104,7 +107,9 @@ Additional focused proof already passed:
 - Independent actual LiveAPIClient wire harness: 41 assertions and 5 negative
   controls passed against the corrected adapter (separate harness commit
   `17de00c`). It caught the initial raw-String Idempotency compile defect;
-  production now uses `.key(operationID.uuidString.lowercased())`.
+  production now uses `.key(operationID.uuidString.lowercased())`. Fresh
+  source-hash-bound rerun receipt:
+  `/tmp/rendprop-upload-restart-wire-_5g6thv1/receipt.json`.
 
 The first generic simulator build exited **65** because of that adapter error:
 `xcodebuild build -project Rendprop.xcodeproj -scheme Rendprop -destination
