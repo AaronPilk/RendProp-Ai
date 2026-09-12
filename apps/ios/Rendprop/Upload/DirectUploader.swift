@@ -12,11 +12,15 @@ enum DirectUploader {
                             contentType: String, keyPrefix: String, api: APIClient,
                             journalStore: DirectUploadJournal = .shared,
                             confirmRestart: Bool = false,
+                            expectedOwner: String? = nil,
                             transfer: (URLRequest, URL) async throws -> URLResponse = { request, file in
                                 try await URLSession.shared.upload(for: request, fromFile: file).1
                             }, delay: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) async throws -> String {
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0, let digest = sha256(of: fileURL) else { throw UploadRecovery.Failure.invalidTicket }
+        if let expectedOwner, AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) != expectedOwner {
+            throw UploadRecovery.Failure.accountChanged
+        }
         if Config.useLiveBackend && Config.enableAuth {
             // An anonymous session may still be connecting on first launch.
             // Bind the journal AFTER that normal connection, never to a nil
@@ -24,6 +28,7 @@ enum DirectUploader {
             guard await AuthStore.shared.ensureSession() else { throw CancellationError() }
         }
         let owner = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        if let expectedOwner, owner != expectedOwner { throw UploadRecovery.Failure.accountChanged }
         let key = keyPrefix + ":" + sha256Hex("\(listingID.uuidString)|\(role)|\(digest)|\(bytes)")
         let journalKey = "\(owner ?? "anonymous-pending")|\(key)"
         func checkOwner() throws {

@@ -19,6 +19,7 @@ struct SpatialTourView: View {
     @State private var loading = false
     @State private var preparing = false
     @State private var mutation = false
+    @State private var restartRecordID: UUID?
     @AppStorage("wifiOnlyUploads") private var wifiOnly = true
 
     var body: some View {
@@ -89,6 +90,11 @@ struct SpatialTourView: View {
                             if !record.isUserPaused {
                                 Button("Resume upload") { uploads.retry(record.id) }
                                     .tint(Theme.accent).accessibilityIdentifier("spatial.upload.resume")
+                                if let frame = record.frames.first(where: { $0.restartRequired == true || $0.restartIntent != nil }),
+                                   (frame.restartGeneration ?? 0) < 3 {
+                                    Button("Restart interrupted photo…") { restartRecordID = record.id }
+                                        .disabled(uploads.restartingFrame).tint(Theme.accent)
+                                }
                             }
                         } else {
                             Text(record.allowCellular ? "Uploading in the background. Your original capture stays saved." : "Uploads wait for Wi-Fi. Your original capture stays saved.")
@@ -114,6 +120,15 @@ struct SpatialTourView: View {
         }
         .background(Theme.bg)
         .navigationTitle("3D walkthrough")
+        .confirmationDialog("Restart one interrupted photo?", isPresented: Binding(get: { restartRecordID != nil }, set: { if !$0 { restartRecordID = nil } })) {
+            Button("Restart photo upload") {
+                if let id = restartRecordID { Task { await uploads.restartFailedFrame(id) } }
+                restartRecordID = nil
+            }
+            Button("Keep capture", role: .cancel) { restartRecordID = nil }
+        } message: {
+            Text("Your room capture stays on this phone. We'll first check whether this photo already finished. One replacement uses a new upload allowance; the room and its other photos are kept. At most three restarts per photo.")
+        }
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("spatial.product.root")
         .sheet(item: $captureHandoff) { handoff in

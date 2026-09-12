@@ -24,6 +24,7 @@ final class SpatialUploadCoordinator: ObservableObject {
     private var journalURL: URL?
     private var backgroundDrain: UIBackgroundTaskIdentifier = .invalid
     private var drainTask: Task<Void, Never>?
+    @Published private(set) var restartingFrame = false
 
     private init() {
         do {
@@ -132,15 +133,56 @@ final class SpatialUploadCoordinator: ObservableObject {
         records.filter { $0.listingLocalID == listingID && owns($0) && !$0.queued }
     }
 
+    /// One confirmed action replaces at most one failed JPEG. The room/job and
+    /// all other attached photos stay intact; no new capture or job is created.
+    func restartFailedFrame(_ id: UUID) async {
+        guard !restartingFrame else { return }
+        do {
+            var i = try assertOwner(id)
+            guard let index = records[i].frames.firstIndex(where: { $0.restartRequired == true || $0.restartIntent != nil }),
+                  let ticketID = records[i].frames[index].ticketID else { throw SpatialClientError.invalidResponse }
+            let owner = records[i].ownerID
+            let frame = records[i].frames[index]
+            guard (frame.restartGeneration ?? 0) < 3 else { throw SpatialClientError.uploadUncertain }
+            if records[i].frames[index].restartIntent == nil {
+                records[i].frames[index].restartIntent = .init(assetID: ticketID, ownerID: owner)
+            }
+            try persist()
+            guard let intent = records[i].frames[index].restartIntent else { throw SpatialClientError.invalidResponse }
+            restartingFrame = true
+            defer { restartingFrame = false }
+            let replacement = try await UploadRecovery.restart(intent,
+                ticket: UploadTicket(assetID: ticketID, mode: .single, transportVersion: 2),
+                currentOwner: { self.ownerID }, complete: {
+                    _ = try self.assertOwner(id)
+                    try await self.api.completeUpload(assetID: ticketID, parts: nil,
+                        metadata: UploadMetadata(bytes: frame.bytes, sha256: frame.sha256))
+                }, replace: { original, operationID in
+                    _ = try self.assertOwner(id)
+                    return try await self.api.restartUpload(assetID: original, operationID: operationID)
+                })
+            i = try assertOwner(id)
+            records[i].frames[index].ticketID = replacement.assetID
+            records[i].frames[index].taskID = nil
+            records[i].frames[index].putURL = replacement.putURL
+            records[i].frames[index].restartIntent = nil
+            records[i].frames[index].restartRequired = replacement.restartRequired == true
+            records[i].frames[index].restartGeneration = replacement.restartGeneration
+            records[i].frames[index].reconciliations = 0
+            records[i].frames[index].phase = replacement.uploaded == true ? .uploaded : (replacement.restartRequired == true || replacement.retryAfterSeconds != nil ? .sending : .ticketed)
+            records[i].failure = replacement.restartRequired == true ? UploadRecovery.RestartRequired(ticket: replacement).localizedDescription : replacement.retryAfterSeconds.map { UploadRecovery.AwaitingReceipt(seconds: $0).localizedDescription }
+            try persist() // child + consumed intent atomically saved before pump
+            pump()
+        } catch { fail(id, error) }
+    }
+
     func pause(jobID: UUID) throws {
         guard let i = records.firstIndex(where: { $0.jobID == jobID && owns($0) }) else { return }
         records[i].pausedByUser = true
         records[i].failure = SpatialClientError.uploadPaused.localizedDescription
-        let prefix = records[i].taskPrefix
-        try persist() // Stop durable scheduling before requesting cloud cancel.
-        session.getAllTasks { tasks in
-            for task in tasks where task.taskDescription?.hasPrefix(prefix) == true { task.cancel() }
-        }
+        // Pausing the room stops scheduling; it must not strand a bounded JPEG
+        // halfway through its one physical write. Existing tasks may settle.
+        try persist()
     }
     func resume(jobID: UUID) throws {
         guard let i = records.firstIndex(where: { $0.jobID == jobID && owns($0) }) else { return }
@@ -161,10 +203,14 @@ final class SpatialUploadCoordinator: ObservableObject {
                 for task in tasks {
                     guard task.state != .completed && task.state != .canceling else { continue }
                     guard let key = task.taskDescription, let parsed = Self.parse(key),
-                          let record = self.records.first(where: { $0.id == parsed.0 }), self.owns(record), !record.isUserPaused,
+                          let record = self.records.first(where: { $0.id == parsed.0 }), self.owns(record),
                           record.frames.indices.contains(parsed.1) else { task.cancel(); continue }
-                    self.active.insert(key)
-                    if task.state == .suspended { task.resume() }
+                    if task.state == .suspended, record.isUserPaused {
+                        self.active.remove(key)
+                    } else {
+                        self.active.insert(key)
+                        if task.state == .suspended { task.resume() }
+                    }
                 }
                 self.pump()
             }
@@ -357,6 +403,11 @@ final class SpatialUploadCoordinator: ObservableObject {
     private func fail(_ id: UUID, _ error: Error) {
         guard let i = records.firstIndex(where: { $0.id == id }) else { return }
         guard !records[i].isUserPaused else { return }
+        if let required = error as? UploadRecovery.RestartRequired,
+           let index = records[i].frames.firstIndex(where: { $0.ticketID.map { UploadRecovery.sameAsset($0, required.ticket.assetID) } == true }) {
+            records[i].frames[index].restartRequired = true
+            records[i].frames[index].restartGeneration = required.ticket.restartGeneration
+        }
         records[i].failure = (error as? LocalizedError)?.errorDescription ?? "Upload paused. Your capture is saved. Tap Resume upload to reconnect."
         do { try persist() } catch { }
     }

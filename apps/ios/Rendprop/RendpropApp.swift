@@ -549,10 +549,11 @@ final class AppModel: ObservableObject {
         guard bytes > 0 else { return nil }
         let memo = "\(FileStore.relativePath(for: fileURL))|\(bytes)"
         if let known = publishedOriginalAssets[memo] { return known }
-        guard let assetID = try? await UploadManager.shared.uploadOriginal(
-            fileURL: fileURL, listingID: listingServerID) else { return nil }
-        publishedOriginalAssets[memo] = assetID
-        return assetID
+        do {
+            let assetID = try await UploadManager.shared.uploadOriginal(fileURL: fileURL, listingID: listingServerID)
+            publishedOriginalAssets[memo] = assetID
+            return assetID
+        } catch { UploadManager.shared.reportPhotoFailure(error); return nil }
     }
 
     /// Publish the ALTERED result of an AI photo edit and attach it to its
@@ -566,11 +567,11 @@ final class AppModel: ObservableObject {
         guard Config.useLiveBackend, !provenanceID.isEmpty else { return }
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { return }
-        guard let assetID = try? await UploadManager.shared.uploadAlteredPhoto(
-            fileURL: fileURL, listingID: listingServerID) else { return }
-        try? await api.attachProvenanceMedia(provenanceID: provenanceID,
-                                             originalAssetID: nil,
-                                             alteredAssetID: assetID)
+        let assetID: String
+        do { assetID = try await UploadManager.shared.uploadAlteredPhoto(fileURL: fileURL, listingID: listingServerID) }
+        catch { UploadManager.shared.reportPhotoFailure(error); return }
+        do { try await api.attachProvenanceMedia(provenanceID: provenanceID, originalAssetID: nil, alteredAssetID: assetID) }
+        catch { UploadManager.shared.reportPhotoAttachmentFailure(error) }
     }
 
     /// Every gallery photo already uploaded, memoised by
@@ -587,9 +588,9 @@ final class AppModel: ObservableObject {
     /// thing that ever creates one. Without this call the gallery is an empty
     /// array on every tour ever published.
     ///
-    /// BEST EFFORT AND SILENT. A publish must not fail because a photo did not
-    /// upload, and an agent must not get an error about a feature they did not
-    /// ask for. Bounded to the newest 40 and to photos under the ceiling.
+    /// Best effort for the video publish, but not silent: a failed photo stays
+    /// in the recovery journal and the agent sees the Uploads notice. Bounded
+    /// to the newest 40 and to photos under the ceiling.
     /// Sequential on purpose: seventeen concurrent multi-megabyte PUTs from a
     /// phone on cellular is how you turn a working publish into a stall.
     func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
@@ -604,9 +605,10 @@ final class AppModel: ObservableObject {
             guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { continue }
             let memo = "\(FileStore.relativePath(for: url))|\(bytes)"
             if publishedGalleryAssets[memo] != nil { continue }
-            guard let assetID = try? await UploadManager.shared.uploadGalleryPhoto(
-                fileURL: url, listingID: listingServerID) else { continue }
-            publishedGalleryAssets[memo] = assetID
+            do {
+                let assetID = try await UploadManager.shared.uploadGalleryPhoto(fileURL: url, listingID: listingServerID)
+                publishedGalleryAssets[memo] = assetID
+            } catch { UploadManager.shared.reportPhotoFailure(error) }
         }
     }
 
@@ -659,7 +661,8 @@ final class AppModel: ObservableObject {
             var posterFile: URL? = nil
             if let poster = await PosterMaker.makePoster(from: renderOutputURL, listingID: id) {
                 posterFile = poster
-                posterAssetID = try? await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+                do { posterAssetID = try await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID) }
+                catch { UploadManager.shared.reportPhotoFailure(error) }
             }
 
             // 3. Upload the rendered mp4 to the PUBLIC renders bucket (or reuse).
@@ -2111,6 +2114,7 @@ struct RendpropApp: App {
 // (Home menu, Settings, or a re-pick in the intro all land here).
 struct RootTabView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject var uploads: UploadManager
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var tab = 0
 
@@ -2139,6 +2143,15 @@ struct RootTabView: View {
         // Resolve the App Store storefront once. Informational only — no UI and
         // no purchase path is conditioned on it (see `Storefronts`, below).
         .resolveStorefront()
+        .safeAreaInset(edge: .top) {
+            if uploads.photoRecoveryError != nil, tab != 3 {
+                HStack {
+                    Button { tab = 3 } label: { Label("Photo sync needs attention · Open Uploads", systemImage: "exclamationmark.circle") }
+                    Spacer()
+                    Button("Dismiss") { uploads.dismissPhotoRecoveryMessage() }
+                }.font(.rpCaption).foregroundStyle(Theme.accent).padding(10).background(Theme.bg)
+            }
+        }
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
         }

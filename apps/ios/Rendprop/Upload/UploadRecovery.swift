@@ -178,6 +178,11 @@ enum UploadRecovery {
             guard let count = ticket.partCount, (1...10_000).contains(count),
                   let size = ticket.partSize, size > 0, size <= 64 * 1024 * 1024,
                   let uploadID = ticket.uploadID, !uploadID.isEmpty else { throw Failure.invalidTicket }
+            let receipts = ticket.confirmedParts ?? []
+            guard Set(receipts.map(\.number)).count == receipts.count,
+                  receipts.allSatisfy({ (1...count).contains($0.number) && !$0.etag.isEmpty && $0.etag.count <= 256 }) else {
+                throw Failure.invalidTicket
+            }
         }
         return ticket
     }

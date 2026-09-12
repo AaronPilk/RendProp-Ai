@@ -100,6 +100,21 @@ import Foundation
             .pendingPhotos(ownerID: AuthStore.jwtSubject(AuthStore.currentAccessToken!)!)
         check(cleared.isEmpty, "Completed photo leaves the recovery list without deleting original")
 
+        let killedStore = DirectUploadJournal(directory: root.appendingPathComponent("killed-photo"))
+        var killed = UploadRecovery.Journal(ticket: expired.ticket(), dispatched: true)
+        killed.source = pending[0].source
+        try await killedStore.save(killed, for: "force-kill-fixture")
+        let killedPending = try await killedStore.pendingPhotos(ownerID: killed.source!.ownerID)
+        check(killedPending.count == 1 && !killedPending[0].needsRestart,
+              "App death without catch still exposes metadata-first photo recovery")
+        check(killedPending[0].message.contains("saved progress"), "Uncaught interruption has an actionable fallback message")
+        try await killedStore.acquire("force-kill-fixture")
+        check(try await killedStore.pendingPhotos(ownerID: killed.source!.ownerID).isEmpty,
+              "Active photo transfer is not falsely labelled interrupted")
+        await killedStore.release("force-kill-fixture")
+        check(try await killedStore.pendingPhotos(ownerID: killed.source!.ownerID).count == 1,
+              "Released unfinished photo stays discoverable for recovery")
+
         let restartLoss = RecoveryAPI()
         restartLoss.completionFailure = .server(status: 409, code: "conflict", message: "upload is terminal or expired")
         restartLoss.loseRestartReplyOnce = true
@@ -241,6 +256,7 @@ import Foundation
         check(DirectUploader.sha256(of: file) == original && finalBytes == bytes,
               "Original media remains byte-identical after every recovery")
         try await multipartRuntimeTests(root: root)
+        try await videoRestartRuntimeTests(root: root)
         print("PASS UploadRecoveryTests \(assertions) assertions")
     }
 
@@ -255,6 +271,7 @@ import Foundation
                 uploadID: "fixture-session", partSize: 16, partCount: 4)
             record.parts = (1...4).map { .init(number: $0, offset: Int64($0 - 1) * 16, length: 16) }
             record.transportVersion = 2
+            record.ownerID = AuthStore.jwtSubject(AuthStore.currentAccessToken!)
             record.ticketKey = "immutable-batch-fixture"
             return record
         }
@@ -335,6 +352,138 @@ import Foundation
         try await Task.sleep(nanoseconds: 20_000_000)
         check(suspended.starts == 0 && delayedManager.state?.status == .paused,
               "Late session enumeration cannot start a task after Pause")
+        let switchedAPI = MultipartRecoveryAPI(); switchedAPI.waitForParts = true
+        let switchedSession = RecoverySession()
+        let switchedManager = UploadManager(api: switchedAPI, session: switchedSession,
+            recovering: state(switchedAPI), persistState: { _ in true })
+        switchedManager.resume()
+        await until("Multipart capability fetch is actually awaiting response") { switchedAPI.heldParts != nil }
+        AuthStore.currentAccessToken = "other-owner-fixture"
+        switchedAPI.heldParts?.resume()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        check(switchedSession.fixtureTasks.isEmpty && switchedManager.state?.status == .paused,
+              "Late multipart capability cannot dispatch after owner changes")
+        AuthStore.currentAccessToken = "offline-fixture-only"
         check(try Data(contentsOf: originalURL) == originalBytes, "Multipart pause and recovery preserve original bytes")
+    }
+
+    @MainActor static func videoRestartRuntimeTests(root: URL) async throws {
+        let owner = AuthStore.jwtSubject("offline-fixture-only")!
+        func state(_ api: RecoveryAPI) -> UploadManager.State {
+            var s = UploadManager.State(filePath: "original.jpg", bytesTotal: FileStore.fileSize(root.appendingPathComponent("original.jpg")),
+                status: .failed, mode: "single", assetID: api.oldID)
+            s.ownerID = owner; s.restartRequired = true; s.transportVersion = 2
+            return s
+        }
+        func until(_ message: String, _ predicate: () -> Bool) async {
+            for _ in 0..<300 {
+                if predicate() { check(true, message); return }
+                try? await Task.sleep(nanoseconds: 5_000_000)
+            }
+            check(false, message)
+        }
+        let delayed = RecoveryAPI(); delayed.holdRestart = true
+        delayed.completionFailure = .server(status: 409, code: "conflict", message: "upload is terminal or expired")
+        let session = RecoverySession()
+        var writes: [UploadManager.State?] = []
+        let manager = UploadManager(api: delayed, session: session, recovering: state(delayed), persistState: { writes.append($0); return true })
+        let restart = Task { await manager.restartConfirmed() }
+        await until("Video restart actually reaches held server response") { delayed.heldRestart != nil }
+        let savedID = manager.state?.id
+        let savedIntent = manager.state?.restartIntent?.operationID
+        manager.cancel()
+        manager.begin(fileURL: root.appendingPathComponent("multipart.mov"), cellularApproved: true)
+        check(manager.state?.id == savedID && manager.state?.restartIntent?.operationID == savedIntent,
+              "Cancel or new begin cannot erase an unresolved linked restart")
+        delayed.heldRestart?.resume()
+        await restart.value
+        check(manager.state?.assetID == delayed.newID && manager.state?.restartIntent == nil,
+              "Real video manager atomically adopts linked child")
+        check(!writes.drop(while: { $0?.restartIntent == nil }).contains(where: {
+            $0 == nil || ($0?.assetID == delayed.oldID && $0?.restartIntent == nil)
+        }), "Video receipt never clears intent before child identity is durable")
+        manager.pause()
+        check(delayed.creates == 0 && delayed.replacements == 1, "Video restart never calls fresh reserve")
+
+        let lost = RecoveryAPI(); lost.loseRestartReplyOnce = true
+        lost.completionFailure = .server(status: 409, code: "conflict", message: "upload is terminal or expired")
+        let lostManager = UploadManager(api: lost, session: RecoverySession(), recovering: state(lost), persistState: { _ in true })
+        await lostManager.restartConfirmed()
+        let firstIntent = lostManager.state?.restartIntent?.operationID
+        lostManager.cancel()
+        check(lostManager.state?.restartIntent?.operationID == firstIntent && firstIntent != nil,
+              "Lost video restart response retains intent even after Cancel")
+        await lostManager.restartConfirmed()
+        lostManager.pause()
+        check(lost.restartKeys.count == 2 && Set(lost.restartKeys).count == 1 && lost.replacements == 1,
+              "Actual video retry reuses saved restart UUID after lost response")
+
+        let completed = RecoveryAPI(); completed.completed = true
+        let completedSession = RecoverySession()
+        let completedManager = UploadManager(api: completed, session: completedSession, recovering: state(completed), persistState: { _ in true })
+        await completedManager.restartConfirmed()
+        check(completedManager.state?.status == .done && completed.restartKeys.isEmpty && completedSession.fixtureTasks.isEmpty,
+              "Video completion winner uses no replacement or physical transfer")
+
+        let ticketAPI = RecoveryAPI(); ticketAPI.holdTicket = true
+        let ticketSession = RecoverySession()
+        var newState = state(ticketAPI); newState.assetID = nil; newState.mode = "pending"; newState.restartRequired = false
+        let ticketManager = UploadManager(api: ticketAPI, session: ticketSession, recovering: newState, persistState: { _ in true })
+        ticketManager.resume()
+        await until("Initial video reservation actually waits for response") { ticketAPI.heldTicket != nil }
+        AuthStore.currentAccessToken = "other-owner-fixture"
+        ticketAPI.heldTicket?.resume()
+        await until("Late original-owner ticket is retained paused") { ticketManager.state?.assetID == ticketAPI.oldID }
+        check(ticketManager.state?.status == .paused && ticketManager.state?.ownerID == owner && ticketSession.fixtureTasks.isEmpty,
+              "Account change before ticket response must not dispatch original-owner media")
+        ticketManager.resume()
+        try await Task.sleep(nanoseconds: 30_000_000)
+        check(ticketSession.fixtureTasks.isEmpty && ticketAPI.renews == 0,
+              "Another owner cannot resume existing upload or send metadata")
+
+        AuthStore.currentAccessToken = nil
+        let anonymousAPI = RecoveryAPI()
+        var anonymousState = newState; anonymousState.ownerID = nil
+        let anonymousSession = RecoverySession()
+        let anonymousManager = UploadManager(api: anonymousAPI, session: anonymousSession, recovering: anonymousState, persistState: { _ in true })
+        anonymousManager.resume()
+        await until("First-launch video binds anonymous account before dispatch") { anonymousSession.fixtureTasks.count == 1 }
+        check(anonymousManager.state?.ownerID == owner && anonymousAPI.creates == 1,
+              "Owner fence preserves no-login first-launch upload")
+        anonymousManager.pause()
+
+        let enumerationAPI = RecoveryAPI()
+        let enumerationSession = RecoverySession(); enumerationSession.deferEnumeration = true
+        let suspended = RecoveryTask(92); suspended.taskDescription = "single:\(enumerationAPI.oldID)"
+        enumerationSession.fixtureTasks = [suspended]
+        let enumerationManager = UploadManager(api: enumerationAPI, session: enumerationSession,
+            recovering: state(enumerationAPI), persistState: { _ in true })
+        enumerationManager.resume()
+        AuthStore.currentAccessToken = "other-owner-fixture"
+        for callback in enumerationSession.enumerations { callback([suspended]) }
+        try await Task.sleep(nanoseconds: 30_000_000)
+        check(suspended.starts == 0 && enumerationManager.state?.status == .paused,
+              "Delayed OS enumeration cannot resume previous-owner transfer")
+        AuthStore.currentAccessToken = "offline-fixture-only"
+
+        var heldPhotos: [CheckedContinuation<String, Error>] = []
+        var dispatchedPhotos = 0
+        var batchNotices = 0
+        let batchManager = UploadManager(api: RecoveryAPI(), session: RecoverySession(), recovering: newState,
+            batchUpload: { _, _ in
+                dispatchedPhotos += 1
+                return try await withCheckedThrowingContinuation { heldPhotos.append($0) }
+            }, persistState: { _ in true })
+        let observer = NotificationCenter.default.addObserver(forName: UploadManager.photosDidCompleteNotification,
+            object: batchManager, queue: nil) { _ in batchNotices += 1 }
+        batchManager.beginPhotoBatch(listingID: UUID(), fileURLs: Array(repeating: root.appendingPathComponent("original.jpg"), count: 6))
+        await until("Actual batch starts only three concurrent photos") { heldPhotos.count == 3 }
+        AuthStore.currentAccessToken = "other-owner-fixture"
+        for continuation in heldPhotos { continuation.resume(returning: UUID().uuidString) }
+        try await Task.sleep(nanoseconds: 50_000_000)
+        check(dispatchedPhotos == 3 && batchNotices == 0 && batchManager.photoProgress?.completed == 0,
+              "Photo batch account change stops new files and stale completion notification")
+        NotificationCenter.default.removeObserver(observer)
+        AuthStore.currentAccessToken = "offline-fixture-only"
     }
 }

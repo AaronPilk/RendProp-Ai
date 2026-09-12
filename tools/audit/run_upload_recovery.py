@@ -85,6 +85,20 @@ def main():
             ("restart-after-completion", files[1], "try await complete()\n            try checkOwner()",
              "try await complete()\n            try checkOwner()\n            _ = try await replace(intent.assetID, intent.operationID)",
              "Completion probe winner never calls restart route", 1),
+            ("hide-uncaught-interruption", files[3], "guard !record.completed, let source = record.source, source.ownerID == ownerID else",
+             "guard record.failureMessage != nil, !record.completed, let source = record.source, source.ownerID == ownerID else",
+             "App death without catch still exposes metadata-first photo recovery", 1),
+            ("cancel-loses-restart-intent", files[4], "func cancel() {\n        // An in-flight",
+             "func cancel() { state?.restartIntent = nil; restartingUpload = false\n        // An in-flight",
+             "Cancel or new begin cannot erase an unresolved linked restart", 1),
+            ("resume-wrong-owner-task", files[4], "guard self.mayDispatch(cur) else { return }",
+             "// Deliberately missing owner check in delayed OS callback.",
+             "Delayed OS enumeration cannot resume previous-owner transfer", 1),
+            ("show-active-as-interrupted", files[3], "guard !activeFiles.contains(file.lastPathComponent) else { continue }",
+             "// Deliberately expose an ongoing actor-owned upload as interrupted.",
+             "Active photo transfer is not falsely labelled interrupted", 1),
+            ("batch-forgets-owner", files[4], "self.photoBatchID == batchID && self.credentialOwner == owner",
+             "self.photoBatchID == batchID", "Photo batch account change stops new files and stale completion notification", 1),
         ]
         for name, path, needle, replacement, expected_message, expected_count in mutations:
             text = path.read_text()
@@ -99,6 +113,9 @@ def main():
             assert "FAIL " + expected_message in failure, f"Wrong mutant failure: {name}"
         restored = out / "restored-fixture"; restored.mkdir()
         run("restore-production", [binary, restored])
+        for p in [api, *files]:
+            key = str(p.relative_to(root) if p.is_relative_to(root) else p.name)
+            assert hashlib.sha256(p.read_bytes()).hexdigest() == receipt["sourceHashes"][key], f"Source changed during proof: {p}"
         receipt["accepted"] = True
     finally:
         (out / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n")

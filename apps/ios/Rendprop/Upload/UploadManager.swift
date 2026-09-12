@@ -105,6 +105,10 @@ final class UploadManager: NSObject, ObservableObject {
         var legacyRecoveryApproved: Bool? = nil
         var legacyCancellationAssetID: String? = nil
         var singleTaskID: Int? = nil
+        var ownerID: String? = nil
+        var restartRequired: Bool? = nil
+        var restartIntent: UploadRecovery.RestartIntent? = nil
+        var restartGeneration: Int? = nil
 
         var fractionComplete: Double {
             bytesTotal > 0 ? Double(bytesSent) / Double(bytesTotal) : 0
@@ -143,11 +147,21 @@ final class UploadManager: NSObject, ObservableObject {
 
     @Published private(set) var state: State?
     @Published private(set) var photoProgress: PhotoProgress?
+    private var photoBatchID: UUID?
+    private var injectedBatchUpload: (@MainActor (URL, UUID) async throws -> String)?
     /// Set when a large upload wants to start on cellular — UI shows a prompt.
     @Published var pendingCellularConfirmation: Bool = false
     /// The most recent terminal/transient failure message (mirrors
     /// `state?.failureMessage`, but survives the state being cleared).
     @Published private(set) var lastFailureMessage: String?
+    @Published private(set) var pendingPhotos: [DirectUploadJournal.PendingPhoto] = []
+    @Published private(set) var photoRecoveryError: String?
+    @Published private(set) var photoRecoveryNotice: String?
+    @Published private(set) var recoveringPhotoID: String?
+    @Published private(set) var restartingUpload = false
+
+    private var credentialOwner: String? { AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) }
+    private var photoRecoveryOwner: String?
 
     /// Optional completion callback (server assetID). NotificationCenter also
     /// fires `didCompleteNotification`. Consumers must avoid retaining `self`.
@@ -260,10 +274,12 @@ final class UploadManager: NSObject, ObservableObject {
     /// without a real background daemon, app journal or network monitor. The
     /// shipping singleton continues to use its OS session and durable store.
     init(api: APIClient, session: URLSession, recovering state: State,
+         batchUpload: (@MainActor (URL, UUID) async throws -> String)? = nil,
          persistState: @escaping (State?) -> Bool) {
         self.api = api
         self.persistState = persistState
         self.state = state
+        self.injectedBatchUpload = batchUpload
         super.init()
         self.backgroundSession = session
     }
@@ -286,6 +302,7 @@ final class UploadManager: NSObject, ObservableObject {
                role: String = "capture",
                metadata: UploadMetadata = UploadMetadata(),
                cellularApproved: Bool = false) {
+        guard !restartingUpload, state?.restartIntent == nil else { return }
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0 else { return }
 
@@ -309,6 +326,7 @@ final class UploadManager: NSObject, ObservableObject {
         newState.listingLocalID = listingLocalID
         newState.role = role
         newState.ticketKey = "ticket:\(newState.id.uuidString.lowercased())"
+        newState.ownerID = credentialOwner
         // Declared once here; the ticket and the PUT both use this exact value.
         newState.contentType = DirectUploader.uploadContentType(for: fileURL, kind: "video")
         var meta = metadata
@@ -346,6 +364,7 @@ final class UploadManager: NSObject, ObservableObject {
     @MainActor
     func upload(fileURL: URL, listingID: UUID, listingLocalID: UUID? = nil, role: String,
                 metadata: UploadMetadata, cellularApproved: Bool = false) async throws -> String {
+        guard !restartingUpload, state?.restartIntent == nil else { throw UploadError.busy }
         let relPath = FileStore.relativePath(for: fileURL)
         // The SAME file parked for Wi-Fi earlier: adopt it (the user approved
         // cellular, or asked again before Wi-Fi came back).
@@ -494,10 +513,14 @@ final class UploadManager: NSObject, ObservableObject {
         let urls = fileURLs.filter { FileStore.fileSize($0) > 0 }
         guard !urls.isEmpty else { return }
         photoProgress = PhotoProgress(total: urls.count, completed: 0, failed: 0)
-        Task { [weak self] in await self?.runPhotoBatch(listingID: listingID, fileURLs: urls) }
+        let batchID = UUID(); photoBatchID = batchID
+        let initialOwner = credentialOwner
+        Task { [weak self] in await self?.runPhotoBatch(listingID: listingID, fileURLs: urls,
+            batchID: batchID, initialOwner: initialOwner) }
     }
 
     func confirmCellularAndStart() {
+        guard !restartingUpload, state?.restartIntent == nil else { return }
         pendingCellularConfirmation = false
         guard var s = state else { return }
         s.status = .uploading
@@ -521,6 +544,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// Explicit Resume allows replacing a legacy ticket only AFTER the server
     /// names it retired and acknowledges that exact ticket's cancellation.
     func resume() {
+        guard !restartingUpload, state?.restartIntent == nil else { return }
         guard var s = state, s.status != .done else { return }
         s.prepareForExplicitResume()
         state = s
@@ -530,7 +554,104 @@ final class UploadManager: NSObject, ObservableObject {
         startOrResume()
     }
 
+    /// Invoked only after the visible Restart confirmation. The saved intent
+    /// survives a lost response; every retry addresses the same parent and UUID.
+    @MainActor func restartConfirmed() async {
+        guard var saved = state, saved.restartRequired == true || saved.restartIntent != nil,
+              let assetID = saved.assetID, let owner = credentialOwner,
+              saved.ownerID == owner, !restartingUpload, !isCompleting else { return }
+        if saved.restartIntent == nil { saved.restartIntent = .init(assetID: assetID, ownerID: owner) }
+        state = saved
+        guard persistBeforeDispatch(), let intent = saved.restartIntent else { return }
+        restartingUpload = true
+        defer { restartingUpload = false }
+        let ticket = UploadTicket(assetID: assetID, mode: saved.mode == "multipart" ? .multipart : .single,
+            putURL: saved.putURL, uploadID: saved.uploadID, partSize: saved.partSize,
+            partCount: saved.partCount, transportVersion: saved.transportVersion)
+        let parts = saved.parts.compactMap { part -> (number: Int, etag: String)? in
+            guard part.status == .done, let etag = part.etag else { return nil }; return (part.number, etag)
+        }
+        do {
+            let replacement = try await UploadRecovery.restart(intent, ticket: ticket,
+                currentOwner: { self.credentialOwner },
+                complete: { try await self.api.completeUpload(assetID: assetID,
+                    parts: ticket.mode == .multipart ? parts : nil, metadata: self.buildMetadata(from: saved)) },
+                replace: { id, operationID in try await self.api.restartUpload(assetID: id, operationID: operationID) })
+            guard state?.id == saved.id, credentialOwner == owner else { throw UploadRecovery.Failure.accountChanged }
+            // A replacement returned after a lost reply can already be complete
+            // or expired. Save its identity before inspecting either outcome.
+            // No intermediate disk write may clear the old intent while the
+            // journal still points at its parent. applyTicket persists child
+            // identity and this cleared intent together before any dispatch.
+            state?.restartIntent = nil
+            state?.restartRequired = replacement.restartRequired == true
+            state?.status = .paused
+            applyTicket(replacement)
+            guard persistBeforeDispatch() else { return }
+            if replacement.uploaded == true { return }
+            if replacement.retryAfterSeconds != nil { return }
+            if replacement.restartRequired == true {
+                fail(UploadRecovery.RestartRequired(ticket: replacement).localizedDescription, terminal: true)
+            } else { resume() }
+        } catch {
+            guard state?.id == saved.id else { return }
+            fail(error.localizedDescription, terminal: true)
+        }
+    }
+
+    @MainActor func refreshPhotoRecovery() async {
+        if photoRecoveryOwner != credentialOwner {
+            pendingPhotos = []; photoRecoveryError = nil; photoRecoveryNotice = nil
+            photoRecoveryOwner = credentialOwner
+        }
+        guard let owner = credentialOwner else { pendingPhotos = []; return }
+        do {
+            let records = try await DirectUploadJournal.shared.pendingPhotos(ownerID: owner)
+            guard credentialOwner == owner else { pendingPhotos = []; return }
+            pendingPhotos = records
+        } catch { photoRecoveryError = "Saved photo upload progress could not be read. Originals are preserved." }
+    }
+
+    @MainActor func retryPhoto(_ item: DirectUploadJournal.PendingPhoto, confirmRestart: Bool) async {
+        guard recoveringPhotoID == nil, credentialOwner == item.source.ownerID else { return }
+        recoveringPhotoID = item.id
+        defer { recoveringPhotoID = nil }
+        let source = item.source
+        do {
+            let file = FileStore.documents.appendingPathComponent(source.relativePath).standardizedFileURL
+            guard file.path.hasPrefix(FileStore.documents.standardizedFileURL.path + "/"),
+                  FileStore.fileSize(file) == source.bytes, DirectUploader.sha256(of: file) == source.sha256 else {
+                throw UploadError.server("The original photo is unavailable or changed. Keep your saved files and choose the original again from its listing.")
+            }
+            _ = try await DirectUploader.uploadPhoto(fileURL: file, listingID: source.listingID,
+                role: source.role, contentType: source.contentType, keyPrefix: source.keyPrefix,
+                api: api, confirmRestart: confirmRestart, expectedOwner: source.ownerID)
+            guard credentialOwner == source.ownerID else { return }
+            photoRecoveryError = nil
+            photoRecoveryNotice = "Photo uploaded. Open its listing to finish syncing any tour or disclosure links."
+        } catch {
+            guard credentialOwner == source.ownerID else { return }
+            photoRecoveryError = error.localizedDescription
+        }
+        await refreshPhotoRecovery()
+    }
+
+    @MainActor func reportPhotoFailure(_ error: Error) {
+        photoRecoveryOwner = credentialOwner
+        photoRecoveryError = "A photo did not reach the cloud. Your original is safe. \(error.localizedDescription) Check Uploads in Settings."
+        Task { await refreshPhotoRecovery() }
+    }
+    @MainActor func reportPhotoAttachmentFailure(_ error: Error) {
+        photoRecoveryOwner = credentialOwner
+        photoRecoveryError = "The photo uploaded, but its disclosure link did not sync. Your original is safe. Contact support to finish linking it; don't upload it again. \(error.localizedDescription)"
+    }
+    func dismissPhotoRecoveryMessage() { photoRecoveryError = nil; photoRecoveryNotice = nil }
+
     func cancel() {
+        // An in-flight or response-lost restart may already have a child. Keep
+        // its parent and intent until reconciliation records that child; wiping
+        // this journal would orphan the only durable route back to it.
+        guard !restartingUpload, state?.restartIntent == nil else { return }
         simulateTimer?.invalidate()
         let assetID = state?.assetID
         let isMultipart = (state?.mode == "multipart")
@@ -541,8 +662,11 @@ final class UploadManager: NSObject, ObservableObject {
         isCompleting = false
         if let assetID { DirectUploader.cleanSlices(for: assetID) }
         // Best-effort: tear down the server-side R2 multipart session.
-        if Config.useLiveBackend, let assetID, isMultipart {
-            Task { [weak self] in try? await self?.api.abortUpload(assetID: assetID) }
+        if Config.useLiveBackend, let assetID, isMultipart, let owner = state?.ownerID, owner == credentialOwner {
+            Task { [weak self] in
+                guard let self, self.credentialOwner == owner else { return }
+                try? await self.api.abortUpload(assetID: assetID)
+            }
         }
         state = nil
         _ = persistState(nil)
@@ -553,6 +677,7 @@ final class UploadManager: NSObject, ObservableObject {
     /// Drop a finished/failed record without touching background tasks for it
     /// (they are ignored by task description). Used before a fresh `upload()`.
     private func clearState() {
+        guard !restartingUpload, state?.restartIntent == nil else { return }
         simulateTimer?.invalidate()
         if let assetID = state?.assetID { DirectUploader.cleanSlices(for: assetID) }
         inFlightBytes.removeAll()
@@ -570,17 +695,39 @@ final class UploadManager: NSObject, ObservableObject {
         reconcileAndResume()
     }
 
+    /// Transfers already handed to iOS may finish after sign-out, but a new
+    /// account must never authorize the next PUT, part, completion or resume.
+    /// Keep the prior owner's receipt intact so returning to it can reconcile.
+    private func pauseForOwnerChange(recordID: UUID) {
+        guard state?.id == recordID else { return }
+        mutate { $0.status = .paused; $0.failureMessage = UploadRecovery.Failure.accountChanged.localizedDescription }
+        onUploadFailed?(UploadRecovery.Failure.accountChanged.localizedDescription)
+    }
+
+    private func mayDispatch(_ snapshot: State) -> Bool {
+        guard state?.id == snapshot.id else { return false }
+        guard let owner = snapshot.ownerID, credentialOwner == owner else {
+            pauseForOwnerChange(recordID: snapshot.id); return false
+        }
+        return true
+    }
+
     /// Reconcile persisted state with whatever the background session is actually
     /// doing (tasks survive relaunch), then launch only what's missing.
     private func reconcileAndResume() {
         guard let s = state else { return }
         guard let assetID = s.assetID else { requestTicketAndStart(s); return }
+        // Old journals did not record an owner. Prove ownership via the
+        // authenticated metadata route before adopting or resuming an OS task.
+        if s.ownerID == nil { reconcileTicket(expectedAssetID: assetID); return }
+        guard mayDispatch(s) else { return }
         let mode = UploadTicket.Mode(rawValue: s.mode)
         backgroundSession.getAllTasks { [weak self] tasks in
             guard let self else { return }
             let mine = tasks.filter { ($0.taskDescription ?? "").contains(assetID) }
             DispatchQueue.main.async {
                 guard let cur = self.state, cur.status == .uploading, cur.assetID == assetID else { return }
+                guard self.mayDispatch(cur) else { return }
                 mine.forEach { if $0.state == .suspended { $0.resume() } }
                 switch mode {
                 case .multipart?:
@@ -655,9 +802,26 @@ final class UploadManager: NSObject, ObservableObject {
         guard !isRequestingTicket else { return }
         isRequestingTicket = true
         let expectedID = s.id
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                // Anonymous accounts are ordinary owners. First launch can
+                // begin before connection finishes; bind only after it exists,
+                // and never rebind a previously owned operation on sign-out.
+                if let oldOwner = s.ownerID, oldOwner != self.credentialOwner {
+                    throw UploadRecovery.Failure.accountChanged
+                }
+                if Config.enableAuth {
+                    guard await AuthStore.shared.ensureSession() else { throw UploadRecovery.Failure.accountChanged }
+                }
+                guard self.state?.id == expectedID, self.state?.status == .uploading else {
+                    self.isRequestingTicket = false; return
+                }
+                guard let owner = self.credentialOwner, s.ownerID == nil || s.ownerID == owner else {
+                    throw UploadRecovery.Failure.accountChanged
+                }
+                self.mutate { $0.ownerID = owner }
+                guard self.persistBeforeDispatch() else { self.isRequestingTicket = false; return }
                 let ticket = try await self.api.requestUpload(
                     filename: s.fileURL.lastPathComponent, bytes: s.bytesTotal,
                     listingID: s.listingID, sha256: s.sha256, kind: "video", role: s.role,
@@ -666,12 +830,23 @@ final class UploadManager: NSObject, ObservableObject {
                 await MainActor.run {
                     self.isRequestingTicket = false
                     guard self.state?.id == expectedID else { return }   // cancelled/replaced meanwhile
+                    if self.credentialOwner != owner {
+                        self.pauseForOwnerChange(recordID: expectedID)
+                        // Preserve the held reservation even when its response
+                        // arrives after sign-out; applyTicket cannot dispatch
+                        // or consume completion for the wrong owner.
+                        self.applyTicket(ticket, reconcileBeforeTransfer: true)
+                        return
+                    }
                     self.applyTicket(ticket, reconcileBeforeTransfer: ticket.replayed != false)
                 }
             } catch {
                 await MainActor.run {
                     self.isRequestingTicket = false
                     guard self.state?.id == expectedID else { return }
+                    if let owner = self.state?.ownerID, self.credentialOwner != owner {
+                        self.pauseForOwnerChange(recordID: expectedID); return
+                    }
                     // 400/401/403/404/413 = the server refused THIS request (bad
                     // listing id, forbidden role, type not allowed, signed out) —
                     // retrying on network regain would loop. 429/5xx/offline are
@@ -691,11 +866,14 @@ final class UploadManager: NSObject, ObservableObject {
         // uploading.
         guard var s = state else { return }
         let sameTicket = s.assetID.map { UploadRecovery.sameAsset($0, ticket.assetID) } ?? false
-        let launch = (s.status == .uploading)
+        let ownsRecord = s.ownerID != nil && s.ownerID == credentialOwner
+        let launch = (s.status == .uploading) && ownsRecord
         s.assetID = ticket.assetID
         if let key = ticket.storageKey { s.storageKey = key }
         s.mode = ticket.mode.rawValue
         s.transportVersion = ticket.transportVersion
+        s.restartRequired = ticket.restartRequired == true
+        s.restartGeneration = ticket.restartGeneration
         if !sameTicket {
             s.singlePutDone = nil
             s.singleTaskID = nil
@@ -704,7 +882,23 @@ final class UploadManager: NSObject, ObservableObject {
             s.parts = []
             s.bytesSent = 0
         }
-        if ticket.uploaded == true { state = s; persist(); markDone(assetID: ticket.assetID); return }
+        if ticket.uploaded == true {
+            state = s; persist()
+            if ownsRecord { markDone(assetID: ticket.assetID) }
+            return
+        }
+        if let seconds = ticket.retryAfterSeconds {
+            s.uploadID = ticket.uploadID; s.partSize = ticket.partSize; s.partCount = ticket.partCount
+            s.putURL = nil; state = s; persist()
+            fail(UploadRecovery.AwaitingReceipt(seconds: seconds).localizedDescription)
+            return
+        }
+        if ticket.restartRequired == true {
+            s.uploadID = ticket.uploadID; s.partSize = ticket.partSize; s.partCount = ticket.partCount
+            s.putURL = nil; state = s; persist()
+            fail(UploadRecovery.RestartRequired(ticket: ticket).localizedDescription, terminal: true)
+            return
+        }
 
         switch ticket.mode {
         case .single:
@@ -763,6 +957,7 @@ final class UploadManager: NSObject, ObservableObject {
 
     private func launchSingle(putURL: URL) {
         guard let s = state, s.status == .uploading else { return }
+        guard mayDispatch(s) else { return }
         // The PUT's Content-Type must equal the ticket's declaration (P0 fix).
         let contentType = s.contentType ?? DirectUploader.uploadContentType(for: s.fileURL, kind: "video")
         let task = backgroundSession.uploadTask(with: DirectUploader.putRequest(url: putURL, contentType: contentType),
@@ -810,6 +1005,7 @@ final class UploadManager: NSObject, ObservableObject {
     private func pumpMultipart() {
         guard let s = state, s.status == .uploading, s.mode == "multipart",
               let assetID = s.assetID else { return }
+        guard mayDispatch(s) else { return }
 
         if !s.parts.isEmpty, s.parts.allSatisfy({ $0.status == .done }) {
             finishMultipart(); return
@@ -846,6 +1042,8 @@ final class UploadManager: NSObject, ObservableObject {
     private struct PartSpec { let n: Int; let url: URL; let offset: Int64; let length: Int64 }
 
     private func launchParts(assetID: String, numbers: [Int]) async {
+        guard let captured = state, captured.assetID == assetID, captured.status == .uploading,
+              mayDispatch(captured), let owner = captured.ownerID else { return }
         // 1. Fetch presigned part URLs (off the main thread — this is `await`ed
         //    on the cooperative pool, not on main).
         let urls: [Int: URL]
@@ -854,6 +1052,7 @@ final class UploadManager: NSObject, ObservableObject {
         } catch {
             await MainActor.run {
                 guard self.state?.assetID == assetID else { return }
+                guard self.credentialOwner == owner else { self.pauseForOwnerChange(recordID: captured.id); return }
                 self.revertToPending(numbers)
                 if (error as? APIError)?.status == 409 {
                     // part-urls uses a generic conflict for legacy/aborted
@@ -878,6 +1077,9 @@ final class UploadManager: NSObject, ObservableObject {
         let (fileURL, specs): (URL?, [PartSpec]) = await MainActor.run {
             guard let s = self.state, s.status == .uploading, s.assetID == assetID else {
                 self.revertToPending(numbers); return (nil, [])   // paused/cancelled mid-fetch
+            }
+            guard self.credentialOwner == owner, self.mayDispatch(s) else {
+                self.pauseForOwnerChange(recordID: captured.id); return (nil, [])
             }
             var out: [PartSpec] = []
             for n in numbers {
@@ -919,6 +1121,11 @@ final class UploadManager: NSObject, ObservableObject {
                       s.parts.first(where: { $0.number == spec.n })?.status == .inflight else {
                     DirectUploader.removeSlice(for: assetID, part: spec.n)
                     self.revertToPending([spec.n])
+                    return
+                }
+                guard self.credentialOwner == owner, self.mayDispatch(s) else {
+                    self.pauseForOwnerChange(recordID: captured.id)
+                    DirectUploader.removeSlice(for: assetID, part: spec.n)
                     return
                 }
                 // Part PUT URLs sign only host + query — NO content type header
@@ -1069,6 +1276,10 @@ final class UploadManager: NSObject, ObservableObject {
     private func reconcileTicket(expectedAssetID assetID: String) {
         guard !isCompleting else { return }
         guard let snapshot = state, snapshot.status == .uploading, snapshot.assetID == assetID else { return }
+        let owner = credentialOwner
+        guard let owner, snapshot.ownerID == nil || snapshot.ownerID == owner else {
+            pauseForOwnerChange(recordID: snapshot.id); return
+        }
         guard snapshot.retryCount < 5 else {
             fail("Upload recovery is still waiting for a storage receipt. Your original is safe. Tap Resume to check again.")
             return
@@ -1096,7 +1307,7 @@ final class UploadManager: NSObject, ObservableObject {
             }
             func requireCurrent() throws {
                 guard self.state?.id == snapshot.id, self.state?.assetID == assetID,
-                      self.state?.status == .uploading else { throw CancellationError() }
+                      self.state?.status == .uploading, self.credentialOwner == owner else { throw CancellationError() }
             }
             do {
                 let result = try await UploadRecovery.reconcile(
@@ -1133,6 +1344,7 @@ final class UploadManager: NSObject, ObservableObject {
                             idempotencyKey: Self.ticketIdempotencyKey(for: snapshot))
                     })
                 try requireCurrent()
+                self.mutate { $0.ownerID = owner }
                 self.isCompleting = false
                 self.recoveryAttempt = nil
                 switch result {
@@ -1141,9 +1353,15 @@ final class UploadManager: NSObject, ObservableObject {
                 }
             } catch is CancellationError {
                 // Pausing or replacing the record is not a server failure.
+                if self.credentialOwner != owner { self.pauseForOwnerChange(recordID: snapshot.id) }
             } catch {
                 guard self.state?.id == snapshot.id, self.state?.assetID == assetID,
                       self.state?.status == .uploading else { return }
+                if let required = error as? UploadRecovery.RestartRequired, self.credentialOwner == owner {
+                    self.mutate { $0.ownerID = owner; $0.restartRequired = true; $0.restartGeneration = required.ticket.restartGeneration }
+                    self.fail(required.localizedDescription, terminal: true)
+                    return
+                }
                 let status = (error as? APIError)?.status
                 let terminal = error is UploadRecovery.Failure ||
                     (status.map { (400..<500).contains($0) && $0 != 429 && $0 != 408 } ?? false)
@@ -1198,7 +1416,8 @@ final class UploadManager: NSObject, ObservableObject {
 
     // MARK: - Photo batch
 
-    private func runPhotoBatch(listingID: UUID, fileURLs: [URL]) async {
+    private func runPhotoBatch(listingID: UUID, fileURLs: [URL], batchID: UUID, initialOwner: String?) async {
+        if let initialOwner, credentialOwner != initialOwner { return }
         guard fileURLs.count <= 200 else {
             await MainActor.run {
                 self.photoProgress?.failed = fileURLs.count
@@ -1206,6 +1425,12 @@ final class UploadManager: NSObject, ObservableObject {
             }
             return
         }
+        if Config.useLiveBackend && Config.enableAuth {
+            guard await AuthStore.shared.ensureSession() else { return }
+        }
+        let owner = credentialOwner
+        guard (!Config.useLiveBackend || owner != nil), initialOwner == nil || initialOwner == owner else { return }
+        @Sendable func isCurrentBatch() -> Bool { self.photoBatchID == batchID && self.credentialOwner == owner }
         // Per-file stable receipts avoid re-reserving the whole batch when one
         // photo fails. The same three-transfer ceiling and per-file server
         // charging remain; completed local originals are never thrown away.
@@ -1213,16 +1438,24 @@ final class UploadManager: NSObject, ObservableObject {
         await withTaskGroup(of: (String?, Bool).self) { group in
             var iterator = fileURLs.makeIterator()
             func addNext() {
-                guard let fileURL = iterator.next() else { return }
+                guard isCurrentBatch(), let fileURL = iterator.next() else { return }
                 group.addTask { [weak self] in
-                    guard let self else { return (nil, false) }
+                    guard let self, isCurrentBatch() else { return (nil, false) }
                     do {
-                        let id = try await DirectUploader.uploadPhoto(fileURL: fileURL, listingID: listingID,
-                            role: "capture", contentType: DirectUploader.mimeType(for: fileURL),
-                            keyPrefix: "photo", api: self.api)
+                        let id: String
+                        if let injected = self.injectedBatchUpload { id = try await injected(fileURL, listingID) }
+                        else {
+                            id = try await DirectUploader.uploadPhoto(fileURL: fileURL, listingID: listingID,
+                                role: "capture", contentType: DirectUploader.mimeType(for: fileURL),
+                                keyPrefix: "photo", api: self.api, expectedOwner: owner)
+                        }
+                        guard isCurrentBatch() else { return (nil, false) }
                         return (id, true)
                     } catch {
-                        await MainActor.run { self.lastFailureMessage = error.localizedDescription }
+                        await MainActor.run {
+                            guard isCurrentBatch() else { return }
+                            self.lastFailureMessage = error.localizedDescription
+                        }
                         return (nil, false)
                     }
                 }
@@ -1231,6 +1464,7 @@ final class UploadManager: NSObject, ObservableObject {
             while let (assetID, ok) = await group.next() {
                 if let assetID { completedIDs.append(assetID) }
                 await MainActor.run {
+                    guard isCurrentBatch() else { return }
                     if ok { self.photoProgress?.completed += 1 }
                     else  { self.photoProgress?.failed += 1 }
                 }
@@ -1240,6 +1474,7 @@ final class UploadManager: NSObject, ObservableObject {
 
         let ids = completedIDs
         await MainActor.run {
+            guard isCurrentBatch() else { return }
             NotificationCenter.default.post(name: Self.photosDidCompleteNotification, object: self,
                                             userInfo: ["assetIDs": ids, "listingID": listingID])
         }
@@ -1360,7 +1595,7 @@ extension UploadManager.State {
              uploadID, partSize, partCount, parts, sha256, retryCount, listingID, role, metadata,
              contentType, listingLocalID, putURL, putURLIssuedAt, singlePutDone,
              failureMessage, terminalError, transportVersion, ticketKey,
-             legacyRecoveryApproved, legacyCancellationAssetID, singleTaskID
+             legacyRecoveryApproved, legacyCancellationAssetID, singleTaskID, ownerID, restartRequired, restartIntent, restartGeneration
     }
 
     init(from decoder: Decoder) throws {
@@ -1398,6 +1633,10 @@ extension UploadManager.State {
         legacyRecoveryApproved = try c.decodeIfPresent(Bool.self, forKey: .legacyRecoveryApproved)
         legacyCancellationAssetID = try c.decodeIfPresent(String.self, forKey: .legacyCancellationAssetID)
         singleTaskID = try c.decodeIfPresent(Int.self, forKey: .singleTaskID)
+        ownerID = try c.decodeIfPresent(String.self, forKey: .ownerID)
+        restartRequired = try c.decodeIfPresent(Bool.self, forKey: .restartRequired)
+        restartIntent = try c.decodeIfPresent(UploadRecovery.RestartIntent.self, forKey: .restartIntent)
+        restartGeneration = try c.decodeIfPresent(Int.self, forKey: .restartGeneration)
     }
 }
 

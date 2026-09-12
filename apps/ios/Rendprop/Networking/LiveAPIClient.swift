@@ -411,7 +411,7 @@ final class LiveAPIClient: APIClient {
 
     func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket {
         let data = try await execute(makeRequest(url: url(["uploads", assetID, "restart"]), method: "POST",
-            json: ["confirm_new_attempt": true], idempotency: operationID.uuidString.lowercased()))
+            json: ["confirm_new_attempt": true], idempotency: .key(operationID.uuidString.lowercased())))
         return try uploadTicket(data)
     }
 

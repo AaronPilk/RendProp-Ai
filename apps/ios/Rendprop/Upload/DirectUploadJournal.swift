@@ -26,13 +26,18 @@ actor DirectUploadJournal {
         let files = try FileManager.default.contentsOfDirectory(at: directory,
             includingPropertiesForKeys: [.fileSizeKey, .isSymbolicLinkKey], options: [.skipsHiddenFiles])
         guard files.count <= 10_000 else { throw UploadRecovery.Failure.invalidTicket }
+        let activeFiles = Set(active.map { file($0).lastPathComponent })
         var result: [PendingPhoto] = []
         for file in files where file.pathExtension == "json" {
+            guard !activeFiles.contains(file.lastPathComponent) else { continue }
             let values = try file.resourceValues(forKeys: [.fileSizeKey, .isSymbolicLinkKey])
             guard values.isSymbolicLink != true, let size = values.fileSize, size <= 65_536 else { throw UploadRecovery.Failure.invalidTicket }
             let record = try JSONDecoder().decode(UploadRecovery.Journal.self, from: Data(contentsOf: file))
-            guard !record.completed, let source = record.source, source.ownerID == ownerID,
-                  let message = record.failureMessage else { continue }
+            guard !record.completed, let source = record.source, source.ownerID == ownerID else { continue }
+            // App termination never reaches an error catch. A saved unfinished
+            // receipt is enough to offer reconciliation, never enough to offer
+            // a paid restart without the server's explicit required state.
+            let message = record.failureMessage ?? "Upload interrupted. Retry to check its saved progress; your original is safe."
             result.append(.init(id: file.deletingPathExtension().lastPathComponent, source: source,
                 message: message, needsRestart: record.needsRestart == true || record.restartIntent != nil,
                 restartGeneration: record.ticket?.restartGeneration))

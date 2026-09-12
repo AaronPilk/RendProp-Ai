@@ -72,6 +72,10 @@ final class RecoveryAPI: APIClient {
     var restartGeneration = 0
     var holdTransfer = false
     var heldTransfer: CheckedContinuation<Void, Error>?
+    var holdTicket = false
+    var heldTicket: CheckedContinuation<Void, Never>?
+    var holdRestart = false
+    var heldRestart: CheckedContinuation<Void, Never>?
 
     func ticket(_ id: String? = nil) -> UploadTicket {
         var result = UploadTicket(assetID: id ?? oldID, mode: .single,
@@ -85,6 +89,7 @@ final class RecoveryAPI: APIClient {
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
         log.append("create"); creates += 1; keys.append(idempotencyKey ?? "missing")
+        if holdTicket { await withCheckedContinuation { heldTicket = $0 } }
         var result = ticket(aborted ? newID : oldID)
         result.replayed = legacy
         return result
@@ -96,6 +101,7 @@ final class RecoveryAPI: APIClient {
     }
     func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket {
         log.append("restart"); restartKeys.append(operationID)
+        if holdRestart { await withCheckedContinuation { heldRestart = $0 } }
         if completionWinsRestart { completed = true; return ticket(oldID) }
         guard assetID == oldID else { throw APIError.badResponse(409) }
         if replacements == 0 { replacements = 1; completed = false; stored = false; completionFailure = nil }
@@ -183,6 +189,8 @@ final class MultipartRecoveryAPI: APIClient {
     var acceptedParts: [(number: Int, etag: String)]?
     var delayedRenewal: CheckedContinuation<UploadTicket, Error>?
     var waitForRenewal = false
+    var waitForParts = false
+    var heldParts: CheckedContinuation<Void, Never>?
     func requestUpload(filename: String, bytes: Int64, listingID: UUID?, sha256: String?, kind: String,
                        role: String, contentType: String?, idempotencyKey: String?) async throws -> UploadTicket {
         creates += 1; throw APIError.badResponse(500)
@@ -204,6 +212,7 @@ final class MultipartRecoveryAPI: APIClient {
     func restartUpload(assetID: String, operationID: UUID) async throws -> UploadTicket { throw APIError.badResponse(500) }
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
         partRequests.append(numbers)
+        if waitForParts { await withCheckedContinuation { heldParts = $0 } }
         return Dictionary(uniqueKeysWithValues: numbers.map { ($0, URL(string:
             "https://upload.invalid/v2/11111111-1111-4111-8111-111111111111?expires=1893456000&signature=" + String(repeating: "a", count: 64))!) })
     }

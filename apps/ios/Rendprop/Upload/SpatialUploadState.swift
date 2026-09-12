@@ -14,6 +14,9 @@ struct SpatialUploadRecord: Codable, Identifiable, Sendable {
         var phase: Phase = .pending
         var taskID: Int?
         var reconciliations = 0
+        var restartRequired: Bool?
+        var restartGeneration: Int?
+        var restartIntent: UploadRecovery.RestartIntent?
     }
     let id: UUID
     let ownerID: String

@@ -17,6 +17,8 @@ enum SpatialUploadRecovery {
         let receipt = try UploadRecovery.validatedRenewal(try await renew(ticketID),
             previous: UploadTicket(assetID: ticketID, mode: .single))
         if receipt.uploaded == true { return .complete }
+        if receipt.restartRequired == true { throw UploadRecovery.RestartRequired(ticket: receipt) }
+        if let seconds = receipt.retryAfterSeconds { throw UploadRecovery.AwaitingReceipt(seconds: seconds) }
         guard let url = receipt.putURL else { throw SpatialClientError.invalidResponse }
         return .renew(url)
     }

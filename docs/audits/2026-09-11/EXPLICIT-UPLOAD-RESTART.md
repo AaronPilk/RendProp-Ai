@@ -61,3 +61,63 @@ client. Missing restart routes produce an explicit service-update error and
 preserve the saved intent. No source commit by itself changes the deployed app.
 The following commit adds Settings confirmation/recovery UI, photo-failure
 visibility, video integration and spatial-frame restart/pause semantics.
+
+## Integrated iOS follow-up (source frozen for final verification)
+
+- Settings lists incomplete owner-bound photo receipts, including a process
+  death before any error catch. Currently active actor-owned photos are hidden
+  from that interrupted list. Retry reconciles; only a structured required
+  receipt or an already-saved explicit intent exposes Restart.
+- Video and each spatial JPEG use the linked restart route. A lost reply keeps
+  the parent and UUID. Returned child identity and consumed intent are saved in
+  one journal write, including already-completed, busy and expired replies.
+- Cancel, Resume and beginning another video cannot discard an unresolved
+  restart intent. Continue saved restart reconciles that operation first.
+- Video ticket requests establish the normal anonymous session before binding
+  their owner. Delayed ticket/part/OS callbacks and photo-batch scheduling are
+  fenced to that owner. Already-dispatched physical writes can settle; another
+  workspace cannot launch the next write or receive stale completion notices.
+- Spatial Pause stops scheduling without cancelling an in-flight JPEG. Paused
+  suspended tasks do not consume running-transfer slots; explicit Resume can
+  reattach the same task.
+- Photo failures are visible on Home and in Settings. Successful information
+  has a separate dismissible notice. A disclosure-link failure truthfully says
+  the bytes uploaded and linking failed, rather than claiming transfer failed.
+
+Final frozen native run is in progress at
+`/tmp/rendprop-upload-recovery-tzgkflkl/receipt.json`. It includes full actual
+UploadManager runtime tests and fifteen compiled mutation controls. The prior
+native snapshot executed 119 assertions; its run was correctly rejected when
+a source edit occurred during a later mutant compile, so that partial run is
+not the final proof.
+
+Additional focused proof already passed:
+
+- `python3 tools/audit/run_spatial_coordinator_recovery.py`: **12 assertions**
+  and **3 compiled mutants** rejected. Receipt
+  `/tmp/rendprop-spatial-restart-0wmus6rg/receipt.json`. This compiles selected
+  actual coordinator method bodies with injected persistence/pump/API/session
+  boundaries; it is not a whole-coordinator or iOS background-daemon test.
+- `python3 tools/audit/run_spatial_client.py`: **75 assertions**, **6 compiled
+  mutants** rejected, restored pass. Receipt
+  `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-client-63l6r0k6/receipt.json`.
+- Independent actual LiveAPIClient wire harness: 41 assertions and 5 negative
+  controls passed against the corrected adapter (separate harness commit
+  `17de00c`). It caught the initial raw-String Idempotency compile defect;
+  production now uses `.key(operationID.uuidString.lowercased())`.
+
+The first generic simulator build exited **65** because of that adapter error:
+`xcodebuild build -project Rendprop.xcodeproj -scheme Rendprop -destination
+'generic/platform=iOS Simulator' -derivedDataPath
+/tmp/rendprop-explicit-restart-derived-20260911 CODE_SIGNING_ALLOWED=NO`.
+Log: `/tmp/rendprop-explicit-restart-build-20260911.log`. No successful full-app
+build is claimed here; the parent is running the corrected integrated source.
+
+### Still distinct acceptance work
+
+- Retrying saved photo bytes does not automatically replay a failed poster or
+  disclosure-link attachment. The UI explicitly asks to reopen the listing or
+  contact support for the link; this remains separate from transfer recovery.
+- Real iPhone Wi-Fi loss, suspension/termination delivery, and a live linked
+  restart against the deployed backend are not executed by these fixtures.
+- No camera test, TestFlight upload or App Review mutation occurred in this unit.
