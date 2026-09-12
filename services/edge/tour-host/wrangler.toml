@@ -1,8 +1,7 @@
 name = "rendprop-tour-host"
 main = "src/index.ts"
-# spatialModule serializes shared validators with Function.toString(). esbuild's
-# default keepNames inserts __name calls whose helper remains in the Worker,
-# not the emitted browser module. The built-byte gate executes both validators.
+# Browser ESM is separately bundled and embedded as inert bytes. This option
+# now affects only Worker functions; the emitted-browser matrix proves both values.
 keep_names = false
 # Bumped from the stale 2024-09-23 (release-audit finding, 2026-09-07) — no
 # compatibility_flags are set, so this date alone controls every default
@@ -43,6 +42,12 @@ routes = [
 # directly from the edge; everything else (e.g. /f/*, /a/*, /terms, /privacy)
 # falls through to the Worker script.
 # ---------------------------------------------------------------------------
+[build]
+# Check, never silently regenerate: even direct Wrangler invocations must stop
+# when the committed browser artifact no longer matches its transitive sources.
+command = "node scripts/build-spatial-browser.mjs --check"
+watch_dir = ["src", "scripts/build-spatial-browser.mjs", "package.json", "package-lock.json"]
+
 [assets]
 directory = "./public"
 

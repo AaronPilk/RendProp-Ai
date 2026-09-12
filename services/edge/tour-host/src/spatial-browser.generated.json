@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "entry": "src/browser/spatial-viewer.js",
+  "tool": {
+    "name": "esbuild",
+    "version": "0.28.1"
+  },
+  "options": {
+    "entryPoints": [
+      "src/browser/spatial-viewer.js"
+    ],
+    "bundle": true,
+    "platform": "browser",
+    "format": "esm",
+    "target": [
+      "es2022"
+    ],
+    "minify": false,
+    "keepNames": false,
+    "splitting": false,
+    "sourcemap": false,
+    "legalComments": "none",
+    "charset": "utf8",
+    "treeShaking": true,
+    "tsconfigRaw": {
+      "compilerOptions": {}
+    },
+    "define": {
+      "process.env.NODE_ENV": "\"production\""
+    },
+    "outfile": "spatial-viewer.js"
+  },
+  "package_sha256": "3434861d1ca43e435f141805d28cadfde2a0ae121240803d75dc0f5d5353f9e1",
+  "lock_sha256": "ded9c5dd0e5518121e4e69607a29cf69bf40fa0223e02161628b6ae0663cf39a",
+  "build_script_sha256": "f62257e739703122501be1ad6aaa997c2a283879b851c32f17128ea934c285a0",
+  "inputs": [
+    {
+      "path": "src/browser/spatial-viewer.js",
+      "bytes": 20057,
+      "sha256": "08a33857f5303068abd79ce7e8383c55409569495a77d366989c875a0ed43d7f"
+    },
+    {
+      "path": "src/spatial-manifest.ts",
+      "bytes": 4271,
+      "sha256": "996f7720e9278456c58ebc2eff69c9ce7cbf26e27d4c626a1c1e25162956d3ca"
+    },
+    {
+      "path": "src/spatial-sog.ts",
+      "bytes": 4205,
+      "sha256": "f4a75590d0dbb3020a3a988161677a4005971b3604dff8a7169dfd794de054ae"
+    },
+    {
+      "path": "src/spatial-values.ts",
+      "bytes": 357,
+      "sha256": "88d015b4cbb1c69a6e06d0cf18251952e1d85ea091b7dd491c868d716e933982"
+    }
+  ],
+  "browser_bytes": 26665,
+  "browser_sha256": "6a093950201c2893c36a9d957bf1133f4ba5e9713226f53bbecbb3e7c643b211"
+}

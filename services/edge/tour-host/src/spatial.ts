@@ -1,7 +1,6 @@
 import type { Env } from "./types";
 import { decodeSpatialManifest } from "./spatial-manifest";
 import { SPATIAL_RUNTIME } from "./spatial-runtime";
-import { inspectSpatialSog } from "./spatial-sog";
 
 export const SPATIAL_HEADERS = {
   "Cache-Control": "no-store", "Referrer-Policy": "no-referrer", "X-Content-Type-Options": "nosniff",
@@ -79,7 +78,9 @@ export async function spatialData(request: Request, env: Env, scene: string, kin
 }
 
 export function spatialModule(): Response {
-  return new Response(`const decodeSpatialManifest = ${decodeSpatialManifest.toString()};\nconst inspectSpatialSog = ${inspectSpatialSog.toString()};\n${SPATIAL_RUNTIME}`, {
+  // Serving a prebuilt module preserves its complete dependency graph. Worker
+  // minification and name helpers must never become browser dependencies.
+  return new Response(SPATIAL_RUNTIME, {
     headers: { ...SPATIAL_HEADERS, "Content-Type": "text/javascript; charset=utf-8" },
   });
 }

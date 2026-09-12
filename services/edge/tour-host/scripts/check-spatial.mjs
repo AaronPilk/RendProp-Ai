@@ -60,7 +60,12 @@ check(source.includes('playcanvas@2.22.1'), 'engine version pinned');
 check(source.includes('crypto.subtle.digest'), 'artifact integrity check present');
 check(source.includes('transfer.signal.addEventListener'), 'decode abort cannot retain pending load');
 check(source.includes('app.destroy()'), 'context destroy implemented');
-assertions++; new Function(source.replace('export function mountSpatial', 'function mountSpatial'));
+// Parse and import the complete ESM artifact, including its declared exports.
+// Stripping a lexical declaration can accidentally hide missing dependencies.
+const browserModule = await import('data:text/javascript;base64,' + Buffer.from(source).toString('base64'));
+check(typeof browserModule.mountSpatial === 'function' &&
+  typeof browserModule.decodeSpatialManifest === 'function' &&
+  typeof browserModule.inspectSpatialSog === 'function', 'browser exports load without Worker scope');
 const page=await spatialPage(id).text();
 check(page.includes('history.replaceState'), 'fragment credential removed');
 check(!page.includes('access=') && !page.includes('output_key'), 'shell contains no artifact access credential');

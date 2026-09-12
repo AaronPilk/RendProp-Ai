@@ -1,204 +1,198 @@
-// Check the browser bytes emitted by Wrangler, not TypeScript's transpileModule.
-// A function that is self-contained in TS can acquire a closure over esbuild's
-// __name helper. Function.toString() then drops that enclosing helper at runtime.
+// Execute the exact self-contained browser ESM returned by a Wrangler build.
+// Neither source transpilation nor injecting missing names is release evidence.
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
-import { createHash } from 'node:crypto';
-import { spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, writeFileSync, statSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, renameSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
+import { buildSpatialBrowser, checkSpatialBrowser, GENERATED_JSON, GENERATED_TS } from './build-spatial-browser.mjs';
+import { sha, boundedFile, sourceSnapshot, copyFixture, buildEnvironment, runBuildCommand,
+  emitWorker, loadEmittedWorker, browserAsset, linkModule } from './spatial-built-fixture.mjs';
 
-const HERE = dirname(fileURLToPath(import.meta.url)), ROOT = resolve(HERE, '..');
-const args = process.argv.slice(2);
-const mode = args[0] || '--build';
-assert(['--build', '--self-test', '--negative-control', '--asset-file', '--asset-url'].includes(mode), 'Unknown mode');
-assert(args.length === (mode.startsWith('--asset-') ? 2 : (args.length ? 1 : 0)), 'Unexpected arguments');
-assert.equal(typeof vm.SourceTextModule, 'function', 'Run Node with --experimental-vm-modules');
-const evidence = mkdtempSync(join(tmpdir(), 'rendprop-spatial-built-'));
-const receipt = { mode, observed_at: new Date().toISOString(), evidence, assertions: 0,
-  scope: 'built browser decoder/SOG contract; synthetic envelope only; no WebGL, phone FPS, auth, media, or deployment proof' };
-const sha = bytes => createHash('sha256').update(bytes).digest('hex');
-const check = (condition, message) => { receipt.assertions++; assert.ok(condition, message); };
-const boundedFile = (path, max) => {
-  assert(statSync(path).size <= max, 'Input file exceeds bound');
-  const data = readFileSync(path); assert(data.length <= max, 'Input grew beyond bound'); return data;
-};
-const persist = () => writeFileSync(join(evidence, 'receipt.json'), JSON.stringify(receipt, null, 2) + '\n');
-async function deadline(promise) {
-  let timer;
-  try {
-    return await Promise.race([promise,new Promise((_,reject)=>{
-      timer=setTimeout(()=>reject(new Error('Module promise exceeded 1500ms')),1500);
-    })]);
-  } finally { clearTimeout(timer); }
-}
+const ROOT=resolve(dirname(fileURLToPath(import.meta.url)),'..');
+const args=process.argv.slice(2), mode=args[0]||'--build';
+assert(['--build','--self-test','--negative-control','--asset-file','--asset-url'].includes(mode),'Unknown mode');
+assert.equal(args.length,mode.startsWith('--asset-')?2:(args.length?1:0),'Unexpected arguments');
+const evidence=mkdtempSync(join(tmpdir(),'rendprop-spatial-built-'));
+const receipt={mode,observed_at:new Date().toISOString(),evidence,assertions:0,cases:[],
+  scope:'Actual emitted browser decoder/SOG contracts. Synthetic envelope only; no WebGL, phone, room quality or deployment proof.'};
+const check=(value,message)=>{receipt.assertions++;assert.ok(value,message);};
+const persist=()=>writeFileSync(join(evidence,'receipt.json'),JSON.stringify(receipt,null,2)+'\n');
 
 function fixture() {
-  return { schema_version:1, scene_id:'11111111-1111-4111-8111-111111111111',
-    artifact_revision:'22222222-2222-4222-8222-222222222222', format:'sog', bytes:4,
-    sha256:'a'.repeat(64), gaussian_count:2048, bounds:{min:[-5,-2,-5],max:[5,4,5]},
-    floor_y:-1.6, eye_height:1.6, floor_source:'capture_estimate', navigation_bounds_source:'capture_estimate',
-    initial_camera:{position:[0,0,3],target:[0,0,0]}, rooms:[{id:'kitchen',label:'Synthetic kitchen',position:[0,0,3],target:[0,0,0]}],
-    provenance:'synthetic', privacy_reviewed:true };
+  return {schema_version:1,scene_id:'11111111-1111-4111-8111-111111111111',artifact_revision:'22222222-2222-4222-8222-222222222222',
+    format:'sog',bytes:4,sha256:'a'.repeat(64),gaussian_count:2048,bounds:{min:[-5,-2,-5],max:[5,4,5]},
+    floor_y:-1.6,eye_height:1.6,floor_source:'capture_estimate',navigation_bounds_source:'capture_estimate',
+    initial_camera:{position:[0,0,3],target:[0,0,0]},rooms:[{id:'kitchen',label:'Synthetic kitchen',position:[0,0,3],target:[0,0,0]}],
+    provenance:'synthetic',privacy_reviewed:true};
 }
-
-// Envelope fixture only: these dimension-bearing bytes are NOT decodable room
-// textures and must never be offered as a successful browser-render test.
+// Envelope only, not a renderable room. Chromium uses a separately converted SOG.
 function sogFixture() {
-  const meta = {version:2,count:2048,means:{files:['means_l.webp','means_u.webp']},quats:{files:['quats.webp']},scales:{files:['scales.webp']},sh0:{files:['sh0.webp']}};
-  const webp = Buffer.alloc(26); webp.write('RIFF'); webp.writeUInt32LE(18,4);
-  webp.write('WEBPVP8L',8); webp.writeUInt32LE(5,16); webp[20]=0x2f; webp.writeUInt32LE(63|(31<<14),21);
+  const meta={version:2,count:2048,means:{files:['means_l.webp','means_u.webp']},quats:{files:['quats.webp']},scales:{files:['scales.webp']},sh0:{files:['sh0.webp']}};
+  const webp=Buffer.alloc(26);webp.write('RIFF');webp.writeUInt32LE(18,4);webp.write('WEBPVP8L',8);
+  webp.writeUInt32LE(5,16);webp[20]=0x2f;webp.writeUInt32LE(63|(31<<14),21);
   const files=[['meta.json',Buffer.from(JSON.stringify(meta))],...['means_l.webp','means_u.webp','quats.webp','scales.webp','sh0.webp'].map(n=>[n,webp])];
-  const chunks=[], directory=[]; let offset=0;
-  for (const [name,body] of files) {
-    const n=Buffer.from(name), local=Buffer.alloc(30), central=Buffer.alloc(46);
-    local.writeUInt32LE(0x04034b50); local.writeUInt32LE(body.length,18); local.writeUInt32LE(body.length,22); local.writeUInt16LE(n.length,26);
-    central.writeUInt32LE(0x02014b50); central.writeUInt32LE(body.length,20); central.writeUInt32LE(body.length,24); central.writeUInt16LE(n.length,28); central.writeUInt32LE(offset,42);
-    chunks.push(local,n,body); directory.push(central,n); offset+=30+n.length+body.length;
-  }
-  const index=Buffer.concat(directory), end=Buffer.alloc(22); end.writeUInt32LE(0x06054b50);
-  end.writeUInt16LE(files.length,8); end.writeUInt16LE(files.length,10); end.writeUInt32LE(index.length,12); end.writeUInt32LE(offset,16);
+  const chunks=[],directory=[];let offset=0;
+  for(const [name,body] of files){const n=Buffer.from(name),local=Buffer.alloc(30),central=Buffer.alloc(46);
+    local.writeUInt32LE(0x04034b50);local.writeUInt32LE(body.length,18);local.writeUInt32LE(body.length,22);local.writeUInt16LE(n.length,26);
+    central.writeUInt32LE(0x02014b50);central.writeUInt32LE(body.length,20);central.writeUInt32LE(body.length,24);central.writeUInt16LE(n.length,28);central.writeUInt32LE(offset,42);
+    chunks.push(local,n,body);directory.push(central,n);offset+=30+n.length+body.length;}
+  const index=Buffer.concat(directory),end=Buffer.alloc(22);end.writeUInt32LE(0x06054b50);end.writeUInt16LE(files.length,8);
+  end.writeUInt16LE(files.length,10);end.writeUInt32LE(index.length,12);end.writeUInt32LE(offset,16);
   return Buffer.concat([...chunks,index,end]);
 }
-
-async function linkModule(source, context, identifier) {
-  const module = new vm.SourceTextModule(source, {context, identifier});
-  await module.link(() => { throw new Error('Unexpected module import; no dependency/network fallback'); });
-  await deadline(module.evaluate({timeout:1000}));
-  return module;
-}
-
-async function emittedAsset(broken = false) {
-  const wrangler = join(ROOT,'node_modules/wrangler/bin/wrangler.js');
-  let config=join(ROOT,'wrangler.toml');
-  receipt.config_sha256=sha(readFileSync(config));
-  receipt.lock_sha256=sha(readFileSync(join(ROOT,'package-lock.json')));
-  receipt.wrangler_version=JSON.parse(readFileSync(resolve(wrangler,'../../package.json'),'utf8')).version;
-  if (broken) {
-    // Keep the actual config and sources, changing only the known regressing
-    // esbuild option. The isolated copy must never modify the working config.
-    const text=readFileSync(config,'utf8');
-    const changed=/^keep_names\s*=/m.test(text) ? text.replace(/^keep_names\s*=.*$/m,'keep_names = true') : 'keep_names = true\n'+text;
-    config=join(evidence,'wrangler.toml'); writeFileSync(config,changed);
-    symlinkSync(join(ROOT,'src'),join(evidence,'src'),'dir');
-    symlinkSync(join(ROOT,'public'),join(evidence,'public'),'dir');
-    receipt.negative_config_sha256=sha(changed);
-  }
-  const out=join(evidence,'bundle');
-  const command=[wrangler,'deploy','--dry-run','--config',config,'--outdir',out];
-  receipt.build_command=[process.execPath,...command];
-  const build=spawnSync(process.execPath,command,{cwd:ROOT,encoding:'utf8',timeout:90000,maxBuffer:2*1024*1024,
-    env:{...process.env,WRANGLER_SEND_METRICS:'false'}});
-  writeFileSync(join(evidence,'build.log'),(build.stdout||'')+(build.stderr||''));
-  check(!build.error && build.status===0,'Wrangler dry-run failed; inspect build.log');
-  const workerBytes=boundedFile(join(out,'index.js'),8*1024*1024);
-  receipt.worker_sha256=sha(workerBytes);
-  let network=0;
-  const context=vm.createContext({Request,Response,Headers,URL,TextEncoder,TextDecoder,AbortController,
-    setTimeout,clearTimeout,console,fetch:()=>{network++;throw new Error('Unexpected Worker network');}});
-  const worker=await linkModule(workerBytes.toString(),context,'emitted-worker');
-  context.worker=worker.namespace.default;
-  context.request=new Request('https://rendprop.com/spatial-viewer.js');
-  const response=await deadline(vm.runInContext('worker.fetch(request, {}, {waitUntil(){throw new Error("Unexpected waitUntil")}})',context,{timeout:1000}));
-  check(response.status===200,'Built Worker browser route returns 200');
-  check(/javascript/.test(response.headers.get('Content-Type')||''),'Built route emits JavaScript');
-  check(response.headers.get('Cache-Control')==='no-store','Built browser module is no-store');
-  check(network===0,'Built asset route has no backend dependency');
-  const source=await response.text(); check(Buffer.byteLength(source)<=512000,'Built browser module bound');
-  receipt.http_status=response.status;
-  return source;
-}
-
-async function publicAsset(url) {
-  // No generic remote evaluator, cookies, auth headers, redirects or room URLs.
-  assert.equal(url,'https://rendprop.com/spatial-viewer.js','Only exact public viewer URL is supported');
-  const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{'User-Agent':'Rendprop-Built-Viewer-Check/1.0'}});
-  receipt.url=response.url; receipt.http_status=response.status;
-  check(response.status===200,'Public asset HTTP status');
-  check(/javascript/.test(response.headers.get('Content-Type')||''),'Public asset content type');
-  const chunks=[];let size=0;
-  for await (const chunk of response.body) { size+=chunk.length; assert(size<=512000,'Public asset exceeds bound'); chunks.push(chunk); }
-  return Buffer.concat(chunks).toString();
-}
-
-async function verifyBrowser(source) {
-  const before=receipt.assertions;
-  receipt.browser_bytes=Buffer.byteLength(source); receipt.browser_sha256=sha(source);
-  writeFileSync(join(evidence,'spatial-viewer.js'),source);
-  // Export only references to the actual emitted lexical bindings. Never add
-  // __name (or any bundler helper) here: isolation is the regression test.
-  const context=vm.createContext({URL,TextDecoder,TextEncoder});
-  const browser=await linkModule(source+'\nexport {decodeSpatialManifest,inspectSpatialSog};',context,'emitted-browser');
+async function verifyBrowser(source,name) {
+  const before=receipt.assertions, context=vm.createContext({URL,TextDecoder,TextEncoder});
+  // Public exports survive identifier minification. Appending lexical exports
+  // would alter the shipped bytes and fail on correctly renamed local symbols.
+  const browser=await linkModule(source,context,name);
   check(typeof browser.namespace.mountSpatial==='function','Real mountSpatial export exists');
-  context.decode=browser.namespace.decodeSpatialManifest;
-  context.inspect=browser.namespace.inspectSpatialSog;
-  const decode=value=>{context.input=value;return vm.runInContext('decode(input)',context,{timeout:1000});};
-  const inspect=(bytes,count)=>{context.bytes=Array.from(bytes);context.count=count;return vm.runInContext('inspect(new Uint8Array(bytes),count)',context,{timeout:1000});};
+  context.decode=browser.namespace.decodeSpatialManifest;context.inspect=browser.namespace.inspectSpatialSog;
+  const decode=input=>{context.input=input;return vm.runInContext('decode(input)',context,{timeout:1000});};
+  const inspect=(input,count)=>{context.bytes=Array.from(input);context.count=count;return vm.runInContext('inspect(new Uint8Array(bytes),count)',context,{timeout:1000});};
   const good=fixture();
   check(decode(good).rooms[0].label==='Synthetic kitchen','Valid emitted manifest decoder executes');
   check(decode({...good,provenance:'captured',privacy_reviewed:false}).privacy_reviewed===false,'Private captured manifest preserved');
   check(!('output_key' in decode({...good,output_key:'synthetic-private-key'})),'Unknown private fields stripped');
-  for (const mutate of [m=>m.bytes=-1,m=>m.bytes=NaN,m=>m.bytes=33554433,m=>m.gaussian_count=500001,
+  for(const mutate of [m=>m.bytes=-1,m=>m.bytes=NaN,m=>m.bytes=33554433,m=>m.gaussian_count=500001,
     m=>m.gaussian_count=1.5,m=>m.bounds.min=[0,0],m=>m.bounds.max=[Infinity,4,5],m=>m.floor_y=5,
     m=>m.eye_height=0,m=>m.initial_camera.position=[6,0,0],m=>m.rooms.push({...m.rooms[0]}),
-    m=>m.scene_id='../a',m=>m.format='ply',m=>m.privacy_reviewed='true',m=>m.sha256='bad']) {
+    m=>m.scene_id='../a',m=>m.format='ply',m=>m.privacy_reviewed='true',m=>m.sha256='bad']){
     const bad=structuredClone(good);mutate(bad);receipt.assertions++;
-    assert.throws(()=>decode(bad),e=>e.name==='Error' && e.message==='Invalid spatial scene manifest');
-  }
+    assert.throws(()=>decode(bad),e=>e.name==='Error'&&e.message==='Invalid spatial scene manifest');}
   const envelope=sogFixture();
   check(inspect(envelope,2048).texturePixels===10240,'Valid emitted SOG guard executes inner helpers');
-  for (const [bytes,count] of [[envelope,0],[envelope,500001],[envelope,2049],[envelope.subarray(0,21),2048],
-    [Buffer.from(envelope).fill(0,0,4),2048]]) {
-    receipt.assertions++;
-    assert.throws(()=>inspect(bytes,count),e=>e.name==='Error' && e.message==='Room package is not a supported bounded SOG');
-  }
-  check(receipt.assertions-before===25,'All expected browser contract assertions executed');
+  for(const [bytes,count] of [[envelope,0],[envelope,500001],[envelope,2049],[envelope.subarray(0,21),2048],[Buffer.from(envelope).fill(0,0,4),2048]]){
+    receipt.assertions++;assert.throws(()=>inspect(bytes,count),e=>e.name==='Error'&&e.message==='Room package is not a supported bounded SOG');}
+  check(receipt.assertions-before===25,'All 25 expected browser contract assertions executed');
+  receipt.cases.push({name,assertions:26,contract_assertions:25,count_control_assertions:1,browser_bytes:Buffer.byteLength(source),browser_sha256:sha(source)});
 }
-
+function setOptions(root,keepNames,minify) {
+  const file=join(root,'wrangler.toml');let config=readFileSync(file,'utf8');
+  for(const [name,value] of [['keep_names',keepNames],['minify',minify]]){
+    const pattern=new RegExp('^'+name+'\\s*=.*$','m');config=pattern.test(config)?config.replace(pattern,name+' = '+value):name+' = '+value+'\n'+config;}
+  writeFileSync(file,config);
+}
+async function emittedAsset(root,name) {
+  const run=emitWorker(root,join(evidence,name)), worker=await loadEmittedWorker(run.path), asset=await browserAsset(worker);
+  receipt.cases.push({name:'build-'+name,...run,config_sha256:sha(readFileSync(join(root,'wrangler.toml'))),browser_sha256:asset.sha256});
+  return asset.source;
+}
+async function detachedHelper() {
+  const root=copyFixture(ROOT,join(evidence,'detached-helper-source'));
+  setOptions(root,false,false);
+  const entry=join(root,'src/browser/spatial-viewer.js'),original=readFileSync(entry,'utf8');
+  const needle='export { decodeSpatialManifest, inspectSpatialSog };';
+  assert.equal(original.split(needle).length,2,'Missing-helper mutant must match actual entrypoint once');
+  // Reintroduce the old serialization mistake. The imported validator compiles,
+  // but its detached function cannot resolve its real imported numeric helper.
+  const changed=original.replace(needle,'const detachedManifest = (0, eval)("(" + decodeSpatialManifest.toString() + ")");\nexport { detachedManifest as decodeSpatialManifest, inspectSpatialSog };');
+  writeFileSync(entry,changed);
+  const generation=runBuildCommand(root,[join(root,'scripts/build-spatial-browser.mjs'),'--write'],join(evidence,'detached-generation.log'));
+  assert.equal(generation.exit,0,'Missing-helper fixture must generate successfully');
+  receipt.cases.push({name:'detached-generation',...generation});
+  await verifyBrowser(await emittedAsset(root,'detached-helper-build'),'detached-helper');
+}
+async function verifyCliEntrypoint(canonical) {
+  const root=copyFixture(ROOT,join(evidence,'cli-source'));
+  const alias=join(evidence,'cli-source-alias');symlinkSync(root,alias,'dir');
+  // Neither exit 0 nor an existing generated file proves the command ran.
+  // Remove only this owned fixture's outputs, then invoke via a path whose
+  // argv spelling differs from Node's canonical import.meta.url on every OS.
+  for(const path of [GENERATED_TS,GENERATED_JSON])renameSync(join(root,path),join(root,path+'.held'));
+  const generation=runBuildCommand(root,[join(alias,'scripts/build-spatial-browser.mjs'),'--write'],join(evidence,'cli-alias-write.log'));
+  check(generation.exit===0&&!generation.error,'Builder --write through symlink exits successfully');
+  const written=JSON.parse(readFileSync(generation.log,'utf8'));
+  check(written.status==='passed'&&written.mode==='--write'&&written.browser_sha256===canonical.metadata.browser_sha256,'Builder entrypoint actually reported generation');
+  const generated=await checkSpatialBrowser({root});
+  check(generated.generatedTypeScript===canonical.generatedTypeScript&&generated.generatedMetadata===canonical.generatedMetadata,'Previously missing fixture outputs were actually recreated exactly');
+  const checked=runBuildCommand(root,[join(alias,'scripts/build-spatial-browser.mjs'),'--check'],join(evidence,'cli-alias-check.log'));
+  const report=JSON.parse(readFileSync(checked.log,'utf8'));
+  check(checked.exit===0&&!checked.error&&report.status==='passed'&&report.mode==='--check','Builder --check through symlink actually executed');
+  receipt.cases.push({name:'cli-source-alias',...generation,check:checked,generated_browser_sha256:generated.metadata.browser_sha256});
+}
+async function rejectedGeneration(kind) {
+  const root=copyFixture(ROOT,join(evidence,kind+'-source')),file=join(root,kind==='missing-generated-ts'?GENERATED_TS:GENERATED_JSON);
+  if(kind.startsWith('missing-generated')) renameSync(file,file+'.held');
+  else if(kind==='stale-helper'||kind==='stale-builder'){
+    const target=join(root,kind==='stale-helper'?'src/spatial-values.ts':'scripts/build-spatial-browser.mjs');
+    writeFileSync(target,readFileSync(target,'utf8')+'\n// Deliberate source freshness control; generated bytes were not refreshed.\n');
+  }else if(kind==='stale-lock'){
+    const path=join(root,'package-lock.json'),lock=JSON.parse(readFileSync(path,'utf8'));
+    lock.synthetic_gate_control='changed-without-regeneration';writeFileSync(path,JSON.stringify(lock,null,2)+'\n');
+  }else {const metadata=JSON.parse(readFileSync(file,'utf8'));metadata.browser_sha256='0'.repeat(64);writeFileSync(file,JSON.stringify(metadata)+'\n');}
+  const marker=kind.startsWith('missing-generated')?'Missing generated browser artifact':'Stale generated browser artifact';
+  const checkRun=runBuildCommand(root,[join(root,'scripts/build-spatial-browser.mjs'),'--check'],join(evidence,kind+'-check.log'));
+  check(checkRun.exit===1&&!checkRun.error,'Generated '+kind+' check fails');
+  check(readFileSync(checkRun.log,'utf8').includes(marker),'Generated failure is specifically '+marker);
+  let failure;try{emitWorker(root,join(evidence,kind+'-dry-run'));}catch(error){failure=error;}
+  check(failure?.name==='AssertionError'&&failure.message.startsWith('Wrangler dry-run failed;'),'Actual dry-run refuses '+kind);
+  check(readFileSync(join(evidence,kind+'-dry-run/build.log'),'utf8').includes(marker),'Dry-run fails at generated check, not unrelated environment');
+  receipt.cases.push({name:kind,...checkRun,dry_run_rejected:true});
+}
+async function unmatchedControl() {
+  const file=join(evidence,'unmatched-browser.js');writeFileSync(file,'throw new Error("UNMATCHED_SCRIPT_EXECUTED");\n');
+  const run=spawnSync(process.execPath,['--experimental-vm-modules',fileURLToPath(import.meta.url),'--asset-file',file],
+    {cwd:ROOT,encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024,env:buildEnvironment()});
+  writeFileSync(join(evidence,'unmatched-control.log'),(run.stdout||'')+(run.stderr||''));
+  check(!run.error&&run.status===1,'Unmatched code must fail');
+  const line=(run.stdout||'').trim().split('\n').findLast(line=>line.startsWith('{'));
+  const rejected=JSON.parse(line||'{}');
+  check(rejected.failure?.name==='AssertionError'&&rejected.failure.message===
+    'Unverified browser asset differs from this source build; supplied JavaScript was not executed','Unmatched code fails before execution');
+  receipt.unmatched_control=rejected;
+}
+async function publicAsset(url) {
+  assert.equal(url,'https://rendprop.com/spatial-viewer.js','Only exact public viewer URL is supported');
+  const response=await fetch(url,{redirect:'error',signal:AbortSignal.timeout(15000),headers:{'User-Agent':'Rendprop-Built-Viewer-Check/2.0'}});
+  check(response.status===200,'Public asset HTTP status');check(/javascript/.test(response.headers.get('Content-Type')||''),'Public asset content type');
+  const chunks=[];let length=0;for await(const bytes of response.body){length+=bytes.length;assert(length<=512000,'Public asset exceeds bound');chunks.push(bytes);}
+  receipt.url=response.url;receipt.http_status=response.status;return Buffer.concat(chunks).toString();
+}
 try {
-  let source;
-  if (mode.startsWith('--asset-')) {
-    source=mode==='--asset-url' ? await publicAsset(args[1]) : boundedFile(resolve(args[1]),512000).toString();
-    receipt.browser_bytes=Buffer.byteLength(source); receipt.browser_sha256=sha(source);
-    // Node's VM is an execution timeout, NOT an isolation boundary. Never run
-    // arbitrary downloaded/file-provided JS with this process's authority.
-    // A deployment check must first match this reviewed source's actual build;
-    // drift fails closed before any supplied code is evaluated.
-    const expected=await emittedAsset();
-    receipt.expected_browser_sha256=sha(expected);
-    check(receipt.browser_sha256===receipt.expected_browser_sha256,
-      'Unverified browser asset differs from this source build; supplied JavaScript was not executed');
-  } else {
-    source=await emittedAsset(mode==='--negative-control');
+  receipt.inputs=sourceSnapshot(ROOT);
+  const canonical=await checkSpatialBrowser({root:ROOT});receipt.canonical_metadata=canonical.metadata;
+  if(mode==='--negative-control') await detachedHelper();
+  else {
+    const expected=await emittedAsset(ROOT,'canonical');
+    check(sha(expected)===canonical.metadata.browser_sha256,'Actual Worker route exactly matches canonical browser build');
+    let source=expected;
+    if(mode.startsWith('--asset-')){
+      source=mode==='--asset-url'?await publicAsset(args[1]):boundedFile(resolve(args[1]),512000).toString();
+      receipt.browser_sha256=sha(source);receipt.expected_browser_sha256=sha(expected);
+      // VM deadlines are not isolation. Refuse unreviewed file/remote JavaScript
+      // before evaluation, even if a caller supplies a seemingly safe URL.
+      check(sha(source)===sha(expected),'Unverified browser asset differs from this source build; supplied JavaScript was not executed');
+    }
+    writeFileSync(join(evidence,'spatial-viewer.js'),source);await verifyBrowser(source,'canonical-browser');
+    if(mode==='--self-test'){
+      for(const keepNames of [false,true])for(const minify of [false,true]){
+        const name='worker-names-'+keepNames+'-minify-'+minify;
+        const root=copyFixture(ROOT,join(evidence,name+'-source'));setOptions(root,keepNames,minify);
+        const asset=await emittedAsset(root,name);check(sha(asset)===sha(expected),'Worker options cannot change browser bytes: '+name);
+        await verifyBrowser(asset,name);
+        const built=await buildSpatialBrowser({root:ROOT,keepNames,minify});
+        check(built.metadata.inputs.some(input=>input.path==='src/spatial-values.ts'),'Real shared helper included in browser dependency graph');
+        await verifyBrowser(built.source,'browser-names-'+keepNames+'-minify-'+minify);receipt.cases.at(-1).metadata=built.metadata;
+      }
+      await verifyCliEntrypoint(canonical);
+      let failure;try{await detachedHelper();}catch(error){failure=error;}
+      receipt.detached_failure=failure?{name:failure.name,message:failure.message}:null;
+      check(failure?.name==='ReferenceError'&&failure.message==='isBoundedSpatialNumber is not defined',
+        'Detached actual decoder must fail specifically at its imported helper');
+      const negatives=['missing-generated-json','missing-generated-ts','stale-generated','stale-helper','stale-builder','stale-lock'];
+      for(const name of negatives)await rejectedGeneration(name);
+      await unmatchedControl();
+      const expectedCases=['canonical-browser',...['worker','browser'].flatMap(target=>[false,true].flatMap(names=>[false,true].map(minify=>target+'-names-'+names+'-minify-'+minify)))];
+      check(JSON.stringify(receipt.cases.filter(entry=>entry.contract_assertions===25).map(entry=>entry.name).sort())===JSON.stringify(expectedCases.sort()),
+        'Exactly nine complete browser contract suites ran');
+      check(JSON.stringify(receipt.cases.filter(entry=>entry.dry_run_rejected).map(entry=>entry.name).sort())===JSON.stringify(negatives.sort()),
+        'All six generated/source freshness controls ran against actual dry-run');
+      check(!!receipt.detached_failure&&receipt.unmatched_control?.status==='failed'&&receipt.cases.some(entry=>entry.name==='cli-source-alias'),'Runtime helper, unmatched-byte and real CLI execution controls ran');
+    }
   }
-  await verifyBrowser(source);
-  if (mode==='--self-test') {
-    const child=spawnSync(process.execPath,['--experimental-vm-modules',fileURLToPath(import.meta.url),'--negative-control'],
-      {cwd:ROOT,encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024});
-    writeFileSync(join(evidence,'negative-control.log'),(child.stdout||'')+(child.stderr||''));
-    check(!child.error && child.status===1,'Deliberately broken config must exit 1');
-    const line=(child.stdout||'').trim().split('\n').findLast(line=>line.startsWith('{'));
-    const negative=JSON.parse(line||'{}');
-    check(negative.failure?.name==='ReferenceError' && negative.failure.message==='__name is not defined',
-      'Negative control must fail at missing helper, not an unrelated build/environment error');
-    receipt.negative_control=negative;
-    const unmatched=join(evidence,'unmatched-browser.js');
-    writeFileSync(unmatched,'throw new Error("UNMATCHED_SCRIPT_EXECUTED");\n');
-    const mismatch=spawnSync(process.execPath,['--experimental-vm-modules',fileURLToPath(import.meta.url),'--asset-file',unmatched],
-      {cwd:ROOT,encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024});
-    writeFileSync(join(evidence,'unmatched-control.log'),(mismatch.stdout||'')+(mismatch.stderr||''));
-    check(!mismatch.error && mismatch.status===1,'Unmatched file must be rejected');
-    const mismatchLine=(mismatch.stdout||'').trim().split('\n').findLast(line=>line.startsWith('{'));
-    const rejected=JSON.parse(mismatchLine||'{}');
-    check(rejected.failure?.name==='AssertionError' &&
-      rejected.failure.message==='Unverified browser asset differs from this source build; supplied JavaScript was not executed',
-      'Unmatched code must fail at byte identity, before its throwing body executes');
-    receipt.unmatched_control=rejected;
-  }
-  receipt.status='passed'; persist(); console.log(JSON.stringify(receipt));
-} catch(error) {
-  receipt.status='failed'; receipt.failure={name:error.name,message:error.message}; persist();
-  console.log(JSON.stringify(receipt)); process.exitCode=1;
-}
+  check(JSON.stringify(sourceSnapshot(ROOT))===JSON.stringify(receipt.inputs),'Reviewed source hashes unchanged throughout gate');
+  receipt.status='passed';persist();console.log(JSON.stringify(receipt));
+}catch(error){receipt.status='failed';receipt.failure={name:error.name,message:error.message};persist();console.log(JSON.stringify(receipt));process.exitCode=1;}

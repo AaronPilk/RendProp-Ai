@@ -1,3 +1,5 @@
+import { isBoundedSpatialNumber } from "./spatial-values";
+
 /** Wire-only scene metadata. No storage keys, URLs, credentials or camera sidecars. */
 export interface SpatialManifest {
   schema_version: 1;
@@ -18,7 +20,7 @@ export interface SpatialManifest {
   privacy_reviewed: boolean;
 }
 
-/** Self-contained so the SAME decoder can be emitted into the browser module. */
+/** The same decoder and its dependencies are bundled for browser validation. */
 export function decodeSpatialManifest(raw: unknown): SpatialManifest {
   const fail = (): never => { throw new Error("Invalid spatial scene manifest"); };
   const record = (v: unknown): Record<string, unknown> => {
@@ -30,7 +32,7 @@ export function decodeSpatialManifest(raw: unknown): SpatialManifest {
     return v;
   };
   const number = (v: unknown, low: number, high: number): number => {
-    if (typeof v !== "number" || !Number.isFinite(v) || v < low || v > high) return fail();
+    if (!isBoundedSpatialNumber(v, low, high)) return fail();
     return v;
   };
   const vector = (v: unknown): number[] => {

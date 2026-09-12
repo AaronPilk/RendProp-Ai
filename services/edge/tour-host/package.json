@@ -8,8 +8,10 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit",
-    "test": "node scripts/check-unbranded.mjs && node scripts/check-routes.mjs && node scripts/check-upstream.mjs && node scripts/check-lead-form.mjs && node scripts/check-legal.mjs && node scripts/check-spatial.mjs && npm run check:spatial:built",
+    "typecheck": "npm run check:spatial:browser && tsc --noEmit",
+    "test": "npm run check:spatial:browser && node scripts/check-unbranded.mjs && node scripts/check-routes.mjs && node scripts/check-upstream.mjs && node scripts/check-lead-form.mjs && node scripts/check-legal.mjs && node scripts/check-spatial.mjs && npm run check:spatial:built",
+    "build:spatial:browser": "node scripts/build-spatial-browser.mjs --write",
+    "check:spatial:browser": "node scripts/build-spatial-browser.mjs --check",
     "check:spatial": "node scripts/check-spatial.mjs",
     "check:spatial:built": "node --experimental-vm-modules scripts/check-spatial-built.mjs --self-test",
     "tail": "wrangler tail",
@@ -20,6 +22,7 @@
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
+    "esbuild": "0.28.1",
     "typescript": "^5.6.3",
     "wrangler": "4.129.0"
   }
