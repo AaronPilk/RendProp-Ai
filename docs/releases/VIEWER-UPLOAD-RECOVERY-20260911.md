@@ -372,7 +372,7 @@ do not describe this later check as a new execution of the helper error.
 Receipt:
 `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-RGcsAS/receipt.json`.
 
-### Final peer-review follow-ups in progress
+### Final peer-review follow-ups (resolved in source below)
 
 The119-assertion native pass missed an actual dispatch-handoff bug in the new
 video Restart: the method called `resume()` while its `restartingUpload` guard
@@ -386,3 +386,82 @@ unfenced photo-journal error after account change. Both are follow-up fixes,
 not privilege escalation claims. Owner journals must remain intact. Broader
 synthetic main/reviewer UI walks are running against `2ed7a8a`; their outcome
 and the repeated final-source app build must be recorded before handoff.
+
+### Final source fixes and independent reruns
+
+Application source is frozen at
+`3063eb481b079ef9d44312e4331581b61c1a9d58` (tree
+`0ecaf4c8063dad045bb547b516157e7418902e5c`). Subsequent context commits are
+documentation only; the root-directory Git diff over apps/ios,services,tests,
+tools is empty against this source commit. All integrated source/context through
+`2ca9c7a6219393845382928fb448d6bead7d4a51` was pushed normally to GitHub and
+the remote branch SHA read back exactly. No shared history was overwritten.
+
+- `5e2843c` integrates the video Restart handoff fix. The parent/consumed intent
+  is durable before releasing the duplicate-operation guard and immediately
+  calling existing Resume, with no intervening await. Resume clears old errors;
+  existing owner and dispatch fences remain. The regression requires a child
+  OS task to start exactly once, not merely a changed journal entry.
+- `3063eb4` integrates workspace-aware controls and stale-photo-read fences.
+  Settings clears both pending confirmations on userID change, explains the
+  mismatch, and disables retained video actions for the wrong owner. It keeps
+  the original journal. Both a delayed read success and its failure ignore the
+  old owner without clearing or replacing the current owner's list/banner.
+- The independent reviewer rechecked all three fixes and found no remaining
+  concrete blocker in those changed paths. This is not an all-codebase audit.
+
+Final independent root receipts:
+
+| Command | Result | Receipt |
+|---|---|---|
+| `python3 tools/audit/run_upload_recovery.py` |128 actual native assertions;18 successfully compiled mutants rejected for intended assertions; restored pass;9 hashed inputs unchanged |`/tmp/rendprop-upload-recovery-m29fqpf2/receipt.json`|
+| `python3 tools/audit/run_upload_restart_wire.py` |41 actual-source wire assertions;5 intended controls rejected; restored pass |`/tmp/rendprop-upload-restart-wire-vudnm3me/receipt.json`|
+| `python3 tools/audit/run_edge_regression.py` |753 passed,0 failures/skips;22 entrypoints pass; fail-open control rejected |`/tmp/rendprop-edge-audit-wrntzun0/receipt.json`|
+| `xcodebuild build-for-testing` with the same project/scheme/destination as above, `FinalDerivedData`, `FinalCompile.xcresult`, Debug and `CODE_SIGNING_ALLOWED=NO` |exit0, `TEST BUILD SUCCEEDED` on final source |`/tmp/rendprop-upload-recovery-app.kRcexp/final-compile.log`|
+
+The final simulator executable wrapper SHA256 is
+`c3acec81685a405da85d04ba6a053d0c1862840a8524c412bcf6d9a33a178bb4`;
+its **actual Debug application dylib** SHA256 is
+`9c40e9b1959edefee78fc2e7c897dcb095d4cafbb9542218091a29c140acfa98`.
+These identify local simulator artifacts, not a signed archive or phone build.
+Full build warnings include pre-existing localized interpolation, redundant
+nil-coalescing, deprecated Bluetooth naming and SDK/tool metadata warnings.
+No warning-free claim is made.
+
+The earlier `2ed7a8a` main and reviewer walks both finished successfully:
+258.347 and362.102seconds respectively; `xcresulttool` asserts2 total/2 passed/
+0 failed/0 skipped in `NonCameraWalks.xcresult`.25 attachments were exported.
+That is intermediate-source coverage. The same walks plus the spatial product
+test are now rerunning against the **separately built final application** in
+`FinalDerivedData`; its final result must be recorded below.
+
+The latest public viewer check at `2026-09-12T00:30:36.308Z` again returned the
+same known-bad26,442-byte SHA. It correctly exits1 at source-hash verification,
+without executing supplied code. Receipt:
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-EWNMud/receipt.json`.
+**The live P0 is still outstanding until deployment.**
+
+### Narrow rollout handoff (future work, not executed here)
+
+1. Fetch the integration branch and inspect its exact source/context. Re-read
+   section1 of the standing brief before any deployment. Do not deploy all22
+   tip Edge Functions as a shortcut; unrelated handlers have paired migrations.
+2. Tour-host can be released separately after its real `npm run predeploy`.
+   After deploy, run the exact live-asset gate from this lockfile/source. A200
+   homepage or legal page does not establish viewer acceptance. Require the
+   reviewed browser SHA `c31b3d1c86fc65fd418a78343071b6f3c701627399c55c994d89420d20436517`
+   and successful validator execution. Do not enable spatial budgets for this.
+3. Upload recovery rollout is **0042 → matching uploads handler → paired iOS**.
+   The gateway is not replaced by a direct-presigned fallback. Verify a bounded
+   owned synthetic complete-winner and interrupted→linked-child flow on the
+   actual deployment, including replay and spent/held-byte accounting. Do not
+   bulk-abort outstanding tickets or infer live race behavior from unit tests.
+4. Keep0039/me and0041/provider paired obligations explicit before broader
+   spatial ingestion. Confirm cleanup scheduling/lifecycle externally; local
+   SQL inventory tests cannot prove physical production cleanup occurred.
+5. Only then prepare a separately authorized internal phone build and test
+   Wi-Fi interruption, suspension/relaunch, owner change and the three-restart
+   limit on device. Keep the current App Review submission untouched.
+6. Reconstruction quality is a separate acceptance failure. No25000-step
+   training, clamp increase, GPU spend or runtime/budget enablement happened in
+   this pass. The existing real-room render is still not an acceptable tour.
