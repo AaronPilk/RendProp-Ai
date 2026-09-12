@@ -2,7 +2,9 @@
 
 September 11, 2026. Base commit `71f9eb77d866554d9902610f519ef0092cc019d4`.
 Integration branch `fix/spatial-upload-release-recovery-20260911`.
-**Work in progress. Not deployed, not a new TestFlight build, not a whole-app GO.**
+**Integrated source fixes under final review. Not deployed, not a new TestFlight
+build, not a whole-app GO.** Read the final checkpoint below before relying on
+historical intermediate counts or failures in this chronological work log.
 
 ## Independently established
 
@@ -315,3 +317,72 @@ automatically replay a failed poster or disclosure attachment. The UI names
 that distinction and preserves the original; transparent metadata reattachment
 is not claimed fixed. The device's real Wi-Fi loss/background delivery and a
 live linked replacement still need acceptance after the paired deployment.
+
+## Final integration checkpoint — September 11 evening Eastern
+
+The Settings correction took three further real build attempts, not a syntax
+parse declared to be an app build:
+
+1. `83e0a18`: exit65, the final local-data alert expression still exceeded
+   Swift's type checker. Preserved `build-corrected.log` and
+   `SpatialProduct-corrected.xcresult` under the same retained build directory.
+2. `389b806`: split the unchanged modifier chain into opaque lifecycle/account/
+   deletion/local-data stages. Type checking advanced and exposed a separate
+   availability error: the new two-value `onChange` requires iOS17, whereas
+   Rendprop supports iOS16. Exit65; `build-staged.log` and
+   `SpatialProduct-staged.xcresult` preserved.
+3. `2ed7a8a`: use the iOS16-compatible one-value observer, without raising the
+   deployment target or removing any confirmation. The **full app and UI test
+   target compiled**; the selected non-camera spatial product test executed
+   and passed in22.077seconds. `xcresulttool` independently reports1 passed,
+   0 failed,0 skipped,1 total, on the dedicated iPhone17Pro simulator/iOS26.4.1.
+
+Exact final successful command at this checkpoint:
+
+```sh
+cd apps/ios
+xcodebuild test -project Rendprop.xcodeproj -scheme Rendprop \
+  -configuration Debug \
+  -destination 'platform=iOS Simulator,id=8D787CFB-B1F3-4950-854E-463126A68F92' \
+  -derivedDataPath /tmp/rendprop-upload-recovery-app.kRcexp/DerivedData \
+  -resultBundlePath /tmp/rendprop-upload-recovery-app.kRcexp/SpatialProduct-compatible.xcresult \
+  -only-testing:RendpropUITests/SpatialProductIntegrationTests \
+  -parallel-testing-enabled NO -test-timeouts-enabled YES \
+  -default-test-execution-time-allowance 180 \
+  -maximum-test-execution-time-allowance 300 CODE_SIGNING_ALLOWED=NO
+```
+
+Log `build-compatible.log` ends `TEST SUCCEEDED`; no zero-test pass is counted.
+Root exported and visually inspected both retained screenshots: the purple
+Home3Dcard is visible and opens the real listing-scoped product, not the lab;
+the unsupported simulator shutter is disabled and no fake room/share button
+appears. This is not camera, filled upload-recovery UI, actual iOS16 runtime,
+real network interruption, or physical-iPhone acceptance. Existing unrelated
+Swift warnings remain; a successful build is not a warning-free claim.
+
+Fresh full edge receipt on clean `2ed7a8a`:
+`/tmp/rendprop-edge-audit-c2zstshp/receipt.json` —753 passed,0 failures/skips,
+22 entrypoints typechecked, intended fail-open mutant rejected. The122 upload
+tests remain a subset, not an additional count.
+
+Latest live viewer read at `2026-09-12T00:16:29Z` (September11 evening Eastern)
+still returned the same26,442bytes/known-bad SHA256 listed above. The strengthened
+gate **rejected at reviewed-source identity before executing supplied code**;
+do not describe this later check as a new execution of the helper error.
+Receipt:
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-RGcsAS/receipt.json`.
+
+### Final peer-review follow-ups in progress
+
+The119-assertion native pass missed an actual dispatch-handoff bug in the new
+video Restart: the method called `resume()` while its `restartingUpload` guard
+was still true. The child and consent were durable, but the control left the
+video paused with stale error text. A new regression must require actual child
+OS dispatch without a second Resume; preserving only its journal is insufficient.
+The iOS unit is correcting this, with a specific mutation control.
+
+Review also found a retained-video workspace-mismatch no-op in Settings and an
+unfenced photo-journal error after account change. Both are follow-up fixes,
+not privilege escalation claims. Owner journals must remain intact. Broader
+synthetic main/reviewer UI walks are running against `2ed7a8a`; their outcome
+and the repeated final-source app build must be recorded before handoff.
