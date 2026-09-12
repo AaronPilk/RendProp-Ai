@@ -137,6 +137,43 @@ struct TeamView: View {
             if s.canManage && s.seats.isFull {
                 // App Store 3.1.1: the ONLY thing offered here is the in-app
                 // paywall. No link, no web page, no "contact us to add seats".
+                //
+                // ── 1.0.2: THE BROKERAGE ROW WAS ASKED FOR AND WAS NOT BUILT ──
+                //
+                // The 9 Sep pricing decision included a "Talk to us" row for
+                // brokerages, sold off the App Store under 3.1.3(c) (Enterprise
+                // Services). Building it here was re-examined for 1.0.2 and
+                // declined. The reasoning, so nobody has to re-derive it:
+                //
+                // 3.1.3's own preamble governs every app that uses one of its
+                // carve-outs, enterprise sales included: "Apps in this section
+                // cannot, within the app, encourage users to use a purchasing
+                // method other than in-app purchase. Developers can send
+                // communications outside of the app to their user base about
+                // purchasing methods other than in-app purchase."
+                //
+                // A row offering to talk about SEATS is a call to action inside
+                // the app whose destination is a seat bought some other way —
+                // and seats are exactly what the Team subscription sells
+                // through StoreKit. It does not matter that the row carries no
+                // price and opens Mail rather than a checkout: the thing it
+                // starts is a sale of the same unit, and 3.1.1 already bars
+                // "buttons, external links, or other calls to action that
+                // direct customers to purchasing mechanisms other than in-app
+                // purchase". Sitting in this section, two rows under "See plans
+                // with more seats", is the adjacency that makes it read as an
+                // alternative to the button beside it.
+                //
+                // The permitted channel is the one 3.1.3 names: OUTSIDE the
+                // app. A brokerage conversation belongs in e-mail the owner
+                // sends, on rendprop.com, or in a reply to the support address
+                // already published in Settings (Legal & support → Contact
+                // support, aaron@pilk.ai) — which a brokerage can already use
+                // today without the app soliciting it.
+                //
+                // `Config.pricingURL` is nil for the same reason and carries
+                // the same standing instruction: do not revive an external
+                // purchase CTA.
                 Button { showPaywall = true } label: {
                     Label("See plans with more seats", systemImage: "arrow.up.circle")
                 }

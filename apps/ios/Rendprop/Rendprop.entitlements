@@ -15,5 +15,21 @@
 	<array>
 		<string>Default</string>
 	</array>
+	<!-- APNs (Push/PushManager.swift). `development` is what a locally-signed
+	     build needs; Xcode rewrites it to `production` when it archives for
+	     TestFlight or the App Store, which is why the file carries the
+	     development value rather than the shipping one.
+
+	     REQUIRES A ONE-TIME PORTAL STEP ON THE MAC: the App ID
+	     com.rendprop.app must have the Push Notifications capability enabled
+	     (Certificates, Identifiers & Profiles) and an APNs key must exist for
+	     the server. Until it does, automatic signing CANNOT produce a profile
+	     carrying this entitlement and the build fails at the signing step with
+	     "Provisioning profile doesn't support the Push Notifications
+	     capability" - that is the expected failure, not a code problem. The
+	     app itself degrades honestly without a token: it never prompts, and
+	     Settings shows the permission state it can actually see. -->
+	<key>aps-environment</key>
+	<string>development</string>
 </dict>
 </plist>

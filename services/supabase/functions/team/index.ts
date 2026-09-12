@@ -1,7 +1,9 @@
 // team — seats, invites and members for one org.
 //
 //   GET    /team                    -> { org, plan, seats:{used,allowed}, members[], invites[], can_manage }
+//   GET    /team/overview?window=   -> the brokerage overview (see below)           owner/admin
 //   POST   /team/invites            { email?, role? } -> { id, code, expires_at }   owner/admin
+//   POST   /team/invites/bulk       { emails[], role? } -> { results[], seats }     owner/admin
 //   DELETE /team/invites/<id>       -> { ok }                                       owner/admin
 //   POST   /team/accept             { code } -> { ok, org_id, org_name, role }      any identified user
 //   DELETE /team/members/<user_id>  -> { ok }                                       owner/admin
@@ -46,6 +48,26 @@
 //   * ACCEPT IS RATE-LIMITED PER IP. A 12-character code over a 30-symbol
 //     alphabet is ~59 bits, but a route that answers "was that a real code?"
 //     unboundedly is a route worth grinding at.
+//
+// ── THE BROKERAGE ROUTES (migration 0048) ───────────────────────────────────
+//
+// Selling seats one agent at a time does not reach a brokerage. A broker asks
+// "can I get my 80 agents on this in an afternoon" and "what are my agents
+// publishing", and those are these two routes:
+//
+//   POST /team/invites/bulk   ONE transaction under ONE org row lock, so a
+//     pasted list is all invited or none of it is. Per-address outcomes come
+//     back (issued / already_a_member / already_invited / invalid) because one
+//     typo in row 14 must not cost the other seventy-nine their invites — but
+//     the SEAT check is all-or-nothing, because "as many as fit" leaves a
+//     brokerage half-onboarded with no way to tell which half. The codes are
+//     minted in SQL (mint_org_invite_code) in the same alphabet and the same
+//     hashed form as codes.ts, so POST /team/accept takes them verbatim; the
+//     plaintext still exists exactly once, in this response.
+//   GET  /team/overview       brokerage_overview(): seats, and per member the
+//     listings, tours and AI-altered assets they published in the window, with
+//     the count who published nothing. Every number is defined in the comment
+//     above that function in migration 0048 — read it before changing a label.
 
 import { handleOptions } from "../_shared/cors.ts";
 import {
@@ -55,6 +77,7 @@ import {
   json,
   pathSegments,
   readJson,
+  readJsonLimited,
   respondError,
   throwRpc,
 } from "../_shared/http.ts";
@@ -71,7 +94,37 @@ const INVITABLE_ROLES = new Set(["admin", "agent", "marketing"]);
 const ACCEPT_MAX_PER_HOUR = 20;
 /** Invites created per org per hour — an owner inviting a brokerage, not a spammer. */
 const INVITE_MAX_PER_HOUR = 60;
+/**
+ * BULK CALLS per org per hour — calls, not addresses.
+ *
+ * Deliberately NOT `cost = emails.length` against INVITE_MAX_PER_HOUR: that
+ * would refuse the actual use case (one brokerage, eighty agents, one
+ * afternoon) to defend against a threat that does not exist here. The number of
+ * invites that can be OUTSTANDING is already bounded by org_seats_allowed(),
+ * this product sends no mail (org_invites.email is "delivery + display only"),
+ * and the code itself is useless without the seat behind it. What is left worth
+ * limiting is somebody hammering the org row lock, and twelve calls an hour
+ * ends that while leaving 12 × 200 addresses of legitimate headroom.
+ */
+const BULK_MAX_PER_HOUR = 12;
+/** Addresses one bulk call may carry. Mirrors the cap inside create_org_invites_bulk. */
+const BULK_MAX_EMAILS = 200;
+/** Ceiling on the bulk body. 200 × 254-char addresses is ~52 KB; this refuses the absurd. */
+const BULK_MAX_BYTES = 128 * 1024;
 const HOUR_SECONDS = 3600;
+
+/**
+ * The windows GET /team/overview offers. Anything else is a 400, not a silent
+ * default — the same allowlist shape admin/funnel.ts uses, and for the same
+ * reason: an unbounded interval the caller picks is a full-table scan, and a
+ * silently-substituted one is a number nobody can reproduce.
+ */
+const OVERVIEW_WINDOWS: Readonly<Record<string, string>> = Object.freeze({
+  "7d": "7 days",
+  "30d": "30 days",
+  "90d": "90 days",
+});
+const DEFAULT_OVERVIEW_WINDOW = "30d";
 
 /** The two tables that mean "this org has real work in it" — same list as adopt.
  *  Everything else (renders, capture_assets, render_jobs, chapters, provenance)
@@ -229,6 +282,32 @@ Deno.serve(async (req) => {
       });
     }
 
+    // ── GET /team/overview ───────────────────────────────────────────────────
+    // What a broker opens: seats, who is on the team, and what each of them
+    // actually published in the window. Gated here on role for the message, and
+    // AGAIN inside brokerage_overview() on the caller's role in that org — an
+    // agent on the same team must not be able to read everybody's numbers.
+    if (req.method === "GET" && seg[0] === "overview" && seg.length === 1) {
+      requireManager();
+      const requested = (new URL(req.url).searchParams.get("window") ?? DEFAULT_OVERVIEW_WINDOW).trim();
+      const interval = OVERVIEW_WINDOWS[requested];
+      if (!interval) {
+        throw new HttpError(400, `window must be one of ${Object.keys(OVERVIEW_WINDOWS).join(", ")}`);
+      }
+
+      const { data, error } = await adminClient().rpc("brokerage_overview", {
+        p_org: orgId,
+        p_actor: user.id,
+        p_window: interval,
+      });
+      if (error) throwRpc(error.message);
+
+      // `window` is echoed as the token the caller sent, not as the interval:
+      // the screen round-trips it, and `from`/`to`/`window_seconds` from the RPC
+      // are what actually define the period.
+      return json({ ...(data as Record<string, unknown>), window: requested });
+    }
+
     // ── POST /team/invites ───────────────────────────────────────────────────
     if (req.method === "POST" && seg[0] === "invites" && seg.length === 1) {
       requireManager();
@@ -280,6 +359,56 @@ Deno.serve(async (req) => {
       return json({ ...(data as Record<string, unknown>), code }, 201);
     }
 
+    // ── POST /team/invites/bulk ──────────────────────────────────────────────
+    // The whole office, in one transaction. Same gates as POST /team/invites,
+    // same invite rows, same code form — the only differences are that the
+    // codes are minted in SQL (the array signature cannot carry eighty hashes
+    // without inventing a second invite mechanism) and that the seat check is
+    // all-or-nothing.
+    if (req.method === "POST" && seg[0] === "invites" && seg[1] === "bulk" && seg.length === 2) {
+      requireManager();
+      // An anonymous session is the owner of its own org (the signup trigger
+      // makes it one), so this check is doing real work here exactly as it is
+      // on the single-invite route.
+      if ((user as { is_anonymous?: boolean }).is_anonymous) {
+        throw new HttpError(
+          403,
+          "Sign in with Apple first — a team seat belongs to a person, not to one phone.",
+          "forbidden",
+        );
+      }
+      if (!(await durableRateLimit(`team:invites:bulk:${orgId}`, BULK_MAX_PER_HOUR, HOUR_SECONDS))) {
+        throw new HttpError(429, "Too many bulk invites at once — try again later.", "rate_limited");
+      }
+
+      const body = await readJsonLimited<{ emails?: unknown; role?: unknown }>(req, BULK_MAX_BYTES);
+      const role = typeof body.role === "string" ? body.role.trim().toLowerCase() : "agent";
+      assert(INVITABLE_ROLES.has(role), 400, "Role must be admin, agent or marketing");
+      assert(Array.isArray(body.emails), 400, "emails must be an array of email addresses");
+      const raw = body.emails as unknown[];
+      assert(raw.length > 0, 400, "Send at least one email address");
+      assert(raw.length <= BULK_MAX_EMAILS, 400, `At most ${BULK_MAX_EMAILS} addresses in one bulk invite`);
+      assert(raw.every((e) => typeof e === "string"), 400, "Every entry in emails must be a string");
+      // Addresses are NOT filtered or normalised here on purpose: a malformed
+      // one has to reach the RPC to come back as its own `invalid` outcome
+      // rather than silently vanishing from a list the broker pasted.
+
+      const { data, error } = await adminClient().rpc("create_org_invites_bulk", {
+        p_org: orgId,
+        p_actor: user.id,
+        p_emails: raw as string[],
+        p_role: role,
+      });
+      if (error) throwRpc(error.message);
+
+      // The RPC returns jsonb with only the safe columns plus the plaintext
+      // codes — `org_invites` carries `token_hash`, which is a credential and
+      // never leaves the database. 201 when something was actually created;
+      // 200 when the whole list was already on the team, because nothing was.
+      const report = (data ?? {}) as Record<string, unknown>;
+      return json(report, Number(report.issued ?? 0) > 0 ? 201 : 200);
+    }
+
     // ── DELETE /team/invites/<id> ────────────────────────────────────────────
     if (req.method === "DELETE" && seg[0] === "invites" && seg.length === 2) {
       requireManager();
@@ -310,9 +439,20 @@ Deno.serve(async (req) => {
       if (targetRole === "admin" && myRole !== "owner") {
         throw new HttpError(403, "Only the owner can remove an admin.", "forbidden");
       }
-      const { error } = await admin.from("memberships")
-        .delete().eq("org_id", orgId).eq("user_id", target);
-      if (error) throw new HttpError(500, `Could not remove them: ${error.message}`);
+
+      // The delete moved into the database (migration 0048 §4) so the SEAT
+      // LEDGER can record WHO revoked the seat. A PostgREST delete runs on the
+      // service role and the acting person's identity never reaches the
+      // trigger, which would have left every removal attributed to nobody. The
+      // four checks above stay where they are — they give the better message —
+      // and remove_org_member re-checks all of them authoritatively under the
+      // org row lock, exactly the split create_org_invite already uses.
+      const { error } = await adminClient().rpc("remove_org_member", {
+        p_org: orgId,
+        p_actor: user.id,
+        p_user: target,
+      });
+      if (error) throwRpc(error.message);
       // Their listings and tours stay with the ORG, which is what the team paid
       // for. They keep their account and get a fresh workspace on next launch.
       return json({ ok: true });
@@ -320,7 +460,8 @@ Deno.serve(async (req) => {
 
     throw new HttpError(
       405,
-      "Only GET /team, POST /team/invites, DELETE /team/invites/:id, POST /team/accept and DELETE /team/members/:id are supported",
+      "Only GET /team, GET /team/overview, POST /team/invites, POST /team/invites/bulk, " +
+        "DELETE /team/invites/:id, POST /team/accept and DELETE /team/members/:id are supported",
     );
   } catch (err) {
     return respondError(err);

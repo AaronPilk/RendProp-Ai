@@ -54,7 +54,14 @@ enum Analytics {
     /// server, so it is refused here too rather than shipped and lost — a typo
     /// at a call site shows up in DEBUG instead of quietly draining the queue.
     static let vocabulary: Set<String> = [
-        "app_open", "signup", "signin", "home_created", "capture_started",
+        "app_open", "signup", "signin",
+        // Anonymous sessions (App Store 5.1.1(v)). Every launch opens one, and
+        // these three are the only way to see from here whether the
+        // no-registration path is actually working in the field. Emitted by
+        // Auth/AuthStore.swift; the server has declared them since
+        // functions/events/schema.ts of 2026-09-12.
+        "anonymous_session_started", "anonymous_session_failed", "anonymous_adopt",
+        "home_created", "capture_started",
         "capture_finished", "render_finished", "tour_published", "ai_photo_edit",
         "reel_made", "voiceover_added", "aerial_made", "paywall_viewed",
         "purchase_started", "purchase_completed", "purchase_failed", "restore",
@@ -82,6 +89,29 @@ enum Analytics {
         // never a name, a path or a listing. This is the only measure of whether
         // the files an agent paid for are actually reaching their camera roll.
         "file_saved",
+        // ── 2026-09-12: four names real call sites already emitted ───────────
+        //
+        // These four were passed to `track` by shipped code but were in NEITHER
+        // this set nor the server schema, so `track` refused them on its first
+        // line and nothing ever reached the network. The server declares all
+        // four now (functions/events/schema.ts), with exactly the prop keys the
+        // call sites already pass — nothing invented, nothing widened:
+        //
+        //   ai_clip_rejected   Screens/FlythroughDetailView.swift — the drift
+        //                      check refused a generated clip. `kind` is the
+        //                      generator ("animate"), `status` the verdict slug.
+        //                      NEVER the refusal text: it is written for a
+        //                      person and can quote the listing's own words.
+        //   tour_viewer_opened Screens/TourViewerView.swift — `kind` is "tour"
+        //                      or "portfolio". No slug and no URL: the link is
+        //                      itself a join key back to a street address.
+        //   listing_link_used  Screens/NewListingView.swift — `source` is the
+        //                      parser that recognised a pasted link, never the
+        //                      link.
+        //   property_lookup    Screens/NewListingView.swift — `ok`, `filled`
+        //                      (HOW MANY fields were filled, never which) and
+        //                      `cached`.
+        "ai_clip_rejected", "tour_viewer_opened", "listing_link_used", "property_lookup",
     ]
 
     /// Most events the app can generate in one flush.

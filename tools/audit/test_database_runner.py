@@ -21,9 +21,11 @@ import unittest
 from unittest.mock import patch
 
 # Exact inventory size of tests/invariants.sql (mirrors INVARIANT_COUNT in
-# run_database_regression.py; 234 since the 0046 commercial-telemetry section,
-# 213 for the 0044 plan-rework section).
-COUNT = 234
+# run_database_regression.py; +19 for the 0047 lifecycle-notification section,
+# +13 for the 0048 brokerage section, 234 since the 0046 commercial-telemetry
+# section, 213 for the 0044 plan-rework section).
+# Both concurrent branches are now reconciled here: 234 + 13 + 19 = 266.
+COUNT = 266
 REQUIRED = [
     'all three explicit Astra writing seats keep their 0030/0034 paid-plan gates',
     'no gpt-6-astra row is reachable on the free or trial tier',

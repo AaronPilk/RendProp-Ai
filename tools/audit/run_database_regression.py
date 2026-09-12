@@ -36,11 +36,20 @@ KEPT_RED = {
 
 # Exact size of the tests/invariants.sql inventory. A suite that prints fewer
 # rows is rejected even when its footer agrees with itself, so this number has
-# to move in the same change that adds or removes an assertion (234 since the
-# 0046 commercial-telemetry section — activation stamp, org_is_real, cancelled_at,
-# admin_cohorts/admin_churn; 213 for the 0044 plan-rework / industry-trial
-# section; 198 before that).
-INVARIANT_COUNT = 234
+# to move in the same change that adds or removes an assertion (+19 for the 0047
+# lifecycle-notification section — the outbox posture, the lead and publish
+# triggers, dedupe, preferences and mute, claim/mark/sweep, the two-connection
+# SKIP LOCKED race and the scheduled tick's idempotency; +13 for the 0048
+# brokerage section — bulk invites, the seat ledger, brokerage_overview and the
+# org-scoped compliance_audit; 234 since the 0046 commercial-telemetry section —
+# activation stamp, org_is_real, cancelled_at, admin_cohorts/admin_churn; 213 for
+# the 0044 plan-rework / industry-trial section; 198 before that).
+#
+# CONCURRENT BRANCHES, now reconciled: 234 + 13 (0048) + 19 (0047) = 266. The
+# 0047 assertions are appended AFTER the 0048 block, so every assertion that
+# existed before either branch — #155, the kept-red astra ceiling below
+# included — keeps the number it had.
+INVARIANT_COUNT = 266
 
 
 def require(ok, message):

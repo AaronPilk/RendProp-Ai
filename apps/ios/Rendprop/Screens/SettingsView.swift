@@ -32,6 +32,19 @@ struct SettingsView: View {
     @State private var usageError: String?
     @State private var isLoadingUsage = false
 
+    // MARK: Notifications (Push/PushManager.swift)
+    @ObservedObject private var push = PushManager.shared
+    /// What the ACCOUNT wants to be told about (`GET /me` → `notifications`).
+    /// nil means the server sent no such object — this deployment has no
+    /// notification preferences yet — which is why the category rows are drawn
+    /// from this being non-nil rather than from a flag we could get wrong.
+    @State private var notificationPrefs: NotificationPrefs?
+    @State private var isSavingNotificationPrefs = false
+    /// Set when a save failed for a reason that is NOT "the route isn't
+    /// deployed". A missing route is a fact about the server and says nothing
+    /// on screen; a real failure is the person's business.
+    @State private var notificationSaveError: String?
+
     // Owner console visibility. Decided by the SERVER — never a hardcoded email
     // and never a local flag. `/me` may one day carry `is_admin`; today it does
     // not, so we probe `GET /admin/spend` ONCE and hide the row on a 403.
@@ -223,14 +236,14 @@ struct SettingsView: View {
                 Text(brandKitFooter)
             }
 
-            // Notifications section is hidden until push (APNs) is wired — a
-            // reviewer must never see "Coming soon" placeholder rows (App Store
-            // 2.1). Re-enable this block behind Config.enablePush when APNs ships.
+            // APNs shipped in 1.0.2, so this section is real now. The rule that
+            // hid it still stands and still shapes it: a reviewer must never
+            // meet a placeholder row (App Store 2.1). So every row below is
+            // either a live switch or an honest statement of a fact the app can
+            // actually see — and the per-category rows appear ONLY once the
+            // server sends preferences to put in them.
             if Config.enablePush {
-                Section("Notifications") {
-                    LabeledContent("Render ready", value: "On")
-                    LabeledContent("New lead", value: "On")
-                }
+                notificationsSection
             }
 
             // Source of truth for shooting guidance is the capture screen's
@@ -336,10 +349,24 @@ struct SettingsView: View {
                         Label("Funnel", systemImage: "chart.bar.xaxis")
                     }
                     // MARK: - end funnel additions
+                    // MARK: - growth additions (1.0.2)
+                    NavigationLink {
+                        AdminCohortsView()
+                    } label: {
+                        Label("Cohorts", systemImage: "calendar.badge.clock")
+                    }
+                    .accessibilityIdentifier("admin.tab.cohorts")
+                    NavigationLink {
+                        AdminChurnView()
+                    } label: {
+                        Label("Churn", systemImage: "person.crop.circle.badge.xmark")
+                    }
+                    .accessibilityIdentifier("admin.tab.churn")
+                    // MARK: - end growth additions
                 } header: {
                     Text("Owner console")
                 } footer: {
-                    Text("Spend and providers are read-only. Funnel shows where people stop and whether the app is crashing. AI routing can be changed — it decides which provider runs each AI job. This row is here because the server says this account is an admin; it enforces that on every request, so nothing on this phone can unlock it.")
+                    Text("Spend and providers are read-only. Funnel shows where people stop and whether the app is crashing. Cohorts follows each signup week forward — who published, how fast, who's paying. Churn shows who cancelled and how that compares with the period before. AI routing can be changed — it decides which provider runs each AI job. This row is here because the server says this account is an admin; it enforces that on every request, so nothing on this phone can unlock it.")
                 }
             }
 
@@ -431,7 +458,11 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.settings)
         .task { await loadUsage() }
-        .refreshable { await loadUsage() }
+        .task { await loadNotificationPrefs() }
+        .refreshable {
+            await loadUsage()
+            await loadNotificationPrefs()
+        }
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
         }
@@ -444,11 +475,15 @@ struct SettingsView: View {
             if signedIn {
                 adminProbeDone = false
                 Task { await loadUsage() }
+                Task { await loadNotificationPrefs() }
             } else {
                 usage = nil
                 usageError = nil
                 showAdminConsole = false
                 adminProbeDone = false
+                // The preferences belong to the account, not to the phone.
+                notificationPrefs = nil
+                notificationSaveError = nil
             }
         }
         .sheet(isPresented: $showSignIn) {
@@ -569,6 +604,161 @@ struct SettingsView: View {
         return auth.isIdentified
             ? "Signed in with Apple. Publishing, leads and AI tools use this account."
             : "Everything works without signing in — your homes, tours, leads and plan live in a workspace held for this iPhone. Sign in with Apple to carry them to a new phone, and to get them back if you delete the app."
+    }
+
+    // MARK: - Notifications (1.0.2)
+    //
+    // FOUR STATES, and the section shows exactly one, because there is exactly
+    // one true answer at a time:
+    //
+    //   DENIED at the OS level    → ONE row that opens iOS Settings. No
+    //       switches: iOS does not let an app turn its own notifications back
+    //       on, and a switch that silently does nothing is worse than none.
+    //   NEVER ASKED               → one button that asks. The single system
+    //       prompt is spent here deliberately: somebody who opened Settings and
+    //       went looking for this has already said yes in every way that
+    //       matters.
+    //   ALLOWED, prefs available  → the master switch plus one row per
+    //       category, each saved with `PATCH /me/notifications`.
+    //   ALLOWED, no prefs         → one row STATING that notifications are on,
+    //       and a footer naming what arrives. This is a signed-out phone, or a
+    //       server that predates the route (they are shipping in parallel). A
+    //       category switch with nowhere to save to is exactly the "Coming
+    //       soon" placeholder this section was hidden to avoid — App Store 2.1.
+
+    @ViewBuilder
+    private var notificationsSection: some View {
+        Section {
+            if push.isDenied {
+                Button { PushManager.openSystemSettings() } label: {
+                    Label("Turn on notifications in iOS Settings", systemImage: "arrow.up.forward.app")
+                }
+                .accessibilityIdentifier("settings.notifications.openSystem")
+            } else if push.isUndecided {
+                Button {
+                    Task { await push.requestAuthorization() }
+                } label: {
+                    Label("Turn on notifications", systemImage: "bell.badge")
+                }
+                .accessibilityIdentifier("settings.notifications.enable")
+            } else if let prefs = notificationPrefs {
+                Toggle("Notifications", isOn: Binding(
+                    get: { notificationPrefs?.enabled ?? true },
+                    set: { setNotificationsEnabled($0) }))
+                    .disabled(isSavingNotificationPrefs)
+                    .accessibilityIdentifier("settings.notifications.master")
+                if prefs.enabled {
+                    ForEach(NotificationCategory.allCases) { category in
+                        Toggle(isOn: Binding(
+                            get: { notificationPrefs?[category] ?? true },
+                            set: { setNotificationCategory(category, to: $0) })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(category.title)
+                                Text(category.blurb)
+                                    .font(.rpCaption)
+                                    .foregroundStyle(Theme.inkDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .disabled(isSavingNotificationPrefs)
+                        .accessibilityIdentifier("settings.notifications.\(category.rawValue)")
+                    }
+                }
+                if let notificationSaveError {
+                    Text(notificationSaveError)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                // Allowed at the OS level, but this account has no preferences
+                // to change — a signed-out phone, or a server that predates the
+                // route. A row that STATES a fact the app can see, never a
+                // switch that would save nowhere.
+                LabeledContent("Notifications", value: "On")
+                    .accessibilityIdentifier("settings.notifications.state")
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text(notificationsFooter)
+        }
+    }
+
+    private var notificationsFooter: String {
+        if push.isDenied {
+            return "Notifications are off for Rendprop in iOS Settings. Only iOS can turn them back on — this opens the right page."
+        }
+        if push.isUndecided {
+            return "We'll tell you when someone enquires about a tour, and when a render finishes. Nothing else."
+        }
+        let arrives = "You'll get a notification when someone enquires about a tour, and when a render finishes."
+        if notificationPrefs == nil {
+            return auth.isSignedIn
+                ? arrives + " Choosing which ones isn't available on this server yet — those switches appear here on their own once it is."
+                : arrives + " Choosing which ones belongs to your account, so those switches appear once this iPhone is connected."
+        }
+        return "These apply to every device signed into this account."
+    }
+
+    /// Read the account's choices. Silent by design: a server without the
+    /// `notifications` object leaves `notificationPrefs` nil, which draws the
+    /// section's "here's what arrives" state instead of an error.
+    @MainActor
+    private func loadNotificationPrefs() async {
+        guard Config.enablePush, Config.useLiveBackend, auth.isSignedIn else {
+            notificationPrefs = nil
+            return
+        }
+        guard let api = model.api as? NotificationPrefsAPI else {
+            notificationPrefs = nil
+            return
+        }
+        // A failure here is silence on purpose: a preferences read that cannot
+        // answer is not something a person can act on, and the section already
+        // has an honest state for "no preferences".
+        let fetched: NotificationPrefs? = try? await api.notificationPrefs()
+        notificationPrefs = fetched
+        notificationSaveError = nil
+    }
+
+    private func setNotificationsEnabled(_ enabled: Bool) {
+        guard var prefs = notificationPrefs else { return }
+        prefs.enabled = enabled
+        saveNotificationPrefs(prefs)
+    }
+
+    private func setNotificationCategory(_ category: NotificationCategory, to value: Bool) {
+        guard var prefs = notificationPrefs else { return }
+        prefs[category] = value
+        saveNotificationPrefs(prefs)
+    }
+
+    /// Optimistic, then corrected by whatever the server says it stored.
+    ///
+    /// A 404 means the route is not deployed: the rows disappear rather than
+    /// lying about having saved anything, and nothing is said — a person cannot
+    /// act on "your server is older than your app". Any other failure puts the
+    /// previous value back and says so in one line.
+    private func saveNotificationPrefs(_ prefs: NotificationPrefs) {
+        guard let api = model.api as? NotificationPrefsAPI else { return }
+        let previous = notificationPrefs
+        notificationPrefs = prefs
+        notificationSaveError = nil
+        isSavingNotificationPrefs = true
+        Haptics.selection()
+        Task { @MainActor in
+            defer { isSavingNotificationPrefs = false }
+            do {
+                notificationPrefs = try await api.updateNotificationPrefs(prefs)
+            } catch let error as APIError where error.isNotFound {
+                notificationPrefs = nil
+            } catch {
+                if error is CancellationError { return }
+                notificationPrefs = previous
+                notificationSaveError = "Couldn't save that just now. Try again in a moment."
+            }
+        }
     }
 
     // MARK: - Plan & usage (live backend only)

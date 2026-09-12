@@ -156,11 +156,74 @@ own log output for the `0022:` notice to see which state you're in. (This is
 the same shape as the deletion-sweeper gate in §9, and can be combined with it
 in one pg_cron enablement pass.)
 
+### 11. Lifecycle notifications (pg_cron is a manual gate here too; the keys are optional)
+Migration `0047_lifecycle_notifications.sql` + `functions/notify` are the first outbound
+messaging in the product: a buyer's lead, a finished tour, a trial ending, an allowance
+running low, a workspace that never published, an upload that stalled. **It ships INERT.**
+Deploy it with no keys and nothing is sent — but the outbox still fills, so nothing is lost
+while you decide.
+
+**The two halves, and what each needs.**
+
+1. *Producing* messages. The two TRIGGERED categories need nothing at all: an AFTER INSERT
+   trigger on `leads` and an in-function call in `publish_render()` /
+   `publish_worker_render()` queue `lead_received` and `render_ready` inside the same
+   transaction as the thing that caused them. The four SCHEDULED categories
+   (`free_week_ending`, `allowance_low`, `first_tour_nudge`, `upload_stuck`) come from
+   `notification_tick()`, which 0047 tries to put on pg_cron every 15 minutes — **the same
+   manual gate as §10**. If 0047's log shows `0047: pg_cron is NOT available …` or
+   `0047: pg_cron setup did not finish (…)`, those four categories are never produced and
+   stalled `sending` rows are never reclaimed. Fix it the same way:
+   Dashboard → Database → Extensions → enable **pg_cron**, re-run the migration (idempotent),
+   then confirm `select * from cron.job where jobname = 'notification-tick';` returns one row
+   scheduled `*/15 * * * *`. The alternative, as in §9, is an external scheduler calling
+   `select public.notification_tick();` (or `POST /functions/v1/notify/sweep`) on its own clock.
+2. *Delivering* them. `POST /functions/v1/notify` (service-role bearer, exactly like
+   §9's sweeper) claims a batch and sends it. Nothing calls it by itself — schedule it the
+   same way you scheduled `sweep-deletions`:
+   ```sql
+   select cron.schedule('notify-drain', '* * * * *', $$
+     select net.http_post(
+       url     := 'https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1/notify',
+       headers := jsonb_build_object('Authorization', 'Bearer ' || current_setting('app.service_role_key'),
+                                     'Content-Type', 'application/json'),
+       body    := '{}'::jsonb) $$);
+   ```
+
+**The five secrets, and exactly what happens without each.** All optional; set them in
+`set-secrets.sh`.
+
+| Secret | Used by | Absent → |
+|---|---|---|
+| `APNS_KEY_P8` | push (APNs token auth) | every `push` row is marked `skipped`, `last_error` = `push is not configured: set APNS_KEY_P8, …`; e-mail rows in the same batch still go out |
+| `APNS_KEY_ID` | push | same |
+| `APNS_TEAM_ID` | push | same |
+| `RESEND_API_KEY` | e-mail | every `email` row is marked `skipped`, `last_error` = `email is not configured: set RESEND_API_KEY, …`; push rows still go out |
+| `NOTIFY_FROM_EMAIL` | e-mail | same |
+
+With none of them set, `POST /notify` still answers `200` with
+`{ok:true, claimed:N, skipped:N, push_configured:false, email_configured:false}`. It never
+500s and never crash-loops. Rows sit `queued` until `notification_sweep()` expires them at
+72 hours, so a key added within that window still delivers the backlog.
+
+**Check it is working:**
+```sql
+select state, category, channel, count(*) from notification_outbox group by 1,2,3 order by 1,2;
+select last_error, count(*) from notification_outbox where state = 'skipped' group by 1;
+select category, channel, count(*) from notification_log group by 1,2;   -- what actually went out
+```
+`notification_log` is the permanent record and is **not** purged by any cron job (§10's
+job touches `app_events` only). `notification_outbox` is the prunable half.
+
+**A person can turn any of it off** — `PATCH /me/notifications` writes the six per-category
+switches and a global `muted_until`; `GET /me` returns them under `notifications`. The
+phone registers its APNs token with `POST /me/devices`.
+
 ## Cost-test WITHOUT the full backend (fastest)
 `cd services/pipeline && cp .env.example .env` (paste the 3 provider keys) → `python cli.py run --image room.jpg --feature restage --style modern`. Real cost per call, logged to the ledger. See `docs/AI-COST-MODEL.md`.
 
 ## Secrets reference (set via set-secrets.sh)
-`CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_UPLOADS=rendprop-uploads, R2_BUCKET_RENDERS=rendprop-renders, R2_BUCKET_PUBLIC=rendprop-public, R2_PUBLIC_BASE_URL, CLOUDFLARE_STREAM_TOKEN, CLOUDFLARE_STREAM_CUSTOMER_CODE, GEMINI_API_KEY, GEMINI_IMAGE_MODEL, GEMINI_TEXT_MODEL, FAL_KEY, JOB_TOKEN_SIGNING_SECRET (signs the ai-video async-job status token — audit item 4, a dedicated secret, never reuse a vendor key), ANTHROPIC_API_KEY, KIE_API_KEY(optional), GHL_API_KEY(optional), GHL_LOCATION_ID(optional), TURNSTILE_SECRET_KEY (required — leads/index.ts now FAILS CLOSED on POST /leads when this is unset; set TURNSTILE_OPTIONAL=1 instead if you are knowingly launching without bot protection), APPLE_TEAM_ID, APPLE_CLIENT_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8 (all four required for Sign in with Apple revocation), QC_PASS_SCORE=85, QC_MAX_RETRIES=2, MAX_GEN_COST_PER_JOB_CENTS=2500, TOUR_PUBLIC_BASE_URL=https://rendprop.com` (the routed domain — never rendprop.app).
+`CLOUDFLARE_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET_UPLOADS=rendprop-uploads, R2_BUCKET_RENDERS=rendprop-renders, R2_BUCKET_PUBLIC=rendprop-public, R2_PUBLIC_BASE_URL, CLOUDFLARE_STREAM_TOKEN, CLOUDFLARE_STREAM_CUSTOMER_CODE, GEMINI_API_KEY, GEMINI_IMAGE_MODEL, GEMINI_TEXT_MODEL, FAL_KEY, JOB_TOKEN_SIGNING_SECRET (signs the ai-video async-job status token — audit item 4, a dedicated secret, never reuse a vendor key), ANTHROPIC_API_KEY, KIE_API_KEY(optional), GHL_API_KEY(optional), GHL_LOCATION_ID(optional), TURNSTILE_SECRET_KEY (required — leads/index.ts now FAILS CLOSED on POST /leads when this is unset; set TURNSTILE_OPTIONAL=1 instead if you are knowingly launching without bot protection), APPLE_TEAM_ID, APPLE_CLIENT_ID, APPLE_KEY_ID, APPLE_PRIVATE_KEY_P8 (all four required for Sign in with Apple revocation), QC_PASS_SCORE=85, QC_MAX_RETRIES=2, MAX_GEN_COST_PER_JOB_CENTS=2500, TOUR_PUBLIC_BASE_URL=https://rendprop.com, APNS_KEY_P8/APNS_KEY_ID/APNS_TEAM_ID (optional — push; absent = every push row is `skipped` with the missing names, e-mail unaffected), RESEND_API_KEY/NOTIFY_FROM_EMAIL (optional — e-mail; absent = every e-mail row is `skipped`, push unaffected — see §11)` (the routed domain — never rendprop.app).
 (`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are auto-injected into functions — no need to set.)
 
 **`TURNSTILE_SECRET_KEY` changed behavior (2026-09-07 audit fix):** it used to

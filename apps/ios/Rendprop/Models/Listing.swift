@@ -78,6 +78,29 @@ struct Listing: Identifiable, Codable, Hashable {
     /// re-geocoding on every open.
     var stateCode: String? = nil
 
+    // MARK: - Added 2026-09-12 (1.0.2). Optional → older snapshots decode.
+    /// SEARCH-ENGINE OPT-IN for this listing's hosted tour page, answered by the
+    /// owner on the publish screen. nil = never asked (the server's own default
+    /// applies, which is `noindex`); false = they said no; true = they said yes.
+    ///
+    /// WHY IT IS A FIELD AND NOT A `details` KEY, which is where the server
+    /// reads it from: `ListingFormData.apply(to:)` sets `details = nil` for
+    /// every real-estate listing, so a flag parked in that bag would be wiped
+    /// the first time an agent tapped "Edit details" — silently un-listing a
+    /// page they had asked to be listed. `LiveAPIClient.listingBody` merges this
+    /// into the wire `details` under the key the tour host actually reads
+    /// (`allow_indexing` — services/edge/tour-host/src/player.ts,
+    /// `allowsIndexing`), so the transport is unchanged and the local truth
+    /// survives every edit path.
+    var allowSearchIndexing: Bool? = nil
+
+    /// The wire key for `allowSearchIndexing`, inside the listing's `details`
+    /// bag. `allowsIndexing()` accepts three spellings and checks them in the
+    /// order `allow_indexing`, `allowIndexing`, `search_indexing`, stopping at
+    /// the first one present — so this one wins, and it is the spelling the
+    /// Worker's own tests, its README and the sitemap all use.
+    static let searchIndexingKey = "allow_indexing"
+
     func detail(_ key: String) -> String { details?[key] ?? "" }
 
     /// The last render/publish attempt failed (or was interrupted). Cards show a
@@ -270,7 +293,7 @@ extension Listing {
              tagline, details, serverID, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, publishedRenderID,
-             unbrandedShareURL, stateCode
+             unbrandedShareURL, stateCode, allowSearchIndexing
     }
 
     init(from decoder: Decoder) throws {
@@ -307,6 +330,7 @@ extension Listing {
         publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
         unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
         stateCode        = try c.decodeIfPresent(String.self, forKey: .stateCode)
+        allowSearchIndexing = try c.decodeIfPresent(Bool.self, forKey: .allowSearchIndexing)
     }
 }
 

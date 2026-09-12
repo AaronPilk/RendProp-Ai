@@ -786,12 +786,25 @@ final class AuthStore: ObservableObject {
         return await attemptAnonymousSignIn()
     }
 
+    /// How many signup POSTs this launch has made since the last one that
+    /// landed. `SessionConnection` retries with a growing delay, so this is the
+    /// attempt number the two `anonymous_session_*` events report — a count of
+    /// tries, never anything about a person (there is no person yet).
+    @MainActor private var anonymousAttempts = 0
+
     /// One signup POST. `true` when a session landed.
     @MainActor
     private func attemptAnonymousSignIn() async -> Bool {
         let epoch = sessionEpoch
         guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty else { return false }
+        // GUIDELINE 5.1.1(v) COMPLIANCE MONITORING. Every launch opens one of
+        // these sessions and every feature depends on it, so "did the
+        // no-registration path work in the field" has to be answerable. The
+        // server declares both names; the only prop is a try count.
+        anonymousAttempts &+= 1
+        let attempt = anonymousAttempts
+        Analytics.track("anonymous_session_started", ["attempt": String(attempt)])
         var req = URLRequest(url: authBase.appendingPathComponent("signup"))
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -801,11 +814,18 @@ final class AuthStore: ObservableObject {
         guard let (data, resp) = try? await URLSession.shared.data(for: req),
               let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               let session = try? JSONDecoder().decode(SupabaseSession.self, from: data)
-        else { return false }
+        else {
+            Analytics.track("anonymous_session_failed", ["attempts": String(attempt)])
+            return false
+        }
+        // NOT a failure: the session landed and was then superseded (sign-in,
+        // sign-out, account switch). Reporting it as one would make the field
+        // numbers say the opposite of what happened.
         guard !Task.isCancelled, sessionEpoch == epoch else { return false }
         applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
+        anonymousAttempts = 0
         return true
     }
 
@@ -831,12 +851,36 @@ final class AuthStore: ObservableObject {
         // Launch can reach Auth before AppModel has loaded its metadata. Do
         // not confirm/clear recovery against an empty, not-yet-loaded library.
         guard onAdoptionStorageReady?() == true else { return }
+        // Read BEFORE the attempt. `retry` removes the Keychain envelope only
+        // on a verified receipt, so "there was one, and afterwards there is
+        // not" IS the adoption having landed — no extra state and no second
+        // source of truth to drift.
+        let before: AnonymousAdoptionRecovery.Pending? = try? recovery.pending()
         let token = Self.storedAccessToken() ?? ""
         let epoch = sessionEpoch
         await recovery.retry(destinationAccess: token, isCurrent: { [weak self] in
             self?.sessionEpoch == epoch && self?.isSignedIn == true
         })
+        guard let before else { return }
+        let after: AnonymousAdoptionRecovery.Pending? = try? recovery.pending()
+        let landed = (after == nil)
+        // GUIDELINE 5.1.1(v) COMPLIANCE MONITORING. An anonymous workspace that
+        // does NOT survive Sign in with Apple is the person losing the tour they
+        // already published, so the field needs to be able to say how often this
+        // lands. Only the operation's outcome travels — never a token, a user id
+        // or an org id. A handoff that is still waiting is reported once per
+        // operation per launch, so a foreground-refresh loop cannot spam it.
+        if landed {
+            Analytics.track("anonymous_adopt", ["ok": "true", "adopted": "true"])
+            reportedAdoptionFailures.remove(before.operationID)
+        } else if !reportedAdoptionFailures.contains(before.operationID) {
+            reportedAdoptionFailures.insert(before.operationID)
+            Analytics.track("anonymous_adopt", ["ok": "false", "adopted": "false"])
+        }
     }
+
+    /// Operations this launch has already reported an unfinished handoff for.
+    @MainActor private var reportedAdoptionFailures: Set<UUID> = []
 
     /// Drop a saved workspace handoff without a receipt: sign-out (explicit or
     /// forced), "Clear local data" and "Delete account" all end the session it

@@ -189,6 +189,26 @@ enum Config {
     // will actually succeed (DEPLOYMENT.md).
     static let enableAuth = true       // Sign in with Apple → Supabase; tokens in Keychain
     static let enableIAP  = true       // StoreKit 2 auto-renewable subscriptions (Purchases/) — read by nothing yet; documents the state
-    static let enablePush = false      // TODO: APNs render-ready / lead-received
+
+    /// APNs — "someone enquired about your tour" and "your render is ready".
+    ///
+    /// TRUE from 1.0.2. What this flag now means, precisely, because it is NOT
+    /// "the app asks for notifications":
+    ///
+    ///   • It un-hides Settings → Notifications and lets `PushManager` register
+    ///     with APNs and POST the token to `/me/devices`.
+    ///   • It does NOT prompt. The system permission is requested at exactly one
+    ///     moment — the first time a person publishes a tour successfully — and
+    ///     only after a plain-words pre-prompt sheet they can decline for free
+    ///     (`PushManager.noteTourPublished`). Nothing asks at launch, ever.
+    ///   • Everything it enables is written to survive the server not having the
+    ///     routes yet: a 404 from `/me/devices` or `/me/notifications` is "not
+    ///     deployed", not an error, and is never retried in the same launch.
+    ///
+    /// Set it back to false and the app returns exactly to its 1.0.1 behaviour:
+    /// no registration, no prompt, Notifications hidden (App Store 2.1 — a
+    /// reviewer must never meet a placeholder row).
+    static let enablePush = true
+
     static let showTutorials = false   // flip on once tutorial videos are filmed (no "coming soon" placeholders ship)
 }

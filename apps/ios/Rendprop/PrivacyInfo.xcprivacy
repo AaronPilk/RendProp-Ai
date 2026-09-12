@@ -161,11 +161,20 @@
         <string>NSPrivacyCollectedDataTypePurposeDeveloperAdvertising</string>
       </array>
     </dict>
-    <!-- Device ID: a UUID this app generates on first launch and keeps in its
-         own Keychain item, sent with every analytics batch so the funnel can
-         count PEOPLE instead of taps. It is NOT the IDFA (never requested, no
-         ATT prompt), NOT the IDFV, and not derivable from either; it is not
-         shared with anyone and never leaves our own backend. -->
+    <!-- Device ID. TWO things land under this type, and both stay on our own
+         backend:
+           (a) a UUID this app generates on first launch and keeps in its own
+               Keychain item, sent with every analytics batch so the funnel can
+               count PEOPLE instead of taps;
+           (b) from 1.0.2, the APNs device token (Push/PushManager.swift ->
+               POST /me/devices), which exists so the server can tell the agent
+               that somebody enquired about their tour or that a render
+               finished. Sent only after the person grants notification
+               permission, and only with the app version, locale and APNs
+               environment the server needs to address it.
+         Neither is the IDFA (never requested, no ATT prompt), neither is the
+         IDFV, and neither is derivable from either; neither is shared with
+         anyone. -->
     <dict>
       <key>NSPrivacyCollectedDataType</key>
       <string>NSPrivacyCollectedDataTypeDeviceID</string>

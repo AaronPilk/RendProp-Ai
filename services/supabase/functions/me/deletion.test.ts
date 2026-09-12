@@ -19,7 +19,18 @@ Deno.env.set("R2_ACCESS_KEY_ID", "synthetic-only-access");
 Deno.env.set("R2_SECRET_ACCESS_KEY", "synthetic-only-secret");
 let handler!: (req: Request) => Promise<Response>;
 const serve = Object.getOwnPropertyDescriptor(Deno, "serve")!;
-Object.defineProperty(Deno, "serve", { ...serve, value: (fn: typeof handler) => { handler = fn; return {}; } });
+// An explicit DATA descriptor, not `{...serve, value}`. `Deno.serve` is an
+// ACCESSOR property (get/set) in the pinned runtime, and spreading it carries
+// those keys along, so adding `value` makes the descriptor invalid and the whole
+// module fails to load with "Cannot both specify accessors and a value or
+// writable attribute" — before a single test runs. Same shape adopt/adopt.test.ts
+// already uses; the `finally` below still restores the original accessor.
+Object.defineProperty(Deno, "serve", {
+  configurable: serve.configurable,
+  enumerable: serve.enumerable,
+  writable: true,
+  value: (fn: typeof handler) => { handler = fn; return {}; },
+});
 try { await import("./index.ts"); } finally { Object.defineProperty(Deno, "serve", serve); }
 if (!handler) throw new Error("Actual /me handler was not captured");
 

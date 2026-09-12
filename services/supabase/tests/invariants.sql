@@ -2370,6 +2370,709 @@ begin
   delete from auth.users where id in (u5, u6, u7);
 end $tel$;
 
+-- ── MUTATING: 0048 brokerage — bulk seats, the ledger, overview, org audit ───
+--
+-- Appended AFTER the kept-red astra assertion so every existing assertion keeps
+-- its number (the kept-red one is #155 and run_database_regression.py names it
+-- by string, but the inventory is positional and a mid-file insert would move
+-- every later row).
+--
+-- Two workspaces, because the two halves ask different questions:
+--   oBrk   the brokerage being reported on. Three memberships are inserted
+--          DIRECTLY, not through the invite path: `team` is 2 seats (0044 §1)
+--          and there is no brokerage tier yet — the exact gap 0048's header
+--          declines to close inside a schema migration. The seat cap is enforced
+--          by the RPCs, not by a constraint, so a direct insert is the honest
+--          way to build a three-person team for a READ test.
+--   oSeat  the seat arithmetic, where every membership and invite arrives
+--          through the real functions so the numbers mean something.
+do $brk$
+declare
+  uOwn  uuid := '0f1e2d3c-4b5a-4968-8776-655443322121';
+  uAdm  uuid := '0f1e2d3c-4b5a-4968-8776-655443322122';
+  uAg   uuid := '0f1e2d3c-4b5a-4968-8776-655443322123';
+  uOut  uuid := '0f1e2d3c-4b5a-4968-8776-655443322124';
+  uSeat uuid := '0f1e2d3c-4b5a-4968-8776-655443322125';
+  uJoin uuid := '0f1e2d3c-4b5a-4968-8776-655443322126';
+  uLose uuid := '0f1e2d3c-4b5a-4968-8776-655443322127';
+  oBrk uuid; oOut uuid; oSeat uuid; oAdmOwn uuid;
+  v_listing uuid; v_asset uuid; v_prov uuid;
+  v_job render_jobs; v_render renders;
+  r jsonb; m jsonb; row_json jsonb;
+  code text; msg text; msg2 text; msg3 text; ok boolean;
+  used_before integer; used_after integer; invites_before bigint; invites_after bigint;
+  n bigint;
+begin
+  -- Defensive cleanup from an aborted earlier run.
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose));
+  delete from org_seat_events where user_id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose);
+  delete from auth.users where id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose);
+
+  insert into auth.users (id, email, raw_user_meta_data) values
+    (uOwn,  'inv-brk-owner@example.com',   '{"full_name":"Bea Broker"}'),
+    (uAdm,  'inv-brk-admin@example.com',   '{"full_name":"Ada Admin"}'),
+    (uAg,   'inv-brk-agent@example.com',   '{"full_name":"Gus Agent"}'),
+    (uOut,  'inv-brk-outside@example.com', '{"full_name":"Ozzy Outside"}'),
+    (uSeat, 'inv-brk-seat@example.com',    '{"full_name":"Sam Seat"}'),
+    (uJoin, 'inv-brk-join@example.com',    '{"full_name":"Jo Joiner"}'),
+    (uLose, 'inv-brk-lose@example.com',    '{"full_name":"Lee Loser"}');
+  select org_id into oBrk    from memberships where user_id = uOwn;
+  select org_id into oAdmOwn from memberships where user_id = uAdm;
+  select org_id into oOut    from memberships where user_id = uOut;
+  select org_id into oSeat   from memberships where user_id = uSeat;
+  update orgs set plan = 'team', plan_source = 'apple' where id in (oBrk, oOut, oSeat);
+
+  insert into memberships (user_id, org_id, role) values (uAdm, oBrk, 'admin'), (uAg, oBrk, 'agent');
+
+  -- ── (a) the ledger caught every seat the trigger could see ────────────────
+  select count(*) into n from org_seat_events
+   where org_id = oBrk and event = 'occupied' and not backfilled;
+  insert into _inv(name, pass, note)
+    values ('the seat ledger records every membership as it is created, not only invited ones',
+            n = 3, format('%s occupied rows for 3 memberships', n));
+
+  -- ── (b) the brokerage's work. The agent publishes; the owner and the admin
+  -- do not; an unrelated org publishes too and must never be counted here.
+  perform set_config('request.jwt.claims', json_build_object('sub', uAg, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oBrk, uAg, '9 Brokerage Row')
+    returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/brk.mp4', 1000, true, 30)
+    returning id into v_asset;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-brk-000001', 'app');
+  v_render := publish_render(v_job.id, 30, 2.0, '[]', null);
+  perform set_config('request.jwt.claims', '', true);
+
+  -- The AI-altered asset the compliance officer has to be able to find. It is
+  -- the AGENT's, and the assertions below read it as the OWNER and the ADMIN.
+  insert into media_provenance (org_id, listing_id, kind, label, model_id, edit, disclosure, altered_key)
+    values (oBrk, v_listing, 'photo_edit', 'Living room', 'inv-model', 'twilight',
+            provenance_disclosure('photo_edit', 'twilight'), 'renders/_inv/brk-altered.jpg')
+    returning id into v_prov;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', uOut, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oOut, uOut, '1 Somewhere Else')
+    returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/out.mp4', 1000, true, 30)
+    returning id into v_asset;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-brk-000002', 'app');
+  perform publish_render(v_job.id, 30, 2.0, '[]', null);
+  perform set_config('request.jwt.claims', '', true);
+
+  r := brokerage_overview(oBrk, uOwn, interval '30 days');
+  select x into m from jsonb_array_elements(r->'members') x where x->>'user_id' = uAg::text;
+  insert into _inv(name, pass, note)
+    values ('brokerage_overview credits the published tour to the listing''s agent and excludes another org''s',
+            m is not null
+              and (m->>'tours_published')::bigint = 1
+              and (m->>'ai_assets_published')::bigint = 1
+              and (m->>'published_nothing')::boolean = false
+              and (r->'totals'->>'tours_published')::bigint = 1
+              and (r->'totals'->>'ai_assets_published')::bigint = 1
+              and not exists (select 1 from jsonb_array_elements(r->'members') y
+                               where y->>'user_id' = uOut::text),
+            format('agent=%s totals=%s', m, r->'totals'));
+
+  insert into _inv(name, pass, note)
+    values ('brokerage_overview reports seats used/allowed/pending and who published nothing',
+            (r->'seats'->>'allowed')::integer = 2
+              and (r->'seats'->>'used')::integer = 3
+              and (r->'seats'->>'pending')::integer = 0
+              and (r->'totals'->>'members')::bigint = 3
+              and (r->'totals'->>'members_published_nothing')::bigint = 2
+              and (r->'totals'->>'members_published_nothing_ever')::bigint = 2,
+            format('seats=%s totals=%s', r->'seats', r->'totals'));
+
+  -- ── (c) the org-wide compliance record ────────────────────────────────────
+  r := compliance_audit(oBrk, uAdm, now() - interval '1 day', now() + interval '1 day');
+  select x into row_json from jsonb_array_elements(r->'rows') x where x->>'id' = v_prov::text;
+  insert into _inv(name, pass, note)
+    values ('compliance_audit hands an ADMIN another member''s AI asset with the agent named and the disclosure',
+            row_json is not null
+              and row_json->>'agent_id' = uAg::text
+              and row_json->>'agent_name' = 'Gus Agent'
+              and row_json->>'altered_key' = 'renders/_inv/brk-altered.jpg'
+              and row_json->>'disclosure' = provenance_disclosure('photo_edit', 'twilight')
+              and (r->>'truncated')::boolean = false,
+            coalesce(row_json::text, '(row missing) ' || (r->>'count')));
+
+  ok := false; msg := null;
+  begin
+    perform compliance_audit(oBrk, uAg, null, null);
+  exception when others then msg := sqlerrm; ok := msg like 'RP403%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('compliance_audit refuses a plain member of the same org', ok,
+            coalesce(msg, 'NO ERROR RAISED'));
+
+  -- ── (d) a plain member is refused by every new brokerage RPC ──────────────
+  msg := null; msg2 := null; msg3 := null;
+  begin perform create_org_invites_bulk(oBrk, uAg, array['inv-brk-nope@example.com'], 'agent');
+  exception when others then msg := sqlerrm; end;
+  begin perform brokerage_overview(oBrk, uAg, interval '30 days');
+  exception when others then msg2 := sqlerrm; end;
+  begin perform remove_org_member(oBrk, uAg, uAdm);
+  exception when others then msg3 := sqlerrm; end;
+  insert into _inv(name, pass, note)
+    values ('a non-owner is refused by create_org_invites_bulk, brokerage_overview and remove_org_member',
+            msg like 'RP403%' and msg2 like 'RP403%' and msg3 like 'RP403%',
+            format('bulk=%s overview=%s remove=%s', coalesce(msg, 'NO ERROR'),
+                   coalesce(msg2, 'NO ERROR'), coalesce(msg3, 'NO ERROR')));
+
+  -- ── (e) seat arithmetic, through the real functions only ──────────────────
+  -- oSeat is on `team` = 2 seats, and its owner already holds one.
+  r := create_org_invites_bulk(
+         oSeat, uSeat,
+         array['Inv-Brk-Join@Example.com', 'not an email', 'inv-brk-seat@example.com'], 'agent');
+  code := (select x->>'code' from jsonb_array_elements(r->'results') x where x->>'outcome' = 'issued');
+  insert into _inv(name, pass, note)
+    values ('a bulk invite with one valid and one invalid address issues exactly one and reports both',
+            (r->>'issued')::integer = 1
+              and (r->>'requested')::integer = 3
+              and jsonb_array_length(r->'results') = 3
+              and (r->'results'->0->>'outcome') = 'issued'
+              and (r->'results'->0->>'email') = 'inv-brk-join@example.com'
+              and (r->'results'->1->>'outcome') = 'invalid'
+              and (r->'results'->2->>'outcome') = 'already_a_member'
+              and code ~ '^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$'
+              and (r->'seats'->>'used')::integer = 2
+              and (r->'seats'->>'pending')::integer = 1,
+            r::text);
+
+  used_before := org_seats_used(oSeat);
+  select count(*) into invites_before from org_invites
+   where org_id = oSeat and accepted_at is null and revoked_at is null and expires_at > now();
+  ok := false; msg := null;
+  begin
+    perform create_org_invites_bulk(oSeat, uSeat,
+              array['inv-brk-x1@example.com', 'inv-brk-x2@example.com'], 'agent');
+  exception when others then msg := sqlerrm; ok := msg like 'RP402%';
+  end;
+  used_after := org_seats_used(oSeat);
+  select count(*) into invites_after from org_invites
+   where org_id = oSeat and accepted_at is null and revoked_at is null and expires_at > now();
+  insert into _inv(name, pass, note)
+    values ('a bulk invite that would exceed the plan''s seats issues NOTHING and moves no count',
+            ok and used_after = used_before and invites_after = invites_before
+              and not exists (select 1 from org_invites
+                               where org_id = oSeat and email like 'inv-brk-x%'),
+            format('%s | used %s→%s live invites %s→%s', coalesce(msg, 'NO ERROR RAISED'),
+                   used_before, used_after, invites_before, invites_after));
+
+  -- The code minted in SQL must be the same credential functions/team/codes.ts
+  -- mints: same alphabet, same length, same sha256-of-the-undashed-form.
+  r := accept_org_invite(uJoin, encode(sha256(convert_to(replace(code, '-', ''), 'UTF8')), 'hex'));
+  select count(*) into n from memberships where org_id = oSeat and user_id = uJoin;
+  insert into _inv(name, pass, note)
+    values ('a code minted by create_org_invites_bulk is accepted verbatim by accept_org_invite',
+            (r->>'ok')::boolean and r->>'org_id' = oSeat::text and r->>'role' = 'agent' and n = 1,
+            r::text);
+
+  -- Two people, one code, one seat: the serialised form of the F02 race 0033
+  -- closed. The loser is refused inside the same org lock and NO second
+  -- membership exists — which is the fact that actually grants access.
+  ok := false; msg := null;
+  begin
+    perform accept_org_invite(uLose, encode(sha256(convert_to(replace(code, '-', ''), 'UTF8')), 'hex'));
+  exception when others then msg := sqlerrm; ok := msg like 'RP404%';
+  end;
+  select count(*) into n from memberships where org_id = oSeat;
+  insert into _inv(name, pass, note)
+    values ('two members racing the last seat produce exactly one membership',
+            ok and n = 2
+              and exists (select 1 from memberships where org_id = oSeat and user_id = uJoin)
+              and not exists (select 1 from memberships where org_id = oSeat and user_id = uLose),
+            format('%s | memberships in oSeat=%s', coalesce(msg, 'NO ERROR RAISED'), n));
+
+  -- ── (f) the ledger outlives the member ────────────────────────────────────
+  r := remove_org_member(oBrk, uOwn, uAdm);
+  select count(*) into n from memberships where org_id = oBrk and user_id = uAdm;
+  insert into _inv(name, pass, note)
+    values ('the seat ledger still names a revoked member after removal, and who removed them',
+            n = 0
+              and exists (select 1 from org_seat_events e
+                           where e.org_id = oBrk and e.user_id = uAdm and e.event = 'released'
+                             and e.member_name = 'Ada Admin'
+                             and e.member_email = 'inv-brk-admin@example.com'
+                             and e.actor_id = uOwn),
+            coalesce((select jsonb_agg(to_jsonb(e) - 'id')::text from org_seat_events e
+                       where e.org_id = oBrk and e.user_id = uAdm), '(no ledger rows)'));
+
+  -- And it must survive the person deleting their account entirely: the profile
+  -- goes, `memberships` cascades with it, and a foreign key on user_id would
+  -- have taken the evidence too.
+  delete from orgs where id = oAdmOwn;
+  delete from auth.users where id = uAdm;
+  select count(*) into n from profiles where id = uAdm;
+  insert into _inv(name, pass, note)
+    values ('the seat ledger survives the member''s profile being deleted outright',
+            n = 0
+              and exists (select 1 from org_seat_events e
+                           where e.org_id = oBrk and e.user_id = uAdm
+                             and e.member_name = 'Ada Admin'),
+            format('profiles rows left=%s ledger rows=%s', n,
+                   (select count(*) from org_seat_events e
+                     where e.org_id = oBrk and e.user_id = uAdm)));
+
+  -- ── (g) the new surface is not client-reachable ───────────────────────────
+  insert into _inv(name, pass, note)
+    values ('the brokerage RPCs and the seat ledger are service-role only',
+            not exists (select 1 from unnest(array[
+                  'public.create_org_invites_bulk(uuid,uuid,text[],text)',
+                  'public.remove_org_member(uuid,uuid,uuid)',
+                  'public.brokerage_overview(uuid,uuid,interval)',
+                  'public.compliance_audit(uuid,uuid,timestamptz,timestamptz)',
+                  'public.mint_org_invite_code()',
+                  'public.record_org_seat_event(uuid,uuid,text,text,uuid)']) f
+                 where has_function_privilege('authenticated', f, 'EXECUTE')
+                    or has_function_privilege('anon', f, 'EXECUTE'))
+              -- The two INTERNAL helpers are out of even service_role's reach:
+              -- one mints a credential, the other forges a ledger row.
+              and not exists (select 1 from unnest(array[
+                  'public.mint_org_invite_code()',
+                  'public.record_org_seat_event(uuid,uuid,text,text,uuid)',
+                  'public.org_seat_event_log()']) f
+                 where has_function_privilege('service_role', f, 'EXECUTE'))
+              and (select bool_and(has_function_privilege('service_role', f, 'EXECUTE'))
+                     from unnest(array[
+                       'public.create_org_invites_bulk(uuid,uuid,text[],text)',
+                       'public.remove_org_member(uuid,uuid,uuid)',
+                       'public.brokerage_overview(uuid,uuid,interval)',
+                       'public.compliance_audit(uuid,uuid,timestamptz,timestamptz)']) f)
+              and not has_table_privilege('authenticated', 'public.org_seat_events', 'SELECT')
+              and not has_table_privilege('anon', 'public.org_seat_events', 'SELECT')
+              -- Append-only: nothing may rewrite or erase a ledger row.
+              and not has_table_privilege('service_role', 'public.org_seat_events', 'UPDATE')
+              and not has_table_privilege('service_role', 'public.org_seat_events', 'DELETE')
+              and (select relrowsecurity from pg_class
+                    where oid = 'public.org_seat_events'::regclass),
+            '');
+
+  -- Cleanup. Deleting the orgs takes their ledger rows with them (org_id
+  -- cascades); the rows for uAdm live under oBrk and go with it.
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uOwn, uAg, uOut, uSeat, uJoin, uLose));
+  delete from orgs where id in (oBrk, oOut, oSeat);
+  delete from org_seat_events where user_id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose);
+  delete from auth.users where id in (uOwn, uAg, uOut, uSeat, uJoin, uLose);
+end $brk$;
+
+-- ── 0047: lifecycle messaging (the outbox, the triggers, the tick) ───────────
+--
+-- MUTATING, and — uniquely in this file — it also runs a genuine SECOND AND
+-- THIRD DATABASE SESSION over dblink. That is not showing off: notification_
+-- claim_batch()'s whole promise is "FOR UPDATE SKIP LOCKED, so two concurrent
+-- drains cannot hand the same row to two providers", and SKIP LOCKED skips rows
+-- locked by OTHER transactions. A single-session test of it proves nothing at
+-- all. Everything this fixture has written up to that point is invisible outside
+-- its own transaction, so the rows the two claimers race for are created by the
+-- remote session too (see §(f)). `create extension if not exists dblink` is the
+-- one schema change this file makes; it is guarded, and if the extension is not
+-- available the assertion FAILS LOUDLY naming it rather than skipping quietly.
+
+do $notif$
+declare
+  uNO uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000001';  -- owner
+  uNA uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000002';  -- admin
+  uNM uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000003';  -- marketing (gets nothing)
+  uCL uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000004';  -- the dblink claim fixture
+  oNO uuid; oCL uuid;
+  v_listing uuid; v_asset uuid; v_job render_jobs; v_render renders;
+  v_lead uuid; v_lead2 uuid; v_row notification_outbox; v_id uuid;
+  r jsonb; ok boolean; msg text; n bigint; n2 bigint;
+  v_conn text; v_sock text;
+  ids_a uuid[]; ids_b uuid[]; mine uuid[]; overlap_ids uuid[];
+  i integer;
+begin
+  -- Defensive cleanup from an aborted earlier run (the dblink fixture below
+  -- COMMITS, so it can survive a failure of this block).
+  delete from notification_log where user_id in (uNO, uNA, uNM, uCL);
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uNO, uNA, uNM, uCL));
+  delete from auth.users where id in (uNO, uNA, uNM, uCL);
+
+  insert into auth.users (id, email, raw_user_meta_data) values
+    (uNO, 'inv-notify-owner@example.com',     '{"full_name":"Ned Owner"}'),
+    (uNA, 'inv-notify-admin@example.com',     '{"full_name":"Ana Admin"}'),
+    (uNM, 'inv-notify-marketing@example.com', '{"full_name":"Mo Marketing"}');
+  select org_id into oNO from memberships where user_id = uNO;
+  insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
+
+  -- ── (a) posture ───────────────────────────────────────────────────────────
+  -- The four tables hold push tokens, message queues and a delivery history
+  -- across every tenant. A single SELECT grant to `authenticated` would let one
+  -- signed-in customer enumerate another's device tokens.
+  insert into _inv(name, pass, note)
+    values ('the four notification tables are service-role only, with RLS on and no tenant grants',
+            not exists (select 1 from unnest(array[
+                  'public.notification_devices','public.notification_preferences',
+                  'public.notification_outbox','public.notification_log']) t
+                 cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']) p
+                 where has_table_privilege('authenticated', t, p)
+                    or has_table_privilege('anon', t, p))
+              and (select bool_and(c.relrowsecurity) from pg_class c
+                    where c.oid in ('public.notification_devices'::regclass,
+                                    'public.notification_preferences'::regclass,
+                                    'public.notification_outbox'::regclass,
+                                    'public.notification_log'::regclass))
+              -- The drain reads devices and the queue with the service role;
+              -- every WRITE still goes through an RPC.
+              and has_table_privilege('service_role', 'public.notification_devices', 'SELECT')
+              and not has_table_privilege('service_role', 'public.notification_devices', 'INSERT')
+              and not has_table_privilege('service_role', 'public.notification_outbox', 'INSERT'),
+            '');
+
+  insert into _inv(name, pass, note)
+    values ('every notification RPC is SECURITY DEFINER and service-role only',
+            not exists (select 1 from unnest(array[
+                  'public.notification_register_device(uuid,text,text,text,text,text)',
+                  'public.notification_set_preferences(uuid,jsonb)',
+                  'public.notification_preferences_for(uuid)',
+                  'public.notification_enqueue(uuid,uuid,text,jsonb,text,timestamptz)',
+                  'public.notification_claim_batch(integer)',
+                  'public.notification_mark(uuid,text,text,text)',
+                  'public.notification_sweep()',
+                  'public.notification_disable_device(text,text)',
+                  'public.notification_tick()']) f
+                 where has_function_privilege('authenticated', f, 'EXECUTE')
+                    or has_function_privilege('anon', f, 'EXECUTE'))
+              and (select bool_and(has_function_privilege('service_role', f, 'EXECUTE'))
+                     from unnest(array[
+                       'public.notification_register_device(uuid,text,text,text,text,text)',
+                       'public.notification_set_preferences(uuid,jsonb)',
+                       'public.notification_enqueue(uuid,uuid,text,jsonb,text,timestamptz)',
+                       'public.notification_claim_batch(integer)',
+                       'public.notification_mark(uuid,text,text,text)',
+                       'public.notification_sweep()',
+                       'public.notification_tick()']) f)
+              and (select bool_and(p.prosecdef) from pg_proc p
+                    where p.pronamespace = 'public'::regnamespace
+                      and p.proname like 'notification\_%'),
+            '');
+
+  -- notification_log is the PERMANENT record. 0022 schedules purge_app_events()
+  -- and nothing else; if anything ever starts deleting from this table, the
+  -- "did we tell this customer" question loses its answer.
+  insert into _inv(name, pass, note)
+    values ('nothing in the database deletes from notification_log',
+            not exists (select 1 from pg_proc p
+                         where p.pronamespace = 'public'::regnamespace
+                           and p.prosrc ~* 'delete\s+from\s+(public\.)?notification_log'),
+            coalesce((select string_agg(p.proname, ', ') from pg_proc p
+                       where p.pronamespace = 'public'::regnamespace
+                         and p.prosrc ~* 'delete\s+from\s+(public\.)?notification_log'), 'none'));
+
+  -- ── (b) the lead trigger — the message that saves the subscription ────────
+  perform set_config('request.jwt.claims', json_build_object('sub', uNO, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oNO, uNO, '412 Marina Blvd')
+    returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/notify.mp4', 1000, true, 30)
+    returning id into v_asset;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-notify-000001', 'app');
+  v_render := publish_render(v_job.id, 30, 2.0, '[]', null);
+  perform set_config('request.jwt.claims', '', true);
+
+  insert into leads (render_id, listing_id, org_id, name, phone)
+    values (v_render.id, v_listing, oNO, 'Nina Patel', '+14155550142')
+    returning id into v_lead;
+
+  select count(*) into n from notification_outbox
+   where category = 'lead_received' and dedupe_key like 'lead_received:' || v_lead::text || ':%';
+  insert into _inv(name, pass, note)
+    values ('a lead insert queues exactly one message for the owner and the admin, and none for a marketing seat',
+            n = 2
+              and exists (select 1 from notification_outbox o where o.user_id = uNO
+                           and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text)
+              and exists (select 1 from notification_outbox o where o.user_id = uNA
+                           and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNA::text)
+              and not exists (select 1 from notification_outbox o where o.user_id = uNM),
+            format('%s rows; marketing rows=%s', n,
+                   (select count(*) from notification_outbox o where o.user_id = uNM)));
+
+  select * into v_row from notification_outbox
+   where dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text;
+  insert into _inv(name, pass, note)
+    values ('the lead message carries the buyer''s name and the listing, which is what makes it worth sending',
+            v_row.payload -> 'data' ->> 'lead_name' = 'Nina Patel'
+              and v_row.payload -> 'data' ->> 'listing_address' = '412 Marina Blvd'
+              and v_row.payload ->> 'deep_link' = '/f/' || v_render.slug
+              and v_row.channel = 'email'   -- no device registered yet
+              and v_row.state = 'queued',
+            v_row.payload::text);
+
+  -- The publish that happened above queued its own message, once per render.
+  select count(*) into n from notification_outbox
+   where category = 'render_ready' and dedupe_key like 'render_ready:' || v_render.id::text || ':%';
+  perform set_config('request.jwt.claims', json_build_object('sub', uNO, 'role', 'authenticated')::text, true);
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-notify-000002', 'app');
+  perform publish_render(v_job.id, 30, 2.0, '[]', null);   -- a SECOND, different render
+  perform set_config('request.jwt.claims', '', true);
+  select count(*) into n2 from notification_outbox
+   where category = 'render_ready' and dedupe_key like 'render_ready:' || v_render.id::text || ':%';
+  insert into _inv(name, pass, note)
+    values ('a publish queues render_ready for the owner and the admin, keyed so that render can never be announced twice',
+            n = 2 and n2 = 2,
+            format('first render: %s rows, still %s after another publish', n, n2));
+
+  -- ── (c) the dedupe key is the invariant, not a convention ────────────────
+  r := notification_enqueue(oNO, uNO, 'lead_received', '{}'::jsonb,
+        'lead_received:' || v_lead::text || ':' || uNO::text, null);
+  select count(*) into n2 from notification_outbox
+   where dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text;
+  insert into _inv(name, pass, note)
+    values ('dedupe_key refuses the same event a second time and writes no row',
+            r->>'state' = 'duplicate' and n2 = 1 and (r->>'id')::uuid = v_row.id,
+            r::text || ' rows=' || n2::text);
+
+  -- ── (d) a person can turn any category off, and mute all of them ─────────
+  perform notification_set_preferences(uNO, '{"lead_received": false}'::jsonb);
+  select count(*) into n from notification_outbox;
+  r := notification_enqueue(oNO, uNO, 'lead_received', '{}'::jsonb, '_inv-NOTIF-off', null);
+  select count(*) into n2 from notification_outbox;
+  insert into _inv(name, pass, note)
+    values ('a category switched off makes notification_enqueue return skipped and write no row',
+            r->>'state' = 'skipped' and r->>'reason' = 'category_off' and n2 = n
+              and not exists (select 1 from notification_outbox where dedupe_key = '_inv-NOTIF-off'),
+            r::text);
+
+  -- …and the switch is per category: the others still go through.
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-still-on', null);
+  insert into _inv(name, pass, note)
+    values ('switching one category off leaves the other five on',
+            r->>'state' = 'queued', r::text);
+
+  perform notification_set_preferences(uNA,
+    jsonb_build_object('muted_until', (now() + interval '2 hours')::text));
+  r := notification_enqueue(oNO, uNA, 'lead_received', '{}'::jsonb, '_inv-NOTIF-muted', null);
+  insert into _inv(name, pass, note)
+    values ('muted_until silences every category, the transactional ones included',
+            r->>'state' = 'skipped' and r->>'reason' = 'muted'
+              and not exists (select 1 from notification_outbox where dedupe_key = '_inv-NOTIF-muted'),
+            r::text);
+  perform notification_set_preferences(uNA, '{"muted_until": null}'::jsonb);
+  perform notification_set_preferences(uNO, '{"lead_received": true}'::jsonb);
+
+  -- ── (e) claim → mark → the permanent log, and the retry policy ───────────
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-send', null);
+  v_id := (r->>'id')::uuid;
+  select count(*) into n from notification_log;
+  perform notification_mark(v_id, 'sent', null, 'apns-inv-1');
+  select * into v_row from notification_outbox where id = v_id;
+  select count(*) into n2 from notification_log;
+  insert into _inv(name, pass, note)
+    values ('notification_mark writes the permanent, content-free notification_log row only for a delivered message',
+            v_row.state = 'sent' and v_row.sent_at is not null and n2 = n + 1
+              and exists (select 1 from notification_log g
+                           where g.user_id = uNO and g.provider_message_id = 'apns-inv-1'
+                             and g.category = 'render_ready' and g.channel = 'email'),
+            format('state=%s log %s -> %s', v_row.state, n, n2));
+
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-retry', null);
+  v_id := (r->>'id')::uuid;
+  update notification_outbox set attempts = 1, state = 'sending', claimed_at = now() where id = v_id;
+  select * into v_row from notification_mark(v_id, 'failed', 'provider 503', null);
+  ok := v_row.state = 'queued' and v_row.scheduled_for > now() and v_row.last_error = 'provider 503';
+  update notification_outbox set attempts = 5, state = 'sending', claimed_at = now() where id = v_id;
+  select * into v_row from notification_mark(v_id, 'failed', 'provider 503 again', null);
+  insert into _inv(name, pass, note)
+    values ('a failed send is retried with a backoff while attempts remain, and only then sticks as failed',
+            ok and v_row.state = 'failed',
+            format('first=%s final=%s', ok, v_row.state));
+
+  -- The sweep is the janitor no drain can be: a drain that died holding a row
+  -- is the one thing nothing else would ever move.
+  update notification_outbox
+     set state = 'sending', claimed_at = now() - interval '30 minutes', last_error = null
+   where id = v_id;
+  r := notification_sweep();
+  select * into v_row from notification_outbox where id = v_id;
+  insert into _inv(name, pass, note)
+    values ('notification_sweep returns a sending row stuck over 10 minutes to queued',
+            v_row.state = 'queued' and v_row.claimed_at is null
+              and (r->>'reclaimed')::bigint >= 1,
+            format('%s / %s', v_row.state, r));
+
+  update notification_outbox
+     set state = 'queued', scheduled_for = now() - interval '96 hours' where id = v_id;
+  r := notification_sweep();
+  select * into v_row from notification_outbox where id = v_id;
+  insert into _inv(name, pass, note)
+    values ('notification_sweep expires a queued row that is long past its usefulness',
+            v_row.state = 'expired' and (r->>'expired')::bigint >= 1,
+            format('%s / %s', v_row.state, r));
+
+  -- A token APNs rejected is retired, and the channel choice follows: with no
+  -- live device the next message goes to e-mail instead of nowhere.
+  perform notification_register_device(uNO, 'AABBCCDD00112233445566778899AABB', null, 'sandbox', 'en-US', '1.0.1');
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-push', null);
+  ok := r->>'channel' = 'push';
+  select notification_disable_device('AABBCCDD00112233445566778899AABB', '410 Unregistered') into n;
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-push2', null);
+  insert into _inv(name, pass, note)
+    values ('a registered device makes the channel push, and a token APNs rejected is retired rather than retried',
+            ok and n = 1 and r->>'channel' = 'email'
+              and exists (select 1 from notification_devices d
+                           where d.user_id = uNO and d.disabled_at is not null
+                             and d.disabled_reason = '410 Unregistered'),
+            format('push_first=%s disabled=%s then=%s', ok, n, r->>'channel'));
+
+  -- ── (f) TWO CONCURRENT CONNECTIONS ───────────────────────────────────────
+  -- See this section's header for why this has to leave the current session.
+  ok := true; msg := null;
+  begin
+    execute 'create extension if not exists dblink';
+  exception when others then
+    ok := false;
+    msg := 'dblink is not available on this server (' || sqlstate || ' — ' || sqlerrm
+        || '); the two-connection claim test could not run';
+  end;
+
+  if ok then
+    v_sock := btrim(split_part(current_setting('unix_socket_directories'), ',', 1));
+    v_conn := 'dbname=' || current_database()
+           || ' port=' || current_setting('port')
+           || ' user=' || current_user;
+    if v_sock <> '' then v_conn := v_conn || ' host=' || v_sock; end if;
+
+    begin
+      perform dblink_connect('inv_claim_a', v_conn);
+      perform dblink_connect('inv_claim_b', v_conn);
+
+      -- A COMMITTED workspace of its own: a second session cannot see a row
+      -- this transaction has not committed, which is the whole difficulty.
+      perform dblink_exec('inv_claim_a', format(
+        'delete from public.orgs where id in (select org_id from public.memberships where user_id = %L)', uCL));
+      perform dblink_exec('inv_claim_a', format('delete from auth.users where id = %L', uCL));
+      perform dblink_exec('inv_claim_a', format(
+        'insert into auth.users (id, email, raw_user_meta_data) values (%L, %L, %L)',
+        uCL, 'inv-notify-claim@example.com', '{"full_name":"Claim Fixture"}'));
+      select t.org_id into oCL from dblink('inv_claim_a',
+        format('select org_id from public.memberships where user_id = %L', uCL)) as t(org_id uuid);
+
+      for i in 1..4 loop
+        perform 1 from dblink('inv_claim_a', format(
+          'select public.notification_enqueue(%L::uuid, %L::uuid, ''render_ready'', ''{}''::jsonb, %L, null)::text',
+          oCL, uCL, '_inv-CL-' || i::text)) as t(x text);
+      end loop;
+
+      -- Claimer A opens a transaction and takes two rows, HOLDING their locks.
+      perform dblink_exec('inv_claim_a', 'begin');
+      select array_agg(t.id) into ids_a from dblink('inv_claim_a',
+        'select id from public.notification_claim_batch(2)') as t(id uuid);
+      -- Claimer B, a different session, asks for everything. FOR UPDATE SKIP
+      -- LOCKED is the only reason it does not block on, or steal, A's two.
+      select array_agg(t.id) into ids_b from dblink('inv_claim_b',
+        'select id from public.notification_claim_batch(10)') as t(id uuid);
+      perform dblink_exec('inv_claim_a', 'commit');
+      perform dblink_disconnect('inv_claim_a');
+      perform dblink_disconnect('inv_claim_b');
+    exception when others then
+      ok := false;
+      msg := 'the two-connection claim test failed to run (' || sqlstate || ' — ' || sqlerrm || ')';
+      begin perform dblink_disconnect('inv_claim_a'); exception when others then null; end;
+      begin perform dblink_disconnect('inv_claim_b'); exception when others then null; end;
+    end;
+  end if;
+
+  if ok then
+    select array_agg(o.id) into mine from notification_outbox o where o.dedupe_key like '\_inv-CL-%';
+    select array_agg(x) into overlap_ids
+      from unnest(coalesce(ids_a, '{}')) x where x = any(coalesce(ids_b, '{}'));
+    select count(*) into n from notification_outbox o
+     where o.dedupe_key like '\_inv-CL-%' and o.state = 'sending' and o.attempts = 1;
+    insert into _inv(name, pass, note)
+      values ('notification_claim_batch under two concurrent connections hands each row to exactly one claimer',
+              coalesce(array_length(mine, 1), 0) = 4
+                and coalesce(array_length(ids_a, 1), 0) = 2
+                and coalesce(array_length(overlap_ids, 1), 0) = 0
+                and (select count(*) from unnest(mine) m
+                      where m = any(coalesce(ids_a, '{}')) or m = any(coalesce(ids_b, '{}'))) = 4
+                and n = 4,
+              format('A=%s B=%s overlap=%s claimed_once=%s',
+                     coalesce(array_length(ids_a, 1), 0), coalesce(array_length(ids_b, 1), 0),
+                     coalesce(array_length(overlap_ids, 1), 0), n));
+  else
+    insert into _inv(name, pass, note)
+      values ('notification_claim_batch under two concurrent connections hands each row to exactly one claimer',
+              false, coalesce(msg, 'the two-connection claim test did not run'));
+  end if;
+
+  -- ── (g) the scheduled tick, twice ────────────────────────────────────────
+  -- Its whole safety story is that a re-run — a cron catch-up, a hand call, two
+  -- schedulers briefly overlapping — cannot send a second copy of anything.
+  update orgs set plan = 'trial', plan_source = 'trial',
+                  trial_ends_at = date_trunc('second', now()) + interval '20 hours'
+   where id = oNO;
+  r := notification_tick();
+  select count(*) into n from notification_outbox
+   where category = 'free_week_ending' and org_id = oNO;
+  ok := (r->>'free_week_ending')::int >= 1;
+  r := notification_tick();
+  select count(*) into n2 from notification_outbox
+   where category = 'free_week_ending' and org_id = oNO;
+  insert into _inv(name, pass, note)
+    values ('the trial-ending tick queues one message per owner/admin and a second run queues none',
+            ok and n = 2 and n2 = 2 and (r->>'free_week_ending')::int = 0,
+            format('first run queued %s rows, second run added %s (tick said %s)',
+                   n, n2 - n, r->>'free_week_ending'));
+
+  -- The other three scheduled categories, on the same org, with the same rule.
+  insert into rate_limits (key, window_start, count, window_seconds)
+    values ('aiphotomo:' || oNO::text, now(), 9999, 2592000)
+    on conflict (key) do update set count = excluded.count, window_start = excluded.window_start;
+  -- The nudge is for a workspace that has NEVER published, and this one did in
+  -- §(b). Clearing 0046's activation stamp is what makes it eligible — the same
+  -- state a real 48-hour-old workspace with nothing in it is in.
+  update orgs set created_at = now() - interval '60 hours', first_tour_published_at = null
+   where id = oNO;
+  insert into upload_reservations (asset_id, org_id, listing_id, actor_id, day, spec, held_bytes, expires_at)
+    values (gen_random_uuid(), oNO, v_listing, uNO, current_date, '{}'::jsonb, 0, now() - interval '2 hours');
+  r := notification_tick();
+  select count(*) into n from notification_outbox where org_id = oNO
+     and category in ('allowance_low','first_tour_nudge','upload_stuck');
+  r := notification_tick();
+  select count(*) into n2 from notification_outbox where org_id = oNO
+     and category in ('allowance_low','first_tour_nudge','upload_stuck');
+  insert into _inv(name, pass, note)
+    values ('allowance_low, first_tour_nudge and upload_stuck each queue once and are not re-sent on the next tick',
+            -- 5: allowance_low and first_tour_nudge go to both the owner and the
+            -- admin; upload_stuck goes only to the person who started the upload.
+            n = 5 and n2 = n
+              and exists (select 1 from notification_outbox where org_id = oNO and category = 'allowance_low'
+                           and payload -> 'data' ->> 'feature' = 'photo_edits'
+                           and (payload -> 'data' ->> 'used')::int = (payload -> 'data' ->> 'cap')::int)
+              and exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
+              and exists (select 1 from notification_outbox where org_id = oNO and category = 'upload_stuck'),
+            format('%s rows after the first tick, %s after the second', n, n2));
+
+  -- An unknown category is a programming error and IS raised; a refusal a
+  -- person chose is not. The two must never be confused, or a lead insert can
+  -- be rolled back by somebody's settings.
+  ok := false; msg := null;
+  begin
+    r := notification_enqueue(oNO, uNO, 'marketing_blast', '{}'::jsonb, '_inv-NOTIF-bad', null);
+  exception when others then msg := sqlerrm; ok := msg like 'RP400%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('notification_enqueue raises only for a programming error, never for a refusal a person chose',
+            ok, coalesce(msg, 'NO ERROR RAISED'));
+
+  -- Cleanup. Deleting the orgs takes their outbox rows with them (user_id and
+  -- org_id both cascade); notification_log is ON DELETE SET NULL by design, so
+  -- its rows are removed by hand here rather than left as null-keyed history in
+  -- a disposable audit database.
+  delete from notification_log where user_id in (uNO, uNA, uNM, uCL);
+  delete from rate_limits where key = 'aiphotomo:' || oNO::text;
+  delete from upload_reservations where org_id in (oNO, oCL);
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uNO, uNA, uNM, uCL));
+  delete from orgs where id in (oNO, oCL);
+  delete from auth.users where id in (uNO, uNA, uNM, uCL);
+end $notif$;
+
 drop table if exists _inv_tasks;
 
 select seq, name, pass, note from _inv order by seq;

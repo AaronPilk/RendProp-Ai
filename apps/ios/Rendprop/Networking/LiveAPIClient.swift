@@ -1530,8 +1530,25 @@ final class LiveAPIClient: APIClient {
         put("sqft", l.sqft, when: l.sqft > 0)
         let tagline = l.tagline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         put("tagline", tagline, when: !tagline.isEmpty)
-        if let d = l.details, !d.isEmpty {
-            b["details"] = d
+        // `details` is the freeform jsonb bag `listings` accepts whole (it only
+        // checks that it is an object under the size cap) and the tour host
+        // reads its per-listing prefs out of. The search-engine answer rides in
+        // it under `allow_indexing` — the first key `allowsIndexing()` looks
+        // for, read from the LISTING's bag before the org brand kit, so the
+        // answer given for this tour wins (services/edge/tour-host/src/player.ts).
+        //
+        // Written as the string "true"/"false" because this bag is typed
+        // [String: String] end to end; `prefFlag` parses both spellings. "false"
+        // is sent EXPLICITLY rather than omitted, so a workspace-level opt-in
+        // can never quietly index a page whose owner said no. A server that
+        // does nothing with the key stores it harmlessly — publishing is
+        // unaffected either way.
+        var details = l.details ?? [:]
+        if let allow = l.allowSearchIndexing {
+            details[Listing.searchIndexingKey] = allow ? "true" : "false"
+        }
+        if !details.isEmpty {
+            b["details"] = details
         } else if forPatch {
             b["details"] = [String: String]()   // column is NOT NULL default '{}'
         }

@@ -46,6 +46,46 @@ private final class FeatureSessionAction: ObservableObject {
     }
 }
 
+/// The workspace's remembered answer to "List this tour on Google".
+///
+/// WHY A REMEMBERED DEFAULT AT ALL. The hosted page is `noindex, nofollow`
+/// until its owner opts in, and that is right: it carries their name, phone,
+/// e-mail and a street address. But an agent who wants their listings findable
+/// wants ALL of them findable, and making them answer the same question on
+/// every tour is how a good default becomes a chore people click through.
+///
+/// So: OFF for a workspace that has never answered, then whatever they last
+/// chose. Per WORKSPACE, not per install — a phone that signs into a different
+/// account starts at OFF again rather than inheriting a stranger's answer,
+/// which is the only direction it is safe to be wrong in. It is a local
+/// convenience, never the published state: what the page does is decided by the
+/// listing's own `allowSearchIndexing`, which is what actually gets sent.
+enum SearchIndexingDefault {
+    private static let valueKey = "tour.searchIndexing.default"
+    private static let ownerKey = "tour.searchIndexing.defaultOwner"
+
+    /// The current workspace's identity, as far as this device can tell.
+    /// Empty before any session exists — which reads as "not the workspace
+    /// that saved a default", i.e. OFF.
+    @MainActor private static var owner: String {
+        AuthStore.shared.userID ?? ""
+    }
+
+    @MainActor static var value: Bool {
+        let defaults = UserDefaults.standard
+        guard let saved = defaults.string(forKey: ownerKey), !saved.isEmpty, saved == owner else {
+            return false
+        }
+        return defaults.bool(forKey: valueKey)
+    }
+
+    @MainActor static func remember(_ allowed: Bool) {
+        let defaults = UserDefaults.standard
+        defaults.set(allowed, forKey: valueKey)
+        defaults.set(owner, forKey: ownerKey)
+    }
+}
+
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
@@ -85,6 +125,10 @@ struct FlythroughDetailView: View {
     @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
+    /// "List this tour on Google". Seeded in `onAppear` from this listing's own
+    /// answer, or from the workspace default when it has never been asked.
+    @State private var listOnGoogle = false
+    @State private var listOnGoogleSeeded = false
 
     // MARK: Compliance (W2-C2) — the org's AI provenance rows for THIS listing
     @State private var provenance: [ProvenanceRecord] = []
@@ -292,6 +336,7 @@ struct FlythroughDetailView: View {
                 } else {
                     nextStepCard
                 }
+                searchIndexingCard
                 complianceSection
                 toolboxSection
                 filesSection
@@ -318,6 +363,13 @@ struct FlythroughDetailView: View {
             if !zillowSeeded {
                 zillowText = currentListing.zillowURL ?? ""
                 zillowSeeded = true
+            }
+            // Same once-only rule: this listing's own answer if it has one,
+            // otherwise the workspace default (which is OFF until somebody
+            // says otherwise).
+            if !listOnGoogleSeeded {
+                listOnGoogle = currentListing.allowSearchIndexing ?? SearchIndexingDefault.value
+                listOnGoogleSeeded = true
             }
             geocodeIfNeeded()
             // Still called on every appearance — coming back from AI Photo
@@ -575,6 +627,70 @@ struct FlythroughDetailView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    // MARK: - "List this tour on Google"
+    //
+    // THE DEFECT this fixes. A hosted tour is `noindex, nofollow` until its
+    // owner opts that listing in, and that default is correct — the page
+    // carries their name, phone, e-mail and a street address, and putting that
+    // in a permanent public index is their call, not ours. But the opt-in
+    // existed ONLY as a key inside the listing's freeform `details` bag, which
+    // no screen has ever written and no agent could ever find. The structured
+    // data the tour host emits is gated on the same flag, so it did nothing for
+    // anybody either.
+    //
+    // So the question gets asked, once, in plain words, where the decision
+    // actually happens: on the publish/share screen, next to the button that
+    // makes the page public. Default OFF. "Not now" costs nothing: the link
+    // works identically either way — the only thing this changes is whether a
+    // stranger can arrive at it through a search box.
+
+    @ViewBuilder private var searchIndexingCard: some View {
+        if !currentListing.isSample, tour != nil || shareURL != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SEARCH").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Toggle(isOn: Binding(get: { listOnGoogle },
+                                     set: { setListOnGoogle($0) })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("List this tour on Google")
+                            .font(.rpBody.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                        Text("Turning this on lets Google show this page, which makes the address and your \(space.profileCardName.lowercased()) — your name, phone and email — findable by anyone searching. Your leads, your files and your other tours stay private either way, and your link keeps working whether it's on or off.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .tint(Theme.accent)
+                .accessibilityIdentifier("listing.listOnGoogle")
+                Text(shareURL == nil
+                     ? "Off unless you turn it on. We'll remember your answer as the default for your next tour."
+                     : "Changing this updates your live page. We'll remember your answer as the default for your next tour.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    /// The answer, written three places: this screen's state, the listing (which
+    /// is what actually reaches the server), and the workspace default for the
+    /// next tour. A live page is PATCHed straight away rather than waiting for
+    /// the next publish — the page is already out there.
+    private func setListOnGoogle(_ allowed: Bool) {
+        listOnGoogle = allowed
+        SearchIndexingDefault.remember(allowed)
+        guard !currentListing.isSample else { return }
+        model.setSearchIndexing(allowed, for: listing.id)
+        Haptics.selection()
+        if currentListing.serverID != nil {
+            // Never throws, never blocks the UI: a failure leaves the listing
+            // dirty and the next sync carries it.
+            Task { await model.syncListing(listing.id) }
+        }
     }
 
     /// The honest next step for a listing that has no share link yet — a real
@@ -1573,6 +1689,11 @@ struct FlythroughDetailView: View {
 
     private func publishWithSession() {
         guard !isPublishing, tour != nil, !currentListing.isSample else { return }
+        // The toggle above the button is the answer whether or not it was
+        // touched: it is drawn at the workspace's own default, so publishing
+        // without touching it has to mean what it says on screen. A no-op when
+        // the listing already carries this answer.
+        model.setSearchIndexing(listOnGoogle, for: listing.id)
         isPublishing = true
         publishFailure = nil
         Haptics.selection()

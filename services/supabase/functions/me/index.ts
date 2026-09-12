@@ -3,11 +3,20 @@
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
 //                                    plan_source, plan_expires_at, apple_product_id,
 //                                    usage: { month, by_feature, windows, renders, leads, leads_new, listings, cost_cents },
-//                                    portfolio_url }
+//                                    notifications, portfolio_url }
 //                                  plan = EFFECTIVE plan (an expired trial reads `free`),
 //                                  entitlement = the plan_entitlements row the server enforces,
 //                                  usage.by_feature = this window's consumption per meter
-//                                  (audit F-supabase-16 / F-E-15; decision B4).
+//                                  (audit F-supabase-16 / F-E-15; decision B4),
+//                                  notifications = the EFFECTIVE notification switches, so the
+//                                  settings screen renders without a second call (0047)
+//   POST   /me/devices          -> { ok, device: { id, environment, bundle_id, last_seen_at } }
+//                                  { device_token, environment?, bundle_id?, locale?, app_version? }
+//                                  Registers this phone's APNs token for the CALLER (0047).
+//   PATCH  /me/notifications    -> { ok, notifications }
+//                                  any of { lead_received, render_ready, upload_stuck,
+//                                  free_week_ending, allowance_low, first_tour_nudge } as
+//                                  booleans, plus { muted_until: ISO-8601 | null }
 //   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle, space_type }, portfolio_url }
 //                                  brand-kit fields + `handle` (public portfolio slug,
 //                                  unique → 409) + `org_name` (business name; never an email)
@@ -15,10 +24,15 @@
 //                                  the app knows; 400 otherwise — 0044 reads it for the
 //                                  industry-aware trial)
 //   GET    /me/compliance       -> { org_id, from, to, count, truncated, rows[] }
-//                                  ?from=&to=&listing_id=&limit=&format=csv
+//                                  ?from=&to=&listing_id=&limit=&format=csv&scope=
 //                                  The BROKER-EXPORTABLE AI audit log: every
 //                                  media_provenance row for the workspace (see
 //                                  §"Compliance export" below).
+//                                  scope=org (owner/admin only) adds the AGENT
+//                                  to every row via compliance_audit() — the
+//                                  same evidence, attributed, for a compliance
+//                                  officer who has to answer for the whole
+//                                  brokerage. Default scope is unchanged.
 //   PATCH  /me/compliance/:id   -> { ok, provenance }
 //                                  { original_asset_id?, altered_asset_id?, label? }
 //                                  Attaches the untouched original and/or the
@@ -133,10 +147,14 @@ Deno.serve(async (req) => {
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
       if (seg[0] === "brand") return await handleBrandPatch(req, user.id);
-      throw new HttpError(404, "Unknown route — PATCH /me/brand or PATCH /me/compliance/:id");
+      if (seg[0] === "notifications") return await handleNotificationsPatch(req, user.id);
+      throw new HttpError(404, "Unknown route — PATCH /me/brand, /me/notifications or /me/compliance/:id");
     }
     if (req.method === "POST" && seg[0] === "apple-code") {
       return await handleAppleCode(req, user.id);
+    }
+    if (req.method === "POST" && seg[0] === "devices") {
+      return await handleDeviceRegister(req, user.id);
     }
     if (req.method === "POST" && seg[0] === "entitlement") {
       return await handleEntitlement(req, user.id);
@@ -145,7 +163,7 @@ Deno.serve(async (req) => {
 
     throw new HttpError(
       405,
-      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/entitlement, and DELETE are supported",
+      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/notifications, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/devices, POST /me/entitlement, and DELETE are supported",
     );
   } catch (err) {
     return respondError(err);
@@ -183,8 +201,18 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const month = monthStart.slice(0, 7); // YYYY-MM
   const meterKeys = Object.values(METERS).map((k) => `${k}:${orgId}`);
 
-  const [profileRes, orgRes, ledgerRes, leadsRes, leadsNewRes, listingsRes, jobsRes, metersRes, entitlement] =
-    await Promise.all([
+  const [
+    profileRes,
+    orgRes,
+    ledgerRes,
+    leadsRes,
+    leadsNewRes,
+    listingsRes,
+    jobsRes,
+    metersRes,
+    prefsRes,
+    entitlement,
+  ] = await Promise.all([
       db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
       db.from("orgs").select(
         "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
@@ -203,6 +231,11 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
         .gte("created_at", monthStart),
       // rate_limits is service-role only (0004): read the org's meters here.
       admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
+      // notification_preferences is service-role only too (0047). The RPC —
+      // not a table read — because it answers the EFFECTIVE switches: a person
+      // who has never opened the settings screen has NO ROW, and every category
+      // is on. The app must render the same answer the enqueuer acts on.
+      admin.rpc("notification_preferences_for", { p_user: userId }),
       entitlementFor(orgId),
     ]);
 
@@ -277,8 +310,142 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       listings: listingsRes.count ?? 0,
       cost_cents: costCents,        // internal provider COGS this month (legacy field)
     },
+    // 0047. Additive: a build older than this migration ignores the key.
+    notifications: shapePreferences(prefsRes.data),
     portfolio_url: portfolioUrl,
   });
+}
+
+// ── Notification settings (migration 0047) ────────────────────────────────────
+//
+// The app's Settings → Notifications screen is six switches and a mute. It
+// renders from GET /me (no second call) and writes through PATCH
+// /me/notifications; the phone's APNs token arrives at POST /me/devices.
+//
+// BOTH WRITES GO THROUGH A SECURITY DEFINER RPC WITH THE SERVICE ROLE, with
+// p_user resolved from the caller's own verified JWT — never from the body.
+// notification_devices and notification_preferences carry no tenant grant at
+// all (0047 §5: RLS on, no policies), precisely so one signed-in tenant can
+// never enumerate or re-point another tenant's push tokens.
+//
+// Neither route calls assertNotDeleting(). That guard exists because a write
+// slipping in during DELETE /me could create an R2 object that is not in the
+// tombstone and survives as an orphan. Both rows here are
+// `references profiles(id) on delete cascade`, so they cannot outlive the
+// account under any ordering — there is nothing for them to orphan.
+
+/**
+ * The six switches + the mute, in the shape the app renders.
+ *
+ * Tolerant on purpose: an absent row, an absent key, or a single-element array
+ * (PostgREST's shape for some composite returns) all resolve to the SAME answer
+ * the enqueuer gives — every category on unless it was explicitly switched off.
+ * A settings screen that disagrees with the queue is worse than no screen.
+ */
+function shapePreferences(row: unknown): Record<string, unknown> {
+  const unwrapped = Array.isArray(row) ? row[0] : row;
+  const p = (unwrapped && typeof unwrapped === "object" ? unwrapped : {}) as Record<string, unknown>;
+  const on = (k: string) => p[k] !== false; // absent row / absent key = ON
+  return {
+    lead_received: on("lead_received"),
+    render_ready: on("render_ready"),
+    upload_stuck: on("upload_stuck"),
+    free_week_ending: on("free_week_ending"),
+    allowance_low: on("allowance_low"),
+    first_tour_nudge: on("first_tour_nudge"),
+    muted_until: (p.muted_until as string | null) ?? null,
+  };
+}
+
+const NOTIFICATION_CATEGORIES = [
+  "lead_received", "render_ready", "upload_stuck",
+  "free_week_ending", "allowance_low", "first_tour_nudge",
+] as const;
+
+const APNS_TOKEN_RE = /^[0-9a-fA-F]{16,400}$/;
+
+async function handleDeviceRegister(req: Request, userId: string): Promise<Response> {
+  const body = await readJson<Record<string, unknown>>(req);
+  const token = String(body.device_token ?? "").trim();
+  assert(APNS_TOKEN_RE.test(token), 400, "device_token must be the hexadecimal APNs token");
+
+  const environment = String(body.environment ?? "production").trim().toLowerCase();
+  assert(
+    environment === "sandbox" || environment === "production",
+    400,
+    "environment must be sandbox or production",
+  );
+
+  const clip = (v: unknown, n: number) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return s ? s.slice(0, n) : null;
+  };
+
+  const { data, error } = await adminClient().rpc("notification_register_device", {
+    p_user: userId,
+    p_token: token,
+    p_bundle_id: clip(body.bundle_id, 120),
+    p_environment: environment,
+    p_locale: clip(body.locale, 32),
+    p_app_version: clip(body.app_version, 40),
+  });
+  if (error) {
+    if (/RP\d{3}:/.test(error.message)) throwRpc(error.message);
+    console.error("notification_register_device failed:", error.message);
+    throw new HttpError(503, "Could not register this device — try again.", "upstream");
+  }
+
+  const row = (data ?? {}) as Record<string, unknown>;
+  // The token itself is NEVER echoed: it is a device credential, and a response
+  // body is the easiest place for one to end up in a log.
+  return json({
+    ok: true,
+    device: {
+      id: row.id ?? null,
+      bundle_id: row.bundle_id ?? null,
+      environment: row.environment ?? environment,
+      last_seen_at: row.last_seen_at ?? null,
+    },
+  });
+}
+
+async function handleNotificationsPatch(req: Request, userId: string): Promise<Response> {
+  const body = await readJson<Record<string, unknown>>(req);
+  const patch: Record<string, unknown> = {};
+
+  for (const key of NOTIFICATION_CATEGORIES) {
+    if (!(key in body)) continue;
+    assert(typeof body[key] === "boolean", 400, `${key} must be true or false`);
+    patch[key] = body[key];
+  }
+  if ("muted_until" in body) {
+    const v = body.muted_until;
+    if (v === null || v === "") {
+      patch.muted_until = null;
+    } else {
+      assert(typeof v === "string", 400, "muted_until must be an ISO-8601 timestamp or null");
+      const t = Date.parse(v);
+      assert(Number.isFinite(t), 400, "muted_until must be an ISO-8601 timestamp or null");
+      patch.muted_until = new Date(t).toISOString();
+    }
+  }
+  assert(
+    Object.keys(patch).length > 0,
+    400,
+    `No notification settings provided. Accepted: ${NOTIFICATION_CATEGORIES.join(", ")}, muted_until`,
+  );
+
+  const { data, error } = await adminClient().rpc("notification_set_preferences", {
+    p_user: userId,
+    p_prefs: patch,
+  });
+  if (error) {
+    if (/RP\d{3}:/.test(error.message)) throwRpc(error.message);
+    console.error("notification_set_preferences failed:", error.message);
+    throw new HttpError(503, "Could not save your notification settings — try again.", "upstream");
+  }
+
+  return json({ ok: true, notifications: shapePreferences(data) });
 }
 
 // ── PATCH /me/brand ───────────────────────────────────────────────────────────
@@ -442,6 +609,23 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
 //   ?listing_id=  one listing only (this is what the iOS COMPLIANCE card reads)
 //   ?limit=  default 500, max 5000
 //   ?format=csv  → text/csv attachment instead of JSON
+//   ?scope=org   → the WHOLE TEAM's record, with the agent on every row
+//
+// ── scope=org, and why it is a different code path (migration 0048) ──────────
+//
+// A brokerage's compliance officer does not ask "what did I publish", they ask
+// "show me every AI-altered image WE published in March and prove the
+// disclosure ran". The rows were always readable — media_provenance's policy is
+// `is_org_member(org_id)` (0012), not an owner check — but the AGENT was not:
+// `profiles` has exactly one policy, `id = auth.uid()` (0001), so a query run as
+// the broker can name nobody but the broker. compliance_audit() does that join
+// as a definer for owners and admins of one org. No policy was weakened to get
+// it; a plain member asking for scope=org gets a 403 from the RPC.
+//
+// EVERYTHING ELSE IS UNCHANGED. Without `scope=org` — which is every existing
+// caller, including the iOS COMPLIANCE card — this route runs exactly the query
+// it ran before, on the caller's own JWT, and returns exactly the same bytes.
+// The `agent` column exists ONLY in org scope.
 
 const COMPLIANCE_DEFAULT_LIMIT = 500;
 const COMPLIANCE_MAX_LIMIT = 5000;
@@ -451,10 +635,49 @@ const CSV_COLUMNS = [
   "model_id", "disclosure", "original_url", "altered_url", "prompt_summary", "id",
 ] as const;
 
+/**
+ * Org scope: the same columns in the same order with ONE added — `agent`, in
+ * second place, because a compliance officer reads a row as "when / who / which
+ * listing". It is a single self-sufficient cell ("Name <email>") rather than
+ * three, so the exported file can be forwarded without a key to decode it.
+ */
+const ORG_CSV_COLUMNS = [
+  "created_at", "agent", "listing_id", "listing_address", "kind", "label", "edit", "style",
+  "model_id", "disclosure", "original_url", "altered_url", "prompt_summary", "id",
+] as const;
+
 /** RFC4180-ish cell: quote everything, double interior quotes, never a raw newline. */
 function csvCell(v: unknown): string {
   const s = v == null ? "" : String(v).replace(/\r?\n/g, " ");
   return `"${s.replace(/"/g, '""')}"`;
+}
+
+/** The CSV attachment both scopes emit. Same quoting, same CRLF, same headers. */
+function csvAttachment(
+  columns: readonly string[],
+  rows: Array<Record<string, unknown>>,
+  filename: string,
+): Response {
+  const lines = [columns.map(csvCell).join(",")];
+  for (const r of rows) {
+    lines.push(columns.map((c) => csvCell(r[c])).join(","));
+  }
+  return new Response(lines.join("\r\n") + "\r\n", {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+/** One printable identity for a row's agent, or "" when the row has no listing. */
+function agentCell(r: Record<string, unknown>): string {
+  const name = typeof r.agent_name === "string" ? r.agent_name.trim() : "";
+  const email = typeof r.agent_email === "string" ? r.agent_email.trim() : "";
+  if (name && email && name !== email) return `${name} <${email}>`;
+  return name || email || "";
 }
 
 /** An ISO date/timestamp query param, or null. Rejects junk rather than ignoring it. */
@@ -481,6 +704,11 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
     ? Math.min(COMPLIANCE_MAX_LIMIT, Math.max(1, Math.round(rawLimit)))
     : COMPLIANCE_DEFAULT_LIMIT;
   const wantCsv = (params.get("format") ?? "").toLowerCase() === "csv";
+  const scope = (params.get("scope") ?? "user").trim().toLowerCase();
+  assert(scope === "user" || scope === "org", 400, "scope must be user or org");
+  if (scope === "org") {
+    return await handleComplianceOrg(userId, orgId, { from, to, listingId, limit, wantCsv });
+  }
 
   let q = db
     .from("media_provenance")
@@ -529,19 +757,12 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
   });
 
   if (wantCsv) {
-    const lines = [CSV_COLUMNS.map(csvCell).join(",")];
-    for (const r of rows) {
-      lines.push(CSV_COLUMNS.map((c) => csvCell((r as Record<string, unknown>)[c])).join(","));
-    }
     const stamp = new Date().toISOString().slice(0, 10);
-    return new Response(lines.join("\r\n") + "\r\n", {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="rendprop-ai-disclosure-${stamp}.csv"`,
-      },
-    });
+    return csvAttachment(
+      CSV_COLUMNS,
+      rows as unknown as Array<Record<string, unknown>>,
+      `rendprop-ai-disclosure-${stamp}.csv`,
+    );
   }
 
   return json({
@@ -549,6 +770,84 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
     from,
     to,
     listing_id: listingId || null,
+    count: rows.length,
+    truncated,
+    rows,
+  });
+}
+
+/**
+ * `?scope=org` — the same export across every member, with the agent named.
+ *
+ * compliance_audit() (0048 §6) owns the authorisation: it refuses anyone who is
+ * not the owner or an admin of THIS org, so there is one authority and not two
+ * that can drift. It also owns the 5000-row ceiling; `limit` and `listing_id`
+ * are applied here afterwards so both keep the meaning they already have, and
+ * `truncated` is true if EITHER the RPC hit its ceiling or the caller's own
+ * limit cut the list short.
+ */
+async function handleComplianceOrg(
+  userId: string,
+  orgId: string,
+  opts: { from: string | null; to: string | null; listingId: string; limit: number; wantCsv: boolean },
+): Promise<Response> {
+  const { data, error } = await adminClient().rpc("compliance_audit", {
+    p_org: orgId,
+    p_actor: userId,
+    p_from: opts.from,
+    p_to: opts.to,
+  });
+  if (error) throwRpc(error.message);
+
+  const report = (data ?? {}) as Record<string, unknown>;
+  const all = (Array.isArray(report.rows) ? report.rows : []) as Array<Record<string, unknown>>;
+  const scoped = opts.listingId ? all.filter((r) => r.listing_id === opts.listingId) : all;
+  const truncated = report.truncated === true || scoped.length > opts.limit;
+
+  // Identical field order to the per-user rows, with the agent appended — so
+  // one renderer serves both and a diff between the two exports is only ever
+  // the attribution. The RPC returns R2 KEYS; publicR2Url stays the single
+  // place a key becomes a link.
+  const rows = scoped.slice(0, opts.limit).map((r) => ({
+    id: r.id as string,
+    created_at: r.created_at as string,
+    listing_id: (r.listing_id as string | null) ?? null,
+    listing_address: (r.listing_address as string | null) ?? null,
+    space_type: (r.space_type as string | null) ?? null,
+    render_id: (r.render_id as string | null) ?? null,
+    kind: r.kind as string,
+    label: (r.label as string | null) ?? null,
+    edit: (r.edit as string | null) ?? null,
+    style: (r.style as string | null) ?? null,
+    model_id: (r.model_id as string | null) ?? null,
+    prompt_summary: (r.prompt_summary as string | null) ?? null,
+    disclosure: r.disclosure as string,
+    original_url: publicR2Url(r.original_key as string | null),
+    altered_url: publicR2Url(r.altered_key as string | null),
+    original_available: publicR2Url(r.original_key as string | null) !== null,
+    agent_id: (r.agent_id as string | null) ?? null,
+    agent_name: (r.agent_name as string | null) ?? null,
+    agent_email: (r.agent_email as string | null) ?? null,
+    agent: agentCell(r),
+  }));
+
+  if (opts.wantCsv) {
+    const stamp = new Date().toISOString().slice(0, 10);
+    // A distinct filename: a team export and a personal one landing in the same
+    // folder must not be told apart by opening them.
+    return csvAttachment(
+      ORG_CSV_COLUMNS,
+      rows as unknown as Array<Record<string, unknown>>,
+      `rendprop-team-ai-disclosure-${stamp}.csv`,
+    );
+  }
+
+  return json({
+    org_id: orgId,
+    scope: "org",
+    from: opts.from,
+    to: opts.to,
+    listing_id: opts.listingId || null,
     count: rows.length,
     truncated,
     rows,

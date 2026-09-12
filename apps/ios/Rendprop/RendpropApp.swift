@@ -17,6 +17,26 @@ final class BackgroundSessionBridge {
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    // MARK: APNs (Push/PushManager.swift)
+    //
+    // The only reason this app has a delegate besides the background-upload
+    // bridge below. NEITHER of these prompts: `registerForRemoteNotifications`
+    // is silent, and the single system prompt is asked exactly once, at the
+    // first successful publish, from `PushManager`.
+
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Task { @MainActor in PushManager.shared.handleDeviceToken(deviceToken) }
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // Only the text crosses to the main actor — an `Error` existential is
+        // not Sendable and there is nothing else here worth carrying.
+        let reason = error.localizedDescription
+        Task { @MainActor in PushManager.shared.handleRegistrationFailure(reason) }
+    }
+
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
@@ -530,6 +550,25 @@ final class AppModel: ObservableObject {
         if listings[i].needsServerSync != true { listings[i].needsServerSync = true }
     }
 
+    /// Record the owner's answer to "List this tour on Google" for one listing.
+    ///
+    /// The hosted page is `noindex, nofollow` until its owner opts in, because
+    /// it carries their name, phone, e-mail and the property's street address.
+    /// That opt-in used to exist only as a `details` key nobody could reach,
+    /// which is the same as not existing — so the question is now asked in
+    /// plain words on the publish screen and the answer lands here.
+    ///
+    /// Local first: the flag is stored on the listing (so a kill mid-publish
+    /// does not lose it) and flagged for the next PATCH. A listing with no
+    /// server row yet needs no PATCH — `createListing` carries the whole
+    /// listing, this field included.
+    func setSearchIndexing(_ allowed: Bool, for id: UUID) {
+        guard let i = index(of: id), !listings[i].isSample else { return }
+        guard listings[i].allowSearchIndexing != allowed else { return }
+        listings[i].allowSearchIndexing = allowed    // persists via didSet
+        markDirty(id)
+    }
+
     // MARK: - Delete
 
     /// Remove a listing everywhere: model maps, every file it produced, any
@@ -843,6 +882,18 @@ final class AppModel: ObservableObject {
             // 1. Adopt (or create) the server listing identity.
             let serverID = try await ensureServerListing(listing)
 
+            // 1b. The publish screen's answer to "List this tour on Google",
+            //     on its way to the page that will carry it. A listing created
+            //     just now already sent it (createListing posts the whole
+            //     listing); an existing one is dirty and gets a PATCH here so
+            //     the page is right the moment it goes live.
+            //
+            //     BEST EFFORT BY CONSTRUCTION: `syncListing` never throws and
+            //     never rethrows a server error — it leaves the listing dirty
+            //     for the next attempt. A server that rejects the field, or is
+            //     simply unreachable, costs the answer, never the publish.
+            await syncListing(id)
+
             // 2. First-frame poster → og:image / video poster on the hosted page.
             //    Best effort: publishing still works without it — but a poster
             //    that fails to upload is said on the listing once the publish
@@ -904,6 +955,11 @@ final class AppModel: ObservableObject {
                 listings[i] = l   // persists via didSet
             }
             Analytics.track("tour_published", ["space_type": SpaceType.current.rawValue, "ok": "true"])
+            // THE one moment this app may ask about notifications: a link now
+            // exists that a stranger can fill a form on. `noteTourPublished`
+            // does nothing at all after the first time, and nothing ever when
+            // the OS answer is already given — see Push/PushManager.swift.
+            PushManager.shared.noteTourPublished()
             // The photos, onto the page that has never had any. Detached: the
             // publish is DONE and the agent is looking at their link — waiting
             // on seventeen uploads before handing it over would make a working
@@ -2212,6 +2268,22 @@ struct RendpropApp: App {
     /// and an agent who tapped their own link is checking what a buyer sees.
     /// Either way it is a visit, not a mode - Done puts the app back.
     @State private var incomingLink: DeepLink?
+    /// The root's ONE sheet slot, for the same reason `HomeDashboardView` has
+    /// one: separate `.sheet` modifiers on a single view fight each other for
+    /// the presentation, and this chain already carries `.paywallHost()` and a
+    /// `.fullScreenCover`. Both root-level sheets go through this.
+    ///
+    /// `.pushPrePrompt` is the notification permission pre-prompt; `.leadsInbox`
+    /// is where a tapped "someone enquired" notification lands — over whatever
+    /// the app was doing, following the same "a visit, not a mode" rule
+    /// `incomingLink` does.
+    private enum RootSheet: String, Identifiable {
+        case pushPrePrompt
+        case leadsInbox
+        var id: String { rawValue }
+    }
+    @State private var rootSheet: RootSheet?
+    @ObservedObject private var push = PushManager.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = AppModel()
     @StateObject private var uploads = UploadManager.shared
@@ -2284,6 +2356,11 @@ struct RendpropApp: App {
                 if phase == .active {
                     AuthStore.shared.signInAnonymouslyIfNeeded()
                     model.refreshSpatialCapability()
+                    // iOS Settings can change the notification permission while
+                    // the app is in the background, in BOTH directions — and a
+                    // device token can be reissued. Re-read it on the way back
+                    // so Settings never shows a stale answer.
+                    Task { await push.refreshAuthorization(registerIfAllowed: true) }
                 }
             }
             // Universal Links. `onContinueUserActivity` is the https path (a
@@ -2304,6 +2381,50 @@ struct RendpropApp: App {
                 TourViewerView(link: link)
                     .environmentObject(model)
             }
+            // MARK: - push additions (1.0.2)
+            // Reads the OS answer and, when it is already yes, refreshes the
+            // APNs token. Prompts nothing — see Push/PushManager.swift.
+            .task { push.start() }
+            // The one root sheet slot. The permission pre-prompt is presented
+            // from HERE so that EVERY publish path reaches it, not just the
+            // detail screen's button.
+            .sheet(item: $rootSheet) { sheet in
+                switch sheet {
+                case .pushPrePrompt:
+                    PushPrePromptView()
+                case .leadsInbox:
+                    NavigationStack {
+                        LeadsView()
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("Done") { rootSheet = nil }
+                                }
+                            }
+                    }
+                    .environmentObject(model)
+                }
+            }
+            // `PushManager` owns "should we be asking"; this mirrors it into the
+            // slot. Both of the pre-prompt's buttons clear `showPrePrompt`, so
+            // the same mirror closes the sheet.
+            .onChange(of: push.showPrePrompt) { show in
+                if show {
+                    rootSheet = .pushPrePrompt
+                } else if rootSheet == .pushPrePrompt {
+                    rootSheet = nil
+                }
+            }
+            // A tapped notification, resolved by `DeepLink` (Push/PushManager
+            // `handle(payload:)`). `onChange` covers a tap while the app is
+            // running; the `task` covers a COLD launch, where the route is
+            // already set before this scene exists and no change is ever
+            // delivered.
+            .onChange(of: push.pendingRoute) { _ in consumePushRoute() }
+            .task {
+                if push.showPrePrompt { rootSheet = .pushPrePrompt }
+                consumePushRoute()
+            }
+            // MARK: - end push additions
             .onChange(of: analyticsAuth.isSignedIn) { signedIn in
                 Analytics.authChanged(signedIn)
                 // The very first launch has no session when the scene appears;
@@ -2326,6 +2447,20 @@ struct RendpropApp: App {
             .onAppear { PaywallEvents.sink = Analytics.externalSink }
             // MARK: - end analytics additions
         }
+    }
+
+    /// Take whatever a tapped notification resolved to and put the app there,
+    /// exactly once. A tour reuses `incomingLink` — the same presentation a
+    /// Universal Link gets, because it IS the same destination; a lead opens
+    /// the inbox, which is the screen you can actually act on one from.
+    @MainActor
+    private func consumePushRoute() {
+        guard let route = push.pendingRoute else { return }
+        switch route {
+        case .tour(let link): incomingLink = link
+        case .leads:          rootSheet = .leadsInbox
+        }
+        push.clearPendingRoute()
     }
 }
 
