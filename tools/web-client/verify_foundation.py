@@ -140,10 +140,14 @@ class FoundationTests(unittest.TestCase):
 
     def test_complete_inventory(self):
         result = validate_capabilities(self.cap, SWIFT)
-        self.assertEqual(result["apiMethods"], 41)
-        self.assertEqual(result["apiDeclarations"], 42)
+        self.assertEqual(result["apiMethods"], 53)
+        self.assertEqual(result["apiDeclarations"], 54)
+        self.assertEqual(result["capabilityGroups"], 15)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
+        spatial = next(row for row in self.cap["api"] if row["id"] == "spatial-jobs")
+        self.assertEqual(spatial["status"], "planned")
+        self.assertEqual(len(spatial["methods"]), 10)
 
     def test_token_positive(self):
         self.assertEqual(len(validate_tokens(self.tokens)), 6)
@@ -156,6 +160,26 @@ class FoundationTests(unittest.TestCase):
         self.cap["api"][1]["methods"].remove("completeUpload")
         with self.assertRaises(ContractError):
             validate_capabilities(self.cap, SWIFT)
+
+    def test_missing_restart_fails(self):
+        uploads = next(row for row in self.cap["api"] if row["id"] == "uploads")
+        uploads["methods"].remove("restartUpload")
+        with self.assertRaisesRegex(ContractError, r"^API mismatch: missing=\['restartUpload'\] extra=\[\]$"):
+            validate_capabilities(self.cap, SWIFT)
+
+    def test_missing_spatial_method_fails(self):
+        # Check each omission separately: a single missing group must not mask
+        # a validator that fails to inventory one of its recovery operations.
+        methods = ["spatialJobs", "spatialJob", "createSpatialJob", "attachSpatialInputs",
+                   "startSpatialJob", "reviewSpatialJob", "publishSpatialJob",
+                   "retrySpatialJob", "cancelSpatialJob", "resumeSpatialJob"]
+        for method in methods:
+            with self.subTest(method=method):
+                cap = copy.deepcopy(self.cap)
+                spatial = next(row for row in cap["api"] if row["id"] == "spatial-jobs")
+                spatial["methods"].remove(method)
+                with self.assertRaisesRegex(ContractError, r"^API mismatch: missing=\['" + method + r"'\] extra=\[\]$"):
+                    validate_capabilities(cap, SWIFT)
 
     def test_new_swift_method_requires_mapping(self):
         added = SWIFT.replace("protocol APIClient: Sendable {", "protocol APIClient: Sendable {\n    func futureCapability() async throws")
@@ -228,7 +252,7 @@ def main():
         # Prove the rejection tests detect an implementation that stops validating.
         globals()["validate_capabilities"] = lambda *_args, **_kwargs: inventory
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FoundationTests))
-    require(result.testsRun == 14 and not result.skipped, "missing/skipped tests")
+    require(result.testsRun == 16 and not result.skipped, "missing/skipped tests")
     require(result.wasSuccessful(), "foundation tests failed")
     print(json.dumps({"inventory": inventory, "contrast": ratios, "tests": result.testsRun,
                       "skips": len(result.skipped), "browserTests": 0, "liveTests": 0}, indent=2))
