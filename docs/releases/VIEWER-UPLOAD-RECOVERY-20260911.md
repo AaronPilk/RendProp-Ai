@@ -265,5 +265,53 @@ iOS client**. No deployment occurred here. The older anonymous-adoption actor
 binding limitation is explicitly still open;0042 does not repair that identity
 migration or magically deploy the0039 cleanup pairing.
 
-Final combined client results remain pending. Do not treat intermediate core
-commits or an agent's in-progress build as release-ready.
+### Integrated client verification
+
+iOS follow-upd51714b is integrated as39da611; receipt-only503a9de as93d95dc.
+The wire harness17de00c is integrated asf26bc62. Root reran all four native
+checks on those combined application sources:
+
+| Command | Observed result | Receipt |
+|---|---|---|
+| `python3 tools/audit/run_upload_recovery.py` |119 assertions;15 successfully compiled mutants rejected; restored source passes |`/tmp/rendprop-upload-recovery-ozcef5ol/receipt.json`|
+| `python3 tools/audit/run_upload_restart_wire.py` |41 assertions;1 exact String→Idempotency compile rejection plus4 compiled runtime mutants; restored pass |`/tmp/rendprop-upload-restart-wire-r7k9w8wq/receipt.json`|
+| `python3 tools/audit/run_spatial_coordinator_recovery.py` |12 assertions;3 compiled mutants rejected; restored pass |`/tmp/rendprop-spatial-restart-mnf_3876/receipt.json`|
+| `python3 tools/audit/run_spatial_client.py` |75 assertions;6 compiled mutants rejected for their intended runtime assertions; restored pass |`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-client-qrmcb2lx/receipt.json`|
+
+The general manager is the actual compiled class with injected API/session
+boundaries. The spatial coordinator gate copies only selected actual method
+bodies and injects persistence, pump and OS boundaries; it is **not** a whole
+iOS background-daemon proof. The API gate uses the actual request builder,
+idempotency policy, adapter, mapper and DTO decoder, with only configuration and
+execute injected; its runtime runs with network denied. Its narrower fake API
+predecessor could not catch the new adapter's compile error.
+
+The119-assertion pass includes app-death-shaped unfinished photo records,
+suppression of currently active photo rows, protected corrupt receipts, stable
+restart intent after lost responses, completion winners, actual video-manager
+Cancel/new-begin races, anonymous bootstrap, delayed account-switched ticket and
+OS callbacks, and stopping a photo batch's next dispatch after an owner change.
+Settings now exposes explicit consent, wait/retry versus restart, exhaustion,
+and truthful separately dismissible photo transfer/attachment messages.
+
+Root's first integrated full-app/UI command used XcodeGen2.45.4 and the existing
+dedicated synthetic simulator8D787CFB-B1F3-4950-854E-463126A68F92, with only
+`SpatialProductIntegrationTests` selected. It **failed before any UI test ran**:
+Swift could not type-check the inline photo-confirmation Binding setter at the
+then-current `SettingsView.swift:467:128`. Exit65 and original result bundle:
+`/tmp/rendprop-upload-recovery-app.kRcexp/build.log` and
+`/tmp/rendprop-upload-recovery-app.kRcexp/SpatialProduct.xcresult`.
+The actual LiveAPIClient error was resolved; this is a distinct UI compilation
+failure, not an environment problem or a skipped test disguised as success.
+Its view-expression correction and repeated full build are pending below.
+
+The required `xcodegen generate` refreshed the tracked project references from
+`project.yml`; that mechanical output is committed as9173b1f, including its
+relative capture-source group and upload recovery source references. No source
+media, signing settings, app version or provisioning profile changed.
+
+Remaining transfer-adjacent limitation: retrying saved photo bytes does not
+automatically replay a failed poster or disclosure attachment. The UI names
+that distinction and preserves the original; transparent metadata reattachment
+is not claimed fixed. The device's real Wi-Fi loss/background delivery and a
+live linked replacement still need acceptance after the paired deployment.
