@@ -401,7 +401,7 @@ struct SettingsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.settings)
         .task { await loadUsage(); await uploads.refreshPhotoRecovery() }
-        .onChange(of: auth.userID) { _, _ in Task { await uploads.refreshPhotoRecovery() } }
+        .onChange(of: auth.userID) { _ in Task { await uploads.refreshPhotoRecovery() } }
         .refreshable { await loadUsage() }
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
