@@ -198,9 +198,11 @@ read, load the new owner's receipts, then release the older request with both
 failure and success. The new receipts and empty error state must survive.
 They also test the computed owner-mismatch control state. Settings uses that
 state to disable only currentUploadRows and retains every other Settings action.
-The native baseline passes **128 assertions**. Frozen receipt:
-`/tmp/rendprop-upload-recovery-iwsnitk9/receipt.json`; its **18-control** mutation
-loop is in progress at this source commit. The two additional mutants recreate
-the stale error and stale-success clearing paths and must fail their specific
-assertions. Actual on-screen wrong-owner interaction remains separate from
-these native boundary tests.
+The frozen run passes **128 assertions** with **18 successfully compiled
+mutants rejected**, restored production pass, and unchanged source hashes.
+Receipt: `/tmp/rendprop-upload-recovery-iwsnitk9/receipt.json`, accepted=true;
+implementation commit `16cb609`. The two additional mutants recreate the
+stale error and stale-success clearing paths and fail their specific runtime
+assertions. Two fixture-only deprecated URLSession initializer warnings remain;
+there are zero production-source native warnings. Actual on-screen wrong-owner
+interaction remains separate from these native boundary tests.
