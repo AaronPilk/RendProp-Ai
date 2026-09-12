@@ -1,0 +1,8 @@
+# Six reviewed historical false positives only; never a path/rule exemption.
+# Evidence: docs/audits/2026-09-11/SECRET-SCAN-DISPOSITIONS.md
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:docs/handoff/launch-P2.md:curl-auth-header:517
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/_shared/applejws.test.ts:generic-api-key:924
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/apple-subscriptions/notify.test.ts:generic-api-key:293
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe.test.ts:private-key:178
+bcba8040bfa10eb0f199e83aa2787fe0f15d5ba9:services/supabase/functions/admin/probe.test.ts:jwt:275
+4e4776dbdd8bf3e7408e805c2d313e1b46087b76:apps/ios/Rendprop/Config.swift:jwt:33
