@@ -69,6 +69,12 @@ export class Fixture {
   sessions = new Map<string, string>();
   physicalParts = new Map<number, { bytes: number; etag: string }>();
   failInitializationReply = false;
+  writeRole = "owner";
+  recoveryReason: string | null = null;
+  restartGeneration = 0;
+  retryAfterSeconds: number | null = null;
+  rpcCalls: Array<{name: string; args: Row}> = [];
+  rpcHandler?: (name: string, args: Row) => Promise<Response | undefined> | Response | undefined;
 
   operation(kind: string, part = 0): Row {
     const found = [...this.operations.values()].find((op) =>
@@ -140,6 +146,9 @@ export class Fixture {
     );
   }
   async rpc(name: string, args: Row): Promise<Response> {
+    this.rpcCalls.push({name, args: structuredClone(args)});
+    const override = await this.rpcHandler?.(name, args);
+    if (override) return override;
     const json = (data: unknown, status = 200) =>
       Response.json(data, { status });
     const reject = (code: number, message: string) =>
@@ -148,6 +157,14 @@ export class Fixture {
       return reject(503, "synthetic durable state unavailable");
     }
     const op = this.operations.get(String(args.p_operation));
+    if (name === "upload_restart_state") {
+      const reason = this.asset?.uploaded ? null : this.recoveryReason ??
+        (this.asset?.upload_aborted ? "cancelled" :
+          [...this.operations.values()].some((op) => ["uncertain", "rejected"].includes(String(op.state)))
+          ? "interrupted" : null);
+      return json({asset: {...this.asset}, restart_required: reason != null, restart_reason: reason,
+        restart_generation: this.restartGeneration, retry_after_seconds: this.retryAfterSeconds});
+    }
     if (name === "reserve_upload_assets") {
       const assets = args.p_assets as Row[];
       if (
@@ -288,7 +305,7 @@ export class Fixture {
     this.assemblyBytes = bytes; // metadata-only 12 GiB fixture, not allocated
     this.operation("init").claim = "fixture-init-dispatched";
   }
-  async request(action: string, body: Row = {}) {
+  async request(action: string, body: Row = {}, headers: Record<string,string> = {}) {
     const path = action === "ticket"
       ? "uploads"
       : action === "batch"
@@ -303,6 +320,7 @@ export class Fixture {
           authorization: "Bearer fixture-token",
           "content-type": "application/json",
           "idempotency-key": "fixture-ticket-unique",
+          ...headers,
         },
         body: JSON.stringify(body),
       }),
@@ -335,7 +353,7 @@ export class Fixture {
         return json({ id: "fixture-user", aud: "authenticated" });
       }
       if (url.pathname === "/rest/v1/memberships") {
-        return row({ role: "owner" });
+        return row({ role: this.writeRole });
       }
       if (url.pathname === "/rest/v1/listings") {
         return row({ id: "fixture-listing", org_id: "fixture-org" });

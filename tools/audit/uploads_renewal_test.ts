@@ -62,7 +62,11 @@ Deno.test("completed legacy tickets remain usable without re-ticketing", () => f
 Deno.test("aborted v2 reservation cannot renew its capability", () => fixture(async (f) => {
   f.asset!.upload_aborted = true;
   const response = await f.request("renew");
-  assertEquals(response.status, 409);
+  assertEquals(response.status, 200);
+  const ticket = await response.json();
+  assertEquals(ticket.restart_required, true);
+  assertEquals(ticket.restart_reason, "cancelled");
+  assertEquals(ticket.put_url, undefined);
   assertEquals(f.charges.length, 0);
   assertEquals(f.operations.size, 0);
 }));
@@ -73,7 +77,11 @@ Deno.test("uncertain write cannot produce a renewed capability before storage is
   op.claim = "previous-owner";
   f.objects.clear();
   const response = await f.request("renew");
-  assertEquals(response.status, 503);
+  assertEquals(response.status, 200);
+  const ticket = await response.json();
+  assertEquals(ticket.restart_required, true);
+  assertEquals(ticket.restart_reason, "interrupted");
+  assertEquals(ticket.put_url, undefined);
   assertEquals(f.charges.length, 0);
   assertEquals(f.copies.length, 0);
   assertEquals(f.operations.size, 1);

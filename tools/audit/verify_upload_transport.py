@@ -53,12 +53,12 @@ def main():
         receipt["negativeControlDetected"]=True
         if args.inject_fault:return 1
         positive=run("uploads",test+["services/supabase/functions/uploads"])
-        if positive.returncode!=0 or not re.search(r"ok \| 100 passed \| 0 failed",positive.stdout) or "ignored" in positive.stdout:
-            raise RuntimeError("Expected all 100 transport/publication tests, no skips")
+        if positive.returncode!=0 or not re.search(r"ok \| 122 passed \| 0 failed",positive.stdout) or "ignored" in positive.stdout:
+            raise RuntimeError("Expected all 122 transport/publication/restart tests, no skips")
         typed=run("native-worker-typecheck",[str(args.tsc),"-p","services/edge/upload-gateway/tsconfig.json"])
         if typed.returncode!=0:raise RuntimeError("Native Worker adapter did not typecheck")
-        receipt.update(accepted=True,tests=100,failed=0,skipped=0)
-        print("PASS: 100 tests; native adapter typecheck; deliberately defective stream exited 1")
+        receipt.update(accepted=True,tests=122,failed=0,skipped=0)
+        print("PASS: 122 tests; native adapter typecheck; deliberately defective stream exited 1")
         return 0
     finally:(out/"receipt.json").write_text(json.dumps(receipt,indent=2)+"\n")
 

@@ -1,6 +1,6 @@
 // Upload transport v2: service-only reservations authorize one exact-size
 // gateway dispatch per journaled operation. No reusable R2 PUT URL fallback.
-// Requires 0037 + configured gateway and drained legacy URLs before rollout.
+// Requires 0037 + 0042 + configured gateway and drained legacy URLs before rollout.
 // Cancellation releases only undispatched held bytes; cleanup is journaled,
 // asynchronous, and does not refund physical writes or promise zero ingress cost.
 
@@ -333,9 +333,26 @@ Deno.serve(async (req) => {
       transportConfiguration();
       assert(asset.transport_version === 2, 409,
         "Legacy upload must be reticketed after rollout cleanup");
-      assert(asset.upload_aborted !== true, 409,
-        "This upload was aborted — create a new ticket");
-      return json(await ticketResponse(admin, asset, true));
+      return json(await recoveryTicket(admin, await uploadRPC(admin, "upload_restart_state", {
+        p_asset: assetId, p_actor: user.id,
+      })));
+    }
+    if (seg[1] === "restart") {
+      const body = await readJson<Record<string, unknown>>(req);
+      assert(body?.confirm_new_attempt === true && Object.keys(body).length === 1, 400,
+        "Explicit confirm_new_attempt:true is required; upload specification cannot be changed");
+      const restartKey = req.headers.get("Idempotency-Key") ?? "";
+      assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(restartKey), 400,
+        "A stable UUID Idempotency-Key is required for an explicit restart");
+      assert(asset.transport_version === 2, 409,
+        "Legacy upload must be reticketed after rollout cleanup");
+      // Validate configuration before spending or retiring the old reservation.
+      // SQL rechecks completion and ownership under the same publication lock;
+      // an HTTP read made before a concurrent completion is not authority.
+      transportConfiguration();
+      return json(await recoveryTicket(admin, await uploadRPC(admin, "restart_upload_asset", {
+        p_asset: assetId, p_actor: user.id, p_restart: restartKey,
+      })));
     }
     if (seg[1] === "abort") {
       assert(
@@ -637,6 +654,39 @@ async function ticketResponse(admin: any, asset: Record<string, unknown>, recove
     mode: "single",
     put_url: await transferURL(admin, String(asset.id), "single"),
   };
+}
+
+// A durable failure/expiry receipt deliberately has no PUT capability. It lets
+// the phone retain its file and ask consent without classifying any generic
+// network error as permission to pay for another attempt. "Interrupted" is not
+// a claim that the old provider write stopped: its spent bytes remain charged,
+// its immutable key remains queued, and the replacement uses a different key.
+// deno-lint-ignore no-explicit-any
+async function recoveryTicket(admin: any, value: unknown) {
+  const state = row(value), asset = row(state.asset);
+  assert(typeof state.restart_required === "boolean" &&
+    Number.isInteger(state.restart_generation) && Number(state.restart_generation) >= 0 &&
+    Number(state.restart_generation) <= 3 &&
+    (state.restart_required === true
+      ? ["expired", "interrupted", "cancelled"].includes(String(state.restart_reason)) && asset.uploaded !== true
+      : state.restart_reason == null) &&
+    (state.retry_after_seconds == null ||
+      (state.restart_required === false && asset.uploaded !== true && Number.isInteger(state.retry_after_seconds) &&
+       Number(state.retry_after_seconds) >= 1 && Number(state.retry_after_seconds) <= 900)),
+    503, "Invalid upload recovery receipt");
+  const metadata = {
+    restart_required: state.restart_required,
+    restart_reason: state.restart_reason,
+    restart_generation: state.restart_generation,
+    ...(state.retry_after_seconds != null ? {retry_after_seconds: state.retry_after_seconds} : {}),
+  };
+  if (state.restart_required === true || state.retry_after_seconds != null) return {
+    asset_id: asset.id, storage_key: asset.storage_key, content_type: asset.content_type,
+    transport_version: asset.transport_version, uploaded: false, replayed: true,
+    mode: asset.parts_total != null ? "multipart" : "single", upload_id: asset.upload_id,
+    part_size: asset.part_size, part_count: asset.parts_total, ...metadata,
+  };
+  return { ...await ticketResponse(admin, asset, true), ...metadata };
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
