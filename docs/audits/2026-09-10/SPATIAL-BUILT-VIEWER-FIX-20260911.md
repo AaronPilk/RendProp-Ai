@@ -6,6 +6,18 @@ Scope: local source/configuration/tests plus one unauthenticated read of the
 public JavaScript asset. No deployment, GPU, room upload, production mutation,
 or Apple change was performed by this work unit.
 
+**Integration update:** this document preserves the original unit's historical
+commands/counts. The root follow-up strengthened the gate: supplied file or live
+browser bytes must now SHA-match a fresh build of the reviewed source **before
+execution**. Unknown bytes are rejected as deployment drift; Node VM timeouts
+are not a security boundary. Current self-test is36 assertions, current matching
+file mode33; the broken-config test still rejects the exact `__name` failure.
+The full integrated predeploy and a real-room responsive-browser check passed,
+but reconstruction remains visibly blurry. The latest live bytes still match
+the old broken asset and fail identity verification. See the authoritative
+root [work log](../../releases/VIEWER-UPLOAD-RECOVERY-20260911.md) for current
+receipts, source bindings and outstanding deployment/phone gates.
+
 ## Confirmed P0, not a hypothetical compiler concern
 
 At `2026-09-11T23:37:56.107Z`, a bounded GET of
