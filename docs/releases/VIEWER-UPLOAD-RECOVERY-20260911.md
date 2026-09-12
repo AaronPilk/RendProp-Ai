@@ -214,5 +214,37 @@ before final integration:
   photo-success notices and failed provenance linking need truthful, separately
   dismissible messages. The overwrite regression is in the96-assertion proof.
 
-Final combined server/client results remain pending. Do not treat intermediate
-core commits or an agent's in-progress build as release-ready.
+### Integrated server verification
+
+Server unitb8a25c27c256c67de30a73ba9debf29737378f15 is integrated as873f456.
+Root independently ran these on the integrated source, not the agent's tree:
+
+| Command | Observed result | Receipt |
+|---|---|---|
+| `python3 tools/audit/test_upload_restart_db.py` |40 passed,0 failures/skips;2 intended SQL assertion failures; restored cases pass; owned socket-only PG17 stopped with exit0 |`/tmp/rendprop-upload-pg-n43vakvd/receipt.json`|
+| `python3 tools/audit/verify_upload_restart.py` |122 handler/transport tests pass;2 copied-handler assertion failures;15 restored tests pass |`/tmp/rendprop-upload-restart-y2ufq8s6/receipt.json`|
+| `python3 tools/audit/run_edge_regression.py` |753 pass,0 failures/skips;all22 entrypoints typecheck; fail-open Turnstile mutant rejected |`/tmp/rendprop-edge-audit-x_mc71fu/receipt.json`|
+
+The122 upload tests are a subset of753, not additional distinct tests. The
+40 PostgreSQL cases include20 existing transport cases plus20 restart cases;
+they really execute migration0042 and its dependencies, not mocked SQL. Two
+concurrency tests observe blocked PostgreSQL lock waiters before release.
+They also execute0039 deletion inventory and0040 spatial attachment: both old
+and replacement keys survive in the deletion payload, and an incomplete or
+cancelled parent cannot attach as the room's completed input.
+
+The service preserves old spent bytes, releases only unspent held bytes, and
+atomically admits at most one direct replacement per parent. The limit is
+three explicit restarts/four total attempts **per linked chain**, not universal
+content deduplication. A delayed old copy cannot publish or overwrite its child.
+Budget denial rolls back old cancellation and new admission together.
+
+See the complete server contract, exact references, limits and rollout plan:
+[`UPLOAD-EXPLICIT-RESTART-SERVER-2026-09-11.md`](../audits/2026-09-10/UPLOAD-EXPLICIT-RESTART-SERVER-2026-09-11.md).
+Deployment order is **0042 → matching uploads renew/restart handler → paired
+iOS client**. No deployment occurred here. The older anonymous-adoption actor
+binding limitation is explicitly still open;0042 does not repair that identity
+migration or magically deploy the0039 cleanup pairing.
+
+Final combined client results remain pending. Do not treat intermediate core
+commits or an agent's in-progress build as release-ready.
