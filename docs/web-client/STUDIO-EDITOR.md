@@ -175,6 +175,37 @@ evidence is separate at `/tmp/rendprop-editor-proof.aupOKp`.
 Safari, Firefox, physical phones, long clips near the limits, and publication remain
 unverified by this editor-only check.
 
+### Deployed preview verification
+
+The same suite passed on `https://studio.rendprop.com` on 2026-09-12,
+16:31:06.321–16:31:34.469 UTC: **13 checks, seven real downloads, zero skipped**
+in 28.148 seconds using Chrome 152.0.7977.83. The fresh context made no cross-origin,
+non-read, redirect, or WebSocket request and reported no browser or asset errors.
+No account was used, and fixtures and encoded exports stayed local.
+
+The actual browser-received 867-byte HTML and both JS/CSS pairs exactly matched
+the frozen build. JS names remained `index-CLxeL-BH.js` and
+`VideoEditor-BQUBAGWf.js`; the dist fingerprint was
+`4adf6e9a492d98ad482c6ac48bff97cd9d73df13fa821b01f9086dff03c170fe`.
+The fingerprint differs from the earlier local receipt because the later build
+added the deployment's `no-transform` response-header directive, without changing
+HTML, JS, or CSS. This editor suite does not request or verify `robots.txt`.
+
+The deployed run decoded trimmed MP4 H.264/AAC at 2.036700 seconds (222,015 bytes)
+and WebM VP8/Opus at 2.027 seconds (122,644 bytes), both with two-channel 48 kHz
+audio and measured original tone near 439.709 Hz. Photo→video exports were
+3.035600/3.013 seconds; the leading photo's audio RMS was 0 in both, with the tone
+retained after the cut. Mute, square-photo, stale-download invalidation, all four
+cancellation paths, navigation media retention, and post-cancellation recovery
+also passed. The hidden-state check remains an explicit platform-event simulation,
+not a physical OS-tab visibility test.
+
+The separate durable receipt is
+[`evidence/2026-09-12/deployed-editor-browser.json`](evidence/2026-09-12/deployed-editor-browser.json).
+Raw screenshots, fixtures, and outputs are in the non-durable OS temporary directory
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ`.
+The local-run receipt above is preserved unchanged.
+
 Reproduce a quick functional test:
 
 1. Run Studio locally and open Video editor without creating an account.
@@ -197,11 +228,20 @@ npm run build
 node tests/browser-editor.mjs --start-preview --base-url=http://127.0.0.1:4181
 # Or use an existing frozen production preview:
 node tests/browser-editor.mjs --base-url=http://127.0.0.1:4179
+# Only after the deployed preview's bytes match the same frozen local dist:
+node tests/browser-editor.mjs --deployed-preview --base-url=https://studio.rendprop.com
 ```
 
 It requires ffmpeg, ffprobe, and the installed Playwright Chromium runtime. Set
 `STUDIO_BROWSER_EXECUTABLE` to an installed Chrome executable when needed.
 `--start-preview` serves existing built bytes and deliberately does not rebuild.
+The default is localhost HTTP only. `--deployed-preview` permits exactly
+`https://studio.rendprop.com` and cannot be combined with `--start-preview`.
+Both modes use fresh isolated contexts with service workers blocked and permit
+only same-origin GET/HEAD requests. Non-read requests, cross-origin requests,
+redirects, and WebSockets are blocked and fail the run. The deployed mode performs
+the same local-file editing/export checks without signing in or uploading media;
+it does not relax the built/served HTML and asset byte comparisons.
 The test creates synthetic fixtures in a new directory under the operating system's
 temporary root, opens a fresh browser context, and blocks external requests. Its
 JSON receipt includes built/served asset SHA-256 hashes, codecs, decoded audio RMS

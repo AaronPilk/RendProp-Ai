@@ -18,6 +18,13 @@ The actual SVG `public/assets/rendprop-mark.svg` and `site.js` are unchanged. CS
 
 ## Availability contract — do not turn a preview into a false launch
 
+**Root integration update, 16:32 UTC:** `https://studio.rendprop.com` is now live
+and its local editor has passed actual HTTPS export tests. Connected Apple login
+remains unconfigured. The public marketing pages described here are not deployed;
+their informational-only CTAs remain unchanged. The rollout instructions below
+are the connected-product release gate, not a claim the preview host is still
+missing. See STUDIO-STATUS for version and receipts.
+
 The planned product host is `https://studio.rendprop.com`. Parent's latest instruction was to avoid shipping a dead CTA until that host is ready, superseding the initial request for active Sign in/Open Studio links.
 
 Accordingly all public Studio buttons currently link to the real `/studio` informational page. The planned hostname is text, not an active sign-in destination. The page offers a support email for preview access. It does not claim generally available browser sign-in, cloud draft sync, paid AI generation, production-quality 3D, auto-posting, social connections or web purchases.
@@ -95,5 +102,5 @@ Private local receipt: `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendpro
 - The optional server is a loopback source-static harness, not the Cloudflare runtime and not a proof of production response/CSP headers.
 - New pages use the same exact pre-paint theme script as the existing pages. `_headers` is unchanged; deployment should still verify its hash/CSP behavior on served assets.
 - No indexing, Search Console, ranking, conversion or enterprise adoption outcome is claimed.
-- `package.json` is outside this agent's ownership. Parent should add `node scripts/check-marketing.mjs` to the normal `predeploy`/CI verification path after integration review, without hiding the existing gates.
+- Root integration added `node scripts/check-marketing.mjs` to the normal `predeploy` and new Studio CI workflow. The existing gates remain, and the full local `npm run predeploy` passed at 16:10 UTC. Remote CI has not run because the branch is not pushed.
 - `git diff --check` passed during this unit. Other agents' `apps/studio` and Supabase `studio` source changes are not part of this marketing receipt.

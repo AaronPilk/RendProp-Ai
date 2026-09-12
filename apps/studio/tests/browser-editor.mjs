@@ -13,9 +13,11 @@ import { chromium, expect } from "@playwright/test";
 const args = process.argv.slice(2);
 let baseArgument;
 let startPreview = false;
+let deployedPreview = false;
 for (let index = 0; index < args.length; index++) {
   const argument = args[index];
   if (argument === "--start-preview") startPreview = true;
+  else if (argument === "--deployed-preview") deployedPreview = true;
   else if (argument === "--base-url") {
     baseArgument = args[++index];
     assert.ok(baseArgument, "--base-url requires a URL.");
@@ -23,16 +25,22 @@ for (let index = 0; index < args.length; index++) {
     baseArgument = argument.slice("--base-url=".length);
   else
     throw new Error(
-      `Unknown argument: ${argument}. Use --base-url=http://127.0.0.1:4179 and optionally --start-preview.`,
+      `Unknown argument: ${argument}. Use --base-url=http://127.0.0.1:4179 and optionally --start-preview, or --deployed-preview --base-url=https://studio.rendprop.com.`,
     );
 }
 const base = new URL(
   baseArgument ?? process.env.STUDIO_BASE_URL ?? "http://127.0.0.1:4179",
 );
 assert.ok(
-  base.protocol === "http:" &&
-    ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname),
-  "Editor browser checks require a local HTTP preview.",
+  deployedPreview
+    ? base.origin === "https://studio.rendprop.com"
+    : base.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(base.hostname),
+  "Editor checks default to local HTTP only; --deployed-preview permits only https://studio.rendprop.com.",
+);
+assert.ok(
+  !(deployedPreview && startPreview),
+  "--deployed-preview cannot be combined with --start-preview.",
 );
 assert.equal(base.pathname, "/", "Use the preview origin, without a pathname.");
 assert.ok(
@@ -45,6 +53,8 @@ const distDirectory = join(appDirectory, "dist");
 const artifacts = await mkdtemp(join(tmpdir(), "rendprop-editor-browser-"));
 const receipt = {
   target: base.origin,
+  deployedPreview,
+  requestPolicy: "Fresh isolated context; same-origin GET/HEAD only; redirects and WebSockets blocked.",
   startedAt: new Date().toISOString(),
   artifacts,
   status: "running",
@@ -54,6 +64,7 @@ const receipt = {
   servedAssets: [],
   assetErrors: [],
   externalRequests: [],
+  disallowedRequests: [],
   consoleErrors: [],
   limits: { durationToleranceSeconds: 0.35, requestedTrimSeconds: 2 },
   visibilityProof:
@@ -148,7 +159,7 @@ async function waitForPreview() {
     if (previewProcess && previewProcess.exitCode !== null)
       throw new Error(`Preview exited: ${previewOutput}`);
     try {
-      const response = await fetch(base, { signal: AbortSignal.timeout(1000) });
+      const response = await fetch(base, { method: "GET", redirect: "error", signal: AbortSignal.timeout(1000) });
       if (response.ok) return;
     } catch {
       /* Startup may not yet be listening. The overall deadline still fails. */
@@ -473,7 +484,7 @@ try {
   if (startPreview) {
     let occupied = false;
     try {
-      await fetch(base, { signal: AbortSignal.timeout(1000) });
+      await fetch(base, { method: "GET", redirect: "error", signal: AbortSignal.timeout(1000) });
       occupied = true;
     } catch {
       /* The owned preview must use an unused local port. */
@@ -503,7 +514,7 @@ try {
     previewProcess.stderr.on("data", collect);
   }
   await waitForPreview();
-  const html = await (await fetch(base)).arrayBuffer();
+  const html = await (await fetch(base, { method: "GET", redirect: "error", signal: AbortSignal.timeout(15_000) })).arrayBuffer();
   assert.equal(
     sha256(Buffer.from(html)),
     beforeDist.files.find((file) => file.path === "index.html").sha256,
@@ -566,12 +577,37 @@ try {
   const context = await browser.newContext({
     acceptDownloads: true,
     viewport: { width: 1440, height: 1000 },
+    serviceWorkers: "block",
   });
-  await context.route("**/*", (route) => {
-    const url = new URL(route.request().url());
-    if (url.origin === base.origin) return route.continue();
-    receipt.externalRequests.push(`${url.origin}${url.pathname}`);
-    return route.abort("blockedbyclient");
+  await context.routeWebSocket("**/*", (socket) => {
+    const url = new URL(socket.url());
+    receipt.disallowedRequests.push(`WebSocket ${url.origin}${url.pathname}`);
+    socket.close();
+  });
+  await context.route("**/*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.origin !== base.origin) {
+      receipt.externalRequests.push(`${url.origin}${url.pathname}`);
+      return route.abort("blockedbyclient");
+    }
+    if (!["GET", "HEAD"].includes(request.method())) {
+      receipt.disallowedRequests.push(`${request.method()} ${url.origin}${url.pathname}`);
+      return route.abort("blockedbyclient");
+    }
+    try {
+      // Do not follow a same-origin response to a cross-origin redirect before
+      // the browser's routing hook gets another chance to inspect it.
+      const response = await route.fetch({ maxRedirects: 0, timeout: 15_000 });
+      if (response.status() >= 300 && response.status() < 400) {
+        receipt.disallowedRequests.push(`Redirect ${url.origin}${url.pathname}`);
+        return route.abort("blockedbyclient");
+      }
+      await route.fulfill({ response });
+    } catch (error) {
+      receipt.assetErrors.push(`Read-only request failed: ${error.message}`);
+      await route.abort("failed").catch(() => {});
+    }
   });
   const page = await context.newPage();
   activePage = page;
@@ -583,14 +619,14 @@ try {
     const url = new URL(response.url());
     if (
       url.origin !== base.origin ||
-      !url.pathname.startsWith("/assets/") ||
+      !(url.pathname === "/" || url.pathname.startsWith("/assets/")) ||
       response.status() !== 200
     )
       return;
     const promise = response
       .body()
       .then((bytes) => {
-        const path = decodeURIComponent(url.pathname.slice(1));
+        const path = url.pathname === "/" ? "index.html" : decodeURIComponent(url.pathname.slice(1));
         const expected = beforeDist.files.find((file) => file.path === path);
         const actualHash = sha256(bytes);
         assert.ok(
@@ -857,7 +893,12 @@ try {
   assert.deepEqual(
     receipt.externalRequests,
     [],
-    "Local editor checks must not contact customer accounts, providers, or external services.",
+    "Editor checks must not contact customer accounts, providers, or cross-origin services.",
+  );
+  assert.deepEqual(
+    receipt.disallowedRequests,
+    [],
+    "Editor checks permit only same-origin GET/HEAD requests, without redirects or WebSockets.",
   );
   assert.deepEqual(
     receipt.consoleErrors,

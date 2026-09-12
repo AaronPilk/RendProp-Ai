@@ -217,9 +217,9 @@ STUDIO_BROWSER_EXECUTABLE='/Applications/Google Chrome.app/Contents/MacOS/Google
 ```json
 {
   "status": "passed",
-  "finishedAt": "2026-09-12T15:57:59.759Z",
+  "finishedAt": "2026-09-12T16:22:03.694Z",
   "browserVersion": "152.0.7977.83",
-  "builtEntrySha256": "32b1bc460aad157938a01f875e0df13c9590e44a6c06c5c5c0acde1415b48762",
+  "builtEntrySha256": "95d81d1cb69bb64d237e6cd4dbc884287b0e314d4f9d49b07aa988f8506fef05",
   "pageViewportCombinations": 10,
   "consoleErrors": 0,
   "externalRequests": 0,
@@ -237,11 +237,22 @@ Cancelling retry retained temporary edits. Accepting retry restored a repaired
 draft with a different ID and two clips, and the next save retained that repaired
 identity. Mobile and planner screenshots were visually inspected after the run.
 Its full receipt and images are at
-`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-workspace-browser-7H1sm3/`.
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-workspace-browser-fwxA6G/`.
 A durable copy of the receipt is included at
 [`evidence/2026-09-12/workspace-browser.json`](evidence/2026-09-12/workspace-browser.json).
 The `--start-preview` orchestration option is implemented but was not exercised
 in this final coordinated run, which deliberately used the already-frozen build.
+
+Final config review also caught the unused-key-alias path: a valid preferred
+publishable key could mask a forbidden value in the other Vite key field. Both
+fields now fail closed even if the unused field is empty. The data suite passed
+24/24; the actual Vite CLI, given only synthetic keys, exited 1 before emitting
+files and left all existing dist hashes unchanged. No actual credential was used
+or printed by that negative control.
+
+The Studio preview subsequently deployed in **unconfigured local mode**. It does
+not enable or prove this Apple account flow. See STUDIO-STATUS for the separate
+live editor/asset receipts and the Cloudflare-managed robots exception.
 
 Before claiming a connected production browser, verify the configured Apple
 round trip reaches the same Supabase subject and existing listings as the iPhone;

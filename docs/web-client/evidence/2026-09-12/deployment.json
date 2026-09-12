@@ -1,0 +1,66 @@
+{
+  "kind": "rendprop-studio-static-preview",
+  "origin": "https://studio.rendprop.com",
+  "account": "9c332c75b96cc642621dad5d86d4bf18",
+  "worker": "rendprop-studio",
+  "runtimeSourceCommit": "98a6da6820f22c144dc024278b959bcd1db020a4",
+  "implementationCommit": "74153def832b088190390552f950afb8baf2be49",
+  "branch": "feat/web-studio-20260912",
+  "sourceBinding": "Application bytes matched the tested build. A header-only follow-up changed _headers, while all seven app asset files stayed identical. Verification scripts and docs have later changes; no assertion is made that their later revisions were uploaded as app resources.",
+  "wranglerVersion": "4.131.1",
+  "fullBuiltDirectorySha256": "4adf6e9a492d98ad482c6ac48bff97cd9d73df13fa821b01f9086dff03c170fe",
+  "builtDirectoryHashDefinition": "SHA256(JSON.stringify(sorted file manifest)) as produced by browser-editor.mjs",
+  "deploymentReadback": {
+    "readAt": "2026-09-12T16:36:28.766Z",
+    "success": true,
+    "status": 200,
+    "deployments": [
+      {
+        "id": "d8802df5-3d95-4fcb-bfb5-e0bb397a8b8b",
+        "created_on": "2026-09-12T16:29:03.89539Z",
+        "source": "wrangler",
+        "strategy": "percentage",
+        "versions": [
+          {
+            "version_id": "2df1ea6d-b3a1-44ff-bc02-9ef66887dacb",
+            "percentage": 100
+          }
+        ]
+      },
+      {
+        "id": "bd693320-88c9-4de9-8abf-fccff7581072",
+        "created_on": "2026-09-12T16:24:45.815697Z",
+        "source": "wrangler",
+        "strategy": "percentage",
+        "versions": [
+          {
+            "version_id": "5cf06909-3367-458a-a5c0-0f19f3d76d12",
+            "percentage": 100
+          }
+        ]
+      }
+    ]
+  },
+  "mode": "unconfigured browser-local editor and planner preview",
+  "liveProofs": [
+    "deployed-assets.json",
+    "deployed-editor-browser.json"
+  ],
+  "accountLoginVerified": false,
+  "studioEdgeFunctionDeployed": false,
+  "publicMarketingDeployed": false,
+  "remoteBranchPushed": false,
+  "untouched": [
+    "App Store Connect and Apple provider configuration",
+    "iOS source",
+    "existing tour-host deployment",
+    "upload gateway deployment",
+    "production database and customer media",
+    "paid provider routes"
+  ],
+  "caveats": [
+    "Browser tests used Chrome 152 with synthetic files, not Safari/Firefox/physical phones.",
+    "Cloudflare managed robots prefix remains: crawler blocking is not verified; HTML/header noindex is present.",
+    "Remote GitHub integration write returned 403; local commits are the handoff source."
+  ]
+}

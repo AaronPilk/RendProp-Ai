@@ -1,0 +1,558 @@
+{
+  "target": "https://studio.rendprop.com",
+  "deployedPreview": true,
+  "requestPolicy": "Fresh isolated context; same-origin GET/HEAD only; redirects and WebSockets blocked.",
+  "startedAt": "2026-09-12T16:31:06.321Z",
+  "artifacts": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ",
+  "status": "passed",
+  "checks": [
+    {
+      "name": "bounded synthetic video, 440 Hz original audio, and photo generated in an owned temporary directory"
+    },
+    {
+      "name": "navigation to planner pauses playback and preserves verified local media when returning to editor"
+    },
+    {
+      "name": "every offered video format exports real trimmed 9:16 video, matching codecs, decoded 440 Hz audio, and burned caption pixels",
+      "count": 2
+    },
+    {
+      "name": "editing the completed revision removes the stale download"
+    },
+    {
+      "name": "explicit Mute audio produces no audio stream"
+    },
+    {
+      "name": "reordered photo-to-video sequence exports in every offered format with silent photo interval and original audio after the cut",
+      "count": 2
+    },
+    {
+      "name": "photo exports as real square video with expected duration, burned text, and no synthetic audio"
+    },
+    {
+      "name": "changing edit revision during active recording aborts and produces no download"
+    },
+    {
+      "name": "explicit cancellation during active recording preserves the edit and produces no download"
+    },
+    {
+      "name": "simulated hidden-tab visibilitychange aborts active recording without download"
+    },
+    {
+      "name": "leaving editor during active recording cancels the export while preserving verified local media"
+    },
+    {
+      "name": "export succeeds after revision, explicit, visibility, and editor-navigation cancellation"
+    },
+    {
+      "name": "actual served editor bytes match dist; no external requests or uncaught browser errors"
+    }
+  ],
+  "skipped": 0,
+  "exports": [
+    {
+      "name": "original-audio-1",
+      "format": {
+        "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+        "label": "MP4 · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/original-audio-1.mp4",
+      "suggestedFilename": "rendprop-local-r5.mp4",
+      "sha256": "1245ae183d8542ee963ed1cc11c937f0892fa84a51fb73c45af7e2855c9a1b5a",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 720,
+            "height": 1280,
+            "duration": "2.036700"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "2.003708"
+          }
+        ],
+        "format": {
+          "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+          "duration": "2.036700",
+          "size": "222015"
+        }
+      },
+      "timing": {
+        "seconds": 2.0367,
+        "measuredFrom": "container metadata"
+      },
+      "audioEvidence": {
+        "samples": 52835,
+        "rms": 0.0883423845321345,
+        "frequencyHz": 439.7085265449039
+      },
+      "captionLightPixels": 4818,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/original-audio-1-frame.png"
+    },
+    {
+      "name": "original-audio-2",
+      "format": {
+        "value": "video/webm;codecs=vp8,opus",
+        "label": "WebM · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/original-audio-2.webm",
+      "suggestedFilename": "rendprop-local-r5.webm",
+      "sha256": "20d3b3ca6c921f4da2eeff401013389b55304206863588cb4ed99e7cfa996a90",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "vp8",
+            "codec_type": "video",
+            "width": 720,
+            "height": 1280
+          },
+          {
+            "codec_name": "opus",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2
+          }
+        ],
+        "format": {
+          "format_name": "matroska,webm",
+          "size": "122644"
+        }
+      },
+      "timing": {
+        "seconds": 2.027,
+        "measuredFrom": "decoded video packet timestamps (container omits duration header)"
+      },
+      "audioEvidence": {
+        "samples": 52944,
+        "rms": 0.08830420545006556,
+        "frequencyHz": 439.70988213961925
+      },
+      "captionLightPixels": 4855,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/original-audio-2-frame.png"
+    },
+    {
+      "name": "explicitly-muted-video",
+      "format": {
+        "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+        "label": "MP4 · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/explicitly-muted-video.mp4",
+      "suggestedFilename": "rendprop-local-r7.mp4",
+      "sha256": "77ad59b8fe7d1c903c35aa6c506e820af6b93c6d224084bb4c203e4b0476f831",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 720,
+            "height": 1280,
+            "duration": "2.068500"
+          }
+        ],
+        "format": {
+          "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+          "duration": "2.068500",
+          "size": "257552"
+        }
+      },
+      "timing": {
+        "seconds": 2.0685,
+        "measuredFrom": "container metadata"
+      },
+      "captionLightPixels": 4821,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/explicitly-muted-video-frame.png"
+    },
+    {
+      "name": "ordered-sequence-1",
+      "format": {
+        "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+        "label": "MP4 · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/ordered-sequence-1.mp4",
+      "suggestedFilename": "rendprop-local-r12.mp4",
+      "sha256": "74729402a8fffd62b164120376cda2917af4c54a72cf7ba3b9d3c30322cc34db",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 720,
+            "height": 1280,
+            "duration": "3.035600"
+          },
+          {
+            "codec_name": "aac",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2,
+            "duration": "3.001812"
+          }
+        ],
+        "format": {
+          "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+          "duration": "3.035600",
+          "size": "296625"
+        }
+      },
+      "timing": {
+        "seconds": 3.0356,
+        "measuredFrom": "container metadata"
+      },
+      "audioEvidence": {
+        "samples": 52835,
+        "rms": 0.08828978716470423,
+        "frequencyHz": 440.61701523611237
+      },
+      "captionLightPixels": 4790,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/ordered-sequence-1-frame.png",
+      "sequenceEvidence": {
+        "firstRGB": [
+          49,
+          37,
+          79
+        ],
+        "secondRGB": [
+          107,
+          13,
+          46
+        ],
+        "silentRMS": 0
+      }
+    },
+    {
+      "name": "ordered-sequence-2",
+      "format": {
+        "value": "video/webm;codecs=vp8,opus",
+        "label": "WebM · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/ordered-sequence-2.webm",
+      "suggestedFilename": "rendprop-local-r12.webm",
+      "sha256": "3bb45e3d69a9e6751d3164eb41f3a08c5dd012f7df2968fc0ab614f6ce671449",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "vp8",
+            "codec_type": "video",
+            "width": 720,
+            "height": 1280
+          },
+          {
+            "codec_name": "opus",
+            "codec_type": "audio",
+            "sample_rate": "48000",
+            "channels": 2
+          }
+        ],
+        "format": {
+          "format_name": "matroska,webm",
+          "size": "282365"
+        }
+      },
+      "timing": {
+        "seconds": 3.013,
+        "measuredFrom": "decoded video packet timestamps (container omits duration header)"
+      },
+      "audioEvidence": {
+        "samples": 52896,
+        "rms": 0.08838176829411719,
+        "frequencyHz": 440.10889292196003
+      },
+      "captionLightPixels": 4858,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/ordered-sequence-2-frame.png",
+      "sequenceEvidence": {
+        "firstRGB": [
+          48,
+          33,
+          77
+        ],
+        "secondRGB": [
+          100,
+          2,
+          46
+        ],
+        "silentRMS": 0
+      }
+    },
+    {
+      "name": "square-photo",
+      "format": {
+        "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+        "label": "MP4 · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/square-photo.mp4",
+      "suggestedFilename": "rendprop-local-r20.mp4",
+      "sha256": "59cfe81b7fe8381c12410958828a237aec9db271c2d8b54e582b4bdf0cf468c1",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 960,
+            "height": 960,
+            "duration": "2.031267"
+          }
+        ],
+        "format": {
+          "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+          "duration": "2.031267",
+          "size": "33684"
+        }
+      },
+      "timing": {
+        "seconds": 2.031267,
+        "measuredFrom": "container metadata"
+      },
+      "captionLightPixels": 5044,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/square-photo-frame.png"
+    },
+    {
+      "name": "after-cancellation",
+      "format": {
+        "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+        "label": "MP4 · Browser encoder"
+      },
+      "path": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/after-cancellation.mp4",
+      "suggestedFilename": "rendprop-local-r23.mp4",
+      "sha256": "ce05c33c1fa93cfb4285eb59b49a3cc44a5df18222742c1f9bccd7dede5bd888",
+      "probe": {
+        "programs": [],
+        "stream_groups": [],
+        "streams": [
+          {
+            "codec_name": "h264",
+            "codec_type": "video",
+            "width": 960,
+            "height": 960,
+            "duration": "2.030367"
+          }
+        ],
+        "format": {
+          "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+          "duration": "2.030367",
+          "size": "37315"
+        }
+      },
+      "timing": {
+        "seconds": 2.030367,
+        "measuredFrom": "container metadata"
+      },
+      "captionLightPixels": 5045,
+      "framePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-editor-browser-NrtpnZ/after-cancellation-frame.png"
+    }
+  ],
+  "servedAssets": [
+    {
+      "path": "index.html",
+      "sha256": "95d81d1cb69bb64d237e6cd4dbc884287b0e314d4f9d49b07aa988f8506fef05",
+      "bytes": 867
+    },
+    {
+      "path": "assets/index-Du_qn1V4.css",
+      "sha256": "6df0bc1b5542a94edd21d56cb72ae8f1bb78db9cc7fb64856f36bda4e8c72d58",
+      "bytes": 22888
+    },
+    {
+      "path": "assets/index-CLxeL-BH.js",
+      "sha256": "5da4bbac644a54d1b369016b96460366b5a78f74b7a20e68c1cf72275d11a2e6",
+      "bytes": 499523
+    },
+    {
+      "path": "assets/VideoEditor-mmvw8CuE.css",
+      "sha256": "e1ee19e3cf47bc85d54e5e137d830f29c2efbeae218c5a62e74bc0103d2cf0de",
+      "bytes": 10080
+    },
+    {
+      "path": "assets/VideoEditor-BQUBAGWf.js",
+      "sha256": "9a352d2b660cc564cc190fee41c25162ff6195d19d02edd5cd74134db962b7b7",
+      "bytes": 27586
+    }
+  ],
+  "assetErrors": [],
+  "externalRequests": [],
+  "disallowedRequests": [],
+  "consoleErrors": [],
+  "limits": {
+    "durationToleranceSeconds": 0.35,
+    "requestedTrimSeconds": 2
+  },
+  "visibilityProof": "Headless platform-event simulation: document.hidden=true during a dispatched visibilitychange. Real OS tab visibility is not claimed.",
+  "mediaIdentityProof": "Same-name, same-size changed-file rejection is covered by browser-workspace.mjs; not duplicated here.",
+  "dist": {
+    "sha256": "4adf6e9a492d98ad482c6ac48bff97cd9d73df13fa821b01f9086dff03c170fe",
+    "files": [
+      {
+        "path": "_headers",
+        "bytes": 675,
+        "sha256": "69ec6d257a1b02c4d15ae5c580ac8c4faceaa323812720d82a830e24cbc605ea"
+      },
+      {
+        "path": "assets/index-CLxeL-BH.js",
+        "bytes": 499523,
+        "sha256": "5da4bbac644a54d1b369016b96460366b5a78f74b7a20e68c1cf72275d11a2e6"
+      },
+      {
+        "path": "assets/index-Du_qn1V4.css",
+        "bytes": 22888,
+        "sha256": "6df0bc1b5542a94edd21d56cb72ae8f1bb78db9cc7fb64856f36bda4e8c72d58"
+      },
+      {
+        "path": "assets/VideoEditor-BQUBAGWf.js",
+        "bytes": 27586,
+        "sha256": "9a352d2b660cc564cc190fee41c25162ff6195d19d02edd5cd74134db962b7b7"
+      },
+      {
+        "path": "assets/VideoEditor-mmvw8CuE.css",
+        "bytes": 10080,
+        "sha256": "e1ee19e3cf47bc85d54e5e137d830f29c2efbeae218c5a62e74bc0103d2cf0de"
+      },
+      {
+        "path": "index.html",
+        "bytes": 867,
+        "sha256": "95d81d1cb69bb64d237e6cd4dbc884287b0e314d4f9d49b07aa988f8506fef05"
+      },
+      {
+        "path": "rendprop-mark.svg",
+        "bytes": 21252,
+        "sha256": "18c5edd6e6801cc33754b41619f167d28b8da33c5604776e70faf76311a31199"
+      },
+      {
+        "path": "robots.txt",
+        "bytes": 26,
+        "sha256": "331ea9090db0c9f6f597bd9840fd5b171830f6e0b3ba1cb24dfa91f0c95aedc1"
+      }
+    ]
+  },
+  "ffmpeg": "ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "ffprobe": "ffprobe version 8.1 Copyright (c) 2007-2026 the FFmpeg developers",
+  "browserVersion": "152.0.7977.83",
+  "advertisedFormats": [
+    {
+      "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+      "label": "MP4 · Browser encoder"
+    },
+    {
+      "value": "video/webm;codecs=vp8,opus",
+      "label": "WebM · Browser encoder"
+    }
+  ],
+  "primaryFormat": {
+    "value": "video/mp4;codecs=avc1.42E01F,mp4a.40.2",
+    "label": "MP4 · Browser encoder"
+  },
+  "finalDistSha256": "4adf6e9a492d98ad482c6ac48bff97cd9d73df13fa821b01f9086dff03c170fe",
+  "finishedAt": "2026-09-12T16:31:34.469Z",
+  "artifactHashes": [
+    {
+      "name": "after-cancellation-frame.png",
+      "bytes": 48137,
+      "sha256": "efa446b6376139b4dcf1013bbd2464bae55b874dbd8d88730063e194e7584c48"
+    },
+    {
+      "name": "after-cancellation.mp4",
+      "bytes": 37315,
+      "sha256": "ce05c33c1fa93cfb4285eb59b49a3cc44a5df18222742c1f9bccd7dede5bd888"
+    },
+    {
+      "name": "cancelled-export.png",
+      "bytes": 217284,
+      "sha256": "1cfc55f84c71f5037a740e83c55a0f7e35c807b63403cc6a23655d59a5063c5d"
+    },
+    {
+      "name": "explicitly-muted-video-frame.png",
+      "bytes": 50015,
+      "sha256": "44c2b8a17a003eff9d534e32b663dad6b815f641f74e12cfc8d5c98a3dc937ba"
+    },
+    {
+      "name": "explicitly-muted-video.mp4",
+      "bytes": 257552,
+      "sha256": "77ad59b8fe7d1c903c35aa6c506e820af6b93c6d224084bb4c203e4b0476f831"
+    },
+    {
+      "name": "ordered-sequence-1-frame.png",
+      "bytes": 51260,
+      "sha256": "756e24b1e01750d4518b270795a16ec25c7e2717fda83f4ae984f323612442a6"
+    },
+    {
+      "name": "ordered-sequence-1.mp4",
+      "bytes": 296625,
+      "sha256": "74729402a8fffd62b164120376cda2917af4c54a72cf7ba3b9d3c30322cc34db"
+    },
+    {
+      "name": "ordered-sequence-2-frame.png",
+      "bytes": 54933,
+      "sha256": "352c45874769a833dbbf61cc54431bba92fadbac72175416d6b0ca5e1cb87ee1"
+    },
+    {
+      "name": "ordered-sequence-2.webm",
+      "bytes": 282365,
+      "sha256": "3bb45e3d69a9e6751d3164eb41f3a08c5dd012f7df2968fc0ab614f6ce671449"
+    },
+    {
+      "name": "original-audio-1-frame.png",
+      "bytes": 26368,
+      "sha256": "ca12a235871ed1ea9307e387579533499b3589a67c318f980c8ede18bf96c780"
+    },
+    {
+      "name": "original-audio-1.mp4",
+      "bytes": 222015,
+      "sha256": "1245ae183d8542ee963ed1cc11c937f0892fa84a51fb73c45af7e2855c9a1b5a"
+    },
+    {
+      "name": "original-audio-2-frame.png",
+      "bytes": 36179,
+      "sha256": "9bb17dd39cb6dbef152d989542a18da89cb50cc778afb62765292c3c56f46ba2"
+    },
+    {
+      "name": "original-audio-2.webm",
+      "bytes": 122644,
+      "sha256": "20d3b3ca6c921f4da2eeff401013389b55304206863588cb4ed99e7cfa996a90"
+    },
+    {
+      "name": "photo-export-complete.png",
+      "bytes": 220862,
+      "sha256": "2050f293f9d0865685bf910865ff5f867f76841beca2aaac5be6935ed4c0dc5d"
+    },
+    {
+      "name": "source-photo.png",
+      "bytes": 1508,
+      "sha256": "c229b6904465b7bda49870962e607e1b2649575bb9d1fa658f6081c2666fa63f"
+    },
+    {
+      "name": "source-tone.mp4",
+      "bytes": 54853,
+      "sha256": "1f5a483dd6c6fcf7ed4eb5ef6a628cdb7ce544e8daf1e223b642dd61cd2a8181"
+    },
+    {
+      "name": "square-photo-frame.png",
+      "bytes": 38868,
+      "sha256": "0bef78eb6adb474e0437bb882f264d8df15c6cd2fe76adaced9cb08922e343b5"
+    },
+    {
+      "name": "square-photo.mp4",
+      "bytes": 33684,
+      "sha256": "59cfe81b7fe8381c12410958828a237aec9db271c2d8b54e582b4bdf0cf468c1"
+    },
+    {
+      "name": "video-export-complete.png",
+      "bytes": 224332,
+      "sha256": "36baaa14be5411f9719addb9740db700e3d878618bda25bb5ab29c291273303d"
+    }
+  ]
+}

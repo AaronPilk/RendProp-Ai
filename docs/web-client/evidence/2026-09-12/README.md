@@ -11,6 +11,14 @@ sign-in, production database integration or social publishing from local tests.
   navigation checks. The entry hash identifies the exact build used by that run.
 - `marketing-browser.json`: 179 assertions, seven public pages at four viewports;
   original branding and actual source hashes. Separate from the Studio app build.
+- `deployed-editor-browser.json`: actual HTTPS Studio preview, 13 grouped checks
+  and seven real downloads with served HTML/JS/CSS hash verification. Same-origin
+  GET/HEAD only, isolated browser, no provider/customer session or backend write.
+- `deployed-assets.json`: actual HTTPS header/content/deep-route read-back. App
+  files are exact; the Cloudflare-managed robots prefix is pinned separately and
+  explicitly warned about. It does not assert all-crawler exclusion.
+- `deployment.json`: runtime source commits, actual Cloudflare deployment read-back,
+  built-directory fingerprint, unchanged systems and explicit rollout limits.
 - `editor-browser-prior-build.json`: historical earlier passing single-clip suite.
   It does NOT cover the final photo→video audio-clock fix. Retained for provenance,
   not counted as an additional release gate or represented as current coverage.

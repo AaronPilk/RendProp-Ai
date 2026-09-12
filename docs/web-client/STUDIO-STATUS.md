@@ -7,6 +7,36 @@ His intervening change touches only the two iOS project/version files; no web
 source or built asset changed. This preserves his current submission source.
 Workspace: `/Users/pilksclaes/Rendprop AI/web-studio-20260912`.
 
+## Delivered preview — read this first
+
+**https://studio.rendprop.com is live** as a local-editor/content-planner preview.
+Cloudflare Worker `rendprop-studio`, version
+`2df1ea6d-b3a1-44ff-bc02-9ef66887dacb`, deployed from source
+`98a6da6820f22c144dc024278b959bcd1db020a4`. Core implementation commit:
+`74153def832b088190390552f950afb8baf2be49`.
+
+Actual HTTPS browser verification passed at 16:31 UTC: 13 grouped editor checks,
+seven real downloads, no skips, no external/disallowed requests or browser errors.
+The browser-received entry HTML and four JS/CSS assets matched the local build.
+The separate deployed-assets gate also verified the original logo, headers and
+SPA deep route. Receipts are linked below; these are not localhost claims.
+
+**Not delivered as live features:** same-account Apple web login and iPhone media
+sync, cloud edit revisions, resumable large uploads, canonical cloud renders,
+team approvals and automated social publishing. The deployed build intentionally
+has no account configuration and says so. No fake listings, fake connection or
+simulated server job is substituted for the missing integration.
+
+The public marketing changes are built/tested/committed but **not deployed to the
+existing tour-host**. Claude must integrate them with its current production
+baseline; do not replace that Worker with a historical branch indiscriminately.
+Apple/iOS submission, existing tour-host, upload gateway, database, customer data
+and paid provider routes were not changed by this Studio deployment.
+
+All source is committed locally on `feat/web-studio-20260912`. GitHub write access
+returned 403, so this branch is **not pushed**. Claude can inspect the local branch
+or worktree immediately; a remote build link is not proof that GitHub has its source.
+
 ## Scope and separation
 
 The owner's latest request supersedes the audit as the main work: build Rendprop's
@@ -46,7 +76,8 @@ edit sync and canonical server exports are not implemented by this release.
   sitemap/robots, corrected account/App Store availability copy. Exact prices unchanged.
 - Dedicated static Worker configuration for `studio.rendprop.com`, private noindex,
   CSP/response headers, pinned dependencies/lockfile, offline and browser test runners,
-  build-output gates and a separate CI workflow. No live deployment claimed yet.
+  build-output gates and a separate CI workflow. The isolated local-mode preview
+  is now deployed and verified as described above; connected mode is not.
 
 ## Important product limits — do not conceal in handoff or marketing
 
@@ -82,10 +113,27 @@ login from being a verified production feature. No provider setting was changed.
 An empty/missing secret field in a management response is not by itself proof
 that a secret was never configured; the Services ID and redirect gaps suffice.
 
-Cloudflare read-back at this pass showed Workers `rendprop-tour-host` and
-`rendprop-upload-gateway`; no Studio Worker/custom domain was present.
-The existing upload domain remains untouched. The CLI is authenticated and can
-package the new static assets, but packaging is not a live deployment receipt.
+Cloudflare predeploy read-back at 16:19 UTC found no Studio custom domain or DNS
+record. This turn then created only `rendprop-studio` and its exact
+`studio.rendprop.com` custom domain, with no database/storage/secret bindings.
+Domain read-back confirmed that mapping and the actual HTTPS tests verified its
+served app. Existing tour/upload hostnames and routes remain untouched.
+
+The initial deployment (`5cf06909-3367-458a-a5c0-0f19f3d76d12`) exposed a real
+environment difference: Cloudflare injected a JavaScript Detection snippet into
+HTML. Exact-byte verification failed. The scoped `no-transform` header fix in
+`98a6da6` resolved it without weakening script CSP or changing zone bot/WAF settings.
+All seven app asset files stayed byte-identical across this header-only fix.
+
+**Separate open crawler-policy item:** Cloudflare also prepends its existing
+managed policy to `robots.txt`. Its wildcard `Allow: /` can conflict with the
+origin's wildcard `Disallow: /`. The file is therefore NOT an exact-byte match,
+and crawl blocking is not claimed. The read-back gate verifies the exact origin
+tail plus the SHA-pinned known managed prefix, reports that exception and retains
+noindex header/meta checks. Noindex is the intended index exclusion; neither it
+nor robots.txt is account access control. Resolve the managed policy with a
+hostname-scoped design before claiming an all-crawler exclusion; do not disable
+or rewrite the entire business domain's crawl settings to silence a test.
 
 ## Required integration order
 
@@ -103,8 +151,9 @@ package the new static assets, but packaging is not a live deployment receipt.
    needed; verify cache headers and signed-URL expiry on actual private media.
    Studio's own `no-store` policy does not cover external R2 responses. Do not
    replace existing iPhone/upload/viewer settings blindly.
-5. Build with the project's **public** Supabase URL and publishable key; deploy
-   only `apps/studio` as its own Worker, then verify headers, emitted JS and actual
+5. For the connected release, rebuild the existing preview with the project's
+   **public** Supabase URL and publishable key; update only its own Worker,
+   then verify headers, emitted JS and actual
    browser sign-in into the SAME subject/org as the phone. No service-role key.
 6. Verify media paging/expiry/import and account-switch behavior against a controlled
    owner fixture. Then activate public Open Studio/Sign in links. The public pages
@@ -158,6 +207,8 @@ assertions, tests and viewport combinations into a fictitious single test total.
 | Public marketing browser run | 179 assertions over 28 page/viewport combinations, zero browser errors; unchanged source hashes bound in receipt |
 | Studio dependency audit | Full and production-only audit reported zero advisories in this installed lockfile at 15:46 UTC |
 | Cloudflare static packaging | Pinned Wrangler 4.131.1 dry run passed; this alone is not deployment proof |
+| Actual HTTPS editor, 16:31 UTC | 13 grouped checks, seven actual exports; strict served HTML/JS/CSS hashes; zero skips/browser errors/disallowed requests |
+| HTTPS app read-back, 16:31–16:32 UTC | Exact HTML/JS/CSS/logo bytes, required headers and SPA route passed; separately pinned managed-robots prefix reported as a warning, not exact robots or crawl-blocking proof |
 | Remote CI | Not run: new workflow is local until this branch can be pushed |
 
 The two-second final MP4 measured 2.038267 seconds (H.264/AAC); the WebM measured
@@ -213,6 +264,13 @@ These are defects discovered and addressed in this new Studio implementation, no
 claims of regressions in the App Store binary. No camera/AR tests were attempted.
 
 ## Next product engineering, in order
+
+Small preview UX follow-ups: the embedded editor still says “Make the listing move”
+(`apps/studio/src/editor/VideoEditor.tsx:525`) regardless of the selected industry;
+make this generic or industry-aware before the all-industry launch. A completed
+export is announced both by the host notice (`App.tsx:699,932`) and editor notice
+(`VideoEditor.tsx:587`); consolidate the announcement owner to reduce duplicate
+visual/live-region messaging. These do not invalidate the actual export proof.
 
 1. Connected account/media acceptance above; paid customers must see the same spaces.
 2. Durable browser upload using existing v2 gateway/recovery protocol; no new storage
