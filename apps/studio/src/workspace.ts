@@ -25,6 +25,14 @@ export type PlanItem = {
   scheduledAt?: string;
 };
 export const MAX_PLANS = 100;
+export const MAX_PLAN_BACKUP_BYTES = 2 * 1024 * 1024;
+export type PlanBackup = {
+  format: "rendprop-content-plans";
+  version: 1;
+  exportedAt: string;
+  plans: PlanItem[];
+};
+export type PlanImportMode = "merge" | "replace";
 export interface StorageLike {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
@@ -201,6 +209,106 @@ export function validatePlans(items: unknown): PlanItem[] {
     throw new Error("Saved content plans have duplicate identities.");
   return result;
 }
+function requireBackupSize(bytes: number): void {
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > MAX_PLAN_BACKUP_BYTES)
+    throw new Error("Choose a nonempty plans backup no larger than 2 MiB.");
+}
+export function planBackupFile(
+  items: PlanItem[],
+  exportedAt = new Date().toISOString(),
+): { text: string; filename: string } {
+  utcInstant(exportedAt);
+  const backup: PlanBackup = {
+    format: "rendprop-content-plans",
+    version: 1,
+    exportedAt: new Date(exportedAt).toISOString(),
+    plans: validatePlans(items),
+  };
+  const text = JSON.stringify(backup, null, 2) + "\n";
+  requireBackupSize(new TextEncoder().encode(text).length);
+  return {
+    text,
+    filename: `rendprop-content-plans-${backup.exportedAt.replace(/[:.]/g, "-")}-${backup.plans.length}-plans.json`,
+  };
+}
+export function parsePlanBackup(text: string): PlanBackup {
+  requireBackupSize(new TextEncoder().encode(text).length);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    throw new Error("This file is not valid JSON. Export a Rendprop plans backup and try again.");
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("Choose a Rendprop content-plans backup, not a calendar or video-edit file.");
+  const value = parsed as Record<string, unknown>;
+  if (value.format !== "rendprop-content-plans" || value.version !== 1)
+    throw new Error("Unsupported plans backup format or version. This Studio reads version 1 only.");
+  // Refuse unknown fields instead of quietly dropping data from a newer export.
+  if (Object.keys(value).some((key) => !["format", "version", "exportedAt", "plans"].includes(key)))
+    throw new Error("This plans backup contains unsupported fields.");
+  if (typeof value.exportedAt !== "string") throw new Error("Invalid backup export date.");
+  utcInstant(value.exportedAt);
+  const plans = validatePlans(value.plans);
+  const itemFields = ["id", "title", "caption", "channel", "date", "createdAt", "timeZone", "scheduledAt"];
+  if ((value.plans as object[]).some((item) => Object.keys(item).some((key) => !itemFields.includes(key))))
+    throw new Error("A plan contains unsupported fields. No plans were imported.");
+  return { format: "rendprop-content-plans", version: 1, exportedAt: new Date(value.exportedAt).toISOString(), plans };
+}
+export async function readPlanBackupFile(
+  file: Pick<File, "size" | "arrayBuffer">,
+): Promise<PlanBackup> {
+  // Bound before allocating/decoding; a renamed video must not freeze the planner.
+  requireBackupSize(file.size);
+  const bytes = await file.arrayBuffer();
+  requireBackupSize(bytes.byteLength);
+  if (bytes.byteLength !== file.size) throw new Error("The backup file changed while reading. Choose it again.");
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    throw new Error("The backup must be a valid UTF-8 JSON file.");
+  }
+  return parsePlanBackup(text);
+}
+export function planImportSnapshot(items: PlanItem[]): string {
+  return JSON.stringify(validatePlans(items));
+}
+export function previewPlanImport(
+  current: PlanItem[],
+  imported: PlanItem[],
+  mode: PlanImportMode,
+): { plans: PlanItem[]; importedCount: number; existingCount: number } {
+  const existing = validatePlans(current), incoming = validatePlans(imported);
+  if (mode !== "merge" && mode !== "replace") throw new Error("Choose Merge or Replace before importing.");
+  if (mode === "merge") {
+    const identities = new Set(existing.map((item) => item.id));
+    const overlaps = incoming.filter((item) => identities.has(item.id)).length;
+    if (overlaps)
+      throw new Error(`${overlaps} imported ${overlaps === 1 ? "plan has an identity" : "plans have identities"} already in this workspace. Merge cannot overwrite or duplicate plans. Choose Replace only if the backup should replace the entire queue.`);
+    if (existing.length + incoming.length > MAX_PLANS)
+      throw new Error(`Merging would create ${existing.length + incoming.length} plans; the limit is ${MAX_PLANS}. No plans will be dropped. Choose a smaller backup or Replace.`);
+  }
+  return {
+    plans: mode === "replace" ? incoming : [...existing, ...incoming],
+    importedCount: incoming.length,
+    existingCount: existing.length,
+  };
+}
+export function confirmPlanImport(
+  current: PlanItem[],
+  imported: PlanItem[],
+  mode: PlanImportMode,
+  reviewedSnapshot: string,
+  onSave: (items: PlanItem[]) => void,
+): void {
+  // An import is a single synchronous parent save. A failed storage write must leave both
+  // the queue and preview intact; never clear then append or save a partially valid file.
+  if (planImportSnapshot(current) !== reviewedSnapshot)
+    throw new Error("Your saved plans changed after this preview. Cancel and choose the backup again before importing.");
+  const preview = previewPlanImport(current, imported, mode);
+  onSave(preview.plans);
+}
 export function savePlan(
   items: PlanItem[],
   item: PlanItem,
@@ -295,7 +403,10 @@ export function writePlans(
   key: string,
   items: PlanItem[],
 ) {
-  storage.setItem(`${key}:planner`, JSON.stringify(validatePlans(items)));
+  const text = JSON.stringify(validatePlans(items));
+  // The read guard is 500,000 characters. Never write a backup which cannot be reopened.
+  if (text.length > 500_000) throw new Error("These plans exceed browser draft storage limits. Existing plans were not changed.");
+  storage.setItem(`${key}:planner`, text);
 }
 const escapeICS = (text: string) =>
   text
@@ -354,9 +465,16 @@ export function calendarFile(item: PlanItem): string {
 }
 export function downloadBlob(blob: Blob, name: string) {
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = name;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  let a: HTMLAnchorElement | undefined;
+  try {
+    a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    document.body.append(a);
+    a.click();
+  } finally {
+    a?.remove();
+    // Give the browser time to start its download; even a failed click releases the URL.
+    setTimeout(() => URL.revokeObjectURL(url), 30_000);
+  }
 }

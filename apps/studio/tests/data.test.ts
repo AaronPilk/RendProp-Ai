@@ -7,12 +7,12 @@ import {
   decodeMedia,
   decodeMemberships,
   decodeWorkspace,
+  type Membership,
   readStudioConfig,
-  StudioError,
-  validateStudioConfig,
   type StudioAuth,
   type StudioConfig,
-  type Membership,
+  StudioError,
+  validateStudioConfig,
 } from "../src/data/index";
 
 const USER = "11111111-1111-4111-8111-111111111111";
@@ -124,11 +124,12 @@ function manualClock() {
     },
     advance(milliseconds: number) {
       now += milliseconds;
-      for (const [key, task] of [...tasks])
+      for (const [key, task] of [...tasks]) {
         if (task.at <= now) {
           tasks.delete(key);
           task.callback();
         }
+      }
     },
     pending: () => tasks.size,
   };
@@ -136,7 +137,8 @@ function manualClock() {
 function mockAuth(initial: Session | null = sessionFor()) {
   let current = initial;
   let callback:
-    ((event: AuthChangeEvent, session: Session | null) => void) | undefined;
+    | ((event: AuthChangeEvent, session: Session | null) => void)
+    | undefined;
   let refreshCalls = 0;
   const signInArgs: unknown[] = [];
   const signOutArgs: unknown[] = [];
@@ -213,7 +215,9 @@ test("browser config accepts publishable and legacy anon keys, normalizes origin
     ),
     config,
   );
-  const legacy = `e30.${Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url")}.c2ln`;
+  const legacy = `e30.${
+    Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url")
+  }.c2ln`;
   assert.equal(
     validateStudioConfig({ ...config, publishableKey: legacy }).publishableKey,
     legacy,
@@ -221,25 +225,31 @@ test("browser config accepts publishable and legacy anon keys, normalizes origin
 });
 
 test("browser config rejects service-role, secret, malformed and unsafe URL inputs", () => {
-  const service = `e30.${Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url")}.c2ln`;
-  for (const key of [
-    service,
-    "sb_secret_FORBIDDEN",
-    "not-a-key",
-    "e30.invalid.c2ln",
-  ]) {
+  const service = `e30.${
+    Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url")
+  }.c2ln`;
+  for (
+    const key of [
+      service,
+      "sb_secret_FORBIDDEN",
+      "not-a-key",
+      "e30.invalid.c2ln",
+    ]
+  ) {
     assert.throws(
       () => validateStudioConfig({ ...config, publishableKey: key }),
       code("configuration"),
     );
   }
-  for (const supabaseUrl of [
-    "http://example.com",
-    "https://user:pass@example.com",
-    "https://example.com/auth",
-    "https://example.com/?token=x",
-    "javascript:alert(1)",
-  ]) {
+  for (
+    const supabaseUrl of [
+      "http://example.com",
+      "https://user:pass@example.com",
+      "https://example.com/auth",
+      "https://example.com/?token=x",
+      "javascript:alert(1)",
+    ]
+  ) {
     assert.throws(
       () => validateStudioConfig({ ...config, supabaseUrl }),
       code("configuration"),
@@ -264,13 +274,19 @@ test("browser config rejects service-role, secret, malformed and unsafe URL inpu
 });
 
 test("browser config rejects ambiguous key fields before an unused secret can be bundled", () => {
-  const service = `e30.${Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url")}.c2ln`;
-  const legacy = `e30.${Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url")}.c2ln`;
+  const service = `e30.${
+    Buffer.from(JSON.stringify({ role: "service_role" })).toString("base64url")
+  }.c2ln`;
+  const legacy = `e30.${
+    Buffer.from(JSON.stringify({ role: "anon" })).toString("base64url")
+  }.c2ln`;
   for (const unused of [service, "sb_secret_OFFLINE_FORBIDDEN", legacy, ""]) {
-    for (const [publishable, anon] of [
-      [config.publishableKey, unused],
-      [unused, legacy],
-    ]) {
+    for (
+      const [publishable, anon] of [
+        [config.publishableKey, unused],
+        [unused, legacy],
+      ]
+    ) {
       assert.throws(
         () =>
           readStudioConfig(
@@ -380,13 +396,15 @@ test("listings reject malformed snake_case fields and unsafe integer money", () 
     () => decodeListings([{ ...withoutOrg, orgId: ORG }], ORG, joined),
     code("invalid-response"),
   );
-  for (const patch of [
-    { details: [] },
-    { status: "unknown" },
-    { created_at: "not-a-date" },
-    { price_cents: Number.MAX_SAFE_INTEGER + 1 },
-    { deleted_at: "2026-09-12" },
-  ]) {
+  for (
+    const patch of [
+      { details: [] },
+      { status: "unknown" },
+      { created_at: "not-a-date" },
+      { price_cents: Number.MAX_SAFE_INTEGER + 1 },
+      { deleted_at: "2026-09-12" },
+    ]
+  ) {
     assert.throws(
       () => decodeListings([{ ...listingDTO(), ...patch }], ORG, joined),
       code("invalid-response"),
@@ -450,8 +468,9 @@ test("workspace reads authenticated RLS memberships and respects server active w
     auth: mockAuth().auth,
     fetch: fakeFetch((url, options) => {
       seen.push({ url, options });
-      if (url.pathname === "/rest/v1/memberships")
+      if (url.pathname === "/rest/v1/memberships") {
         return json([membershipDTO(), membershipDTO(OTHER_ORG)]);
+      }
       return json(meDTO(OTHER_ORG));
     }),
   });
@@ -652,6 +671,23 @@ test("explicit AbortSignal rejects a late response after workspace navigation", 
 });
 
 test("private media is bound to org and listing and rejects unsafe or expired URLs", () => {
+  const issuedAt = Math.floor(Date.now() / 1000) * 1000;
+  const validUrl = new URL(
+    `https://${
+      "a".repeat(32)
+    }.r2.cloudflarestorage.com/rendprop-uploads/uploads/${ORG}/${LISTING}/photo.jpg`,
+  );
+  validUrl.search = new URLSearchParams({
+    "X-Amz-Algorithm": "AWS4-HMAC-SHA256",
+    "X-Amz-Credential": "OFFLINE_FIXTURE/20260912/auto/s3/aws4_request",
+    "X-Amz-Date": new Date(issuedAt).toISOString().replace(/[-:]/g, "").replace(
+      ".000",
+      "",
+    ),
+    "X-Amz-Expires": "600",
+    "X-Amz-SignedHeaders": "host",
+    "X-Amz-Signature": "a".repeat(64),
+  }).toString();
   const dto = {
     org_id: ORG,
     listing_id: LISTING,
@@ -659,8 +695,8 @@ test("private media is bound to org and listing and rejects unsafe or expired UR
       {
         id: PHOTO,
         listing_id: LISTING,
-        url: "https://private.example.invalid/object?X-Amz-Signature=fixture",
-        expires_at: "2099-01-01T00:00:00Z",
+        url: validUrl.href,
+        expires_at: new Date(issuedAt + 600_000).toISOString(),
         caption: null,
         is_staged: true,
         sort: 0,
@@ -685,11 +721,23 @@ test("private media is bound to org and listing and rejects unsafe or expired UR
       ),
     code("identity-mismatch"),
   );
-  for (const url of [
-    "javascript:alert(1)",
-    "http://example.com/file",
-    "https://example.com/?access_token=secret",
-  ]) {
+  for (
+    const url of [
+      "javascript:alert(1)",
+      "http://example.com/file",
+      "https://example.com/?access_token=secret",
+      validUrl.href.replace(validUrl.hostname, "media.example.invalid"),
+      validUrl.href.replace(ORG, OTHER_ORG),
+      validUrl.href.replace(LISTING, OTHER_LISTING),
+      validUrl.href.replace("/photo.jpg", "/%2fphoto.jpg"),
+      `${validUrl.href}&X-Amz-Expires=600`,
+      `${validUrl.href}&x-amz-expires=600`,
+      validUrl.href.replace("X-Amz-Expires=600", "X-Amz-Expires=604800"),
+      validUrl.href.replace("AWS4-HMAC-SHA256", "OTHER"),
+      validUrl.href.replace(/X-Amz-Signature=[^&]+/, "X-Amz-Signature=invalid"),
+      validUrl.href.replace(/X-Amz-Date=[^&]+/, "X-Amz-Date=20260230T120000Z"),
+    ]
+  ) {
     assert.throws(
       () =>
         decodeMedia(
@@ -700,6 +748,39 @@ test("private media is bound to org and listing and rejects unsafe or expired UR
       code("invalid-response"),
     );
   }
+  const staleUrl = new URL(validUrl);
+  staleUrl.searchParams.set(
+    "X-Amz-Date",
+    new Date(issuedAt - 700_000).toISOString().replace(/[-:]/g, "").replace(
+      ".000",
+      "",
+    ),
+  );
+  assert.throws(
+    () =>
+      decodeMedia(
+        { ...dto, photos: [{ ...dto.photos[0], url: staleUrl.href }] },
+        ORG,
+        LISTING,
+      ),
+    code("media-expired"),
+  );
+  assert.throws(
+    () =>
+      decodeMedia(
+        {
+          ...dto,
+          photos: [{ ...dto.photos[0], expires_at: "2099-01-01T00:00:00Z" }],
+        },
+        ORG,
+        LISTING,
+      ),
+    code("invalid-response"),
+  );
+  assert.throws(
+    () => decodeMedia(dto, ORG, LISTING, 1),
+    code("invalid-response"),
+  );
   assert.throws(
     () =>
       decodeMedia(

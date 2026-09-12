@@ -45,26 +45,6 @@ let browser, previewProcess, activePage;
 let previewOutput = "";
 const appDirectory = fileURLToPath(new URL("../", import.meta.url));
 
-async function runBuild() {
-  await new Promise((resolve, reject) => {
-    const child = spawn("npm", ["run", "build"], {
-      cwd: appDirectory,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let output = "";
-    const collect = (data) => {
-      output = (output + data.toString()).slice(-30000);
-    };
-    child.stdout.on("data", collect);
-    child.stderr.on("data", collect);
-    child.on("error", reject);
-    child.on("exit", (code) =>
-      code === 0
-        ? resolve()
-        : reject(new Error(`Production build failed (${code}): ${output}`)),
-    );
-  });
-}
 async function waitForPreview() {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
@@ -149,7 +129,8 @@ try {
       false,
       "The requested preview port is already occupied. Choose another --base-url or use its existing server without --start-preview.",
     );
-    await runBuild();
+    // Like the export suite, serve the single coordinated production build.
+    // Rebuilding here could change dist while another browser gate reads it.
     previewProcess = spawn(
       process.execPath,
       [
@@ -182,7 +163,7 @@ try {
     .update(servedHTML)
     .digest("hex");
   receipt.buildMode = args.includes("--start-preview")
-    ? "built current source and owned preview"
+    ? "frozen dist served by owned preview; no rebuild"
     : "existing frozen dist preview";
   browser = await chromium.launch({
     headless: true,
@@ -325,6 +306,68 @@ try {
   check(
     "planner saves, reloads unchanged, and downloads a valid escaped UTC manual calendar reminder",
   );
+
+  const backupEvent = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Export plans backup", exact: true }).click();
+  const backupDownload = await backupEvent;
+  const backupPath = join(artifacts, "fixture-plans-backup.json");
+  await backupDownload.saveAs(backupPath);
+  const backupBytes = await readFile(backupPath);
+  const backup = JSON.parse(backupBytes.toString("utf8"));
+  assert.equal(backup.format, "rendprop-content-plans");
+  assert.equal(backup.version, 1);
+  assert.deepEqual(backup.plans, JSON.parse(plannedBefore));
+  const inputBackup = async (text) => page.getByLabel("Choose plans backup JSON", { exact: true }).setInputFiles({
+    name: "offline-plans.json", mimeType: "application/json", buffer: Buffer.from(text),
+  });
+  const plansNow = () => page.evaluate(() => localStorage.getItem("rendprop-studio:v1:local:planner"));
+  await inputBackup(backupBytes);
+  await expect(page.getByRole("alert").filter({ hasText: "Merge cannot overwrite or duplicate" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Confirm merge import", exact: true })).toBeDisabled();
+  assert.equal(await plansNow(), plannedBefore);
+  await page.getByRole("button", { name: "Cancel import", exact: true }).click();
+  check("actual JSON backup download preserves all plans and timezone; duplicate merge refuses without writes");
+
+  const mergedPlan = { ...backup.plans[0], id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", title: "Portable second plan" };
+  const incoming = JSON.stringify({ ...backup, plans: [mergedPlan] });
+  await inputBackup(incoming);
+  await expect(page.getByRole("button", { name: "Confirm merge import", exact: true })).toBeEnabled();
+  assert.equal(await plansNow(), plannedBefore, "Preview must never write");
+  await page.getByRole("button", { name: "Cancel import", exact: true }).click();
+  assert.equal(await plansNow(), plannedBefore, "Cancel preserves existing plans");
+  await inputBackup(incoming);
+  await page.getByRole("button", { name: "Confirm merge import", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Portable second plan", exact: true })).toBeVisible();
+  assert.deepEqual(JSON.parse(await plansNow()), [...backup.plans, mergedPlan]);
+  await inputBackup("{not json");
+  await expect(page.getByRole("status").filter({ hasText: "not valid JSON" })).toBeVisible();
+  assert.deepEqual(JSON.parse(await plansNow()), [...backup.plans, mergedPlan]);
+  await inputBackup(backupBytes);
+  await page.getByRole("combobox", { name: "Import mode", exact: true }).selectOption("replace");
+  assert.equal(JSON.parse(await plansNow()).length, 2, "Replace preview must never write");
+  await page.getByRole("button", { name: "Confirm replace import", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Portable second plan", exact: true })).toHaveCount(0);
+  assert.equal(await plansNow(), plannedBefore);
+  check("merge and explicit replace persist exact plans; preview, cancellation, and malformed input preserve originals");
+
+  await inputBackup(incoming);
+  await expect(page.getByRole("button", { name: "Confirm merge import", exact: true })).toBeEnabled();
+  await page.evaluate(() => {
+    const write = Storage.prototype.setItem;
+    window.__restorePlannerStorage = () => { Storage.prototype.setItem = write; };
+    Storage.prototype.setItem = function(key, value) {
+      if (key === "rendprop-studio:v1:local:planner") throw new DOMException("Fixture planner storage full", "QuotaExceededError");
+      return write.call(this, key, value);
+    };
+  });
+  await page.getByRole("button", { name: "Confirm merge import", exact: true }).click();
+  await expect(page.getByRole("status").filter({ hasText: "Fixture planner storage full" })).toBeVisible();
+  assert.equal(await plansNow(), plannedBefore, "Storage rejection preserves durable plans");
+  await expect(page.getByRole("heading", { name: "Portable second plan", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Confirm merge import", exact: true })).toBeVisible();
+  await page.evaluate(() => window.__restorePlannerStorage());
+  await page.getByRole("button", { name: "Cancel import", exact: true }).click();
+  check("quota failure leaves saved plans, rendered queue and import preview intact for retry or cancel");
 
   const originalPlan = JSON.parse(plannedBefore)[0];
   await page.getByRole("button", { name: "Edit plan", exact: true }).click();

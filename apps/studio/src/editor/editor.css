@@ -90,6 +90,20 @@
 .rp-editor-plan-actions button {
   background: transparent;
 }
+.rp-editor-history {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.rp-editor-history p {
+  flex: 1 1 230px;
+  color: var(--editor-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  margin-left: 6px;
+}
 .rp-editor-file-input {
   display: none;
 }

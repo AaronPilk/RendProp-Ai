@@ -1,9 +1,9 @@
 import {
-  assertEquals,
   assert,
+  assertEquals,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { bucketForKey, createStudioHandler, PAGE_SIZE } from "./handler.ts";
-import type { StudioDependencies, MediaScope, PhotoRow } from "./handler.ts";
+import type { MediaScope, PhotoRow, StudioDependencies } from "./handler.ts";
 import { HttpError } from "../_shared/http.ts";
 const org = "10000000-0000-4000-8000-000000000001",
   listing = "20000000-0000-4000-8000-000000000002",
@@ -53,20 +53,23 @@ Deno.test("canonical linked keys only, not arbitrary object reads", () => {
     bucketForKey(`renders/${org}/${listing}/finished.mp4`, scope),
     "renders",
   );
-  for (const bad of [
-    null,
-    "",
-    `uploads/${user}/${listing}/x.jpg`,
-    `uploads/${org}/${user}/x.jpg`,
-    `_staging/${key}`,
-    `${key}?version=1`,
-    `${key}/../other`,
-    `uploads/${org}/${listing}/%2e%2e/x`,
-    `${key}#x`,
-    `${key}\\x`,
-    `ai-router/${org}/result.jpg`,
-  ])
+  for (
+    const bad of [
+      null,
+      "",
+      `uploads/${user}/${listing}/x.jpg`,
+      `uploads/${org}/${user}/x.jpg`,
+      `_staging/${key}`,
+      `${key}?version=1`,
+      `${key}/../other`,
+      `uploads/${org}/${listing}/%2e%2e/x`,
+      `${key}#x`,
+      `${key}\\x`,
+      `ai-router/${org}/result.jpg`,
+    ]
+  ) {
     assertEquals(bucketForKey(bad, scope), null);
+  }
 });
 Deno.test("OPTIONS requires no authorization or media read", async () => {
   const f = fixture();
@@ -315,3 +318,90 @@ Deno.test(
     assert(!(await response.text()).includes("secret"));
   },
 );
+
+Deno.test("rechecks live membership and deletion after reading and signing", async () => {
+  for (const status of [403, 409]) {
+    const f = fixture();
+    let checks = 0;
+    f.deps.authorize = async () => {
+      if (++checks === 2) throw new HttpError(status, "Access changed.");
+      return scope;
+    };
+    f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+    const response = await createStudioHandler(f.deps)(request());
+    assertEquals(checks, 2);
+    assertEquals(response.status, status);
+    assertEquals(response.headers.get("cache-control"), "private, no-store");
+    assert(!(await response.text()).includes("https://objects.example/read"));
+  }
+});
+Deno.test("deletion already in progress stops before rate limit, read or signing", async () => {
+  const f = fixture();
+  f.deps.authorize = async () => {
+    throw new HttpError(409, "Account deletion pending.");
+  };
+  f.deps.rateLimit = () => {
+    throw Error("must not run");
+  };
+  assertEquals((await createStudioHandler(f.deps)(request())).status, 409);
+  assertEquals(f.reads(), 0);
+  assertEquals(f.signed.length, 0);
+});
+Deno.test("valid row followed by foreign lookahead fails before any signing", async () => {
+  const f = fixture();
+  f.deps.read = async () => ({
+    photos: [photo, { ...photo, listing_id: user }],
+    assets: [],
+    renders: [],
+  });
+  assertEquals((await createStudioHandler(f.deps)(request())).status, 500);
+  assertEquals(f.signed.length, 0);
+});
+Deno.test("oversized query result and paging-limit lookahead are explicit failures", async () => {
+  for (const [count, offset, status] of [[52, 0, 500], [51, 10000, 422]]) {
+    const f = fixture();
+    f.deps.read = async () => ({
+      photos: Array(count).fill(photo),
+      assets: [],
+      renders: [],
+    });
+    assertEquals(
+      (await createStudioHandler(f.deps)(request(`&offset=${offset}`))).status,
+      status,
+    );
+    assertEquals(f.signed.length, 0);
+  }
+});
+Deno.test("two pages consume each source's lookahead exactly once", async () => {
+  const f = fixture();
+  const photos = Array.from(
+    { length: 52 },
+    (_, i) => ({ ...photo, id: `photo${i}`, original_key: `${key}-${i}` }),
+  );
+  f.deps.read = async (_scope, offset) => ({
+    photos: photos.slice(offset, offset + PAGE_SIZE + 1),
+    assets: [],
+    renders: [],
+  });
+  const first = await (await createStudioHandler(f.deps)(request())).json();
+  const second = await (await createStudioHandler(f.deps)(
+    request(`&offset=${first.next_offset}`),
+  )).json();
+  assertEquals(first.photos.length, 50);
+  assertEquals(second.photos.length, 2);
+  assertEquals(second.next_offset, null);
+  assertEquals(
+    new Set([...first.photos, ...second.photos].map((p) => p.id)).size,
+    52,
+  );
+});
+Deno.test("does not return capabilities whose declared lifetime elapsed during signing", async () => {
+  const f = fixture();
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  const now = f.deps.now();
+  f.deps.sign = async () => {
+    f.deps.now = () => now + 600_000;
+    return "https://objects.example/read";
+  };
+  assertEquals((await createStudioHandler(f.deps)(request())).status, 503);
+});

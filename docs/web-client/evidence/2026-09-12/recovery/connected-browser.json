@@ -1,0 +1,88 @@
+{
+  "status": "passed",
+  "mutation": false,
+  "artifacts": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-connected-browser-Yl1ymm",
+  "checks": [
+    "real App restores fixture account and stores its edit under user + organization",
+    "same-account refresh retains title and live File binding during and after the request",
+    "503 leaves an explicit stale-data notice while local file editing remains intact",
+    "403 clears visible workspace/media without deleting its stored draft",
+    "verified access recovery restores the right draft and honestly requests original-file reselection",
+    "organization and account switches still fence drafts and in-memory files"
+  ],
+  "errors": [],
+  "externalRequests": [],
+  "skipped": 0,
+  "proof": "Separately compiled real App + real Studio services with injected offline Auth/fetch. This is NOT a live Apple sign-in or deployed media proof.",
+  "requests": [
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/me",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/listings",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/me",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/listings",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/me",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/listings",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/me",
+      "org": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "path": "/functions/v1/listings",
+      "org": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "path": "/rest/v1/memberships",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/me",
+      "org": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "path": "/functions/v1/listings",
+      "org": "33333333-3333-4333-8333-333333333333"
+    }
+  ],
+  "finishedAt": "2026-09-12T18:04:57.868Z"
+}

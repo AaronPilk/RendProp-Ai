@@ -12,6 +12,8 @@ npm run verify
 npx playwright install chromium
 node tests/browser-workspace.mjs --start-preview --base-url=http://127.0.0.1:4181
 node tests/browser-editor.mjs --start-preview --base-url=http://127.0.0.1:4182
+node tests/browser-connected.mjs
+node tests/browser-connected-control.mjs
 npx wrangler deploy --dry-run
 ```
 
@@ -23,6 +25,11 @@ The editor and planner run without configuration or an account. Local media stay
 on the device; edit instructions and planned captions stay in browser storage.
 This is **not** cloud backup or automatic social publication. Original files must
 be reselected after a reload, and their full hashes must match the saved edit.
+Undo/Redo keeps up to 20 recent steps within 64 KiB of metadata. Undoing removal
+restores the edit instructions, not the released file. Content plans can be
+downloaded as versioned JSON and restored with an explicit Merge/Replace preview.
+The connected browser harness compiles a separate offline test entry; it proves
+App/session behavior, not live Apple sign-in. It never overwrites production dist.
 
 ## Connected accounts
 

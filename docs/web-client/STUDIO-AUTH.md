@@ -148,12 +148,33 @@ type ListingMediaDTO = {
 The server accepts listing identity, never an arbitrary client storage key.
 Only supported, completed objects are signed. Every item must match the
 requested listing; top-level listing and organization must match the request.
-The decoder rejects expired or non-HTTPS links, credentials and bearer-token
-query parameters. Staging disclosure is retained. Signed URLs stay in memory,
+The browser validates the existing path-style R2 signer contract: an HTTPS
+account endpoint, canonical uploads/renders key scoped to the requested org and
+listing, unique SigV4 parameters, and a signed lifetime no longer than 600 seconds.
+It rejects foreign hosts/tenant paths, expired signatures even when the DTO
+claims a later expiry, malformed dates, duplicate parameters, credentials and
+bearer-token query parameters. This is structural validation, not cryptographic
+signature verification; R2 verifies the signature. Staging disclosure is retained. Signed URLs stay in memory,
 are short-lived read capabilities, and must be renewed by fetching the route
 again. R2 requests never receive the user's Supabase Authorization header.
 Browser playback/import needs working origin CORS and a no-referrer policy;
 native URLSession playback is not proof of browser access.
+
+The request adapter verifies the bearer with Auth, checks account deletion,
+reads current membership, then checks the live org and live listing through the
+request-local RLS client. The handler repeats authorization after reading and
+signing but before returning the page, so removal/deletion observed during the
+request cannot release a stale successful response. This is not an atomic
+transaction or instant revocation: a capability already issued remains usable
+until its short expiry, and already downloaded bytes cannot be recalled.
+
+`Cache-Control: private, no-store` on the JSON response and `cache: no-store` on
+the editor's bounded download do not govern direct `<img>`/`<video>` responses.
+The shared `presignGet(bucket, key, expiresIn)` currently has no response-header
+override option. No cache parameter is appended after signing (that would
+invalidate SigV4), and shared R2 behavior was not changed. Before enabling the
+connected library, verify actual private R2 GET/Range cache headers, expiry and
+CORS. Do not describe media browser-cache removal as proven by static headers.
 
 `listMedia(orgId, listingId, signal?, offset = 0)` reads one page. Server offsets
 advance by 50 database rows per source. Each response permits at most 100 photos
@@ -166,6 +187,32 @@ React commits; an account change cannot render the preceding account's data
 while waiting for cleanup effects. The editor mounts only after the matching
 storage scope is restored, preventing its empty initial draft from overwriting
 a saved edit.
+
+Each of the three RLS queries orders by ID and requests an inclusive 51-row
+range: 50 usable rows plus one lookahead, with the same offset for each source.
+Null/failed query results, oversized pages and cross-listing rows (including the
+lookahead) fail rather than appearing as an empty or truncated successful library.
+The request AbortSignal is attached to these queries. Offset paging is not a
+database snapshot: concurrent media insertion/removal can shift later pages;
+refresh from offset zero to reconcile changes. No snapshot cursor is claimed.
+
+Offline API-hardening verification on 2026-09-12:
+
+```sh
+deno test --cached-only --deny-net --deny-run --deny-write \
+  services/supabase/functions/studio/handler.test.ts \
+  services/supabase/functions/studio/repository.test.ts
+deno check --deny-import --frozen services/supabase/functions/studio/index.ts
+cd apps/studio
+node --import tsx --test tests/data.test.ts
+npm run typecheck
+```
+
+Observed: 29 route/real-query-adapter tests passed, 24 browser-data tests passed,
+zero failures or skipped tests; both type checks passed. Tests use isolated
+synthetic rows, Auth and query doubles; they do not prove production RLS or
+provider configuration. No dist rebuild, deployment, provider change or
+production mutation was performed for this hardening pass.
 
 ## Verification and remaining live gates
 

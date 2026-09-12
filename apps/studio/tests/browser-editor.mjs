@@ -323,6 +323,9 @@ async function downloadExport(
   await expect(
     page.getByRole("button", { name: "Cancel export", exact: true }),
   ).toHaveCount(0);
+  const completion = page.getByRole("status").filter({ hasText: /^Your local (MP4|WEBM) is ready to download\./ });
+  await expect(completion).toHaveCount(1);
+  await expect(page.getByRole("region", { name: "Local video editor" }).getByRole("status").filter({ hasText: /^Your local (MP4|WEBM) is ready to download\./ })).toHaveCount(1);
   const pending = page.waitForEvent("download");
   await link.click();
   const download = await pending;
@@ -427,6 +430,7 @@ async function downloadExport(
     timing,
     audioEvidence,
     captionLightPixels,
+    completionAnnouncements: await completion.count(),
     framePath,
   };
   receipt.exports.push(evidence);
@@ -661,6 +665,12 @@ try {
     page.getByRole("heading", { name: "Video editor", exact: true, level: 1 }),
   ).toBeVisible();
   const editor = page.getByRole("region", { name: "Local video editor" });
+  const undo = editor.getByRole("button", { name: "Undo", exact: true });
+  const redo = editor.getByRole("button", { name: "Redo", exact: true });
+  const revision = async () => Number((await editor.locator(".rp-editor-revision").innerText()).replace("Rev ", ""));
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeDisabled();
+  await expect(editor.getByRole("heading", { name: "Bring your story to life.", exact: true })).toBeVisible();
   await page
     .getByLabel("Add photos or videos", { exact: true })
     .setInputFiles(source);
@@ -687,6 +697,22 @@ try {
     .getByLabel("Clip caption", { exact: false })
     .fill("ORIGINAL AUDIO RETAINED");
   await page.getByRole("combobox", { name: /^Audio/ }).selectOption("original");
+  const beforeHistory = await revision();
+  await undo.click();
+  await expect(page.getByLabel("Clip caption", { exact: false })).toHaveValue("");
+  await undo.click();
+  await expect(page.getByLabel("Trim end (sec)", { exact: true })).toHaveValue("3");
+  await undo.click();
+  await expect(page.getByLabel("Trim start (sec)", { exact: true })).toHaveValue("0");
+  await redo.click();
+  await redo.click();
+  await redo.click();
+  await expect(page.getByLabel("Trim start (sec)", { exact: true })).toHaveValue("0.5");
+  await expect(page.getByLabel("Trim end (sec)", { exact: true })).toHaveValue("2.5");
+  await expect(page.getByLabel("Clip caption", { exact: false })).toHaveValue("ORIGINAL AUDIO RETAINED");
+  assert.equal(await revision(), beforeHistory + 6, "Undo/Redo must allocate new revisions, never restore stale export identities.");
+  await expect(page.locator(".rp-editor-export-button")).toBeEnabled();
+  check("Undo/Redo restores exact trims and caption with monotonic revisions and keeps current original media connected");
   const formats = await page
     .getByRole("combobox", { name: /^Export format/ })
     .locator("option")
@@ -721,9 +747,22 @@ try {
     fullPage: true,
   });
   check(
-    "every offered video format exports real trimmed 9:16 video, matching codecs, decoded 440 Hz audio, and burned caption pixels",
+    "every offered video format exports real trimmed 9:16 video, matching codecs, decoded 440 Hz audio, burned caption pixels, and exactly one editor-owned completion announcement",
     { count: formats.length },
   );
+
+  await page.getByRole("combobox", { name: /^Aspect ratio/ }).selectOption("1:1");
+  await expect(page.locator(".rp-editor-download")).toHaveCount(0);
+  await expect(page.getByRole("status").filter({ hasText: /^Your local (MP4|WEBM) is ready to download\./ })).toHaveCount(0);
+  await undo.click();
+  await expect(page.getByRole("combobox", { name: /^Aspect ratio/ })).toHaveValue("9:16");
+  await expect(page.locator(".rp-editor-download")).toHaveCount(0);
+  await redo.click();
+  await expect(page.getByRole("combobox", { name: /^Aspect ratio/ })).toHaveValue("1:1");
+  await undo.click();
+  await expect(page.getByRole("combobox", { name: /^Aspect ratio/ })).toHaveValue("9:16");
+  await expect(page.locator(".rp-editor-download")).toHaveCount(0);
+  check("ratio Undo/Redo restores settings without reviving a completed export or stale ready announcement");
 
   await page
     .getByLabel("Title overlay", { exact: true })
@@ -747,6 +786,11 @@ try {
   await page.getByLabel("Clip caption", { exact: false }).fill("PHOTO FIRST");
   await page.getByRole("button", { name: "Move earlier", exact: true }).click();
   await expect(page.getByRole("button", { name: /^Select clip 1: source-photo.png/ })).toBeVisible();
+  await undo.click();
+  await expect(page.getByRole("button", { name: /^Select clip 2: source-photo.png/ })).toBeVisible();
+  await redo.click();
+  await expect(page.getByRole("button", { name: /^Select clip 1: source-photo.png/ })).toBeVisible();
+  check("Undo/Redo restores clip order before actual multi-clip export");
   for (const [index, format] of formats.entries()) {
     const sequence = await downloadExport(page, format, `ordered-sequence-${index + 1}`, { audio: true, ratio: [720, 1280], seconds: 3, caption: true, toneStart: 1.35 });
     sequence.sequenceEvidence = await assertPhotoThenVideo(sequence.path);
@@ -754,6 +798,28 @@ try {
   check("reordered photo-to-video sequence exports in every offered format with silent photo interval and original audio after the cut", { count: formats.length });
   // Remove only these synthetic clips to return to a single-photo cancellation fixture.
   await page.getByRole("button", { name: "Remove from edit", exact: true }).click();
+
+  await undo.click();
+  const restoredPhoto = page.getByRole("button", { name: /^Select clip 1: source-photo.png.*original file missing/ });
+  await expect(restoredPhoto).toBeVisible();
+  await restoredPhoto.click();
+  await expect(page.getByLabel("Photo duration (seconds)", { exact: true })).toHaveValue("1");
+  await expect(page.getByLabel("Clip caption", { exact: false })).toHaveValue("PHOTO FIRST");
+  await expect(page.locator(".rp-editor-export-button")).toBeDisabled();
+  const reconnect = async (file) => {
+    const selectedFile = page.waitForEvent("filechooser");
+    await page.getByRole("button", { name: "Reselect original file", exact: true }).click();
+    await (await selectedFile).setFiles(file);
+  };
+  await reconnect(source);
+  await expect(editor.getByRole("status").filter({ hasText: /This is a different file/ })).toBeVisible();
+  await expect(page.locator(".rp-editor-export-button")).toBeDisabled();
+  await reconnect(photo);
+  await expect(editor.getByRole("status").filter({ hasText: "Original media verified and reconnected." })).toBeVisible();
+  await expect(page.locator(".rp-editor-export-button")).toBeEnabled();
+  await redo.click();
+  await expect(page.getByRole("button", { name: /^Select clip .*source-photo.png/ })).toHaveCount(0);
+  check("Undo removal restores exact cuts/text, requires verified original reselection, rejects a wrong file, and Redo removes it again");
 
   await page
     .getByRole("button", { name: "Remove from edit", exact: true })
@@ -867,6 +933,17 @@ try {
   await expect(page.getByRole("button", { name: "Reselect original file", exact: true })).toHaveCount(0);
   await expect(page.locator(".rp-editor-export-button")).toBeEnabled();
   check("leaving editor during active recording cancels the export while preserving verified local media");
+
+  await beginLongExport(page, primary);
+  const beforeUndoExport = await revision();
+  await undo.click();
+  await expect(page.getByRole("button", { name: "Cancel export", exact: true })).toHaveCount(0, { timeout: 10_000 });
+  await expect(editor.getByRole("status").filter({ hasText: /Export cancelled because the edit changed/ })).toBeVisible();
+  await expect(page.locator(".rp-editor-download")).toHaveCount(0);
+  assert.equal(await revision(), beforeUndoExport + 1);
+  await redo.click();
+  await expect(page.locator(".rp-editor-download")).toHaveCount(0);
+  check("Undo cancels active export and Redo cannot revive the interrupted output");
 
   // A fresh export after cancellations proves the encoder and UI recover.
   await page.getByLabel("Photo duration (seconds)", { exact: true }).fill("2");

@@ -4,6 +4,7 @@ import {
   useState,
   type ChangeEvent,
   type DragEvent,
+  type KeyboardEvent,
 } from "react";
 import {
   EDIT_LIMITS,
@@ -43,10 +44,21 @@ import {
   type LocalExport,
 } from "./export";
 import "./editor.css";
+import {
+  HISTORY_LIMITS,
+  closeHistoryGroup,
+  createHistory,
+  editHistory,
+  redoHistory,
+  releasedMediaIds,
+  undoHistory,
+  type EditHistory,
+} from "./history";
 
 export type VideoEditorProps = {
   active?: boolean;
   initialDraft?: EditDraft;
+  /** Optional observer only; the editor already renders and announces its notices. */
   onNotice?: (message: string) => void;
   onDraftChange?: (draft: EditDraft) => void;
   importRequest?: { id: string; files: File[] };
@@ -94,7 +106,9 @@ export function VideoEditor({
       };
     }
   });
-  const [draft, setDraft] = useState<EditDraft>(initial.draft);
+  const [history, setHistory] = useState(() => createHistory(initial.draft));
+  const historyRef = useRef(history);
+  const draft = history.present;
   const activeRef = useRef(active);
   activeRef.current = active;
   const draftRef = useRef(draft);
@@ -152,19 +166,40 @@ export function VideoEditor({
     outputUrl.current = null;
     setOutput(null);
   };
-  const replaceDraft = (next: EditDraft) => {
+  const replaceHistory = (nextHistory: EditHistory) => {
+    if (nextHistory === historyRef.current) return false;
+    const next = nextHistory.present;
     invalidateExport();
+    setMessage("");
     setPlaying(false);
+    // Undo restores metadata, not removed files. Release anything that no longer
+    // belongs to the current plan instead of growing an unbounded media cache.
+    const released = releasedMediaIds(next, new Map(
+      [...media.current].map(([id, local]) => [id, local.source]),
+    ));
+    for (const id of released) {
+      URL.revokeObjectURL(media.current.get(id)!.url);
+      media.current.delete(id);
+    }
+    if (released.length) setMediaVersion((version) => version + 1);
+    historyRef.current = nextHistory;
     draftRef.current = next;
-    setDraft(next);
+    setHistory(nextHistory);
+    setSelectedId((id) => next.clips.some((clip) => clip.id === id) ? id : (next.clips[0]?.id ?? ""));
     timeRef.current = Math.min(timeRef.current, timelineDuration(next.clips));
     setTime(timeRef.current);
+    return true;
   };
-  const update = (patch: Parameters<typeof reviseDraft>[1]) => {
+  const finishHistoryGroup = () => {
+    historyRef.current = closeHistoryGroup(historyRef.current);
+  };
+  const update = (patch: Parameters<typeof reviseDraft>[1], label = "edit", group: string | null = null) => {
+    if (importAbort.current) return false;
     try {
-      replaceDraft(reviseDraft(draftRef.current, patch));
+      return replaceHistory(editHistory(historyRef.current, patch, label, group));
     } catch (error) {
       notice(errorText(error));
+      return false;
     }
   };
   const updateClip = (
@@ -173,11 +208,36 @@ export function VideoEditor({
       Pick<EditClip, "start" | "end" | "caption" | "focusX" | "focusY">
     >,
   ) => {
+    const field = Object.keys(patch)[0] ?? "clip";
+    const label = field === "caption" ? "clip caption" : field.startsWith("focus") ? "clip framing" : "clip timing";
     update({
       clips: draftRef.current.clips.map((clip) =>
         clip.id === id ? { ...clip, ...patch } : clip,
       ),
-    });
+    }, label, `clip:${id}:${field}`);
+  };
+  const travelHistory = (direction: "undo" | "redo") => {
+    if (!activeRef.current || importAbort.current) return;
+    try {
+      const current = historyRef.current;
+      const label = (direction === "undo" ? current.past : current.future).at(-1)?.label;
+      const next = direction === "undo" ? undoHistory(current) : redoHistory(current);
+      if (!replaceHistory(next)) return;
+      const missingCount = next.present.clips.filter((clip) => !media.current.has(clip.id)).length;
+      notice(`${direction === "undo" ? "Undid" : "Redid"} ${label}. ${missingCount ? "Reselect missing original media; its full SHA-256 hash must match." : "Your edit is ready."}`);
+    } catch (error) {
+      notice(errorText(error));
+    }
+  };
+  const historyShortcut = (event: KeyboardEvent<HTMLElement>) => {
+    const target = event.target;
+    // Leave native text-field undo alone; editor shortcuts operate outside fields.
+    if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) return;
+    if (!(event.metaKey || event.ctrlKey) || event.altKey) return;
+    const key = event.key.toLowerCase();
+    if (key !== "z" && !(key === "y" && event.ctrlKey)) return;
+    event.preventDefault();
+    travelHistory(key === "y" || event.shiftKey ? "redo" : "undo");
   };
 
   useEffect(() => {
@@ -244,12 +304,12 @@ export function VideoEditor({
         });
       }
       assertCurrentRevision(snapshot, draftRef.current, controller.signal);
-      const next = reviseDraft(snapshot, {
+      const next = editHistory(historyRef.current, {
         clips: [...snapshot.clips, ...staged.map((item) => item.clip)],
-      });
+      }, "add media");
       for (const item of staged) media.current.set(item.clip.id, item.local);
       accepted = true;
-      replaceDraft(next);
+      replaceHistory(next);
       setSelectedId(staged[0]!.clip.id);
       setMediaVersion((version) => version + 1);
       timeRef.current = timelineDuration(snapshot.clips);
@@ -366,12 +426,8 @@ export function VideoEditor({
   const removeClip = () => {
     if (!selected) return;
     const id = selected.id;
-    update({ clips: draft.clips.filter((clip) => clip.id !== id) });
-    const local = media.current.get(id);
-    if (local) URL.revokeObjectURL(local.url);
-    media.current.delete(id);
-    setMediaVersion((version) => version + 1);
-    setSelectedId(draft.clips.find((clip) => clip.id !== id)?.id ?? "");
+    if (update({ clips: draft.clips.filter((clip) => clip.id !== id) }, "remove clip"))
+      notice("Clip removed. Undo restores its cuts and text; reselect the original file to restore its media.");
   };
   const openPlan = async (file?: File) => {
     if (!file) return;
@@ -408,12 +464,12 @@ export function VideoEditor({
         URL.revokeObjectURL(local.url);
       media.current = rebound;
       accepted = true;
-      replaceDraft(next);
+      replaceHistory(createHistory(next));
       setSelectedId(next.clips[0]?.id ?? "");
       setMediaVersion((version) => version + 1);
       scrubTo(0);
       notice(
-        "Edit plan opened. Reselect any missing original media; every file is verified by its full SHA-256 hash.",
+        "Edit plan opened. Undo history was reset. Reselect any missing original media; every file is verified by its full SHA-256 hash.",
       );
     } catch (error) {
       if (!controller.signal.aborted) notice(errorText(error));
@@ -518,11 +574,11 @@ export function VideoEditor({
   };
 
   return (
-    <section className="rp-editor" aria-label="Local video editor">
+    <section className="rp-editor" aria-label="Local video editor" onBlur={finishHistoryGroup} onPointerUp={finishHistoryGroup} onKeyDown={historyShortcut}>
       <div className="rp-editor-heading">
         <div>
           <p className="rp-editor-eyebrow">YOUR FOOTAGE. YOUR STORY.</p>
-          <h2>Make the listing move.</h2>
+          <h2>Bring your story to life.</h2>
           <p>
             Arrange your media, refine the details, and create a video right
             here.
@@ -549,6 +605,11 @@ export function VideoEditor({
             Save edit plan
           </button>
         </div>
+      </div>
+      <div className="rp-editor-history" role="group" aria-label="Edit history">
+        <button type="button" disabled={importing || !history.past.length} title={`Undo ${history.past.at(-1)?.label ?? "last edit"}`} aria-keyshortcuts="Control+Z Meta+Z" onClick={() => travelHistory("undo")}>Undo</button>
+        <button type="button" disabled={importing || !history.future.length} title={`Redo ${history.future.at(-1)?.label ?? "last edit"}`} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y" onClick={() => travelHistory("redo")}>Redo</button>
+        <p>Up to {HISTORY_LIMITS.steps} recent steps. Undoing a removal requires original-file reselection.</p>
       </div>
       <input
         ref={filesInput}
@@ -584,7 +645,7 @@ export function VideoEditor({
         }}
       />
       {message && (
-        <p className="rp-editor-notice" role="status">
+        <p className="rp-editor-notice" role="status" aria-atomic="true">
           {message}
         </p>
       )}
@@ -625,7 +686,7 @@ export function VideoEditor({
                     ▧
                   </span>
                   <h3>A great story starts here.</h3>
-                  <p>Drop in your listing photos and video clips.</p>
+                  <p>Drop in your photos and video clips.</p>
                   <button
                     type="button"
                     className="rp-editor-primary"
@@ -756,7 +817,7 @@ export function VideoEditor({
                 value={draft.ratio}
                 disabled={importing}
                 onChange={(event) =>
-                  update({ ratio: event.target.value as Ratio })
+                  update({ ratio: event.target.value as Ratio }, "aspect ratio")
                 }
               >
                 <option value="9:16">9:16 · Reels & stories</option>
@@ -771,8 +832,8 @@ export function VideoEditor({
                 value={draft.title}
                 maxLength={80}
                 disabled={importing}
-                onChange={(event) => update({ title: event.target.value })}
-                placeholder="e.g. A new perspective on home"
+                onChange={(event) => update({ title: event.target.value }, "title overlay", "title")}
+                placeholder="e.g. A fresh perspective"
               />
             </label>
             <label>
@@ -781,7 +842,7 @@ export function VideoEditor({
                 value={draft.audio}
                 disabled={importing}
                 onChange={(event) =>
-                  update({ audio: event.target.value as EditDraft["audio"] })
+                  update({ audio: event.target.value as EditDraft["audio"] }, "audio mode")
                 }
               >
                 <option value="original">Keep original clip audio</option>
@@ -935,7 +996,7 @@ export function VideoEditor({
                           selectedIndex,
                           selectedIndex - 1,
                         ),
-                      })
+                      }, "clip order")
                     }
                   >
                     Move earlier
@@ -952,7 +1013,7 @@ export function VideoEditor({
                           selectedIndex,
                           selectedIndex + 1,
                         ),
-                      })
+                      }, "clip order")
                     }
                   >
                     Move later

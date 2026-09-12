@@ -1,5 +1,5 @@
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments } from "../_shared/http.ts";
+import { assert, HttpError, json, pathSegments } from "../_shared/http.ts";
 
 export const PAGE_SIZE = 50;
 export const MEDIA_TTL_SECONDS = 600;
@@ -68,17 +68,20 @@ export function bucketForKey(
     typeof key !== "string" ||
     key.length > 1024 ||
     /[\\%?#\u0000-\u001f]/.test(key)
-  )
+  ) {
     return null;
+  }
   if (
     key
       .split("/")
       .some((segment) => !segment || segment === "." || segment === "..")
-  )
+  ) {
     return null;
+  }
   for (const bucket of ["uploads", "renders"] as const) {
-    if (key.startsWith(`${bucket}/${scope.orgId}/${scope.listingId}/`))
+    if (key.startsWith(`${bucket}/${scope.orgId}/${scope.listingId}/`)) {
       return bucket;
+    }
   }
   return null;
 }
@@ -127,6 +130,20 @@ export function createStudioHandler(deps: StudioDependencies) {
         "Too many library refreshes. Please wait a minute.",
       );
       const rows = await deps.read(scope, offset);
+      // Validate the complete page (including its lookahead) before creating
+      // even the first capability. A broken query must fail, not be truncated.
+      for (const list of [rows.photos, rows.assets, rows.renders]) {
+        assert(
+          Array.isArray(list) && list.length <= PAGE_SIZE + 1,
+          500,
+          "Media page exceeded its query bound.",
+        );
+        assert(
+          list.every((row) => row.listing_id === listingId),
+          500,
+          "Media scope did not match.",
+        );
+      }
       const more = [rows.photos, rows.assets, rows.renders].some(
         (list) => list.length > PAGE_SIZE,
       );
@@ -164,7 +181,7 @@ export function createStudioHandler(deps: StudioDependencies) {
           photo.enhanced_key || photo.original_key,
           photo.listing_id,
         );
-        if (url)
+        if (url) {
           photos.push({
             id: photo.id,
             listing_id: listingId,
@@ -174,17 +191,19 @@ export function createStudioHandler(deps: StudioDependencies) {
             is_staged: photo.is_staged === true,
             sort: photo.sort,
           });
+        }
       }
       for (const asset of rows.assets.slice(0, PAGE_SIZE)) {
-        if (!asset.uploaded || !["photo", "video"].includes(asset.kind))
+        if (!asset.uploaded || !["photo", "video"].includes(asset.kind)) {
           continue;
+        }
         const url = await sign(
           asset.storage_key,
           asset.listing_id,
           asset.bucket,
         );
         if (!url) continue;
-        if (asset.kind === "photo")
+        if (asset.kind === "photo") {
           photos.push({
             id: asset.id,
             listing_id: listingId,
@@ -194,7 +213,7 @@ export function createStudioHandler(deps: StudioDependencies) {
             is_staged: false,
             sort: 0,
           });
-        else
+        } else {
           videos.push({
             id: asset.id,
             listing_id: listingId,
@@ -204,6 +223,7 @@ export function createStudioHandler(deps: StudioDependencies) {
             created_at: asset.created_at,
             duration_s: asset.duration_s,
           });
+        }
       }
       for (const render of rows.renders.slice(0, PAGE_SIZE)) {
         if (!render.video_key) {
@@ -211,7 +231,7 @@ export function createStudioHandler(deps: StudioDependencies) {
           continue;
         }
         const url = await sign(render.video_key, render.listing_id, "renders");
-        if (url)
+        if (url) {
           videos.push({
             id: render.id,
             listing_id: listingId,
@@ -221,7 +241,23 @@ export function createStudioHandler(deps: StudioDependencies) {
             created_at: render.created_at,
             duration_s: render.duration_s,
           });
+        }
       }
+      // Membership/deletion can change while the page is being read or signed.
+      // Recheck live state before releasing any capabilities, never reuse JWT
+      // metadata or the initial lookup as a revocation cache.
+      const finalScope = await deps.authorize(req, orgId, listingId);
+      assert(
+        finalScope.userId === scope.userId && finalScope.orgId === orgId &&
+          finalScope.listingId === listingId,
+        403,
+        "Workspace authorization failed.",
+      );
+      assert(
+        deps.now() < Date.parse(expires_at),
+        503,
+        "Media signing took too long.",
+      );
       return json(
         {
           org_id: orgId,

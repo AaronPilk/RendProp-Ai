@@ -56,6 +56,10 @@ jobs:
         run: node tests/browser-workspace.mjs --start-preview --base-url=http://127.0.0.1:4181
       - name: Actual built video, audio and cancellation
         run: node tests/browser-editor.mjs --start-preview --base-url=http://127.0.0.1:4182
+      - name: Connected workspace refresh and identity isolation (offline fixture)
+        run: node tests/browser-connected.mjs
+      - name: Prove browser gate catches the original refresh regression
+        run: node tests/browser-connected-control.mjs
       - name: Cloudflare asset packaging (no deploy)
         run: npx wrangler deploy --dry-run
       - name: Public website content and schema
@@ -69,4 +73,4 @@ jobs:
         with:
           deno-version: "2.9.6"
       - run: deno check services/supabase/functions/studio/index.ts
-      - run: deno test --deny-net --deny-run --deny-write services/supabase/functions/studio/handler.test.ts
+      - run: deno test --deny-net --deny-run --deny-write services/supabase/functions/studio/handler.test.ts services/supabase/functions/studio/repository.test.ts

@@ -99,6 +99,70 @@
 .content-planner .planned-items {
   max-height: 850px;
 }
+.content-planner .planner-backups {
+  margin-top: 18px;
+  padding: 16px;
+  background: #191620;
+  border: 1px solid #35303f;
+  border-radius: 12px;
+}
+.content-planner .planner-backups h3,
+.content-planner .planner-import-preview h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  color: #d9c6fa;
+}
+.content-planner .planner-backups p,
+.content-planner .planner-backups label {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.content-planner .planner-backups > small {
+  display: block;
+  margin-top: 12px;
+  color: #b8b4c4;
+  font-size: 0.7rem;
+}
+.content-planner .planner-import-preview,
+.content-planner .planner-import-progress {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #765160;
+}
+.content-planner .planner-backup-name {
+  font-weight: 600;
+}
+.content-planner .planner-import-total {
+  color: #d9c6fa;
+}
+.content-planner .planner-import-items {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 0;
+  margin: 16px 0;
+  list-style: none;
+  border: 1px solid #35303f;
+  border-radius: 8px;
+}
+.content-planner .planner-import-items li {
+  padding: 12px;
+  border-bottom: 1px solid #35303f;
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+.content-planner .planner-import-items li:last-child {
+  border-bottom: 0;
+}
+.content-planner .planner-import-items span {
+  display: block;
+  margin-top: 5px;
+  color: #b8b4c4;
+  font-size: 0.7rem;
+}
+.content-planner .planner-import-items p {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
 @media (max-width: 560px) {
   .content-planner .planner-filters,
   .content-planner .form-row {

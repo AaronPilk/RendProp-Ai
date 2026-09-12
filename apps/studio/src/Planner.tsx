@@ -1,20 +1,25 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import {
   CHANNELS,
   MAX_PLANS,
   bindPlanDate,
   calendarFile,
+  confirmPlanImport,
   currentTimeZone,
   downloadBlob,
   filterPlans,
+  planBackupFile,
   planDateChoices,
+  planImportSnapshot,
   plannerWeekStart,
+  previewPlanImport,
+  readPlanBackupFile,
   removePlan,
   savePlan,
   shiftPlannerWeek,
 } from "./workspace";
-import type { PlanItem } from "./workspace";
+import type { PlanBackup, PlanImportMode, PlanItem } from "./workspace";
 import "./planner.css";
 
 const COMMON_ZONES = [
@@ -68,6 +73,31 @@ export default function Planner({
     plannerWeekStart(Date.now(), browserZone),
   );
   const titleInput = useRef<HTMLInputElement>(null);
+  const backupInput = useRef<HTMLInputElement>(null);
+  const readGeneration = useRef(0);
+  const [readingBackup, setReadingBackup] = useState(false);
+  const [backup, setBackup] = useState<{
+    file: PlanBackup;
+    name: string;
+    reviewedSnapshot: string;
+  } | null>(null);
+  const [importMode, setImportMode] = useState<PlanImportMode>("merge");
+  useEffect(() => () => {
+    // Workspace changes unmount this keyed planner. A late file read belongs to the old
+    // workspace and must not create a preview or notice in the new one.
+    readGeneration.current += 1;
+  }, []);
+  const importPreview = useMemo(() => {
+    if (!backup) return null;
+    try {
+      if (planImportSnapshot(items) !== backup.reviewedSnapshot)
+        throw new Error("Your saved plans changed after this preview. Cancel and choose the backup again before importing.");
+      return { ...previewPlanImport(items, backup.file.plans, importMode), error: "" };
+    } catch (error) {
+      return { plans: [], importedCount: backup.file.plans.length, existingCount: items.length,
+        error: error instanceof Error ? error.message : "Could not preview this import." };
+    }
+  }, [items, backup, importMode]);
   const dates = useMemo(() => {
     if (!date) return { choices: [] as string[], error: "" };
     try {
@@ -182,6 +212,50 @@ export default function Planner({
       );
     } catch (error) {
       report(error, "Could not export this reminder.");
+    }
+  }
+  function exportBackup() {
+    try {
+      const file = planBackupFile(items);
+      downloadBlob(new Blob([file.text], { type: "application/json;charset=utf-8" }), file.filename);
+      onNotice("Plans backup download requested. Keep this JSON file somewhere safe; it includes captions and reminder times, not media or social posts.");
+    } catch (error) {
+      report(error, "Could not export your plans backup.");
+    }
+  }
+  function cancelImport() {
+    readGeneration.current += 1;
+    setReadingBackup(false);
+    setBackup(null);
+    if (backupInput.current) backupInput.current.value = "";
+  }
+  async function openBackup(file: File) {
+    const generation = ++readGeneration.current;
+    setBackup(null);
+    setReadingBackup(true);
+    setImportMode("merge");
+    try {
+      const reviewedSnapshot = planImportSnapshot(items);
+      const parsed = await readPlanBackupFile(file);
+      if (generation !== readGeneration.current) return;
+      setBackup({ file: parsed, name: file.name, reviewedSnapshot });
+    } catch (error) {
+      if (generation === readGeneration.current)
+        report(error, "Could not read this backup. Existing plans were not changed.");
+    } finally {
+      if (generation === readGeneration.current) setReadingBackup(false);
+    }
+  }
+  function importBackup() {
+    if (!backup) return;
+    try {
+      confirmPlanImport(items, backup.file.plans, importMode, backup.reviewedSnapshot, onSave);
+      if (importMode === "replace") reset();
+      setRemoving(null);
+      setBackup(null);
+      onNotice(`${backup.file.plans.length} ${backup.file.plans.length === 1 ? "plan" : "plans"} imported using ${importMode}. Saved in this browser workspace only; calendar reminders and social posts were not changed.`);
+    } catch (error) {
+      report(error, "Could not save this import. Existing plans and the preview were kept.");
     }
   }
   return (
@@ -356,6 +430,62 @@ export default function Planner({
           Plans stay in this browser and workspace. Social accounts are not
           connected; these are not automatically published.
         </p>
+        <section className="planner-backups" aria-labelledby="planner-backups-title">
+          <h3 id="planner-backups-title">Take your plans with you</h3>
+          <p>Download all saved plans as a JSON backup, or review one from another browser. No media, account credentials, or social connections are included. Store backups privately; captions may contain business details.</p>
+          <div className="button-row">
+            <button type="button" onClick={exportBackup}>Export plans backup</button>
+            <button type="button" onClick={() => backupInput.current?.click()}>Import plans backup</button>
+          </div>
+          <input
+            ref={backupInput}
+            type="file"
+            accept=".json,application/json"
+            aria-label="Choose plans backup JSON"
+            hidden
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) void openBackup(file);
+            }}
+          />
+          <small>Rendprop content-plans JSON · version 1 · maximum 2 MiB and 100 plans. Export includes the whole queue, not just the current filter.</small>
+          {readingBackup ? <div role="status" className="planner-import-progress">
+            <p>Reading backup. Nothing has been saved.</p>
+            <button type="button" onClick={cancelImport}>Cancel import</button>
+          </div> : null}
+          {backup && importPreview ? <section className="planner-import-preview" aria-labelledby="planner-import-title">
+            <h4 id="planner-import-title">Review plans import</h4>
+            <p className="planner-backup-name">{backup.name}</p>
+            <p>Exported {new Date(backup.file.exportedAt).toLocaleString()}. {backup.file.plans.length} plans in the backup; {items.length} currently saved here.</p>
+            <label>
+              Import mode
+              <select value={importMode} onChange={(event) => setImportMode(event.target.value as PlanImportMode)}>
+                <option value="merge">Merge — keep existing plans and add the backup</option>
+                <option value="replace">Replace — use only the backup plans</option>
+              </select>
+            </label>
+            <p>{importMode === "merge"
+              ? "Merge keeps every existing plan. If any IDs overlap or the total exceeds 100, nothing will be imported."
+              : `Replace removes the current ${items.length} saved plans from this browser workspace and uses only the backup's ${backup.file.plans.length} plans. Unsaved form changes will also be cleared. Export a backup first if you want to keep the current queue.`}</p>
+            {backup.file.plans.some((item) => !item.timeZone) ? <p className="planner-legacy">Some older plans have no confirmed timezone. Import will preserve that state, not guess a zone. Edit those plans before exporting calendar reminders.</p> : null}
+            {importPreview.error ? <p className="planner-validation" role="alert">{importPreview.error}</p>
+              : <p className="planner-import-total" role="status">After {importMode}: {importPreview.plans.length} saved plans. Calendar reminders and social posts will not change.</p>}
+            {backup.file.plans.length ? <ul className="planner-import-items" aria-label="Plans in backup">
+              {backup.file.plans.map((item) => <li key={item.id}>
+                <strong>{item.title}</strong><span>{item.channel} · {displayDate(item)}</span>
+                <p>{item.caption || "No caption"}</p>
+              </li>)}
+            </ul> : <p>This is an empty backup. Replace would leave the saved queue empty.</p>}
+            <div className="button-row">
+              <button type="button" onClick={cancelImport}>Cancel import</button>
+              <button type="button" className={importMode === "replace" ? "planner-remove" : "primary"}
+                disabled={Boolean(importPreview.error)} onClick={importBackup}>
+                {importMode === "replace" ? "Confirm replace import" : "Confirm merge import"}
+              </button>
+            </div>
+          </section> : null}
+        </section>
         <div className="planner-filters">
           <label>
             Filter channel

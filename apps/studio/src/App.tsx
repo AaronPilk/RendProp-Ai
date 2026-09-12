@@ -17,6 +17,7 @@ import Icon from "./icons";
 import type { IconName } from "./icons";
 import { INDUSTRIES, scopeKey, writePlans } from "./workspace";
 import { restoreDrafts } from "./drafts";
+import { canRetainWorkspace } from "./workspace-refresh";
 import type { Industry, PlanItem } from "./workspace";
 
 type Page = "overview" | "editor" | "library" | "planner" | "workspace";
@@ -48,11 +49,16 @@ const errorMessage = (error: unknown) =>
 const industryName = (key: string) =>
   INDUSTRIES[key as Industry] ?? "Your business";
 
-export default function App() {
+// Dependency injection is a component seam, not a browser URL/environment mode.
+// It lets isolated browser fixtures exercise real account transitions without
+// connecting to a provider or putting test identities in the production entry.
+export default function App({ servicesFactory }: {
+  servicesFactory?: () => ReturnType<typeof createStudioServices>;
+} = {}) {
   const setup = useMemo(() => {
     try {
       return {
-        services: createStudioServices(
+        services: servicesFactory ? servicesFactory() : createStudioServices(
           readStudioConfig(import.meta.env, window.location.origin),
         ),
         error: null,
@@ -60,7 +66,7 @@ export default function App() {
     } catch (error) {
       return { services: null, error: errorMessage(error) };
     }
-  }, []);
+  }, [servicesFactory]);
   const services = setup.services;
   const [session, setSession] = useState<SessionSnapshot>(
     services?.getSnapshot() ?? signedOut,
@@ -203,10 +209,9 @@ export default function App() {
       return () => controller.abort();
     }
     setBusy(true);
-    setWorkspace(null);
-    setListings([]);
-    setSelected(null);
-    setMedia(null);
+    // Keep the same verified scope mounted while refreshing. Identity and org
+    // selection already fence the rendered data; blanking this state here also
+    // blanks the editor's scope and unnecessarily discards its selected files.
     const version = session.identityVersion;
     void (async () => {
       const account = await services.loadWorkspace(
@@ -235,8 +240,16 @@ export default function App() {
         if (
           !controller.signal.aborted &&
           services.getSnapshot().identityVersion === version
-        )
+        ) {
+          if (!canRetainWorkspace(error)) {
+            setWorkspace(null);
+            setLoadedVersion(null);
+            setListings([]);
+            setSelected(null);
+            setMedia(null);
+          }
           setLoadError(errorMessage(error));
+        }
       })
       .finally(() => {
         if (
@@ -710,7 +723,9 @@ export default function App() {
             <div className="notice error" role="alert">
               <span>
                 {loadError || session.error}{" "}
-                {isConnected
+                {workspace
+                  ? "Your last loaded workspace is shown. Local edits are still available; retry to refresh account data."
+                  : isConnected
                   ? "Switch to local mode to edit files on this device."
                   : "Your local editor is still available."}
               </span>
@@ -929,9 +944,6 @@ export default function App() {
                   active={page === "editor"}
                   initialDraft={draft}
                   onDraftChange={saveDraft}
-                  onNotice={(message) => {
-                    if (currentScope()) setNotice(message);
-                  }}
                   importRequest={importRequest}
                 />
               ) : (
@@ -1125,7 +1137,7 @@ export default function App() {
           {page === "planner" &&
             (workspaceDraftReady ? (
               <Planner
-                key={editScope}
+                key={restoreScope}
                 items={plans}
                 onSave={savePlans}
                 onNotice={(message) => {

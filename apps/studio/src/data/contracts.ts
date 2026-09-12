@@ -140,8 +140,9 @@ function invalid(field: string): never {
   );
 }
 function record(value: unknown, field: string): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value))
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return invalid(field);
+  }
   return value as Record<string, unknown>;
 }
 function list(value: unknown, field: string): unknown[] {
@@ -165,13 +166,15 @@ export function uuid(value: unknown, field = "identifier"): string {
   const v = str(value, field);
   if (
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v)
-  )
+  ) {
     return invalid(field);
+  }
   return v.toLowerCase();
 }
 function num(value: unknown, field: string): number {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0)
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return invalid(field);
+  }
   return value;
 }
 function nullableNumber(value: unknown, field: string): number | null {
@@ -197,15 +200,17 @@ function nullableDate(
     : date(value, field);
 }
 function equal(actual: string, expected: string, field: string): void {
-  if (actual !== expected)
+  if (actual !== expected) {
     throw new StudioError(
       "identity-mismatch",
       `The server returned data outside the current ${field}. Reload the workspace.`,
     );
+  }
 }
 function unique(values: { id: string }[], field: string): void {
-  if (new Set(values.map((value) => value.id)).size !== values.length)
+  if (new Set(values.map((value) => value.id)).size !== values.length) {
     invalid(field);
+  }
 }
 
 export function decodeMemberships(
@@ -217,8 +222,9 @@ export function decodeMemberships(
     equal(uuid(row.user_id, "membership user_id"), userId, "account");
     const orgId = uuid(row.org_id, "membership org_id");
     const role = str(row.role, "membership role");
-    if (!["owner", "admin", "agent", "marketing"].includes(role))
+    if (!["owner", "admin", "agent", "marketing"].includes(role)) {
       invalid("membership role");
+    }
     const org = record(row.orgs, "membership orgs");
     equal(uuid(org.id, "organization id"), orgId, "workspace");
     if (org.deleted_at !== null) invalid("organization deleted_at");
@@ -247,11 +253,12 @@ export function decodeWorkspace(
   equal(uuid(user.id, "user id"), userId, "account");
   const org = record(row.org, "workspace org");
   const orgId = uuid(org.id, "organization id");
-  if (!memberships.some((m) => m.orgId === orgId))
+  if (!memberships.some((m) => m.orgId === orgId)) {
     throw new StudioError(
       "identity-mismatch",
       "This workspace is not in your current memberships. Reload the workspace.",
     );
+  }
   if (requestedOrg) equal(orgId, requestedOrg, "workspace");
   const usage = record(row.usage, "workspace usage");
   return {
@@ -287,21 +294,23 @@ export function decodeListings(
   memberships: Membership[],
 ): Listing[] {
   const allowed = new Set(memberships.map((m) => m.orgId));
-  if (!allowed.has(orgId))
+  if (!allowed.has(orgId)) {
     throw new StudioError(
       "membership-required",
       "Reload your workspace before opening these listings.",
     );
+  }
   const rows = list(value, "listings").map((raw) => {
     const row = record(raw, "listing");
     const rowOrg = uuid(row.org_id, "listing org_id");
     // Existing GET /listings returns all caller-visible orgs, ignoring X-Org-Id.
     // Validate the whole response before selecting; an unknown tenant fails closed.
-    if (!allowed.has(rowOrg))
+    if (!allowed.has(rowOrg)) {
       throw new StudioError(
         "identity-mismatch",
         "The server returned a listing outside your current memberships. Reload the workspace.",
       );
+    }
     if (row.deleted_at !== null) invalid("listing deleted_at");
     const status = str(row.status, "listing status");
     if (
@@ -314,11 +323,13 @@ export function decodeListings(
         "expired",
         "archived",
       ].includes(status)
-    )
+    ) {
       invalid("listing status");
+    }
     const priceCents = nullableNumber(row.price_cents, "listing price_cents");
-    if (priceCents !== null && !Number.isSafeInteger(priceCents))
+    if (priceCents !== null && !Number.isSafeInteger(priceCents)) {
       invalid("listing price_cents");
+    }
     return {
       id: uuid(row.id, "listing id"),
       orgId: rowOrg,
@@ -342,7 +353,13 @@ export function decodeListings(
   return rows.filter((row) => row.orgId === orgId);
 }
 
-function mediaURL(value: unknown): string {
+function mediaURL(
+  value: unknown,
+  orgId: string,
+  listingId: string,
+  expiresAt: string,
+  now: number,
+): string {
   const s = str(value, "media URL");
   let url: URL;
   try {
@@ -355,13 +372,72 @@ function mediaURL(value: unknown): string {
     url.username ||
     url.password ||
     url.hash ||
+    url.port ||
+    !/^[a-f0-9]{32}\.r2\.cloudflarestorage\.com$/.test(url.hostname) ||
     [...url.searchParams.keys()].some((key) =>
       ["access_token", "refresh_token", "token", "apikey"].includes(
         key.toLowerCase(),
-      ),
+      )
     )
-  )
+  ) {
     invalid("media URL");
+  }
+  let segments: string[];
+  try {
+    segments = url.pathname.slice(1).split("/").map(decodeURIComponent);
+  } catch {
+    return invalid("media URL path");
+  }
+  // Match the existing path-style signer: /<bucket>/<uploads|renders>/<org>/<listing>/<file>.
+  // This validates the literal route contract, not the cryptographic signature.
+  if (
+    segments.length < 5 || !["uploads", "renders"].includes(segments[1]!) ||
+    segments[2] !== orgId || segments[3] !== listingId ||
+    segments.some((segment) =>
+      !segment || segment === "." || segment === ".." ||
+      /[\\/%?#\u0000-\u001f]/.test(segment)
+    )
+  ) {
+    invalid("media URL scope");
+  }
+  const params = url.searchParams;
+  const names = [...params.keys()];
+  if (
+    new Set(names.map((name) => name.toLowerCase())).size !== names.length ||
+    params.get("X-Amz-Algorithm") !== "AWS4-HMAC-SHA256" ||
+    !/^[a-f0-9]{64}$/i.test(params.get("X-Amz-Signature") ?? "") ||
+    params.get("X-Amz-SignedHeaders") !== "host" ||
+    !params.get("X-Amz-Credential")
+  ) invalid("media signature");
+  const stamp = params.get("X-Amz-Date") ?? "";
+  const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/.exec(stamp);
+  const seconds = params.get("X-Amz-Expires") ?? "";
+  if (!match || !/^[1-9]\d{0,2}$/.test(seconds) || Number(seconds) > 600) {
+    invalid("media signature lifetime");
+  }
+  const issuedAt = Date.parse(
+    `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:${match[6]}Z`,
+  );
+  if (
+    !Number.isFinite(issuedAt) ||
+    new Date(issuedAt).toISOString().replace(/[-:]/g, "").replace(
+        ".000",
+        "",
+      ) !== stamp
+  ) {
+    invalid("media signature date");
+  }
+  const signedExpiry = issuedAt + Number(seconds) * 1000;
+  if (signedExpiry <= now) {
+    throw new StudioError(
+      "media-expired",
+      "The private media link has expired. Refresh the library.",
+    );
+  }
+  // SigV4 timestamps have second precision, while the route's timestamp has milliseconds.
+  if (Date.parse(expiresAt) > signedExpiry + 1000) {
+    invalid("media expiry mismatch");
+  }
   return s;
 }
 export function mediaOffset(value: unknown): number {
@@ -376,33 +452,39 @@ export function decodeMedia(
   offset = 0,
 ): ListingMedia {
   const row = record(value, "listing media");
+  const now = Date.now();
+  mediaOffset(offset);
   equal(uuid(row.org_id, "media org_id"), orgId, "workspace");
   equal(uuid(row.listing_id, "media listing_id"), listingId, "listing");
   function common(raw: unknown) {
     const item = record(raw, "media item");
     equal(uuid(item.listing_id, "media listing_id"), listingId, "listing");
     const expiresAt = date(item.expires_at, "media expires_at");
-    if (Date.parse(expiresAt) <= Date.now())
+    if (Date.parse(expiresAt) <= now) {
       throw new StudioError(
         "media-expired",
         "The private media link has expired. Refresh the library.",
       );
+    }
     return {
       item,
       id: uuid(item.id, "media id"),
       listingId,
-      url: mediaURL(item.url),
+      url: mediaURL(item.url, orgId, listingId, expiresAt, now),
       expiresAt,
     };
   }
   const photoRows = list(row.photos, "photos"),
     videoRows = list(row.videos, "videos");
-  if (photoRows.length > 100 || videoRows.length > 100)
+  if (photoRows.length > 100 || videoRows.length > 100) {
     invalid("media page size");
-  const nextOffset =
-    row.next_offset === null ? null : mediaOffset(row.next_offset);
-  if (nextOffset !== null && nextOffset !== offset + 50)
+  }
+  const nextOffset = row.next_offset === null
+    ? null
+    : mediaOffset(row.next_offset);
+  if (nextOffset !== null && nextOffset !== offset + 50) {
     invalid("media next_offset");
+  }
   const unavailableCount = integer(
     row.unavailable_count,
     "media unavailable_count",

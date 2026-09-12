@@ -1,11 +1,26 @@
 # Rendprop Studio — implementation status and Claude handoff
 
-Working date: 2026-09-12. Web branch: `feat/web-studio-20260912`.
+Working date: 2026-09-12. Current web branch: `feat/web-studio-recovery-20260912`.
+It branches from initial Studio branch `feat/web-studio-20260912` at `0eec832`.
 Base: `81fa6d21c17b559297fc03e6e548f70d7ce33bad` (Claude's build-20 hardening wave).
 Before the web commit, fast-forwarded to Claude's `00b56e3` (1.0.1 build 21).
 His intervening change touches only the two iOS project/version files; no web
 source or built asset changed. This preserves his current submission source.
 Workspace: `/Users/pilksclaes/Rendprop AI/web-studio-20260912`.
+
+## Latest iteration — 18:12 UTC
+
+Implemented Undo/Redo, portable JSON content-plan backup/restore, connected-refresh
+file retention, single editor completion notices and stricter scoped media reads.
+Integrated verification passed:154 unit tests,29 Deno tests,17 workspace browser
+checks,18 editor browser checks/seven real video downloads, six connected-fixture
+checks and a deliberate refresh regression caught at its specific browser assertion.
+Type checks, exact built assets and Studio-only deploy dry-run passed.
+
+This iteration is locally verified and ready for the dedicated Studio deployment.
+Live preview below still describes the prior version until a new deployment receipt
+is recorded. [Full changes, reproduction, limits and Claude handoff](STUDIO-RECOVERY-2026-09-12.md).
+No iOS, Apple, paid-provider or existing production service changes were made.
 
 ## Delivered preview — read this first
 
@@ -99,10 +114,10 @@ edit sync and canonical server exports are not implemented by this release.
    signed merely because a client-writable photo record points to them.
 6. Existing `/listings` has no paging contract and may hit default Data API limits
    for very large accounts. Enterprise-wide completeness needs a paginated contract.
-7. Refreshing a connected content library currently reloads the workspace snapshot
-   and drops in-memory source bindings; saved edit instructions survive, but originals
-   need reselection. Ordinary Studio page navigation now preserves originals. Resolve
-   this connected-refresh behavior during the live account integration acceptance.
+7. Recovery iteration fixes same-account refresh file retention, including transient
+   network/503 failure. Access loss, identity/org changes, reload and explicit draft
+   recovery still require original reselection. Offline App/services browser proof
+   passed; real same-account integration acceptance is still required.
 
 ## Live configuration read-back (GET only)
 

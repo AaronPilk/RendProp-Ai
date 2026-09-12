@@ -15,7 +15,6 @@ import { validateDraft, type EditDraft } from './editor/model';
   active={currentPage === 'editor'}
   initialDraft={validatedSavedDraft}
   onDraftChange={(draft: EditDraft) => saveForCurrentWorkspace(draft)}
-  onNotice={message => showNotice(message)}
   importRequest={{ id: stableOperationId, files: alreadyFetchedFiles }}
 />
 ```
@@ -38,6 +37,11 @@ another import receives an explicit retry notice. Root code owns any authenticat
 download; the editor receives real `File` objects and makes no network request.
 
 The component imports its own scoped `editor.css`. It adds no npm dependencies.
+The editor owns its visible, atomic status announcement. Optional `onNotice` is an
+observer for integrations, not a request to render the same message again; Studio
+does not forward it into the host banner. Successful edits clear old completion
+messages along with their invalidated download. The headline and empty-state copy
+are industry-neutral.
 
 ## Implemented behavior
 
@@ -45,6 +49,8 @@ The component imports its own scoped `editor.css`. It adds no npm dependencies.
   identify the browser limitation. SVG/HTML are rejected.
 - Select a clip, move it earlier/later using named buttons, or remove it from the edit.
 - Set photo duration; trim video in/out; change horizontal/vertical crop focus.
+- Undo/Redo timing, captions, title, framing, order, aspect ratio, audio mode,
+  removal, and added-media edits, within the bounded session history below.
 - Choose 9:16 (720×1280), 16:9 (1280×720), or 1:1 (960×960).
 - Set a persistent title overlay and each clip's caption, burned into the canvas.
 - Play/pause/replay and scrub the actual sequence, with source trim offsets respected.
@@ -60,6 +66,36 @@ New photos start at 3 seconds; new videos use up to their first 6 seconds. This 
 stated in the sequence help and import notice, and all source duration remains
 available to the trim controls. Over-limit batches are refused; files are not dropped
 from a selection and timelines are not silently truncated.
+
+## Undo/Redo and removed-media lifecycle
+
+The recovery branch adds a pure validated history engine: at most **20 combined
+Undo/Redo steps and 64 KiB of UTF-8 snapshot/label payload**. Older, more distant
+steps expire first; large plans can therefore retain fewer than 20. History holds
+edit metadata only, never files, thumbnails, decoders, blob URLs, or completed
+exports. The existing 12-file/160 MiB media bounds are unchanged. This payload cap
+does not claim a hard browser-process heap limit.
+
+Repeated changes within one focused field are grouped until blur or pointer release.
+Undo/Redo buttons are keyboard accessible; Ctrl/Cmd+Z and Ctrl/Cmd+Shift+Z (or Ctrl+Y)
+work while focus is inside the editor but outside input fields. Native text-field
+undo is left alone. Real edits after Undo discard the redo branch; a no-op value does
+not consume history, clear redo, or invalidate a valid export.
+
+Undo/Redo restore exact validated content under the **same edit ID and a newly
+incremented revision**. They never reuse a previous export identity. Both stop
+playback, abort an active export, and revoke a completed download. Opening a plan,
+reloading, or changing workspace/identity starts a new history; portable plans and
+autosaved drafts persist only current edit intent, not history.
+
+Removing a clip still immediately releases its original local media and thumbnail.
+Undo restores its original hash, cuts, caption, position, and framing, but the user
+must reselect that original file to preview/export it. The toolbar/removal/undo
+notices state this explicitly. Reselection still verifies the entire SHA-256 plus
+media metadata; a same-ID/different-source resource cannot be silently reattached.
+Reselection itself does not consume history, so Redo can remove the clip again.
+Undoing an import follows the same release/reselection contract. No hidden media
+cache grows behind the timeline as clips are removed and re-added.
 
 ## Export and audio
 
@@ -106,6 +142,7 @@ timeouts and cancellation races so a blocked `play()`/audio resume cannot hang c
 | Total edit duration | 180 seconds |
 | Caption/title | 120/80 characters, at most four explicit lines |
 | Portable edit JSON | 64 KiB |
+| Undo/Redo history | 20 combined steps; 64 KiB UTF-8 snapshot/label payload |
 | Encoded output held in memory | 128 MiB |
 | Export deadline | twice edit duration plus 60 seconds |
 | Native media event/startup wait | 15 seconds |
@@ -121,6 +158,20 @@ dependent; pixel limits are checked when dimensions become available, not a guar
 of a hard browser-process memory cap against pathological media.
 
 ## Verification
+
+Recovery-branch source verification on 2026-09-12: `npm run typecheck` and
+`npx tsx --test tests/editor*.test.ts` pass (**19 tests, zero skipped**). Six new
+engine tests cover all reversible operations, grouping, divergent redo, no-ops,
+combined count/byte bounds, source release/full-hash identity, corrupt/cross-plan
+history, invalid edits, and revision exhaustion. Negative cases assert rejection
+without mutating the history. The browser runner now additionally asserts restored
+trims/captions/order/ratio, missing-file recovery after Undo removal (including a
+wrong-file rejection), active-export cancellation by Undo, and exactly one
+editor-owned completion announcement for every actual export. **Fresh integrated
+browser proof passed at18:08 UTC:18 checks, seven real exports, zero skips/errors.**
+It includes the new Undo/Redo UI and checks exact served build bytes. See
+[the recovery iteration](STUDIO-RECOVERY-2026-09-12.md) and its dedicated receipts.
+The older13-check evidence below is preserved as history, not reused as new proof.
 
 Executed locally on 2026-09-12 against the final frozen production build:
 

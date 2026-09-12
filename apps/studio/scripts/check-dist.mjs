@@ -25,6 +25,8 @@ for (const name of files) {
     "No source maps, server files or env files in deployment.",
   );
   const bytes = await readFile(path.join(root, "dist/assets", name));
+  assert(!bytes.includes(Buffer.from("studioFixture")), "Connected test fixture must not ship.");
+  assert(!bytes.includes(Buffer.from("ISOLATED_FIXTURE_NOT_REAL")), "Fixture account config must not ship.");
   compressed += gzipSync(bytes).length;
 }
 assert(
@@ -48,6 +50,7 @@ for (const required of [
   assert(headers.includes(required));
 assert(!headers.includes("script-src 'self' 'unsafe-inline'"));
 assert.equal(await read("robots.txt"), "User-agent: *\nDisallow: /\n");
+assert(!(await readdir(path.join(root, "dist"))).includes("tests"), "No test entrypoints may be deployed.");
 console.log(
   JSON.stringify({
     gate: "studio-built-assets",
