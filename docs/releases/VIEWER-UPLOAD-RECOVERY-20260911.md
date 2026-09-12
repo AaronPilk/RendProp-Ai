@@ -584,3 +584,35 @@ intended Turnstile fail-open mutant rejected.** Receipt:
 `/tmp/rendprop-edge-audit-sl4kplo_/receipt.json`. This includes the122 upload
 tests; do not add them again. A fresh hosted run against the repaired commit,
 not a rerun of the old SHA, is required for hosted-environment acceptance.
+
+### Second hosted run: repairs verified, one new test failure exposed
+
+Commit `26c9459c4493f66681e6483f157915eafb836147` was pushed normally and the
+exact remote SHA read back. Root's integrated-history Gitleaks8.24.3 run passed:
+297 scanned commits,13,186,787 bytes,0 findings. The exact six historical
+fingerprints and independent same-path/new-commit negative control are documented
+in [SECRET-SCAN-DISPOSITIONS.md](../audits/2026-09-11/SECRET-SCAN-DISPOSITIONS.md).
+That review corrects the earlier claim about a possible Bearer credential on
+launch-P2 line518: the cited example is an unauthenticated request/error, not
+an exposed private header. No broad scanner exception, rule disablement,
+credential rotation or history rewrite occurred.
+
+Fresh [run34663177777](https://github.com/AaronPilk/RendProp-Ai/actions/runs/34663177777)
+evaluated this exact pushed commit, not an old rerun. Seven jobs passed,
+including the actual built Worker gate, web inventory and scanner. Both DB jobs
+remained red; the fresh-migration log reports exactly the pre-existing
+agent-reel headroom invariant above. The publication job replayed0042 and
+passed positive/mutant/restored publication cases, then stopped its own cluster.
+
+The Edge job passed all27 deletion tests on real hosted Deno2.9.6, confirming
+the descriptor repair. It nevertheless finished **752 passed,1 failed**:
+`_shared/applejws.test.ts:952`, the x5c base64URL rejection case, did not reject
+as expected. This is a different finding, not the original deletion failure.
+The follow-up must distinguish a randomized fixture assumption from actual
+decoder-runtime behavior before changing code or claiming a green suite.
+
+At `2026-09-12T00:55:22.780Z`, the latest live viewer read again returned
+HTTP200,26,442 bytes, the same known-bad SHA256. The source-bound gate exited1
+at identity mismatch before executing supplied code. Receipt:
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-VR4F2N/receipt.json`.
+No tour-host deployment, iOS delivery, Apple change or budget enablement occurred.
