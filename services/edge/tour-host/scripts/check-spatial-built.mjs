@@ -158,7 +158,21 @@ async function verifyBrowser(source) {
 }
 
 try {
-  const source=mode==='--asset-url' ? await publicAsset(args[1]) : mode==='--asset-file' ? boundedFile(resolve(args[1]),512000).toString() : await emittedAsset(mode==='--negative-control');
+  let source;
+  if (mode.startsWith('--asset-')) {
+    source=mode==='--asset-url' ? await publicAsset(args[1]) : boundedFile(resolve(args[1]),512000).toString();
+    receipt.browser_bytes=Buffer.byteLength(source); receipt.browser_sha256=sha(source);
+    // Node's VM is an execution timeout, NOT an isolation boundary. Never run
+    // arbitrary downloaded/file-provided JS with this process's authority.
+    // A deployment check must first match this reviewed source's actual build;
+    // drift fails closed before any supplied code is evaluated.
+    const expected=await emittedAsset();
+    receipt.expected_browser_sha256=sha(expected);
+    check(receipt.browser_sha256===receipt.expected_browser_sha256,
+      'Unverified browser asset differs from this source build; supplied JavaScript was not executed');
+  } else {
+    source=await emittedAsset(mode==='--negative-control');
+  }
   await verifyBrowser(source);
   if (mode==='--self-test') {
     const child=spawnSync(process.execPath,['--experimental-vm-modules',fileURLToPath(import.meta.url),'--negative-control'],
@@ -170,6 +184,18 @@ try {
     check(negative.failure?.name==='ReferenceError' && negative.failure.message==='__name is not defined',
       'Negative control must fail at missing helper, not an unrelated build/environment error');
     receipt.negative_control=negative;
+    const unmatched=join(evidence,'unmatched-browser.js');
+    writeFileSync(unmatched,'throw new Error("UNMATCHED_SCRIPT_EXECUTED");\n');
+    const mismatch=spawnSync(process.execPath,['--experimental-vm-modules',fileURLToPath(import.meta.url),'--asset-file',unmatched],
+      {cwd:ROOT,encoding:'utf8',timeout:120000,maxBuffer:2*1024*1024});
+    writeFileSync(join(evidence,'unmatched-control.log'),(mismatch.stdout||'')+(mismatch.stderr||''));
+    check(!mismatch.error && mismatch.status===1,'Unmatched file must be rejected');
+    const mismatchLine=(mismatch.stdout||'').trim().split('\n').findLast(line=>line.startsWith('{'));
+    const rejected=JSON.parse(mismatchLine||'{}');
+    check(rejected.failure?.name==='AssertionError' &&
+      rejected.failure.message==='Unverified browser asset differs from this source build; supplied JavaScript was not executed',
+      'Unmatched code must fail at byte identity, before its throwing body executes');
+    receipt.unmatched_control=rejected;
   }
   receipt.status='passed'; persist(); console.log(JSON.stringify(receipt));
 } catch(error) {

@@ -86,6 +86,24 @@ this same URL gate pass.** Do not enable spatial budgets as part of a viewer fix
 Detailed unit report:
 [`SPATIAL-BUILT-VIEWER-FIX-20260911.md`](../audits/2026-09-10/SPATIAL-BUILT-VIEWER-FIX-20260911.md).
 
+**Gate follow-up,00:07UTC September12 (September11 evening Eastern):**
+Independent review correctly noted that Node's VM timeout is not an isolation
+boundary. Remote/file-provided browser code is now required to SHA-match the
+actual build from the reviewed local source **before** execution. A mismatch
+is reported as deployment drift without evaluating supplied JavaScript. This
+also makes a future live pass source-bound rather than merely "some script ran."
+The documented preview command's loopback-only Deno permission remains a CLI
+requirement; never rerun it with ambient unrestricted network permissions.
+
+Root reran full `npm run predeploy`:exit0, **36 built-byte assertions**, exact
+missing-`__name` control retained, plus a second deliberately throwing unmatched
+script rejected at identity verification before its body executes. Worker and
+browser hashes are unchanged. Receipt:
+`/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-spatial-built-9vyLUH/receipt.json`.
+Older34-assertion receipts above remain valid history; the current gate has36.
+The live check now requires this source/lockfile's build dependencies and will
+reject an older deployed asset as a hash mismatch before evaluating it.
+
 ## Unchanged limits and delivery gates
 
 - No production data deletion, bulk ticket cancellation, feature enablement,
@@ -224,6 +242,7 @@ Root independently ran these on the integrated source, not the agent's tree:
 | `python3 tools/audit/test_upload_restart_db.py` |40 passed,0 failures/skips;2 intended SQL assertion failures; restored cases pass; owned socket-only PG17 stopped with exit0 |`/tmp/rendprop-upload-pg-n43vakvd/receipt.json`|
 | `python3 tools/audit/verify_upload_restart.py` |122 handler/transport tests pass;2 copied-handler assertion failures;15 restored tests pass |`/tmp/rendprop-upload-restart-y2ufq8s6/receipt.json`|
 | `python3 tools/audit/run_edge_regression.py` |753 pass,0 failures/skips;all22 entrypoints typecheck; fail-open Turnstile mutant rejected |`/tmp/rendprop-edge-audit-x_mc71fu/receipt.json`|
+| `python3 tools/audit/verify_upload_transport.py --tsc <integration tour-host>/node_modules/typescript/bin/tsc --deno-dir /Users/pilksclaes/Library/Caches/deno` |122 pass;native Worker adapter typecheck passes; final-byte streaming mutant rejected |`/tmp/rendprop-upload-offline-yces8j8v/receipt.json`|
 
 The122 upload tests are a subset of753, not additional distinct tests. The
 40 PostgreSQL cases include20 existing transport cases plus20 restart cases;
