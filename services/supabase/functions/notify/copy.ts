@@ -173,11 +173,15 @@ export function render(category: string, payload: Data): RenderedMessage {
       const who = str(data, "inviter");
       const code = str(data, "code") ?? "";
       const opener = who ? `${who} added you to ${org} on Rendprop` : `You have been added to ${org} on Rendprop`;
+      // LEAD WITH THE LINK, NOT THE CODE. The link is the whole point — it
+      // lands on a page that copies the code and opens the app, so the code
+      // below it is the fallback for a mail client that strips links or a
+      // person reading this on the wrong device, not the instruction.
       return {
-        title: `${opener}`,
+        title: opener,
         body: code
-          ? `Your join code is ${code}. Install Rendprop, open Settings, tap Join a team and enter it. The code works once and expires in 14 days.`
-          : "Install Rendprop and ask whoever invited you for the join code.",
+          ? `Tap the link below to join — it fills your code in for you. If you would rather type it, the code is ${code}. It works once and expires in 14 days.`
+          : "Tap the link below to join.",
       };
     }
 
@@ -218,13 +222,22 @@ export function absoluteLink(payload: Data, base: string): string | null {
 }
 
 /** Plain-text e-mail body: the message, the link if there is one, and a footer. */
-export function emailText(message: RenderedMessage, link: string | null): string {
+export function emailText(
+  message: RenderedMessage,
+  link: string | null,
+  category?: string,
+): string {
   const lines = [message.body];
   if (link) lines.push("", link);
-  lines.push(
-    "",
-    "— Rendprop",
-    "You can turn any of these off in the app under Settings → Notifications.",
-  );
+  lines.push("", "— Rendprop");
+  // An invitee has no account and no Settings screen, so the standard footer
+  // would be pointing them at something that does not exist for them yet. It
+  // is also the one category that is never suppressible (migration 0053), so
+  // offering to turn it off would be a lie.
+  if (category === "team_invite") {
+    lines.push("You received this because someone added you to their team. If you were not expecting it, ignore this email — the invite expires on its own.");
+  } else {
+    lines.push("You can turn any of these off in the app under Settings → Notifications.");
+  }
   return lines.join("\n");
 }

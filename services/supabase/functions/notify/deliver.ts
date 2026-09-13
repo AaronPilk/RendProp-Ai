@@ -157,7 +157,7 @@ export async function deliverEmail(
   const result = await email.sendEmail({
     to: address,
     subject: message.title,
-    text: emailText(message, link),
+    text: emailText(message, link, row.category),
   }, fetchImpl);
 
   if (result.ok) {

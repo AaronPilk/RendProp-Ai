@@ -35,6 +35,7 @@ import type { Env, Portfolio, Tour } from "./types";
 import { appStoreUrl } from "./attribution";
 import { buildDemoPortfolio, buildDemoTour, demoSpaceFrom, isDemoHandle, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
+import { joinPage, normalizeJoinCode } from "./join";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
@@ -484,6 +485,21 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
     const handle = safeDecode(aMatch[1]);
     if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "no-store" });
     return handlePortfolio(handle, req, url, env);
+  }
+
+  // ── /join/<code> ─────────────────────────────────────────────────────────
+  // The landing page for a team invite. no-store and noindex because the URL
+  // carries a single-use code; the Worker never validates it (it has no
+  // database, and a page that told a stranger whether a code was real would be
+  // an oracle for guessing them) — acceptance stays in POST /team/accept.
+  if (path === "/join" || path.startsWith("/join/")) {
+    const fromPath = path === "/join" ? null : path.slice("/join/".length);
+    const code = normalizeJoinCode(fromPath ?? url.searchParams.get("code"));
+    const resp = htmlResponse(joinPage(code), code ? 200 : 404, {
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
   if (path === "/sitemap.xml") {
