@@ -179,6 +179,14 @@ struct OnboardingView: View {
 
             PrimaryButton(title: "Get started", systemImage: "arrow.right") {
                 hasOnboarded = true
+                // Ask about notifications HERE, not only after the first
+                // publish. A person who is never asked can currently only find
+                // this in Settings, and nobody goes looking for a switch they
+                // do not know exists. This raises the plain-words pre-prompt,
+                // never the iOS dialog — that one is spent only on a yes, so a
+                // "Not now" costs nothing and the publish moment may ask once
+                // more. See PushManager.noteOnboardingFinished.
+                PushManager.shared.noteOnboardingFinished()
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 28)

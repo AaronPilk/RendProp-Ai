@@ -197,10 +197,14 @@ enum Config {
     ///
     ///   • It un-hides Settings → Notifications and lets `PushManager` register
     ///     with APNs and POST the token to `/me/devices`.
-    ///   • It does NOT prompt. The system permission is requested at exactly one
-    ///     moment — the first time a person publishes a tour successfully — and
-    ///     only after a plain-words pre-prompt sheet they can decline for free
-    ///     (`PushManager.noteTourPublished`). Nothing asks at launch, ever.
+    ///   • It does NOT raise the iOS dialog on its own. That one-shot prompt is
+    ///     spent ONLY on a yes, from a plain-words pre-prompt sheet that can be
+    ///     declined for free. The sheet appears at up to two moments in a
+    ///     lifetime: when onboarding finishes (`noteOnboardingFinished`, added
+    ///     13 Sep 2026 because the only other route was Settings, which nobody
+    ///     finds) and, if that one was declined, after the first successful
+    ///     publish (`noteTourPublished`), where the sentence is finally about a
+    ///     tour that exists. Nothing asks on a cold launch, ever.
     ///   • Everything it enables is written to survive the server not having the
     ///     routes yet: a 404 from `/me/devices` or `/me/notifications` is "not
     ///     deployed", not an error, and is never retried in the same launch.

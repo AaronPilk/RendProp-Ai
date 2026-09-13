@@ -253,6 +253,13 @@ final class PushManager: ObservableObject {
     @Published private(set) var authorization: UNAuthorizationStatus = .notDetermined
     /// Drives the pre-prompt sheet at the app root.
     @Published var showPrePrompt = false
+
+    /// WHICH moment raised the sheet. The words on it differ, because the two
+    /// moments are not the same promise: at onboarding nothing exists yet and
+    /// the sheet describes what WILL arrive; after a publish there is a live
+    /// tour a stranger can fill a form on, and it can say so.
+    enum PrePromptContext { case onboarding, published }
+    @Published private(set) var prePromptContext: PrePromptContext = .published
     /// Set by a tapped notification; the root consumes it and clears it.
     @Published private(set) var pendingRoute: PushRoute?
 
@@ -274,8 +281,20 @@ final class PushManager: ObservableObject {
     private var deviceRouteMissing = false
     private var isRegistering = false
 
+    /// "Not now" at ONBOARDING, which is deliberately not the same as
+    /// `hasAsked`. Declining a sheet before anything has been built is a
+    /// judgement about an abstraction, not about notifications — so it costs
+    /// that one sheet and nothing else, and the publish moment may still ask
+    /// once. Two soft asks in a lifetime, maximum, and the iOS one-shot prompt
+    /// is never spent by either decline.
+    private var declinedAtOnboarding: Bool {
+        get { UserDefaults.standard.bool(forKey: Keys.declinedAtOnboarding) }
+        set { UserDefaults.standard.set(newValue, forKey: Keys.declinedAtOnboarding) }
+    }
+
     private enum Keys {
         static let hasAsked = "push.hasAskedPermission.v1"
+        static let declinedAtOnboarding = "push.declinedAtOnboarding.v1"
     }
 
     /// Push does nothing at all in either automated harness, and the reason is
@@ -326,8 +345,57 @@ final class PushManager: ObservableObject {
 
     // MARK: The one moment the app asks
 
-    /// A tour just went live. THE one moment this app may ask for notification
-    /// permission, and only the first time.
+    /// Onboarding just finished. THE FIRST of the two moments this app may ask.
+    ///
+    /// Added 13 Sep 2026 on the owner's call: "it needs to prompt the user to
+    /// do that in the beginning not go to the settings to do it." He is right
+    /// about the failure — before this, a person who was never asked could only
+    /// turn notifications on by finding Settings → Turn on notifications, and
+    /// nobody goes looking for a switch they do not know exists.
+    ///
+    /// It is still a PRE-prompt, not the iOS dialog. That distinction is the
+    /// whole reason asking early is safe: iOS grants exactly one system prompt
+    /// per install and a decline is permanent, so the sheet spends a decision
+    /// that costs nothing and only escalates to the real prompt on a yes. A
+    /// "Not now" here leaves the publish moment free to ask once more.
+    ///
+    /// Does nothing when the OS has already been answered (a reinstall carries
+    /// the old answer forward), when this sheet has already been shown, or when
+    /// push is off in `Config`.
+    func noteOnboardingFinished() {
+        guard !Self.isSuppressed else { return }
+        guard !hasAsked, !declinedAtOnboarding, !showPrePrompt else { return }
+        Task {
+            let status = await Self.currentAuthorization()
+            authorization = status
+            guard status == .notDetermined else {
+                // Already decided at the OS level: there is nothing to ask, so
+                // do not burn the publish ask either. Pick up the token if the
+                // answer was yes — this is the path that registers a reinstall
+                // whose permission survived.
+                hasAsked = true
+                if Self.allowsNotifications(status) { registerWithAPNs() }
+                return
+            }
+            // LET THE ROOT SWAP FINISH FIRST. "Get started" sets `hasOnboarded`,
+            // which replaces OnboardingView with RootTabView in the same frame.
+            // The sheet modifier lives on the Group that wraps both, so it
+            // survives the swap — but a sheet presented DURING a view-tree
+            // replacement that large is the classic way to get a sheet that
+            // never appears. Three quarters of a second is below the threshold
+            // where anyone reads it as a delay, and it lands the sheet on a
+            // settled tab bar instead of a half-built one.
+            try? await Task.sleep(nanoseconds: 750_000_000)
+            guard !hasAsked, !declinedAtOnboarding else { return }
+            prePromptContext = .onboarding
+            showPrePrompt = true
+        }
+    }
+
+    /// A tour just went live. The SECOND and last moment this app may ask —
+    /// and the only one when the person has something real to be notified
+    /// about. Reached when onboarding's sheet was declined, or when push was
+    /// switched on in `Config` after this install had already onboarded.
     ///
     /// Does nothing at all when the person has already been asked, when the OS
     /// has already been answered (a reinstall carries the old answer), or when
@@ -345,6 +413,7 @@ final class PushManager: ObservableObject {
                 if Self.allowsNotifications(status) { registerWithAPNs() }
                 return
             }
+            prePromptContext = .published
             showPrePrompt = true
         }
     }
@@ -355,7 +424,21 @@ final class PushManager: ObservableObject {
     /// for it themselves. Idempotent: the sheet's `onDisappear` calls it too,
     /// so closing it by ANY route counts as having been asked.
     func declinePrePrompt() {
-        hasAsked = true
+        // IDEMPOTENT ON PURPOSE, and the order matters. `onDisappear` calls
+        // this after BOTH buttons have already run, so the first thing to
+        // check is whether the question is already settled: `requestAuthorization`
+        // sets `hasAsked`, and a later sweep-up call must not undo anything.
+        guard !hasAsked else { showPrePrompt = false; return }
+        // Not settled, so this was a decline — by the button, or by a swipe,
+        // which means the same thing. An onboarding decline closes THIS sheet
+        // only: `hasAsked` stays false so the publish moment, where the
+        // sentence is finally about something that exists, may ask once more.
+        // A publish decline is final.
+        if prePromptContext == .onboarding {
+            declinedAtOnboarding = true
+        } else {
+            hasAsked = true
+        }
         showPrePrompt = false
     }
 
@@ -568,7 +651,7 @@ struct PushPrePromptView: View {
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Theme.accent)
                 .accessibilityHidden(true)
-            Text("Your tour is live. Want to know when it gets you something?")
+            Text(headline)
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -617,6 +700,20 @@ struct PushPrePromptView: View {
         // promise is that this is not repeated, and a sheet that reappears on
         // the next publish would break it.
         .onDisappear { push.declinePrePrompt() }
+    }
+
+    /// Two moments, two true sentences. At onboarding nothing has been built
+    /// yet, so the sheet can only describe what will arrive — and it says so
+    /// plainly rather than implying a tour already exists. After a publish
+    /// there IS a live tour a stranger can fill a form on, and the older line
+    /// stands word for word.
+    private var headline: String {
+        switch push.prePromptContext {
+        case .onboarding:
+            return "Want to know the moment a tour gets you something?"
+        case .published:
+            return "Your tour is live. Want to know when it gets you something?"
+        }
     }
 
     private func promise(_ icon: String, _ text: String) -> some View {

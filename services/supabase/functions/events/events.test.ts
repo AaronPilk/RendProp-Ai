@@ -79,6 +79,39 @@ Deno.test("scrub: output is clipped and whitespace-collapsed", () => {
   assertEquals(scrubString("x".repeat(500), 40).length, 40);
 });
 
+// REGRESSION, 2026-09-13. Build 23 reported "1.0.2 (23)" and the row in
+// app_events read "[redacted])". The phone rule (a digit, 6+ of [digits spaces
+// dots parens dashes], a digit) matches any three-component version with a
+// build number. Two-component versions escaped by one character, which is why
+// 1.0 (16) looked fine and this was invisible until 1.0.1 shipped. It broke
+// every version-keyed analytic — admin_cohorts and admin_churn group by
+// app_version.
+Deno.test("scrubMeta: a real version number survives intact", () => {
+  for (const v of [
+    "1.0 (16)",       // survived before the fix, by luck
+    "1.0.1 (22)",     // did not
+    "1.0.2 (23)",     // the one found live
+    "2.0.10 (105)",
+    "1.2.3.4 (9999)",
+    "1.0",
+    "18.7.3",
+    "26.6.2",
+  ]) {
+    assertEquals(scrubMeta(v), v, `version "${v}" must reach the database unchanged`);
+  }
+});
+
+// The pass-through is a whole-string match, so it cannot be used as a way to
+// smuggle anything past the scrubber by prefixing it with a version.
+Deno.test("scrubMeta: the version pass-through is anchored, not a bypass", () => {
+  assertEquals(scrubMeta("1.0.2 (23) call 4155550132"), "[redacted]) call [redacted]");
+  assertEquals(scrubMeta("4155550132"), "[redacted]");
+  assertEquals(scrubMeta("+1 (415) 555-0132"), "[redacted]");
+  assertEquals(scrubMeta("1.0.2 (23) a@b.com"), "[redacted]) [redacted]");
+  // Longer than MAX_META_STRING: not eligible for the pass-through.
+  assertEquals(scrubMeta("1".repeat(45)), "[redacted]");
+});
+
 Deno.test("scrubMeta: clips to 40 and nulls an empty result", () => {
   assertEquals(scrubMeta("iOS 26.4"), "iOS 26.4");
   assertEquals(scrubMeta("v".repeat(90))!.length, 40);

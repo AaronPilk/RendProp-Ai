@@ -210,9 +210,43 @@ export function scrubString(input: string, max = MAX_PROP_STRING): string {
   return out.length > max ? out.slice(0, max) : out;
 }
 
-/** Scrub + clip a metadata string (app_version, os). Empty → null. */
+// THE SCRUBBER ATE THE VERSION NUMBER. Found live on 2026-09-13: build 23
+// reported `1.0.2 (23)` and the database stored `[redacted])`.
+//
+// The phone rule is /\+?\d(?:[\d\s().-]{6,})\d/ — a digit, then six or more
+// characters drawn from digits, spaces, dots, parentheses and dashes, then a
+// digit. A three-component version with a build number is exactly that shape:
+// "1.0.2 (23" is 1 + ".0.2 (2" (seven) + 3. It matched, and only the trailing
+// ")" survived. Two-component versions escaped by one character — "1.0 (16)"
+// has five middle characters, not six — which is why 1.0 (16) looked fine and
+// the bug stayed invisible until 1.0.1 shipped.
+//
+// This silently destroyed every version-keyed analytic from 1.0.1 onward:
+// admin_cohorts and admin_churn (0046) group by app_version, and a cohort
+// named "[redacted])" is not a cohort. Crash and error events carry
+// app_version as a whitelisted prop too.
+//
+// WHY A PASS-THROUGH IS SAFE HERE, and not a weakening of the scrubber. The
+// exemption is not "skip the rules for this field" — it is a whole-string
+// match against a shape that CANNOT hold any of the four things the scrubber
+// exists to catch. Digits, dots and one parenthesised build number have
+// nowhere to put an @, a scheme, a slash or a street suffix, and the match is
+// anchored, so "1.0.2 (23) call 4155550132" is not a version and is scrubbed
+// normally. The rule stays over-eager everywhere else.
+const VERSION_RE = /^\d{1,4}(?:\.\d{1,4}){0,3}(?:[ -]?\(\d{1,8}\))?$/;
+
+/**
+ * Scrub + clip a metadata string (app_version, os). Empty → null.
+ *
+ * A plain version number is returned untouched — see VERSION_RE above for why
+ * that cannot leak anything. Everything else goes through the full scrubber.
+ */
 export function scrubMeta(input: unknown): string | null {
   if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (trimmed.length > 0 && trimmed.length <= MAX_META_STRING && VERSION_RE.test(trimmed)) {
+    return trimmed;
+  }
   const s = scrubString(input, MAX_META_STRING);
   return s.length === 0 ? null : s;
 }
