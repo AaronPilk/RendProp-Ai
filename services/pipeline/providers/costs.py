@@ -67,7 +67,11 @@ ANTHROPIC_RATES_CENTS_PER_1K: dict[str, dict[str, float]] = {
     },
 }
 # Safe default if an unrecognized model id is passed (treat as Haiku-class).
-_DEFAULT_ANTHROPIC_RATE = ANTHROPIC_RATES_CENTS_PER_1K["claude-haiku-4-5"]
+# The default must be the model actually in use, not the cheapest one in the
+# table: qc_model moved to claude-sonnet-5 on 2026-09-13 (haiku-4-5 retires
+# >= 2026-10-15) and a haiku-priced default would under-report every QC
+# judgement in the cost ledger, which is what the spend ceiling reads.
+_DEFAULT_ANTHROPIC_RATE = ANTHROPIC_RATES_CENTS_PER_1K["claude-sonnet-5"]
 
 # Model FAMILY prefixes, longest-first. Exact-id lookup used to be the only path,
 # so a dated or aliased id (`claude-sonnet-5-20260514`, `claude-sonnet-5-latest`)
@@ -176,7 +180,7 @@ def estimate_job(
     hero: bool,
     hero_seconds: float = 5.0,
     restage_route: str = "gemini",
-    qc_model: str = "claude-haiku-4-5",
+    qc_model: str = "claude-sonnet-5",
     qc_per_enhanced_room: bool = True,
 ) -> dict:
     """Projected cost breakdown for a whole listing — powers `cli.py estimate`.
