@@ -25,7 +25,10 @@ import { absoluteLink, emailText, render } from "./copy.ts";
 export interface OutboxRow {
   id: string;
   org_id: string | null;
-  user_id: string;
+  /** Nullable since 0053: a team invitee has no account yet. */
+  user_id: string | null;
+  /** Set only on rows addressed to someone with no profile to look up. */
+  to_email?: string | null;
   category: string;
   channel: "push" | "email";
   dedupe_key: string;

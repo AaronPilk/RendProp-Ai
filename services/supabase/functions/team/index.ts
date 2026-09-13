@@ -182,6 +182,44 @@ async function identifiedUser(req: Request) {
   return user;
 }
 
+/**
+ * Queue the e-mail that actually carries an invite code.
+ *
+ * WHY THIS LIVES HERE AND NOT IN A TRIGGER. `org_invites.token_hash` is
+ * sha256 of the plaintext (0032) — the code itself is never at rest in the
+ * database. A trigger on that table can only see the hash, so it could never
+ * send a usable invite. This function runs in the one request that legitimately
+ * holds the plaintext, immediately after minting it.
+ *
+ * NEVER THROWS, AND THAT IS THE CONTRACT. A seat that was successfully issued
+ * must not be rolled back because a mail could not be queued — the caller still
+ * gets the code in the response and can pass it on by hand, exactly as before
+ * this existed. A queue failure is logged and swallowed.
+ */
+async function queueInviteEmail(
+  orgId: string,
+  inviteId: unknown,
+  address: string | null,
+  code: string,
+  role: string,
+  actorId: string,
+): Promise<void> {
+  if (!address || typeof inviteId !== "string") return;
+  try {
+    const { error } = await adminClient().rpc("notification_enqueue_invite", {
+      p_org: orgId,
+      p_invite: inviteId,
+      p_email: address,
+      p_code: code,
+      p_role: role,
+      p_inviter: actorId,
+    });
+    if (error) console.error("invite mail not queued:", error.message);
+  } catch (e) {
+    console.error("invite mail not queued:", e instanceof Error ? e.message : String(e));
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -356,7 +394,9 @@ Deno.serve(async (req) => {
       // The RPC returns jsonb with only the safe columns — `org_invites` carries
       // `token_hash`, which is a credential and never leaves the database. The
       // plaintext code exists here and nowhere else, ever.
-      return json({ ...(data as Record<string, unknown>), code }, 201);
+      const created = (data ?? {}) as Record<string, unknown>;
+      await queueInviteEmail(orgId, created.id, email, code, role, user.id);
+      return json({ ...created, code, emailed: Boolean(email) }, 201);
     }
 
     // ── POST /team/invites/bulk ──────────────────────────────────────────────
@@ -406,7 +446,23 @@ Deno.serve(async (req) => {
       // never leaves the database. 201 when something was actually created;
       // 200 when the whole list was already on the team, because nothing was.
       const report = (data ?? {}) as Record<string, unknown>;
-      return json(report, Number(report.issued ?? 0) > 0 ? 201 : 200);
+
+      // Queue one mail per issued invite. Sequential rather than parallel: this
+      // is at most 200 rows against the same table, and a burst of 200
+      // concurrent RPCs would contend on the outbox for no gain when the drain
+      // runs once a minute anyway. Failures are already swallowed per-invite,
+      // so one bad address cannot stop the other 199.
+      const results = Array.isArray(report.results) ? report.results as Array<Record<string, unknown>> : [];
+      let queued = 0;
+      for (const r of results) {
+        if (r.outcome !== "issued") continue;
+        const addr = typeof r.email === "string" ? r.email : null;
+        const codeOut = typeof r.code === "string" ? r.code : null;
+        if (!addr || !codeOut) continue;
+        await queueInviteEmail(orgId, r.id, addr, codeOut, role, user.id);
+        queued++;
+      }
+      return json({ ...report, emails_queued: queued }, Number(report.issued ?? 0) > 0 ? 201 : 200);
     }
 
     // ── DELETE /team/invites/<id> ────────────────────────────────────────────

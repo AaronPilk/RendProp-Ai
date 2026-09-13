@@ -32,7 +32,8 @@ export type NotificationCategory =
   | "upload_stuck"
   | "free_week_ending"
   | "allowance_low"
-  | "first_tour_nudge";
+  | "first_tour_nudge"
+  | "team_invite";
 
 export interface RenderedMessage {
   /** Push alert title; e-mail subject. */
@@ -157,6 +158,26 @@ export function render(category: string, payload: Data): RenderedMessage {
         body: left > 0
           ? `${left} left before it resets. Tours you have already published are not affected.`
           : "The allowance resets at the start of your next cycle. Tours you have already published are not affected.",
+      };
+    }
+
+    // THE ONLY MESSAGE THAT GOES TO A STRANGER. Everything else here is
+    // addressed to someone who already has an account and asked for the app;
+    // this one lands cold, in the inbox of an agent whose broker signed a
+    // contract they may not have heard about yet. So it says who, and from
+    // where, before it says what to do — and it carries the code in the body
+    // rather than behind a link, because a twelve-character code is something
+    // a person can act on from a phone in a car.
+    case "team_invite": {
+      const org = str(data, "org_name") ?? "a team";
+      const who = str(data, "inviter");
+      const code = str(data, "code") ?? "";
+      const opener = who ? `${who} added you to ${org} on Rendprop` : `You have been added to ${org} on Rendprop`;
+      return {
+        title: `${opener}`,
+        body: code
+          ? `Your join code is ${code}. Install Rendprop, open Settings, tap Join a team and enter it. The code works once and expires in 14 days.`
+          : "Install Rendprop and ask whoever invited you for the join code.",
       };
     }
 

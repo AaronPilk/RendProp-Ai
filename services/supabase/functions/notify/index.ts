@@ -124,8 +124,18 @@ async function handleDrain(limit: number): Promise<Response> {
   }
 
   // Two lookups for the whole batch rather than two per row.
-  const pushUsers = [...new Set(rows.filter((r) => r.channel === "push").map((r) => r.user_id))];
-  const mailUsers = [...new Set(rows.filter((r) => r.channel === "email").map((r) => r.user_id))];
+  // A userless row can only be email — the DB CHECK in 0053 enforces it — so
+  // every push row here has a user_id. The filter makes that legible to the
+  // type checker rather than relying on the constraint from a distance.
+  const pushUsers = [...new Set(
+    rows.filter((r) => r.channel === "push" && r.user_id).map((r) => r.user_id as string),
+  )];
+  // user_id is nullable since 0053 (an invitee has no account), and a row that
+  // carries its own to_email needs no lookup at all — so both are filtered out
+  // before the profile query rather than being sent as nulls.
+  const mailUsers = [...new Set(
+    rows.filter((r) => r.channel === "email" && !r.to_email && r.user_id).map((r) => r.user_id as string),
+  )];
 
   const devicesByUser = new Map<string, DeviceRow[]>();
   if (pushUsers.length > 0 && apns.configured()) {
@@ -161,8 +171,12 @@ async function handleDrain(limit: number): Promise<Response> {
   for (const row of rows) {
     try {
       const outcome = row.channel === "push"
-        ? await deliverPush(row, devicesByUser.get(row.user_id) ?? [], TOUR_BASE)
-        : await deliverEmail(row, emailByUser.get(row.user_id) ?? null, TOUR_BASE);
+        ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE)
+        // to_email wins. An invitee has no profile to look an address up
+        // from — that is precisely what is being invited — so the row carries
+        // the destination itself (migration 0053). Ordinary rows leave it null
+        // and fall through to the profile lookup exactly as before.
+        : await deliverEmail(row, row.to_email ?? (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE);
       disabledTokens.push(...outcome.deadTokens);
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);
