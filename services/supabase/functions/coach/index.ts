@@ -80,7 +80,7 @@ const MAX_MESSAGE_CHARS = 1200;
 
 const MAX_LISTINGS = 25;
 const MAX_TITLE_CHARS = 120;
-const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team"] as const;
+const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
 
 // Where the coach was opened from. A CLOSED SET, like KNOWN_PLANS and the
 // action enum — not a length-capped free string. `screen` is a hint to the

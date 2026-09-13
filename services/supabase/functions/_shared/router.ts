@@ -160,7 +160,13 @@ export function healthKey(provider: string, model: string): string {
 // An unrecognised plan ranks as `free`, the most restrictive answer: a typo in
 // a plan string must never hand out a premium step.
 
-const PLAN_ORDER = ["free", "trial", "starter", "solo", "pro", "team"] as const;
+// `brokerage` (migration 0050) sits at the top: it is a signed, invoiced
+// contract, so it must clear every min_plan gate `team` clears. Leaving it
+// out was not a cosmetic omission — planRank() returns 0 ("free", the most
+// restrictive answer) for anything it does not recognise, so a 400-seat
+// brokerage would have been routed to the cheapest model on every request
+// and refused outright by any route gated above free.
+const PLAN_ORDER = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
 
 function planRank(plan: string | null | undefined): number {
   const i = PLAN_ORDER.indexOf(String(plan ?? "").trim().toLowerCase() as typeof PLAN_ORDER[number]);
