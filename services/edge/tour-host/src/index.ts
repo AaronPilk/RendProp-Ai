@@ -189,6 +189,11 @@ const AASA = JSON.stringify({
         components: [
           { "/": "/f/*", comment: "a published tour" },
           { "/": "/a/*", comment: "an agent's portfolio" },
+          // /join/* opens the app straight onto the Join sheet with the code
+          // already filled in. Without this entry the invite link only ever
+          // reaches Safari, and the agent is back to copying a code by hand —
+          // which is the exact complaint this whole path exists to answer.
+          { "/": "/join/*", comment: "a team invite" },
           // /u/* is EXCLUDED, deliberately. It is the URL an agent puts in an
           // MLS field because the MLS forbids agent branding and contact
           // capture on it; opening it in the app wrapped a compliant page in

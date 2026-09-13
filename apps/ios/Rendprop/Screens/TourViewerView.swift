@@ -74,8 +74,13 @@ struct TourViewerView: View {
 
     private var title: String {
         switch link {
-        case .tour:     return "Tour"
+        case .tour:      return "Tour"
         case .portfolio: return "Their homes"
+        // Unreachable: RendpropApp routes .join to JoinTeamView, never here.
+        // Spelled out rather than covered by `default:` so that the next case
+        // added to DeepLink breaks this switch loudly instead of silently
+        // rendering as an invite.
+        case .join:      return "Join a team"
         }
     }
 

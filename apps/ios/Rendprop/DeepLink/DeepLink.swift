@@ -39,11 +39,19 @@ import Foundation
 enum DeepLink: Equatable, Identifiable {
     case tour(slug: String)
     case portfolio(handle: String)
+    /// A team invite, carrying its own code. Added 13 Sep 2026 on the owner's
+    /// beta feedback: "A user would find it difficult to go to settings and
+    /// put in the code. People are idiots this ux and process needs to be
+    /// easier for a user to do." He was right — the old path was find
+    /// Settings, find Team, find Join a team, then hand-type twelve
+    /// characters, four hundred times over for a brokerage.
+    case join(code: String)
 
     var id: String {
         switch self {
         case .tour(let slug):        return "f:\(slug)"
-        case .portfolio(let handle):         return "a:\(handle)"
+        case .portfolio(let handle): return "a:\(handle)"
+        case .join(let code):        return "join:\(code)"
         }
     }
 
@@ -75,6 +83,18 @@ enum DeepLink: Equatable, Identifiable {
         switch kind {
         case "f": return .tour(slug: value)
         case "a": return .portfolio(handle: value)
+        // NORMALISED HERE, not at the point of use. A code travels through a
+        // mail client, a web page and a clipboard before it reaches this line,
+        // so it can arrive with or without dashes and in any case. Everything
+        // downstream should only ever see one shape. A code that is not
+        // exactly twelve alphanumerics is not a code, and returning nil hands
+        // the URL back to the system rather than opening the app onto an
+        // error.
+        case "join":
+            let bare = value.uppercased().filter { $0.isLetter || $0.isNumber }
+            guard bare.count == 12 else { return nil }
+            let a = bare.prefix(4), b = bare.dropFirst(4).prefix(4), c = bare.suffix(4)
+            return .join(code: "\(a)-\(b)-\(c)")
         // "u" IS DELIBERATELY NOT HERE, and this is not an omission.
         //
         // /u/<slug> is the URL an agent puts in an MLS field precisely because
@@ -98,6 +118,11 @@ enum DeepLink: Equatable, Identifiable {
             return URL(string: "https://rendprop.com/f/\(escaped(slug))")
         case .portfolio(let handle):
             return URL(string: "https://rendprop.com/a/\(escaped(handle))")
+        // An invite is handled entirely in-app. There is no page to fall back
+        // to, and sending someone to the web version of the link they just
+        // opened IN the app would be a loop.
+        case .join:
+            return nil
         }
     }
 

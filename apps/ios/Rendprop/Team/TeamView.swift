@@ -251,7 +251,7 @@ struct TeamView: View {
         } header: {
             Text(s.invites.isEmpty ? "Invite" : "Waiting to join")
         } footer: {
-            Text("You'll get a code to send them. They enter it in Rendprop under Settings → Team → Join a team.")
+            Text("They get an email with a link. Tapping it opens Rendprop with the code already filled in — there is nothing for them to type.")
         }
         .sheet(isPresented: $showInvite) {
             NewInviteView { email, role in
@@ -266,7 +266,7 @@ struct TeamView: View {
                 Label("Join a team with a code", systemImage: "arrow.right.circle")
             }
         } footer: {
-            Text("Someone on a team plan can invite you. Joining moves you to their workspace — you can only do it while your own is empty.")
+            Text("Someone on a team plan can invite you. Joining adds their workspace alongside your own — you keep everything you have already made.")
         }
     }
 
@@ -441,6 +441,10 @@ private struct InviteCodeView: View {
 // MARK: - Join with a code
 
 struct JoinTeamView: View {
+    /// Filled in when the sheet was opened by an invite link rather than by
+    /// someone navigating here themselves (DeepLink.join). The whole point of
+    /// the link is that this is already correct and nobody types anything.
+    var prefilledCode: String = ""
     var onJoined: () -> Void = {}
 
     @Environment(\.dismiss) private var dismiss
@@ -473,7 +477,9 @@ struct JoinTeamView: View {
                             .font(.system(.body, design: .monospaced))
                             .disabled(joining)
                     } footer: {
-                        Text("The owner of the team sends you this code. Joining moves you to their workspace, and it only works while your own workspace is empty.")
+                        Text(prefilledCode.isEmpty
+                             ? "The owner of the team sends you this code — usually as a link you can just tap. Joining adds their workspace alongside your own; nothing you have already made goes away."
+                             : "This code came from your invite link, so there is nothing to type — just tap Join. Joining adds their workspace alongside your own; nothing you have already made goes away.")
                     }
                     if let errorMessage {
                         Section {
@@ -484,6 +490,12 @@ struct JoinTeamView: View {
             }
             .navigationTitle("Join a team")
             .navigationBarTitleDisplayMode(.inline)
+            // The code arrives from the link. Set it ONCE, and only when the
+            // field is still empty, so re-rendering the sheet never stomps on
+            // something the person has since typed or corrected themselves.
+            .task {
+                if code.isEmpty, !prefilledCode.isEmpty { code = prefilledCode }
+            }
             .sheet(isPresented: $showSignIn) { SignInView.optionalUpgrade() }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

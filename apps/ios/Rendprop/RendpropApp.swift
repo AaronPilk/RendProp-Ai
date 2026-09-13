@@ -2378,8 +2378,20 @@ struct RendpropApp: App {
                 incomingLink = link
             }
             .fullScreenCover(item: $incomingLink) { link in
-                TourViewerView(link: link)
-                    .environmentObject(model)
+                // A tour and a portfolio are both a page in the viewer. An
+                // invite is not a page at all - it is an action against the
+                // account - so it gets the Join sheet with its code already
+                // filled in. Routing it to TourViewerView would have opened a
+                // web view onto /join/<code>, which is the page the person
+                // just tapped OUT of.
+                switch link {
+                case .join(let code):
+                    JoinTeamView(prefilledCode: code) { incomingLink = nil }
+                        .environmentObject(model)
+                default:
+                    TourViewerView(link: link)
+                        .environmentObject(model)
+                }
             }
             // MARK: - push additions (1.0.2)
             // Reads the OS answer and, when it is already yes, refreshes the
