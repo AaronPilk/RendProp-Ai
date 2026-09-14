@@ -35,6 +35,10 @@ class AppTests(unittest.TestCase):
         modal.Secret.from_name.assert_not_called()
         control.assert_not_called()
         run.assert_not_called()
+        from provider_journal import SOURCE_FILES as journal_files
+        self.assertEqual(set(module.SOURCE_FILES), set(journal_files))
+        self.assertIn("tools/spatial-spike/training/converter_probe_remote.py", module.SOURCE_FILES)
+        self.assertNotIn("tools/spatial-spike/training/modal_converter_probe.py", module.SOURCE_FILES)
 
     def test_remote_module_layout_has_no_local_repository_parent_or_mount_lookup(self):
         image = Mock(); image.pip_install.return_value = image

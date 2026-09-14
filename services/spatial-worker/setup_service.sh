@@ -6,7 +6,11 @@ set -euo pipefail
 export PIP_CONSTRAINT=/opt/room-experiment/requirements-baseline.txt
 test -s "$PIP_CONSTRAINT"
 bash /opt/room-experiment/modal_setup.sh
-apt-get install -y --no-install-recommends curl xz-utils
+# The validated L4 export needs the Vulkan loader and graphics runtime, while
+# retaining Modal's projected NVIDIA driver and ICD (no driver installation).
+apt-get install -y --no-install-recommends ca-certificates curl xz-utils \
+  vulkan-tools libgl1 libglvnd0 libglx0 libegl1 libxext6
+test -s /etc/vulkan/icd.d/nvidia_icd.json
 curl --fail --silent --show-error --location \
   https://nodejs.org/dist/v22.22.0/node-v22.22.0-linux-x64.tar.xz \
   --output /opt/room-experiment/node.tar.xz

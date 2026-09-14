@@ -1,7 +1,8 @@
 """Strict offline provider-boundary execution, not a successful GPU run."""
 from decimal import Decimal, ROUND_CEILING
 from contextlib import redirect_stdout
-from io import StringIO
+from io import BytesIO, StringIO
+import hashlib
 import importlib.metadata
 import json
 from pathlib import Path
@@ -9,16 +10,19 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+import zipfile
 from unittest.mock import Mock, patch
 
 from worker import JobFailure, MIN_COST_RESERVATION_CENTS, TRAINING_ROOT
 from modal_provider import (ModalProvider, TRAINER_COMMIT, compute_bound_cents, copy_bounded_json,
-                            dependency_baseline_digest, dependency_verification_command, quality_record)
+                            dependency_baseline_digest, dependency_verification_command, quality_record,
+                            converter_input, converter_link_command, conversion_record)
 from provider_journal import sandbox_name
 from test_worker import JOB_ID, LEASE_ID, job
 
 sys.path.insert(0, str(TRAINING_ROOT))
 import modal_room
+import converter_probe_remote
 
 try:
     # The pinned SDK's own local name validator, the one Sandbox.create runs
@@ -42,14 +46,51 @@ class ProviderFixture(unittest.TestCase):
         self.metadata = {"status": "trained", "gsplat_commit": TRAINER_COMMIT, "frames": 20,
                          "max_steps": 3000, "max_seconds": 900, "max_gaussians": 500000,
                          "gaussian_count": 100, "world_normalization": False,
-                         "pose_optimization": True, "elapsed_seconds": 200.5}
+                         "pose_optimization": True, "elapsed_seconds": 200.5,
+                         "ply": f"{modal_room.REMOTE}/result/ply/point_cloud_2999.ply",
+                         "ply_bytes": 23701, "ply_sha256": "a" * 64}
         self.metrics = {"psnr": 19.6, "ssim": 0.81, "lpips": 0.55, "num_GS": 100}
+        self.adapter_log = "[0] NVIDIA L4\n"
+        self.vulkan_log = ("deviceName = NVIDIA L4\nvendorID = 0x10de\n"
+                           "deviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n"
+                           "driverID = DRIVER_ID_NVIDIA_PROPRIETARY\n"
+                           "driverVersion = 2434253120 (0x9117c140)\ndriverInfo = 580.95.05\n")
+        self.conversion_log = "100 gaussians · 3 SH bands\ndone in 10s [peak cpu=100MB gpu=112.9MB]\n"
+        process = {"exit_code": 0, "timed_out": False, "log_truncated": False, "elapsed_seconds": 1.0}
+        self.device = {"schema_version": 1, "stage": "device", "success": True, "sh_bands": 3,
+                       "sh_iterations": 10, "automatic_retries": 0, "node_version": "v22.22.0",
+                       "converter_version": "3.4.2", "webgpu_version": "0.4.0", "icd_sha256": "b" * 64,
+                       "process": dict(process), "vulkan_process": dict(process),
+                       "device": converter_probe_remote.validate_adapters(self.adapter_log),
+                       "vulkan": converter_probe_remote.validate_vulkan(self.vulkan_log)}
+        data = BytesIO()
+        with zipfile.ZipFile(data, "w") as archive:
+            archive.writestr("meta.json", json.dumps({"version": 2, "count": 100,
+                "asset": {"generator": "splat-transform v3.4.2"}, "shN": {"bands": 3}}))
+            for name in ("means_l", "means_u", "quats", "scales", "sh0", "shN_centroids", "shN_labels"):
+                archive.writestr(name + ".webp", b"synthetic-validation-fixture")
+        self.sog = data.getvalue()
+        self.converted = {key: self.device[key] for key in ("schema_version", "success", "sh_bands", "sh_iterations",
+                          "automatic_retries", "node_version", "converter_version", "webgpu_version", "icd_sha256", "device")}
+        self.converted.update(stage="convert", process=dict(process), input={"sha256": self.metadata["ply_sha256"],
+                              "bytes": self.metadata["ply_bytes"], "gaussian_count": 100},
+                              gpu_usage=converter_probe_remote.validate_conversion_log(self.conversion_log),
+                              output={"bytes": len(self.sog), "sha256": hashlib.sha256(self.sog).hexdigest(),
+                                      "gaussian_count": 100, "sh_bands": 3, "sog_version": 2})
         def content(remote):
+            if remote.endswith("device-receipt.json"):
+                return json.dumps(self.device).encode()
+            if remote.endswith("conversion-receipt.json"):
+                return json.dumps(self.converted).encode()
+            for name, text in (("device.log", self.adapter_log), ("vulkan.log", self.vulkan_log),
+                               ("conversion.log", self.conversion_log)):
+                if remote.endswith(name):
+                    return text.encode()
             if remote.endswith("run.json"):
                 return json.dumps(self.metadata).encode()
             if remote.endswith(f"val_step{self.metadata['max_steps'] - 1:04d}.json"):
                 return json.dumps(self.metrics).encode()
-            return b"sog"
+            return self.sog
         self.sb.filesystem.stat.side_effect = lambda remote: SimpleNamespace(size=len(content(remote)))
         def copy(remote, local):
             local.parent.mkdir(parents=True, exist_ok=True)
@@ -76,7 +117,7 @@ class ProviderTests(ProviderFixture):
         with patch.object(modal_room, "inventory", return_value=[{"path": "images/000000.jpg"}]), \
                 patch.object(modal_room, "exec_to_log") as execute:
             output, manifest = self.provider.reconstruct(job(), self.root, self.capture, self.lease)
-        self.assertEqual(output.read_bytes(), b"sog")
+        self.assertEqual(output.read_bytes(), self.sog)
         self.assertEqual(manifest["gaussian_count"], 100)
         create = self.modal.Sandbox.create.call_args.kwargs
         # The TTL travels with CREATE: deadline minus 120s of controller slack,
@@ -97,8 +138,8 @@ class ProviderTests(ProviderFixture):
         deny = max(i for i, entry in enumerate(order) if entry == ("network", {"outbound_cidr_allowlist": [], "outbound_domain_allowlist": []}))
         media = next(i for i, entry in enumerate(order) if entry[0] == "copy" and "/dataset/" in entry[1])
         self.assertLess(deny, media)
-        self.assertEqual(execute.call_count, 4)
-        training = execute.call_args_list[2].args[1]
+        self.assertEqual(execute.call_count, 6)
+        training = execute.call_args_list[3].args[1]
         self.assertEqual(training.count("--pose-opt"), 1)
         self.assertEqual(training[training.index("--max-seconds") + 1], "900")
         self.assertEqual(training[training.index("--max-steps") + 1], "3000")
@@ -110,11 +151,12 @@ class ProviderTests(ProviderFixture):
     def test_candidate_bounds_drive_deadline_metrics_and_converter_input_without_extending_provider_lifetime(self):
         value_job = job()
         value_job.update(max_iterations=30000, max_training_seconds=4200)
-        self.metadata.update(max_steps=30000, max_seconds=4200)
+        self.metadata.update(max_steps=30000, max_seconds=4200,
+                             ply=f"{modal_room.REMOTE}/result/ply/point_cloud_29999.ply")
         with patch.object(modal_room, "inventory", return_value=[]), \
                 patch.object(modal_room, "exec_to_log") as execute, redirect_stdout(StringIO()):
             self.provider.reconstruct(value_job, self.root, self.capture, self.lease)
-        training_call = execute.call_args_list[2]
+        training_call = execute.call_args_list[3]
         training = training_call.args[1]
         self.assertEqual(training[training.index("--max-steps") + 1], "30000")
         self.assertEqual(training[training.index("--max-seconds") + 1], "4200")
@@ -123,9 +165,12 @@ class ProviderTests(ProviderFixture):
         self.assertEqual(training_call.args[2], 4300)
         downloads = [call.args[0] for call in self.sb.filesystem.copy_to_local.call_args_list]
         self.assertIn(f"{modal_room.REMOTE}/result/stats/val_step29999.json", downloads)
-        converter_call = execute.call_args_list[3]
-        self.assertIn(f"{modal_room.REMOTE}/result/ply/point_cloud_29999.ply", converter_call.args[1])
-        self.assertEqual(converter_call.args[2], 600)
+        link_call = execute.call_args_list[4]
+        self.assertIn(f"{modal_room.REMOTE}/result/ply/point_cloud_29999.ply", link_call.args[1][2])
+        self.assertEqual(link_call.args[2], 30)
+        converter_call = execute.call_args_list[5]
+        self.assertEqual(converter_call.args[1][:3], ["python", f"{modal_room.REMOTE}/converter_probe_remote.py", "convert"])
+        self.assertEqual(converter_call.args[2], 630)
         receipt = json.loads((self.root / "provider-receipt.json").read_text())
         self.assertEqual(receipt["quality"]["steps"], 30000)
         self.assertIs(receipt["quality"]["pose_optimization"], True)
@@ -332,7 +377,7 @@ class QualityReceiptTests(ProviderFixture):
         stages = []
         def execute(sb, command, *args, **kwargs):
             stages.append(command)
-            if "splat-transform" in command[0]:
+            if command[2:3] == ["convert"]:
                 self.assertIn('"event": "spatial_training_quality"', output.getvalue())
                 raise modal_room.StageFailure(1)
         with patch.object(modal_room, "inventory", return_value=[]), \
@@ -346,7 +391,7 @@ class QualityReceiptTests(ProviderFixture):
         self.assertNotIn("must-never-be-logged", output.getvalue())
         receipt = json.loads((self.root / "provider-receipt.json").read_text())
         self.assertEqual(receipt["quality"], quality)
-        self.assertEqual(len(stages), 4)
+        self.assertEqual(len(stages), 6)
         self.assertTrue(receipt["private_files_removed"])
         self.assertTrue(receipt["terminated"])
         self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
@@ -359,9 +404,138 @@ class QualityReceiptTests(ProviderFixture):
                 patch.object(modal_room, "exec_to_log") as execute, redirect_stdout(output):
             with self.assertRaisesRegex(JobFailure, "invalid_training_quality"):
                 self.provider.reconstruct(job(), self.root, self.capture, self.lease)
-        self.assertEqual(execute.call_count, 3)
+        self.assertEqual(execute.call_count, 4)
         self.assertEqual(output.getvalue(), "")
         self.sb.terminate.assert_called_once_with(wait=True)
+
+
+class GpuExportTests(ProviderFixture):
+    def test_invalid_device_stops_before_any_room_transfer_and_cleans_up(self):
+        self.adapter_log = "[0] llvmpipe\n"
+        with patch.object(modal_room, "inventory", return_value=[{"path": "images/000001.jpg"}]), \
+                patch.object(modal_room, "exec_to_log"), redirect_stdout(StringIO()):
+            with self.assertRaisesRegex(JobFailure, "invalid_converter_device"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        copies = [call.args[1] for call in self.sb.filesystem.copy_from_local.call_args_list]
+        self.assertFalse(any("/dataset/" in path for path in copies))
+        self.assertIn(f"{modal_room.REMOTE}/converter_probe_remote.py", copies)
+        self.assertEqual(self.modal.Sandbox.create.call_args.kwargs["env"]["NVIDIA_DRIVER_CAPABILITIES"],
+                         "compute,graphics,utility")
+        receipt = json.loads((self.root / "provider-receipt.json").read_text())
+        self.assertNotIn("gpu_device_verified_before_media", receipt)
+        self.assertTrue(receipt["private_files_removed"])
+        self.assertTrue(receipt["terminated"])
+        self.sb.terminate.assert_called_once_with(wait=True)
+        self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
+
+    def test_device_execution_failure_transfers_no_private_bytes(self):
+        def execute(sandbox, command, *args, **kwargs):
+            if command[2:3] == ["device"]:
+                kwargs["stage"]["exit_code"] = 1
+                kwargs["persist"]()
+                raise modal_room.StageFailure(1)
+        with patch.object(modal_room, "inventory", return_value=[{"path": "images/000001.jpg"}]), \
+                patch.object(modal_room, "exec_to_log", side_effect=execute):
+            with self.assertRaisesRegex(JobFailure, "generation_failed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.assertFalse(any("/dataset/" in call.args[1] for call in self.sb.filesystem.copy_from_local.call_args_list))
+        receipt = json.loads((self.root / "provider-receipt.json").read_text())
+        self.assertEqual(receipt["stages"]["device"]["exit_code"], 1)
+        self.assertTrue(receipt["terminated"])
+
+    def test_helper_must_remain_exact_validated_source_before_allocation(self):
+        with patch.object(modal_room, "sha", return_value="0" * 64):
+            with self.assertRaisesRegex(JobFailure, "converter_helper_changed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.modal.Sandbox.create.assert_not_called()
+        self.assertEqual(self.journal_rows, [])
+
+    def test_trainer_ply_binding_rejects_wrong_paths_hashes_and_sizes(self):
+        expected = converter_input(job(), self.metadata, modal_room.REMOTE)
+        self.assertEqual(expected, self.converted["input"])
+        for change in ({"ply": "/private/other.ply"}, {"ply": f"{modal_room.REMOTE}/result/ply/../other.ply"},
+                       {"ply_sha256": "wrong"}, {"ply_sha256": None}, {"ply_bytes": True},
+                       {"ply_bytes": 0}, {"ply_bytes": 512 * 1024**2 + 1}):
+            with self.subTest(change=change), self.assertRaisesRegex(JobFailure, "invalid_converter_input"):
+                converter_input(job(), {**self.metadata, **change}, modal_room.REMOTE)
+
+    def test_fixed_hardlink_preserves_source_and_refuses_existing_or_linked_input(self):
+        command = converter_link_command(job(), self.metadata, modal_room.REMOTE)
+        # Run only the path/link guard on a synthetic local file, never a converter.
+        local_root = (self.root / "link-fixture").resolve()
+        source = local_root / "result/ply/point_cloud_2999.ply"
+        source.parent.mkdir(parents=True)
+        source.write_bytes(b"x" * self.metadata["ply_bytes"])
+        code = command[2].replace(modal_room.REMOTE, str(local_root))
+        with redirect_stdout(StringIO()):
+            exec(compile(code, "<synthetic-link-guard>", "exec"), {})
+        target = local_root / "input.ply"
+        self.assertEqual(source.stat().st_ino, target.stat().st_ino)
+        self.assertEqual(source.read_bytes(), target.read_bytes())
+        with self.assertRaises(RuntimeError):
+            exec(compile(code, "<existing-link-guard>", "exec"), {})
+        target.unlink()
+        actual = source.with_name("actual.ply")
+        source.rename(actual)
+        source.symlink_to(actual)
+        with self.assertRaisesRegex(RuntimeError, "invalid trained PLY path"):
+            exec(compile(code, "<symlink-guard>", "exec"), {})
+
+    def test_receipt_input_profile_and_gpu_proof_must_match(self):
+        binding = converter_input(job(), self.metadata, modal_room.REMOTE)
+        for change in ({"input": {**binding, "sha256": "c" * 64}}, {"sh_bands": 0},
+                       {"sh_iterations": 1}, {"converter_version": "3.4.3"}, {"success": False},
+                       {"device": {"adapter_count": 1, "cpu_fallback_allowed": True}},
+                       {"process": {**self.converted["process"], "timed_out": True}}):
+            with self.subTest(change=change), self.assertRaisesRegex(JobFailure, "invalid_converter_receipt"):
+                conversion_record(converter_probe_remote, job(), self.sb.object_id, self.device,
+                                  {**self.converted, **change}, binding, self.conversion_log)
+        for log in (self.conversion_log + "GPU adapter index 0 not found, using default\n",
+                    self.conversion_log.replace(" gpu=112.9MB", "")):
+            with self.assertRaisesRegex(JobFailure, "invalid_converter_gpu_proof"):
+                conversion_record(converter_probe_remote, job(), self.sb.object_id, self.device,
+                                  self.converted, binding, log)
+
+    def test_tampered_download_fails_hash_and_still_terminates(self):
+        self.converted["output"]["sha256"] = "c" * 64
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"), \
+                redirect_stdout(StringIO()):
+            with self.assertRaisesRegex(JobFailure, "sog_hash_changed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.sb.filesystem.remove.assert_called_once_with(modal_room.REMOTE, recursive=True)
+        self.sb.terminate.assert_called_once_with(wait=True)
+        self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
+
+    def test_wrong_sog_metadata_fails_even_with_matching_byte_hash(self):
+        data = BytesIO()
+        with zipfile.ZipFile(BytesIO(self.sog)) as source, zipfile.ZipFile(data, "w") as target:
+            for name in source.namelist():
+                body = source.read(name)
+                if name == "meta.json":
+                    value = json.loads(body); value["shN"]["bands"] = 0
+                    body = json.dumps(value).encode()
+                target.writestr(name, body)
+        self.sog = data.getvalue()
+        self.converted["output"].update(bytes=len(self.sog), sha256=hashlib.sha256(self.sog).hexdigest())
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"), \
+                redirect_stdout(StringIO()):
+            with self.assertRaisesRegex(JobFailure, "invalid_converter_output"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.sb.terminate.assert_called_once_with(wait=True)
+
+    def test_only_allowlisted_conversion_values_reach_controller_logs(self):
+        self.converted["token"] = "sensitive-canary"
+        self.device["raw_input"] = "sensitive-canary"
+        self.conversion_log += "/private/room sensitive-canary\n"
+        output = StringIO()
+        with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"), \
+                redirect_stdout(output):
+            self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        lines = [json.loads(line) for line in output.getvalue().splitlines()]
+        self.assertEqual([line["event"] for line in lines], ["spatial_training_quality", "spatial_conversion"])
+        self.assertNotIn("sensitive-canary", output.getvalue())
+        self.assertNotIn("/private/room", output.getvalue())
+        self.assertFalse(lines[1]["hardware_peak_measured"])
 
 
 class DependencyBaselineTests(ProviderFixture):
