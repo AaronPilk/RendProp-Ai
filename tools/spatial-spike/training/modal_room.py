@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import stat
 import subprocess
@@ -309,20 +310,30 @@ def source_binding():
     require(not subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain"], text=True).strip(),
             "source must be committed and clean before rental")
     return {"commit": subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"], text=True).strip(),
-            "files": {name: sha(source / name) for name in (*SOURCE_FILES, "modal_room.py", "modal_retry.py")}}
+            "files": {name: sha(source / name) for name in (*SOURCE_FILES, "modal_room.py", "modal_retry.py", "modal_ablation.py")}}
 
 
-def run(modal, dataset, state):
+def run(modal, dataset, state, *, app_name=APP_NAME, pose_opt=False, dependency_baseline=None):
     require(not state.exists(), "experiment state exists; never silently rent again")
     require(state.parent.is_dir() and not state.parent.is_symlink(), "private state parent required")
     files = inventory(dataset)
     binding = source_binding()
+    require(type(pose_opt) is bool, "pose_opt must be a boolean")
+    dependencies = None
+    if dependency_baseline is not None:
+        baseline = json.loads(dependency_baseline.read_text())
+        dependencies = baseline["resolved_dependencies"]
+        require(isinstance(dependencies, list) and all(isinstance(x, str) and
+                re.fullmatch(r"[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+", x) for x in dependencies),
+                "invalid baseline dependency constraints")
     require(not state.resolve().is_relative_to(dataset.resolve()), "state cannot modify dataset")
     state.mkdir(mode=0o700)
     receipt_path = state / "provider-receipt.json"
     receipt = {"schema_version": 1, "run_id": str(uuid.uuid4()), "policy": policy(), "source": binding,
                "dataset_files": files, "transferred_files": [], "phase_a_acceptance_complete": False,
                "actual_charge_usd": None, "billing_status": "not_yet_measured"}
+    receipt["pose_optimization"] = pose_opt
+    receipt["dependency_baseline_sha256"] = sha(dependency_baseline) if dependency_baseline else None
     receipt["sandbox_name"] = "room-proof-" + receipt["run_id"]
     record(receipt_path, receipt, "namespace_lookup_started")
     # The provider lifetime is in the creation request BEFORE setup/training.
@@ -330,7 +341,7 @@ def run(modal, dataset, state):
     sb = None
     creation_attempted = False
     try:
-        app = modal.App.lookup(APP_NAME, create_if_missing=False)
+        app = modal.App.lookup(app_name, environment_name="main", create_if_missing=False)
         require(isinstance(app.app_id, str) and app.app_id.startswith("ap-"), "invalid experiment app ID")
         record(receipt_path, receipt, "creation_started", app_id=app.app_id)
         creation_attempted = True
@@ -345,13 +356,33 @@ def run(modal, dataset, state):
         source = Path(__file__).parent
         for name in SOURCE_FILES:
             sb.filesystem.copy_from_local(source / name, f"{REMOTE}/{name}")
+        setup_command = ["bash", f"{REMOTE}/modal_setup.sh"]
+        if dependencies is not None:
+            constraints = state / "baseline-constraints.txt"
+            constraints.write_text("\n".join(dependencies) + "\n")
+            os.chmod(constraints, 0o600)
+            save(state / "baseline-dependencies.json", dependencies)
+            sb.filesystem.copy_from_local(constraints, f"{REMOTE}/baseline-constraints.txt")
+            sb.filesystem.copy_from_local(state / "baseline-dependencies.json", f"{REMOTE}/baseline-dependencies.json")
+            setup_command = ["env", f"PIP_CONSTRAINT={REMOTE}/baseline-constraints.txt", *setup_command]
         record(receipt_path, receipt, "setup_started")
         receipt["stages"] = {"setup": {}}
-        exec_to_log(sb, ["bash", f"{REMOTE}/modal_setup.sh"], 1800, state / "setup.log",
+        exec_to_log(sb, setup_command, 1800, state / "setup.log",
                     stage=receipt["stages"]["setup"], persist=lambda: save(receipt_path, receipt))
         # Dataset bytes are not present until public dependency setup succeeds.
         sb._experimental_set_outbound_network_policy(outbound_cidr_allowlist=[], outbound_domain_allowlist=[])
         record(receipt_path, receipt, "outbound_denied")
+        if dependencies is not None:
+            # Verify the full resolved environment before any room image arrives.
+            # This freezes the old run; changing dependencies would confound A.
+            check = ("import importlib.metadata as m,json; "
+                     f"expected=json.load(open('{REMOTE}/baseline-dependencies.json')); "
+                     "actual=sorted(f\"{d.metadata['Name']}=={d.version}\" for d in m.distributions()); "
+                     "assert actual==expected, 'resolved environment differs from baseline'; "
+                     "print('PASS: exact baseline Python dependencies')")
+            receipt["stages"]["dependencies"] = {}
+            exec_to_log(sb, ["python", "-c", check], 60, state / "dependencies.log",
+                        stage=receipt["stages"]["dependencies"], persist=lambda: save(receipt_path, receipt))
         for item in files:
             local = dataset / item["path"]
             require(sha(local) == item["sha256"], "dataset changed before transfer")
@@ -362,6 +393,8 @@ def run(modal, dataset, state):
         command = ["python", f"{REMOTE}/run_training.py", "--gsplat-dir", "/opt/gsplat-phase-a",
                    "--dataset", f"{REMOTE}/dataset", "--output", f"{REMOTE}/result",
                    "--max-seconds", "900", "--max-steps", "3000", "--max-gaussians", "500000"]
+        if pose_opt:
+            command.append("--pose-opt")
         receipt["training_command"] = command
         save(receipt_path, receipt)
         receipt["stages"]["training"] = {}
@@ -375,7 +408,7 @@ def run(modal, dataset, state):
         if sb is None and creation_attempted:
             # Reconciliation uses the unique provider name; it is lookup only.
             try:
-                sb = modal.Sandbox.from_name(APP_NAME, receipt["sandbox_name"])
+                sb = modal.Sandbox.from_name(app_name, receipt["sandbox_name"], environment_name="main")
                 receipt["sandbox_id"] = sb.object_id
             except Exception:
                 record(receipt_path, receipt, "allocation_unresolved_no_retry")

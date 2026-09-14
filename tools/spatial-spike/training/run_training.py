@@ -14,14 +14,16 @@ import time
 from prepare_capture import CaptureError, GSPLAT_COMMIT, read_json, require
 
 
-def training_command(python, gsplat, dataset, output, max_steps, max_gaussians):
+def training_command(python, gsplat, dataset, output, max_steps, max_gaussians, pose_opt=False):
     require(1 <= max_steps <= 7000, "max_steps must be 1–7000")
     require(100 <= max_gaussians <= 500000, "max_gaussians must be 100–500000")
+    require(type(pose_opt) is bool, "pose_opt must be a boolean")
     # Fields exist in v1.5.3 Config and MCMCStrategy. DefaultStrategy has no
     # gaussian cap; MCMC is selected deliberately to bound this experiment.
     return [str(python), str(Path(gsplat) / "examples/simple_trainer.py"), "mcmc",
             "--data-dir", str(dataset), "--data-factor", "1", "--result-dir", str(output),
-            "--init-type", "sfm", "--no-normalize-world-space", "--no-pose-opt",
+            "--init-type", "sfm", "--no-normalize-world-space",
+            "--pose-opt" if pose_opt else "--no-pose-opt",
             "--disable-viewer", "--disable-video", "--save-ply", "--packed",
             "--max-steps", str(max_steps), "--eval-steps", str(max_steps),
             "--save-steps", str(max_steps), "--ply-steps", str(max_steps),
@@ -104,12 +106,14 @@ def main():
     parser.add_argument("--max-seconds", type=int, default=900)
     parser.add_argument("--max-steps", type=int, default=3000)
     parser.add_argument("--max-gaussians", type=int, default=500000)
+    parser.add_argument("--pose-opt", action="store_true", help="enable the pinned trainer's camera pose optimization")
     args = parser.parse_args()
     try:
         gsplat, dataset, output = args.gsplat_dir.resolve(), args.dataset.resolve(), args.output.resolve()
         require(sys.platform == "linux", "the pinned GPU runner requires Linux with NVIDIA CUDA")
         require(1 <= args.max_seconds <= 1800, "max_seconds must be 1–1800")
-        command = training_command(sys.executable, gsplat, dataset, output, args.max_steps, args.max_gaussians)
+        command = training_command(sys.executable, gsplat, dataset, output, args.max_steps, args.max_gaussians,
+                                   pose_opt=args.pose_opt)
         report = validate_dataset(dataset, args.max_gaussians)
         head = subprocess.check_output(["git", "-C", str(gsplat), "rev-parse", "HEAD"], text=True).strip()
         require(head == GSPLAT_COMMIT, "gsplat checkout does not match the pinned commit")
@@ -136,7 +140,7 @@ def main():
                     "gpu_total_vram_bytes": torch.cuda.get_device_properties(0).total_memory,
                     "cuda_version": torch.version.cuda, "max_seconds": args.max_seconds,
                     "max_steps": args.max_steps, "max_gaussians": args.max_gaussians,
-                    "world_normalization": False, "pose_optimization": False,
+                    "world_normalization": False, "pose_optimization": args.pose_opt,
                     "resolved_dependencies": sorted(f"{dist.metadata['Name']}=={dist.version}"
                                                     for dist in importlib.metadata.distributions())}
         (output / "run.json").write_text(json.dumps(metadata, indent=2) + "\n")

@@ -24,6 +24,24 @@ class TrainingGuardTests(unittest.TestCase):
             self.assertIn(flag, command)
         self.assertEqual(command[command.index("--strategy.cap-max")+1], "500000")
 
+    def test_pose_ablation_changes_exactly_one_argument(self):
+        baseline = training_command("python", "/trainer", "/dataset", "/output", 3000, 500000)
+        explicit_baseline = training_command("python", "/trainer", "/dataset", "/output", 3000, 500000,
+                                             pose_opt=False)
+        optimized = training_command("python", "/trainer", "/dataset", "/output", 3000, 500000,
+                                     pose_opt=True)
+        self.assertEqual(explicit_baseline, baseline)
+        self.assertEqual(len(optimized), len(baseline))
+        differences = [(before, after) for before, after in zip(baseline, optimized) if before != after]
+        self.assertEqual(differences, [("--no-pose-opt", "--pose-opt")])
+        self.assertEqual(optimized.count("--pose-opt"), 1)
+        self.assertNotIn("--no-pose-opt", optimized)
+
+    def test_pose_optimization_rejects_non_boolean_values(self):
+        for value in (None, 0, 1, "false", "true"):
+            with self.subTest(value=value), self.assertRaisesRegex(CaptureError, "boolean"):
+                training_command("python", "/trainer", "/dataset", "/output", 3000, 500000, pose_opt=value)
+
     def test_process_failure_and_timeout_are_real_failures(self):
         result, _ = bounded_process([sys.executable, "-c", "raise SystemExit(7)"], 5)
         self.assertEqual(result, 7)
