@@ -1,6 +1,7 @@
 """Ephemeral Modal implementation of the cloud worker's provider boundary."""
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_CEILING
+import hashlib
 import json
 import math
 import os
@@ -23,6 +24,39 @@ CPU_USD_PER_CORE_SECOND = Decimal("0.00003942")
 MEMORY_USD_PER_GIB_SECOND = Decimal("0.00000667")
 REGION_MULTIPLIER = {"us": Decimal("1.15")}
 TRAINER_COMMIT = "937e29912570c372bed6747a5c9bf85fed877bae"
+
+
+def dependency_baseline_digest(path):
+    """Only a bounded public package==version list may be sent to setup."""
+    require(path.is_file() and not path.is_symlink() and 0 < path.stat().st_size <= 64 * 1024,
+            "invalid_dependency_baseline")
+    raw = path.read_bytes()
+    require(len(raw) <= 64 * 1024, "invalid_dependency_baseline")
+    try:
+        entries = raw.decode("ascii").splitlines()
+    except UnicodeDecodeError:
+        raise JobFailure("invalid_dependency_baseline") from None
+    require(entries and entries == sorted(set(entries)) and all(
+        re.fullmatch(r"[A-Za-z0-9_.-]+==[A-Za-z0-9_.+!-]+", entry) for entry in entries),
+        "invalid_dependency_baseline")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def dependency_verification_command(remote, expected_digest):
+    """Check the full GPU environment without logging arbitrary package data."""
+    require(re.fullmatch(r"[0-9a-f]{64}", expected_digest) is not None, "invalid_dependency_baseline")
+    code = (
+        "import hashlib,importlib.metadata as m; from pathlib import Path\n"
+        f"raw=Path({(remote + '/requirements-baseline.txt')!r}).read_bytes()\n"
+        f"if len(raw)>65536 or hashlib.sha256(raw).hexdigest()!={expected_digest!r}:\n"
+        " raise RuntimeError('dependency baseline changed during setup')\n"
+        "expected=raw.decode('ascii').splitlines()\n"
+        "actual=sorted(f\"{d.metadata['Name']}=={d.version}\" for d in m.distributions())\n"
+        "if actual!=expected:\n"
+        " raise RuntimeError('resolved environment differs from baseline')\n"
+        "print('PASS: exact baseline Python dependencies')\n"
+    )
+    return ["python", "-c", code]
 
 
 def copy_bounded_json(sandbox, remote, local, limit):
@@ -128,10 +162,13 @@ class ModalProvider:
     def reconstruct(self, job, root, capture, lease):
         sys.path.insert(0, str(TRAINING_ROOT)) if str(TRAINING_ROOT) not in sys.path else None
         import modal_room as experiment
+        baseline_path = Path(__file__).parent / "requirements-baseline.txt"
+        baseline_digest = dependency_baseline_digest(baseline_path)
         manifest = navigation_manifest(capture, job["room_label"])
         dataset_files = experiment.inventory(root / "dataset")
         receipt = {"job_id": job["id"], "sandbox_name": sandbox_name(job),
-                   "run_id": job["lease_token"], "stages": {}, "artifacts": [], "cleanup_complete": False}
+                   "run_id": job["lease_token"], "stages": {}, "artifacts": [], "cleanup_complete": False,
+                   "python_dependency_baseline_sha256": baseline_digest}
         receipt_path = root / "provider-receipt.json"
         save = lambda: experiment.save(receipt_path, receipt)
         save()
@@ -175,6 +212,7 @@ class ModalProvider:
             sb._experimental_set_outbound_network_policy(outbound_cidr_allowlist=["0.0.0.0/0"], outbound_domain_allowlist=["*"])
             sources = [(TRAINING_ROOT / name, name) for name in experiment.SOURCE_FILES]
             sources.append((Path(__file__).parent / "setup_service.sh", "setup_service.sh"))
+            sources.append((baseline_path, "requirements-baseline.txt"))
             viewer = TRAINING_ROOT.parent / "viewer"
             sources.extend((viewer / name, "converter/" + name) for name in ("package.json", "package-lock.json"))
             for source, name in sources:
@@ -184,6 +222,11 @@ class ModalProvider:
                                    root / "setup.log", stage=receipt["stages"]["setup"], persist=save)
             sb._experimental_set_outbound_network_policy(outbound_cidr_allowlist=[], outbound_domain_allowlist=[])
             receipt["network_denied_before_media"] = True
+            save()
+            receipt["stages"]["dependencies"] = {}
+            experiment.exec_to_log(sb, dependency_verification_command(experiment.REMOTE, baseline_digest), 60,
+                                   root / "dependencies.log", stage=receipt["stages"]["dependencies"], persist=save)
+            receipt["dependencies_verified_before_media"] = True
             save()
             lease.stage(.25)
             for item in dataset_files:

@@ -2,6 +2,7 @@
 from decimal import Decimal, ROUND_CEILING
 from contextlib import redirect_stdout
 from io import StringIO
+import importlib.metadata
 import json
 from pathlib import Path
 import sys
@@ -11,7 +12,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from worker import JobFailure, MIN_COST_RESERVATION_CENTS, TRAINING_ROOT
-from modal_provider import ModalProvider, TRAINER_COMMIT, compute_bound_cents, copy_bounded_json, quality_record
+from modal_provider import (ModalProvider, TRAINER_COMMIT, compute_bound_cents, copy_bounded_json,
+                            dependency_baseline_digest, dependency_verification_command, quality_record)
 from provider_journal import sandbox_name
 from test_worker import JOB_ID, LEASE_ID, job
 
@@ -95,8 +97,8 @@ class ProviderTests(ProviderFixture):
         deny = max(i for i, entry in enumerate(order) if entry == ("network", {"outbound_cidr_allowlist": [], "outbound_domain_allowlist": []}))
         media = next(i for i, entry in enumerate(order) if entry[0] == "copy" and "/dataset/" in entry[1])
         self.assertLess(deny, media)
-        self.assertEqual(execute.call_count, 3)
-        training = execute.call_args_list[1].args[1]
+        self.assertEqual(execute.call_count, 4)
+        training = execute.call_args_list[2].args[1]
         self.assertEqual(training[training.index("--max-seconds") + 1], "900")
         self.assertEqual(training[training.index("--max-steps") + 1], "3000")
         self.sb.terminate.assert_called_once_with(wait=True)
@@ -304,7 +306,7 @@ class QualityReceiptTests(ProviderFixture):
         self.assertNotIn("must-never-be-logged", output.getvalue())
         receipt = json.loads((self.root / "provider-receipt.json").read_text())
         self.assertEqual(receipt["quality"], quality)
-        self.assertEqual(len(stages), 3)
+        self.assertEqual(len(stages), 4)
         self.assertTrue(receipt["private_files_removed"])
         self.assertTrue(receipt["terminated"])
         self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
@@ -317,9 +319,98 @@ class QualityReceiptTests(ProviderFixture):
                 patch.object(modal_room, "exec_to_log") as execute, redirect_stdout(output):
             with self.assertRaisesRegex(JobFailure, "invalid_training_quality"):
                 self.provider.reconstruct(job(), self.root, self.capture, self.lease)
-        self.assertEqual(execute.call_count, 2)
+        self.assertEqual(execute.call_count, 3)
         self.assertEqual(output.getvalue(), "")
         self.sb.terminate.assert_called_once_with(wait=True)
+
+
+class DependencyBaselineTests(ProviderFixture):
+    def test_committed_baseline_contains_only_reviewed_public_version_pins(self):
+        baseline = Path(__file__).with_name("requirements-baseline.txt")
+        self.assertEqual(dependency_baseline_digest(baseline),
+                         "9c5c6356ccb384bb430c2690126df0ba2bb2e989bb3b181fb22802d024bb91f7")
+        self.assertEqual(len(baseline.read_text().splitlines()), 164)
+        for index, text in enumerate(("package @ file:///private/source\n", "--extra-index-url https://example.test\n",
+                                      "pkg==1\npkg==1\n", "pkg==1\n", "")):
+            candidate = self.root / f"candidate-{index}.txt"
+            candidate.write_text(text)
+            if text == "pkg==1\n":
+                self.assertEqual(len(dependency_baseline_digest(candidate)), 64)
+            else:
+                with self.subTest(text=text), self.assertRaisesRegex(JobFailure, "invalid_dependency_baseline"):
+                    dependency_baseline_digest(candidate)
+
+    def test_remote_check_rejects_missing_extra_changed_and_tampered_dependencies_even_optimized(self):
+        baseline = self.root / "requirements-baseline.txt"
+        baseline.write_text("alpha==1\nbeta==2\n")
+        command = dependency_verification_command(str(self.root), dependency_baseline_digest(baseline))
+        compiled = compile(command[2], "<offline-dependency-check>", "exec", optimize=2)
+        def distribution(name, version):
+            return SimpleNamespace(metadata={"Name": name}, version=version)
+        expected = [distribution("beta", "2"), distribution("alpha", "1")]
+        output = StringIO()
+        with patch.object(importlib.metadata, "distributions", return_value=expected), redirect_stdout(output):
+            exec(compiled, {})
+        self.assertEqual(output.getvalue(), "PASS: exact baseline Python dependencies\n")
+        for actual in (expected[:1], expected + [distribution("unexpected", "3")],
+                       [distribution("alpha", "1"), distribution("beta", "3")]):
+            output = StringIO()
+            with self.subTest(actual=actual), \
+                    patch.object(importlib.metadata, "distributions", return_value=actual), redirect_stdout(output):
+                with self.assertRaisesRegex(RuntimeError, "resolved environment differs"):
+                    exec(compiled, {})
+            self.assertEqual(output.getvalue(), "")
+        baseline.write_text("alpha==1\nbeta==3\n")
+        with self.assertRaisesRegex(RuntimeError, "baseline changed"):
+            exec(compiled, {})
+
+    def test_dependency_mismatch_after_network_denial_transfers_no_room_and_terminates(self):
+        phases = []
+        self.sb._experimental_set_outbound_network_policy.side_effect = lambda **kwargs: phases.append(kwargs)
+        def execute(sandbox, command, *args, **kwargs):
+            if command[:2] == ["python", "-c"]:
+                self.assertEqual(phases[-1], {"outbound_cidr_allowlist": [], "outbound_domain_allowlist": []})
+                self.assertFalse(any("/dataset/" in call.args[1]
+                                     for call in sandbox.filesystem.copy_from_local.call_args_list))
+                raise modal_room.StageFailure(1)
+        with patch.object(modal_room, "inventory", return_value=[{"path": "images/000001.jpg"}]), \
+                patch.object(modal_room, "exec_to_log", side_effect=execute):
+            with self.assertRaisesRegex(JobFailure, "generation_failed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        sources = [call.args[1] for call in self.sb.filesystem.copy_from_local.call_args_list]
+        self.assertIn(f"{modal_room.REMOTE}/requirements-baseline.txt", sources)
+        self.assertFalse(any("/dataset/" in path for path in sources))
+        receipt = json.loads((self.root / "provider-receipt.json").read_text())
+        self.assertNotIn("dependencies_verified_before_media", receipt)
+        self.assertTrue(receipt["network_denied_before_media"])
+        self.assertTrue(receipt["private_files_removed"])
+        self.assertTrue(receipt["terminated"])
+        self.modal.Sandbox.create.assert_called_once()
+        self.sb.terminate.assert_called_once_with(wait=True)
+        self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
+
+    def test_successful_dependency_gate_precedes_media_without_changing_training_options(self):
+        verified = False
+        def execute(sandbox, command, *args, **kwargs):
+            nonlocal verified
+            if command[:2] == ["python", "-c"]:
+                verified = True
+            elif "--max-steps" in command:
+                self.assertNotIn("--pose-opt", command)
+                self.assertEqual(command[command.index("--max-steps") + 1], "3000")
+                self.assertEqual(command[command.index("--max-seconds") + 1], "900")
+        def copy(source, remote):
+            if "/dataset/" in remote:
+                self.assertTrue(verified)
+        self.sb.filesystem.copy_from_local.side_effect = copy
+        with patch.object(modal_room, "inventory", return_value=[{"path": "images/000001.jpg"}]), \
+                patch.object(modal_room, "exec_to_log", side_effect=execute), redirect_stdout(StringIO()):
+            self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        receipt = json.loads((self.root / "provider-receipt.json").read_text())
+        self.assertTrue(receipt["dependencies_verified_before_media"])
+        self.assertEqual(receipt["python_dependency_baseline_sha256"],
+                         dependency_baseline_digest(Path(__file__).with_name("requirements-baseline.txt")))
+        self.assertEqual(self.modal.Sandbox.create.call_args.kwargs["secrets"], [])
 
 
 class SandboxNameTests(ProviderFixture):

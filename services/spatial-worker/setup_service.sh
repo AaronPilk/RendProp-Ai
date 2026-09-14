@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # All dependency acquisition happens BEFORE any capture is transferred.
 set -euo pipefail
+# Exact public package versions from the baseline and controlled A/B profiles.
+# The CPU controller verifies the complete installed set after network denial.
+export PIP_CONSTRAINT=/opt/room-experiment/requirements-baseline.txt
+test -s "$PIP_CONSTRAINT"
 bash /opt/room-experiment/modal_setup.sh
 apt-get install -y --no-install-recommends curl xz-utils
 curl --fail --silent --show-error --location \
