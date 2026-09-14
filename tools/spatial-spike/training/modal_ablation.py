@@ -6,10 +6,12 @@ attempt has its own billing app; unresolved costs retain their full-lifetime
 hold. This is a manual experiment harness, not an automatic retry policy.
 """
 import argparse
+from contextlib import closing
 from datetime import datetime, timezone
 from decimal import Decimal
 import fcntl
 import hashlib
+from itertools import zip_longest
 import json
 import math
 import os
@@ -24,12 +26,18 @@ import sys
 import modal_room as room
 from modal_retry import private_path, bounded_json
 import refine_sfm as sfm
+import refine_sfm_incremental as sfm_incremental
 
 PRIVATE_ROOT = Path.home() / "LocalSpatialExperiments"
 COST_BASELINE = PRIVATE_ROOT / "spatial-ablation-20260914-cost-baseline.json"
 BASELINE_RUN = PRIVATE_ROOT / "modal-room-20260911-01/download/result/run.json"
 ORIGINAL_DATASET = PRIVATE_ROOT / "capture-20260911.liWf0i/dataset"
+D1_DATASET = PRIVATE_ROOT / "spatial-sfm-20260914-d01/dataset"
 MARKER_GLOB = "spatial-ablation-20260914-*.allocation.json"
+# Canonical JSON fingerprints of the official 4.2.0 options, excluding only
+# mapping image_names (checked separately against the original 133-frame split).
+D2_MAPPING_OPTIONS_SHA256 = "370f512026e3d4f5a0aafe2a7089803b10debed64e4c36f0351fa10fbfc3157f"
+D2_ALIGNMENT_OPTIONS_SHA256 = "8c6a840f3a0a6d999da9ebb982223b0b25602fb52b74d2d807a45d9b9f7c023e"
 
 
 def require_cleanup_reconciled(receipt_path, receipt):
@@ -214,6 +222,164 @@ def validate_sfm_dataset(dataset, files, original, source):
             "matched_pairs_sha256": room.sha(pairs_path), "training_images": train, "evaluation_images": heldout}
 
 
+def committed_incremental_helpers(source):
+    root = Path(__file__).resolve().parent
+    result = {}
+    for name in ("refine_sfm_incremental.py", "refine_sfm.py", "run_training.py", "prepare_capture.py"):
+        committed = subprocess.check_output(["git", "-C", str(root.parents[2]), "show",
+            f"{source['commit']}:tools/spatial-spike/training/{name}"])
+        digest = hashlib.sha256(committed).hexdigest()
+        room.require(room.sha(root / name) == digest, "D2 helper differs from committed source")
+        result[name] = digest
+    return result
+
+
+def canonical_sha(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
+def exact_ids(value, allowed, label):
+    room.require(isinstance(value, list) and all(type(i) is int and i in allowed for i in value)
+                 and value == sorted(set(value)), f"invalid D2 {label} IDs")
+    return set(value)
+
+
+def require_same_cached_records(original, copied):
+    """COLMAP may update SQLite headers; all schema and cached rows stay exact."""
+    with closing(sqlite3.connect(original.as_uri() + "?mode=ro&immutable=1", uri=True)) as before, \
+            closing(sqlite3.connect(copied.as_uri() + "?mode=ro&immutable=1", uri=True)) as after:
+        schema = "SELECT type,name,tbl_name,sql FROM sqlite_master ORDER BY type,name"
+        room.require(list(before.execute(schema)) == list(after.execute(schema)),
+                     "D2 requires the exact copied D01 cache schema")
+        for (table,) in before.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"):
+            room.require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table) is not None,
+                         "unexpected D01 cache table name")
+            query = f'SELECT * FROM "{table}" ORDER BY rowid'
+            sentinel = object()
+            room.require(all(left == right for left, right in zip_longest(
+                before.execute(query), after.execute(query), fillvalue=sentinel)),
+                "D2 requires the exact copied D01 cache records")
+
+
+def validate_incremental_sfm_dataset(dataset, files, original, source):
+    """D2 has separate provenance; the frozen D1 validator above is unchanged."""
+    d1_dataset = private_path(D1_DATASET)
+    d1_files = room.inventory(d1_dataset)
+    d1_binding = validate_sfm_dataset(d1_dataset, d1_files, original, source)
+    original_dataset = private_path(ORIGINAL_DATASET)
+    before = {item["path"]: item for item in original["dataset_files"]}
+    after = {item["path"]: item for item in files}
+    jpegs = {name: item for name, item in before.items() if name.startswith("images/")}
+    room.require({name: item for name, item in after.items() if name.startswith("images/")} == jpegs,
+                 "D2 requires exact original JPEG inventory")
+    room.require(after.get("sparse/0/cameras.bin") == before.get("sparse/0/cameras.bin"),
+                 "D2 requires original cameras.bin")
+    train, heldout = sfm.fixed_split([Path(name).name for name in jpegs])
+    training_ids = {int(name[:6]) for name in train}
+    originals = sfm.image_records(original_dataset / "sparse/0/images.bin")
+    records = sfm.image_records(dataset / "sparse/0/images.bin")
+    room.require(set(records) == set(originals) == set(range(1, 154)) and
+                 all(row[0] == f"{i:06d}.jpg" for i, row in records.items()), "D2 dropped or renamed a camera")
+    room.require(all(records[int(name[:6])] == originals[int(name[:6])] and records[int(name[:6])][2] == 0
+                     for name in heldout), "D2 changed original heldout camera records")
+    run_path, report_path = dataset.parent / "sfm-run.json", dataset.parent / "sfm-report.json"
+    run, report = bounded_json(run_path), bounded_json(report_path)
+    adapter = bounded_json(dataset / "adapter-report.json")
+    room.require(run.get("status") == report.get("status") == "prepared" and
+                 run.get("profile") == report.get("profile") == adapter.get("sfm_profile") == sfm_incremental.PROFILE,
+                 "D2 requires completed exact incremental profile")
+    room.require(run.get("execute") is True and type(run.get("max_seconds")) is int and
+                 1 <= run["max_seconds"] <= 1800 and type(run.get("elapsed_seconds")) in (int, float) and
+                 math.isfinite(run["elapsed_seconds"]) and run["elapsed_seconds"] >= 0 and
+                 run.get("training_frames") == 133 and run.get("evaluation_frames") == 20,
+                 "D2 requires the bounded 133/20 CPU run")
+    room.require(report.get("training_images") == train and
+                 report.get("evaluation_images") == run.get("evaluation_images") == adapter.get("evaluation_images") == heldout and
+                 report.get("evaluation_pose_records_unchanged") is True and report.get("heldout_pixels_used_by_sfm") is False and
+                 report.get("original_arkit_seeds_used") is False and report.get("gpu_used") is False and report.get("network_used") is False and
+                 report.get("quality_status") == adapter.get("quality_status") == "unknown" and
+                 report.get("scene_quality_accepted") is False and adapter.get("scene_quality_accepted") is False and
+                 adapter.get("gpu_training_performed") is False and adapter.get("reprojection_error_measured") is True and
+                 adapter.get("sfm_provenance") == "../sfm-report.json", "D2 split, seed or quality provenance changed")
+    helper_hashes = committed_incremental_helpers(source)
+    original_models = {Path(name).name: item["sha256"] for name, item in before.items() if name.startswith("sparse/0/")}
+    room.require(report.get("source_sha256") == helper_hashes and report.get("source_model_sha256") == original_models and
+                 report.get("source_adapter_report_sha256") == before["adapter-report.json"]["sha256"] and
+                 report.get("source_image_sha256") == {Path(name).name: item["sha256"] for name, item in jpegs.items()},
+                 "D2 original source or committed helper binding changed")
+    registration, alignment = report.get("registration"), report.get("alignment")
+    room.require(isinstance(registration, dict) and isinstance(alignment, dict), "D2 registration/alignment receipts missing")
+    options = registration.get("options")
+    room.require(isinstance(options, dict) and options == run.get("mapping_options") and options.get("image_names") == train and
+                 canonical_sha({k: v for k, v in options.items() if k != "image_names"}) == D2_MAPPING_OPTIONS_SHA256 and
+                 alignment.get("options") == run.get("alignment_options") and
+                 canonical_sha(alignment.get("options")) == D2_ALIGNMENT_OPTIONS_SHA256,
+                 "D2 frozen registration or alignment options changed")
+    source_database = private_path(d1_dataset.parent / "work/features.db")
+    source_cache = sfm_incremental.cache_inventory(source_database, {i: f"{i:06d}.jpg" for i in training_ids})
+    copied_database = private_path(dataset.parent / "work/features.db")
+    copied_cache = sfm_incremental.cache_inventory(copied_database, {i: f"{i:06d}.jpg" for i in training_ids})
+    expected_cache = {**source_cache, "sfm_report_sha256": d1_binding["sfm_report_sha256"]}
+    room.require({k: v for k, v in copied_cache.items() if k != "database_sha256"} ==
+                 {k: v for k, v in source_cache.items() if k != "database_sha256"} and
+                 report.get("cache") == run.get("cache") == expected_cache and
+                 report.get("copied_database_sha256") == copied_cache["database_sha256"],
+                 "D2 must use the exact copied D01 feature database and report")
+    require_same_cached_records(source_database, copied_database)
+    registered = exact_ids(report.get("registered_training_ids"), training_ids, "registered")
+    fallback = exact_ids(report.get("original_pose_fallback_ids"), training_ids, "fallback")
+    missing = exact_ids(report.get("missing_from_selected_model_ids"), training_ids, "missing")
+    other = exact_ids(report.get("registered_in_other_models_ids"), training_ids, "other-model")
+    unregistered = exact_ids(report.get("unregistered_training_ids"), training_ids, "unregistered")
+    authorized = run.get("fallback_authorized")
+    room.require(type(authorized) is bool and report.get("fallback_authorized") is authorized and
+                 adapter.get("fallback_authorized") is authorized and (authorized or not fallback) and
+                 registered.isdisjoint(fallback) and registered | fallback == training_ids and missing == fallback and
+                 other <= fallback and unregistered == training_ids - registered - other and
+                 adapter.get("registered_training_ids") == sorted(registered) and
+                 adapter.get("original_pose_fallback_ids") == sorted(fallback),
+                 "D2 fallback authorization or complete cohort accounting changed")
+    models = registration.get("models")
+    room.require(isinstance(models, list) and 1 <= len(models) <= 50 and all(isinstance(m, dict) for m in models),
+                 "D2 component inventory missing")
+    model_ids = [m.get("model_id") for m in models]
+    room.require(all(type(i) is int and i >= 0 for i in model_ids) and model_ids == sorted(set(model_ids)),
+                 "D2 component IDs invalid")
+    all_registered = set()
+    for model in models:
+        all_registered |= exact_ids(model.get("registered_ids"), training_ids, "component")
+        room.require(type(model.get("points")) is int and model["points"] > 0, "D2 component point count invalid")
+    selected = min(models, key=lambda m: (-len(m["registered_ids"]), -m["points"], m["model_id"]))
+    room.require(type(registration.get("selected_model_id")) is int and
+                 registration["selected_model_id"] == selected["model_id"] and
+                 set(selected["registered_ids"]) == registered and all_registered - registered == other,
+                 "D2 selected component or dropped-camera accounting changed")
+    registered_directory = private_path(dataset.parent / "work/registered-model")
+    registered_hashes = {name: room.sha(private_path(registered_directory / name)) for name in sfm.MODEL_FILES}
+    registered_records = sfm.image_records(registered_directory / "images.bin")
+    room.require(report.get("registered_model_sha256") == registered_hashes and set(registered_records) == registered and
+                 all(row[0] == f"{i:06d}.jpg" for i, row in registered_records.items()),
+                 "D2 registered model differs from its receipt")
+    registered_points, _ = validate_point_tracks(registered_directory / "points3D.bin", registered_records, registered)
+    room.require(registered_points == selected["points"], "D2 registered point count differs from selected component")
+    point_count, observations = validate_point_tracks(dataset / "sparse/0/points3D.bin", records, training_ids)
+    room.require(all(records[i] == originals[i] and records[i][2] == observations[i] == 0 for i in fallback),
+                 "D2 fallback must preserve original zero-track camera records")
+    room.require(after["sparse/0/points3D.bin"]["sha256"] != before["sparse/0/points3D.bin"]["sha256"] and
+                 point_count == report.get("final_points") == adapter.get("initial_points") and
+                 sum(observations.values()) == report.get("final_observations") == adapter.get("point_observations") and
+                 report.get("observations_by_training_image") == {str(i): count for i, count in observations.items()},
+                 "D2 real training tracks or observation receipts changed")
+    return {"variant": "D2", "d1_dataset": str(d1_dataset), "d1_sfm": d1_binding,
+            "d1_dataset_inventory_sha256": canonical_sha(d1_files), "cache": expected_cache,
+            "copied_database_sha256": copied_cache["database_sha256"],
+            "helper_sha256": helper_hashes, "registered_model_sha256": registered_hashes,
+            "sfm_report_sha256": room.sha(report_path), "sfm_run_sha256": room.sha(run_path),
+            "derived_model_sha256": adapter["model_sha256"], "training_images": train, "evaluation_images": heldout,
+            "registered_training_ids": sorted(registered), "original_pose_fallback_ids": sorted(fallback),
+            "fallback_authorized": authorized}
+
+
 def prepare(dataset, label):
     room.require(re.fullmatch(r"[abd][0-9]{2}", label) is not None, "only reviewed A, B and D attempts are configured; C has no additional original frames")
     is_b = label.startswith("b")
@@ -225,14 +391,20 @@ def prepare(dataset, label):
     files = room.inventory(dataset)
     original = bounded_json(PRIVATE_ROOT / "modal-room-20260911-01/provider-receipt.json")
     source = room.source_binding()
+    is_d2 = is_d and bounded_json(dataset / "adapter-report.json").get("sfm_profile") == sfm_incremental.PROFILE
     if is_d:
-        sfm_binding = validate_sfm_dataset(dataset, files, original, source)
+        if is_d2:
+            room.require(int(label[1:]) >= 2, "D2 must follow the original D01 attempt")
+            sfm_binding = validate_incremental_sfm_dataset(dataset, files, original, source)
+        else:
+            sfm_binding = validate_sfm_dataset(dataset, files, original, source)
     else:
         room.require(files == original["dataset_files"], "A and B require the exact original 153-frame dataset")
     held = Decimal(costs["total_historical_spatial_usage_usd"])
     predecessors = []
     completed_a = []
     completed_b = []
+    completed_d01 = []
     for path in sorted(PRIVATE_ROOT.glob(MARKER_GLOB)):
         marker = bounded_json(path)
         receipt_path = private_path(Path(marker["state"])) / "provider-receipt.json"
@@ -261,8 +433,13 @@ def prepare(dataset, label):
         if is_d and re.fullmatch(r"spatial-ablation-20260914-b[0-9]{2}\.allocation\.json", path.name) \
                 and receipt.get("outcome") == "trained":
             completed_b.append(completed_pose_metrics(receipt_path, receipt, expected_step=29999))
+        if is_d2 and path.name == "spatial-ablation-20260914-d01.allocation.json" and receipt.get("outcome") == "trained":
+            room.require(canonical_sha(receipt.get("dataset_files")) == sfm_binding["d1_dataset_inventory_sha256"],
+                         "D2 requires D01 metrics from the exact cached D1 dataset")
+            completed_d01.append(completed_pose_metrics(receipt_path, receipt, expected_step=29999))
     room.require(not is_b or completed_a, "B requires completed A with collected held-out metrics")
     room.require(not is_d or completed_b, "D requires completed B with collected final held-out metrics")
+    room.require(not is_d2 or completed_d01, "D2 requires completed D01 with collected final held-out metrics")
     reserve = Decimal(room.policy()["compute_upper_bound_usd"])
     room.require(held + reserve <= Decimal("25.00"), "attempt exceeds remaining $25 authorization")
     plan = {"schema_version": 1, "label": label, "app_name": f"rendprop-spatial-ablation-{label}-20260914",
@@ -281,6 +458,9 @@ def prepare(dataset, label):
                     evaluation="same original 20 loss-heldout camera records; SfM uses only 133 training images; original ARKit VIO poses are not independent ground truth",
                     selection="manual review of B quality; no automatic quality threshold or retry",
                     c_unavailable_reason="The original capture has only 153 frames. A new dense capture changes the fixed heldout cohort.")
+    if is_d2:
+        plan.update(completed_d01_metrics=completed_d01,
+                    selection="manual review of D01 quality; unknown-pose registration from the frozen D1 cache; no automatic quality threshold or retry")
     return plan
 
 

@@ -1,6 +1,8 @@
 """Offline ordered-ablation authorization and dependency regressions."""
 import json
+import importlib.metadata
 from pathlib import Path
+import shutil
 import sqlite3
 import struct
 from types import SimpleNamespace
@@ -13,6 +15,10 @@ import modal_retry
 import modal_room as room
 
 REAL_INVENTORY = room.inventory
+try:
+    OFFICIAL_SFM = importlib.metadata.version("pycolmap") == "4.2.0"
+except importlib.metadata.PackageNotFoundError:
+    OFFICIAL_SFM = False
 
 class AblationGuardTests(unittest.TestCase):
     def setUp(self):
@@ -541,6 +547,275 @@ class SfmAblationTests(unittest.TestCase):
                 ablation.execute(self.modal(), plan_path, self.root / "d02")
             self.assertEqual(marker.read_bytes(), original)
             dispatch.assert_called_once()
+
+
+@unittest.skipUnless(OFFICIAL_SFM, "D2 option fingerprints require the separate official 4.2.0 environment")
+class IncrementalSfmAblationTests(unittest.TestCase):
+    """Exact binary cohort/track guards; no real-room data or provider access."""
+    write = staticmethod(AblationGuardTests.write)
+    predecessor = AblationGuardTests.predecessor
+    completed = AblationGuardTests.completed
+    modal = AblationGuardTests.modal
+    rehash_model = SfmAblationTests.rehash_model
+
+    def setUp(self):
+        import pycolmap as p
+        SfmAblationTests.setUp(self)
+        self.d1_dataset = self.dataset
+        d1_work = self.d1_dataset.parent / "work"
+        with sqlite3.connect(d1_work / "features.db") as db:
+            db.execute("CREATE TABLE keypoints (image_id INTEGER PRIMARY KEY, rows INTEGER)")
+            db.executemany("INSERT INTO keypoints VALUES (?,100)", [(i,) for i in self.training_ids])
+            db.execute("CREATE TABLE two_view_geometries (pair_id INTEGER PRIMARY KEY, rows INTEGER, data BLOB)")
+            db.execute("INSERT INTO two_view_geometries VALUES (?,1,?)", (2 * 2147483647 + 3, struct.pack("<II", 0, 0)))
+        db.close()
+        self.dataset = self.root / "incremental-result/dataset"
+        shutil.copytree(self.d1_dataset, self.dataset)
+        (self.dataset.parent / "work").mkdir()
+        shutil.copyfile(d1_work / "features.db", self.dataset.parent / "work/features.db")
+        self.report_path = self.dataset.parent / "sfm-report.json"
+        self.run_report_path = self.dataset.parent / "sfm-run.json"
+        incremental = ablation.sfm_incremental
+        helpers = {name: room.sha(Path(incremental.__file__).with_name(name)) for name in
+                   ("refine_sfm_incremental.py", "refine_sfm.py", "run_training.py", "prepare_capture.py")}
+        for name, value in (("D1_DATASET", self.d1_dataset),):
+            context = patch.object(ablation, name, value)
+            context.start()
+            self.addCleanup(context.stop)
+        context = patch.object(ablation, "committed_incremental_helpers", return_value=helpers)
+        context.start()
+        self.addCleanup(context.stop)
+        cache = incremental.cache_inventory(d1_work / "features.db", {i: f"{i:06d}.jpg" for i in self.training_ids})
+        cache["sfm_report_sha256"] = room.sha(self.d1_dataset.parent / "sfm-report.json")
+        mapping = incremental.json_options(incremental.mapping_options(self.train, p).todict())
+        alignment = incremental.json_options(incremental.alignment_options(p).todict())
+        original_adapter = json.loads((self.original / "adapter-report.json").read_text())
+        adapter_path = self.dataset / "adapter-report.json"
+        adapter = json.loads(adapter_path.read_text())
+        adapter.update(sfm_profile=incremental.PROFILE, registered_training_ids=sorted(self.training_ids),
+            original_pose_fallback_ids=[], fallback_authorized=False, scene_quality_accepted=False, quality_status="unknown")
+        self.write(adapter_path, adapter)
+        self.write(self.report_path, {"status": "prepared", "profile": incremental.PROFILE,
+            "training_images": self.train, "evaluation_images": self.heldout,
+            "evaluation_pose_records_unchanged": True, "heldout_pixels_used_by_sfm": False,
+            "original_arkit_seeds_used": False, "gpu_used": False, "network_used": False,
+            "quality_status": "unknown", "scene_quality_accepted": False, "source_sha256": helpers,
+            "source_model_sha256": original_adapter["model_sha256"], "source_image_sha256": original_adapter["image_sha256"],
+            "source_adapter_report_sha256": room.sha(self.original / "adapter-report.json"),
+            "cache": cache, "copied_database_sha256": cache["database_sha256"], "fallback_authorized": False,
+            "registered_training_ids": sorted(self.training_ids), "original_pose_fallback_ids": [],
+            "missing_from_selected_model_ids": [], "registered_in_other_models_ids": [], "unregistered_training_ids": [],
+            "registration": {"options": mapping, "models": [{"model_id": 0, "registered_ids": sorted(self.training_ids), "points": 100}],
+                             "selected_model_id": 0},
+            "alignment": {"options": alignment}, "final_points": 100, "final_observations": 13300,
+            "observations_by_training_image": {str(i): 100 for i in self.training_ids}})
+        self.write(self.run_report_path, {"status": "prepared", "profile": incremental.PROFILE,
+            "execute": True, "max_seconds": 1800, "elapsed_seconds": 10., "training_frames": 133, "evaluation_frames": 20,
+            "evaluation_images": self.heldout, "mapping_options": mapping, "alignment_options": alignment,
+            "cache": cache, "fallback_authorized": False})
+        self.registered_model(self.training_ids)
+        self.completed("b00", 29999)
+
+    def registered_model(self, registered):
+        directory = self.dataset.parent / "work/registered-model"
+        directory.mkdir(exist_ok=True)
+        for name in ("cameras.bin", "points3D.bin"):
+            shutil.copyfile(self.dataset / "sparse/0" / name, directory / name)
+        records = ablation.sfm.image_records(self.dataset / "sparse/0/images.bin")
+        (directory / "images.bin").write_bytes(struct.pack("<Q", len(registered)) + b"".join(records[i][1] for i in sorted(registered)))
+        report = json.loads(self.report_path.read_text())
+        report["registered_model_sha256"] = {name: room.sha(directory / name) for name in ablation.sfm.MODEL_FILES}
+        self.write(self.report_path, report)
+
+    def completed_d1(self, step=29999):
+        state = self.completed("d01", step)
+        path = state / "provider-receipt.json"
+        receipt = json.loads(path.read_text())
+        receipt["dataset_files"] = REAL_INVENTORY(self.d1_dataset)
+        self.write(path, receipt)
+        return state
+
+    def add_fallback(self, authorized):
+        registered = self.training_ids - {2}
+        images = self.dataset / "sparse/0/images.bin"
+        records = ablation.sfm.image_records(images)
+        records[2] = ablation.sfm.image_records(self.original / "sparse/0/images.bin")[2]
+        images.write_bytes(struct.pack("<Q", len(records)) + b"".join(records[i][1] for i in sorted(records)))
+        points = bytearray(struct.pack("<Q", 100))
+        for point_id in range(1, 101):
+            points.extend(struct.pack("<Q3d3BdQ", point_id, point_id * .01, 0., 2., 128, 128, 128, .1, len(registered)))
+            for image_id in sorted(registered):
+                points.extend(struct.pack("<II", image_id, point_id - 1))
+        (self.dataset / "sparse/0/points3D.bin").write_bytes(points)
+        for name in ("images.bin", "points3D.bin"):
+            self.rehash_model(name)
+        for path in (self.run_report_path, self.report_path, self.dataset / "adapter-report.json"):
+            data = json.loads(path.read_text())
+            data["fallback_authorized"] = authorized
+            if path != self.run_report_path:
+                data.update(registered_training_ids=sorted(registered), original_pose_fallback_ids=[2])
+            if path == self.report_path:
+                data.update(missing_from_selected_model_ids=[2], unregistered_training_ids=[2], final_observations=13200,
+                            observations_by_training_image={str(i): 100 if i in registered else 0 for i in self.training_ids})
+                data["registration"]["models"][0]["registered_ids"] = sorted(registered)
+            if path.name == "adapter-report.json":
+                data["point_observations"] = 13200
+            self.write(path, data)
+        self.registered_model(registered)
+
+    def test_d2_requires_collected_d01_final_metrics_and_exact_predecessor_dataset(self):
+        with self.assertRaisesRegex(ValueError, "completed D01"):
+            ablation.prepare(self.dataset, "d02")
+        state = self.completed_d1(step=2999)
+        with self.assertRaisesRegex(ValueError, "missing"):
+            ablation.prepare(self.dataset, "d02")
+        path = state / "download/result/stats/val_step29999.json"
+        self.write(path, {"psnr": 19.9, "ssim": .78, "lpips": .40})
+        with self.assertRaisesRegex(ValueError, "collected artifact"):
+            ablation.prepare(self.dataset, "d02")
+        receipt_path = state / "provider-receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt["artifacts"] = [{"path": "result/stats/val_step29999.json", "sha256": room.sha(path), "bytes": path.stat().st_size}]
+        self.write(receipt_path, receipt)
+        plan = ablation.prepare(self.dataset, "d02")
+        self.assertEqual(plan["completed_d01_metrics"][0]["psnr"], 19.9)
+        self.assertEqual((plan["steps"], plan["max_training_seconds"], plan["fixed_eval_every"], plan["random_seed"]), (30000, 4200, 8, 42))
+        receipt["dataset_files"] = REAL_INVENTORY(self.original)
+        self.write(receipt_path, receipt)
+        with self.assertRaisesRegex(ValueError, "exact cached D1 dataset"):
+            ablation.prepare(self.dataset, "d02")
+
+    def test_d2_rejects_wrong_label_nonfinite_metrics_and_active_predecessor(self):
+        self.completed_d1()
+        with self.assertRaisesRegex(ValueError, "follow the original D01"):
+            ablation.prepare(self.dataset, "d01")
+        path = self.root / "d01/provider-receipt.json"
+        receipt = json.loads(path.read_text())
+        receipt["phase"] = "training_started"
+        self.write(path, receipt)
+        with self.assertRaisesRegex(ValueError, "cleanup reconciliation"):
+            ablation.prepare(self.dataset, "d02")
+        receipt["phase"] = "terminated"
+        metrics = self.root / "d01/download/result/stats/val_step29999.json"
+        self.write(metrics, {"psnr": float("nan"), "ssim": .8, "lpips": .4})
+        receipt["artifacts"][0].update(sha256=room.sha(metrics), bytes=metrics.stat().st_size)
+        self.write(path, receipt)
+        with self.assertRaisesRegex(ValueError, "finite"):
+            ablation.prepare(self.dataset, "d02")
+
+    def test_d2_default_rejects_fallback_and_explicit_fallback_preserves_full_cohort(self):
+        self.completed_d1()
+        self.add_fallback(False)
+        with self.assertRaisesRegex(ValueError, "fallback authorization"):
+            ablation.prepare(self.dataset, "d02")
+        self.add_fallback(True)
+        plan = ablation.prepare(self.dataset, "d02")
+        self.assertEqual(plan["sfm_dataset"]["original_pose_fallback_ids"], [2])
+        self.assertEqual(len(plan["sfm_dataset"]["registered_training_ids"]), 132)
+        self.assertTrue(plan["sfm_dataset"]["fallback_authorized"])
+        self.assertEqual(len(plan["sfm_dataset"]["evaluation_images"]), 20)
+
+    def test_d2_rejects_profile_options_helpers_cache_and_partition_mutations(self):
+        self.completed_d1()
+        original = json.loads(self.report_path.read_text())
+        changes = [{"profile": {**ablation.sfm_incremental.PROFILE, "random_seed": 5}}, {"source_sha256": {}},
+                   {"copied_database_sha256": "0" * 64}, {"cache": {}}, {"registered_model_sha256": {}},
+                   {"registered_training_ids": sorted(self.training_ids - {2})}, {"original_pose_fallback_ids": [1]},
+                   {"registered_in_other_models_ids": [2]}, {"unregistered_training_ids": [2]},
+                   {"scene_quality_accepted": True}, {"heldout_pixels_used_by_sfm": True}]
+        for change in changes:
+            self.write(self.report_path, {**original, **change})
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                ablation.prepare(self.dataset, "d02")
+        self.write(self.report_path, original)
+        run = json.loads(self.run_report_path.read_text())
+        changed = json.loads(json.dumps(original))
+        changed["registration"]["options"]["mapper"]["abs_pose_refine_focal_length"] = True
+        run["mapping_options"] = changed["registration"]["options"]
+        self.write(self.report_path, changed)
+        self.write(self.run_report_path, run)
+        with self.assertRaisesRegex(ValueError, "frozen registration"):
+            ablation.prepare(self.dataset, "d02")
+
+    def test_d2_rejects_changed_copied_database_even_if_receipts_are_rehashed(self):
+        self.completed_d1()
+        database = self.dataset.parent / "work/features.db"
+        for statement in ("UPDATE keypoints SET rows=101 WHERE image_id=2",
+                          "UPDATE two_view_geometries SET data=x'0100000000000000'",
+                          "CREATE TABLE extra_cache (image_id INTEGER)"):
+            shutil.copyfile(self.d1_dataset.parent / "work/features.db", database)
+            with sqlite3.connect(database) as db:
+                db.execute(statement)
+            db.close()
+            report = json.loads(self.report_path.read_text())
+            report["copied_database_sha256"] = room.sha(database)
+            self.write(self.report_path, report)
+            with self.subTest(statement=statement), self.assertRaisesRegex(ValueError, "exact copied D01"):
+                ablation.prepare(self.dataset, "d02")
+
+    def test_d2_allows_sqlite_header_changes_only_with_post_mapping_hash(self):
+        self.completed_d1()
+        database = self.dataset.parent / "work/features.db"
+        before = room.sha(database)
+        with sqlite3.connect(database) as db:
+            db.execute("PRAGMA user_version=4")
+        db.close()
+        self.assertNotEqual(room.sha(database), before)
+        with self.assertRaisesRegex(ValueError, "exact copied D01"):
+            ablation.prepare(self.dataset, "d02")
+        report = json.loads(self.report_path.read_text())
+        report["copied_database_sha256"] = room.sha(database)
+        self.write(self.report_path, report)
+        plan = ablation.prepare(self.dataset, "d02")
+        self.assertEqual(plan["sfm_dataset"]["cache"]["database_sha256"], before)
+        self.assertEqual(plan["sfm_dataset"]["copied_database_sha256"], room.sha(database))
+
+    def test_d2_rejects_heldout_tracks_dropped_cohort_and_changed_original_fallback(self):
+        self.completed_d1()
+        self.add_fallback(True)
+        path = self.dataset / "sparse/0/images.bin"
+        original = path.read_bytes()
+        records = ablation.sfm.image_records(path)
+        for image_id, pattern in ((1, "heldout"), (2, "fallback")):
+            changed = dict(records)
+            name, raw, count = changed[image_id]
+            raw = bytearray(raw)
+            struct.pack_into("<d", raw, 36, .25)
+            changed[image_id] = (name, bytes(raw), count)
+            path.write_bytes(struct.pack("<Q", 153) + b"".join(changed[i][1] for i in sorted(changed)))
+            self.rehash_model(path.name)
+            with self.subTest(image_id=image_id), self.assertRaisesRegex(ValueError, pattern):
+                ablation.prepare(self.dataset, "d02")
+        path.write_bytes(struct.pack("<Q", 152) + b"".join(records[i][1] for i in sorted(records) if i != 2))
+        self.rehash_model(path.name)
+        with self.assertRaisesRegex(ValueError, "dropped"):
+            ablation.prepare(self.dataset, "d02")
+        path.write_bytes(original)
+        self.rehash_model(path.name)
+        points = self.dataset / "sparse/0/points3D.bin"
+        changed = bytearray(points.read_bytes())
+        struct.pack_into("<I", changed, 8 + 51, 1)
+        points.write_bytes(changed)
+        self.rehash_model(points.name)
+        with self.assertRaisesRegex(ValueError, "excluded"):
+            ablation.prepare(self.dataset, "d02")
+
+    def test_d2_plan_mutation_stops_before_provider_and_preserves_budget_hold(self):
+        self.completed_d1()
+        plan_path = self.root / "d2-plan.json"
+        plan = ablation.prepare(self.dataset, "d02")
+        self.assertEqual(plan["reserved_usd"], "4.9110336000")
+        self.assertEqual(plan["prior_costs_and_holds_usd"], "11.5020879900")
+        self.write(plan_path, plan)
+        report = json.loads(self.report_path.read_text())
+        report["registration_seconds"] = 100.
+        self.write(self.report_path, report)
+        modal = self.modal()
+        with patch.object(room, "run") as dispatch:
+            with self.assertRaisesRegex(ValueError, "plan inputs"):
+                ablation.execute(modal, plan_path, self.root / "d02")
+            dispatch.assert_not_called()
+            modal.App.lookup.assert_not_called()
 
 
 class DependencyGateTests(unittest.TestCase):
