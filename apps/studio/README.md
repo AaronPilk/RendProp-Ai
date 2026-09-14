@@ -35,14 +35,20 @@ App/session behavior, not live Apple sign-in. It never overwrites production dis
 
 Use only public Supabase values from `.env.example`. The build rejects unexpected
 `VITE_` fields and server-role keys. Never put any server secret in a Vite variable.
-Apple web Services ID/callback configuration, the additive `studio` Edge Function,
-and R2 read CORS must be verified before advertising connected account access.
-Do not change native Apple configuration or the current App Review submission.
+The September 14 release configures Apple web sign-in for `com.rendprop.studio`,
+associated with the existing native `com.rendprop.app` identity. It deploys the
+authenticated `studio` media function and Studio-origin signed GET/HEAD access to
+the private R2 buckets. Existing native audiences and redirect URLs are preserved.
 
-See [the complete implementation and deployment handoff](../../docs/web-client/STUDIO-STATUS.md),
-[identity contracts](../../docs/web-client/STUDIO-AUTH.md),
-[editor proof](../../docs/web-client/STUDIO-EDITOR.md), and
-[public search implementation](../../docs/web-client/STUDIO-SEO.md).
+Production builds need the two public fields in `.env.production.local` (ignored
+by Git), or the equivalent build environment. Building without them produces a
+local-only preview. `npm run verify` validates both public configuration and built
+assets; `node scripts/verify-deployed.mjs` compares live assets with that build.
+
+See [the current release and verification record](../../docs/web-client/release-2026-09-14/README.md).
+Workspace/library reads share the iPhone account's existing RLS. Listings and
+memberships paginate within the selected workspace; refresh uses the signed-in
+user's token. Browser edit plans and content plans remain local, not cloud writes.
 
 ## Boundaries
 

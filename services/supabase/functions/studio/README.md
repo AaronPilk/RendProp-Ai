@@ -25,5 +25,5 @@ deno test --deny-net --deny-run --deny-write services/supabase/functions/studio/
 The dependency-injected tests prove the route contract and rejection paths, not
 the production database's RLS configuration. Connected acceptance also needs a
 real same-account web login, selected-workspace checks, and R2 browser GET CORS.
-See `docs/web-client/STUDIO-STATUS.md` before deploying. Do not redeploy all other
+See `docs/web-client/release-2026-09-14/README.md` before deploying. Do not redeploy all other
 functions or alter their JWT flags as part of this additive web route.
