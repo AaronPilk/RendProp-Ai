@@ -32,7 +32,7 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 | Sept 11 baseline | Off | 3,000 | 153 | 19.65985680 | 0.81097144 | 0.55676222 | 209.441 | 0.57381695 |
 | A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | 0.21150668 |
 | A02 | On | 3,000 | 153 | 19.15759087 | 0.80769598 | 0.56202793 | 252.094 | 0.64541049 |
-| B01 | On | 30,000 | 153 | Running | Running | Running | Running | Full lifetime hold retained |
+| B01 | On | 30,000 | 153 | 21.47684288 | 0.80856246 | 0.38908443 | 2,425.635 | Pending closed-hour billing; full lifetime hold retained |
 
 A02 is a valid negative result: PSNR changed by −0.502266 dB, SSIM by
 −0.003275, and LPIPS by +0.005266. An independent comparison confirmed the
@@ -51,7 +51,24 @@ schedules retain the pinned implementation's defaults. No intermediate
 checkpoint or hidden tuning change is introduced.
 
 B's dependency verification passed before media transfer. Training started at
-21:00:34 UTC. The recorded baseline and A02 SOG previews both load with the
+21:00:34 UTC and the completed provider was explicitly terminated at 21:41:24.
+Its 157 input hashes, 164 distributions, permitted command differences, all 26
+output hashes and all 20 original evaluation canvases passed independent
+verification. The model reached 500,000 Gaussians and its PLY is 118,001,477
+bytes. The trainer wrapper took 2,425.635 seconds; the trainer's separately
+reported `ellipse_time` is 2,371.514 seconds. Directory removal succeeded and
+the exact sandbox was terminal with exit 137 and no active app sandboxes.
+
+B improves PSNR by 1.816986 dB and LPIPS by 0.167678 relative to baseline, but
+SSIM decreases by 0.002409. Views 0007 and 0014 recover substantial interior
+detail. View 0000 still has severe stretched or duplicated geometry around the
+telescope, plant, mirror rim and window. This prevents acceptance despite the
+better average PSNR. Conversion with the unchanged pinned CPU SOG converter
+is being measured locally; it is not proof of Modal conversion performance.
+No suitable denser version of this capture has been identified, so C is
+unavailable with the current inputs and real SfM is the next quality ablation.
+
+The recorded baseline and A02 SOG previews both load with the
 production decoder/viewer and no browser errors, using the same private
 loopback harness, 1280×720 viewport, initial camera and saved UI movement
 sequence. Both remain visibly blurred. Recorded desktop navigation is
