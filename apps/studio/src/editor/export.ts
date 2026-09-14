@@ -1,5 +1,7 @@
+import {OverlayPainter} from "./overlay-renderer";
 import {
   EDIT_LIMITS,
+  draftMedia,
   assertCurrentRevision,
   clipDuration,
   renderDimensions,
@@ -31,6 +33,7 @@ export type LocalExport = {
   revision: number;
   duration: number;
   audio: EditDraft["audio"];
+  narration?: boolean;
 };
 
 export function exportFormats(): ExportFormat[] {
@@ -72,6 +75,7 @@ export function supportsOriginalAudio(): boolean {
 export async function exportLocalVideo(options: {
   draft: EditDraft;
   media: Map<string, LocalMedia>;
+  narrationBlob?: Blob;
   format: ExportFormat;
   signal: AbortSignal;
   currentDraft: () => EditDraft;
@@ -81,7 +85,7 @@ export async function exportLocalVideo(options: {
   const draft = validateDraft(options.draft);
   const total = timelineDuration(draft.clips);
   if (!draft.clips.length) throw new Error("Add media before exporting.");
-  for (const clip of draft.clips) {
+  for (const clip of draftMedia(draft)) {
     const local = media.get(clip.id);
     if (!local || local.source.sha256 !== clip.source.sha256)
       throw new Error(
@@ -90,9 +94,9 @@ export async function exportLocalVideo(options: {
   }
   if (!exportFormats().some((candidate) => candidate.mime === format.mime))
     throw new Error("This export format is unavailable in this browser.");
-  const withAudio =
-    draft.audio === "original" &&
-    draft.clips.some((clip) => clip.source.kind === "video");
+  if (draft.narration && (!options.narrationBlob?.size || options.narrationBlob.size > EDIT_LIMITS.narrationBytes)) throw new Error("Restore the selected narration before exporting.");
+  const originalAudio = draft.audio === "original" && draft.clips.some(clip => clip.source.kind === "video");
+  const withAudio = originalAudio || !!draft.narration;
   if (withAudio && !supportsOriginalAudio())
     throw new Error(
       "Original audio export is unavailable in this browser. Choose Mute audio explicitly or use a browser with Web Audio support.",
@@ -124,6 +128,7 @@ export async function exportLocalVideo(options: {
     (total * 2 + 60) * 1000,
   );
   const renderSignal = controller.signal;
+  const overlays = new OverlayPainter(draft, media, renderSignal);
   const canvas = document.createElement("canvas");
   Object.assign(canvas, renderDimensions(draft.ratio));
   let stream: MediaStream | undefined;
@@ -132,6 +137,12 @@ export async function exportLocalVideo(options: {
   let destination: MediaStreamAudioDestinationNode | undefined;
   let silentSource: ConstantSourceNode | undefined;
   let audioSource: MediaElementAudioSourceNode | undefined;
+  let originalGain: GainNode | undefined;
+  let voiceBuffer: AudioBuffer | undefined;
+  let voiceSource: AudioBufferSourceNode | undefined;
+  let voiceGain: GainNode | undefined;
+  const previous = document.createElement("canvas"); Object.assign(previous, renderDimensions(draft.ratio));
+  let hasPrevious = false;
   let decoded: DecodedMedia | undefined;
   let stopped: Promise<void> | undefined;
   const chunks: Blob[] = [];
@@ -153,6 +164,11 @@ export async function exportLocalVideo(options: {
         throw new Error(
           "The browser blocked original audio. Press Export again, or explicitly choose Mute audio.",
         );
+    }
+    if (draft.narration && audio && options.narrationBlob) {
+      voiceBuffer = await awaitMediaOperation(audio.decodeAudioData(await options.narrationBlob.arrayBuffer()), renderSignal, "Decoding narration");
+      if (!Number.isFinite(voiceBuffer.duration) || voiceBuffer.duration <= 0 || voiceBuffer.duration > 300 || voiceBuffer.numberOfChannels > 2 || voiceBuffer.sampleRate > 96000) throw new Error("The saved narration has an invalid duration.");
+      voiceGain = audio.createGain(); voiceGain.gain.value = draft.narration.volume; voiceGain.connect(destination!);
     }
     throwIfAborted(renderSignal);
     stream = canvas.captureStream(30);
@@ -202,22 +218,26 @@ export async function exportLocalVideo(options: {
           : undefined;
       if (video) {
         await seekMedia(video, clip.start, renderSignal);
-        if (audio && destination) {
+        video.playbackRate = clip.speed ?? 1;
+        if (originalAudio && audio && destination) {
           audioSource = audio.createMediaElementSource(video);
-          audioSource.connect(destination);
+          originalGain = audio.createGain(); originalGain.gain.value = draft.narration ? 0.22 : 1;
+          audioSource.connect(originalGain); originalGain.connect(destination);
           // Sound goes only to the recording destination, avoiding an audible duplicate.
           video.muted = false;
           video.volume = 1;
         }
       }
-      drawFrame(canvas, decoded, clip, draft);
+      drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
+      await overlays.paint(canvas, elapsedBefore);
       throwIfAborted(renderSignal);
       if (recorder.state === "inactive") {
         // start() changes state synchronously. Some WebM encoders emit `start`
         // only after receiving a fresh frame; awaiting that event before the
         // render loop deadlocks. Submit a frame and let the loop feed the encoder.
         recorder.start(500);
-        drawFrame(canvas, decoded, clip, draft);
+        drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore, localTime: 0, previous: hasPrevious ? previous : undefined});
+        await overlays.paint(canvas, elapsedBefore);
         const track = stream.getVideoTracks()[0] as
           CanvasCaptureMediaStreamTrack | undefined;
         track?.requestFrame?.();
@@ -229,6 +249,13 @@ export async function exportLocalVideo(options: {
       // Start recording before advancing the source, so startup cannot discard speech.
       if (video)
         await awaitMediaOperation(video.play(), renderSignal, "Starting video");
+      if (draft.narration && voiceBuffer && audio && voiceGain) {
+        const offset = Math.max(0, elapsedBefore - draft.narration.offset), delay = Math.max(0, draft.narration.offset - elapsedBefore);
+        if (offset < voiceBuffer.duration && delay < clipDuration(clip)) {
+          voiceSource = audio.createBufferSource(); voiceSource.buffer = voiceBuffer; voiceSource.connect(voiceGain);
+          voiceSource.start(audio.currentTime + delay, offset);
+        }
+      }
       const start = performance.now();
       let lastVideoTime = video?.currentTime ?? 0;
       let lastVideoAdvance = start;
@@ -237,7 +264,7 @@ export async function exportLocalVideo(options: {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
         const now = await nextFrame(renderSignal);
         const elapsed = video
-          ? Math.max(0, video.currentTime - clip.start)
+          ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
           : (now - start) / 1000;
         if (video && video.currentTime > lastVideoTime + 0.001) {
           lastVideoTime = video.currentTime;
@@ -247,7 +274,8 @@ export async function exportLocalVideo(options: {
           throw new Error(
             "Video playback stalled during export. Try a smaller or differently encoded clip.",
           );
-        drawFrame(canvas, decoded, clip, draft);
+        drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
+        await overlays.paint(canvas, elapsedBefore + elapsed);
         if (now - lastProgressAt > 150) {
           onProgress(Math.min(1, (elapsedBefore + elapsed) / total));
           lastProgressAt = now;
@@ -259,6 +287,9 @@ export async function exportLocalVideo(options: {
       recorder.pause();
       await paused;
       video?.pause();
+      voiceSource?.stop(); voiceSource?.disconnect(); voiceSource = undefined;
+      originalGain?.disconnect(); originalGain = undefined;
+      previous.getContext("2d")!.drawImage(canvas, 0, 0); hasPrevious = true;
       audioSource?.disconnect();
       audioSource = undefined;
       decoded.dispose();
@@ -294,13 +325,17 @@ export async function exportLocalVideo(options: {
       revision: draft.revision,
       duration: total,
       audio: draft.audio,
+      ...(draft.narration ? {narration: true} : {}),
     };
   } finally {
+    overlays.dispose();
     clearTimeout(deadline);
     signal.removeEventListener("abort", forwardAbort);
     document.removeEventListener("visibilitychange", hidden);
     decoded?.dispose();
     audioSource?.disconnect();
+    originalGain?.disconnect(); voiceSource?.stop(); voiceSource?.disconnect(); voiceGain?.disconnect();
+    previous.width = previous.height = 0;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();
       // onstop flushes the encoder before its tracks/context are released.

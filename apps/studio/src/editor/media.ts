@@ -1,6 +1,10 @@
 import {
   EDIT_LIMITS,
   coverCrop,
+  clipDuration,
+  narrationCaption,
+  transitionSeconds,
+  type CaptionStyle,
   mediaKind,
   validateFileBatch,
   type EditClip,
@@ -203,7 +207,7 @@ export async function inspectFile(
       "Media identity checks require HTTPS or localhost in a modern browser.",
     );
   throwIfAborted(signal);
-  // Digest is not streaming. The 32 MiB per-file cap and sequential imports bound this allocation.
+  // Digest is not streaming. The 128 MiB per-file cap and sequential imports bound this allocation.
   const digest = await crypto.subtle.digest(
     "SHA-256",
     await file.arrayBuffer(),
@@ -308,24 +312,25 @@ function paintText(
   placement: "top" | "bottom",
   width: number,
   height: number,
+  style: CaptionStyle = "clean",
 ) {
   if (!text.trim()) return;
   const margin = width * 0.065;
   let size = Math.round(
-    Math.min(width, height) * (placement === "top" ? 0.041 : 0.049),
+    Math.min(width, height) * (style === "center" ? 0.075 : placement === "top" ? 0.041 : 0.049),
   );
   let lines: string[] = [];
   do {
-    ctx.font = `600 ${size}px system-ui, sans-serif`;
+    ctx.font = `${style === "clean" ? 600 : 800} ${size}px system-ui, sans-serif`;
     lines = wrapText(ctx, text, width - margin * 2);
     size -= 1;
   } while (lines.length > 4 && size > 14);
   const lineHeight = (size + 1) * 1.32;
   const blockHeight = lines.length * lineHeight + 24;
-  const top = placement === "bottom" ? y - blockHeight : y;
-  ctx.fillStyle = "rgba(11,13,16,0.76)";
+  const top = style === "center" ? height / 2 - blockHeight / 2 : placement === "bottom" ? y - blockHeight : y;
+  ctx.fillStyle = style === "highlight" ? "#e7f46c" : "rgba(11,13,16,0.76)";
   ctx.fillRect(margin - 12, top, width - margin * 2 + 24, blockHeight);
-  ctx.fillStyle = "#F2F3F5";
+  ctx.fillStyle = style === "highlight" ? "#172008" : "#F2F3F5";
   ctx.textAlign = "center";
   ctx.textBaseline = "top";
   lines.forEach((line, index) =>
@@ -337,7 +342,8 @@ export function drawFrame(
   canvas: HTMLCanvasElement,
   media: DecodedMedia,
   clip: EditClip,
-  draft: Pick<EditDraft, "title">,
+  draft: Pick<EditDraft, "title" | "narration">,
+  options: {time?: number; localTime?: number; previous?: HTMLCanvasElement} = {},
 ): void {
   const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) throw new Error("Canvas rendering is unavailable in this browser.");
@@ -350,6 +356,13 @@ export function drawFrame(
     clip.focusX,
     clip.focusY,
   );
+  if (clip.source.kind === "image" && clip.motion && clip.motion !== "still") {
+    const fraction = Math.min(1, Math.max(0, (options.localTime ?? 0) / clipDuration(clip)));
+    const zoom = clip.motion === "push_in" ? 1 + 0.12 * fraction : clip.motion === "pull_out" ? 1.12 - 0.12 * fraction : 1.1;
+    crop.width /= zoom; crop.height /= zoom;
+    const focus = clip.motion === "pan_left" ? 0.7 - 0.4 * fraction : clip.motion === "pan_right" ? 0.3 + 0.4 * fraction : clip.focusX;
+    crop.x = (clip.source.width - crop.width) * focus; crop.y = (clip.source.height - crop.height) * clip.focusY;
+  }
   ctx.fillStyle = "#0B0D10";
   ctx.fillRect(0, 0, width, height);
   ctx.drawImage(
@@ -364,7 +377,22 @@ export function drawFrame(
     height,
   );
   paintText(ctx, draft.title, height * 0.055, "top", width, height);
-  paintText(ctx, clip.caption, height * 0.91, "bottom", width, height);
+  const spokenCaption = narrationCaption(draft.narration, options.time ?? 0);
+  paintText(ctx, clip.caption, height * (spokenCaption ? 0.76 : 0.91), "bottom", width, height, clip.captionStyle ?? "clean");
+  if (spokenCaption) paintText(ctx, spokenCaption, height * 0.94, "bottom", width, height, "highlight");
+  const seconds = transitionSeconds(clip), progress = seconds ? Math.min(1, Math.max(0, (options.localTime ?? seconds) / seconds)) : 1;
+  if (options.previous && progress < 1) {
+    ctx.save();
+    if (clip.transition === "dissolve") {
+      ctx.globalAlpha = 1 - progress; ctx.drawImage(options.previous, 0, 0, width, height);
+    } else if (clip.transition === "whip") {
+      const eased = progress * progress * (3 - 2 * progress);
+      // Shift the incoming frame in place, then slide the held outgoing frame away.
+      ctx.drawImage(canvas, Math.round(width * (1 - eased)), 0);
+      ctx.drawImage(options.previous, Math.round(-width * eased), 0, width, height);
+    }
+    ctx.restore();
+  }
 }
 
 export function nextFrame(signal: AbortSignal): Promise<number> {

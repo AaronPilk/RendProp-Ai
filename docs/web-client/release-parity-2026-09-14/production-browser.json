@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "origin": "https://studio.rendprop.com",
+  "verifiedAt": "2026-09-14T18:35:00Z",
+  "method": "Real Chrome UI with previously verified Apple session",
+  "checks": [
+    "Existing Apple account and workspace restored",
+    "Existing property visible without creating customer data",
+    "Properties, Creative Studio, cloud editor, business workspace and planner load",
+    "Empty Apple profile name has a visible and accessible account control",
+    "Overview left open as the release deliverable"
+  ],
+  "requestedCustomerMutations": false,
+  "paidProviderActions": false,
+  "screenshotsCommitted": false,
+  "limits": "Read-only production UI smoke; physical iPhone roundtrip and paid provider output not asserted."
+}

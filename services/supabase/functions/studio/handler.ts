@@ -42,7 +42,7 @@ export interface StudioDependencies {
   read(
     scope: MediaScope,
     offset: number,
-  ): Promise<{ photos: PhotoRow[]; assets: AssetRow[]; renders: RenderRow[] }>;
+  ): Promise<{ photos: PhotoRow[]; assets: AssetRow[]; renders: RenderRow[]; photoAssetAliases?: string[] }>;
   sign(
     bucket: "uploads" | "renders",
     key: string,
@@ -145,6 +145,8 @@ export function createStudioHandler(deps: StudioDependencies) {
           "Media scope did not match.",
         );
       }
+      const photoAssetAliases = new Set(rows.photoAssetAliases ?? []);
+      assert(photoAssetAliases.size <= PAGE_SIZE + 1 && [...photoAssetAliases].every(key => bucketForKey(key, scope) !== null), 500, "Media aliases did not match.");
       // User-writable text must not expand a bounded row page into an unbounded
       // browser payload. Reject instead of silently truncating business content.
       assert(rows.photos.every((photo) => photo.caption === null ||
@@ -180,7 +182,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         signed.add(key as string);
         return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS);
       }
-      // Sequential signing is intentionally bounded (at most 150 objects per page).
+      // Sequential signing is intentionally bounded (at most 200 objects per page).
       // It does no object download, provider work, mutation, or publication.
       for (const photo of rows.photos.slice(0, PAGE_SIZE)) {
         const url = await sign(
@@ -188,6 +190,11 @@ export function createStudioHandler(deps: StudioDependencies) {
           photo.listing_id,
         );
         if (url) {
+          const originalBucket = bucketForKey(photo.original_key, scope);
+          const originalURL = originalBucket && photo.original_key
+            ? photo.original_key === (photo.enhanced_key || photo.original_key) ? url
+              : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS)
+            : null;
           photos.push({
             id: photo.id,
             listing_id: listingId,
@@ -195,6 +202,8 @@ export function createStudioHandler(deps: StudioDependencies) {
             expires_at,
             caption: photo.caption,
             is_staged: photo.is_staged === true,
+            is_altered: photo.is_staged === true || Boolean(photo.enhanced_key && photo.enhanced_key !== photo.original_key),
+            original_url: originalURL,
             sort: photo.sort,
           });
         }
@@ -203,6 +212,10 @@ export function createStudioHandler(deps: StudioDependencies) {
         if (!asset.uploaded || !["photo", "video"].includes(asset.kind)) {
           continue;
         }
+        // A reordered gallery row may be on another page than its capture ID.
+        // Keep the canonical gallery identity and caption, not a second source
+        // card whose only difference is the backing capture UUID.
+        if (asset.kind === "photo" && photoAssetAliases.has(asset.storage_key)) continue;
         const url = await sign(
           asset.storage_key,
           asset.listing_id,
@@ -217,6 +230,10 @@ export function createStudioHandler(deps: StudioDependencies) {
             expires_at,
             caption: null,
             is_staged: false,
+            // Publication assets may already contain an edit. Only capture/original
+            // bucket assets can be offered as an unaltered source without provenance.
+            is_altered: asset.bucket === "renders",
+            original_url: asset.bucket === "uploads" ? url : null,
             sort: 0,
           });
         } else {

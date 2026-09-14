@@ -167,6 +167,8 @@ Deno.test("returns literal contract, short lifetime, no cache", async () => {
       expires_at: "2026-09-12T12:10:00.000Z",
       caption: "Example room",
       is_staged: true,
+      is_altered: true,
+      original_url: "https://objects.example/read",
       sort: 0,
     },
   ]);

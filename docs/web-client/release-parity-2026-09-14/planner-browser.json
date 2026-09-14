@@ -1,0 +1,12 @@
+{
+  "proof": "Real CloudPlanner and DocumentSync with isolated CAS server fixtures; no external service calls",
+  "checks": [
+    "Legacy plan migrates at revision zero and reopens from account after clearing browser storage",
+    "Pending save survives workspace switch; explicit reviewed replacement uses CAS and keeps previous account backup; discard never writes cloud",
+    "Concurrent phone edit rejects replacement, preserves local recovery, and recovery UI fits 390px",
+    "Lost receipt auto-acknowledges identical cloud data on return without another mutation"
+  ],
+  "errors": [],
+  "externalRequests": [],
+  "status": "passed"
+}

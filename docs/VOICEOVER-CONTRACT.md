@@ -2,6 +2,8 @@
 
 Frozen 2026-09-04. Three agents build against this in parallel:
 
+Additive Studio continuity extension, 2026-09-14 / iPhone build 27: `AIVoiceResult.sharedResultID: UUID?` decodes the optional successful backend `shared_result_id` receipt. `Voiceover` accepts a final, default-nil `sharedReference: SharedVoiceReference?` initializer parameter; the reference contains the genuine result ID, authenticated owner ID and server listing ID. Existing call sites remain compatible. Save setup includes the reference only for the same owner/listing, and `CloudVoiceStore` persists it with the selected audio. A missing receipt or metadata-write failure never discards successfully generated audio. Voices generated before shared history are not retroactively recovered.
+
 - **A** owns `apps/ios/Rendprop/Voice/**` (new files) + `Rendprop/Info.plist`
 - **B** owns `services/supabase/functions/ai-voice/**` + `apps/ios/Rendprop/Networking/**`
 - **C** owns `apps/ios/Rendprop/Screens/FlythroughDetailView.swift` (ReelStudioView + stitch)

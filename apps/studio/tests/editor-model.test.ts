@@ -254,7 +254,7 @@ test("all duration, caption, media, and timeline limits fail visibly", () => {
           source: { ...photo().source, size: EDIT_LIMITS.fileBytes },
         })),
       }),
-    /160 MiB/,
+    /512 MiB/,
   );
 });
 
@@ -283,7 +283,7 @@ test("input batch limits reject the complete selection without truncation", () =
           size: EDIT_LIMITS.fileBytes,
         })),
       ),
-    /160 MiB/,
+    /512 MiB/,
   );
   assert.throws(
     () => mediaKind({ name: "house.svg", type: "image/svg+xml" }),

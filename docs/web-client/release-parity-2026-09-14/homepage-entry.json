@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "checkedAt": "2026-09-14T18:33:51.498Z",
+  "homepage": {
+    "status": 200,
+    "studioLink": true
+  },
+  "studioRoute": {
+    "status": 302,
+    "location": "https://studio.rendprop.com/"
+  }
+}

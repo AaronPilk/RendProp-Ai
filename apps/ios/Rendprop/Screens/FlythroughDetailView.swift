@@ -337,6 +337,13 @@ struct FlythroughDetailView: View {
                     nextStepCard
                 }
                 searchIndexingCard
+                if !currentListing.isSample, currentListing.serverID != nil {
+                    NavigationLink { CloudMediaView(listing: currentListing) } label: {
+                        Label("Cloud files from Studio & iPhone", systemImage: "icloud.and.arrow.down")
+                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(16)
+                            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                }
                 complianceSection
                 toolboxSection
                 filesSection
@@ -3282,8 +3289,10 @@ extension EnhancedPhoto {
             .map { file -> DatedPhoto in
                 let id = file.url.deletingPathExtension().lastPathComponent
                     .replacingOccurrences(of: "enh-", with: "")
-                let origName = "orig-\(id).jpg"
-                let origURL = names.contains(origName) ? dir.appendingPathComponent(origName) : file.url
+                let preferredOriginal = "orig-\(id).jpg"
+                let originalName = names.contains(preferredOriginal) ? preferredOriginal
+                    : names.sorted().first(where: { $0.hasPrefix("orig-\(id).") })
+                let origURL = originalName.map { dir.appendingPathComponent($0) } ?? file.url
                 return DatedPhoto(photo: EnhancedPhoto(id: id, originalURL: origURL,
                                                        enhancedURL: file.url),
                                   createdAt: file.createdAt)
@@ -7213,6 +7222,10 @@ struct ReelStudioView: View {
     /// picked survives every mode switch and every re-appearance.
     @State private var tone: ScriptTone = .warm
     @State private var seededTone = false
+    @State private var nativeSetupRevision = 0
+    @State private var nativeSetupBusy = false
+    @State private var nativeSetupNotice: String?
+    @State private var nativeSetupError: String?
 
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     /// The screen photos are added on — same words as its title bar.
@@ -7262,7 +7275,7 @@ struct ReelStudioView: View {
                 }
                 .padding()
             }
-            .disabled(connection.isWaiting)
+            .disabled(connection.isWaiting || nativeSetupBusy)
             .background(Theme.bg)
             .navigationTitle("Reel Studio")
             .navigationBarTitleDisplayMode(.inline)
@@ -7295,6 +7308,12 @@ struct ReelStudioView: View {
                 seededTone = true
             }
             lastReel = Self.newestReel(for: listing.id)
+            if aiScript.isEmpty, let script = CloudVoiceStore.script(listing.id) { aiScript = script }
+            if voiceover == nil, let saved = CloudVoiceStore.voice(listing.id) {
+                voiceover = saved
+                voiceMode = .aiVoice
+                voiceNote = "Narration saved from Studio."
+            }
             // Pick up clips a previous run generated and was charged for but
             // never stitched — the reel equivalent of resuming a pending aerial.
             if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
@@ -7366,6 +7385,7 @@ struct ReelStudioView: View {
     // this file has hit the type-checker's expression budget before, so
     // `setupSection` stays a short list of identifiers and nothing else.
     @ViewBuilder private var setupSection: some View {
+        nativeSetupCard
         setupHeader
 
         // Unfinished, ALREADY-PAID-FOR clips come first, and deliberately NOT
@@ -7385,6 +7405,104 @@ struct ReelStudioView: View {
         stepPhotosCard
         stepVoiceCard
         stepMakeCard
+    }
+
+    @ViewBuilder private var nativeSetupCard: some View {
+        if !listing.isSample && auth.isIdentified {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Continue in Studio", systemImage: "icloud").font(.rpHeadline)
+                Text("Save your script, captions, transitions and photo order for the office. Uploaded photos stay selected across devices. Files saved only on this iPhone still need uploading.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                HStack {
+                    Button("Save setup") { Task { await syncNativeSetup(save: true) } }
+                    Button("Load saved setup") { Task { await syncNativeSetup(save: false) } }
+                    if nativeSetupBusy { ProgressView() }
+                }.buttonStyle(.bordered).disabled(nativeSetupBusy || isWorking || ttsInFlight || scriptInFlight || recorder.isRecording)
+                if let nativeSetupNotice { Text(nativeSetupNotice).font(.rpCaption).foregroundStyle(Theme.accent) }
+                if let nativeSetupError { Text(nativeSetupError).font(.rpCaption).foregroundStyle(.orange) }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+    }
+
+    @MainActor private func syncNativeSetup(save: Bool) async {
+        guard !nativeSetupBusy, !isWorking, !ttsInFlight, !scriptInFlight, !recorder.isRecording,
+              auth.isIdentified, let cloud = model.api as? WorkspaceSyncAPI else { return }
+        nativeSetupBusy = true; nativeSetupError = nil; nativeSetupNotice = nil
+        defer { nativeSetupBusy = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, epoch = auth.syncSessionRevision
+        do {
+            var live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+            if live.serverID == nil { _ = try await model.ensureServerListing(live) }
+            if (model.listings.first(where: { $0.id == listing.id })?.serverOrgID) == nil { await model.refreshCloudWorkspace() }
+            live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+            guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified,
+                  let sid = live.serverID, let org = live.serverOrgID, live.cloudUnavailable != true else { throw CloudSyncError.identityChanged }
+            if save {
+                guard let ownerID = actor.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+                let selectedIDs = selected
+                guard Set(photos.map(\.id)).count == photos.count else { throw CloudSyncError.invalidResponse }
+                let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+                var sharedPhotos: [NativeReelDraft.Photo] = []
+                for (index, localID) in selectedIDs.enumerated() {
+                    guard let photo = byID[localID] else { throw CloudSyncError.invalidResponse }
+                    nativeSetupNotice = "Checking uploaded photo \(index + 1) of \(selectedIDs.count)…"
+                    let sourceID = try await CloudPhotoReferences.shared.sourceID(fileURL: photo.enhancedURL,
+                        ownerID: ownerID, orgID: org, listingID: sid)
+                    guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified,
+                          selected == selectedIDs else { throw CloudSyncError.identityChanged }
+                    sharedPhotos.append(.init(localId: localID, sourcePhotoId: sourceID))
+                }
+                nativeSetupNotice = "Saving setup to your account…"
+                let voiceID = voiceMode == .off ? nil : voiceover?.sharedReference?.resultID(ownerID: ownerID, listingID: sid)
+                let draft = NativeReelDraft(schema: 1, kind: "native-reel-setup", portrait: portrait, titleCard: captionsOn,
+                    shotCaptions: bigCaptionsOn, captionStyle: bigCaptionStyle.rawValue, transition: reelTransition.rawValue,
+                    motionPrompt: motionPrompt, script: aiScript, tone: tone.rawValue, wordCaptions: wordCaptionsOn,
+                    voiceMode: voiceMode == .off ? "off" : (voiceMode == .myVoice ? "myVoice" : "aiVoice"), voiceResultId: voiceID,
+                    localNarration: voiceMode != .off && voiceover != nil && voiceID == nil,
+                    photos: sharedPhotos,
+                    localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()))
+                let document = try await cloud.saveCloudNativeReel(draft, listingID: sid, orgID: org, revision: nativeSetupRevision)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
+                nativeSetupRevision = document.revision
+                let localCount = sharedPhotos.filter { $0.sourcePhotoId == nil }.count
+                nativeSetupNotice = localCount == 0 ? "Setup saved to Studio with your uploaded photo selections. No new media was generated."
+                    : "Setup saved. \(localCount) selected photo\(localCount == 1 ? " is" : "s are") still on this iPhone; upload the photos, then save setup again."
+            } else {
+                let document = try await cloud.cloudNativeReel(listingID: sid, orgID: org)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
+                guard let document else { nativeSetupRevision = 0; nativeSetupNotice = "No saved setup yet. Save this one to continue at the office."; return }
+                let draft = document.payload
+                portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = draft.shotCaptions
+                bigCaptionStyle = ReelComposer.ShotCaptionStyle(rawValue: draft.captionStyle) ?? .lowerThird
+                reelTransition = ReelComposer.Transition(rawValue: draft.transition) ?? .cut
+                motionPrompt = draft.motionPrompt; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
+                wordCaptionsOn = draft.wordCaptions
+                let available = Set(photos.map(\.id))
+                selected = draft.photos.compactMap { photo in
+                    if available.contains(photo.localId) { return photo.localId }
+                    if let sid = photo.sourcePhotoId { return available.first(where: { $0.lowercased() == "cloud-\(sid.uuidString.lowercased())" }) }
+                    return nil
+                }
+                var missing: [String] = []
+                if selected.count < draft.photos.count { missing.append("Save missing photos from Cloud files, then load this setup again.") }
+                selectedExtras = []
+                if draft.localExtraClipCount > 0 { missing.append("Choose the extra clips saved on this iPhone.") }
+                if draft.voiceMode != "off", let voiceID = draft.voiceResultId,
+                   let saved = CloudVoiceStore.voice(listing.id), saved.id == voiceID {
+                    voiceover = saved; voiceMode = .aiVoice
+                } else {
+                    voiceMode = .off
+                    if draft.voiceMode != "off" { missing.append(draft.localNarration ? "The recorded narration is on its original iPhone." : "Save its narration from Cloud files.") }
+                }
+                nativeSetupRevision = document.revision
+                nativeSetupNotice = (["Saved setup loaded."] + missing).joined(separator: " ")
+            }
+        } catch is CancellationError { return }
+        catch {
+            guard auth.userID == actor, auth.syncSessionRevision == epoch else { return }
+            nativeSetupError = save ? "Setup couldn't be saved. If another device changed it, load the saved setup before saving again." : "Saved setup couldn't be loaded. Refresh when connected."
+        }
     }
 
     private var setupHeader: some View {
@@ -8640,6 +8758,7 @@ struct ReelStudioView: View {
         let listingID = listing.id
         let isSample = listing.isSample
         let key = UUID().uuidString               // one idempotency key per tap
+        let actor = auth.userID, epoch = auth.syncSessionRevision
         ttsInFlight = true
         voiceError = nil
         voiceNote = nil
@@ -8647,16 +8766,25 @@ struct ReelStudioView: View {
             do {
                 let serverID: UUID? = isSample ? nil
                     : await model.serverListingIDForCompliance(listingID)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
                 let result = try await api.aiVoiceTTS(text: script, voiceID: voiceID,
                                                       listingServerID: serverID,
                                                       label: "Reel voiceover",
                                                       idempotencyKey: key)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
                 let persisted = try await Self.downloadVoiceover(from: result.audioURL,
                                                                  listingID: listingID.uuidString)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
+                let reference: SharedVoiceReference? = result.sharedResultID.flatMap { resultID in
+                    guard let serverID, let ownerID = actor.flatMap(UUID.init(uuidString:)), auth.isIdentified else { return nil }
+                    return SharedVoiceReference(resultID: resultID, ownerID: ownerID, listingID: serverID)
+                }
                 let vo = Voiceover(audioURL: persisted, duration: result.durationS,
                                    transcript: script, words: result.words,
-                                   source: .aiVoice, voiceName: result.voiceName)
+                                   source: .aiVoice, voiceName: result.voiceName, sharedReference: reference)
                 await MainActor.run {
+                    guard auth.userID == actor, auth.syncSessionRevision == epoch else { return }
+                    if reference != nil { try? CloudVoiceStore.saveGeneratedVoice(vo, listingID: listingID) }
                     voiceover = vo
                     voPlayer = nil
                     ttsInFlight = false
@@ -8667,7 +8795,7 @@ struct ReelStudioView: View {
                 let message = AIFailure(error).message
                 await MainActor.run {
                     ttsInFlight = false
-                    voiceError = message
+                    if auth.userID == actor, auth.syncSessionRevision == epoch { voiceError = message }
                 }
             }
         }

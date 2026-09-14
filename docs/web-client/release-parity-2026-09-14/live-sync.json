@@ -1,0 +1,45 @@
+{
+  "status": "passed",
+  "runId": "75eda163-cf40-407b-8102-af6d6bf635b5",
+  "checks": [
+    "two independent sessions restore the same existing account and workspace",
+    "phone-created listing appears in Studio and desktop edits return to the second session",
+    "listing-create replay returns the original row without duplication or overwriting later office edits",
+    "shared drafts persist across sessions and stale revisions cannot overwrite them",
+    "live account, team, leads and disclosure contracts decode; notification changes return to the second session",
+    "real upload gateway completion, gallery attachment, activity hydration and signed media read agree",
+    "gallery captions, complete ordering and one cover synchronize; stale edits conflict and confirmed reorder replay is safe",
+    "mark sold and return to active synchronize through the existing native listing fields",
+    "voice storage reservation returns its exact scoped key and unchanged deadline on replay without invoking a provider",
+    "creative results route restores an empty scoped history without provider calls",
+    "real MP4 output finalizes once with server disclosure and exact source records, then restores on the other session",
+    "Studio sign-out leaves the other device session active"
+  ],
+  "aiCalls": 0,
+  "emailSends": 0,
+  "publications": 0,
+  "customerDataTouched": false,
+  "appleLoginVerified": false,
+  "cleanup": {
+    "requested": true,
+    "accountRemoved": true,
+    "complete": false,
+    "pending": true,
+    "pendingWork": {
+      "r2_objects": 7,
+      "stream_videos": 0,
+      "crm_contacts": 0,
+      "apple_revocation": false,
+      "analytics_cleanup": false,
+      "profile_row": false,
+      "auth_user": false,
+      "gpu_attempts": 0,
+      "multipart_uploads": 0,
+      "unverified_uploads": 0,
+      "unverified_render_jobs": 0,
+      "waiting_for_storage_writes": true
+    },
+    "deletionRequestId": "ada89771-c846-4d54-8450-e0296162c108"
+  },
+  "finishedAt": "2026-09-14T18:37:11.167Z"
+}

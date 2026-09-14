@@ -26,6 +26,15 @@ struct CaptionWord: Codable, Equatable, Sendable {
 }
 
 /// A finished voiceover: an audio file on disk plus its word timings.
+struct SharedVoiceReference: Equatable, Sendable {
+    let resultID: UUID
+    let ownerID: UUID
+    let listingID: UUID
+    func resultID(ownerID: UUID, listingID: UUID) -> UUID? {
+        self.ownerID == ownerID && self.listingID == listingID ? resultID : nil
+    }
+}
+
 struct Voiceover: Identifiable, Equatable, Sendable {
     enum Source: String, Codable, Sendable { case myVoice, aiVoice }
     let id: UUID
@@ -35,11 +44,13 @@ struct Voiceover: Identifiable, Equatable, Sendable {
     let words: [CaptionWord]   // may be empty — captions then simply don't render
     let source: Source
     let voiceName: String?     // AI voice label, nil for myVoice
+    let sharedReference: SharedVoiceReference?
 
     /// Same parameter order as the implicit memberwise init (so contract
     /// call-sites keep compiling); `id`, `words` and `voiceName` get defaults.
     init(id: UUID = UUID(), audioURL: URL, duration: Double, transcript: String,
-         words: [CaptionWord] = [], source: Source, voiceName: String? = nil) {
+         words: [CaptionWord] = [], source: Source, voiceName: String? = nil,
+         sharedReference: SharedVoiceReference? = nil) {
         self.id = id
         self.audioURL = audioURL
         self.duration = duration
@@ -47,6 +58,7 @@ struct Voiceover: Identifiable, Equatable, Sendable {
         self.words = words
         self.source = source
         self.voiceName = voiceName
+        self.sharedReference = sharedReference
     }
 }
 

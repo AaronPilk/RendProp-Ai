@@ -34,6 +34,7 @@ export type Listing = {
   status: string;
   createdAt: string;
   mainPhotoKey: string | null;
+  soldAt?: string | null;
   beds: number | null;
   baths: number | null;
   sqft: number | null;
@@ -46,6 +47,8 @@ export type StudioPhoto = {
   expiresAt: string;
   caption: string | null;
   isStaged: boolean;
+  isAltered?: boolean;
+  originalUrl?: string | null;
   sort: number;
 };
 export type StudioVideo = {
@@ -357,6 +360,7 @@ export function decodeListings(
       details: boundedDetails(row.details),
       status,
       createdAt: date(row.created_at, "listing created_at"),
+      soldAt: row.sold_at == null ? null : date(row.sold_at, "listing sold_at"),
       mainPhotoKey: nullableString(
         row.main_photo_key,
         "listing main_photo_key",
@@ -514,6 +518,8 @@ export function decodeMedia(
       ...base,
       caption: nullableString(item.caption, "photo caption"),
       isStaged: item.is_staged,
+      ...(item.is_altered === undefined ? {} : { isAltered: item.is_altered === true }),
+      ...(item.original_url === undefined ? {} : { originalUrl: item.original_url === null ? null : mediaURL(item.original_url, orgId, listingId, base.expiresAt, now) }),
       sort: integer(item.sort, "photo sort"),
     };
   });

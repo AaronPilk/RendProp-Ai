@@ -1,3 +1,4 @@
+import {OverlayPainter} from "./overlay-renderer";
 import {
   useEffect,
   useRef,
@@ -8,6 +9,8 @@ import {
 } from "react";
 import {
   EDIT_LIMITS,
+  draftMedia,
+  type EditOverlay,
   assertCurrentRevision,
   assertSourceMatch,
   clipDuration,
@@ -25,6 +28,9 @@ import {
   type EditClip,
   type EditDraft,
   type Ratio,
+  type Narration,
+  type CaptionStyle,
+  type Transition,
 } from "./model";
 import {
   awaitMediaOperation,
@@ -55,13 +61,25 @@ import {
   type EditHistory,
 } from "./history";
 
+export type EditorSettings = {ratio: Ratio; title: string; captionStyle?: CaptionStyle; transition: Transition; narration?: Narration; clearCaptions?: boolean};
 export type VideoEditorProps = {
   active?: boolean;
   initialDraft?: EditDraft;
   /** Optional observer only; the editor already renders and announces its notices. */
   onNotice?: (message: string) => void;
   onDraftChange?: (draft: EditDraft) => void;
-  importRequest?: { id: string; files: File[] };
+  importRequest?: { id: string; files: File[]; listingId?: string; sourceMedia?: {id: string; kind: "photo" | "video"}[] };
+  relinkRequest?: { id: string; files: File[] };
+  onSourcesChange?: (sources: { file: File; sha256: string }[]) => void;
+  onSaveOutput?: (output: LocalExport) => Promise<void>;
+  narrationChoices?: {id: string; label: string; words: Narration["words"]}[];
+  resolveNarration?: (id: string, signal: AbortSignal) => Promise<Blob>;
+  planRequest?: {id: string; files: File[]; clips: {seconds: number; caption: string; motion: EditClip["motion"]}[]; narration?: Narration; settings?: EditorSettings};
+  settingsRequest?: EditorSettings & {id: string};
+  onSettingsApplied?: () => void;
+  agentRequest?: {id: string; baseFile: File; photos: File[]; overlays: {start: number; end: number; caption: string; motion?: EditOverlay["motion"]}[]};
+  onPlanApplied?: (draft: EditDraft) => void;
+  onPlanFailed?: (message: string) => void;
 };
 
 function errorText(error: unknown): string {
@@ -92,6 +110,17 @@ export function VideoEditor({
   onNotice,
   onDraftChange,
   importRequest,
+  relinkRequest,
+  onSourcesChange,
+  onSaveOutput,
+  narrationChoices,
+  resolveNarration,
+  planRequest,
+  agentRequest,
+  onPlanApplied,
+  onPlanFailed,
+  settingsRequest,
+  onSettingsApplied,
 }: VideoEditorProps) {
   const [initial] = useState(() => {
     try {
@@ -114,11 +143,14 @@ export function VideoEditor({
   const draftRef = useRef(draft);
   const media = useRef(new Map<string, LocalMedia>());
   const [mediaVersion, setMediaVersion] = useState(0);
+  const [voice, setVoice] = useState<{id: string; blob: Blob; url: string} | null>(null);
+  const [voiceIssue, setVoiceIssue] = useState(""), [voiceRetry, setVoiceRetry] = useState(0);
   const [selectedId, setSelectedId] = useState(draft.clips[0]?.id ?? "");
   const [message, setMessage] = useState(initial.issue);
   const [importing, setImporting] = useState(false);
   const importAbort = useRef<AbortController | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [savingOutput, setSavingOutput] = useState(false);
   const exportAbort = useRef<AbortController | null>(null);
   const [progress, setProgress] = useState(0);
   const [output, setOutput] = useState<(LocalExport & { url: string }) | null>(
@@ -144,10 +176,9 @@ export function VideoEditor({
   const selected =
     draft.clips.find((clip) => clip.id === selectedId) ?? draft.clips[0];
   const selectedIndex = selected ? draft.clips.indexOf(selected) : -1;
-  const missing = draft.clips.filter((clip) => !media.current.has(clip.id));
-  const needsAudio =
-    draft.audio === "original" &&
-    draft.clips.some((clip) => clip.source.kind === "video");
+  const missing = draftMedia(draft).filter((clip) => !media.current.has(clip.id));
+  const needsAudio = !!draft.narration || draft.audio === "original" && draft.clips.some((clip) => clip.source.kind === "video");
+  const voiceReady = !draft.narration || voice?.id === draft.narration.resultId;
   const audioUnavailable = needsAudio && !supportsOriginalAudio();
   const dimensions = renderDimensions(draft.ratio);
 
@@ -205,7 +236,7 @@ export function VideoEditor({
   const updateClip = (
     id: string,
     patch: Partial<
-      Pick<EditClip, "start" | "end" | "caption" | "focusX" | "focusY">
+      Pick<EditClip, "start" | "end" | "caption" | "focusX" | "focusY" | "speed" | "captionStyle" | "transition" | "motion">
     >,
   ) => {
     const field = Object.keys(patch)[0] ?? "clip";
@@ -223,7 +254,7 @@ export function VideoEditor({
       const label = (direction === "undo" ? current.past : current.future).at(-1)?.label;
       const next = direction === "undo" ? undoHistory(current) : redoHistory(current);
       if (!replaceHistory(next)) return;
-      const missingCount = next.present.clips.filter((clip) => !media.current.has(clip.id)).length;
+      const missingCount = draftMedia(next.present).filter((clip) => !media.current.has(clip.id)).length;
       notice(`${direction === "undo" ? "Undid" : "Redid"} ${label}. ${missingCount ? "Reselect missing original media; its full SHA-256 hash must match." : "Your edit is ready."}`);
     } catch (error) {
       notice(errorText(error));
@@ -339,17 +370,135 @@ export function VideoEditor({
   }, [importRequest]);
 
   useEffect(() => {
+    if (!settingsRequest || consumedRequest.current.has(settingsRequest.id)) return;
+    consumedRequest.current.add(settingsRequest.id);
+    if (importAbort.current) {onPlanFailed?.("Wait for the media import to finish, then apply phone settings again."); return;}
+    const {ratio, title, narration, captionStyle, transition, clearCaptions} = settingsRequest;
+    const changed = update({ratio, title, narration, clips: draftRef.current.clips.map((clip, index) => ({...clip, caption: clearCaptions ? "" : clip.caption, captionStyle: captionStyle ?? "clean", transition: index === 0 ? "cut" : transition}))}, "phone reel settings");
+    if (changed) {notice("Phone reel settings applied to this sequence. Review the preview before exporting."); onSettingsApplied?.();}
+  }, [settingsRequest]);
+
+  useEffect(() => {
+    if (!planRequest || consumedRequest.current.has(planRequest.id)) return;
+    if (importAbort.current) { onPlanFailed?.("Wait for the current import to finish, then apply the shot plan again."); return; }
+    consumedRequest.current.add(planRequest.id);
+    const controller = new AbortController(), staged: {clip: EditClip; local: LocalMedia}[] = []; let accepted = false;
+    importAbort.current = controller; setImporting(true); setPlaying(false);
+    const snapshot = draftRef.current;
+    void (async () => {
+      validateFileBatch(planRequest.files);
+      if (planRequest.files.length !== planRequest.clips.length) throw new Error("The shot plan does not match its selected photos.");
+      for (let index = 0; index < planRequest.files.length; index++) {
+        const local = await inspectFile(planRequest.files[index], controller.signal), item = planRequest.clips[index];
+        if (local.source.kind !== "image") { URL.revokeObjectURL(local.url); throw new Error("A shot plan must use the original property photos."); }
+        staged.push({local, clip: {id: crypto.randomUUID(), source: local.source, start: 0, end: item.seconds, caption: item.caption, focusX: 0.5, focusY: 0.5, captionStyle: planRequest.settings?.captionStyle ?? "clean", transition: index === 0 ? "cut" : planRequest.settings?.transition ?? "cut", motion: item.motion}});
+      }
+      assertCurrentRevision(snapshot, draftRef.current, controller.signal);
+      const next = editHistory(historyRef.current, {clips: staged.map(item => item.clip), overlays: [], narration: planRequest.narration, ...(planRequest.settings ? {ratio: planRequest.settings.ratio, title: planRequest.settings.title} : {})}, "apply saved shot plan");
+      for (const item of staged) media.current.set(item.clip.id, item.local);
+      accepted = true; replaceHistory(next); onPlanApplied?.(next.present); setMediaVersion(value => value + 1); scrubTo(0);
+      notice("Saved shot plan applied. Review the photos, timing, captions, and narration before exporting.");
+    })().catch(error => { if (!controller.signal.aborted) { notice(errorText(error)); onPlanFailed?.(errorText(error)); } })
+      .finally(() => { if (!accepted) staged.forEach(item => URL.revokeObjectURL(item.local.url)); if (importAbort.current === controller) { importAbort.current = null; setImporting(false); } });
+    return () => controller.abort();
+  }, [planRequest]);
+
+  useEffect(() => {
+    if (!agentRequest || consumedRequest.current.has(agentRequest.id)) return;
+    if (importAbort.current) {onPlanFailed?.("Wait for the current import, then apply the agent plan again.");return;}
+    consumedRequest.current.add(agentRequest.id);
+    const controller = new AbortController(), staged: LocalMedia[] = []; let accepted = false;
+    importAbort.current = controller; setImporting(true); setPlaying(false); const snapshot = draftRef.current;
+    void (async () => {
+      if (agentRequest.photos.length !== agentRequest.overlays.length || agentRequest.photos.length > 12) throw new Error("The cutaway plan does not match its photos.");
+      const base = await inspectFile(agentRequest.baseFile, controller.signal); staged.push(base);
+      if (base.source.kind !== "video" || base.source.duration > EDIT_LIMITS.timelineSeconds) throw new Error("Choose an agent video up to 3 minutes long. Shorten a longer recording before applying this plan.");
+      const clip: EditClip = {id:crypto.randomUUID(),source:base.source,start:0,end:base.source.duration,caption:"",focusX:.5,focusY:.5,speed:1};
+      const overlays: EditOverlay[] = [];
+      for (let index = 0; index < agentRequest.photos.length; index++) {
+        const local = await inspectFile(agentRequest.photos[index], controller.signal); staged.push(local);
+        if (local.source.kind !== "image") throw new Error("Choose still photos for the agent’s cutaways.");
+        overlays.push({id:crypto.randomUUID(),source:local.source,...agentRequest.overlays[index],focusX:.5,focusY:.5});
+      }
+      assertCurrentRevision(snapshot, draftRef.current, controller.signal);
+      const next = editHistory(historyRef.current, {clips:[clip],overlays,narration:undefined,audio:"original"}, "apply agent cutaways");
+      media.current.set(clip.id,base); overlays.forEach((overlay,index)=>media.current.set(overlay.id,staged[index+1]));
+      accepted=true;replaceHistory(next);onPlanApplied?.(next.present);setMediaVersion(value=>value+1);scrubTo(0);
+      notice("Agent plan applied. The original video and speech continue beneath each photo cutaway.");
+    })().catch(error=>{if(!controller.signal.aborted){notice(errorText(error));onPlanFailed?.(errorText(error));}})
+      .finally(()=>{if(!accepted)staged.forEach(local=>URL.revokeObjectURL(local.url));if(importAbort.current===controller){importAbort.current=null;setImporting(false);}});
+    return ()=>controller.abort();
+  }, [agentRequest]);
+
+  useEffect(() => {
+    if (!relinkRequest || consumedRequest.current.has(relinkRequest.id)) return;
+    consumedRequest.current.add(relinkRequest.id);
+    const controller = new AbortController();
+    void (async () => {
+      for (const file of relinkRequest.files) {
+        const local = await inspectFile(file, controller.signal);
+        const matches = draftMedia(draftRef.current).filter(clip => clip.source.sha256 === local.source.sha256);
+        if (!matches.length) { URL.revokeObjectURL(local.url); continue; }
+        let used = false;
+        try {
+          for (const clip of matches) {
+            assertSourceMatch(clip.source, local.source);
+            const old = media.current.get(clip.id);
+            if (old) URL.revokeObjectURL(old.url);
+            media.current.set(clip.id, used ? {...local,url:URL.createObjectURL(file)} : local);
+            used=true;
+          }
+        } finally { if (!used) URL.revokeObjectURL(local.url); }
+      }
+      if (!controller.signal.aborted) { setMediaVersion(v=>v+1); notice("Saved source files restored. Continue editing where you left off."); }
+    })().catch(error => { if (!controller.signal.aborted) notice(errorText(error)); });
+    return () => controller.abort();
+  }, [relinkRequest]);
+  useEffect(() => {
+    onSourcesChange?.([...new Map([...media.current.values()].map(local => [local.source.sha256, {file:local.file,sha256:local.source.sha256}])).values()]);
+  }, [mediaVersion, onSourcesChange]);
+
+  useEffect(() => {
+    const id = draft.narration?.resultId;
+    setVoice(null); setVoiceIssue("");
+    if (!id) return;
+    if (!resolveNarration) { setVoiceIssue("Open this plan in connected Studio to restore its narration."); return; }
+    const abort = new AbortController(); let url: string | undefined;
+    void resolveNarration(id, abort.signal).then(blob => {
+      if (abort.signal.aborted) return;
+      if (!blob.size || blob.size > EDIT_LIMITS.narrationBytes) throw new Error("Narration must be under 16 MB.");
+      url = URL.createObjectURL(blob); setVoice({id, blob, url});
+    }).catch(error => { if (!abort.signal.aborted) setVoiceIssue(errorText(error)); });
+    return () => { abort.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [draft.narration?.resultId, resolveNarration, voiceRetry]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !active) return;
     const controller = new AbortController();
     const signal = controller.signal;
     let decoded: DecodedMedia | undefined;
+    const previous = document.createElement("canvas"); previous.width = canvas.width; previous.height = canvas.height;
+    let hasPrevious = false;
+    const overlayPainter = new OverlayPainter(draft, media.current, signal);
+    const narration = draft.narration && voice?.id === draft.narration.resultId ? new Audio(voice.url) : undefined;
+    if (narration && draft.narration) narration.volume = draft.narration.volume;
     setPreviewError("");
     const paint = async () => {
       const position = locateTime(draft.clips, timeRef.current);
       if (!position) {
         canvas.getContext("2d")?.clearRect(0, 0, canvas.width, canvas.height);
         return;
+      }
+      if (position.index > 0) {
+        const outgoing = draft.clips[position.index - 1], local = media.current.get(outgoing.id);
+        if (local) {
+          const prior = await decodeMedia(local.url, outgoing.source.kind, signal);
+          try {
+            if (prior.element instanceof HTMLVideoElement) await seekMedia(prior.element, Math.max(outgoing.start, outgoing.end - 0.02), signal);
+            drawFrame(previous, prior, outgoing, draft); hasPrevious = true;
+          } finally { prior.dispose(); }
+        }
       }
       for (let index = position.index; index < draft.clips.length; index++) {
         const clip = draft.clips[index]!;
@@ -363,22 +512,30 @@ export function VideoEditor({
             ? decoded.element
             : undefined;
         if (video) {
-          await seekMedia(video, clip.start + offset, signal);
+          await seekMedia(video, clip.start + offset * (clip.speed ?? 1), signal);
+          video.playbackRate = clip.speed ?? 1; video.volume = draft.narration ? 0.22 : 1;
           video.muted = draft.audio === "muted";
         }
-        drawFrame(canvas, decoded, clip, draft);
+        const before = timelineDuration(draft.clips.slice(0, index));
+        drawFrame(canvas, decoded, clip, draft, {time: before + offset, localTime: offset, previous: hasPrevious ? previous : undefined});
+        await overlayPainter.paint(canvas, before + offset);
         if (!playing) return;
         if (video)
           await awaitMediaOperation(video.play(), signal, "Starting preview");
         throwIfAborted(signal);
         const start = performance.now();
-        const before = timelineDuration(draft.clips.slice(0, index));
+        let narrationStarted = false;
         while (true) {
           const now = await nextFrame(signal);
           const elapsed = video
-            ? Math.max(0, video.currentTime - clip.start)
+            ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
             : offset + (now - start) / 1000;
-          drawFrame(canvas, decoded, clip, draft);
+          if (narration && draft.narration && !narrationStarted && before + elapsed >= draft.narration.offset) {
+            narration.currentTime = Math.max(0, before + elapsed - draft.narration.offset);
+            await awaitMediaOperation(narration.play(), signal, "Playing narration"); narrationStarted = true;
+          }
+          drawFrame(canvas, decoded, clip, draft, {time: before + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
+          await overlayPainter.paint(canvas, before + elapsed);
           timeRef.current = Math.min(
             total,
             before + Math.min(elapsed, clipDuration(clip)),
@@ -386,6 +543,7 @@ export function VideoEditor({
           setTime(timeRef.current);
           if (elapsed >= clipDuration(clip) || video?.ended) break;
         }
+        narration?.pause(); previous.getContext("2d")!.drawImage(canvas, 0, 0); hasPrevious = true;
         decoded.dispose();
         decoded = undefined;
       }
@@ -398,12 +556,13 @@ export function VideoEditor({
           setPlaying(false);
         }
       })
-      .finally(() => decoded?.dispose());
+      .finally(() => { decoded?.dispose(); narration?.pause(); overlayPainter.dispose(); });
     return () => {
       controller.abort();
-      decoded?.dispose();
+      decoded?.dispose(); overlayPainter.dispose(); narration?.pause(); if (narration) { narration.removeAttribute("src"); narration.load(); }
+      previous.width = previous.height = 0;
     };
-  }, [active, draft, mediaVersion, playing, scrubVersion, total]);
+  }, [active, draft, mediaVersion, playing, scrubVersion, total, voice]);
 
   const scrubTo = (seconds: number) => {
     setPlaying(false);
@@ -426,7 +585,7 @@ export function VideoEditor({
   const removeClip = () => {
     if (!selected) return;
     const id = selected.id;
-    if (update({ clips: draft.clips.filter((clip) => clip.id !== id) }, "remove clip"))
+    if (update({ clips: draft.clips.filter((clip) => clip.id !== id), ...(draft.clips.length === 1 ? {overlays: []} : {}) }, "remove clip"))
       notice("Clip removed. Undo restores its cuts and text; reselect the original file to restore its media.");
   };
   const openPlan = async (file?: File) => {
@@ -448,7 +607,7 @@ export function VideoEditor({
       const next = parseDraft(await file.text());
       throwIfAborted(controller.signal);
       // Rebind only full matching hashes from already selected local files.
-      for (const clip of next.clips) {
+      for (const clip of draftMedia(next)) {
         const match = [...media.current.values()].find(
           (local) => local.source.sha256 === clip.source.sha256,
         );
@@ -483,7 +642,7 @@ export function VideoEditor({
     }
   };
   const relink = async (file?: File) => {
-    const clip = draftRef.current.clips.find(
+    const clip = draftMedia(draftRef.current).find(
       (item) => item.id === relinkId.current,
     );
     if (!file || !clip || importAbort.current) return;
@@ -495,7 +654,7 @@ export function VideoEditor({
       local = await inspectFile(file, controller.signal);
       assertSourceMatch(clip.source, local.source);
       if (
-        !draftRef.current.clips.some(
+        !draftMedia(draftRef.current).some(
           (item) =>
             item.id === clip.id && item.source.sha256 === clip.source.sha256,
         )
@@ -530,6 +689,7 @@ export function VideoEditor({
       const result = await exportLocalVideo({
         draft: draftRef.current,
         media: new Map(media.current),
+        narrationBlob: voice?.id === draftRef.current.narration?.resultId ? voice?.blob : undefined,
         format,
         signal: controller.signal,
         currentDraft: () => {
@@ -548,7 +708,7 @@ export function VideoEditor({
       outputUrl.current = url;
       setOutput({ ...result, url });
       notice(
-        `Your local ${result.extension.toUpperCase()} is ready to download. ${result.audio === "muted" ? "Audio is muted." : "Original clip audio is included where the source has audio."}`,
+        `Your local ${result.extension.toUpperCase()} is ready to download. ${result.narration ? "Saved narration is included." : result.audio === "muted" ? "Audio is muted." : "Original clip audio is included where the source has audio."}`,
       );
     } catch (error) {
       notice(errorText(error));
@@ -665,7 +825,7 @@ export function VideoEditor({
             <div className="rp-editor-panel-bar">
               <span>Video preview</span>
               <span className="rp-editor-audio-badge">
-                {draft.audio === "muted" ? "Audio muted" : "Original audio"}
+                {draft.narration ? "Narration" : draft.audio === "muted" ? "Audio muted" : "Original audio"}
               </span>
             </div>
             <div
@@ -800,7 +960,7 @@ export function VideoEditor({
               </div>
             )}
             <p className="rp-editor-limit-note">
-              Local limits: 12 clips · 32 MiB each · 160 MiB total · 3-minute
+              Local limits: 12 clips · 128 MiB each · 512 MiB total · 3-minute
               edit. Videos open with their first 6 seconds.
             </p>
           </div>
@@ -814,6 +974,7 @@ export function VideoEditor({
             <label>
               Aspect ratio
               <select
+                aria-label="Aspect ratio"
                 value={draft.ratio}
                 disabled={importing}
                 onChange={(event) =>
@@ -849,6 +1010,19 @@ export function VideoEditor({
                 <option value="muted">Mute audio</option>
               </select>
             </label>
+            {(resolveNarration || draft.narration) && <>
+              <label>Saved narration<select aria-label="Saved narration" disabled={importing} value={draft.narration?.resultId ?? ""} onChange={event => {
+                const choice = narrationChoices?.find(item => item.id === event.target.value);
+                update({narration: choice ? {resultId: choice.id, label: choice.label, offset: 0, volume: 1, wordCaptions: choice.words.length > 0, words: choice.words} : undefined}, "narration");
+              }}><option value="">No narration</option>{draft.narration && !narrationChoices?.some(item => item.id === draft.narration?.resultId) && <option value={draft.narration.resultId}>{draft.narration.label || "Saved narration"}</option>}{narrationChoices?.map(item => <option key={item.id} value={item.id}>{item.label}</option>)}</select></label>
+              {!narrationChoices?.length && <p className="rp-editor-limit-note">Generate narration in AI tools for this property, then return here to use the saved result.</p>}
+              {draft.narration && <>
+                <label>Narration starts at (seconds)<input aria-label="Narration starts at (seconds)" type="number" min={0} max={180} step={0.1} value={draft.narration.offset} onChange={event => {if(event.target.value !== "") update({narration: {...draft.narration!, offset: Number(event.target.value)}}, "narration start");}} /></label>
+                <label>Narration volume<input type="range" min={0} max={1} step={0.05} value={draft.narration.volume} onChange={event => update({narration: {...draft.narration!, volume: Number(event.target.value)}}, "narration volume")} /></label>
+                <label><input type="checkbox" checked={draft.narration.wordCaptions} disabled={!draft.narration.words.length} onChange={event => update({narration: {...draft.narration!, wordCaptions: event.target.checked}}, "timed narration captions")} />Timed narration captions</label>
+                {voiceIssue ? <p role="status">{voiceIssue} <button onClick={() => setVoiceRetry(v => v + 1)}>Restore narration</button></p> : !voiceReady ? <p role="status">Restoring saved narration…</p> : <p className="rp-editor-limit-note">Narration is ready. Original clip sound is lowered beneath it. Audio beyond the end of the edit is trimmed.</p>}
+              </>}
+            </>}
           </div>
           <div className="rp-editor-clip-settings">
             <div className="rp-editor-panel-bar">
@@ -937,9 +1111,14 @@ export function VideoEditor({
                     </small>
                   </div>
                 )}
+                {selected.source.kind === "video" && <label>Playback speed<select aria-label="Playback speed" value={selected.speed ?? 1} disabled={importing} onChange={event => updateClip(selected.id, {speed: Number(event.target.value)})}><option value={0.25}>0.25× · Quarter speed</option><option value={0.5}>0.5× · Slow</option><option value={1}>1× · Normal</option><option value={1.5}>1.5×</option><option value={2}>2× · Fast</option><option value={4}>4×</option></select></label>}
+                <label>Transition into this clip<select aria-label="Transition into this clip" value={selected.transition ?? "cut"} disabled={importing || selectedIndex === 0} onChange={event => updateClip(selected.id, {transition: event.target.value as Transition})}><option value="cut">Cut</option><option value="dissolve">Dissolve · 0.28 seconds</option><option value="whip">Whip · 0.18 seconds</option></select></label>
+                {selected.source.kind === "image" && <label>Photo motion<select aria-label="Photo motion" value={selected.motion ?? "still"} disabled={importing} onChange={event => updateClip(selected.id, {motion: event.target.value as EditClip["motion"]})}><option value="still">Still</option><option value="push_in">Gentle push in</option><option value="pull_out">Gentle pull out</option><option value="pan_left">Pan left</option><option value="pan_right">Pan right</option></select></label>}
+                <label>Caption style<select aria-label="Caption style" value={selected.captionStyle ?? "clean"} disabled={importing} onChange={event => updateClip(selected.id, {captionStyle: event.target.value as CaptionStyle})}><option value="clean">Clean lower third</option><option value="center">Bold center</option><option value="highlight">Highlight box</option></select></label>
                 <label>
                   Clip caption
                   <textarea
+                    aria-label="Clip caption"
                     rows={3}
                     value={selected.caption}
                     maxLength={EDIT_LIMITS.captionCharacters}
@@ -1034,6 +1213,7 @@ export function VideoEditor({
               </p>
             )}
           </div>
+          {!!draft.overlays?.length && <div className="rp-editor-clip-settings"><h3>Agent photo cutaways</h3><p>The base video and its speech continue underneath. Cutaways replace only the picture during their selected times.</p>{draft.overlays.map((overlay,index)=><fieldset key={overlay.id} disabled={importing}><legend>Cutaway {index+1} · {overlay.source.name}</legend>{!media.current.has(overlay.id)&&<button onClick={()=>chooseOriginal(overlay.id)}>Reselect cutaway photo</button>}<label>Cutaway {index+1} starts (seconds)<input type="number" min={0} max={total} step={.1} value={overlay.start} onChange={event=>{if(event.target.value!=="")update({overlays:draft.overlays!.map(item=>item.id===overlay.id?{...item,start:Number(event.target.value)}:item)},"cutaway start");}} /></label><label>Cutaway {index+1} ends (seconds)<input type="number" min={0} max={total} step={.1} value={overlay.end} onChange={event=>{if(event.target.value!=="")update({overlays:draft.overlays!.map(item=>item.id===overlay.id?{...item,end:Number(event.target.value)}:item)},"cutaway end");}} /></label><label>Cutaway {index+1} caption<input value={overlay.caption} maxLength={120} onChange={event=>update({overlays:draft.overlays!.map(item=>item.id===overlay.id?{...item,caption:event.target.value}:item)},"cutaway caption")} /></label><button onClick={()=>scrubTo(overlay.start)}>Preview cutaway {index+1}</button><button onClick={()=>update({overlays:draft.overlays!.filter(item=>item.id!==overlay.id)},"remove cutaway")}>Remove cutaway {index+1}</button></fieldset>)}</div>}
           <div className="rp-editor-export">
             <h3>Ready when you are.</h3>
             <p>A local video file, made in this browser.</p>
@@ -1099,6 +1279,7 @@ export function VideoEditor({
                   missing.length > 0 ||
                   !formats.length ||
                   audioUnavailable ||
+                  !voiceReady ||
                   importing
                 }
                 onClick={() => void startExport()}
@@ -1109,9 +1290,9 @@ export function VideoEditor({
               </button>
             )}
             <p className="rp-editor-export-note">
-              {draft.audio === "muted"
-                ? "Audio will be muted."
-                : "Keeps original audio within each video trim; photos are silent."}{" "}
+              {draft.narration ? "Includes saved narration and timed captions when enabled; original sound is lowered beneath it." : draft.audio === "muted"
+                ? "Original clip audio will be muted."
+                : draft.overlays?.length ? "Original video audio continues through every photo cutaway." : "Keeps original audio within each video trim; photos are silent."}{" "}
               Export takes about the length of your edit. Keep this tab visible.{" "}
               {formats.some((format) => format.extension === "mp4")
                 ? "Choose the format supported by your destination."
@@ -1127,6 +1308,13 @@ export function VideoEditor({
                 Download {output.extension.toUpperCase()} ·{" "}
                 {(output.blob.size / 1024 / 1024).toFixed(1)} MiB
               </a>
+            )}
+            {output && onSaveOutput && (
+              <button type="button" disabled={savingOutput} onClick={() => {
+                setSavingOutput(true);
+                void onSaveOutput(output).then(() => notice("Video saved to your listing. Open Properties to review and publish it."))
+                  .catch(error => notice(errorText(error))).finally(() => setSavingOutput(false));
+              }}>{savingOutput ? "Saving to your listing…" : "Save video to listing"}</button>
             )}
           </div>
         </aside>

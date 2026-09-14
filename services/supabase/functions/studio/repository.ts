@@ -54,7 +54,11 @@ export function createStudioRepository(
           .select(
             "id,listing_id,original_key,enhanced_key,caption,is_staged,sort,created_at",
           )
-          .eq("listing_id", scope.listingId).order("id", { ascending: true })
+          // The native/gallery sort is business state, not a display hint.
+          // Apply it before pagination; UUID alone preserves the old order after
+          // a successful reorder and puts the wrong photos on later pages.
+          .eq("listing_id", scope.listingId).order("sort", { ascending: true })
+          .order("id", { ascending: true })
           .range(offset, offset + PAGE_SIZE).abortSignal(req.signal),
         db().from("capture_assets")
           .select(
@@ -78,10 +82,31 @@ export function createStudioRepository(
       ) {
         throw new HttpError(503, "Media lookup returned inconsistent data.");
       }
+      // Gallery order and capture UUID order have different page boundaries.
+      // Resolve only this bounded capture page's display-key aliases through
+      // RLS, including gallery rows on other pages. Distinct untouched originals
+      // of altered photos are intentionally retained as source assets.
+      const assetKeys = [...new Set(assets.data.filter(asset => asset.kind === "photo" && asset.uploaded).map(asset => asset.storage_key))];
+      const photoAssetAliases = new Set<string>();
+      if (assetKeys.length) {
+        if (assetKeys.length > PAGE_SIZE + 1) throw new HttpError(503, "Media lookup exceeded its page bound.");
+        const references = await Promise.all(["original_key", "enhanced_key"].map(column =>
+          db().from("photos").select("id,listing_id,original_key,enhanced_key")
+            .eq("listing_id", scope.listingId).in(column, assetKeys)
+            .limit(501).abortSignal(req.signal)));
+        for (const reference of references) {
+          if (reference.error || !Array.isArray(reference.data) || reference.data.length > 500 || reference.data.some(row => row.listing_id !== scope.listingId)) throw new HttpError(503, "Gallery references could not be verified.");
+          for (const row of reference.data) {
+            const visibleKey = row.enhanced_key || row.original_key;
+            if (assetKeys.includes(visibleKey)) photoAssetAliases.add(visibleKey);
+          }
+        }
+      }
       return {
         photos: photos.data,
         assets: assets.data,
         renders: renders.data,
+        photoAssetAliases: [...photoAssetAliases],
       };
     },
   };

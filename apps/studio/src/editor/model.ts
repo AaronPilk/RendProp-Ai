@@ -1,8 +1,10 @@
+import {validateOverlays, type EditOverlay} from "./overlays";
+export type {EditOverlay} from "./overlays";
 /** Local edit intent. Media stays in browser memory; this is not a publish approval. */
 export const EDIT_LIMITS = {
   clips: 12,
-  fileBytes: 32 * 1024 * 1024,
-  totalBytes: 160 * 1024 * 1024,
+  fileBytes: 128 * 1024 * 1024,
+  totalBytes: 512 * 1024 * 1024,
   imagePixels: 12_000_000,
   videoPixels: 8_400_000,
   sourceSeconds: 300,
@@ -11,6 +13,7 @@ export const EDIT_LIMITS = {
   photoSeconds: 30,
   captionCharacters: 120,
   draftBytes: 64 * 1024,
+  narrationBytes: 16 * 1024 * 1024,
   outputBytes: 128 * 1024 * 1024,
 } as const;
 
@@ -25,6 +28,9 @@ export type SourceRef = {
   height: number;
   duration: number;
 };
+export type CaptionStyle = "clean" | "center" | "highlight";
+export type Transition = "cut" | "dissolve" | "whip";
+export type Narration = { resultId: string; label: string; offset: number; volume: number; wordCaptions: boolean; words: {text: string; start: number; end: number}[] };
 export type EditClip = {
   id: string;
   source: SourceRef;
@@ -33,6 +39,10 @@ export type EditClip = {
   caption: string;
   focusX: number;
   focusY: number;
+  speed?: number;
+  captionStyle?: CaptionStyle;
+  transition?: Transition;
+  motion?: "still" | "push_in" | "pull_out" | "pan_left" | "pan_right";
 };
 export type EditDraft = {
   schema: 1;
@@ -42,6 +52,8 @@ export type EditDraft = {
   title: string;
   audio: "original" | "muted";
   clips: EditClip[];
+  narration?: Narration;
+  overlays?: EditOverlay[];
 };
 export type TimelinePosition = {
   clip: EditClip;
@@ -62,8 +74,10 @@ export function newDraft(): EditDraft {
   };
 }
 
+export function draftMedia(draft: EditDraft): (EditClip | EditOverlay)[] { return [...draft.clips, ...(draft.overlays ?? [])]; }
+
 export function clipDuration(clip: EditClip): number {
-  return clip.end - clip.start;
+  return (clip.end - clip.start) / (clip.source.kind === "video" ? (clip.speed ?? 1) : 1);
 }
 export function timelineDuration(clips: EditClip[]): number {
   return clips.reduce((sum, clip) => sum + clipDuration(clip), 0);
@@ -82,7 +96,7 @@ export function locateTime(
     const duration = clipDuration(clip);
     if (remaining < duration || index === clips.length - 1) {
       const localTime = Math.min(remaining, duration);
-      return { clip, index, localTime, sourceTime: clip.start + localTime };
+      return { clip, index, localTime, sourceTime: clip.start + localTime * (clip.speed ?? 1) };
     }
     remaining -= duration;
   }
@@ -180,13 +194,13 @@ export function validateFileBatch(
       );
     if (file.size > EDIT_LIMITS.fileBytes)
       throw new Error(
-        `${file.name}: ${Math.ceil(file.size / 1024 / 1024)} MiB exceeds the 32 MiB local per-file limit.`,
+        `${file.name}: ${Math.ceil(file.size / 1024 / 1024)} MiB exceeds the 128 MiB local per-file limit.`,
       );
     total += file.size;
   }
   if (total > EDIT_LIMITS.totalBytes)
     throw new Error(
-      `Selected media totals ${Math.ceil(total / 1024 / 1024)} MiB; the local limit is 160 MiB.`,
+      `Selected media totals ${Math.ceil(total / 1024 / 1024)} MiB; the local limit is 512 MiB.`,
     );
 }
 
@@ -244,6 +258,33 @@ function safeInteger(
   return result;
 }
 
+function allowedChoice<T extends string>(value: unknown, choices: readonly T[], label: string): T {
+  if (!choices.includes(value as T)) throw new Error(`Invalid ${label}.`);
+  return value as T;
+}
+export function validateNarration(value: unknown): Narration {
+  const row = record(value, "narration");
+  if (typeof row.resultId !== "string" || !/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(row.resultId)) throw new Error("Choose a saved narration result.");
+  if (typeof row.wordCaptions !== "boolean" || !Array.isArray(row.words) || row.words.length > 1500) throw new Error("Invalid narration captions.");
+  let previous = 0;
+  const words = row.words.map(value => {
+    const word = record(value, "narration word");
+    const start = boundedNumber(word.start, previous, 7200, "word start"), end = boundedNumber(word.end, start, 7200, "word end"); previous = start;
+    return {text: boundedText(word.text, 200, "word", true), start, end};
+  });
+  return {resultId: row.resultId, label: boundedText(row.label, 100, "narration label"), offset: boundedNumber(row.offset, 0, 180, "narration start"), volume: boundedNumber(row.volume, 0, 1, "narration volume"), wordCaptions: row.wordCaptions, words};
+}
+export function transitionSeconds(clip: EditClip): number {
+  return Math.min(clipDuration(clip) / 2, clip.transition === "dissolve" ? 0.28 : clip.transition === "whip" ? 0.18 : 0);
+}
+export function narrationCaption(narration: Narration | undefined, time: number): string {
+  if (!narration?.wordCaptions) return "";
+  const local = time - narration.offset;
+  const index = narration.words.findIndex(word => local >= word.start && local < word.end);
+  if (index < 0) return "";
+  const start = Math.floor(index / 5) * 5;
+  return narration.words.slice(start, start + 5).map(word => word.text).join(" ");
+}
 /** Rebuild allowlisted fields: imported JSON cannot retain URLs, credentials, or unknown state. */
 export function validateDraft(value: unknown): EditDraft {
   const draft = record(value, "edit plan");
@@ -326,6 +367,10 @@ export function validateDraft(value: unknown): EditDraft {
       ),
       focusX: boundedNumber(clip.focusX, 0, 1, "horizontal framing"),
       focusY: boundedNumber(clip.focusY, 0, 1, "vertical framing"),
+      ...(clip.speed !== undefined ? {speed: boundedNumber(clip.speed, source.kind === "image" ? 1 : 0.25, source.kind === "image" ? 1 : 4, "clip speed")} : {}),
+      ...(clip.captionStyle !== undefined ? {captionStyle: allowedChoice(clip.captionStyle, ["clean", "center", "highlight"] as const, "caption style")} : {}),
+      ...(clip.motion !== undefined ? {motion: allowedChoice(clip.motion, ["still", "push_in", "pull_out", "pan_left", "pan_right"] as const, "photo motion")} : {}),
+      ...(clip.transition !== undefined ? {transition: allowedChoice(clip.transition, ["cut", "dissolve", "whip"] as const, "transition")} : {}),
     };
   });
   if (timelineDuration(clips) > EDIT_LIMITS.timelineSeconds + 0.00001)
@@ -334,8 +379,17 @@ export function validateDraft(value: unknown): EditDraft {
     clips.reduce((sum, clip) => sum + clip.source.size, 0) >
     EDIT_LIMITS.totalBytes
   )
-    throw new Error("The edit exceeds the 160 MiB total media limit.");
-  return {
+    throw new Error("The edit exceeds the 512 MiB total media limit.");
+  const overlays = draft.overlays !== undefined ? validateOverlays(draft.overlays, timelineDuration(clips)) : undefined;
+  if (overlays?.some(overlay => ids.has(overlay.id))) throw new Error("A cutaway and a base clip cannot share the same ID.");
+  const allSources = new Map(clips.map(clip => [clip.source.sha256, clip.source]));
+  for (const overlay of overlays ?? []) {
+    const previous = allSources.get(overlay.source.sha256);
+    if (previous) assertSourceMatch(previous, overlay.source);
+    allSources.set(overlay.source.sha256, overlay.source);
+  }
+  if ([...allSources.values()].reduce((sum, source) => sum + source.size, 0) > EDIT_LIMITS.totalBytes) throw new Error("Base footage and cutaway photos exceed the 512 MiB total source limit.");
+  const validated: EditDraft = {
     schema: 1,
     id: boundedText(draft.id, 100, "edit ID", true),
     revision: safeInteger(
@@ -348,16 +402,21 @@ export function validateDraft(value: unknown): EditDraft {
     title: boundedText(draft.title, 80, "title"),
     audio: draft.audio as EditDraft["audio"],
     clips,
+    ...(overlays ? {overlays} : {}),
+    ...(draft.narration != null ? {narration: validateNarration(draft.narration)} : {}),
   };
+  if (new TextEncoder().encode(JSON.stringify(validated)).byteLength > EDIT_LIMITS.draftBytes) throw new Error("The edit plan exceeds 64 KiB. Shorten its text or narration captions.");
+  return validated;
 }
 export function reviseDraft(
   draft: EditDraft,
-  patch: Partial<Pick<EditDraft, "clips" | "title" | "ratio" | "audio">>,
+  patch: Partial<Pick<EditDraft, "clips" | "title" | "ratio" | "audio" | "narration" | "overlays">>,
 ): EditDraft {
   return validateDraft({ ...draft, ...patch, revision: draft.revision + 1 });
 }
 export function serializeDraft(draft: EditDraft): string {
-  return JSON.stringify(validateDraft(draft), null, 2);
+  const checked = validateDraft(draft), pretty = JSON.stringify(checked, null, 2);
+  return new TextEncoder().encode(pretty).byteLength <= EDIT_LIMITS.draftBytes ? pretty : JSON.stringify(checked);
 }
 export function parseDraft(json: string): EditDraft {
   if (new TextEncoder().encode(json).byteLength > EDIT_LIMITS.draftBytes)

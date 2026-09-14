@@ -1136,3 +1136,41 @@ test("metadata decoding rejects oversized fields instead of truncating saved bus
   assert.throws(() => decodeListings([{ ...listingDTO(), details: { text: "x".repeat(65_537) } }], ORG, joined), code("invalid-response"));
   assert.throws(() => decodeListings([{ ...listingDTO(), address: "x".repeat(16_385) }], ORG, joined), code("invalid-response"));
 });
+
+test("mutations keep workspace scope and never replay an ambiguous or unauthorized POST", async () => {
+  for (const status of [401, 503]) {
+    const auth = mockAuth(); let writes=0;
+    const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+      if(options.method==='POST') {writes++;assert.equal(new Headers(options.headers).get('X-Org-Id'),ORG);assert.equal(new Headers(options.headers).get('Idempotency-Key'),'one-action');return json({},status);}
+      return fixtureResponse(url);
+    })});
+    await services.loadWorkspace();
+    await assert.rejects(services.api('/functions/v1/renders',{orgId:ORG,method:'POST',body:{listing_id:LISTING},idempotencyKey:'one-action'}));
+    assert.equal(writes,1);assert.equal(auth.refreshCalls(),0);services.dispose();
+  }
+});
+test("mutation identity change aborts and rejects late completion",async()=>{
+  const auth=mockAuth(), response=deferred<Response>(),started=deferred<void>();
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+    if(options.method==='PATCH'){started.resolve();return response.promise;}return fixtureResponse(url);
+  })});
+  await services.loadWorkspace();const write=services.api('/functions/v1/listings/'+LISTING,{orgId:ORG,method:'PATCH',body:{address:'Changed'}});
+  await started.promise;auth.emit('SIGNED_IN',sessionFor(OTHER_USER));response.resolve(json({id:LISTING}));
+  await assert.rejects(write,code('stale-identity'));services.dispose();
+});
+test("API rejects foreign origins, traversals, missing membership and read bodies before dispatch",async()=>{
+  let calls=0;const auth=mockAuth();const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch(url=>{calls++;return fixtureResponse(url);})});
+  await services.loadWorkspace();const start=calls;
+  for(const path of ['https://foreign.invalid/functions/v1/me','//foreign.invalid/','/functions/v1/me/../uploads','/functions/v1/me%2fsecret'])await assert.rejects(services.api(path,{orgId:ORG}));
+  await assert.rejects(services.api('/functions/v1/me',{orgId:FOREIGN_ORG}));
+  await assert.rejects(services.api('/functions/v1/me',{orgId:ORG,body:{}}));assert.equal(calls,start);services.dispose();
+});
+test("upload sends only media content to exact capability gateway and fences session changes",async()=>{
+  const auth=mockAuth();let puts=0;
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+    if(options.method==='PUT'){puts++;const h=new Headers(options.headers);assert.equal(h.get('Authorization'),null);assert.equal(h.get('apikey'),null);assert.equal(options.credentials,'omit');assert.equal(options.redirect,'error');return new Response(null,{headers:{ETag:'confirmed'}});}return fixtureResponse(url);
+  })});
+  await services.loadWorkspace();const path='/v2/'+LISTING+'?expires=1999999999&signature='+'a'.repeat(64);
+  await assert.rejects(services.upload('https://other.invalid'+path,new Blob(['photo']),{orgId:ORG}));
+  assert.deepEqual(await services.upload('https://uploads.rendprop.com'+path,new Blob(['photo']),{orgId:ORG}),{etag:'confirmed'});assert.equal(puts,1);services.dispose();
+});

@@ -51,6 +51,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 }
 
 extension Notification.Name {
+    static let rendpropCloudBrandUpdated = Notification.Name("RendpropCloudBrandUpdated")
     /// Posted (main thread) by `AppModel.markSpaceTypeOutOfSync()`: the server
     /// does not have this device's business type. `AppModel` re-sends it.
     static let rendpropSpaceTypeOutOfSync = Notification.Name("RendpropSpaceTypeOutOfSync")
@@ -106,6 +107,15 @@ final class AppModel: ObservableObject {
     /// once per foreground by `RendpropApp`; a failed refresh keeps the last
     /// answer rather than yanking a tile mid-session.
     @Published private(set) var spatialCapability: SpatialCapability?
+    @Published private(set) var isCloudSyncing = false
+    @Published private(set) var cloudSyncError: String?
+    @Published private(set) var lastCloudSyncAt: Date?
+    private var cloudRefreshTask: Task<Void, Never>?
+    private var cloudRefreshOperation: UUID?
+    var pendingCloudListingCount: Int {
+        guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return 0 }
+        return listings.filter { CloudDraftCreation.canAutoSync($0, userID: owner) && ($0.serverID == nil || $0.needsServerSync == true) }.count
+    }
     private var spatialCapabilityFetch: Task<Void, Never>?
 
     /// True only once the server has said the 3D walkthrough is on.
@@ -183,17 +193,35 @@ final class AppModel: ObservableObject {
     /// Clear every per-account server reference (called when the signed-in
     /// account changes). Local tours/assets are untouched.
     func forgetServerIdentities(for userID: UUID) {
+        cloudRefreshTask?.cancel()
+        cloudRefreshTask = nil
+        cloudRefreshOperation = nil
+        cloudSyncError = nil
+        lastCloudSyncAt = nil
         let wasRestoring = isRestoring
         isRestoring = true
+        let previousOwner = identityOwnerUserID
         adoptionBindings = adoptionBindings?.detaching(listings, owner: identityOwnerUserID)
         identityOwnerUserID = userID
+        // Rows first loaded from another device belong to that account. Their
+        // downloaded files stay on disk; signing back in restores the same IDs.
+        let cloudOnly = Set(listings.filter { $0.cloudImported == true }.map(\.id))
+        listings.removeAll { cloudOnly.contains($0.id) }
+        assets = assets.filter { !cloudOnly.contains($0.key) }
+        tours = tours.filter { !cloudOnly.contains($0.key) }
+        renders = renders.filter { !cloudOnly.contains($0.key) }
         for i in listings.indices {
+            if let sid = listings[i].serverID {
+                listings[i].cloudDetachedServerID = sid
+                listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
+            }
             listings[i].serverID = nil
+            listings[i].serverOrgID = nil
+            listings[i].cloudUnavailable = nil
             listings[i].shareSlug = nil
             listings[i].shareURL = nil
             listings[i].unbrandedShareURL = nil
             listings[i].publishedRenderID = nil
-            listings[i].needsServerSync = nil
         }
         uploadedRenderAssets.removeAll()
         pendingPublish.removeAll()
@@ -237,8 +265,12 @@ final class AppModel: ObservableObject {
             return confirmed == orgID && identityOwnerUserID == pending.destinationUserID
         }
         do {
-            let restored = try journal.restoring(listings, pending: pending,
+            var restored = try journal.restoring(listings, pending: pending,
                 currentUserID: pending.destinationUserID, orgID: orgID)
+            for i in restored.indices where restored[i].serverID != nil {
+                restored[i].cloudSyncOwnerID = pending.destinationUserID
+                restored[i].cloudDetachedServerID = nil
+            }
             let previousListings = listings, previousOwner = identityOwnerUserID
             var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
             isRestoring = true
@@ -323,6 +355,7 @@ final class AppModel: ObservableObject {
         Task { [weak self] in
             await AuthStore.shared.retryPendingAdoptionIfNeeded()
             await self?.syncDirtyListings()
+            await self?.refreshCloudWorkspace()
             await self?.resumePendingPublishes()
         }
     }
@@ -454,7 +487,13 @@ final class AppModel: ObservableObject {
     }
 
     func add(_ listing: Listing) {
-        listings.insert(listing, at: 0)   // persists via didSet
+        var draft = listing
+        if !draft.isSample {
+            draft.needsServerSync = true
+            if AuthStore.shared.isIdentified { draft.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) }
+        }
+        listings.insert(draft, at: 0)   // persists via didSet
+        if !draft.isSample { Task { [weak self] in await self?.syncListing(draft.id) } }
     }
 
     /// Local pipeline state only — never synced (the server owns its own status).
@@ -542,11 +581,9 @@ final class AppModel: ObservableObject {
         listings[i].lastError = value
     }
 
-    /// Flag a listing as having local edits the server hasn't seen. Meaningful
-    /// only once it has a server identity (before first publish the create
-    /// call sends the full listing anyway).
+    /// Flag facts waiting for first create or an update to their existing row.
     func markDirty(_ id: UUID) {
-        guard let i = index(of: id), !listings[i].isSample, listings[i].serverID != nil else { return }
+        guard let i = index(of: id), !listings[i].isSample else { return }
         if listings[i].needsServerSync != true { listings[i].needsServerSync = true }
     }
 
@@ -620,14 +657,24 @@ final class AppModel: ObservableObject {
         syncInFlight.insert(id)
         defer { syncInFlight.remove(id) }
 
+        if let draft = listings.first(where: { $0.id == id }), draft.serverID == nil {
+            guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+                  CloudDraftCreation.canAutoSync(draft, userID: owner) else { return }
+            do { _ = try await ensureServerListing(draft) }
+            catch { return }
+        }
+
         var attempts = 0
         while attempts < 3,
               let snapshot = listings.first(where: { $0.id == id }),
-              !snapshot.isSample, snapshot.serverID != nil, snapshot.needsServerSync == true {
+              !snapshot.isSample, snapshot.serverID != nil, snapshot.cloudUnavailable != true, snapshot.needsServerSync == true {
             attempts += 1
             guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }   // signed out: keep it dirty
+            let owner = AuthStore.shared.userID
+            let revision = AuthStore.shared.syncSessionRevision
             do {
                 _ = try await api.updateListing(snapshot)
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
                 if let i = index(of: id), listings[i] == snapshot {
                     listings[i].needsServerSync = false
                 }
@@ -640,10 +687,65 @@ final class AppModel: ObservableObject {
 
     /// Push every dirty listing (called on launch and by pull-to-refresh).
     func syncDirtyListings() async {
-        let dirty = listings.filter { !$0.isSample && $0.serverID != nil && $0.needsServerSync == true }.map { $0.id }
+        let dirty = listings.filter { !$0.isSample && ($0.needsServerSync == true || $0.serverID == nil) }.map { $0.id }
         for id in dirty {
             await syncListing(id)
         }
+    }
+
+    /// Two-way refresh for launch, foreground, sign-in and pull-to-refresh.
+    /// Completed writes reach Studio; the complete remote snapshot then updates
+    /// this phone while retaining filenames, captures and unfinished edits.
+    func refreshCloudWorkspace() async {
+        guard hasLoaded, Config.useLiveBackend else { return }
+        guard AuthStore.shared.isIdentified, let cloud = api as? WorkspaceSyncAPI else {
+            await syncDirtyListings()
+            return
+        }
+        if let existing = cloudRefreshTask { await existing.value; return }
+        let operation = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            self.isCloudSyncing = true
+            self.cloudSyncError = nil
+            defer { if self.cloudRefreshOperation == operation { self.isCloudSyncing = false } }
+            await AuthStore.shared.retryPendingAdoptionIfNeeded()
+            await self.syncDirtyListings()
+            guard await AuthStore.validAccessToken() != nil else { return }
+            let actor = AuthStore.shared.userID
+            let revision = AuthStore.shared.syncSessionRevision
+            do {
+                let bindingsAtRead = Dictionary(uniqueKeysWithValues: self.listings.map { ($0.id, $0.serverID) })
+                let remote = try await cloud.cloudListings()
+                try Task.checkCancellation()
+                guard AuthStore.shared.isIdentified, AuthStore.shared.userID == actor,
+                      AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+                var protected = self.syncInFlight.union(self.publishInFlight).union(self.serverCreationInFlight).union(self.pendingPublish)
+                protected.formUnion(self.listings.filter { $0.status == .processing || $0.status == .uploading }.map(\.id))
+                protected.formUnion(self.listings.filter { $0.serverID != (bindingsAtRead[$0.id] ?? nil) }.map(\.id))
+                let merged = try CloudListingMerge.merge(local: self.listings, remote: remote, protected: protected, ownerID: actor.flatMap(UUID.init(uuidString:)))
+                self.listings = merged
+                self.identityOwnerUserID = actor.flatMap(UUID.init(uuidString:))
+                self.lastCloudSyncAt = Date()
+                self.persist()
+                await self.syncDirtyListings()
+                // Brand reads are independent of media and use the same account
+                // fence. A transient brand error must not roll back listing sync.
+                if let brand = try? await cloud.cloudBrand(), !Task.isCancelled,
+                   AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision {
+                    AgentCard.acceptCloud(brand)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+                self.cloudSyncError = error is CloudSyncError ? error.localizedDescription : "Cloud updates couldn't be loaded. Your saved files and edits are safe. Pull to refresh when you're connected."
+            }
+        }
+        cloudRefreshTask = task
+        cloudRefreshOperation = operation
+        await task.value
+        if cloudRefreshOperation == operation { cloudRefreshTask = nil; cloudRefreshOperation = nil }
     }
 
     // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
@@ -662,11 +764,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    /// Return the server listing id for a local listing, creating the server
-    /// listing on first publish and adopting its id as the listing's server
-    /// identity (persisted). All later server calls for this listing use it.
+    /// Bind a listing once: identified draft sync and explicit upload/publish
+    /// share the same durable create key and adoption guards.
     func ensureServerListing(_ listing: Listing) async throws -> UUID {
         let localID = listing.id
+        if listings.first(where: { $0.id == localID })?.cloudUnavailable == true { throw CloudSyncError.cloudMissing }
         guard !pendingAdoptionBlocksServerListing(localID) else { throw PublishError.workspaceRecoveryPending }
         if let existing = listings.first(where: { $0.id == localID })?.serverID {
             return existing
@@ -674,16 +776,23 @@ final class AppModel: ObservableObject {
         guard !serverCreationInFlight.contains(localID) else { throw PublishError.serverIdentityBusy }
         serverCreationInFlight.insert(localID)
         defer { serverCreationInFlight.remove(localID) }
-        let owner = AuthStore.shared.userID
+        let requestedOwner = AuthStore.shared.userID
+        if Config.useLiveBackend { _ = await AuthStore.validAccessToken() }
+        guard AuthStore.shared.userID == requestedOwner else { throw CloudSyncError.identityChanged }
+        let identity = CloudDraftCreation.Identity(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision)
         // Sync using the freshest local copy (address/details may have changed).
-        let live = listings.first(where: { $0.id == localID }) ?? listing
-        let created = try await api.createListing(live)
-        guard AuthStore.shared.userID == owner else { throw CancellationError() }
-        let serverID = created.id
-        if let i = listings.firstIndex(where: { $0.id == localID }) {
-            listings[i].serverID = serverID   // persists via didSet
+        var live = listings.first(where: { $0.id == localID }) ?? listing
+        if live.cloudCreateFingerprint == nil { live.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(live) }
+        if let i = index(of: localID), AuthStore.shared.isIdentified {
+            listings[i].cloudSyncOwnerID = identity.userID.flatMap(UUID.init(uuidString:))
+            listings[i].cloudCreateFingerprint = live.cloudCreateFingerprint
         }
-        return serverID
+        return try await CloudDraftCreation.ensure(snapshot: live, identity: identity,
+            create: { try await self.api.createListing($0) },
+            current: { self.listings.first(where: { $0.id == localID }) },
+            activeIdentity: { .init(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision) },
+            save: { updated in if let i = self.index(of: localID) { self.listings[i] = updated } },
+            deleteRemoved: { sid in try? await self.api.deleteListing(serverID: sid) })
     }
 
     // MARK: - Compliance plumbing (W2-C3)
@@ -2356,6 +2465,7 @@ struct RendpropApp: App {
                 if phase == .active {
                     AuthStore.shared.signInAnonymouslyIfNeeded()
                     model.refreshSpatialCapability()
+                    Task { await model.refreshCloudWorkspace() }
                     // iOS Settings can change the notification permission while
                     // the app is in the background, in BOTH directions — and a
                     // device token can be reissued. Re-read it on the way back
@@ -2443,6 +2553,7 @@ struct RendpropApp: App {
                 // ask again once one exists so the answer is not "unknown" all day.
                 if signedIn {
                     model.refreshSpatialCapability()
+                    Task { await model.refreshCloudWorkspace() }
                     // …and tell the new session which industry this is, so the
                     // server sizes the free week for it (AppModel, "Business
                     // type → server").
@@ -2453,6 +2564,10 @@ struct RendpropApp: App {
             // a different org, which has not heard the business type yet.
             .onChange(of: analyticsAuth.userID) { _ in
                 model.syncSpaceTypeIfNeeded()
+                Task { await model.refreshCloudWorkspace() }
+            }
+            .onChange(of: analyticsAuth.isIdentified) { identified in
+                if identified { Task { await model.refreshCloudWorkspace() } }
             }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.

@@ -18,15 +18,15 @@ import {
 export const MAX_METADATA_BYTES = 2 * 1024 * 1024;
 const READ_PAGE_SIZE = 100;
 const MAX_READ_ROWS = 10_000;
-const LISTING_COLUMNS = "id,org_id,space_type,address,tagline,details,status,created_at,deleted_at,main_photo_key,beds,baths,sqft,price_cents";
+const LISTING_COLUMNS = "id,org_id,space_type,address,tagline,details,status,created_at,deleted_at,main_photo_key,sold_at,beds,baths,sqft,price_cents";
 
 type ReadPage = { offset: number; limit: number };
 type PageResult = { rows: unknown[]; total: number };
 
-async function boundedJson(response: Response, signal: AbortSignal): Promise<unknown> {
+async function boundedJson(response: Response, signal: AbortSignal, limit = MAX_METADATA_BYTES): Promise<unknown> {
   const tooLarge = () => new StudioError("response-too-large", "This workspace response is too large to load safely. Contact support.");
   const declared = response.headers.get("content-length");
-  if (declared && /^\d+$/.test(declared) && Number(declared) > MAX_METADATA_BYTES) {
+  if (declared && /^\d+$/.test(declared) && Number(declared) > limit) {
     void response.body?.cancel().catch(() => {});
     throw tooLarge();
   }
@@ -43,7 +43,7 @@ async function boundedJson(response: Response, signal: AbortSignal): Promise<unk
       signal.throwIfAborted();
       if (done) break;
       size += value.byteLength;
-      if (size > MAX_METADATA_BYTES) throw tooLarge();
+      if (size > limit) throw tooLarge();
       chunks.push(value);
     }
     const bytes = new Uint8Array(size);
@@ -108,6 +108,29 @@ export type StudioDependencies = {
   readTimeoutMs?: number;
   authTimeoutMs?: number;
 };
+
+export type StudioRequestOptions = {
+  orgId: string;
+  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  body?: unknown;
+  signal?: AbortSignal;
+  idempotencyKey?: string;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
+};
+
+/** Only the immutable upload gateway receives media; account credentials stay on Supabase. */
+export function validateUploadUrl(raw: string): string {
+  let url: URL;
+  try { url = new URL(raw); } catch { throw new StudioError("upload-url", "The upload ticket is invalid. Request a new ticket."); }
+  if (url.origin !== "https://uploads.rendprop.com" || url.username || url.password || url.hash ||
+    !/^\/v2\/[0-9a-f-]{36}$/.test(url.pathname) ||
+    !/^\d{10,13}$/.test(url.searchParams.get("expires") ?? "") ||
+    !/^[0-9a-f]{64}$/.test(url.searchParams.get("signature") ?? "") ||
+    [...url.searchParams.keys()].some(k => !["expires", "signature"].includes(k)))
+    throw new StudioError("upload-url", "The upload ticket is invalid. Request a new ticket.");
+  return url.href;
+}
 
 export function createStudioServices(
   rawConfig: StudioConfig,
@@ -342,6 +365,7 @@ export function createStudioServices(
     signal?: AbortSignal,
     orgId?: string,
     page?: ReadPage,
+    options?: StudioRequestOptions,
   ): Promise<unknown> {
     assertCurrent(version, signal);
     const controller = new AbortController();
@@ -351,7 +375,8 @@ export function createStudioServices(
     try {
       return await deadline(
         async () => {
-          for (let attempt = 0; attempt < 2; attempt++) {
+          const method = options?.method ?? "GET";
+          for (let attempt = 0; attempt < (method === "GET" ? 2 : 1); attempt++) {
             assertCurrent(version, controller.signal);
             const token = session?.access_token;
             if (!token)
@@ -366,8 +391,11 @@ export function createStudioServices(
             };
             if (orgId) headers["X-Org-Id"] = orgId;
             if (page) headers.Prefer = "count=exact";
+            if (options?.body !== undefined) headers["Content-Type"] = "application/json";
+            if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
             const response = await fetcher(`${config.supabaseUrl}${path}`, {
-              method: "GET",
+              method,
+              body: options?.body === undefined ? undefined : JSON.stringify(options.body),
               headers,
               signal: controller.signal,
               cache: "no-store",
@@ -375,25 +403,38 @@ export function createStudioServices(
               redirect: "error",
             });
             assertCurrent(version, controller.signal);
-            if (response.status === 401 && attempt === 0) {
+            if (response.status === 401 && attempt === 0 && method === "GET") {
               void response.body?.cancel().catch(() => {});
               await refresh(version, token);
               continue;
             }
             if (!response.ok) {
-              const message =
+              let message =
                 response.status === 401
                   ? "Your session expired. Sign in again."
                   : response.status === 403
                     ? "You no longer have access to this workspace. Reload your workspaces."
                     : response.status === 404
                       ? "This listing or media is unavailable."
-                      : "Rendprop could not load your data. Please retry.";
+                      : response.status === 409 ? "This item changed on another device. Refresh before saving again."
+                      : response.status === 402 ? "Your current plan has reached its allowance. Review your plan in Workspace."
+                      : response.status === 429 ? "Please wait a moment before trying again."
+                      : "Rendprop could not complete this request. Please retry.";
+              // Existing Edge Functions return user-facing HttpError messages. Never
+              // echo provider/5xx bodies or URLs, which may contain signed capabilities.
+              if ([400, 409, 413, 422].includes(response.status)) {
+                try {
+                  const detail = await boundedJson(response, controller.signal, 8192) as { error?: unknown };
+                  if (typeof detail.error === "string" && detail.error.length <= 400 &&
+                    !/https?:|bearer|token|signature|secret|stack|select\s|insert\s/i.test(detail.error)) message = detail.error;
+                } catch { /* Use the stable status message. */ }
+              } else void response.body?.cancel().catch(() => {});
               throw new StudioError("request-failed", message, response.status);
             }
+            if (response.status === 204) { assertCurrent(version, controller.signal); return null; }
             let result: unknown;
             try {
-              result = await boundedJson(response, controller.signal);
+              result = await boundedJson(response, controller.signal, options?.maxResponseBytes);
             } catch (error) {
               if (error instanceof StudioError) throw error;
               throw new StudioError(
@@ -409,8 +450,10 @@ export function createStudioServices(
             "Your session expired. Sign in again.",
           );
         },
-        readTimeoutMs,
-        "Loading your Rendprop data timed out. Check your connection and retry.",
+        options?.timeoutMs ?? readTimeoutMs,
+        options?.method && options.method !== "GET"
+          ? "The request timed out. Refresh this item to check whether it finished before trying again."
+          : "Loading your Rendprop data timed out. Check your connection and retry.",
         () => controller.abort(),
       );
     } catch (error) {
@@ -418,7 +461,9 @@ export function createStudioServices(
       if (error instanceof StudioError) throw error;
       throw new StudioError(
         "network",
-        "Could not reach Rendprop. Check your connection and retry.",
+        options?.method && options.method !== "GET"
+          ? "Connection interrupted. Refresh this item to check whether the change finished before trying again."
+          : "Could not reach Rendprop. Check your connection and retry.",
       );
     } finally {
       signal?.removeEventListener("abort", abort);
@@ -461,6 +506,66 @@ export function createStudioServices(
   }
 
   return {
+    async api(path: string, options: StudioRequestOptions): Promise<unknown> {
+      // Resolve only local Edge routes; never permit credentials to follow a
+      // client-provided origin, relative traversal, fragment or redirect.
+      if (!/^\/functions\/v1\/[a-z][a-z0-9-]*(?:[/?][^#\\]*)?$/.test(path) ||
+        path.includes("..") || /%2e|%2f|%5c|[\u0000-\u0020]/i.test(path))
+        throw new StudioError("request-path", "Choose a valid Rendprop action.");
+      const selected = uuid(options.orgId, "selected organization");
+      const actor = await identity(options.signal);
+      if (!memberships.some(m => m.orgId === selected))
+        throw new StudioError("membership-required", "Load this workspace before making changes.");
+      if (options.timeoutMs !== undefined && (!Number.isSafeInteger(options.timeoutMs) || options.timeoutMs < 1 || options.timeoutMs > 600_000))
+        throw new StudioError("configuration", "The request timeout is invalid.");
+      if (options.maxResponseBytes !== undefined && (!Number.isSafeInteger(options.maxResponseBytes) || options.maxResponseBytes < 1 || options.maxResponseBytes > 32 * 1024 * 1024))
+        throw new StudioError("configuration", "The response limit is invalid.");
+      if (options.idempotencyKey && !/^[a-zA-Z0-9:_-]{1,128}$/.test(options.idempotencyKey))
+        throw new StudioError("request-key", "The action identifier is invalid.");
+      if (options.body !== undefined && new TextEncoder().encode(JSON.stringify(options.body)).byteLength > 32 * 1024 * 1024)
+        throw new StudioError("request-size", "This request is too large. Choose a smaller image.");
+      if (options.body !== undefined && (!options.method || options.method === "GET"))
+        throw new StudioError("request-method", "A read request cannot change data.");
+      return request(path, actor.version, options.signal, selected, undefined, options);
+    },
+    async upload(rawUrl: string, body: Blob, options: {
+      orgId: string; signal?: AbortSignal; contentType?: string;
+      onProgress?: (loaded: number, total: number) => void;
+    }): Promise<{ etag: string | null }> {
+      const actor = await identity(options.signal);
+      const selected = uuid(options.orgId, "selected organization");
+      if (!memberships.some(m => m.orgId === selected))
+        throw new StudioError("membership-required", "Load this workspace before uploading.");
+      const url = validateUploadUrl(rawUrl);
+      if (!body.size || body.size > 64 * 1024 * 1024)
+        throw new StudioError("upload-size", "Upload each file in parts of 64 MB or smaller.");
+      const controller = new AbortController();
+      const abort = () => controller.abort(options.signal?.reason);
+      options.signal?.addEventListener("abort", abort, { once: true });
+      activeRequests.add(controller);
+      try {
+        return await deadline(async () => {
+          assertCurrent(actor.version, controller.signal);
+          options.onProgress?.(0, body.size);
+          const response = await fetcher(url, {
+            method: "PUT", body, headers: { "Content-Type": options.contentType || body.type || "application/octet-stream" },
+            credentials: "omit", redirect: "error", signal: controller.signal,
+          });
+          assertCurrent(actor.version, controller.signal);
+          void response.body?.cancel().catch(() => {});
+          if (!response.ok) throw new StudioError("upload-failed", "Upload was not confirmed. Resume it to reconcile its saved parts.", response.status);
+          options.onProgress?.(body.size, body.size);
+          return { etag: response.headers.get("ETag") };
+        }, 600_000, "The upload was interrupted. Resume it to check which parts reached Rendprop.", () => controller.abort());
+      } catch (error) {
+        assertCurrent(actor.version, options.signal);
+        if (error instanceof StudioError) throw error;
+        throw new StudioError("upload-failed", "The upload was interrupted. Resume it to check which parts reached Rendprop.");
+      } finally {
+        options.signal?.removeEventListener("abort", abort);
+        activeRequests.delete(controller);
+      }
+    },
     async ready(): Promise<SessionSnapshot> {
       await initialization;
       return snapshot;

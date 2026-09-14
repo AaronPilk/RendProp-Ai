@@ -55,7 +55,9 @@ try {
   page.on("pageerror", (error) => receipt.errors.push(error.message));
   page.setDefaultTimeout(8000);
   await page.goto(`${origin}/tests/fixtures/connected.html`, { waitUntil: "networkidle" });
-  await expect(page.getByText("Account connected", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Updated \d/)).toBeVisible();
+  await expect(page.getByRole("button", {name:"Manage Your account",exact:true})).toContainText("Your account");
+  check("an Apple account with an empty profile name retains a visible and accessible account control");
   await nav("Video editor").click();
   const png = await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 800; c.height = 450; const g = c.getContext("2d"); g.fillStyle = "#7d39ec"; g.fillRect(0, 0, c.width, c.height); return c.toDataURL().split(",")[1]; });
   await page.getByLabel("Add photos or videos", { exact: true }).setInputFiles({ name: "isolated.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
@@ -73,7 +75,7 @@ try {
   await expect(title(), "REFRESH_BINDING_REGRESSION: editor must stay mounted during a same-account refresh").toHaveValue("Scoped business edit", { timeout: 2000 });
   await expect(page.getByText(/original file needs reselection/)).toHaveCount(0);
   await page.evaluate(() => window.studioFixture.release());
-  await expect(page.getByText("Account connected", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await expect(title()).toHaveValue("Scoped business edit");
   await expect(page.getByText(/original file needs reselection/)).toHaveCount(0);
   check("same-account refresh retains title and live File binding during and after the request");
@@ -102,7 +104,7 @@ try {
 
   await nav("Workspace").click();
   await page.getByRole("combobox", { name: "Workspace", exact: true }).selectOption("44444444-4444-4444-8444-444444444444");
-  await expect(page.getByText("Account connected", { exact: true })).toBeVisible();
+  await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await nav("Video editor").click();
   await expect(title()).not.toHaveValue("Scoped business edit");
   await expect(page.getByRole("button", { name: /Select clip 1:/ })).toHaveCount(0);
@@ -112,6 +114,16 @@ try {
   await expect(title()).not.toHaveValue("Second organization only");
   await expect(title()).not.toHaveValue("Scoped business edit");
   check("organization and account switches still fence drafts and in-memory files");
+
+  await nav("Properties").click();
+  await page.getByRole("button",{name:"＋ New property",exact:true}).click();
+  await page.getByLabel("Address or property name",{exact:true}).fill("Office handoff fixture");
+  await page.getByRole("button",{name:"Create property",exact:true}).click();
+  await expect(page.getByRole("heading",{name:"Office handoff fixture",exact:true})).toBeVisible();
+  await expect.poll(()=>new URL(page.url()).searchParams.get("listing")).toMatch(/^[a-f0-9-]{36}$/);
+  await nav("Content library").click();
+  await expect(page.getByRole("heading",{name:"Office handoff fixture",exact:true})).toBeVisible();
+  check("newly created property remains selected across workspace refresh and navigation to its library");
 
   await page.screenshot({ path: join(artifacts, "connected-fixture.png"), fullPage: true });
   assert.deepEqual(receipt.externalRequests, [], "No provider or external request is permitted");

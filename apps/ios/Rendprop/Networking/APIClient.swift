@@ -347,6 +347,10 @@ struct AIVoiceResult: Sendable, Equatable {
     /// no listing id yet). The audio itself still succeeded.
     let provenanceRecorded: Bool
 
+    /// Optional private creative-history receipt. A missing receipt must never
+    /// fail audio that was generated and paid for successfully.
+    var sharedResultID: UUID? = nil
+
     /// True when the server gave a duration it actually measured or computed,
     /// rather than admitting it has none.
     var hasReliableDuration: Bool { durationSource != "unknown" && durationS > 0 }
@@ -671,6 +675,7 @@ struct Lead: Identifiable, Codable, Hashable {
     var createdAt: Date
     var source: String? = nil
     var listingAddress: String? = nil
+    var status: String? = nil
 }
 
 /// One tap-to-jump chapter sent with a publish (`{label, t_ms, sort}` on the

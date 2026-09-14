@@ -41,6 +41,22 @@ struct Listing: Identifiable, Codable, Hashable {
     /// The server `listings.id` adopted on first publish. Once set, every server
     /// call for this listing (uploads, publish) uses this id, not the local `id`.
     var serverID: UUID? = nil
+    /// The shared workspace that owns this server row (including team listings).
+    var serverOrgID: UUID? = nil
+    /// True for a row first discovered on another device. Optional for old snapshots.
+    var cloudImported: Bool? = nil
+    /// A complete cloud read no longer returned this listing. Keep local files,
+    /// but do not recreate or publish into a workspace whose access has changed.
+    var cloudUnavailable: Bool? = nil
+    /// Keeps automatic draft sync within the account that created this draft.
+    var cloudSyncOwnerID: UUID? = nil
+    /// Retained across account changes so returning to the same account can
+    /// reattach an authorized row without creating another listing.
+    var cloudDetachedServerID: UUID? = nil
+    /// Initial facts fingerprint survives an interrupted first create.
+    var cloudCreateFingerprint: String? = nil
+    /// Response metadata used only while adopting a create receipt.
+    var cloudCreateReplayed: Bool? = nil
     /// The published tour's server slug (never fabricated from the local UUID).
     var shareSlug: String? = nil
     /// The full public share URL returned by the server (e.g. rendprop.com/f/<slug>).
@@ -290,7 +306,7 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
-             tagline, details, serverID, shareSlug, shareURL,
+             tagline, details, serverID, serverOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, publishedRenderID,
              unbrandedShareURL, stateCode, allowSearchIndexing
@@ -319,6 +335,13 @@ extension Listing {
         tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)
         details          = try c.decodeIfPresent([String: String].self, forKey: .details)
         serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
+        serverOrgID      = try c.decodeIfPresent(UUID.self,   forKey: .serverOrgID)
+        cloudImported    = try c.decodeIfPresent(Bool.self,   forKey: .cloudImported)
+        cloudUnavailable = try c.decodeIfPresent(Bool.self,   forKey: .cloudUnavailable)
+        cloudSyncOwnerID = try c.decodeIfPresent(UUID.self, forKey: .cloudSyncOwnerID)
+        cloudDetachedServerID = try c.decodeIfPresent(UUID.self, forKey: .cloudDetachedServerID)
+        cloudCreateFingerprint = try c.decodeIfPresent(String.self, forKey: .cloudCreateFingerprint)
+        cloudCreateReplayed = try c.decodeIfPresent(Bool.self, forKey: .cloudCreateReplayed)
         shareSlug        = try c.decodeIfPresent(String.self, forKey: .shareSlug)
         shareURL         = try c.decodeIfPresent(String.self, forKey: .shareURL)
         exteriorPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .exteriorPhotoRelPath)

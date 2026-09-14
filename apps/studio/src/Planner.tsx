@@ -53,7 +53,9 @@ export default function Planner({
   items,
   onSave,
   onNotice,
+  connected = false,
 }: {
+  connected?: boolean;
   items: PlanItem[];
   onSave: (items: PlanItem[]) => void;
   onNotice: (message: string) => void;
@@ -179,7 +181,9 @@ export default function Planner({
       // Do not clear the form before the parent confirms browser storage succeeded.
       reset();
       onNotice(
-        editing
+        connected
+          ? "Plan queued to sync with your account. Check the save status above before closing. Calendar reminders and social posts are managed separately."
+          : editing
           ? "Post plan updated in this browser. Any previously downloaded calendar reminder must be updated separately."
           : "Post plan saved in this browser. It has not been scheduled on social media.",
       );
@@ -193,7 +197,7 @@ export default function Planner({
       setRemoving(null);
       if (editing?.id === item.id) reset();
       onNotice(
-        "Post plan removed from this browser only. Calendar reminders and social posts were not changed.",
+        connected ? "Plan removal queued to sync with your account. Calendar reminders and social posts were not changed." : "Post plan removed from this browser only. Calendar reminders and social posts were not changed.",
       );
     } catch (error) {
       report(error, "Could not remove this post plan.");
@@ -253,7 +257,7 @@ export default function Planner({
       if (importMode === "replace") reset();
       setRemoving(null);
       setBackup(null);
-      onNotice(`${backup.file.plans.length} ${backup.file.plans.length === 1 ? "plan" : "plans"} imported using ${importMode}. Saved in this browser workspace only; calendar reminders and social posts were not changed.`);
+      onNotice(`${backup.file.plans.length} ${backup.file.plans.length === 1 ? "plan" : "plans"} imported using ${importMode}. ${connected ? "Queued to sync with your account" : "Saved in this browser workspace only"}; calendar reminders and social posts were not changed.`);
     } catch (error) {
       report(error, "Could not save this import. Existing plans and the preview were kept.");
     }
@@ -268,7 +272,7 @@ export default function Planner({
           <h2 id="planner-form-title">
             {editing ? "Edit post plan" : "Plan your next post"}
           </h2>
-          <span className="tag">Browser draft</span>
+          <span className="tag">{connected ? "Account plan" : "Browser draft"}</span>
         </div>
         <p className="muted">
           Get the story ready, then export a calendar reminder and publish on
@@ -410,7 +414,7 @@ export default function Planner({
           </div>
           {!editing && items.length >= MAX_PLANS ? (
             <p className="planner-validation" role="status">
-              This workspace has 100 browser-local plans. Edit or remove one
+              This workspace has 100 plans. Edit or remove one
               before adding another.
             </p>
           ) : null}
@@ -427,8 +431,7 @@ export default function Planner({
           </span>
         </div>
         <p className="muted small">
-          Plans stay in this browser and workspace. Social accounts are not
-          connected; these are not automatically published.
+          {connected ? "Saved plans sync with this account and workspace. " : "Plans stay in this browser and workspace. "}Social accounts are not connected; these are not automatically published.
         </p>
         <section className="planner-backups" aria-labelledby="planner-backups-title">
           <h3 id="planner-backups-title">Take your plans with you</h3>
@@ -635,11 +638,11 @@ export default function Planner({
                   <div
                     className="planner-remove-confirm"
                     role="group"
-                    aria-label={`Remove local plan ${item.title}`}
+                    aria-label={`Remove ${connected ? "saved" : "local"} plan ${item.title}`}
                   >
-                    <h4>Remove this local plan?</h4>
+                    <h4>Remove this {connected ? "saved" : "local"} plan?</h4>
                     <p>
-                      Only “{item.title}” in this browser workspace will be
+                      Only “{item.title}” in {connected ? "your account workspace" : "this browser workspace"} will be
                       removed. Downloaded calendar reminders, listing media, and
                       social posts will not change.
                     </p>

@@ -12,6 +12,7 @@ import { createStudioServices, readStudioConfig } from "./data";
 import type { VideoEditorProps } from "./editor/VideoEditor";
 import { EDIT_LIMITS, validateDraft } from "./editor/model";
 import type { EditDraft } from "./editor/model";
+import type { AgentPlanHandoff, ShotPlanHandoff } from "./features/creative/model";
 import Planner from "./Planner";
 import Icon from "./icons";
 import type { IconName } from "./icons";
@@ -20,7 +21,12 @@ import { restoreDrafts } from "./drafts";
 import { canRetainWorkspace } from "./workspace-refresh";
 import type { Industry, PlanItem } from "./workspace";
 
-type Page = "overview" | "editor" | "library" | "planner" | "workspace";
+type Page = "overview" | "properties" | "creative" | "editor" | "library" | "planner" | "workspace";
+const ListingWorkflow = lazy(() => import("./features/listings/ListingWorkflow"));
+const CreativeWorkspace = lazy(() => import("./features/creative/CreativeWorkspace"));
+const BusinessWorkspace = lazy(() => import("./features/business/BusinessWorkspace"));
+const CloudEditor = lazy(() => import("./features/sync/CloudEditor"));
+const CloudPlanner = lazy(() => import("./features/sync/CloudPlanner"));
 const EditorImpl = lazy(() => import("./editor/VideoEditor"));
 function VideoEditor(props: VideoEditorProps) {
   return (
@@ -31,6 +37,8 @@ function VideoEditor(props: VideoEditorProps) {
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
   { id: "overview", label: "Overview", icon: "home" },
+  { id: "properties", label: "Properties", icon: "folder" },
+  { id: "creative", label: "Create", icon: "plus" },
   { id: "editor", label: "Video editor", icon: "film" },
   { id: "library", label: "Content library", icon: "library" },
   { id: "planner", label: "Content planner", icon: "calendar" },
@@ -71,7 +79,11 @@ export default function App({ servicesFactory }: {
   const [session, setSession] = useState<SessionSnapshot>(
     services?.getSnapshot() ?? signedOut,
   );
-  const [page, setPage] = useState<Page>("overview");
+  const [page, setPage] = useState<Page>(() => {
+    const view=new URL(window.location.href).searchParams.get("view");
+    return pages.some(item=>item.id===view) ? view as Page : "overview";
+  });
+  const initialListing = useRef(new URL(window.location.href).searchParams.get("listing"));
   const [industry, setIndustry] = useState<Industry>("real_estate");
   const [storedWorkspace, setWorkspace] = useState<Workspace | null>(null);
   const [storedListings, setListings] = useState<Listing[]>([]);
@@ -83,10 +95,15 @@ export default function App({ servicesFactory }: {
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [refresh, setRefresh] = useState(0);
+  const [lastSynced, setLastSynced] = useState<Date | null>(null);
   const [noticeValue, setNoticeValue] = useState("");
   const [noticeScope, setNoticeScope] = useState("");
   const [showLogin, setLoginVisible] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
+  const [authRedirectFailed, setAuthRedirectFailed] = useState(() => {
+    const url = new URL(window.location.href);
+    return url.searchParams.has("error") || new URLSearchParams(url.hash.slice(1)).has("error");
+  });
   const [storedSelected, setSelected] = useState<Listing | null>(null);
   const [storedMedia, setMedia] = useState<ListingMedia | null>(null);
   const [mediaVersion, setMediaVersion] = useState<number | null>(null);
@@ -95,8 +112,14 @@ export default function App({ servicesFactory }: {
   const [storedImport, setImportRequest] = useState<{
     id: string;
     files: File[];
+    listingId?: string;
+    sourceMedia?: {id:string;kind:"photo"|"video"}[];
   }>();
   const [importScope, setImportScope] = useState("");
+  const [storedShotPlan, setStoredShotPlan] = useState<(ShotPlanHandoff & {id:string})>();
+  const [shotPlanScope, setShotPlanScope] = useState("");
+  const [storedAgentPlan, setStoredAgentPlan] = useState<(AgentPlanHandoff & {id:string})>();
+  const [agentPlanScope, setAgentPlanScope] = useState("");
   const transfer = useRef<AbortController | null>(null);
   const [importBusy, setImportBusy] = useState(false);
   const [storedPlans, setPlans] = useState<PlanItem[]>([]);
@@ -107,6 +130,8 @@ export default function App({ servicesFactory }: {
   const [plannerReadFailed, setPlannerReadFailed] = useState(false);
   const [restoreAttempt, setRestoreAttempt] = useState(0);
   const [editorOpened, setEditorOpened] = useState(false);
+  const [plannerOpened, setPlannerOpened] = useState(false);
+  const [creativeOpened, setCreativeOpened] = useState(false);
   const dialogRef = useRef<HTMLElement | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const mediaPageAbort = useRef<AbortController | null>(null);
@@ -127,11 +152,11 @@ export default function App({ servicesFactory }: {
       ? storedWorkspace
       : null;
   const listings = workspace ? storedListings : [];
+  const accountName = workspace?.user.name?.trim() || (isConnected ? "Your account" : "Sign in");
   const selected =
     workspace &&
-    storedSelected?.orgId === workspace.org.id &&
-    listings.some((item) => item.id === storedSelected.id)
-      ? storedSelected
+    storedSelected?.orgId === workspace.org.id
+      ? listings.find((item) => item.id === storedSelected.id) ?? null
       : null;
   const media =
     workspace &&
@@ -156,6 +181,8 @@ export default function App({ servicesFactory }: {
   activeVersion.current = editScope;
   const notice = noticeScope === editScope ? noticeValue : "";
   const importRequest = importScope === editScope ? storedImport : undefined;
+  const importPlan = shotPlanScope === editScope ? storedShotPlan : undefined;
+  const importAgentPlan = agentPlanScope === editScope ? storedAgentPlan : undefined;
   const mediaScope = useRef("");
   mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
   function setRequestedOrg(orgId: string | undefined) {
@@ -166,6 +193,33 @@ export default function App({ servicesFactory }: {
   function setNotice(message: string) {
     setNoticeScope(editScope);
     setNoticeValue(message);
+  }
+  function selectListing(id: string) {
+    const found = listings.find(item => item.id === id);
+    // A newly created row can arrive before the workspace refresh. Preserve
+    // its selection so moving from Properties to Create opens the same work.
+    initialListing.current = found ? null : id;
+    setSelected(found ?? null);
+  }
+  function useShotPlan(plan: ShotPlanHandoff) {
+    if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
+    transfer.current?.abort();
+    setImportRequest(undefined);
+    setStoredAgentPlan(undefined);
+    setShotPlanScope(editScope);
+    setStoredShotPlan({...structuredClone(plan),id:crypto.randomUUID()});
+    selectListing(plan.listingId);
+    navigate("editor");
+  }
+  function useAgentPlan(plan: AgentPlanHandoff) {
+    if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
+    transfer.current?.abort();
+    setImportRequest(undefined);
+    setStoredShotPlan(undefined);
+    setAgentPlanScope(editScope);
+    setStoredAgentPlan({...structuredClone(plan),id:crypto.randomUUID()});
+    selectListing(plan.listingId);
+    navigate("editor");
   }
   function setShowLogin(open: boolean) {
     if (open)
@@ -227,8 +281,11 @@ export default function App({ servicesFactory }: {
         services.getSnapshot().identityVersion !== version
       )
         return;
+      setLastSynced(new Date());
       setWorkspace(account);
       setListings(spaces);
+      const requestedListing=initialListing.current;
+      if(requestedListing){setSelected(spaces.find(item=>item.id===requestedListing) ?? null);initialListing.current=null;}
       setLoadedVersion(version);
       setIndustry(
         account.org.spaceType in INDUSTRIES
@@ -261,7 +318,24 @@ export default function App({ servicesFactory }: {
     return () => controller.abort();
   }, [services, isConnected, session.identityVersion, requestedOrg, refresh]);
   useEffect(() => {
+    if (!workspace || initialListing.current) return;
+    const url=new URL(window.location.href);
+    if(selected)url.searchParams.set("listing",selected.id);else url.searchParams.delete("listing");
+    window.history.replaceState(null,"",url.pathname+url.search+url.hash);
+  }, [selected?.id, workspace?.org.id]);
+  useEffect(() => {
+    if (!isConnected) return;
+    const refreshVisible = () => { if (document.visibilityState === "visible" && navigator.onLine) setRefresh(v => v + 1); };
+    const timer = setInterval(refreshVisible, 30000);
+    window.addEventListener("focus", refreshVisible);
+    window.addEventListener("online", refreshVisible);
+    document.addEventListener("visibilitychange", refreshVisible);
+    return () => { clearInterval(timer); window.removeEventListener("focus", refreshVisible); window.removeEventListener("online", refreshVisible); document.removeEventListener("visibilitychange", refreshVisible); };
+  }, [isConnected]);
+  useEffect(() => {
     if (page === "editor") setEditorOpened(true);
+    if (page === "planner") setPlannerOpened(true);
+    if (page === "creative") setCreativeOpened(true);
   }, [page]);
   useEffect(() => {
     setLoadedKey("");
@@ -269,6 +343,8 @@ export default function App({ servicesFactory }: {
     setPlans([]);
     setLocalError(null);
     setImportRequest(undefined);
+    setStoredShotPlan(undefined);
+    setStoredAgentPlan(undefined);
     transfer.current?.abort();
     const restored = restoreDrafts(() => localStorage, key);
     setDraft(restored.draft);
@@ -430,13 +506,15 @@ export default function App({ servicesFactory }: {
     setPlans(next);
   }
   function navigate(next: Page) {
+    const url=new URL(window.location.href);url.searchParams.set("view",next);
+    window.history.replaceState(null,"",url.pathname+url.search+url.hash);
     setPage(next);
     setNotice("");
   }
   async function connect() {
     if (!services) {
       setNotice(
-        "Account connection is not configured on this Studio preview yet. You can edit local files now.",
+        "Account connection is not configured on Studio yet. You can edit local files now.",
       );
       return;
     }
@@ -528,7 +606,7 @@ export default function App({ servicesFactory }: {
       if (mediaPageAbort.current === controller) setMediaPageBusy(false);
     }
   }
-  async function importMedia(url: string, name: string) {
+  async function importMedia(url: string, name: string, sourceMedia: {id:string;kind:"photo"|"video"}) {
     transfer.current?.abort();
     const controller = new AbortController();
     transfer.current = controller;
@@ -557,7 +635,7 @@ export default function App({ servicesFactory }: {
       const declared = Number(response.headers.get("content-length"));
       if (declared > EDIT_LIMITS.fileBytes)
         throw new Error(
-          "This file exceeds the local editor’s 32 MiB limit. Download a smaller clip from the app.",
+          `This file exceeds the editor’s ${EDIT_LIMITS.fileBytes / 1024 ** 2} MiB limit. Use a shorter clip or the property’s render tools.`,
         );
       const reader = response.body.getReader();
       const chunks: Uint8Array<ArrayBuffer>[] = [];
@@ -569,7 +647,7 @@ export default function App({ servicesFactory }: {
           size += value.byteLength;
           if (size > EDIT_LIMITS.fileBytes)
             throw new Error(
-              "This file exceeds the local editor’s 32 MiB limit.",
+              `This file exceeds the editor’s ${EDIT_LIMITS.fileBytes / 1024 ** 2} MiB limit.`,
             );
           chunks.push(new Uint8Array(value));
         }
@@ -580,15 +658,19 @@ export default function App({ servicesFactory }: {
       if (controller.signal.aborted || version !== activeVersion.current)
         return;
       if (!currentScope()) return;
-      const file = new File(chunks, name, {
-        type: response.headers.get("content-type")?.split(";")[0] ?? "",
+      const contentType=response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "";
+      const extension=({"image/png":"png","image/jpeg":"jpg","image/webp":"webp","video/mp4":"mp4","video/quicktime":"mov","video/x-m4v":"m4v"} as Record<string,string>)[contentType];
+      const file = new File(chunks, extension ? name.replace(/\.[^.]+$/, `.${extension}`) : name, {
+        type: contentType,
         lastModified: 0,
       });
       setImportScope(version);
-      setImportRequest({ id: crypto.randomUUID(), files: [file] });
-      setPage("editor");
+      setStoredShotPlan(undefined);
+      setStoredAgentPlan(undefined);
+      setImportRequest({ id: crypto.randomUUID(), files: [file], listingId:selected?.id, sourceMedia:[sourceMedia] });
+      navigate("editor");
       setNotice(
-        "Media loaded into the local editor. This does not change the original in your app.",
+        "Shared media is ready in Video editor.",
       );
     } catch (error) {
       if (timedOut && currentScope())
@@ -626,10 +708,8 @@ export default function App({ servicesFactory }: {
             {workspace?.org.name.slice(0, 1).toUpperCase() ?? "R"}
           </span>
           <div>
-            <strong>{workspace?.org.name ?? "Your creative space"}</strong>
-            <small>
-              {workspace ? "Connected workspace" : "Local workspace"}
-            </small>
+            {workspace ? <><label className="sr-only" htmlFor="switch-workspace">Switch workspace</label><select id="switch-workspace" value={workspace.org.id} onChange={e=>{transfer.current?.abort();setRequestedOrg(e.target.value);}}>{workspace.memberships.map(m=><option key={m.orgId} value={m.orgId}>{m.orgName}</option>)}</select></> : <strong>Your creative space</strong>}
+            <small>{workspace ? "Connected workspace" : "Local workspace"}</small>
           </div>
         </div>
         <p className="nav-label">CREATE & GROW</p>
@@ -643,7 +723,7 @@ export default function App({ servicesFactory }: {
             >
               <Icon name={item.icon} />
               {item.label}
-              {item.id === "editor" && <span className="nav-new">NEW</span>}
+
             </button>
           ))}
         </nav>
@@ -652,8 +732,7 @@ export default function App({ servicesFactory }: {
             <Icon name="link" />
             <strong>From phone to studio.</strong>
             <p>
-              Sign in with the account you use in Rendprop to bring your spaces
-              with you.
+              {workspace ? "Your properties and uploaded media share this workspace with your iPhone. Refresh on either device to see the latest work." : "Sign in with the account you use in Rendprop to bring your spaces with you."}
             </p>
             <button
               onClick={() =>
@@ -675,7 +754,7 @@ export default function App({ servicesFactory }: {
             Terms
           </a>
           <small className="version-label">
-            Studio preview · Local drafts stay here
+            Your phone. Your office. One workspace.
           </small>
         </div>
       </aside>
@@ -690,24 +769,28 @@ export default function App({ servicesFactory }: {
               {busy
                 ? "Connecting…"
                 : workspace
-                  ? "Account connected"
+                  ? `Updated ${lastSynced?.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) ?? "just now"}`
                   : "Local mode"}
             </span>
             <button
               className="account-button"
+              aria-label={isConnected ? `Manage ${accountName}` : "Sign in"}
               onClick={() =>
                 isConnected ? navigate("workspace") : setShowLogin(true)
               }
             >
               <span className="account-avatar">
-                {workspace?.user.name?.slice(0, 1) ?? "↗"}
+                {workspace?.user.name?.trim().slice(0, 1) || "↗"}
               </span>
-              {workspace?.user.name ??
-                (isConnected ? "Your account" : "Sign in")}
+              {accountName}
             </button>
           </div>
         </header>
         <main id="main" tabIndex={-1}>
+          {authRedirectFailed && !isConnected && <div className="notice error" role="alert">
+            <span>This sign-in link expired or was interrupted. Start a fresh Apple sign-in to continue.</span>
+            <button onClick={() => { setAuthRedirectFailed(false); setShowLogin(true); }}>Sign in again</button>
+          </div>}
           {notice && (
             <div className="notice" role="status">
               <span>{notice}</span>
@@ -767,19 +850,23 @@ export default function App({ servicesFactory }: {
               </button>
             </div>
           )}
-          <div className="page-title">
+          {!(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
             <div>
               <p className="eyebrow">
                 {industryName(industry).toUpperCase()} / RENDPROP STUDIO
               </p>
               <h1>
                 {page === "overview"
-                  ? "Make your next impression."
+                  ? workspace ? "Pick up where you left off." : "Make your next impression."
                   : heading.label}
               </h1>
               <p className="subtitle">
                 {page === "overview"
-                  ? "Your spaces. Your stories. One place to create."
+                  ? workspace ? "Your listings, media, and business tools in one shared workspace." : "Your spaces. Your stories. One place to create."
+                  : page === "properties"
+                    ? "Everything for a listing, from its first capture to the published tour."
+                  : page === "creative"
+                    ? "Create photos, narration, scripts, and videos for your listing."
                   : page === "editor"
                     ? "Turn your photos and footage into a story worth sharing."
                     : page === "library"
@@ -790,15 +877,20 @@ export default function App({ servicesFactory }: {
               </p>
             </div>
             {page === "overview" && (
-              <button className="primary" onClick={() => navigate("editor")}>
+              <button className="primary" onClick={() => navigate("properties")}>
                 <Icon name="plus" size={18} />
-                Create a video
+                Open properties
               </button>
             )}
-          </div>
+          </div>}
           {page === "overview" && (
             <>
-              <section className="studio-hero">
+              {workspace ? <section className="handoff-summary" aria-label="Workspace summary">
+                <button onClick={()=>navigate("properties")}><span>Properties</span><strong>{listings.length}</strong><small>Open your shared workspace →</small></button>
+                <button onClick={()=>navigate("properties")}><span>Ready to finish</span><strong>{listings.filter(l=>l.status==="draft"||l.status==="capturing").length}</strong><small>Continue a listing →</small></button>
+                <button onClick={()=>navigate("properties")}><span>Processing</span><strong>{listings.filter(l=>l.status==="processing"||l.status==="uploading").length}</strong><small>Check your latest progress →</small></button>
+                <button onClick={()=>navigate("workspace")}><span>New leads</span><strong>{workspace.usage.leadsNew}</strong><small>Open your lead inbox →</small></button>
+              </section> : <section className="studio-hero">
                 <div className="hero-copy">
                   <span className="tag tag-light">YOUR NEW CREATIVE DESK</span>
                   <h2>
@@ -845,7 +937,7 @@ export default function App({ servicesFactory }: {
                     9:16 <span>Ready for your feed</span>
                   </div>
                 </div>
-              </section>
+              </section>}
               <section className="quick-grid" aria-label="Creation tools">
                 <button
                   className="quick-card"
@@ -903,14 +995,14 @@ export default function App({ servicesFactory }: {
                     spaces={listings.slice(0, 4)}
                     select={(space) => {
                       setSelected(space);
-                      navigate("library");
+                      navigate("properties");
                     }}
                   />
                 ) : (
                   <EmptyConnect onConnect={() => setShowLogin(true)} />
                 )}
               </section>
-              <div className="industry-strip">
+              {!workspace && <div className="industry-strip">
                 <span>BUILT AROUND YOUR BUSINESS</span>
                 <label className="sr-only" htmlFor="industry">
                   Business type
@@ -930,15 +1022,23 @@ export default function App({ servicesFactory }: {
                   Local display preference · your app’s business settings stay
                   unchanged
                 </small>
-              </div>
+              </div>}
             </>
           )}
+          {page === "properties" && (workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
+            <ListingWorkflow key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
+          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />)}
+          {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening creative tools…</p>}>
+            <CreativeWorkspace key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} />
+          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section
               hidden={page !== "editor"}
               aria-label="Video editing workspace"
             >
-              {workspaceDraftReady ? (
+              {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
+                <CloudEditor key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} />
+              </Suspense> : workspaceDraftReady ? (
                 <VideoEditor
                   key={`${editScope}:${restoreAttempt}`}
                   active={page === "editor"}
@@ -1047,6 +1147,7 @@ export default function App({ servicesFactory }: {
                                       void importMedia(
                                         photo.url,
                                         `photo-${photo.id}.jpg`,
+                                        {id:photo.id,kind:"photo"},
                                       )
                                     }
                                   >
@@ -1074,6 +1175,7 @@ export default function App({ servicesFactory }: {
                                       void importMedia(
                                         video.url,
                                         `video-${video.id}.mp4`,
+                                        {id:video.id,kind:"video"},
                                       )
                                     }
                                   >
@@ -1091,7 +1193,7 @@ export default function App({ servicesFactory }: {
                             )}
                             <p className="small muted">
                               Links expire after 10 minutes. Refresh to renew.
-                              Local imports support up to 32 MiB per file.
+                              Editor imports support up to {EDIT_LIMITS.fileBytes / 1024 ** 2} MiB per file.
                             </p>
                           </>
                         )}
@@ -1120,7 +1222,7 @@ export default function App({ servicesFactory }: {
                     {media.unavailableCount === 1
                       ? "item cannot"
                       : "items cannot"}{" "}
-                    be opened in this preview. Use the Rendprop app to review
+                    be opened in Studio. Use the Rendprop app to review
                     these items.
                   </p>
                 )}
@@ -1134,8 +1236,8 @@ export default function App({ servicesFactory }: {
                 )}
               </section>
             )}
-          {page === "planner" &&
-            (workspaceDraftReady ? (
+          {(page === "planner" || plannerOpened) && <section hidden={page !== "planner"} aria-label="Content planning workspace">
+            {workspace && services ? <Suspense fallback={<p role="status">Opening saved plans…</p>}><CloudPlanner key={editScope} services={services} workspace={workspace} onNotice={setNotice}/></Suspense> : workspaceDraftReady ? (
               <Planner
                 key={restoreScope}
                 items={plans}
@@ -1146,7 +1248,8 @@ export default function App({ servicesFactory }: {
               />
             ) : (
               <p role="status">Opening this workspace’s content plan…</p>
-            ))}
+            )}</section>}
+          {page === "workspace" && workspace && services && <Suspense fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></Suspense>}
           {page === "workspace" && (
             <div className="settings-grid">
               <section className="panel">
@@ -1159,7 +1262,7 @@ export default function App({ servicesFactory }: {
                 {workspace ? (
                   <>
                     <p className="account-email">
-                      {workspace.user.name ?? "Your account"}
+                      {accountName}
                     </p>
                     <p className="muted">{workspace.user.email}</p>
                     <label>
@@ -1226,9 +1329,8 @@ export default function App({ servicesFactory }: {
                   )}
                 </div>
                 <p className="small muted">
-                  Direct publishing and account analytics require platform
-                  connections. No post is scheduled or published by this
-                  preview.
+                  Download your finished video and use your social app to post.
+                  Saved plans and calendar reminders help you keep your schedule.
                 </p>
                 <button onClick={() => navigate("planner")}>
                   Open content planner
@@ -1286,7 +1388,7 @@ export default function App({ servicesFactory }: {
             </button>
             {!services && (
               <p className="setup-note">
-                Account sign-in is not configured on this preview. Local editing
+                Account sign-in is not configured on Studio. Local editing
                 and the content planner work now.
               </p>
             )}
@@ -1344,8 +1446,8 @@ function SpaceList({
     <div className="empty-inline">
       <h3>No spaces to show yet.</h3>
       <p>
-        Spaces saved to your account in the Rendprop app appear here. Local-only
-        captures are still on your phone.
+        Create a property in Properties, or sign in to the same account on your
+        iPhone. Uploaded photos and footage will appear in both places.
       </p>
     </div>
   ) : (

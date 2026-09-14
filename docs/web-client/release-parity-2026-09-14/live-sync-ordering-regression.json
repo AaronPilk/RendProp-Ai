@@ -1,0 +1,42 @@
+{
+  "status": "failed",
+  "runId": "eb30153f-9f3c-4dc9-9eb0-a089f82479e1",
+  "checks": [
+    "two independent sessions restore the same existing account and workspace",
+    "phone-created listing appears in Studio and desktop edits return to the second session",
+    "listing-create replay returns the original row without duplication or overwriting later office edits",
+    "shared drafts persist across sessions and stale revisions cannot overwrite them",
+    "live account, team, leads and disclosure contracts decode; notification changes return to the second session",
+    "real upload gateway completion, gallery attachment, activity hydration and signed media read agree"
+  ],
+  "aiCalls": 0,
+  "emailSends": 0,
+  "publications": 0,
+  "customerDataTouched": false,
+  "appleLoginVerified": false,
+  "failure": {
+    "message": "Expected values to be strictly deep-equal:\n+ actual - expected\n\n  [\n+   '2217cd68-8d7b-4513-974e-07f5188ad894',\n    'e1f2a094-e081-4dd5-80d6-8de10b0e41b0',\n-   '2217cd68-8d7b-4513-974e-07f5188ad894'\n  ]\n"
+  },
+  "cleanup": {
+    "requested": true,
+    "accountRemoved": true,
+    "complete": false,
+    "pending": true,
+    "pendingWork": {
+      "r2_objects": 4,
+      "stream_videos": 0,
+      "crm_contacts": 0,
+      "apple_revocation": false,
+      "analytics_cleanup": false,
+      "profile_row": false,
+      "auth_user": false,
+      "gpu_attempts": 0,
+      "multipart_uploads": 0,
+      "unverified_uploads": 0,
+      "unverified_render_jobs": 0,
+      "waiting_for_storage_writes": true
+    },
+    "deletionRequestId": "0dd8879e-94c1-43e7-8984-e3913ea20562"
+  },
+  "finishedAt": "2026-09-14T18:28:31.565Z"
+}

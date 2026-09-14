@@ -17,6 +17,7 @@ import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { createListingRow } from "./create.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
 // server-controlled and never taken from the body. Must stay in sync with the
@@ -149,10 +150,8 @@ Deno.serve(async (req) => {
       const org_id = await orgForUser(user.id, preferredOrg(req));
       const patch = pick(body);
       validate(patch, org_id, null);
-      const row = { ...patch, org_id, agent_id: user.id };
-      const { data, error } = await db.from("listings").insert(row).select().single();
-      if (error) throw new HttpError(400, `Create failed: ${error.message}`);
-      return json(data, 201);
+      const result = await createListingRow(db, patch, user.id, org_id, req.headers.get("Idempotency-Key"));
+      return json({ ...result.data, create_replayed: result.replayed }, result.replayed ? 200 : 201);
     }
 
     // ---- GET /listings ----

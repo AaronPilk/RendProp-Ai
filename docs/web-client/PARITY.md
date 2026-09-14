@@ -1,5 +1,11 @@
 # Parity inventory — before components
 
+Historical planning inventory. The September 14 implementation and executed
+verification are recorded in [STUDIO_RELEASE_20260914.md](STUDIO_RELEASE_20260914.md)
+and its linked feature receipts. The foundation checker below deliberately remains
+an inventory checker; its zero browser-proof count does not describe the newer
+release's separately executed browser suites.
+
 Source baseline: `f14081d`. This is an inventory, **not verified parity**.
 Machine-readable truth: `packages/client-contracts/capabilities.json`. Its verifier
 compares every `APIClient` protocol method against the actual Swift file, detects missing,

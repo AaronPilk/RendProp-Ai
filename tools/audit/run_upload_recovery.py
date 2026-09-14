@@ -27,6 +27,7 @@ def main():
     upload = root / "apps/ios/Rendprop/Upload"
     files = [models, upload / "UploadRecovery.swift", upload / "DirectUploader.swift",
              upload / "DirectUploadJournal.swift", upload / "UploadManager.swift", upload / "UploadStore.swift",
+             upload / "CloudPhotoReferences.swift",
              root / "tests/phase1/UploadRecoveryDependencies.swift", root / "tests/phase1/UploadRecoveryTests.swift"]
     receipt = {"accepted": False, "commands": [], "sourceHashes": {
         str(p.relative_to(root) if p.is_relative_to(root) else p.name): hashlib.sha256(p.read_bytes()).hexdigest()

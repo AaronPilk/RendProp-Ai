@@ -58,7 +58,7 @@ const MAX_ALTERED_MEDIA = 40;
 
 /** The model family in plain words — the public page never names a vendor model. */
 function modelFamily(kind: string): string {
-  return kind === "aerial" || kind === "reel" ? "AI video" : "AI image edit";
+  return kind === "aerial" || kind === "reel" ? "AI video" : kind === "other" ? "Edited media" : "AI image edit";
 }
 
 interface AlteredMedium {

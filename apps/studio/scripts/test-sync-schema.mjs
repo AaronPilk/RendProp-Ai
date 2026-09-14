@@ -1,0 +1,46 @@
+import {mkdtemp,writeFile,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';import {join,resolve} from 'node:path';import {spawnSync} from 'node:child_process';
+const root=resolve(import.meta.dirname,'../../..'),temp=await mkdtemp(join(tmpdir(),'rendprop-sync-db-'));
+const port=String(55439);
+function run(command,args){const r=spawnSync(command,args,{encoding:'utf8'});if(r.status!==0)throw new Error(`${command}: ${r.stderr||r.stdout}`);return r.stdout;}
+let started=false;
+try{
+ run('initdb',['-D',join(temp,'data'),'-A','trust','--no-locale']);
+ run('pg_ctl',['-D',join(temp,'data'),'-l',join(temp,'server.log'),'-o',`-k ${temp} -p ${port} -c listen_addresses=''`,'start']);started=true;
+ const setup=`create role anon; create role authenticated; create role service_role bypassrls;
+ create schema auth; create table auth.users(id uuid primary key);
+ create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;
+ create function auth.jwt() returns jsonb language sql stable as $$select jsonb_build_object('is_anonymous',coalesce(nullif(current_setting('request.jwt.claim.is_anonymous',true),''),'false')::boolean)$$;
+ grant usage on schema auth to authenticated;grant execute on function auth.uid() to authenticated;
+ create table orgs(id uuid primary key,deleted_at timestamptz);
+ create table memberships(user_id uuid,org_id uuid);
+ create table listings(id uuid primary key,org_id uuid references orgs(id),deleted_at timestamptz);
+ create table media_provenance(id uuid primary key);
+ create function is_org_member(id uuid) returns boolean language sql stable as $$select exists(select 1 from memberships where org_id=id and user_id=auth.uid())$$;
+ grant select on orgs,listings,memberships to authenticated;
+ insert into auth.users values('10000000-0000-4000-8000-000000000001'),('10000000-0000-4000-8000-000000000002');
+ insert into orgs values('20000000-0000-4000-8000-000000000001',null),('20000000-0000-4000-8000-000000000002',null);
+ insert into memberships values('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001');
+ insert into listings values('30000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001',null);`;
+ const migration=await readFile(join(root,'services/supabase/migrations/20260914161954_studio_cross_device_workspace.sql'),'utf8');
+ const named=await readFile(join(root,'services/supabase/migrations/20260914164554_studio_documents_named_accounts.sql'),'utf8');
+ const assertions=`insert into studio_documents(user_id,org_id,key,kind,payload)values('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','edit','edit','{}');
+ set role authenticated; select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',false);
+ do $$begin if (select count(*) from studio_documents)<>1 then raise exception 'owner read failed';end if;
+ begin insert into studio_documents(user_id,org_id,key,kind,payload)values(auth.uid(),'20000000-0000-4000-8000-000000000001','planner','planner','{}');raise exception 'client mutation permitted';exception when insufficient_privilege then null;end;
+ begin select count(*) from studio_creative_results;raise exception 'trusted result exposed';exception when insufficient_privilege then null;end;end$$;
+ select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000002',false);
+ do $$begin if (select count(*) from studio_documents)<>0 then raise exception 'other user read';end if;end$$;
+ select set_config('request.jwt.claim.is_anonymous','true',false);select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',false);
+ do $$begin if (select count(*) from studio_documents)<>0 then raise exception 'anonymous session read';end if;end$$;
+ select set_config('request.jwt.claim.is_anonymous','false',false);
+ reset role;update orgs set deleted_at=now();set role authenticated;select set_config('request.jwt.claim.sub','10000000-0000-4000-8000-000000000001',false);
+ do $$begin if (select count(*) from studio_documents)<>0 then raise exception 'deleted org read';end if;end$$;
+ reset role;set role anon;
+ do $$begin begin select count(*) from studio_documents;raise exception 'anon read';exception when insufficient_privilege then null;end;end$$;
+ reset role;
+ do $$begin begin insert into studio_documents(user_id,org_id,key,kind,payload)values('10000000-0000-4000-8000-000000000001','20000000-0000-4000-8000-000000000001','invalid','edit','[]');raise exception 'array payload allowed';exception when check_violation then null;end;end$$;`;
+ const file=join(temp,'test.sql');await writeFile(file,setup+'\n'+migration+'\n'+named+'\n'+assertions);
+ run('psql',['-X','-h',temp,'-p',port,'-d','postgres','-v','ON_ERROR_STOP=1','-f',file]);
+ console.log(JSON.stringify({status:'passed',checks:['migration executes on Postgres17','owner read','foreign user denied','anon denied','client mutation denied','trusted results hidden','deleted workspace denied','payload constraint']},null,2));
+}finally{if(started)run('pg_ctl',['-D',join(temp,'data'),'stop','-m','fast']);await rm(temp,{recursive:true,force:true});}

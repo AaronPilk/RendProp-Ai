@@ -1,0 +1,38 @@
+{
+  "project": "ymgqpbnjpztwjsyvceld",
+  "verifiedAt": "2026-09-14T18:36:47.807Z",
+  "functions": [
+    {
+      "name": "listings",
+      "version": 33,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "updated_at": 1789410403377,
+      "ezbr_sha256": "73a5941efb1699d563c749ec5cdaf3ab17fbf5f2c98f991f99ade2d6f2305b4f"
+    },
+    {
+      "name": "tours",
+      "version": 38,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "updated_at": 1789410403377,
+      "ezbr_sha256": "9d4d81578b334b2159c4c3bf6754ca2f3354ba5f7d9982592c865441218f2db2"
+    },
+    {
+      "name": "ai-voice",
+      "version": 29,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "updated_at": 1789410403377,
+      "ezbr_sha256": "4622f89db98f5b021138df0b2f9575eb85a264a76452dc333ed454721424f46b"
+    },
+    {
+      "name": "studio",
+      "version": 6,
+      "status": "ACTIVE",
+      "verify_jwt": true,
+      "updated_at": 1789410887726,
+      "ezbr_sha256": "159629263797fd5d7848e4badc6b02415e555250ce95dcd13ed57fbb1d42c64d"
+    }
+  ]
+}

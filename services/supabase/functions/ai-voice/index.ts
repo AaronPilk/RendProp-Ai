@@ -95,8 +95,8 @@
 //   ai-video do today. A repeated `Idempotency-Key` inside 120 s gets a 409
 //   `conflict`; it does not return the first response. So a double tap cannot
 //   double-charge, but a genuinely lost response cannot be recovered either —
-//   the retry is refused rather than re-answered. Nothing is persisted
-//   server-side to replay from.
+//   the retry is refused rather than re-answered. Successful named-account audio
+//   is retained in private shared history; that is not a replay of this request.
 //
 // ── COST VISIBILITY (added 2026-09-07 — this route used to be invisible) ────
 //
@@ -142,6 +142,8 @@ import type { RouteStep } from "../_shared/router.ts";
 import { resolveChain } from "../_shared/providers/chain.ts";
 import { R2_BUCKET_UPLOADS, presignPut } from "../_shared/r2.ts";
 import { AwsClient } from "https://esm.sh/aws4fetch@1.0.20";
+import { saveSharedVoice } from "./shared-result.ts";
+import { assertVoiceWriteWindow, reserveVoiceStorage } from "./storage-reservation.ts";
 
 // Denial-of-wallet guard: every TTS call bills ElevenLabs per character.
 const TTS_MAX_PER_WINDOW = 20;
@@ -646,6 +648,9 @@ Deno.serve(async (req) => {
       const charge = await guardTTS(user.id, req);
 
       try {
+        // Reserve an owned object key before provider dispatch. Account deletion
+        // retains this key and its write deadline even if result history fails.
+        const storage = await reserveVoiceStorage(adminClient(), user.id, charge.orgId, body.listing_id);
         // ── ROUTE ── read-only: which row describes what we are about to run,
         // and at what price. It does NOT decide the vendor (see the header) —
         // ElevenLabs is called unconditionally below, exactly as before. Inside
@@ -714,7 +719,8 @@ Deno.serve(async (req) => {
         // ── STORE ── the mp3 goes to R2; the app gets a short-lived signed GET.
         // Own prefix so an R2 lifecycle rule can expire voiceovers without
         // touching listing media.
-        const key = `ai-voice/${charge.orgId}/${crypto.randomUUID()}.mp3`;
+        assertVoiceWriteWindow(storage);
+        const key = storage.key;
         const putUrl = await presignPut({
           bucket: R2_BUCKET_UPLOADS,
           key,
@@ -725,6 +731,7 @@ Deno.serve(async (req) => {
           method: "PUT",
           headers: { "content-type": OUTPUT_MIME },
           body: audioBuf,
+          signal: AbortSignal.timeout(120_000),
         });
         if (!put.ok) {
           const detail = await put.text().catch(() => "");
@@ -798,7 +805,19 @@ Deno.serve(async (req) => {
           promptSummary: text.slice(0, 300),
         });
 
+        // Preserve successful phone narration in the same private history the
+        // office editor uses. No paid call, signed URL, or client-selected key
+        // is replayed by this write. Studio's own reservation avoids duplicates.
+        const sharedResultId = !user.is_anonymous && body.listing_id
+          ? await saveSharedVoice(userClient(req), adminClient(), {
+            userId: user.id, orgId: charge.orgId, listingId: body.listing_id,
+            key, requestKey: req.headers.get("idempotency-key")?.trim(),
+            label: body.label ?? "Reel voiceover", voiceName, duration: durationS,
+            words: timed.words, disclosure: prov.disclosure, provenanceId: prov.id,
+          }) : null;
+
         return json({
+          ...(sharedResultId ? { shared_result_id: sharedResultId } : {}),
           audio_url: audioUrl,
           mime: OUTPUT_MIME,
           duration_s: durationS,

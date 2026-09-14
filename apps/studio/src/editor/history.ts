@@ -1,4 +1,4 @@
-import { parseDraft, reviseDraft, validateDraft, type EditDraft, type SourceRef } from "./model";
+import { draftMedia, parseDraft, reviseDraft, validateDraft, type EditDraft, type SourceRef } from "./model";
 
 export const HISTORY_LIMITS = { steps: 20, bytes: 64 * 1024 } as const;
 type Snapshot = { label: string; json: string };
@@ -59,7 +59,7 @@ function travel(history: EditHistory, direction: "undo" | "redo"): EditHistory {
   if (target.id !== history.present.id) throw new Error("Edit history belongs to another plan.");
   // Restoring old content is a new revision, never a return to an old export identity.
   const present = reviseDraft(history.present, {
-    clips: target.clips, title: target.title, ratio: target.ratio, audio: target.audio,
+    clips: target.clips, title: target.title, ratio: target.ratio, audio: target.audio, narration: target.narration, overlays: target.overlays,
   });
   const reverse = snapshot(history.present, entry.label);
   return direction === "undo"
@@ -72,7 +72,7 @@ export const redoHistory = (history: EditHistory) => travel(history, "redo");
 
 /** Only current exact source identities may retain live media, regardless of history. */
 export function releasedMediaIds(next: EditDraft, sources: ReadonlyMap<string, SourceRef>): string[] {
-  const expected = new Map(next.clips.map((clip) => [clip.id, clip.source]));
+  const expected = new Map(draftMedia(next).map((clip) => [clip.id, clip.source]));
   return [...sources].filter(([id, source]) => {
     const wanted = expected.get(id);
     return !wanted || wanted.sha256 !== source.sha256 || wanted.size !== source.size ||

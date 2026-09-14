@@ -14,6 +14,8 @@ let user = A;
 let mode = "ok";
 let callbacks: (event: AuthChangeEvent, session: Session | null) => void = () => {};
 let release: (() => void) | undefined;
+const documents = new Map<string, unknown>();
+const listingRows: Record<string, unknown>[] = [];
 const calls: { path: string; org?: string | null }[] = [];
 const session = (): Session => ({
   access_token: "isolated-fixture-not-a-token",
@@ -35,6 +37,22 @@ const fetcher: typeof fetch = async (input, options) => {
   const actor = user;
   calls.push({ path: url.pathname, org });
   if (calls.length > 100) throw new Error("Unexpected request loop");
+  if (url.pathname === "/functions/v1/listings" && options?.method === "POST") {
+    const body = JSON.parse(String(options.body));
+    const row = {id:crypto.randomUUID(),org_id:org,agent_id:actor,space_type:"real_estate",address:"",tagline:null,details:{},status:"draft",created_at:new Date().toISOString(),deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null,...body};
+    listingRows.push(row);return Response.json(row,{status:201});
+  }
+  if (url.pathname === "/functions/v1/studio/listing-state") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),assets:[],photos:[],jobs:[],renders:[],chapters:[],next_offset:null});
+  if (url.pathname === "/functions/v1/studio/media") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),photos:[],videos:[],next_offset:null,unavailable_count:0});
+  if (url.pathname === "/functions/v1/studio/documents") {
+    const body=options?.body ? JSON.parse(String(options.body)) : null;
+    const key=body?.key ?? url.searchParams.get("key"); const storageKey=`${actor}:${org}:${key}`;
+    if(body) { const existing=documents.get(storageKey) as {revision:number}|undefined;
+      if(body.expected_revision!==(existing?.revision??0))return Response.json({error:"Conflict"},{status:409});
+      documents.set(storageKey,{...body,revision:(existing?.revision??0)+1,updated_at:new Date().toISOString()});
+    }
+    return Response.json({document:documents.get(storageKey)??null});
+  }
   if (url.pathname === "/rest/v1/memberships") {
     if (mode === "hold") await new Promise<void>((resolve) => {
       const done = () => { options?.signal?.removeEventListener("abort", done); resolve(); };
@@ -46,14 +64,15 @@ const fetcher: typeof fetch = async (input, options) => {
       orgs: { id, name: id === ORG ? "Fixture business" : "Second business", space_type: "real_estate", deleted_at: null } })), { headers: { "Content-Range": "0-1/2" } });
   }
   if (url.pathname === "/functions/v1/me") return Response.json({
-    user: { id: actor, name: actor === A ? "Fixture A" : "Fixture B", email: "fixture@example.invalid", avatar_url: null },
+    user: { id: actor, name: actor === A ? "  " : "Fixture B", email: "fixture@example.invalid", avatar_url: null },
     org: { id: org, name: org === ORG ? "Fixture business" : "Second business", handle: null, space_type: "real_estate" },
     plan: "free", plan_raw: "trial", trial_ends_at: null, plan_expires_at: null,
     usage: { listings: 0, leads: 0, leads_new: 0, renders: 0 },
   });
   if (url.pathname === "/rest/v1/listings") {
     if (url.searchParams.get("org_id") !== `eq.${org}`) throw new Error("Missing selected workspace filter");
-    return Response.json([], { headers: { "Content-Range": "*/0" } });
+    const selectedRows=listingRows.filter(row=>row.org_id===org&&row.agent_id===actor);
+    return Response.json(selectedRows, { headers: { "Content-Range": selectedRows.length ? `0-${selectedRows.length-1}/${selectedRows.length}` : "*/0" } });
   }
   throw new Error(`Unexpected fixture request: ${url.pathname}`);
 };
