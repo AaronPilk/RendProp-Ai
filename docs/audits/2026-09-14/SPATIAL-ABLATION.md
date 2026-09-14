@@ -32,7 +32,8 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 | Sept 11 baseline | Off | 3,000 | 153 | 19.65985680 | 0.81097144 | 0.55676222 | 209.441 | 0.57381695 |
 | A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | 0.21150668 |
 | A02 | On | 3,000 | 153 | 19.15759087 | 0.80769598 | 0.56202793 | 252.094 | 0.64541049 |
-| B01 | On | 30,000 | 153 | 21.47684288 | 0.80856246 | 0.38908443 | 2,425.635 | Pending closed-hour billing; full lifetime hold retained |
+| B01 | On | 30,000 | 153 | 21.47684288 | 0.80856246 | 0.38908443 | 2,425.635 | 2.07333106 |
+| D01, real SfM | On | 30,000 | 153 | Pending | Pending | Pending | Pending | Full lifetime hold retained |
 
 A02 is a valid negative result: PSNR changed by −0.502266 dB, SSIM by
 −0.003275, and LPIPS by +0.005266. An independent comparison confirmed the
@@ -65,6 +66,21 @@ detail. View 0000 still has severe stretched or duplicated geometry around the
 telescope, plant, mirror rim and window. This prevents acceptance despite the
 better average PSNR. Conversion with the unchanged pinned CPU SOG converter
 is being measured locally; it is not proof of Modal conversion performance.
+At 21:53:20 UTC it was still running after 632 seconds, exceeding the current
+600-second production conversion allowance. No real SfM ran concurrently
+during those first 632 seconds. Local D preprocessing started afterward, so
+the remaining conversion elapsed time may include CPU contention. Preserve
+the private timing observation rather than treating the full local elapsed
+time as an isolated Modal benchmark.
+Separately, the same pinned converter on the local Apple M4 Pro GPU produced
+an 8,575,332-byte SOG in 13.578 seconds, with all three SH bands and ten
+clustering iterations unchanged. This is a compression-backend validation,
+not a training-profile change. The GPU/Metal result loads in the actual
+production viewer, passes browser checks, and was navigated using the saved
+UI sequence. Both its initial view and interior pan still have obvious geometry
+smears; B remains rejected. The converter's CPU and GPU clustering are both
+randomized, and GPU may use FP16; byte equality is not expected. Cloud
+Vulkan/L4 compatibility is not established by this local result.
 No suitable denser version of this capture has been identified, so C is
 unavailable with the current inputs and real SfM is the next quality ablation.
 
@@ -141,6 +157,13 @@ terminal, with zero active sandboxes in their apps. Historical usage plus A is
 **$2.53693796**; after retaining B's full $4.9110336 hold, **$17.55202844** remains
 available. These are gross metered usage amounts, not a monthly final invoice.
 
+At 22:00:48 and 22:02:56 UTC, unchanged closed-hour billing attributed
+**$2.07333106** to B01. Its recorded provider lifetime was 3,153.965 seconds;
+fresh checks again confirmed successful remote deletion, terminal 137 and zero
+active B sandboxes. Historical usage plus A and B is **$4.61026902**. With D's
+full **$4.9110336** hold retained, **$15.47869738** remains available. Local
+SfM and local converter checks incur no provider charge.
+
 ## Release status
 
 No winner yet. All production gates remain disabled. The candidate queue
@@ -161,6 +184,16 @@ rollback; its temporary server was stopped. All 71 worker tests pass. The
 integrated training harness has 130 passing tests and seven intentional skips
 for the separate official SfM environment, where those seven pass.
 
+An additional production SfM entrypoint is prepared in new, unreferenced files.
+It composes the frozen D1 geometry functions for 20–400 frames, preserves the
+every-eighth evaluation records, and provides child-process-group cancellation
+and an environment constructed without inherited credentials. Its targeted
+suite has 15 passing tests in official COLMAP, including a real synthetic
+20-frame reconstruction and mixed successful/failed verification rows. In the
+trainer environment, 13 pass and two geometry tests skip. The service suite
+before the last metadata-only test addition had 83 passes and two skips. No
+400-frame resource benchmark or production integration is claimed.
+
 Current capture UI has a saved-photo counter, not green coverage targets or
 8/16 completion. Automatic stopping at 400 frames/600 seconds records an
 unexportable `limit_reached` session. For a denser capture, use 300–350 saved
@@ -169,7 +202,30 @@ Coverage copy should encourage walking with overlap, revisiting doorways and
 corners from different positions, upper/lower coverage and slow motion. Do not
 label a frame count as room completeness.
 
-The optional D1 helper is prepared but has not processed real room images.
+The D1 helper started processing the real room locally at about 21:53 UTC,
+from the frozen clean `84f4c10` checkout, under its 1,800-second supervisor.
+This stage allocates no cloud GPU and incurs no provider charge.
+It completed successfully in 118.150 seconds: 1,480 candidate pairs were
+tested, with positive geometric inliers in 824 pairs and zero in 656. The
+frozen helper's `verified_pairs` field counts stored verification rows, not
+positive-inlier pairs; its original hash-bound report remains unchanged.
+27,235 points were triangulated, and 26,522 points with
+92,696 observations survived filtering. Reprojection RMSE changed from
+1.643584 pixels before pose-prior adjustment to 0.847237 afterward and
+0.834482 after filtering. The solver reached its 101-iteration limit and
+reported `NO_CONVERGENCE` with a usable solution; do not call this convergence.
+Training images 2, 3, 4 and 88 have no triangulated observations. Median camera
+position/rotation changes were 0.013144 metres / 0.415431 degrees; maxima were
+0.429339 metres / 6.770736 degrees. These are optimizer adjustments, not
+independently measured ARKit errors.
+
+The exact D dataset, training-only feature database, pair list, original
+evaluation records and committed helper hashes passed the manual allocation
+guard. D01 then allocated once from frozen `84f4c10`, retaining B's settings
+and dependency baseline. Its exact 164 dependency versions were verified
+after network denial, all 157 dataset files were transferred, and training
+started at 22:08:51 UTC. No D quality metrics exist yet. All previous sandbox
+lifetimes were reconciled before this allocation.
 It uses official COLMAP/pycolmap 4.2.0 in a separate CPU environment: SIFT,
 deterministic temporal/nearby pairs, triangulation, then camera-position-prior
 bundle adjustment with fixed intrinsics. The 133 training images alone supply
