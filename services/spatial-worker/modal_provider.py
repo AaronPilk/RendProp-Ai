@@ -238,7 +238,7 @@ class ModalProvider:
             command = ["python", f"{experiment.REMOTE}/run_training.py", "--gsplat-dir", "/opt/gsplat-phase-a",
                        "--dataset", f"{experiment.REMOTE}/dataset", "--output", f"{experiment.REMOTE}/result",
                        "--max-seconds", str(job["max_training_seconds"]), "--max-steps", str(job["max_iterations"]),
-                       "--max-gaussians", str(job["max_gaussians"])]
+                       "--max-gaussians", str(job["max_gaussians"]), "--pose-opt"]
             experiment.exec_to_log(sb, command, job["max_training_seconds"] + 100, root / "training.log",
                                    stage=receipt["stages"]["training"], persist=save)
             metadata = copy_bounded_json(sb, f"{experiment.REMOTE}/result/run.json", root / "run.json", 1024**2)

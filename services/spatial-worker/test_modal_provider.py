@@ -42,12 +42,12 @@ class ProviderFixture(unittest.TestCase):
         self.metadata = {"status": "trained", "gsplat_commit": TRAINER_COMMIT, "frames": 20,
                          "max_steps": 3000, "max_seconds": 900, "max_gaussians": 500000,
                          "gaussian_count": 100, "world_normalization": False,
-                         "pose_optimization": False, "elapsed_seconds": 200.5}
+                         "pose_optimization": True, "elapsed_seconds": 200.5}
         self.metrics = {"psnr": 19.6, "ssim": 0.81, "lpips": 0.55, "num_GS": 100}
         def content(remote):
             if remote.endswith("run.json"):
                 return json.dumps(self.metadata).encode()
-            if remote.endswith("val_step2999.json"):
+            if remote.endswith(f"val_step{self.metadata['max_steps'] - 1:04d}.json"):
                 return json.dumps(self.metrics).encode()
             return b"sog"
         self.sb.filesystem.stat.side_effect = lambda remote: SimpleNamespace(size=len(content(remote)))
@@ -99,11 +99,42 @@ class ProviderTests(ProviderFixture):
         self.assertLess(deny, media)
         self.assertEqual(execute.call_count, 4)
         training = execute.call_args_list[2].args[1]
+        self.assertEqual(training.count("--pose-opt"), 1)
         self.assertEqual(training[training.index("--max-seconds") + 1], "900")
         self.assertEqual(training[training.index("--max-steps") + 1], "3000")
+        self.assertIs(receipt["quality"]["pose_optimization"], True)
         self.sb.terminate.assert_called_once_with(wait=True)
         self.sb.filesystem.remove.assert_called_once_with(modal_room.REMOTE, recursive=True)
         self.assertIs(self.lease.provider_stopped, True)
+
+    def test_candidate_bounds_drive_deadline_metrics_and_converter_input_without_extending_provider_lifetime(self):
+        value_job = job()
+        value_job.update(max_iterations=30000, max_training_seconds=4200)
+        self.metadata.update(max_steps=30000, max_seconds=4200)
+        with patch.object(modal_room, "inventory", return_value=[]), \
+                patch.object(modal_room, "exec_to_log") as execute, redirect_stdout(StringIO()):
+            self.provider.reconstruct(value_job, self.root, self.capture, self.lease)
+        training_call = execute.call_args_list[2]
+        training = training_call.args[1]
+        self.assertEqual(training[training.index("--max-steps") + 1], "30000")
+        self.assertEqual(training[training.index("--max-seconds") + 1], "4200")
+        self.assertEqual(training[training.index("--max-gaussians") + 1], "500000")
+        self.assertEqual(training.count("--pose-opt"), 1)
+        self.assertEqual(training_call.args[2], 4300)
+        downloads = [call.args[0] for call in self.sb.filesystem.copy_to_local.call_args_list]
+        self.assertIn(f"{modal_room.REMOTE}/result/stats/val_step29999.json", downloads)
+        converter_call = execute.call_args_list[3]
+        self.assertIn(f"{modal_room.REMOTE}/result/ply/point_cloud_29999.ply", converter_call.args[1])
+        self.assertEqual(converter_call.args[2], 600)
+        receipt = json.loads((self.root / "provider-receipt.json").read_text())
+        self.assertEqual(receipt["quality"]["steps"], 30000)
+        self.assertIs(receipt["quality"]["pose_optimization"], True)
+        create = self.modal.Sandbox.create.call_args.kwargs
+        self.assertLessEqual(create["timeout"], 7080)
+        self.assertLessEqual(compute_bound_cents(create), value_job["max_cost_cents"])
+        self.assertEqual(create["secrets"], [])
+        self.modal.Sandbox.create.assert_called_once()
+        self.sb.terminate.assert_called_once_with(wait=True)
 
     def test_ambiguous_allocation_cannot_authorize_an_immediate_retry(self):
         def lost_create(**options):
@@ -238,7 +269,7 @@ class QualityReceiptTests(ProviderFixture):
         self.metadata.update(command=["/private/path", "secret-canary"], token="secret-canary",
                              resolved_dependencies=["private-source"], room_label="private-room")
         self.metrics.update(raw_image="private-pixels", source_path="/private/path")
-        record = quality_record(job(), self.sb.object_id, 20, self.metadata, self.metrics)
+        record = quality_record(job(), self.sb.object_id, 20, self.metadata, self.metrics, pose_opt=True)
         self.assertEqual(set(record), {"event", "job_id", "sandbox_id", "trainer_commit", "frames",
                          "loss_heldout_count", "test_every", "seed", "pose_optimization", "steps",
                          "gaussians", "training_elapsed_seconds", "psnr", "ssim", "lpips", "evaluation"})
@@ -248,28 +279,37 @@ class QualityReceiptTests(ProviderFixture):
                              ("private", "secret-canary", "command", "token")))
         dense_job = job(); dense_job["manifest"]["frames"] = ["frame"] * 153
         self.assertEqual(quality_record(dense_job, self.sb.object_id, 153,
-                         {**self.metadata, "frames": 153}, self.metrics)["loss_heldout_count"], 20)
+                         {**self.metadata, "frames": 153}, self.metrics, pose_opt=True)["loss_heldout_count"], 20)
 
     def test_nonfinite_or_invalid_metric_ranges_fail_without_quality_log(self):
         for field, value in (("psnr", float("nan")), ("psnr", float("inf")), ("psnr", -0.01),
                              ("ssim", 1.01), ("ssim", -1.01), ("lpips", -0.01),
                              ("lpips", float("inf")), ("psnr", True), ("ssim", "0.81")):
             with self.subTest(field=field, value=value), self.assertRaisesRegex(JobFailure, "invalid_training_quality"):
-                quality_record(job(), self.sb.object_id, 20, self.metadata, {**self.metrics, field: value})
+                quality_record(job(), self.sb.object_id, 20, self.metadata, {**self.metrics, field: value}, pose_opt=True)
 
     def test_metadata_must_match_claimed_job_and_pinned_trainer(self):
         for change in ({"status": "running"}, {"gsplat_commit": "wrong-commit"}, {"frames": 21},
                        {"max_steps": 3001}, {"max_seconds": 901}, {"max_gaussians": 500001},
                        {"gaussian_count": 0}, {"gaussian_count": 101}, {"gaussian_count": True},
-                       {"world_normalization": True}, {"pose_optimization": True},
+                       {"world_normalization": True}, {"pose_optimization": False},
                        {"elapsed_seconds": float("nan")}, {"elapsed_seconds": -1},
                        {"elapsed_seconds": 1001}):
             with self.subTest(change=change), self.assertRaises(JobFailure):
-                quality_record(job(), self.sb.object_id, 20, {**self.metadata, **change}, self.metrics)
+                quality_record(job(), self.sb.object_id, 20, {**self.metadata, **change}, self.metrics, pose_opt=True)
         with self.assertRaisesRegex(JobFailure, "frame_count"):
-            quality_record(job(), self.sb.object_id, 21, self.metadata, self.metrics)
+            quality_record(job(), self.sb.object_id, 21, self.metadata, self.metrics, pose_opt=True)
         with self.assertRaisesRegex(JobFailure, "gaussian_count"):
-            quality_record(job(), self.sb.object_id, 20, self.metadata, {**self.metrics, "num_GS": True})
+            quality_record(job(), self.sb.object_id, 20, self.metadata, {**self.metrics, "num_GS": True}, pose_opt=True)
+
+    def test_quality_pose_flag_must_match_actual_trainer_receipt_in_both_directions(self):
+        for pose_opt in (False, True):
+            metadata = {**self.metadata, "pose_optimization": pose_opt}
+            with self.subTest(pose_opt=pose_opt):
+                record = quality_record(job(), self.sb.object_id, 20, metadata, self.metrics, pose_opt=pose_opt)
+                self.assertIs(record["pose_optimization"], pose_opt)
+                with self.assertRaisesRegex(JobFailure, "training_output_unconfirmed"):
+                    quality_record(job(), self.sb.object_id, 20, metadata, self.metrics, pose_opt=not pose_opt)
 
     def test_copy_checks_positive_bounded_size_before_transfer_and_exact_size_after(self):
         for index, size in enumerate((0, -1, True, 1024**2 + 1, 1.5)):
@@ -396,7 +436,7 @@ class DependencyBaselineTests(ProviderFixture):
             if command[:2] == ["python", "-c"]:
                 verified = True
             elif "--max-steps" in command:
-                self.assertNotIn("--pose-opt", command)
+                self.assertEqual(command.count("--pose-opt"), 1)
                 self.assertEqual(command[command.index("--max-steps") + 1], "3000")
                 self.assertEqual(command[command.index("--max-seconds") + 1], "900")
         def copy(source, remote):

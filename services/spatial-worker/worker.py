@@ -149,8 +149,8 @@ def validate_job(job, now=None):
             and canonical_uuid(job.get("lease_token"))
             and canonical_uuid(job.get("attempt_key")), "invalid_job_identity")
     require(integer(job.get("max_seconds"), 7200, 7200), "invalid_lifetime_ceiling")
-    require(integer(job.get("max_training_seconds"), 1, 1800), "invalid_training_ceiling")
-    require(integer(job.get("max_iterations"), 1, 7000), "invalid_iteration_ceiling")
+    require(integer(job.get("max_training_seconds"), 1, 4200), "invalid_training_ceiling")
+    require(integer(job.get("max_iterations"), 1, 30000), "invalid_iteration_ceiling")
     require(integer(job.get("max_gaussians"), 100, 500000), "invalid_gaussian_ceiling")
     require(integer(job.get("max_cost_cents"), MIN_COST_RESERVATION_CENTS, 2500), "insufficient_cost_reservation")
     try:

@@ -56,10 +56,20 @@ class ContractTests(unittest.TestCase):
     def test_valid_contract(self):
         self.assertGreater(w.validate_job(job()), 7000)
 
+    def test_candidate_training_bounds_keep_lifetime_and_cost_reservation_unchanged(self):
+        value_job = job()
+        value_job.update(max_iterations=30000, max_training_seconds=4200)
+        self.assertGreater(w.validate_job(value_job), 7000)
+        self.assertEqual(value_job["max_seconds"], 7200)
+        self.assertEqual(value_job["max_gaussians"], 500000)
+        self.assertEqual(value_job["max_cost_cents"], 600)
+
     def test_hostile_numeric_bounds(self):
         for field, value in [("max_seconds", 0), ("max_seconds", 60), ("max_seconds", 7201), ("max_seconds", True),
-                             ("max_training_seconds", 1801), ("max_training_seconds", 0),
-                             ("max_iterations", 7001), ("max_gaussians", 500001),
+                             ("max_training_seconds", 4201), ("max_training_seconds", 0),
+                             ("max_training_seconds", True), ("max_training_seconds", 4200.0),
+                             ("max_iterations", 30001), ("max_iterations", 0),
+                             ("max_iterations", True), ("max_iterations", 30000.0), ("max_gaussians", 500001),
                              ("max_cost_cents", 599), ("max_cost_cents", 2501)]:
             with self.subTest(field=field, value=value):
                 value_job = job(); value_job[field] = value

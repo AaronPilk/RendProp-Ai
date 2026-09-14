@@ -126,8 +126,8 @@ available. These are gross metered usage amounts, not a monthly final invoice.
 
 ## Release status
 
-No winner yet. All production gates remain disabled. A source toggle alone is
-insufficient: the queue provider must explicitly pass `--pose-opt` if it wins.
+No winner yet. All production gates remain disabled. The candidate queue
+provider explicitly passes `--pose-opt` and admits 30,000 steps / 4,200 seconds.
 The worker now has a bounded, allowlisted numeric quality receipt in CPU logs
 before conversion and temporary cleanup. It contains the job/provider identity,
 fixed evaluator settings and validated PSNR/SSIM/LPIPS, never raw logs, media,
@@ -135,6 +135,14 @@ geometry or credentials. This remains undeployed until a quality winner exists.
 Production setup now has the same 164 public Python version pins as A02 and
 verifies the exact installed set after network denial and before media transfer.
 The dependency file is included in both deployment and durable source inventories.
+Migration `0055_spatial_training_quality_limits.sql` was scaffolded with the
+CLI and numbered in the owner's next available sequence. It widens only the
+two training check constraints, leaving existing row values and defaults intact.
+It is **not applied**. An isolated local Postgres test accepted 30,000 / 4,200,
+rejected out-of-range values, verified unchanged runtime settings, and confirmed
+rollback; its temporary server was stopped. All 71 worker tests pass. The
+integrated training harness has 130 passing tests and seven intentional skips
+for the separate official SfM environment, where those seven pass.
 
 Current capture UI has a saved-photo counter, not green coverage targets or
 8/16 completion. Automatic stopping at 400 frames/600 seconds records an
