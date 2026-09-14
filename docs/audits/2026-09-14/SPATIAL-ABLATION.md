@@ -21,7 +21,7 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 - Full resolved Python dependency versions are constrained to the original run
   and checked for exact equality before transferring private media. Public
   setup, source pins, fixed image digest and resource limits stay unchanged.
-- Read all 20 PSNR/SSIM values via the trainer's aggregate metric JSON. Compare
+- Record aggregate PSNR/SSIM over all 20 views from the trainer's metric JSON. Compare
   fixed render pairs 0007 (interior edges/patterns), 0014 (cabinetry/door trim),
   and 0000 (backlit thin geometry). Text legibility and continuous-navigation
   ghosting still need a real-room acceptance capture; these frames cannot prove
@@ -31,7 +31,24 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | Sept 11 baseline | Off | 3,000 | 153 | 19.65985680 | 0.81097144 | 0.55676222 | 209.441 | 0.57381695 |
 | A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | Provisional; pending closed-hour billing |
-| A02 | On | 3,000 | 153 | Pending | Pending | Pending | Pending | Pending |
+| A02 | On | 3,000 | 153 | 19.15759087 | 0.80769598 | 0.56202793 | 252.094 | Pending closed-hour billing |
+| B01 | On | 30,000 | 153 | Running | Running | Running | Running | Full lifetime hold retained |
+
+A02 is a valid negative result: PSNR changed by −0.502266 dB, SSIM by
+−0.003275, and LPIPS by +0.005266. An independent comparison confirmed the
+single changed trainer argument, identical resolved dependencies and all 157
+dataset files, all 26 collected artifact hashes, and pixel-identical original
+image halves in all 20 held-out render pairs. The output has 29,733 Gaussians.
+The fixed interior and cabinetry views still have blurred detail and ghosted
+edges; A02 does not pass quality acceptance. Remote directory removal and
+terminal provider poll 137 are explicitly confirmed.
+
+B01 started at 20:48:50 UTC from a clean detached execution checkout of
+`af6f127`. It keeps A02's images, initialization, pose settings, dependencies,
+500,000-Gaussian ceiling and evaluator. The only model-profile change is
+30,000 steps; the wall-clock watchdog is 4,200 seconds. Step-dependent trainer
+schedules retain the pinned implementation's defaults. No intermediate
+checkpoint or hidden tuning change is introduced.
 
 A replaces exactly one trainer argument, `--no-pose-opt` with `--pose-opt`.
 Simply deleting the former is ineffective: the pinned trainer defaults false.
@@ -110,3 +127,14 @@ photos and Stop manually; preserve the cadence/quality thresholds during A/B.
 Coverage copy should encourage walking with overlap, revisiting doorways and
 corners from different positions, upper/lower coverage and slow motion. Do not
 label a frame count as room completeness.
+
+The optional D1 helper is prepared but has not processed real room images.
+It uses official COLMAP/pycolmap 4.2.0 in a separate CPU environment: SIFT,
+deterministic temporal/nearby pairs, triangulation, then camera-position-prior
+bundle adjustment with fixed intrinsics. The 133 training images alone supply
+features, matches, tracks and point colors. The original 20 evaluation image
+and camera records stay unchanged. The explicit isotropic 1-metre position
+prior is an assumption, not measured ARKit uncertainty. D changes both seed
+initialization and training poses, so it is a pipeline ablation. Synthetic
+checks establish feasibility only; D is not a quality result or deployment
+decision.
