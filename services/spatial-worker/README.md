@@ -8,14 +8,20 @@ do not export folders, rent GPUs or run any command.
 
 ## Deployment status
 
-**Automatic app-queue workflow is not yet accepted on a real cloud job.** The
-separate authorized153-frame experiment completed training September11 at
-21:26UTC and produced a private PLY/held-out diagnostics; its explicit directory
-cleanup and GPU termination were confirmed. The output is visibly blurry and
-does not pass production-quality acceptance. The prior billing-cycle allocation
-failure is historical, not a current refusal.
-This worker does not change that account setting. Importing`app.py` or running the tests
-neither starts the scheduler nor allocates a GPU.
+**Automatic app-queue workflow is not yet accepted on a real cloud job.**
+The September 14 controlled experiments are recorded in
+[the ablation report](../../docs/audits/2026-09-14/SPATIAL-ABLATION.md).
+Pose optimization alone, 30,000 training steps, and the first real-SfM profile
+all failed visual acceptance. Two further CPU SfM candidates were rejected
+before GPU training because of missing coverage or implausible camera poses.
+No winning reconstruction profile is approved for deployment.
+
+The disabled worker candidate now uses the exact-source L4 GPU SOG converter
+verified by a separate private export probe: 500,000 Gaussians, three SH bands,
+ten clustering iterations and an 8.61 MB output in 18.08 seconds. The actual
+production decoder loaded that output. This verifies export compatibility,
+not reconstruction quality or automatic queue acceptance. Importing `app.py`
+or running tests neither starts the scheduler nor allocates a GPU.
 
 Never enable this worker just to make a UI screenshot look complete. The backend
 runtime row defaults disabled with zero budgets and the scheduler independently
@@ -46,8 +52,10 @@ no App Review metadata/build attachment changes are part of this service.
 - `max_seconds`: first-profile lifecycle is fixed at7200s maximum authority;
   the actual providerTTL uses remaining time minus120s. Shorter configuration
   profiles need measured bootstrap support and are not silently accepted.
-  `max_training_seconds`: trainer subprocess≤1800s (default900s).
-  `max_iterations`:≤7000 (default3000); gaussians≤500000.
+  The candidate admits `max_training_seconds` up to 4200 and `max_iterations`
+  up to 30000; defaults remain 900 seconds / 3000 steps, with at most 500000
+  Gaussians. Draft migration 0055 widens only the corresponding database check
+  constraints; it has not been applied and does not change live runtime values.
 - Database reservesUSD6 per attempt before queueing, conservatively covering the
   documented full sandbox lifetime and bounded CPU controller. This is not a
   measured typical room cost. No automatic refund or second paid GPU on ambiguous
@@ -60,6 +68,10 @@ no App Review metadata/build attachment changes are part of this service.
   billable memory. The override is omitted. Input and output are separately
   bounded by the application at2GiB and32MiB; temporary derived datasets and
   dependencies also occupy scratch space.
+- Export validates the L4/Vulkan device before private media transfer, uses GPU
+  index 0 with no CPU fallback, binds the training PLY bytes/hash/count to its
+  receipt, and checks the bounded SOG archive and conversion receipt. The
+  converter has a 600-second process timeout within the existing job deadline.
 - FinalSOG≤32MiB. One-write service output ticket binds a server-created revision,
   actual bytes and SHA256. Completion is server-confirmed and remains private.
 - Lease renewal continues during output transfer. A failed heartbeat terminates
@@ -106,8 +118,10 @@ made in the manifest or viewer.
 
 ## Reproducibility caveat
 
-Base image, Node22.22.0archive, gsplat1.5.3commit, GLMgitlink, PlayCanvas2.22.1 and
-SplatTransform3.4.2/npm lock are pinned. The inherited experiment setup still
-resolves transitive Python dependencies and apt packages during setup. A locked,
-prebuilt deployment image and a successfully reproduced CUDA build remain
-release gates; a passing mocked provider test does not close them.
+Base image, Node 22.22.0 archive, gsplat 1.5.3 commit, GLM gitlink,
+PlayCanvas 2.22.1 and SplatTransform 3.4.2/npm lock are pinned. The 164 resolved
+Python distribution versions are frozen to the baseline and checked for exact
+equality after network denial and before private media transfer. Public apt
+packages still resolve during setup, so the image is not fully hermetic.
+Source-bound manual A/B/D training and the L4 export probe ran successfully;
+the automatic app-queue path and acceptable real-room quality remain unproven.

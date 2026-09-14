@@ -310,3 +310,128 @@ every fallback camera must retain its exact original record and zero tracks.
 The largest selected component and all missing/fallback IDs must be reviewed
 before another paid training allocation. This preparation is local CPU only,
 bounded to 1,800 seconds, with no cloud charge or quality acceptance implied.
+
+D2 CPU preparation completed in **18.351 seconds**. Registration took
+13.655 seconds and produced four components with 80, 15, 15 and 15 cameras
+(one camera overlaps two secondary components). Only the largest 80-camera
+component was selected. The other 53 training records fell back to their exact
+original poses; nine cameras were never registered in any component. Cameras
+2, 3, 4 and 88 still have zero observations. The selected reconstruction has
+23,984 points and 120,723 observations, with 1.227112-pixel reprojection RMSE.
+Root rejected this candidate before GPU allocation: it does not recover the
+problematic early cameras and would discard useful reconstruction coverage.
+**D2 PSNR/SSIM/LPIPS are unavailable because no trainer ran; cloud cost is $0.**
+This CPU rejection is preserved rather than presented as a quality win.
+
+D3 was frozen as `ec2a66e` before execution. It expands only candidate matching
+to all 8,778 pairs of the same 133 training images, retaining the extracted
+features, calibration, matching options, D2 registration pipeline and evaluation
+cohort. The helper SHA-256 is
+`5995dd585c338b3869a3a9cf2d860f37826bebe9c5f4d16213f68a9eabd43b1c`.
+Six synthetic tests passed, including actual matching, preservation of an old
+zero-result pair, the complete 153-frame cohort and original-pose fallback.
+Independent rejection checks and a one-second supervisor timeout also passed.
+The real-room run used a new private directory and the unchanged 1,800-second
+CPU bound, with original-pose fallback explicitly enabled before execution.
+
+D3 CPU preparation completed in **178.381 seconds**, of which matching took
+143.537 seconds. Expanding 1,480 to 8,778 candidate pairs added 1,242 positive
+pairs: 2,066 pairs now have inliers. The selected single reconstruction contains
+126 training cameras, 34,903 points and 167,982 observations. Its remaining seven
+original-pose fallback IDs are **2, 3, 4, 86, 87, 88 and 142**; all have zero
+tracks. The final reprojection RMSE is 1.273660 pixels. Camera alignment has a
+5.465-metre maximum residual; after bundle adjustment, maximum position and
+rotation changes from the original poses are 5.380 metres and 179.935 degrees.
+Independent verification reproduced the outliers: frame 140 moved 5.379573 m
+and 179.935063 degrees; frames 56, 58, 59 and 60 moved 1.505–1.879 m and
+179.476–179.786 degrees. The next largest position change is only 0.117982 m.
+These are differences from ARKit, not independent ground-truth errors. The
+source frames include both visible blur and fairly sharp, repetitive furnishings
+or blinds, so blur alone does not explain the reversed camera estimates.
+Expanded matching found no new positive-inlier pair for frames 2, 3, 4 or 88.
+
+Root rejected D3 before GPU allocation: the problematic early views remain
+unsupported, and the newly registered cameras include implausible reversals.
+**D3 PSNR/SSIM/LPIPS are unavailable because no trainer ran; cloud cost is $0.**
+Independent verification passed all five committed source hashes, frozen D2
+geometry options, exact dry plan, 153 original JPEGs/intrinsics, 20 held-out
+camera records, the 133-camera partition and reciprocal tracks. All 1,480
+original rows in each pair table, all ten fixed database tables and cached
+features remain unchanged; the expanded database contains exactly 8,778 pairs.
+A successful data-integrity check is not a successful reconstruction.
+
+The disabled worker candidate now uses the cloud-validated GPU export helper,
+with exact-source verification, device checks before media transfer, unchanged
+dependency/network gates, receipt-bound PLY input and bounded SOG validation.
+All existing provider cost, lease, journal and cleanup semantics remain intact.
+The 80 relevant offline tests pass, and the real converter02 receipts and SOG
+also pass the production validation functions. No worker deployment, Secret,
+runtime update or migration has been applied.
+
+
+At 23:45–23:46 UTC, read-only production checks confirmed the runtime remains:
+
+```json
+{
+  "enabled": false,
+  "daily_budget_cents": 0,
+  "org_monthly_budget_cents": 0,
+  "job_cap_cents": 600,
+  "max_seconds": 7200,
+  "max_training_seconds": 900,
+  "max_iterations": 3000,
+  "max_gaussians": 500000
+}
+```
+
+There are zero `spatial_jobs`. No winning runtime values are prescribed because
+no run passes quality acceptance. B's 30,000 steps / 4,200-second watchdog are
+measured experiment settings, not a release recommendation. The worker source
+switch is still false, and no new Secret, schedule, deployment or migration was
+activated. Claude's fetched tip at 23:44 UTC remains `8d32f855`, already included.
+
+
+## Capture guidance supported by this scan
+
+The original sidecars contain 153 saved frames over 76.0065 seconds, with every
+adjacent gap approximately 0.500043 seconds. Median adjacent translation is
+13.24 cm (95th percentile 28.81 cm, maximum 42.22 cm); median rotation is
+10.04 degrees (95th percentile 26.33, maximum 56.92). Twenty-four of 152
+intervals turn more than 20 degrees. All saved frames report normal tracking;
+that state does not establish usable photographic overlap or sharpness.
+
+Frames 2–5 have short 0.84–1.12 ms exposures, so long exposure is not a supported
+explanation for their registration failure. Frames 86–90 have 16.67 ms
+exposures and several 27–36-degree turns between successive half-second frames.
+These are recorded adjacent averages, not shutter-motion measurements or proof
+of the current blur filter's behavior. The scan predates that filter.
+
+For the next private capture, use one well-lit room, remove moving subjects,
+and include a printed label near a door frame so text and edge quality can be
+judged. Walk slowly with gentle turns, keeping recognizable details visible
+across successive viewpoints. Revisit the first wall, doorways and corners from
+several positions; include upper and lower surfaces. Do not stand in place and
+spin. Aim for 300–350 **saved photos** and press Stop and save before the current
+400-photo or ten-minute cap. More photos alone do not guarantee coverage.
+A new recording is a new benchmark, not the missing same-capture C ablation:
+freeze its evaluation cohort before training and compare variants on that cohort.
+
+Recommended capture UI work, separate from the frozen experiments:
+
+1. Replace the 150–250-frame advice with a guided slower scan and a visible
+   reminder to stop before the hard limit; say "photos" rather than "frames".
+2. Show where the user should move next and distinguish translation/overlap
+   from merely turning. The present saved-photo count is not a completeness
+   score; green targets and an "8 of 16" indicator are not implemented.
+3. Keep existing blur and low-texture feedback, and add practical overlap/revisit
+   guidance. Do not claim normal ARKit tracking means a usable reconstruction.
+4. Review the cap-stop behavior: currently reaching a cap preserves the files
+   but marks the scan unexportable. A future change should safely finalize and
+   validate complete saved data rather than make the user repeat the whole room.
+   This behavior was not changed during the ablation.
+
+ARKit-only reconstruction did not pass on this scan. The SfM branch adds measured
+feature tracks and camera refinement, but none of the tested SfM profiles has
+passed acceptance either. Better coverage and reliable pose validation are
+needed before further paid training or enabling the feature. No result establishes
+Matterport-level quality, text legibility or an end-to-end phone queue success.
