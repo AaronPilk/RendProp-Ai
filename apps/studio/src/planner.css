@@ -1,20 +1,22 @@
 .content-planner .planner-edit-note {
   padding: 12px 14px;
-  border-left: 3px solid #a97cf2;
-  background: #211a2e;
+  border-left: 3px solid var(--line);
+  background: var(--surface);
   border-radius: 0 8px 8px 0;
-  color: #d9c6fa;
+  color: var(--accent-text);
   font-size: 0.82rem;
   overflow-wrap: anywhere;
 }
 .content-planner .planner-validation,
 .content-planner .planner-time-choice {
   padding: 12px 14px;
-  background: #30211f;
-  border: 1px solid #765544;
+  background: var(--warn-soft);
+  border: 1px solid var(--line);
   border-radius: 9px;
-  color: #f3d2b9;
+  color: var(--warn);
   font-size: 0.82rem;
+
+  border-color: var(--warn-line);
 }
 .content-planner .planner-validation {
   margin: 0;
@@ -43,9 +45,9 @@
   gap: 10px;
   flex-wrap: wrap;
   padding: 12px;
-  border: 1px solid #35303f;
+  border: 1px solid var(--line);
   border-radius: 10px;
-  background: #191620;
+  background: var(--surface);
 }
 .content-planner .planner-week-buttons {
   display: flex;
@@ -62,35 +64,35 @@
 }
 .content-planner .planner-week small {
   display: block;
-  color: #b8b4c4;
+  color: var(--muted);
   font-size: 0.7rem;
   margin-top: 5px;
   overflow-wrap: anywhere;
 }
 .content-planner .planner-result-count {
-  color: #b8b4c4;
+  color: var(--muted);
   font-size: 0.74rem;
   margin: 13px 0;
 }
 .content-planner .planned-item.is-editing {
-  border-color: #a97cf2;
+  border-color: var(--line);
 }
 .content-planner .planner-legacy {
   font-size: 0.72rem;
-  color: #dbbba0;
+  color: var(--muted);
 }
 .content-planner .planner-remove {
-  color: #f2bac8;
-  border-color: #765160;
+  color: var(--bad);
+  border-color: var(--bad-line);
 }
 .content-planner .planner-remove-confirm {
   margin-top: 16px;
-  border-top: 1px solid #765160;
+  border-top: 1px solid var(--line);
   padding-top: 15px;
 }
 .content-planner .planner-remove-confirm h4 {
   margin: 0;
-  color: #f2ceda;
+  color: var(--bad);
   font-size: 0.88rem;
 }
 .content-planner .planner-remove-confirm p {
@@ -102,15 +104,15 @@
 .content-planner .planner-backups {
   margin-top: 18px;
   padding: 16px;
-  background: #191620;
-  border: 1px solid #35303f;
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 12px;
 }
 .content-planner .planner-backups h3,
 .content-planner .planner-import-preview h4 {
   margin: 0;
   font-size: 0.88rem;
-  color: #d9c6fa;
+  color: var(--accent-text);
 }
 .content-planner .planner-backups p,
 .content-planner .planner-backups label {
@@ -120,20 +122,20 @@
 .content-planner .planner-backups > small {
   display: block;
   margin-top: 12px;
-  color: #b8b4c4;
+  color: var(--muted);
   font-size: 0.7rem;
 }
 .content-planner .planner-import-preview,
 .content-planner .planner-import-progress {
   margin-top: 18px;
   padding-top: 16px;
-  border-top: 1px solid #765160;
+  border-top: 1px solid var(--line);
 }
 .content-planner .planner-backup-name {
   font-weight: 600;
 }
 .content-planner .planner-import-total {
-  color: #d9c6fa;
+  color: var(--accent-text);
 }
 .content-planner .planner-import-items {
   max-height: 280px;
@@ -141,12 +143,12 @@
   padding: 0;
   margin: 16px 0;
   list-style: none;
-  border: 1px solid #35303f;
+  border: 1px solid var(--line);
   border-radius: 8px;
 }
 .content-planner .planner-import-items li {
   padding: 12px;
-  border-bottom: 1px solid #35303f;
+  border-bottom: 1px solid var(--line);
   overflow-wrap: anywhere;
   font-size: 0.78rem;
 }
@@ -156,7 +158,7 @@
 .content-planner .planner-import-items span {
   display: block;
   margin-top: 5px;
-  color: #b8b4c4;
+  color: var(--muted);
   font-size: 0.7rem;
 }
 .content-planner .planner-import-items p {

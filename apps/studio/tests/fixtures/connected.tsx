@@ -36,6 +36,7 @@ const fetcher: typeof fetch = async (input, options) => {
   const org = new Headers(options?.headers).get("X-Org-Id") ?? ORG;
   const actor = user;
   calls.push({ path: url.pathname, org });
+  if (url.pathname === "/functions/v1/spatial/capability") return Response.json({enabled:false});
   if (calls.length > 100) throw new Error("Unexpected request loop");
   if (url.pathname === "/functions/v1/listings" && options?.method === "POST") {
     const body = JSON.parse(String(options.body));

@@ -12,28 +12,31 @@ import "./business.css";
 export type BusinessWorkspaceProps = {
   services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string;
   onChanged: () => void; onSelectListing?: (id: string) => void;
+  sectionRequest?: BusinessSectionRequest;
 };
-type Section = "leads" | "brand" | "team" | "activity" | "disclosures" | "account";
-const sections: { id: Section; label: string }[] = [
-  { id: "leads", label: "Leads" }, { id: "brand", label: "Brand & portfolio" }, { id: "team", label: "Team" },
+export type BusinessSection = "leads" | "brand" | "team" | "activity" | "disclosures" | "account";
+export type BusinessSectionRequest = { id: string; section: BusinessSection };
+const sections: { id: BusinessSection; label: string }[] = [
+  { id: "leads", label: "Leads" }, { id: "brand", label: "Agent card" }, { id: "team", label: "Team" },
   { id: "activity", label: "Team activity" }, { id: "disclosures", label: "AI disclosures" }, { id: "account", label: "Account & plan" },
 ];
 const displayDate = (value: string | null) => value ? new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(new Date(value)) : "—";
 const failure = (error: unknown) => error instanceof Error ? error.message : "That could not be completed. Please try again.";
 
-function useResource<T>(read: (signal: AbortSignal) => Promise<T>, refreshOnFocus = true) {
+function useResource<T>(read: (signal: AbortSignal) => Promise<T>, refreshOnFocus = true, keepLoadedForm = false) {
   const [data, setData] = useState<T | null>(null), [error, setError] = useState<string | null>(null), [loading, setLoading] = useState(true);
   const [version, setVersion] = useState(0);
   const reload = useCallback(() => setVersion((n) => n + 1), []);
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError(null); setData(null);
+    setLoading(true); setError(null);
+    if (!keepLoadedForm) setData(null);
     void read(controller.signal).then((value) => {
       if (!controller.signal.aborted) setData(value);
     }).catch((error: unknown) => { if (!controller.signal.aborted) setError(failure(error)); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [read, version]);
+  }, [read, version, keepLoadedForm]);
   useEffect(() => {
     if (!refreshOnFocus) return;
     const refresh = () => { if (document.visibilityState === "visible") reload(); };
@@ -82,20 +85,35 @@ export default function BusinessWorkspace(props: BusinessWorkspaceProps) {
 }
 function BusinessWorkspaceContent(props: BusinessWorkspaceProps) {
   const { workspace, services } = props;
-  const [section, setSection] = useState<Section>("leads");
+  const [section, setSection] = useState<BusinessSection>("leads");
+  const [visited, setVisited] = useState<ReadonlySet<BusinessSection>>(() => new Set(["leads"]));
+  const consumedRequests = useRef(new Set<string>());
+  const openSection = useCallback((next: BusinessSection) => {
+    setVisited((current) => current.has(next) ? current : new Set([...current, next]));
+    setSection(next);
+  }, []);
   const api = useMemo(() => businessApi(services, workspace), [services, workspace]);
   const isManager = manager(workspaceRole(workspace));
+  useEffect(() => {
+    const request = props.sectionRequest;
+    if (!request || consumedRequests.current.has(request.id)) return;
+    consumedRequests.current.add(request.id);
+    openSection(request.section === "activity" && !isManager ? "account" : request.section);
+  }, [props.sectionRequest, isManager, openSection]);
+  useEffect(() => {
+    if (section === "activity" && !isManager) openSection("account");
+  }, [section, isManager, openSection]);
   return <div className="business-workspace">
-    <header className="business-intro"><div><span className="business-eyebrow">Your business</span><h2>Keep the office in step with the field.</h2><p>Leads, your public brand, team access and allowances all come from the account you use on your iPhone.</p></div><span className="business-chip">{workspace.org.name}</span></header>
-    <nav className="business-nav" aria-label="Business tools">{sections.filter((s) => s.id !== "activity" || isManager).map((item) => <button key={item.id} aria-current={section === item.id ? "page" : undefined} onClick={() => setSection(item.id)}>{item.label}</button>)}</nav>
-    <div className="business-content" key={section}>
-      {section === "leads" && <LeadsPanel {...props} api={api} />}
-      {section === "brand" && <BrandPanel {...props} api={api} />}
-      {section === "team" && <TeamPanel {...props} api={api} />}
-      {section === "activity" && isManager && <ActivityPanel api={api} />}
-      {section === "disclosures" && <DisclosurePanel {...props} api={api} />}
-      {section === "account" && <AccountPanel {...props} api={api} />}
-    </div>
+    <header className="business-intro"><div><span className="business-eyebrow">Your business</span><h2>{sections.find((item) => item.id === section)?.label}</h2><p>Your agent card, leads and team stay together on your phone and in Studio.</p></div><span className="business-chip">{workspace.org.name}</span></header>
+    <nav className="business-nav" aria-label="Business tools">{sections.filter((s) => s.id !== "activity" || isManager).map((item) => <button key={item.id} aria-current={section === item.id ? "page" : undefined} onClick={() => openSection(item.id)}>{item.label}</button>)}</nav>
+    {sections.map((item) => visited.has(item.id) && <div key={item.id} hidden={section !== item.id}><div className="business-content">
+      {item.id === "leads" && <LeadsPanel {...props} api={api} />}
+      {item.id === "brand" && <BrandPanel {...props} api={api} />}
+      {item.id === "team" && <TeamPanel {...props} api={api} />}
+      {item.id === "activity" && isManager && <ActivityPanel api={api} />}
+      {item.id === "disclosures" && <DisclosurePanel {...props} api={api} />}
+      {item.id === "account" && <AccountPanel {...props} api={api} />}
+    </div></div>)}
   </div>;
 }
 type PanelProps = BusinessWorkspaceProps & { api: BusinessApi };
@@ -103,6 +121,7 @@ type PanelProps = BusinessWorkspaceProps & { api: BusinessApi };
 function LeadsPanel({ api, workspace, listings, listingId, onChanged, onSelectListing }: PanelProps) {
   const [listing, setListing] = useState(listingId ?? ""), [status, setStatus] = useState<LeadStatus | "">(""), [since, setSince] = useState(""), [query, setQuery] = useState("");
   const [selected, setSelected] = useState<string | null>(null), [overrides, setOverrides] = useState<Record<string, Lead>>({});
+  useEffect(() => { setListing(listingId ?? ""); setSelected(null); }, [listingId]);
   const read = useCallback((signal: AbortSignal) => api.leads({ listingId: listing || undefined, status: status || undefined, since: since || undefined }, signal), [api, listing, status, since]);
   const resource = useResource(read), action = useAction();
   // A fresh server read always wins over an earlier save on this screen.
@@ -131,12 +150,18 @@ function LeadsPanel({ api, workspace, listings, listingId, onChanged, onSelectLi
 
 function BrandPanel(props: PanelProps) {
   const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]);
-  const resource = useResource(read, false);
-  return <><div className="business-heading"><div><h3>Your public brand</h3><p>One card for your iPhone, branded tours and portfolio.</p></div></div><ResourceState {...resource} />{resource.data && <BrandForm {...props} account={resource.data} />}</>;
+  const resource = useResource(read, false, true);
+  return <><div className="business-heading"><div><h3>Your agent card</h3><p>Keep your contact details together on your phone, branded tours and public profile.</p></div></div><ResourceState {...resource} />{resource.data && <BrandForm {...props} account={resource.data} />}</>;
 }
 function BrandForm({ api, workspace, onChanged, account }: PanelProps & { account: Account }) {
   const [brand, setBrand] = useState<Brand>(account.brand), [saved, setSaved] = useState(account.brand), action = useAction();
   const editable = manager(workspaceRole(workspace)), dirty = JSON.stringify(brand) !== JSON.stringify(saved);
+  const lastRemoteBrand = useRef(account.brand);
+  useEffect(() => {
+    if (lastRemoteBrand.current === account.brand) return;
+    lastRemoteBrand.current = account.brand;
+    if (!dirty) { setBrand(account.brand); setSaved(account.brand); }
+  }, [account.brand, dirty]);
   const update = (key: keyof Brand, value: string) => setBrand((b) => ({ ...b, [key]: value }));
   useEffect(() => {
     if (!dirty) return;
@@ -207,7 +232,7 @@ function DisclosurePanel({ api, workspace, listings, listingId, onSelectListing 
 }
 
 function AccountPanel(props: PanelProps) {
-  const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]), resource = useResource(read, false);
+  const read = useCallback((signal: AbortSignal) => props.api.account(signal), [props.api]), resource = useResource(read, false, true);
   return <><div className="business-heading"><div><h3>Account & plan</h3><p>Your Apple sign-in, subscription and allowances are shared with Rendprop on your iPhone.</p></div><button disabled={resource.loading} onClick={resource.reload}>Refresh allowance</button></div><ResourceState {...resource} />{resource.data && <AccountDetails {...props} account={resource.data} />}</>;
 }
 function AccountDetails({ account, workspace, services, api, onChanged }: PanelProps & { account: Account }) {
@@ -215,6 +240,18 @@ function AccountDetails({ account, workspace, services, api, onChanged }: PanelP
   const [deleting, setDeleting] = useState(false), [confirmation, setConfirmation] = useState(""), [acknowledged, setAcknowledged] = useState(false);
   const [deletion, setDeletion] = useState<{ accountDeleted: boolean; complete: boolean; needsSupport: boolean; requestId: string } | null>(null);
   const dirty = JSON.stringify(preferences) !== JSON.stringify(saved);
+  const lastRemotePreferences = useRef(account.notifications);
+  useEffect(() => {
+    if (lastRemotePreferences.current === account.notifications) return;
+    lastRemotePreferences.current = account.notifications;
+    if (!dirty) { setPreferences(account.notifications); setSaved(account.notifications); }
+  }, [account.notifications, dirty]);
+  useEffect(() => {
+    if (!dirty) return;
+    const before = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ""; };
+    window.addEventListener("beforeunload", before);
+    return () => window.removeEventListener("beforeunload", before);
+  }, [dirty]);
   return <>
     <div className="business-columns"><Card title="Signed in with Apple"><strong>{workspace.user.name || account.brand.name || "Your Rendprop account"}</strong><p>{workspace.user.email || "Apple did not share an email address"}</p><p className="business-subtle">Use this same Apple account on your iPhone. Apple may display a private relay email when Hide My Email is enabled.</p><a href="https://apps.apple.com/us/app/id6808982413" target="_blank" rel="noopener noreferrer">Open Rendprop for iPhone ↗</a></Card><Card title="Shared subscription"><div className="business-plan-name">{account.degraded || workspace.planDegraded ? "Temporarily unavailable" : workspace.plan}</div><p>{workspace.planExpiresAt ? `Current access through ${displayDate(workspace.planExpiresAt)}.` : workspace.trialEndsAt ? `Trial ends ${displayDate(workspace.trialEndsAt)}.` : "Your current workspace allowance is shown below."}</p><p className="business-subtle">Purchases and restores are managed in the iPhone app. A restored purchase updates this workspace automatically.</p><a href="https://apps.apple.com/account/subscriptions" target="_blank" rel="noopener noreferrer">Manage Apple subscriptions ↗</a></Card></div>
     <Card title="Current allowance">{account.degraded ? <p className="business-notice">The plan could not be verified. Refresh before starting new paid work.</p> : <div className="business-meter-grid">{account.meters.map((meter) => <div key={meter.key} className="business-meter"><div><strong>{meter.title}</strong><span>{meter.used} / {meter.cap}</span></div><progress value={Math.min(meter.used, meter.cap)} max={Math.max(1, meter.cap)} aria-label={`${meter.title}: ${meter.used} used of ${meter.cap}`} /><small>{meter.cap === 0 ? "Not included in your current plan" : meter.resetsAt ? `Resets ${displayDate(meter.resetsAt)}` : "Window starts with your first use"}</small></div>)}</div>}<p className="business-subtle">These are the same meters used by the iPhone app. Publishing a video rendered on your device does not use a cloud render allowance.</p></Card>

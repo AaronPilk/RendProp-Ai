@@ -18,7 +18,8 @@ const receipt = { status: "running", mutation, artifacts, checks: [], errors: []
   proof: "Separately compiled real App + real Studio services with injected offline Auth/fetch. This is NOT a live Apple sign-in or deployed media proof." };
 let browser, server, page;
 let transformed = false;
-const nav = (name) => page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: new RegExp(`^${name}(?:\\s*NEW)?$`) });
+const labels = {"Video editor":"Make a reel","Content library":"Photos & videos",Properties:"My homes",Workspace:"My business",Overview:"Home",Create:"AI tools"};
+const nav = (name) => page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: new RegExp(`^${labels[name]??name}(?:\\s*NEW)?$`) });
 const title = () => page.getByLabel("Title overlay", { exact: true });
 const check = (name) => receipt.checks.push(name);
 const savedKey = "rendprop-studio:v1:11111111-1111-4111-8111-111111111111:33333333-3333-4333-8333-333333333333:edit";

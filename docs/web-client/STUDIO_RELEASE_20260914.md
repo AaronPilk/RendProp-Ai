@@ -1,5 +1,7 @@
 # Rendprop Studio — phone and office release
 
+The subsequent [app branding and creation workflow release](brand-parity-2026-09-14/README.md) is now live, with native feature cards, appearance modes and a phone-media reel picker. Its separate receipts document the remaining native/desktop boundaries.
+
 This release extends the September 14 connected Studio into a working property,
 creative, and business workspace. Its native companion is Rendprop 1.0.3 build 27.
 The iPhone and browser use the same Supabase account, memberships, listings,

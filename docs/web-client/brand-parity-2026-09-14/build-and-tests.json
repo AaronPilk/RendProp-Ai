@@ -1,0 +1,18 @@
+{
+  "command": "npm run verify",
+  "status": "passed",
+  "tests": 276,
+  "passed": 276,
+  "failed": 0,
+  "typecheck": "passed",
+  "viteBuild": "passed",
+  "assets": {
+    "gate": "studio-built-assets",
+    "status": "passed",
+    "htmlAssets": 3,
+    "builtFiles": 20,
+    "gzipBytes": 263966,
+    "brandIdentical": true,
+    "privateNoindex": true
+  }
+}

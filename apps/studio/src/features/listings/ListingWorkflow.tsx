@@ -10,8 +10,11 @@ import SpatialWorkflow from "./SpatialWorkflow";
 import GalleryPhotoCard from "./GalleryPhotoCard";
 import { downloadTourQR } from "./qr";
 import "./listings.css";
+import { FeatureCards } from "../home/Dashboard";
+import { FEATURES, homeWords, type FeatureId } from "../home/features";
 
-type Props = { services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => void };
+export type ListingEntryRequest = {id:string;listingId:string;tab:Tab};
+type Props = { entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => void };
 type Tab = "media" | "tour" | "floorplan" | "details";
 const terminal = new Set(["ready", "failed", "completed", "published", "cancelled"]);
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
@@ -42,10 +45,16 @@ export default function ListingWorkflow(props: Props) {
   const [selected, setSelected] = useState(props.listingId ?? props.listings[0]?.id ?? "");
   const [creating, setCreating] = useState(false);
   useEffect(() => { if (props.listingId) setSelected(props.listingId); }, [props.listingId]);
+  const requests=useRef({create:"",entry:""});
+  useEffect(()=>{
+    if(props.createRequest&&requests.current.create!==props.createRequest){requests.current.create=props.createRequest;setCreating(true);}
+    if(props.entryRequest&&requests.current.entry!==props.entryRequest.id){requests.current.entry=props.entryRequest.id;setCreating(false);setSelected(props.entryRequest.listingId);}
+  },[props.createRequest,props.entryRequest]);
+  const words=homeWords(props.workspace.org.spaceType);
   const listing = props.listings.find((item) => item.id === selected);
   const choose = (id: string) => { setCreating(false); setSelected(id); props.onSelectListing?.(id); };
   return <section className="listing-workflow" aria-label="Property workspace">
-    <div className="lw-title"><div><p className="eyebrow">From your phone to your desk</p><h1>Your properties</h1><p>Every uploaded photo, walkthrough, and published tour belongs to the same workspace.</p></div><button className="primary" disabled={props.workspace.memberships.find((m) => m.orgId === props.workspace.org.id)?.role === "marketing"} onClick={() => setCreating(true)}>＋ New property</button></div>
+    <div className="lw-title"><div><p className="eyebrow">From your phone to your desk</p><h1>{words.collection}</h1><p>Every uploaded photo, walkthrough, and published tour belongs to the same workspace.</p></div><button className="primary" disabled={props.workspace.memberships.find((m) => m.orgId === props.workspace.org.id)?.role === "marketing"} onClick={() => setCreating(true)}>＋ New property</button></div>
     <div className="lw-property-switch"><label htmlFor="property-workspace-select">Working on</label><select id="property-workspace-select" value={listing?.id ?? ""} onChange={(event) => choose(event.target.value)}><option value="" disabled>Choose a property</option>{props.listings.map((item) => <option key={item.id} value={item.id}>{item.address || item.tagline || "Untitled property"}</option>)}</select><span className="lw-sync-dot">Same account as your iPhone</span></div>
     {creating ? <PropertyForm services={props.services} workspace={props.workspace} onSaved={(id) => { props.onChanged(); choose(id); }} onCancel={() => setCreating(false)} /> : listing ? <PropertyWorkspace key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`} {...props} listing={listing} /> : <div className="lw-empty"><h2>Start with a property</h2><p>Create it here or in the Rendprop iPhone app. Sign in to the same Apple account on both devices to pick up where you left off.</p><button className="primary" onClick={() => setCreating(true)}>Create your first property</button></div>}
   </section>;
@@ -103,8 +112,10 @@ function PropertyForm({ services, workspace, listing, onSaved, onCancel }: { ser
   </fieldset><div className="lw-actions"><button className="primary" type="submit" disabled={busy || lookupBusy || readOnly || remoteChanged}>{busy ? "Saving…" : listing ? "Save property" : "Create property"}</button>{onCancel && <button type="button" onClick={onCancel} disabled={busy}>Cancel</button>}</div></form>;
 }
 
-function PropertyWorkspace({ services, workspace, listing, onChanged }: Props & { listing: Listing }) {
+function PropertyWorkspace({ services, workspace, listing, onChanged, entryRequest, onOpenFeature }: Props & { listing: Listing }) {
   const [tab, setTab] = useState<Tab>("media"), [state, setState] = useState<ListingState>(EMPTY_STATE);
+  const appliedEntry=useRef("");
+  useEffect(()=>{if(entryRequest?.listingId===listing.id&&appliedEntry.current!==entryRequest.id){appliedEntry.current=entryRequest.id;setTab(entryRequest.tab);}},[entryRequest,listing.id]);
   const [media, setMedia] = useState<ListingMedia | null>(null), [loading, setLoading] = useState(true);
   const [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState("");
   const [progress, setProgress] = useState(0), [uploadingName, setUploadingName] = useState("");
@@ -222,6 +233,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged }: Props & 
     void changeGallery({ action: "reorder", expected_order: order, photo_ids: next }, "Gallery order saved for every device and the property tour.");
   };
   return <div className="lw-property">
+    {onOpenFeature && <section className="app-property-tools" aria-label="Create with this home"><h2>Make something with this {homeWords(workspace.org.spaceType).noun}</h2><FeatureCards features={FEATURES.filter(f=>["studio","reel","tour","aerial"].includes(f.id))} onOpen={id=>onOpenFeature(id,listing.id)}/></section>}
     <header className="lw-property-heading"><div><h2>{listing.address || "Untitled property"}</h2><p>{listing.tagline || "Everything you need to bring this property to market."}</p></div><button onClick={() => { onChanged(); void refresh(true); }} disabled={loading}>↻ {loading ? "Refreshing…" : "Refresh"}</button></header>
     <div className="lw-tabs" role="tablist" aria-label="Property tasks">{([["media", "1", "Media"], ["tour", "2", "Create & publish"], ["floorplan", "3", "Floor plan & 3D"], ["details", "", "Details"]] as const).map(([value, number, title]) => <button key={value} role="tab" aria-selected={tab === value} aria-controls={`lw-${value}`} id={`lw-tab-${value}`} onClick={() => setTab(value)}><span>{number}</span>{title}</button>)}</div>
     {error && <div role="alert" className="lw-error">{error}<button onClick={() => void refresh()}>Refresh property</button></div>}{notice && <p role="status" className="lw-notice">✓ {notice}</p>}

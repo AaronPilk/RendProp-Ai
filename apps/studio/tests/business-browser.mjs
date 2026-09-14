@@ -26,9 +26,9 @@ try {
   await page.getByRole("combobox", { name: "Status for Alex Buyer" }).selectOption("contacted");
   await expect(page.getByRole("status")).toContainText("marked contacted");
   receipt.checks.push("Lead details and status roundtrip through native route");
-  await nav("Brand & portfolio").click(); await page.getByLabel("Display name", { exact: true }).fill("Office Agent");
+  await nav("Agent card").click(); await page.getByLabel("Display name", { exact: true }).fill("Office Agent");
   await page.getByRole("button", { name: "Save brand", exact: true }).click(); await expect(page.getByRole("status")).toContainText("Brand saved");
-  await nav("Leads").click(); await nav("Brand & portfolio").click(); await expect(page.getByLabel("Display name", { exact: true })).toHaveValue("Office Agent");
+  await nav("Leads").click(); await nav("Agent card").click(); await expect(page.getByLabel("Display name", { exact: true })).toHaveValue("Office Agent");
   receipt.checks.push("Brand persists through remote reload and matches card preview");
   await nav("Account & plan").click(); await page.getByLabel("New leads", { exact: true }).uncheck();
   await page.getByRole("button", { name: "Save notification preferences" }).click(); await expect(page.getByRole("status")).toContainText("preferences saved");
@@ -45,7 +45,7 @@ try {
   receipt.checks.push("Team publishing and disclosure records render without raw payloads");
   await page.evaluate(() => window.businessFixture.marketing()); await nav("Leads").click();
   await expect(page.getByRole("combobox", { name: "Status for Alex Buyer" })).toHaveCount(0);
-  await expect(nav("Team activity")).toHaveCount(0); await nav("Brand & portfolio").click(); await expect(page.getByLabel("Display name", { exact: true })).toBeDisabled();
+  await expect(nav("Team activity")).toHaveCount(0); await nav("Agent card").click(); await expect(page.getByLabel("Display name", { exact: true })).toBeDisabled();
   receipt.checks.push("Marketing role has read-only lead and brand controls; no team overview");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1), true, "No horizontal page overflow on phone width");

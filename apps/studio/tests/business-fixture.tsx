@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import BusinessWorkspace from "../src/features/business/BusinessWorkspace";
+import BusinessWorkspace, {type BusinessSectionRequest} from "../src/features/business/BusinessWorkspace";
 import type { StudioServices } from "../src/data/services";
 import type { Workspace, Listing } from "../src/data/contracts";
 import "../src/styles.css";
@@ -29,8 +29,10 @@ const services = { api: async (path: string, options: { method?: string; orgId: 
   throw new Error(`Operation not permitted in fixture: ${method} ${path}`);
 }, signOut: async () => {} } as unknown as StudioServices;
 function Fixture() {
+  const [sectionRequest, setSectionRequest] = useState<BusinessSectionRequest>();
+  const [version, setVersion] = useState(0);
   const [role, setRole] = useState<"owner" | "marketing">("owner");
-  Object.assign(window, { businessFixture: { calls: () => structuredClone(calls), marketing: () => setRole("marketing") } });
-  return <div style={{ padding: 30 }}><BusinessWorkspace services={services} workspace={{ ...workspace, memberships: [{ ...workspace.memberships[0], role }] }} listings={listings} onChanged={() => {}} /></div>;
+  Object.assign(window, { businessFixture: { calls: () => structuredClone(calls), marketing: () => setRole("marketing"), section: (section: BusinessSectionRequest["section"], id = crypto.randomUUID()) => setSectionRequest({id,section}), refreshWorkspace: () => setVersion(version + 1) } });
+  return <div style={{ padding: 30 }}><BusinessWorkspace sectionRequest={sectionRequest} services={services} workspace={{ ...workspace, memberships: [{ ...workspace.memberships[0], role }] }} listings={listings} onChanged={() => {}} /></div>;
 }
 createRoot(document.getElementById("root")!).render(<Fixture />);

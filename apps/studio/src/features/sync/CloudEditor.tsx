@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VideoEditor from "../../editor/VideoEditor";
 import type { VideoEditorProps, EditorSettings } from "../../editor/VideoEditor";
-import { EDIT_LIMITS, draftMedia, validateDraft, type EditDraft } from "../../editor/model";
+import { EDIT_LIMITS, draftMedia, validateDraft, validateFileBatch, type EditDraft } from "../../editor/model";
 import type { LocalExport } from "../../editor/export";
 import { canonicalDocument, DocumentSync, type SyncState } from "../../data/documents";
 import type { StudioServices, Workspace, Listing } from "../../data";
@@ -12,6 +12,8 @@ import {resolvePhotoAliases, type ReadableMedia} from "./media-aliases";
 import { decodeResult, type ShotPlanHandoff, type AgentPlanHandoff } from "../creative/model";
 import {decodeNativeReel, nativeReelShots, nativeCaptionStyle, type NativeReel} from "./native-reel";
 import { mapShotMotion, reviewShotPlan } from "./shot-plan";
+import ReelMediaPicker from "./ReelMediaPicker";
+import "./reel.css";
 
 type Source = { sha256: string; assetId: string; listingId: string };
 export function activeSourceRefs(draft: EditDraft | undefined, sources: Source[], listingId: string): Source[] {
@@ -40,7 +42,7 @@ export async function downloadSource(url: string, source: EditDraft["clips"][num
   // The editor independently checks the entire SHA-256 and dimensions before relinking.
   return new File(chunks, source.name, { type: response.headers.get("content-type")?.split(";")[0] ?? "", lastModified: source.lastModified });
 }
-export default function CloudEditor(props: VideoEditorProps & { services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; importPlan?: ShotPlanHandoff & {id: string}; importAgentPlan?: AgentPlanHandoff & {id: string}; onChanged: () => void }) {
+export default function CloudEditor(props: VideoEditorProps & { services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; importPlan?: ShotPlanHandoff & {id: string}; importAgentPlan?: AgentPlanHandoff & {id: string}; entryRequest?: {id: string; listingId: string}; onOpenCreative?: (listingId: string, tool: "voiceover" | "shot-plans") => void; onChanged: () => void }) {
   const { services, workspace, listings } = props;
   const [ready, setReady] = useState(false), [initial, setInitial] = useState<EditDraft>(), [state, setState] = useState<SyncState>("loading");
   const [listingId, setListingId] = useState(props.listingId ?? ""), [message, setMessage] = useState("");
@@ -51,6 +53,9 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
   const [agentRequest, setAgentRequest] = useState<VideoEditorProps["agentRequest"]>();
   const [planRequest, setPlanRequest] = useState<VideoEditorProps["planRequest"]>();
   const [reviewMedia, setReviewMedia] = useState<VideoEditorProps["importRequest"]>();
+  const [pickerListingId, setPickerListingId] = useState<string | null>(null);
+  const [mediaCount, setMediaCount] = useState({clips: 0, bytes: 0});
+  const consumedEntries = useRef(new Set<string>()), editorAnchor = useRef<HTMLDivElement>(null);
   const consumedImports = useRef(new Set<string>()), ignoredPlans = useRef(new Set<string>());
   const importSources = useRef(new Map<File, {assetId: string; listingId: string}>());
   const applyingPlan = useRef<{listingId: string; ids: string[]; requestId: string} | null>(null);
@@ -217,9 +222,10 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
   }, [syncSources, queue, pendingFiles]);
   async function acceptMedia(request: NonNullable<VideoEditorProps["importRequest"]>) {
     const target = request.listingId || selected.current;
-    if (!target) { setMessage("Choose the property for these files before importing."); return; }
+    if (!target) { setMessage("Choose the property for these files before importing."); return false; }
     setSourceBusy(true);
     try {
+      validateFileBatch(request.files, currentDraft.current?.clips ?? []);
       if (request.sourceMedia) {
         if (request.sourceMedia.length !== request.files.length) throw new Error("The selected media changed. Choose it from the library again.");
         const needed = new Set(request.sourceMedia.map(item => item.id)); let offset: number | null = 0;
@@ -233,10 +239,12 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
         if (needed.size) throw new Error("Some selected media is no longer available in this property. Refresh the library and choose it again.");
         request.files.forEach((file, index) => importSources.current.set(file, {assetId: request.sourceMedia![index].id, listingId: target}));
       }
-      if (controller.current.signal.aborted) return;
+      if (controller.current.signal.aborted) return false;
       selected.current = target; setListingId(target); setAcceptedImport(request); setReviewMedia(undefined); queue();
+      return true;
     } catch (error) { if (!controller.current.signal.aborted) setMessage(error instanceof Error ? error.message : "The media could not be imported."); }
     finally { if (!controller.current.signal.aborted) setSourceBusy(false); }
+    return false;
   }
   useEffect(() => {
     const request = props.importRequest; if (!ready || !request || consumedImports.current.has(request.id)) return;
@@ -244,6 +252,27 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
     if (request.listingId && request.listingId !== selected.current && currentDraft.current?.clips.length) setReviewMedia(request);
     else void acceptMedia(request);
   }, [props.importRequest, ready]);
+  useEffect(() => {
+    const request = props.entryRequest;
+    if (!ready || props.active === false || sourceBusy || outputBusy || !request || consumedEntries.current.has(request.id)) return;
+    consumedEntries.current.add(request.id);
+    if (!listings.some(listing => listing.id === request.listingId && listing.orgId === workspace.org.id)) { setMessage("That property is not available in this workspace. Choose one of your saved properties."); return; }
+    // Opening a native-style feature card only opens this picker. It must not
+    // reassign, reset or queue the currently saved workspace edit.
+    setPickerListingId(request.listingId);
+  }, [props.entryRequest, props.active, ready, sourceBusy, outputBusy, listings, workspace.org.id]);
+  function openPicker() {
+    const target = selected.current || props.listingId || listings[0]?.id;
+    if (target) setPickerListingId(target);
+    else setMessage("Add a property first, then upload photos from your iPhone or computer.");
+  }
+  async function acceptPickerMedia(request: NonNullable<VideoEditorProps["importRequest"]>) {
+    if (controller.current.signal.aborted || session.current?.state === "conflict" || uploadFlight.current || restoring.current || outputFlight.current) throw new Error("Finish the current save or resolve its conflict, then add these files again.");
+    validateFileBatch(request.files, currentDraft.current?.clips ?? []);
+    if (request.listingId !== selected.current && currentDraft.current?.clips.length) {
+      setReviewMedia(request); setPickerListingId(null);
+    } else if (await acceptMedia(request)) setPickerListingId(null);
+  }
   async function loadPhoneRecipe() {
     if (!selected.current || sourceBusy || outputBusy) return;
     setSourceBusy(true);
@@ -353,6 +382,8 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
 
   function draftChanged(draft: EditDraft) {
     currentDraft.current = validateDraft(draft);
+    const nextCount = { clips: draft.clips.length, bytes: draftMedia(draft).reduce((total, clip) => total + clip.source.size, 0) };
+    setMediaCount(old => old.clips === nextCount.clips && old.bytes === nextCount.bytes ? old : nextCount);
     try { localStorage.setItem(localKey, JSON.stringify(draft)); } catch { setMessage("Browser backup is unavailable. Keep this tab open until cloud saving finishes."); }
     queue();
   }
@@ -378,7 +409,18 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
       }
     } finally { outputFlight.current = false; if (!signal.aborted) setOutputBusy(false); }
   }
+  const editProperty = listings.find(listing => listing.id === listingId);
+  const pickerProperty = listings.find(listing => listing.id === pickerListingId && listing.orgId === workspace.org.id);
   return <div className="cloud-editor">
+    <section className="reel-start-guide" aria-label="Make a reel in three steps">
+      <header><h2>Make a reel{editProperty ? ` · ${editProperty.address || editProperty.tagline || "Your property"}` : ""}</h2><p>Your photos become one video for Reels, TikTok or YouTube. Photos → Voice → Make it.</p></header>
+      <div className="reel-step-grid">
+        <div className="reel-step"><span>1 · Photos</span><h3>Use your phone’s photos & video</h3><p>Pick uploaded media from this property. Keep the current edit and add the next shots.</p><button disabled={!ready || sourceBusy || outputBusy || state === "conflict"} onClick={openPicker}>Choose property photos & video</button></div>
+        <div className="reel-step"><span>2 · Voice</span><h3>Add your voice or a script</h3><p>Choose a saved voiceover below, keep the video’s original sound, or make a new narration.</p>{props.onOpenCreative && <div><button disabled={!ready || !listingId || sourceBusy || outputBusy} onClick={() => props.onOpenCreative?.(listingId, "voiceover")}>Create a voiceover</button><button disabled={!ready || !listingId || sourceBusy || outputBusy} onClick={() => props.onOpenCreative?.(listingId, "shot-plans")}>Help plan my reel</button></div>}</div>
+        <div className="reel-step"><span>3 · Make it</span><h3>Review, export & share</h3><p>Arrange the shots, choose a shape and play the preview. Export MP4, then choose “Save video to listing” to see the finished reel on your phone.</p><button disabled={!ready} onClick={() => editorAnchor.current?.scrollIntoView({behavior: "smooth", block: "start"})}>Continue in the editor</button></div>
+      </div>
+    </section>
+    {pickerProperty && <><p className="reel-picker-context">{listingId && listingId !== pickerProperty.id && mediaCount.clips > 0 ? `Your current edit belongs to ${editProperty?.address || "another property"}. You are choosing files from ${pickerProperty.address || "this property"}; nothing moves until you review the import below.` : "Use the same property on your iPhone and desktop. Finish phone uploads so the files appear here."}</p><ReelMediaPicker services={services} workspace={workspace} listing={pickerProperty} availableSlots={Math.max(0, EDIT_LIMITS.clips - mediaCount.clips)} remainingBytes={Math.max(0, EDIT_LIMITS.totalBytes - mediaCount.bytes)} disabled={!ready || sourceBusy || outputBusy || state === "conflict"} onImport={acceptPickerMedia} onClose={() => setPickerListingId(null)} /></>}
     <section className="sync-toolbar panel">
       <label>Save this edit with<select aria-label="Save this edit with" disabled={sourceBusy || outputBusy} value={listingId} onChange={e => { selected.current = e.target.value; setListingId(e.target.value); setNativeRecipe(null); queue(); void syncSources(); }}><option value="">Choose a property</option>{listings.map(l => <option key={l.id} value={l.id}>{l.address || "Untitled property"}</option>)}</select></label>
       <button disabled={!ready || !listingId || sourceBusy || outputBusy} onClick={() => void loadPhoneRecipe()}>Load phone reel setup</button>
@@ -395,6 +437,6 @@ export default function CloudEditor(props: VideoEditorProps & { services: Studio
     {reviewMedia && <section className="panel"><h3>Continue with another property</h3><p>These files belong to {listings.find(listing => listing.id === reviewMedia.listingId)?.address || "another property"}. Adding them will move this edit and save its existing source files with that property.</p><button disabled={sourceBusy || outputBusy} onClick={() => void acceptMedia(reviewMedia)}>Add files and move this edit</button><button onClick={() => setReviewMedia(undefined)}>Cancel import</button></section>}
     {props.importAgentPlan && !ignoredPlans.current.has(props.importAgentPlan.id) && <section className="panel"><h3>Apply your agent video plan</h3><p>Restore the original agent recording and {props.importAgentPlan.cutaways.length} timed photo cutaways. This replaces the current sequence after every source is checked. Your continuous original speech stays underneath the photos.</p><button disabled={!ready || sourceBusy || outputBusy || state === "conflict"} onClick={() => void applyAgentPlan()}>Replace edit with agent plan</button><button disabled={sourceBusy} onClick={() => {ignoredPlans.current.add(props.importAgentPlan!.id);setPlanVersion(value=>value+1);}}>Keep current edit</button></section>}
     {props.importPlan && !ignoredPlans.current.has(props.importPlan.id) && <section className="panel" key={`${props.importPlan.id}:${planVersion}`}><h3>Apply your saved shot plan</h3><p>{props.importPlan.shots.length} photos for {listings.find(listing => listing.id === props.importPlan!.listingId)?.address || "this property"}. This replaces the current sequence after every original photo is restored. The plan’s order, timing, captions, gentle photo motion, and selected narration are applied.</p><button disabled={!ready || sourceBusy || outputBusy || state === "conflict"} onClick={() => void applyShotPlan()}>Replace edit with this shot plan</button><button disabled={sourceBusy} onClick={() => {ignoredPlans.current.add(props.importPlan!.id);setPlanVersion(value => value + 1);}}>Keep current edit</button></section>}
-    {ready ? <VideoEditor {...props} settingsRequest={settingsRequest} onSettingsApplied={() => setMessage("Phone reel settings applied. Review the sequence before exporting.")} importRequest={acceptedImport} planRequest={planRequest} agentRequest={agentRequest} onPlanApplied={planApplied} onPlanFailed={message => {setMessage(message);setSourceBusy(false);applyingPlan.current=null;}} initialDraft={initial} onDraftChange={draftChanged} onSourcesChange={sourcesChanged} relinkRequest={relink} onSaveOutput={saveOutput} narrationChoices={narrationChoices} resolveNarration={resolveNarration} /> : <p role="status">Opening your saved edit…</p>}
+    <div ref={editorAnchor}>{ready ? <VideoEditor {...props} settingsRequest={settingsRequest} onSettingsApplied={() => setMessage("Phone reel settings applied. Review the sequence before exporting.")} importRequest={acceptedImport} planRequest={planRequest} agentRequest={agentRequest} onPlanApplied={planApplied} onPlanFailed={message => {setMessage(message);setSourceBusy(false);applyingPlan.current=null;}} initialDraft={initial} onDraftChange={draftChanged} onSourcesChange={sourcesChanged} relinkRequest={relink} onSaveOutput={saveOutput} narrationChoices={narrationChoices} resolveNarration={resolveNarration} /> : <p role="status">Opening your saved edit…</p>}</div>
   </div>;
 }

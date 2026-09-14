@@ -7,33 +7,43 @@ export type Edit =
   | "declutter"
   | "stage"
   | "custom";
+export type CreativeTool =
+  | "photo-studio" | "scripts" | "shot-plans" | "agent-cutaways"
+  | "voiceover" | "ai-video" | "animate" | "drone" | "aerial"
+  | "chapters" | "coach";
+export type CreativeEntryRequest = {
+  id: string;
+  listingId: string;
+  tool: CreativeTool;
+  preset?: Edit;
+};
 export const PRESETS: { id: Edit; name: string; hint: string }[] = [
   {
+    id: "declutter",
+    name: "Declutter",
+    hint: "Tidy the room by removing movable clutter and personal items.",
+  },
+  {
+    id: "stage",
+    name: "Staging",
+    hint: "Add furniture in the style you pick. Walls and windows stay as they are.",
+  },
+  {
     id: "twilight",
-    name: "Day to dusk",
+    name: "Make it twilight",
     hint: "Warm evening light for an exterior.",
   },
   {
     id: "sky",
-    name: "Sky replacement",
+    name: "Make the sky blue",
     hint: "Improve the sky and preserve the property.",
   },
   {
     id: "lawn",
-    name: "Lawn refresh",
+    name: "Make the lawn green",
     hint: "Refresh the visible grass and landscaping.",
   },
-  {
-    id: "declutter",
-    name: "Declutter",
-    hint: "Remove movable clutter and personal items.",
-  },
-  {
-    id: "stage",
-    name: "Virtual staging",
-    hint: "Furnish a room with its structure preserved.",
-  },
-  { id: "custom", name: "Custom edit", hint: "Describe the change you want." },
+  { id: "custom", name: "Ask for anything", hint: "Describe the change you want." },
 ];
 export type Shot = {
   photoId: string;

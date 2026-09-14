@@ -14,6 +14,7 @@ import {
 import {
   type AgentPlanHandoff,
   type CreativeDraft,
+  type CreativeEntryRequest,
   type CreativeResult,
   decodeChapters,
   decodeCutaways,
@@ -34,6 +35,7 @@ import {
   text,
 } from "./model";
 import "./creative.css";
+import BatchPhotoStudio from "./BatchPhotoStudio";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
 
 type Props = {
@@ -45,10 +47,12 @@ type Props = {
   onSelectListing?: (id: string) => void;
   onUseShotPlan?: (plan: ShotPlanHandoff) => void;
   onUseAgentPlan?: (plan: AgentPlanHandoff) => void;
+  entryRequest?: CreativeEntryRequest;
+  onOpenEditor?: (listingId: string) => void;
 };
 type Panel = "photos" | "copy" | "voice" | "video" | "chapters" | "coach";
 const PANELS: { id: Panel; label: string }[] = [
-  { id: "photos", label: "Photo Studio" },
+  { id: "photos", label: "AI Photo Studio" },
   { id: "copy", label: "Scripts & shot plans" },
   { id: "voice", label: "Voiceover" },
   { id: "video", label: "AI video" },
@@ -56,6 +60,7 @@ const PANELS: { id: Panel; label: string }[] = [
   { id: "coach", label: "Ask Rendprop" },
 ];
 export default function CreativeWorkspace(props: Props) {
+  const consumedEntries = useRef(new Set<string>());
   const [selected, setSelected] = useState(
     props.listingId ?? props.listings[0]?.id ?? "",
   );
@@ -64,15 +69,22 @@ export default function CreativeWorkspace(props: Props) {
   }, [props.listingId]);
   const listing = props.listings.find((item) => item.id === selected) ??
     props.listings[0];
+  const consumeEntry = useCallback((request: CreativeEntryRequest) => {
+    const key = `${props.workspace.user.id}:${props.workspace.org.id}:${request.id}`;
+    if (request !== props.entryRequest || request.listingId !== listing?.id ||
+      consumedEntries.current.has(key)) return false;
+    consumedEntries.current.add(key);
+    return true;
+  }, [props.entryRequest, props.workspace.user.id, props.workspace.org.id, listing?.id]);
   return (
     <section className="creative-workspace" aria-label="Creative Studio">
       <header className="creative-heading">
         <div>
-          <span className="creative-eyebrow">CREATE WITH YOUR LISTING</span>
+          <span className="creative-eyebrow">YOUR PROPERTY, READY TO CREATE</span>
           <h1>Creative Studio</h1>
           <p>
-            Polish your photos, plan your story and create your next property
-            video.
+            Choose the photos and videos you uploaded from your phone, then
+            turn them into your next property story.
           </p>
         </div>
         <label>
@@ -97,13 +109,14 @@ export default function CreativeWorkspace(props: Props) {
             key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`}
             {...props}
             listing={listing}
+            consumeEntry={consumeEntry}
           />
         )
         : (
           <div className="creative-empty">
             <h2>Start with a property</h2>
             <p>
-              Create a listing or sync one from your phone. Your creative tools
+              Add a property here or finish uploading one from your phone. Your creative tools
               and saved results will stay with that property.
             </p>
           </div>
@@ -121,15 +134,20 @@ function ListingCreative(
     onSelectListing,
     onUseShotPlan,
     onUseAgentPlan,
+    entryRequest,
+    consumeEntry,
+    onOpenEditor,
   }:
     & Props
-    & { listing: Listing },
+    & { listing: Listing; consumeEntry: (request: CreativeEntryRequest) => boolean },
 ) {
   const orgId = workspace.org.id, listingId = listing.id;
   const [panel, setPanel] = useState<Panel>("photos"),
     [busy, setBusy] = useState<string | null>(null),
     [error, setError] = useState<string | null>(null),
     [notice, setNotice] = useState<string | null>(null);
+  const [batchBusy, setBatchBusy] = useState(false);
+  const isBusy = !!busy || batchBusy;
   const [photos, setPhotos] = useState<StudioPhoto[]>([]),
     [mediaOffset, setMediaOffset] = useState<number | null>(null),
     [selectedPhotos, setSelectedPhotos] = useState<string[] | null>(null);
@@ -143,7 +161,7 @@ function ListingCreative(
       ReturnType<typeof decodeListingState>["jobs"]
     >([]);
   const [source, setSource] = useState<SourceImage | null>(null),
-    [edit, setEdit] = useState<Edit>("twilight"),
+    [edit, setEdit] = useState<Edit>("declutter"),
     [style, setStyle] = useState("modern"),
     [prompt, setPrompt] = useState(""),
     [room, setRoom] = useState("");
@@ -190,6 +208,29 @@ function ListingCreative(
       Record<string, { pass: boolean; message: string }>
     >({});
   const [planNarrationId, setPlanNarrationId] = useState("");
+  const [agentPlanOpen, setAgentPlanOpen] = useState(false);
+  useEffect(() => {
+    if (!entryRequest || entryRequest.listingId !== listingId ||
+      !consumeEntry(entryRequest)) return;
+    // A card opens a tool. It must never reset a draft or start an AI request.
+    switch (entryRequest.tool) {
+      case "photo-studio":
+        setPanel("photos");
+        if (entryRequest.preset) setEdit(entryRequest.preset);
+        break;
+      case "scripts": case "shot-plans": case "agent-cutaways":
+        setPanel("copy");
+        if (entryRequest.tool === "agent-cutaways") setAgentPlanOpen(true);
+        break;
+      case "voiceover": setPanel("voice"); break;
+      case "ai-video": setPanel("video"); break;
+      case "animate": setPanel("video"); setVideoKind("reel"); break;
+      case "drone": setPanel("video"); setVideoKind("drone"); break;
+      case "aerial": setPanel("video"); setVideoKind("aerial"); break;
+      case "chapters": setPanel("chapters"); break;
+      case "coach": setPanel("coach"); break;
+    }
+  }, [entryRequest, consumeEntry, listingId]);
   const [chapterAsset, setChapterAsset] = useState(""),
     [chapterRender, setChapterRender] = useState(""),
     [maxChapters, setMaxChapters] = useState(12);
@@ -234,7 +275,7 @@ function ListingCreative(
       : "This action could not finish. Please try again.";
   }
   async function run(label: string, action: () => Promise<void>) {
-    if (operationBusy.current) return;
+    if (operationBusy.current || batchBusy) return;
     operationBusy.current = true;
     setBusy(label);
     setError(null);
@@ -935,15 +976,16 @@ function ListingCreative(
   const toolbar = (
     <div className="creative-actions">
       <button
-        disabled={!!busy}
+        disabled={isBusy}
         onClick={() =>
           run("Refreshing", async () => {
             await Promise.all([loadPhotos(), loadAssets(), refreshResults()]);
-            setNotice("Cloud media and creative results refreshed.");
+            setNotice("Your latest photos, videos and saved creations are ready.");
           })}
       >
-        Refresh from cloud
+        Refresh from phone
       </button>
+      {onOpenEditor && <button onClick={() => onOpenEditor(listingId)}>Open Reel Studio →</button>}
       <span className="creative-sync">
         {dirty
           ? "Unsaved draft changes"
@@ -955,12 +997,12 @@ function ListingCreative(
             })
           }`
           : draftReady
-          ? "Cloud draft ready"
-          : "Loading cloud draft…"}
+          ? "Your saved draft is ready"
+          : "Loading your saved draft…"}
       </span>
       {dirty && (
         <button
-          disabled={!!busy || !draftReady || restoreConflict}
+          disabled={isBusy || !draftReady || restoreConflict}
           onClick={() => run("Saving draft", () => saveDraft())}
         >
           Save draft
@@ -970,11 +1012,13 @@ function ListingCreative(
   );
   const sourcePicker = (
     <div className="creative-source">
+      <h2>Choose your photo</h2>
+      <p>Use a saved property photo from your phone, or add one from this computer.</p>
       <label className="creative-upload">
         Import a photo<input
           type="file"
           accept="image/jpeg,image/png,image/webp"
-          disabled={!!busy || !canCreate}
+          disabled={isBusy || !canCreate}
           onChange={(e) => {
             const file = e.target.files?.[0];
             if (file) {
@@ -992,7 +1036,7 @@ function ListingCreative(
           Or use a property photo<select
             aria-label="Source property photo"
             value=""
-            disabled={!!busy}
+            disabled={isBusy}
             onChange={(e) => {
               const photo = photos.find((p) => p.id === e.target.value);
               if (
@@ -1089,7 +1133,7 @@ function ListingCreative(
             </div>
             {mediaOffset !== null && (
               <button
-                disabled={!!busy}
+                disabled={isBusy}
                 onClick={() =>
                   run("Loading more photos", () => loadPhotos(mediaOffset))}
               >
@@ -1126,7 +1170,7 @@ function ListingCreative(
           )}
           <div className="creative-actions">
             <button
-              disabled={!!busy}
+              disabled={isBusy}
               onClick={() => {
                 setRestoreConflict(false);
                 setNotice(
@@ -1137,7 +1181,7 @@ function ListingCreative(
               Keep my recovered edits
             </button>
             <button
-              disabled={!!busy}
+              disabled={isBusy}
               onClick={() => run("Opening cloud draft", () => loadDraft(true))}
             >
               Use the cloud draft
@@ -1170,7 +1214,7 @@ function ListingCreative(
         <div className="creative-alert" role="alert">
           <p>{error}</p>
           <button
-            disabled={!!busy}
+            disabled={isBusy}
             onClick={() => run("Reloading draft", () => loadDraft())}
           >
             Reload saved draft
@@ -1183,6 +1227,12 @@ function ListingCreative(
           {busy}… Keep this tab open until the action is confirmed.
         </p>
       )}
+      {batchBusy && panel !== "photos" && (
+        <p className="creative-working" role="status">
+          Your photo previews are still being prepared.{" "}
+          <button onClick={() => setPanel("photos")}>View photo progress</button>
+        </p>
+      )}
       {!canCreate && (
         <p className="creative-notice">
           Your marketing role can review existing media. Ask an owner or admin
@@ -1191,36 +1241,42 @@ function ListingCreative(
       )}
       {panel === "photos" && (
         <div className="creative-two-column">
-          {sourcePicker}
           <div className="creative-card">
-            <h2>Bring out the best in every room</h2>
+            <h2>What would you like to change?</h2>
             <p>
-              Preview the edit before adding it to the gallery. Every saved edit
-              keeps its original and disclosure.
+              Choose an edit, then pick your photo. Review the preview before
+              saving it. Your original stays with the property.
             </p>
             <div className="creative-preset-grid">
               {PRESETS.map((p) => (
                 <button
                   key={p.id}
                   className={edit === p.id ? "selected" : ""}
+                  aria-pressed={edit === p.id}
                   onClick={() => setEdit(p.id)}
                 >
                   <strong>{p.name}</strong>
                   <span>{p.hint}</span>
                 </button>
               ))}
+              <button onClick={() => { setVideoKind("reel"); setPanel("video"); }}>
+                <strong>Turn it into video</strong>
+                <span>Turn a property photo into a short moving clip.</span>
+              </button>
             </div>
             {edit === "stage" && (
-              <label>
-                Staging style<select
-                  value={style}
-                  onChange={(e) => setStyle(e.target.value)}
-                >
-                  {["modern", "rustic", "minimalist", "scandinavian"].map(
-                    (s) => <option key={s}>{s}</option>,
-                  )}
-                </select>
-              </label>
+              <div className="creative-style-picker" role="group" aria-label="Staging style">
+                <p>Choose a style</p>
+                <div className="creative-preset-grid">
+                  {["modern", "rustic", "minimalist", "scandinavian"].map((value) => (
+                    <button key={value} aria-pressed={style === value}
+                      className={style === value ? "selected" : ""}
+                      onClick={() => setStyle(value)}>
+                      {value[0].toUpperCase() + value.slice(1)}
+                    </button>
+                  ))}
+                </div>
+              </div>
             )}
             {edit === "custom" && (
               <>
@@ -1233,7 +1289,7 @@ function ListingCreative(
                   />
                 </label>
                 <button
-                  disabled={!!busy || !prompt.trim() || !canCreate}
+                  disabled={isBusy || !prompt.trim() || !canCreate}
                   onClick={() =>
                     run("Refining your edit", async () => {
                       const response = record(
@@ -1259,7 +1315,7 @@ function ListingCreative(
             )}
             <div className="creative-actions">
               <button
-                disabled={!source || !!busy || !canCreate}
+                disabled={!source || isBusy || !canCreate}
                 onClick={() =>
                   run("Finding suitable edits", async () => {
                     const response = record(
@@ -1288,7 +1344,7 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!source || !!busy || !canCreate}
+                disabled={!source || isBusy || !canCreate}
                 onClick={() => run("Creating your photo", generatePhoto)}
               >
                 Generate preview
@@ -1306,6 +1362,7 @@ function ListingCreative(
               </button>
             ))}
           </div>
+          {sourcePicker}
           {photoResult && (
             <section className="creative-card creative-wide">
               <h2>Review your edit</h2>
@@ -1329,7 +1386,7 @@ function ListingCreative(
               <div className="creative-actions">
                 <button
                   className="creative-primary"
-                  disabled={!!busy || photoResult.saved ||
+                  disabled={isBusy || photoResult.saved ||
                     !photoResult.provenanceId}
                   onClick={() => run("Saving photo and original", savePhoto)}
                 >
@@ -1345,6 +1402,13 @@ function ListingCreative(
           )}
         </div>
       )}
+      <div hidden={panel !== "photos"}>
+        <BatchPhotoStudio services={services} workspace={workspace} listing={listing}
+          photos={photos} canCreate={canCreate} onChanged={onChanged}
+          onComplete={() => void loadPhotos().catch((error) => {
+            if (alive.current) setError(message(error));
+          })} disabled={!!busy} onBusyChange={setBatchBusy} />
+      </div>
       {panel === "copy" && (
         <div className="creative-two-column">
           <div className="creative-card">
@@ -1378,7 +1442,7 @@ function ListingCreative(
             {photoSelection}
             <div className="creative-actions">
               <button
-                disabled={!!busy || !draftReady || !canCreate}
+                disabled={isBusy || !draftReady || !canCreate}
                 onClick={() =>
                   run("Writing a script", () => generateCopy("script"))}
               >
@@ -1386,7 +1450,7 @@ function ListingCreative(
               </button>
               <button
                 className="creative-primary"
-                disabled={!!busy || !draftReady || !chosenPhotos.length ||
+                disabled={isBusy || !draftReady || !chosenPhotos.length ||
                   !canCreate}
                 onClick={() =>
                   run("Planning your shots", () => generateCopy("shotlist"))}
@@ -1415,7 +1479,7 @@ function ListingCreative(
             </small>
             <div className="creative-actions">
               <button
-                disabled={!!busy || !dirty || !draftReady}
+                disabled={isBusy || !dirty || !draftReady}
                 onClick={() => run("Saving script", () => saveDraft())}
               >
                 Save script
@@ -1492,7 +1556,7 @@ function ListingCreative(
                   )}
                   <button
                     className="creative-primary"
-                    disabled={!!busy || dirty || restoreConflict || !draftReady}
+                    disabled={isBusy || dirty || restoreConflict || !draftReady}
                     onClick={() =>
                       onUseShotPlan({
                         listingId,
@@ -1513,17 +1577,18 @@ function ListingCreative(
               )}
             </div>
           )}
-          <details className="creative-card creative-wide">
+          <details className="creative-card creative-wide" open={agentPlanOpen}
+            onToggle={(event) => setAgentPlanOpen(event.currentTarget.open)}>
             <summary>Plan an agent-on-camera reel</summary>
             <p>
-              Use your real talking-head footage and a timed transcript.
-              Rendprop plans when to show property photos while keeping your
-              face at the opening and closing.
+              Choose a video of yourself presenting the property, then add its
+              subtitles. Rendprop plans where to show your photos while your
+              voice continues.
             </p>
             <label>
               Agent-on-camera video<select
                 value={draft.agentAssetId || ""}
-                disabled={!!busy || !draftReady}
+                disabled={isBusy || !draftReady}
                 onChange={(event) => {
                   const asset = agentVideos.find((item) =>
                     item.id === event.target.value
@@ -1559,7 +1624,7 @@ function ListingCreative(
                 min={6}
                 max={180}
                 value={agentSeconds}
-                disabled={!!busy || !draftReady ||
+                disabled={isBusy || !draftReady ||
                   agentBase?.duration_s != null}
                 onChange={(e) =>
                   updateDraft({
@@ -1573,7 +1638,7 @@ function ListingCreative(
               Import subtitles (.srt or .vtt)<input
                 type="file"
                 accept=".srt,.vtt,text/vtt,application/x-subrip"
-                disabled={!!busy || !draftReady || !agentBase}
+                disabled={isBusy || !draftReady || !agentBase}
                 onChange={(event) => {
                   const file = event.target.files?.[0];
                   event.target.value = "";
@@ -1594,7 +1659,7 @@ function ListingCreative(
             <label>
               Timed transcript<textarea
                 value={draft.agentTranscript}
-                disabled={!!busy || !draftReady}
+                disabled={isBusy || !draftReady}
                 onChange={(e) =>
                   updateDraft({
                     ...draft,
@@ -1606,7 +1671,7 @@ function ListingCreative(
               />
             </label>
             <button
-              disabled={!!busy || !chosenPhotos.length || !canCreate ||
+              disabled={isBusy || !chosenPhotos.length || !canCreate ||
                 !draftReady || !agentBase}
               onClick={() =>
                 run("Planning your on-camera edit", generateAgentPlan)}
@@ -1633,7 +1698,7 @@ function ListingCreative(
                 </p>
                 <button
                   className="creative-primary"
-                  disabled={!!busy || dirty || restoreConflict || !draftReady ||
+                  disabled={isBusy || dirty || restoreConflict || !draftReady ||
                     !agentBase}
                   onClick={() =>
                     run("Opening your on-camera plan", async () => {
@@ -1701,7 +1766,7 @@ function ListingCreative(
             <small>{draft.script.length}/1,000 characters</small>
             <button
               className="creative-primary"
-              disabled={!!busy || !voiceId || !draft.script.trim() ||
+              disabled={isBusy || !voiceId || !draft.script.trim() ||
                 draft.script.length > 1000 || !draftReady || !canCreate}
               onClick={() =>
                 run("Creating and saving narration", generateVoice)}
@@ -1762,7 +1827,8 @@ function ListingCreative(
       {panel === "video" && (
         <div className="creative-two-column">
           <div className="creative-card">
-            <h2>Choose your video</h2>
+            <h2>{videoKind === "aerial" ? "Make an aerial shot" : videoKind === "drone" ? "Polish your drone footage" : videoKind === "declutter" ? "Remove an object from your video" : "Animate a property photo"}</h2>
+            <p>{videoKind === "aerial" ? "Start with an exterior photo of this property. Review your AI aerial-style clip before adding it to a reel." : videoKind === "drone" ? "Choose drone footage you uploaded from your phone to make a smoother, sharper clip." : videoKind === "declutter" ? "Choose a saved clip and describe the object you want removed." : "Choose a saved property photo, add a little movement, then use the clip in Reel Studio."}</p>
             <label>
               What would you like to make?<select
                 value={videoKind}
@@ -1780,7 +1846,7 @@ function ListingCreative(
               ? sourcePicker
               : (
                 <label>
-                  Completed source video<select
+                  Saved property video<select
                     value={videoAsset}
                     onChange={(e) => setVideoAsset(e.target.value)}
                   >
@@ -1865,7 +1931,7 @@ function ListingCreative(
             </label>
             <button
               className="creative-primary"
-              disabled={!!busy || !canCreate}
+              disabled={isBusy || !canCreate}
               onClick={() => run("Starting your video", generateVideo)}
             >
               Generate video
@@ -1876,7 +1942,7 @@ function ListingCreative(
             </small>
           </div>
           <div className="creative-card">
-            <h2>Saved generations</h2>
+            <h2>Your saved AI videos</h2>
             {results.filter((r) => r.kind === "video").length === 0
               ? (
                 <p>
@@ -1914,7 +1980,7 @@ function ListingCreative(
                     )}
                     {["processing", "importing"].includes(result.state) && (
                       <button
-                        disabled={!!busy || pollBusy.current}
+                        disabled={isBusy || pollBusy.current}
                         onClick={() =>
                           run("Checking video", async () => {
                             const raw = record(
@@ -1937,7 +2003,7 @@ function ListingCreative(
                     {result.url &&
                       ["reel", "aerial"].includes(result.videoKind ?? "") && (
                       <button
-                        disabled={!!busy || result.qcPublishable}
+                        disabled={isBusy || result.qcPublishable}
                         onClick={() =>
                           run(
                             "Checking property accuracy",
@@ -2001,7 +2067,7 @@ function ListingCreative(
             </label>
             <button
               className="creative-primary"
-              disabled={!!busy || !chapterAsset || !canCreate || !draftReady}
+              disabled={isBusy || !chapterAsset || !canCreate || !draftReady}
               onClick={() =>
                 run("Finding rooms in the walkthrough", generateChapters)}
             >
@@ -2093,7 +2159,7 @@ function ListingCreative(
                 </label>
                 <button
                   className="creative-primary"
-                  disabled={!!busy || !chapterRender || !canCreate}
+                  disabled={isBusy || !chapterRender || !canCreate}
                   onClick={() => run("Updating tour chapters", applyChapters)}
                 >
                   Save chapters to tour
@@ -2122,7 +2188,7 @@ function ListingCreative(
             {replies.map((reply) => (
               <button
                 key={reply}
-                disabled={!!busy}
+                disabled={isBusy}
                 onClick={() => run("Asking Rendprop", () => askCoach(reply))}
               >
                 {reply}
@@ -2145,7 +2211,7 @@ function ListingCreative(
             </label>
             <button
               className="creative-primary"
-              disabled={!!busy || !question.trim()}
+              disabled={isBusy || !question.trim()}
             >
               Ask Rendprop
             </button>

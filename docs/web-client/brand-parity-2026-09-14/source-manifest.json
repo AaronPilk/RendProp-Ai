@@ -1,0 +1,217 @@
+{
+  "readAt": "2026-09-14T19:21:02.162287+00:00",
+  "files": [
+    {
+      "path": "apps/studio/src/App.tsx",
+      "sha256": "fed8353d7d595054a73e37abdea7c2bd5fc2f91a0fa3acd673d27a2a7e4715b7"
+    },
+    {
+      "path": "apps/studio/src/Appearance.tsx",
+      "sha256": "946efa2d2877dd5d4422e463c1551f6e8d06f8354b2b4d8329f9f72edc841d5d"
+    },
+    {
+      "path": "apps/studio/src/Planner.tsx",
+      "sha256": "d602953ccda2d7609aa20c30d6f1f6145a277fffd694988436927f74911e0f8c"
+    },
+    {
+      "path": "apps/studio/src/data/config.ts",
+      "sha256": "bcaf08e76a9c682d8fbcbc3f516cdf95e004b8be064cfd649b51c7d1477ded3d"
+    },
+    {
+      "path": "apps/studio/src/data/contracts.ts",
+      "sha256": "95627ce047f891d44fbcbdf58c11f5aa86daf6631cd95dc5605c561620b489ff"
+    },
+    {
+      "path": "apps/studio/src/data/documents.ts",
+      "sha256": "153b07a4a25f17a350c48b563f26c20236ad92a5f52d988f720e257d66699977"
+    },
+    {
+      "path": "apps/studio/src/data/index.ts",
+      "sha256": "7eebf5d5163f082bbb23fc1fd7569927ea17d51dbfe7d220941c2a131193023d"
+    },
+    {
+      "path": "apps/studio/src/data/services.ts",
+      "sha256": "c41548663f401d2968fa07b0d2833fd9fc195c0771fbe2785e7a31423402d0fe"
+    },
+    {
+      "path": "apps/studio/src/drafts.ts",
+      "sha256": "fb2dee5788bc09a91794acad273d604bc459d0b1adcc4a5cfd843556acdec55f"
+    },
+    {
+      "path": "apps/studio/src/editor/VideoEditor.tsx",
+      "sha256": "d7d1129ab365c67f700410c75db64dd076d4ebb5279a65c5bdd68bdbe1f873cf"
+    },
+    {
+      "path": "apps/studio/src/editor/editor.css",
+      "sha256": "0adf14f1561def325535eb0a3b18ddc9d52ff94d2bcb6042812fc9f6925e53d6"
+    },
+    {
+      "path": "apps/studio/src/editor/export.ts",
+      "sha256": "f03a34611658c478cfd2b148e8ea466f820ee984f09c97e35d128c436e86a4fd"
+    },
+    {
+      "path": "apps/studio/src/editor/history.ts",
+      "sha256": "c049da213ff43e2fe145082f19ed765ea4359e5b861fbb3a8f6e463886b2d020"
+    },
+    {
+      "path": "apps/studio/src/editor/media.ts",
+      "sha256": "77012bbefecd86ef8ce90ad2498a2fcc3249a44b93538de1f92adb60c18f90af"
+    },
+    {
+      "path": "apps/studio/src/editor/model.ts",
+      "sha256": "6f2e10a8145ae1b142462620f56b4207622ad90c63fe0aa496050deb4f9651a8"
+    },
+    {
+      "path": "apps/studio/src/editor/overlay-renderer.ts",
+      "sha256": "3705e4575d125d737a203860397d95f9b87749004d14a9b55f5b1ddae120e85c"
+    },
+    {
+      "path": "apps/studio/src/editor/overlays.ts",
+      "sha256": "0e2ffafa0d2812c836202621aef5a6f51309009c762d8cea635845fcc9fed0a6"
+    },
+    {
+      "path": "apps/studio/src/features/business/BusinessWorkspace.tsx",
+      "sha256": "9674eb7b548a89b8c3c6bd90602a4bd15ac0bbf410e295845c28e430e6f93e6b"
+    },
+    {
+      "path": "apps/studio/src/features/business/api.ts",
+      "sha256": "867718c0a63051f8a3489f668144df3de7d4832233026fbe12845a63c322205d"
+    },
+    {
+      "path": "apps/studio/src/features/business/business.css",
+      "sha256": "2fcf3c2c124553fcfd3bbb5f8a243f3b6ae9d0369a8428b2d3c405902800845b"
+    },
+    {
+      "path": "apps/studio/src/features/business/model.ts",
+      "sha256": "9b245bf7e667ff4d1544a76d3a12a5c8e54cbd82039fc38f67093fe88c74b97c"
+    },
+    {
+      "path": "apps/studio/src/features/creative/BatchPhotoStudio.tsx",
+      "sha256": "1872d2bab7eec44034e251ce26e94798854c67afb23940c8de07a1a935585ae8"
+    },
+    {
+      "path": "apps/studio/src/features/creative/CreativeWorkspace.tsx",
+      "sha256": "d9e8cf24e3133256e4fc9e8b7433a60da45441bb4f240e97cc3ef4df2ddf1de2"
+    },
+    {
+      "path": "apps/studio/src/features/creative/creative.css",
+      "sha256": "f75c6a64d97bdb137617f9e807e2f146364dd3fe420fb519f06c76559ef5d75e"
+    },
+    {
+      "path": "apps/studio/src/features/creative/media.ts",
+      "sha256": "f54e7157ea441cbf09f7195e874a5f9c2c22346f0f221ca3875e283cde5e6ad7"
+    },
+    {
+      "path": "apps/studio/src/features/creative/model.ts",
+      "sha256": "0d9d8313d84084d4abfd9683c26b3e2e0e9a366b51636eda29d6ee837cfffd49"
+    },
+    {
+      "path": "apps/studio/src/features/creative/transcript.ts",
+      "sha256": "7e567826993f5607dba31c3aa4dc34a40b1ab67fdad6378a8c1d2d1c96dcbcb2"
+    },
+    {
+      "path": "apps/studio/src/features/home/Dashboard.tsx",
+      "sha256": "e0a1757d4e13a58f096c0d3a0acfe9837fe96be485582acb135f54aa3a41d0e3"
+    },
+    {
+      "path": "apps/studio/src/features/home/features.ts",
+      "sha256": "fe8c2a2aa2038e8da4571fc065c4888c2845d32b87264ccca994caf86bc7ccb0"
+    },
+    {
+      "path": "apps/studio/src/features/listings/GalleryPhotoCard.tsx",
+      "sha256": "175b4375ae25e9c64a15c42187ab520e6e7bfaedfceeecdd9346b65d592ea569"
+    },
+    {
+      "path": "apps/studio/src/features/listings/ListingWorkflow.tsx",
+      "sha256": "bb553a2a42b0c048d7ebd377505391f7ad8294ab8a0faed8a352e45057116d81"
+    },
+    {
+      "path": "apps/studio/src/features/listings/SpatialWorkflow.tsx",
+      "sha256": "f9a3eac68ffa1bca484d0dc1f64c75c7ce60e234193c17af22db171962b0eba3"
+    },
+    {
+      "path": "apps/studio/src/features/listings/listings.css",
+      "sha256": "9d66744652a9c77f0970c10ab9cd7f598f0ee6f548ef3ffa36a65b81096bd899"
+    },
+    {
+      "path": "apps/studio/src/features/listings/model.ts",
+      "sha256": "ecf61c585d5c4c66d4c3413ea4d57377af75c8efcd0d41cf0e6f4d5f0135080e"
+    },
+    {
+      "path": "apps/studio/src/features/listings/qr.ts",
+      "sha256": "97caa107af905b4294bfb8c2db2859ea5fd76005e94af3b7d313ab45aaf81330"
+    },
+    {
+      "path": "apps/studio/src/features/listings/uploads.ts",
+      "sha256": "3a5d7b48474ad0af56048f4167e4d5269a1dadffc6503b2e44d19dcf39b6fbd2"
+    },
+    {
+      "path": "apps/studio/src/features/sync/CloudEditor.tsx",
+      "sha256": "d12030707f877c685f35a189e1188168502096a35c9dad2693acac7c2667721a"
+    },
+    {
+      "path": "apps/studio/src/features/sync/CloudPlanner.tsx",
+      "sha256": "a0a88df24a9b8e6888f94f4497b9dfddd832f0907be06b6704b0a622b1f21306"
+    },
+    {
+      "path": "apps/studio/src/features/sync/ReelMediaPicker.tsx",
+      "sha256": "ee9d3f1d78c77517dd32a84dcaa852605db2f73d0fa1bd906f3834ef27cf03ab"
+    },
+    {
+      "path": "apps/studio/src/features/sync/SyncStatus.tsx",
+      "sha256": "da344be12c6b07888c85e4fa29e09899cffe3a7ef77e186b0f45dbe8617953b8"
+    },
+    {
+      "path": "apps/studio/src/features/sync/media-aliases.ts",
+      "sha256": "d87431cafd73b8f70da0f4ce238d076b9e6a8c68b589e9445977215cd5de2c69"
+    },
+    {
+      "path": "apps/studio/src/features/sync/native-reel.ts",
+      "sha256": "49f7758731c70f661ec7c756100027334c2126a8fd30cf262011d00083b43479"
+    },
+    {
+      "path": "apps/studio/src/features/sync/planner-recovery.css",
+      "sha256": "7517a7a24a9b9d1c35978468c3d6c8dc0f636fb0bd2650a7a0559bfd1728a455"
+    },
+    {
+      "path": "apps/studio/src/features/sync/planner-recovery.ts",
+      "sha256": "79fd1ae334f3f228891640852a57b186d68b7123e67c8b61b4d68421bdda2d32"
+    },
+    {
+      "path": "apps/studio/src/features/sync/reel.css",
+      "sha256": "b428d5dfb9d305c984c4e6d9b5a09009072f9eae51f624541364a4710d914d0e"
+    },
+    {
+      "path": "apps/studio/src/features/sync/shot-plan.ts",
+      "sha256": "72f05a7dd8d2f1eea3cec12f6ea093875aa42821af77a03c2294cdaba146a112"
+    },
+    {
+      "path": "apps/studio/src/icons.tsx",
+      "sha256": "f2d09155d7544a28b3de047bbd95e00b3244695b6287c02db51168d7d95539b9"
+    },
+    {
+      "path": "apps/studio/src/main.tsx",
+      "sha256": "2b61a6fe1ad3b73b57210cbe0fca2c6ae60085840de086d16eec2a2692ed2e01"
+    },
+    {
+      "path": "apps/studio/src/planner.css",
+      "sha256": "339948a91095f57a5ba67ce109aa47a9996bb844bd463abf9fc13f7abaeb294b"
+    },
+    {
+      "path": "apps/studio/src/styles.css",
+      "sha256": "7b5a834bbc76eb0f27e8d2bb3dd0439c82b17455903245c6f931adbb8eaff50e"
+    },
+    {
+      "path": "apps/studio/src/theme.ts",
+      "sha256": "09348d5a43f726ee14727082d607b5c5f2ed2f2b23ed0638ed53e6a88c5cac4a"
+    },
+    {
+      "path": "apps/studio/src/workspace-refresh.ts",
+      "sha256": "5685352bf32b380999b19c1c37e49707d52846ab55457f8d21035d698a1b7080"
+    },
+    {
+      "path": "apps/studio/src/workspace.ts",
+      "sha256": "99143827e4faae1ee4921e226908a3dd0a0adeb2c55c87df6ca897483c5e4917"
+    }
+  ]
+}

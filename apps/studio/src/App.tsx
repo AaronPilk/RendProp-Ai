@@ -12,8 +12,13 @@ import { createStudioServices, readStudioConfig } from "./data";
 import type { VideoEditorProps } from "./editor/VideoEditor";
 import { EDIT_LIMITS, validateDraft } from "./editor/model";
 import type { EditDraft } from "./editor/model";
-import type { AgentPlanHandoff, ShotPlanHandoff } from "./features/creative/model";
+import type { AgentPlanHandoff, ShotPlanHandoff, CreativeEntryRequest, CreativeTool } from "./features/creative/model";
 import Planner from "./Planner";
+import { AppearanceSelector } from "./Appearance";
+import Dashboard, { FeatureGate } from "./features/home/Dashboard";
+import { homeWords, type FeatureId } from "./features/home/features";
+import type { BusinessSectionRequest } from "./features/business/BusinessWorkspace";
+import type { ListingEntryRequest } from "./features/listings/ListingWorkflow";
 import Icon from "./icons";
 import type { IconName } from "./icons";
 import { INDUSTRIES, scopeKey, writePlans } from "./workspace";
@@ -36,13 +41,13 @@ function VideoEditor(props: VideoEditorProps) {
   );
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
-  { id: "overview", label: "Overview", icon: "home" },
-  { id: "properties", label: "Properties", icon: "folder" },
-  { id: "creative", label: "Create", icon: "plus" },
-  { id: "editor", label: "Video editor", icon: "film" },
-  { id: "library", label: "Content library", icon: "library" },
+  { id: "overview", label: "Home", icon: "home" },
+  { id: "properties", label: "My homes", icon: "folder" },
+  { id: "creative", label: "AI tools", icon: "plus" },
+  { id: "editor", label: "Make a reel", icon: "film" },
+  { id: "library", label: "Photos & videos", icon: "library" },
   { id: "planner", label: "Content planner", icon: "calendar" },
-  { id: "workspace", label: "Workspace", icon: "settings" },
+  { id: "workspace", label: "My business", icon: "settings" },
 ];
 const signedOut: SessionSnapshot = {
   status: "signed-out",
@@ -132,6 +137,10 @@ export default function App({ servicesFactory }: {
   const [editorOpened, setEditorOpened] = useState(false);
   const [plannerOpened, setPlannerOpened] = useState(false);
   const [creativeOpened, setCreativeOpened] = useState(false);
+  const [businessOpened, setBusinessOpened] = useState(false);
+  const [propertiesOpened,setPropertiesOpened]=useState(false);
+  const [featureEntry, setFeatureEntry] = useState<{scope:string;creative?:CreativeEntryRequest;business?:BusinessSectionRequest;property?:ListingEntryRequest;reel?:{id:string;listingId:string};create?:string;gate?:FeatureId}>();
+  const [spatialFlag,setSpatialFlag] = useState<{scope:string;enabled:boolean}>();
   const dialogRef = useRef<HTMLElement | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
   const mediaPageAbort = useRef<AbortController | null>(null);
@@ -183,6 +192,7 @@ export default function App({ servicesFactory }: {
   const importRequest = importScope === editScope ? storedImport : undefined;
   const importPlan = shotPlanScope === editScope ? storedShotPlan : undefined;
   const importAgentPlan = agentPlanScope === editScope ? storedAgentPlan : undefined;
+  const entry = featureEntry?.scope === editScope ? featureEntry : undefined;
   const mediaScope = useRef("");
   mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
   function setRequestedOrg(orgId: string | undefined) {
@@ -200,6 +210,45 @@ export default function App({ servicesFactory }: {
     // its selection so moving from Properties to Create opens the same work.
     initialListing.current = found ? null : id;
     setSelected(found ?? null);
+  }
+  function openBusiness(section: BusinessSectionRequest["section"]) {
+    if (!workspace) { setShowLogin(true); return; }
+    setFeatureEntry({scope:editScope,business:{id:crypto.randomUUID(),section}});
+    navigate("workspace");
+  }
+  function openCreative(listingId:string,tool:CreativeTool) {
+    if (!workspace || !listings.some(item=>item.id===listingId)) return;
+    selectListing(listingId);
+    setFeatureEntry({scope:editScope,creative:{id:crypto.randomUUID(),listingId,tool}});
+    navigate("creative");
+  }
+  function createProperty() {
+    if (!workspace) { setShowLogin(true); return; }
+    setFeatureEntry({scope:editScope,create:crypto.randomUUID()});
+    navigate("properties");
+  }
+  function openFeature(feature:FeatureId,requestedId?:string) {
+    if (!workspace) { setShowLogin(true); return; }
+    if (feature === "agent") { openBusiness("brand"); return; }
+    const available=listings.filter(item=>!item.soldAt);
+    const target=available.find(item=>item.id===(requestedId??selected?.id))??(available.length===1?available[0]:undefined);
+    if (!target) {
+      if (!available.length) createProperty();
+      else setFeatureEntry({scope:editScope,gate:feature});
+      return;
+    }
+    selectListing(target.id);
+    const id=crypto.randomUUID();
+    if (["tour","spatial","photos","floorplan"].includes(feature)) {
+      setFeatureEntry({scope:editScope,property:{id,listingId:target.id,tab:feature==="tour"?"tour":feature==="photos"?"media":"floorplan"}});
+      navigate("properties");
+    } else if(feature === "reel") {
+      setFeatureEntry({scope:editScope,reel:{id,listingId:target.id}});
+      navigate("editor");
+    } else {
+      const tool=({studio:"photo-studio",aerial:"aerial",voice:"voiceover",copy:"shot-plans",animate:"animate",chapters:"chapters",coach:"coach"} as Partial<Record<FeatureId,CreativeTool>>)[feature];
+      if(tool)openCreative(target.id,tool);
+    }
   }
   function useShotPlan(plan: ShotPlanHandoff) {
     if (!workspace || !listings.some(item => item.id === plan.listingId)) return;
@@ -336,7 +385,16 @@ export default function App({ servicesFactory }: {
     if (page === "editor") setEditorOpened(true);
     if (page === "planner") setPlannerOpened(true);
     if (page === "creative") setCreativeOpened(true);
+    if (page === "workspace") setBusinessOpened(true);
+    if (page === "properties") setPropertiesOpened(true);
   }, [page]);
+  useEffect(() => {
+    const abort=new AbortController();
+    if(workspace&&services)void services.api("/functions/v1/spatial/capability",{orgId:workspace.org.id,signal:abort.signal}).then(raw=>{
+      if(!abort.signal.aborted)setSpatialFlag({scope:editScope,enabled:(raw as {enabled?:boolean})?.enabled===true});
+    },()=>{});
+    return ()=>abort.abort();
+  },[services,workspace?.org.id,editScope]);
   useEffect(() => {
     setLoadedKey("");
     setDraft(undefined);
@@ -689,7 +747,9 @@ export default function App({ servicesFactory }: {
       .toLowerCase()
       .includes(query.toLowerCase()),
   );
-  const heading = pages.find((p) => p.id === page)!;
+  const navigation = pages.map(item=>item.id==="properties"?{...item,label:homeWords(workspace?.org.spaceType??industry).collection}:item);
+  const heading = navigation.find((p) => p.id === page)!;
+  const compactLabels: Record<Page,string>={overview:"Home",properties:homeWords(workspace?.org.spaceType??industry).plural,creative:"AI tools",editor:"Reel",library:"Library",planner:"Planner",workspace:"Business"};
   return (
     <div className="studio-shell">
       <aside className="sidebar">
@@ -714,16 +774,16 @@ export default function App({ servicesFactory }: {
         </div>
         <p className="nav-label">CREATE & GROW</p>
         <nav aria-label="Studio navigation">
-          {pages.map((item) => (
+          {navigation.map((item) => (
             <button
               key={item.id}
               className={`nav-item ${page === item.id ? "active" : ""}`}
+              aria-label={item.label}
               aria-current={page === item.id ? "page" : undefined}
               onClick={() => navigate(item.id)}
             >
               <Icon name={item.icon} />
-              {item.label}
-
+              <span className="nav-label-full">{item.label}</span><span className="nav-label-short" aria-hidden="true">{compactLabels[item.id]}</span>
             </button>
           ))}
         </nav>
@@ -764,6 +824,7 @@ export default function App({ servicesFactory }: {
             Workspace <span>/</span> <strong>{heading.label}</strong>
           </div>
           <div className="top-actions">
+            <AppearanceSelector compact/>
             <span className="connection">
               <i className={workspace ? "online" : ""} />
               {busy
@@ -850,20 +911,16 @@ export default function App({ servicesFactory }: {
               </button>
             </div>
           )}
-          {!(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
+          {page !== "overview" && !(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
             <div>
               <p className="eyebrow">
                 {industryName(industry).toUpperCase()} / RENDPROP STUDIO
               </p>
               <h1>
-                {page === "overview"
-                  ? workspace ? "Pick up where you left off." : "Make your next impression."
-                  : heading.label}
+{heading.label}
               </h1>
               <p className="subtitle">
-                {page === "overview"
-                  ? workspace ? "Your listings, media, and business tools in one shared workspace." : "Your spaces. Your stories. One place to create."
-                  : page === "properties"
+                {page === "properties"
                     ? "Everything for a listing, from its first capture to the published tour."
                   : page === "creative"
                     ? "Create photos, narration, scripts, and videos for your listing."
@@ -876,160 +933,14 @@ export default function App({ servicesFactory }: {
                         : "One identity. Your existing Rendprop workspace."}
               </p>
             </div>
-            {page === "overview" && (
-              <button className="primary" onClick={() => navigate("properties")}>
-                <Icon name="plus" size={18} />
-                Open properties
-              </button>
-            )}
           </div>}
-          {page === "overview" && (
-            <>
-              {workspace ? <section className="handoff-summary" aria-label="Workspace summary">
-                <button onClick={()=>navigate("properties")}><span>Properties</span><strong>{listings.length}</strong><small>Open your shared workspace →</small></button>
-                <button onClick={()=>navigate("properties")}><span>Ready to finish</span><strong>{listings.filter(l=>l.status==="draft"||l.status==="capturing").length}</strong><small>Continue a listing →</small></button>
-                <button onClick={()=>navigate("properties")}><span>Processing</span><strong>{listings.filter(l=>l.status==="processing"||l.status==="uploading").length}</strong><small>Check your latest progress →</small></button>
-                <button onClick={()=>navigate("workspace")}><span>New leads</span><strong>{workspace.usage.leadsNew}</strong><small>Open your lead inbox →</small></button>
-              </section> : <section className="studio-hero">
-                <div className="hero-copy">
-                  <span className="tag tag-light">YOUR NEW CREATIVE DESK</span>
-                  <h2>
-                    Captured on your phone.
-                    <br />
-                    <span>Crafted in your studio.</span>
-                  </h2>
-                  <p>
-                    Find the right moments. Make them yours. Bring photos and
-                    video together with a timeline built for your business.
-                  </p>
-                  <button
-                    className="white-button"
-                    onClick={() => navigate("editor")}
-                  >
-                    Open video editor
-                    <Icon name="arrow" size={18} />
-                  </button>
-                  <small>Local editing · No account needed to start</small>
-                </div>
-                <div className="hero-art" aria-hidden="true">
-                  <div className="art-frame art-back">
-                    <span>YOUR SPACE</span>
-                  </div>
-                  <div className="art-frame art-front">
-                    <div className="art-window">
-                      <div className="art-sun" />
-                      <div className="art-plane" />
-                    </div>
-                    <div className="art-caption">
-                      <span>THE NEXT CHAPTER</span>
-                      <strong>A new perspective.</strong>
-                    </div>
-                    <div className="art-play">▶</div>
-                  </div>
-                  <div className="art-timeline">
-                    <i />
-                    <i />
-                    <i />
-                    <i />
-                    <div className="art-playhead" />
-                  </div>
-                  <div className="art-chip">
-                    9:16 <span>Ready for your feed</span>
-                  </div>
-                </div>
-              </section>}
-              <section className="quick-grid" aria-label="Creation tools">
-                <button
-                  className="quick-card"
-                  onClick={() => navigate("editor")}
-                >
-                  <span className="quick-icon violet">
-                    <Icon name="film" />
-                  </span>
-                  <h3>Create a video</h3>
-                  <p>Trim, arrange, caption. Tell your story.</p>
-                  <Icon name="arrow" size={18} />
-                </button>
-                <button
-                  className="quick-card"
-                  onClick={() => navigate("library")}
-                >
-                  <span className="quick-icon teal">
-                    <Icon name="library" />
-                  </span>
-                  <h3>Explore your content</h3>
-                  <p>Your app’s spaces, photos, and footage.</p>
-                  <Icon name="arrow" size={18} />
-                </button>
-                <button
-                  className="quick-card"
-                  onClick={() => navigate("planner")}
-                >
-                  <span className="quick-icon pink">
-                    <Icon name="calendar" />
-                  </span>
-                  <h3>Plan your next post</h3>
-                  <p>Prepare captions and calendar reminders.</p>
-                  <Icon name="arrow" size={18} />
-                </button>
-              </section>
-              <section className="panel spaces-panel">
-                <div className="section-heading">
-                  <div>
-                    <h2>Your spaces</h2>
-                    <p className="muted">
-                      Pick up the story where you left it.
-                    </p>
-                  </div>
-                  <button
-                    className="text-button"
-                    onClick={() => navigate("library")}
-                  >
-                    View library <Icon name="arrow" size={16} />
-                  </button>
-                </div>
-                {busy ? (
-                  <p role="status">Loading your Rendprop workspace…</p>
-                ) : workspace ? (
-                  <SpaceList
-                    spaces={listings.slice(0, 4)}
-                    select={(space) => {
-                      setSelected(space);
-                      navigate("properties");
-                    }}
-                  />
-                ) : (
-                  <EmptyConnect onConnect={() => setShowLogin(true)} />
-                )}
-              </section>
-              {!workspace && <div className="industry-strip">
-                <span>BUILT AROUND YOUR BUSINESS</span>
-                <label className="sr-only" htmlFor="industry">
-                  Business type
-                </label>
-                <select
-                  id="industry"
-                  value={industry}
-                  onChange={(e) => setIndustry(e.target.value as Industry)}
-                >
-                  {Object.entries(INDUSTRIES).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
-                    </option>
-                  ))}
-                </select>
-                <small>
-                  Local display preference · your app’s business settings stay
-                  unchanged
-                </small>
-              </div>}
-            </>
-          )}
-          {page === "properties" && (workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
-            <ListingWorkflow key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
-          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />)}
+          {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
+          {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
+          {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
+            <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
+          </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening creative tools…</p>}>
-            <CreativeWorkspace key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} />
+            <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} />
           </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section
@@ -1037,7 +948,7 @@ export default function App({ servicesFactory }: {
               aria-label="Video editing workspace"
             >
               {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
-                <CloudEditor key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} />
+                <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} />
               </Suspense> : workspaceDraftReady ? (
                 <VideoEditor
                   key={`${editScope}:${restoreAttempt}`}
@@ -1249,7 +1160,7 @@ export default function App({ servicesFactory }: {
             ) : (
               <p role="status">Opening this workspace’s content plan…</p>
             )}</section>}
-          {page === "workspace" && workspace && services && <Suspense fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></Suspense>}
+          {(page === "workspace" || businessOpened) && workspace && services && <section hidden={page !== "workspace"} aria-label="Business workspace"><Suspense fallback={<p role="status">Opening your business workspace…</p>}><BusinessWorkspace sectionRequest={entry?.business} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing}/></Suspense></section>}
           {page === "workspace" && (
             <div className="settings-grid">
               <section className="panel">

@@ -1,11 +1,11 @@
 .rp-editor {
-  --editor-ground: #0b0d10;
-  --editor-surface: #161820;
-  --editor-text: #f2f3f5;
-  --editor-muted: #9698a6;
-  --editor-accent: #7c3aed;
-  --editor-accent-text: #a97cf2;
-  --editor-focus: #d9c6fa;
+  --editor-ground: var(--bg);
+  --editor-surface: var(--surface);
+  --editor-text: var(--ink);
+  --editor-muted: var(--muted);
+  --editor-accent: var(--accent);
+  --editor-accent-text: var(--accent-text);
+  --editor-focus: var(--focus);
   color: var(--editor-text);
   min-width: 0;
 }
@@ -21,21 +21,23 @@
 .rp-editor button,
 .rp-editor-download {
   min-height: 44px;
-  border: 1px solid #343540;
-  border-radius: 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
   padding: 10px 14px;
-  background: #20222c;
+  background: var(--surface);
   color: var(--editor-text);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   transition:
     background-color 160ms,
     border-color 160ms;
+
+  border-color: var(--input-line);
 }
 .rp-editor button:hover:not(:disabled) {
-  background: #2d2b3b;
-  border-color: #827194;
+  background: var(--surface-subtle);
+  border-color: var(--line);
 }
 .rp-editor button:disabled,
 .rp-editor input:disabled,
@@ -65,7 +67,7 @@
 }
 .rp-editor-eyebrow {
   color: var(--editor-accent-text);
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 700;
   letter-spacing: 0.16em;
   margin-bottom: 9px !important;
@@ -110,16 +112,18 @@
 .rp-editor-notice,
 .rp-editor-missing {
   padding: 12px 16px;
-  border: 1px solid #504369;
-  background: #211b2e;
+  border: 1px solid var(--line);
+  background: var(--accent-soft);
   border-radius: 10px;
   font-size: 13px;
   line-height: 1.55;
   margin-bottom: 16px !important;
 }
 .rp-editor-missing {
-  border-color: #655d3d;
-  background: #262419;
+  border-color: var(--warn-line);
+  background: var(--warn-soft);
+
+  color: var(--warn);
 }
 .rp-editor-workspace {
   display: grid;
@@ -134,7 +138,7 @@
 .rp-editor-timeline,
 .rp-editor-inspector {
   background: var(--editor-surface);
-  border: 1px solid #2a2c36;
+  border: 1px solid var(--line);
   border-radius: 12px;
   overflow: hidden;
 }
@@ -153,18 +157,18 @@
   font-weight: 600;
 }
 .rp-editor-panel-bar h3 span {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--editor-muted);
   font-weight: 400;
   margin-left: 8px;
 }
 .rp-editor-panel-bar > span:last-child {
-  font-size: 10px;
+  font-size: 12px;
   letter-spacing: 0.04em;
   color: var(--editor-muted);
 }
 .rp-editor-audio-badge {
-  border: 1px solid #383441;
+  border: 1px solid var(--line);
   border-radius: 20px;
   padding: 5px 9px;
 }
@@ -177,8 +181,8 @@
   justify-content: center;
   background: radial-gradient(ellipse at 50% 60%, #1b1928, #0b0d10 76%);
   overflow: hidden;
-  border-top: 1px solid #242630;
-  border-bottom: 1px solid #242630;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
 }
 .rp-editor-stage.has-media {
   background: #080a0d;
@@ -200,13 +204,17 @@
   flex-direction: column;
   padding: 24px;
   text-align: center;
+
+  color: #f2f0fa;
+
+  --editor-muted: #b8b4c9;
 }
 .rp-editor-film-icon {
   display: grid;
   place-items: center;
   width: 66px;
   height: 66px;
-  border: 1px solid #5b4778;
+  border: 1px solid var(--line);
   color: #bd9bf5;
   background: linear-gradient(140deg, #302343, #1e1b29);
   border-radius: 17px;
@@ -227,19 +235,19 @@
 }
 .rp-editor button.rp-editor-primary {
   background: var(--editor-accent);
-  color: #fff;
-  border-color: #8d56e6;
+  color: var(--on-accent);
+  border-color: var(--accent);
   min-height: 44px;
   padding: 12px 20px;
 }
 .rp-editor button.rp-editor-primary:hover:not(:disabled) {
-  background: #8b4fef;
+  background: var(--accent-hover);
 }
 .rp-editor-empty .rp-editor-primary {
   margin-top: 22px;
 }
 .rp-editor-empty small {
-  font-size: 10px;
+  font-size: 12px;
   color: var(--editor-muted);
   margin-top: 16px;
 }
@@ -272,7 +280,7 @@
 }
 .rp-editor-transport output {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: 13px;
   font-variant-numeric: tabular-nums;
 }
 .rp-editor-transport output span {
@@ -287,7 +295,7 @@
 .rp-editor-timeline .rp-editor-panel-bar button {
   background: transparent;
   border-color: transparent;
-  color: #d9c6fa;
+  color: var(--accent-text);
   font-size: 12px;
 }
 .rp-editor-clips {
@@ -306,20 +314,20 @@
   display: block;
   text-align: left;
   padding: 4px;
-  background: #101218;
+  background: var(--surface-subtle);
   width: 100%;
   border: 2px solid transparent;
   border-radius: 8px;
 }
 .rp-editor button.rp-editor-clip.is-selected {
-  border-color: var(--editor-accent-text);
-  background: #262031;
+  border-color: var(--accent);
+  background: var(--accent-soft);
 }
 .rp-editor-thumbnail {
   height: 87px;
   position: relative;
   border-radius: 4px;
-  background: #23222e;
+  background: var(--surface);
   overflow: hidden;
   display: grid;
   place-items: center;
@@ -330,7 +338,7 @@
   object-fit: cover;
 }
 .rp-editor-thumbnail > span:not([class]) {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--editor-muted);
 }
 .rp-editor-clip-number,
@@ -340,7 +348,7 @@
   background: #101016c9;
   padding: 2px 5px;
   border-radius: 3px;
-  font-size: 10px;
+  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 .rp-editor-clip-number {
@@ -353,7 +361,7 @@
 }
 .rp-editor-clip strong {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -363,13 +371,13 @@
 .rp-editor-clip small {
   color: var(--editor-muted);
   display: block;
-  font-size: 10px;
+  font-size: 12px;
   font-weight: 400;
   margin: 5px 4px 6px;
 }
 .rp-editor-empty-timeline {
   margin: 8px 18px 18px;
-  border: 1px dashed #3a3547;
+  border: 1px dashed var(--line);
   border-radius: 8px;
   min-height: 102px;
   display: flex;
@@ -386,10 +394,10 @@
   font-size: 12px;
 }
 .rp-editor-limit-note {
-  border-top: 1px solid #282a34;
+  border-top: 1px solid var(--line);
   padding: 13px 18px;
   color: var(--editor-muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.7;
 }
 .rp-editor-settings,
@@ -403,7 +411,7 @@
 }
 .rp-editor-inspector label {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 500;
   line-height: 1.5;
   margin-bottom: 14px;
@@ -413,19 +421,21 @@
 .rp-editor-inspector textarea {
   display: block;
   margin-top: 7px;
-  border: 1px solid #383944;
-  background: #111319;
+  border: 1px solid var(--line);
+  background: var(--surface);
   color: var(--editor-text);
   border-radius: 7px;
   padding: 10px 11px;
   width: 100%;
   min-height: 44px;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.5;
+
+  border-color: var(--input-line);
 }
 .rp-editor-inspector input::placeholder,
 .rp-editor-inspector textarea::placeholder {
-  color: #9698a6;
+  color: var(--muted);
   opacity: 1;
 }
 .rp-editor-inspector textarea {
@@ -441,7 +451,7 @@
   display: block;
   text-align: right;
   color: var(--editor-muted);
-  font-size: 10px;
+  font-size: 12px;
   margin-top: 4px;
   font-weight: 400;
 }
@@ -450,10 +460,10 @@
 }
 .rp-editor-clip-settings,
 .rp-editor-export {
-  border-top: 1px solid #2a2c36;
+  border-top: 1px solid var(--line);
 }
 .rp-editor-selected-name {
-  font-size: 11px;
+  font-size: 13px;
   color: var(--editor-muted);
   white-space: nowrap;
   text-overflow: ellipsis;
@@ -471,7 +481,7 @@
 }
 .rp-editor-trim > small {
   grid-column: 1 / -1;
-  font-size: 10px;
+  font-size: 12px;
   color: var(--editor-muted);
   line-height: 1.5;
 }
@@ -481,21 +491,21 @@
   gap: 8px;
 }
 .rp-editor-reorder button {
-  font-size: 11px;
+  font-size: 13px;
   padding: 10px 8px;
 }
 .rp-editor button.rp-editor-remove {
-  color: #e6bccd;
+  color: var(--bad);
   width: 100%;
   background: transparent;
   border-color: transparent;
   font-weight: 400;
-  font-size: 11px;
+  font-size: 13px;
   margin-top: 8px;
 }
 .rp-editor button.rp-editor-relink {
   width: 100%;
-  border-color: #806690;
+  border-color: var(--line);
   margin-bottom: 14px;
 }
 .rp-editor-inspector-empty {
@@ -506,7 +516,7 @@
 }
 .rp-editor-export {
   padding-top: 20px;
-  background: linear-gradient(140deg, #201b2c, #171820);
+  background: var(--accent-soft);
 }
 .rp-editor-export h3 {
   font-size: 15px;
@@ -515,7 +525,7 @@
 }
 .rp-editor-export > p:first-of-type {
   color: var(--editor-muted);
-  font-size: 11px;
+  font-size: 13px;
   margin: 8px 0 16px;
 }
 .rp-editor-export-button,
@@ -524,13 +534,13 @@
 }
 .rp-editor-export-note {
   color: var(--editor-muted);
-  font-size: 10px;
+  font-size: 12px;
   line-height: 1.7;
   margin-top: 12px !important;
 }
 .rp-editor-export p[role="status"] {
-  color: #d9c6fa;
-  font-size: 11px;
+  color: var(--accent-text);
+  font-size: 13px;
   line-height: 1.6;
   margin: 10px 0;
 }
@@ -543,9 +553,9 @@
   display: block;
   text-align: center;
   margin-top: 14px;
-  background: #322244;
+  background: var(--accent-soft);
   text-decoration: none;
-  color: #e8d9fe;
+  color: var(--accent-text);
   font-size: 12px;
 }
 @media (max-width: 1050px) {
@@ -576,11 +586,13 @@
   }
   .rp-editor-clip-settings {
     border-top: none;
-    border-left: 1px solid #2a2c36;
+    border-left: 1px solid var(--line);
   }
   .rp-editor-export {
     grid-column: 1 / -1;
-  }
+
+  background: var(--accent-soft);
+}
 }
 @media (max-width: 480px) {
   .rp-editor-inspector {
@@ -588,7 +600,7 @@
   }
   .rp-editor-clip-settings {
     border-left: none;
-    border-top: 1px solid #2a2c36;
+    border-top: 1px solid var(--line);
   }
   .rp-editor-stage {
     height: 355px;
@@ -601,14 +613,14 @@
   }
   .rp-editor-plan-actions button {
     flex: 1;
-    font-size: 11px;
+    font-size: 13px;
   }
   .rp-editor-transport {
     gap: 8px;
     padding: 10px;
   }
   .rp-editor-transport output {
-    font-size: 10px;
+    font-size: 12px;
   }
 }
 @media (prefers-reduced-motion: reduce) {
