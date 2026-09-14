@@ -15,7 +15,7 @@ from prepare_capture import CaptureError, GSPLAT_COMMIT, read_json, require
 
 
 def training_command(python, gsplat, dataset, output, max_steps, max_gaussians, pose_opt=False):
-    require(1 <= max_steps <= 7000, "max_steps must be 1–7000")
+    require(type(max_steps) is int and 1 <= max_steps <= 30000, "max_steps must be 1–30000")
     require(100 <= max_gaussians <= 500000, "max_gaussians must be 100–500000")
     require(type(pose_opt) is bool, "pose_opt must be a boolean")
     # Fields exist in v1.5.3 Config and MCMCStrategy. DefaultStrategy has no
@@ -31,7 +31,7 @@ def training_command(python, gsplat, dataset, output, max_steps, max_gaussians, 
 
 
 def bounded_process(command, timeout, *, cwd=None, env=None, stdout=None):
-    require(0 < timeout <= 1800, "wall-clock ceiling must be positive and at most 1800 seconds")
+    require(0 < timeout <= 4200, "wall-clock ceiling must be positive and at most 4200 seconds")
     started = time.monotonic()
     process = None
     handlers = {}
@@ -111,7 +111,7 @@ def main():
     try:
         gsplat, dataset, output = args.gsplat_dir.resolve(), args.dataset.resolve(), args.output.resolve()
         require(sys.platform == "linux", "the pinned GPU runner requires Linux with NVIDIA CUDA")
-        require(1 <= args.max_seconds <= 1800, "max_seconds must be 1–1800")
+        require(1 <= args.max_seconds <= 4200, "max_seconds must be 1–4200")
         command = training_command(sys.executable, gsplat, dataset, output, args.max_steps, args.max_gaussians,
                                    pose_opt=args.pose_opt)
         report = validate_dataset(dataset, args.max_gaussians)

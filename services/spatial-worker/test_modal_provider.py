@@ -1,5 +1,7 @@
 """Strict offline provider-boundary execution, not a successful GPU run."""
 from decimal import Decimal, ROUND_CEILING
+from contextlib import redirect_stdout
+from io import StringIO
 import json
 from pathlib import Path
 import sys
@@ -9,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from worker import JobFailure, MIN_COST_RESERVATION_CENTS, TRAINING_ROOT
-from modal_provider import ModalProvider, compute_bound_cents
+from modal_provider import ModalProvider, TRAINER_COMMIT, compute_bound_cents, copy_bounded_json, quality_record
 from provider_journal import sandbox_name
 from test_worker import JOB_ID, LEASE_ID, job
 
@@ -35,11 +37,21 @@ class ProviderFixture(unittest.TestCase):
         self.app = SimpleNamespace(name="rendprop-spatial-worker")
         self.sb = self.modal.Sandbox.create.return_value
         self.sb.object_id = "sb-fixture1234"; self.sb.poll.return_value = 137
-        self.sb.filesystem.stat.return_value = SimpleNamespace(size=3)
+        self.metadata = {"status": "trained", "gsplat_commit": TRAINER_COMMIT, "frames": 20,
+                         "max_steps": 3000, "max_seconds": 900, "max_gaussians": 500000,
+                         "gaussian_count": 100, "world_normalization": False,
+                         "pose_optimization": False, "elapsed_seconds": 200.5}
+        self.metrics = {"psnr": 19.6, "ssim": 0.81, "lpips": 0.55, "num_GS": 100}
+        def content(remote):
+            if remote.endswith("run.json"):
+                return json.dumps(self.metadata).encode()
+            if remote.endswith("val_step2999.json"):
+                return json.dumps(self.metrics).encode()
+            return b"sog"
+        self.sb.filesystem.stat.side_effect = lambda remote: SimpleNamespace(size=len(content(remote)))
         def copy(remote, local):
             local.parent.mkdir(parents=True, exist_ok=True)
-            local.write_bytes(json.dumps({"status": "trained", "gaussian_count": 100}).encode()
-                              if remote.endswith("run.json") else b"sog")
+            local.write_bytes(content(remote))
         self.sb.filesystem.copy_to_local.side_effect = copy
         self.journal_rows = []
         def journal_call(j, route, **fields):
@@ -49,7 +61,7 @@ class ProviderFixture(unittest.TestCase):
                     "attempt_key": j["attempt_key"], "dispatch": True, **fields["data"]}
         self.api = SimpleNamespace(job_call=Mock(side_effect=journal_call))
         self.lease = SimpleNamespace(check=Mock(), stage=Mock(), abort=lambda: None, provider_stopped=True, api=self.api)
-        self.capture = {"frames": [{"pose": [[1,0,0,0],[0,1,0,1.6],[0,0,1,0],[0,0,0,1]]}],
+        self.capture = {"frames": [{"pose": [[1,0,0,0],[0,1,0,1.6],[0,0,1,0],[0,0,0,1]]} for _ in range(20)],
                         "seeds": [{"position": [-1,0,-1]}, {"position": [1,2,1]}]}
         self.provider = ModalProvider(self.modal, self.app)
 
@@ -217,6 +229,97 @@ class ProviderTests(ProviderFixture):
         with patch.object(modal_room, "inventory", return_value=[]), patch.object(modal_room, "exec_to_log"):
             with self.assertRaisesRegex(JobFailure, "provider_journal_unconfirmed"):
                 self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+
+
+class QualityReceiptTests(ProviderFixture):
+    def test_receipt_allowlist_excludes_arbitrary_trainer_fields(self):
+        self.metadata.update(command=["/private/path", "secret-canary"], token="secret-canary",
+                             resolved_dependencies=["private-source"], room_label="private-room")
+        self.metrics.update(raw_image="private-pixels", source_path="/private/path")
+        record = quality_record(job(), self.sb.object_id, 20, self.metadata, self.metrics)
+        self.assertEqual(set(record), {"event", "job_id", "sandbox_id", "trainer_commit", "frames",
+                         "loss_heldout_count", "test_every", "seed", "pose_optimization", "steps",
+                         "gaussians", "training_elapsed_seconds", "psnr", "ssim", "lpips", "evaluation"})
+        self.assertEqual(record["evaluation"], "loss_held_out_seed_initialization_uses_all_frames")
+        self.assertEqual((record["loss_heldout_count"], record["test_every"], record["seed"]), (3, 8, 42))
+        self.assertFalse(any(value in json.dumps(record) for value in
+                             ("private", "secret-canary", "command", "token")))
+        dense_job = job(); dense_job["manifest"]["frames"] = ["frame"] * 153
+        self.assertEqual(quality_record(dense_job, self.sb.object_id, 153,
+                         {**self.metadata, "frames": 153}, self.metrics)["loss_heldout_count"], 20)
+
+    def test_nonfinite_or_invalid_metric_ranges_fail_without_quality_log(self):
+        for field, value in (("psnr", float("nan")), ("psnr", float("inf")), ("psnr", -0.01),
+                             ("ssim", 1.01), ("ssim", -1.01), ("lpips", -0.01),
+                             ("lpips", float("inf")), ("psnr", True), ("ssim", "0.81")):
+            with self.subTest(field=field, value=value), self.assertRaisesRegex(JobFailure, "invalid_training_quality"):
+                quality_record(job(), self.sb.object_id, 20, self.metadata, {**self.metrics, field: value})
+
+    def test_metadata_must_match_claimed_job_and_pinned_trainer(self):
+        for change in ({"status": "running"}, {"gsplat_commit": "wrong-commit"}, {"frames": 21},
+                       {"max_steps": 3001}, {"max_seconds": 901}, {"max_gaussians": 500001},
+                       {"gaussian_count": 0}, {"gaussian_count": 101}, {"gaussian_count": True},
+                       {"world_normalization": True}, {"pose_optimization": True},
+                       {"elapsed_seconds": float("nan")}, {"elapsed_seconds": -1},
+                       {"elapsed_seconds": 1001}):
+            with self.subTest(change=change), self.assertRaises(JobFailure):
+                quality_record(job(), self.sb.object_id, 20, {**self.metadata, **change}, self.metrics)
+        with self.assertRaisesRegex(JobFailure, "frame_count"):
+            quality_record(job(), self.sb.object_id, 21, self.metadata, self.metrics)
+        with self.assertRaisesRegex(JobFailure, "gaussian_count"):
+            quality_record(job(), self.sb.object_id, 20, self.metadata, {**self.metrics, "num_GS": True})
+
+    def test_copy_checks_positive_bounded_size_before_transfer_and_exact_size_after(self):
+        for index, size in enumerate((0, -1, True, 1024**2 + 1, 1.5)):
+            sb = Mock(); sb.filesystem.stat.return_value.size = size
+            with self.subTest(size=size), self.assertRaisesRegex(JobFailure, "too_large"):
+                copy_bounded_json(sb, "/result/run.json", self.root / f"run-{index}.json", 1024**2)
+            sb.filesystem.copy_to_local.assert_not_called()
+        sb = Mock(); sb.filesystem.stat.return_value.size = 65537
+        with self.assertRaisesRegex(JobFailure, "too_large"):
+            copy_bounded_json(sb, "/result/stats/val_step2999.json", self.root / "stats.json", 64 * 1024)
+        sb.filesystem.copy_to_local.assert_not_called()
+        sb.filesystem.stat.return_value.size = 1
+        sb.filesystem.copy_to_local.side_effect = lambda remote, local: local.write_text("{}")
+        with self.assertRaisesRegex(JobFailure, "size_changed"):
+            copy_bounded_json(sb, "/result/run.json", self.root / "changed.json", 1024**2)
+
+    def test_conversion_failure_keeps_numeric_log_and_local_receipt_before_cleanup(self):
+        output = StringIO()
+        self.metadata["token"] = "must-never-be-logged"
+        stages = []
+        def execute(sb, command, *args, **kwargs):
+            stages.append(command)
+            if "splat-transform" in command[0]:
+                self.assertIn('"event": "spatial_training_quality"', output.getvalue())
+                raise modal_room.StageFailure(1)
+        with patch.object(modal_room, "inventory", return_value=[]), \
+                patch.object(modal_room, "exec_to_log", side_effect=execute), redirect_stdout(output):
+            with self.assertRaisesRegex(JobFailure, "generation_failed"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        quality = json.loads(lines[0])
+        self.assertEqual(quality["psnr"], 19.6)
+        self.assertNotIn("must-never-be-logged", output.getvalue())
+        receipt = json.loads((self.root / "provider-receipt.json").read_text())
+        self.assertEqual(receipt["quality"], quality)
+        self.assertEqual(len(stages), 3)
+        self.assertTrue(receipt["private_files_removed"])
+        self.assertTrue(receipt["terminated"])
+        self.assertEqual(self.journal_rows[-1]["action"], "cleanup")
+        self.sb.terminate.assert_called_once_with(wait=True)
+
+    def test_invalid_metrics_prevent_conversion_and_log_but_still_clean_up(self):
+        self.metrics["ssim"] = float("nan")
+        output = StringIO()
+        with patch.object(modal_room, "inventory", return_value=[]), \
+                patch.object(modal_room, "exec_to_log") as execute, redirect_stdout(output):
+            with self.assertRaisesRegex(JobFailure, "invalid_training_quality"):
+                self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.assertEqual(execute.call_count, 2)
+        self.assertEqual(output.getvalue(), "")
+        self.sb.terminate.assert_called_once_with(wait=True)
 
 
 class SandboxNameTests(ProviderFixture):

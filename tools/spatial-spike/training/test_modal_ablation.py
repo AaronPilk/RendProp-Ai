@@ -1,4 +1,4 @@
-"""Offline A-ablation authorization and dependency-order regressions."""
+"""Offline ordered-ablation authorization and dependency regressions."""
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -58,6 +58,91 @@ class AblationGuardTests(unittest.TestCase):
             "app_id": f"ap-{label}", "sandbox_id": f"sb-{label}"})
         return state
 
+    def completed_a(self):
+        state = self.predecessor()
+        metrics_path = state / "download/result/stats/val_step2999.json"
+        metrics_path.parent.mkdir(parents=True)
+        self.write(metrics_path, {"psnr": 19.2, "ssim": 0.80, "lpips": 0.55})
+        receipt_path = state / "provider-receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt.update(outcome="trained", pose_optimization=True, artifacts=[{
+            "path": "result/stats/val_step2999.json", "sha256": room.sha(metrics_path),
+            "bytes": metrics_path.stat().st_size}])
+        self.write(receipt_path, receipt)
+        return state
+
+    def lost_setup(self):
+        state = self.predecessor()
+        receipt_path = state / "provider-receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt.update(outcome="failed", transferred_files=[],
+                       events=[{"phase": phase} for phase in ("allocated", "setup_started", "failed", "terminated")],
+                       stages={"setup": {"exit_code": 1}},
+                       remote_copy_delete={"response": "failed", "error_type": "ConnectionError"},
+                       terminate={"poll_exit_code": 0})
+        self.write(receipt_path, receipt)
+        observed = {"schema_version": 1, "sdk": "modal==1.5.3", "profile": "rendprop-room-experiment",
+                    "app_id": receipt["app_id"], "sandbox_id": receipt["sandbox_id"],
+                    "provider_receipt_sha256": room.sha(receipt_path),
+                    "provider_receipt_path": str(receipt_path),
+                    "provider_state": {"terminal": True, "numeric_exit_code": 0,
+                                       "generic_result_status": 2,
+                                       "generic_result_status_name": "GENERIC_STATUS_FAILURE",
+                                       "exception_classification": "worker_disappeared",
+                                       "provider_exception": "Worker disappeared."},
+                    "active_app_sandbox_count": 0, "active_app_sandboxes": [],
+                    "private_transfer_proof": {"transferred_files": [],
+                                               "outbound_denied_event_present": False,
+                                               "training_started_event_present": False,
+                                               "failed_during_dependency_setup": True},
+                    "remote_directory_deletion": {"confirmed": False}}
+        self.write(state / "provider-readback.json", observed)
+        return state, receipt, observed
+
+    def test_independently_terminal_disappeared_setup_allows_explicit_continuation_only(self):
+        state, receipt, observed = self.lost_setup()
+        receipt_path = state / "provider-receipt.json"
+        before = receipt_path.read_bytes()
+        plan = ablation.prepare(self.dataset, "a01")
+        self.assertEqual(plan["prior_costs_and_holds_usd"], "6.5910543900")
+        self.assertEqual(receipt_path.read_bytes(), before)
+        self.assertEqual(receipt["remote_copy_delete"]["response"], "failed")
+        self.assertFalse(observed["remote_directory_deletion"]["confirmed"])
+        with self.assertRaisesRegex(ValueError, "completed A"):
+            ablation.prepare(self.dataset, "b01")
+
+    def test_disappeared_setup_exception_never_excuses_possible_private_transfer(self):
+        state, original, observed = self.lost_setup()
+        receipt_path = state / "provider-receipt.json"
+        for change in ({"transferred_files": ["images/000001.jpg"]},
+                       {"events": original["events"] + [{"phase": "outbound_denied"}]},
+                       {"events": original["events"] + [{"phase": "training_started"}]},
+                       {"stages": {"setup": {"exit_code": 0}}}):
+            with self.subTest(change=change):
+                self.write(receipt_path, {**original, **change})
+                self.write(state / "provider-readback.json", {**observed,
+                           "provider_receipt_sha256": room.sha(receipt_path)})
+                with self.assertRaisesRegex(ValueError, "pre-media cleanup reconciliation"):
+                    ablation.prepare(self.dataset, "a01")
+
+    def test_disappeared_setup_requires_exact_identity_receipt_and_terminal_readback(self):
+        state, receipt, original = self.lost_setup()
+        for change in ({"provider_receipt_sha256": "0" * 64}, {"app_id": "ap-other"},
+                       {"sandbox_id": "sb-other"}, {"active_app_sandbox_count": 1},
+                       {"active_app_sandboxes": ["sb-active"]},
+                       {"provider_state": {**original["provider_state"], "terminal": False}},
+                       {"provider_state": {**original["provider_state"], "exception_classification": "unknown"}},
+                       {"private_transfer_proof": {"failed_during_dependency_setup": False}}):
+            with self.subTest(change=change):
+                self.write(state / "provider-readback.json", {**original, **change})
+                with self.assertRaisesRegex(ValueError, "pre-media cleanup reconciliation"):
+                    ablation.prepare(self.dataset, "a01")
+        self.write(state / "provider-readback.json", original)
+        receipt["terminate"]["poll_exit_code"] = None
+        self.write(state / "provider-receipt.json", receipt)
+        with self.assertRaisesRegex(ValueError, "explicit cleanup reconciliation"):
+            ablation.prepare(self.dataset, "a01")
+
     def test_plan_keeps_baseline_training_and_fixed_evaluation(self):
         plan = ablation.prepare(self.dataset, "a01")
         self.assertTrue(plan["pose_optimization"])
@@ -71,7 +156,34 @@ class AblationGuardTests(unittest.TestCase):
         with patch.object(room, "inventory", return_value=self.files[:-1]):
             with self.assertRaisesRegex(ValueError, "exact original"):
                 ablation.prepare(self.dataset, "a01")
-        with self.assertRaisesRegex(ValueError, "pose-only"):
+        with self.assertRaisesRegex(ValueError, "reviewed"):
+            ablation.prepare(self.dataset, "c01")
+
+    def test_b_requires_a_completion_and_bound_metrics(self):
+        with self.assertRaisesRegex(ValueError, "completed A"):
+            ablation.prepare(self.dataset, "b01")
+        state = self.completed_a()
+        plan = ablation.prepare(self.dataset, "b01")
+        self.assertEqual((plan["steps"], plan["max_training_seconds"], plan["max_gaussians"]),
+                         (30000, 4200, 500000))
+        self.assertEqual((plan["fixed_eval_every"], plan["random_seed"]), (8, 42))
+        self.assertTrue(plan["pose_optimization"])
+        self.assertEqual(plan["completed_a_metrics"][0]["psnr"], 19.2)
+        # Poor-but-finite A measurements are accepted; success must not be cherry-picked.
+        metrics = state / "download/result/stats/val_step2999.json"
+        metrics.write_text('{"psnr": 40, "ssim": 0.99, "lpips": 0.01}')
+        with self.assertRaisesRegex(ValueError, "collected artifact"):
+            ablation.prepare(self.dataset, "b01")
+
+    def test_b_rejects_failed_a_or_missing_metrics(self):
+        state = self.predecessor()
+        with self.assertRaisesRegex(ValueError, "completed A"):
+            ablation.prepare(self.dataset, "b01")
+        receipt_path = state / "provider-receipt.json"
+        receipt = json.loads(receipt_path.read_text())
+        receipt.update(outcome="trained", pose_optimization=True)
+        self.write(receipt_path, receipt)
+        with self.assertRaisesRegex(ValueError, "missing"):
             ablation.prepare(self.dataset, "b01")
 
     def test_unreconciled_previous_attempt_blocks_another_allocation(self):
@@ -119,7 +231,8 @@ class AblationGuardTests(unittest.TestCase):
         def fail(*args, **kwargs):
             self.assertTrue(marker.exists())
             self.assertEqual(kwargs, {"app_name": "rendprop-spatial-ablation-a01-20260914",
-                                     "pose_opt": True, "dependency_baseline": self.run_path})
+                                     "pose_opt": True, "dependency_baseline": self.run_path,
+                                     "max_steps": 3000, "max_seconds": 900})
             raise TimeoutError("ambiguous allocation")
         with patch.object(room, "run", side_effect=fail) as dispatch:
             with self.assertRaises(TimeoutError):

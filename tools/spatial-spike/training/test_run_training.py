@@ -13,7 +13,7 @@ from run_training import bounded_process, training_command, validate_dataset
 
 class TrainingGuardTests(unittest.TestCase):
     def test_caps_reject_out_of_bounds(self):
-        for steps, points in ((0,100), (7001,100), (100,99), (100,500001)):
+        for steps, points in ((0,100), (30001,100), (100,99), (100,500001)):
             with self.subTest(steps=steps, points=points), self.assertRaises(CaptureError):
                 training_command("python", "/trainer", "/dataset", "/output", steps, points)
 
@@ -42,12 +42,22 @@ class TrainingGuardTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaisesRegex(CaptureError, "boolean"):
                 training_command("python", "/trainer", "/dataset", "/output", 3000, 500000, pose_opt=value)
 
+    def test_longer_profile_changes_only_final_step_values(self):
+        baseline = training_command("python", "/trainer", "/dataset", "/output", 3000, 500000, pose_opt=True)
+        longer = training_command("python", "/trainer", "/dataset", "/output", 30000, 500000, pose_opt=True)
+        expected = list(baseline)
+        for flag in ("--max-steps", "--eval-steps", "--save-steps", "--ply-steps"):
+            expected[expected.index(flag) + 1] = "30000"
+        self.assertEqual(longer, expected)
+        result, _ = bounded_process([sys.executable, "-c", "pass"], 4200)
+        self.assertEqual(result, 0)
+
     def test_process_failure_and_timeout_are_real_failures(self):
         result, _ = bounded_process([sys.executable, "-c", "raise SystemExit(7)"], 5)
         self.assertEqual(result, 7)
         with self.assertRaisesRegex(CaptureError, "wall-clock"):
             bounded_process([sys.executable, "-c", "import time; time.sleep(30)"], 0.05)
-        for timeout in (0,1801):
+        for timeout in (0,4201):
             with self.assertRaises(CaptureError):
                 bounded_process([sys.executable, "-c", "pass"], timeout)
 

@@ -5,9 +5,10 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sys
 
-from worker import JobFailure, MAX_OUTPUT_BYTES, TRAINING_ROOT, require
+from worker import JobFailure, MAX_OUTPUT_BYTES, TRAINING_ROOT, canonical_uuid, require
 from provider_journal import ProviderJournal, sandbox_name
 
 # Published Modal Sandbox rates (September 10, 2026), USD per second. These are
@@ -21,6 +22,54 @@ GPU_USD_PER_SECOND = {"L4": Decimal("0.000222")}
 CPU_USD_PER_CORE_SECOND = Decimal("0.00003942")
 MEMORY_USD_PER_GIB_SECOND = Decimal("0.00000667")
 REGION_MULTIPLIER = {"us": Decimal("1.15")}
+TRAINER_COMMIT = "937e29912570c372bed6747a5c9bf85fed877bae"
+
+
+def copy_bounded_json(sandbox, remote, local, limit):
+    """Read one exact, bounded trainer receipt; never emit its arbitrary fields."""
+    size = sandbox.filesystem.stat(remote).size
+    require(type(size) is int and 0 < size <= limit, "training_receipt_too_large")
+    require(not local.exists(), "training_receipt_already_exists")
+    sandbox.filesystem.copy_to_local(remote, local)
+    os.chmod(local, 0o600)
+    require(local.stat().st_size == size, "training_receipt_size_changed")
+    value = json.loads(local.read_text())
+    require(isinstance(value, dict), "invalid_training_receipt")
+    return value
+
+
+def quality_record(job, sandbox_id, frame_count, metadata, metrics, *, pose_opt=False):
+    """Only source-bound numeric quality and approved identities may reach logs."""
+    require(canonical_uuid(job.get("id")) and isinstance(sandbox_id, str)
+            and re.fullmatch(r"sb-[A-Za-z0-9]{4,64}", sandbox_id) is not None,
+            "invalid_quality_identity")
+    require(type(frame_count) is int and 20 <= frame_count <= 400
+            and frame_count == len(job["manifest"]["frames"]), "training_frame_count_mismatch")
+    require(metadata.get("status") == "trained" and metadata.get("gsplat_commit") == TRAINER_COMMIT
+            and type(metadata.get("frames")) is int and metadata["frames"] == frame_count
+            and type(metadata.get("max_steps")) is int and metadata["max_steps"] == job["max_iterations"]
+            and type(metadata.get("max_seconds")) is int and metadata["max_seconds"] == job["max_training_seconds"]
+            and type(metadata.get("max_gaussians")) is int and metadata["max_gaussians"] == job["max_gaussians"]
+            and metadata.get("world_normalization") is False
+            and type(pose_opt) is bool and metadata.get("pose_optimization") is pose_opt,
+            "training_output_unconfirmed")
+    count = metadata.get("gaussian_count")
+    require(type(count) is int and 0 < count <= job["max_gaussians"]
+            and type(metrics.get("num_GS")) is int and metrics["num_GS"] == count,
+            "training_gaussian_count_mismatch")
+    elapsed = metadata.get("elapsed_seconds")
+    require(type(elapsed) in (int, float) and math.isfinite(elapsed)
+            and 0 < elapsed <= job["max_training_seconds"] + 100, "invalid_training_elapsed")
+    require(all(type(metrics.get(key)) in (int, float) and math.isfinite(metrics[key])
+                for key in ("psnr", "ssim", "lpips")), "invalid_training_quality")
+    require(metrics["psnr"] >= 0 and -1 <= metrics["ssim"] <= 1 and metrics["lpips"] >= 0,
+            "invalid_training_quality")
+    return {"event": "spatial_training_quality", "job_id": job["id"], "sandbox_id": sandbox_id,
+            "trainer_commit": TRAINER_COMMIT, "frames": frame_count,
+            "loss_heldout_count": (frame_count + 7) // 8, "test_every": 8, "seed": 42,
+            "pose_optimization": pose_opt, "steps": metadata["max_steps"], "gaussians": count,
+            "training_elapsed_seconds": elapsed, "psnr": metrics["psnr"], "ssim": metrics["ssim"],
+            "lpips": metrics["lpips"], "evaluation": "loss_held_out_seed_initialization_uses_all_frames"}
 
 
 def compute_bound_cents(options):
@@ -149,6 +198,16 @@ class ModalProvider:
                        "--max-gaussians", str(job["max_gaussians"])]
             experiment.exec_to_log(sb, command, job["max_training_seconds"] + 100, root / "training.log",
                                    stage=receipt["stages"]["training"], persist=save)
+            metadata = copy_bounded_json(sb, f"{experiment.REMOTE}/result/run.json", root / "run.json", 1024**2)
+            metrics_name = f"val_step{job['max_iterations'] - 1:04d}.json"
+            metrics = copy_bounded_json(sb, f"{experiment.REMOTE}/result/stats/{metrics_name}",
+                                        root / metrics_name, 64 * 1024)
+            receipt["quality"] = quality_record(job, sb.object_id, len(capture["frames"]), metadata, metrics,
+                                                pose_opt="--pose-opt" in command)
+            save()
+            # This CPU-controller log survives a later converter failure and the
+            # temporary directory cleanup. No room label, path or raw output is logged.
+            print(json.dumps(receipt["quality"], sort_keys=True, allow_nan=False), flush=True)
             lease.stage(.75)
             ply = f"{experiment.REMOTE}/result/ply/point_cloud_{job['max_iterations'] - 1}.ply"
             sog = f"{experiment.REMOTE}/result/model.sog"
@@ -161,12 +220,6 @@ class ModalProvider:
             lease.check()
             size = sb.filesystem.stat(sog).size
             require(type(size) is int and 0 < size <= MAX_OUTPUT_BYTES, "sog_output_too_large")
-            metadata_path = f"{experiment.REMOTE}/result/run.json"
-            require(sb.filesystem.stat(metadata_path).size <= 1024**2, "training_metadata_too_large")
-            sb.filesystem.copy_to_local(metadata_path, root / "run.json")
-            metadata = json.loads((root / "run.json").read_text())
-            require(metadata.get("status") == "trained" and type(metadata.get("gaussian_count")) is int
-                    and 0 < metadata["gaussian_count"] <= job["max_gaussians"], "training_output_unconfirmed")
             output = root / "model.sog"
             sb.filesystem.copy_to_local(sog, output)
             os.chmod(output, 0o600)

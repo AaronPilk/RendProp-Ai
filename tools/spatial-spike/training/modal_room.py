@@ -276,9 +276,10 @@ def collect_failed_diagnostics(sb, state):
     return results
 
 
-def collect(sb, target):
+def collect(sb, target, max_steps=3000):
     """Copy only final artifact, diagnostics and held-out renders, not checkpoints."""
-    allowed = ("result/run.json", "result/training.log", "result/ply/point_cloud_2999.ply",
+    require(type(max_steps) is int and 1 <= max_steps <= 30000, "max_steps must be 1–30000")
+    allowed = ("result/run.json", "result/training.log", f"result/ply/point_cloud_{max_steps - 1}.ply",
                "resolved-setup.txt")
     names = list(allowed)
     for directory in ("result/stats", "result/renders"):
@@ -313,9 +314,12 @@ def source_binding():
             "files": {name: sha(source / name) for name in (*SOURCE_FILES, "modal_room.py", "modal_retry.py", "modal_ablation.py")}}
 
 
-def run(modal, dataset, state, *, app_name=APP_NAME, pose_opt=False, dependency_baseline=None):
+def run(modal, dataset, state, *, app_name=APP_NAME, pose_opt=False, dependency_baseline=None,
+        max_steps=3000, max_seconds=900):
     require(not state.exists(), "experiment state exists; never silently rent again")
     require(state.parent.is_dir() and not state.parent.is_symlink(), "private state parent required")
+    require(type(max_steps) is int and 1 <= max_steps <= 30000, "max_steps must be 1–30000")
+    require(type(max_seconds) is int and 1 <= max_seconds <= 4200, "max_seconds must be 1–4200")
     files = inventory(dataset)
     binding = source_binding()
     require(type(pose_opt) is bool, "pose_opt must be a boolean")
@@ -392,16 +396,16 @@ def run(modal, dataset, state, *, app_name=APP_NAME, pose_opt=False, dependency_
         record(receipt_path, receipt, "training_started")
         command = ["python", f"{REMOTE}/run_training.py", "--gsplat-dir", "/opt/gsplat-phase-a",
                    "--dataset", f"{REMOTE}/dataset", "--output", f"{REMOTE}/result",
-                   "--max-seconds", "900", "--max-steps", "3000", "--max-gaussians", "500000"]
+                   "--max-seconds", str(max_seconds), "--max-steps", str(max_steps), "--max-gaussians", "500000"]
         if pose_opt:
             command.append("--pose-opt")
         receipt["training_command"] = command
         save(receipt_path, receipt)
         receipt["stages"]["training"] = {}
-        exec_to_log(sb, command, 1000, state / "wrapper.log",
+        exec_to_log(sb, command, max_seconds + 100, state / "wrapper.log",
                     stage=receipt["stages"]["training"], persist=lambda: save(receipt_path, receipt))
         # wrapper stdout is already local; do not require a nonexistent remote log.
-        artifacts = collect(sb, state / "download")
+        artifacts = collect(sb, state / "download", max_steps=max_steps)
         record(receipt_path, receipt, "artifacts_collected", artifacts=artifacts, outcome="trained")
     except BaseException as exc:
         record(receipt_path, receipt, "failed", failure_type=type(exc).__name__, outcome="failed")

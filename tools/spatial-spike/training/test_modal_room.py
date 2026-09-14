@@ -227,6 +227,29 @@ class OrchestrationTests(unittest.TestCase):
             {"outbound_cidr_allowlist": [], "outbound_domain_allowlist": []},
         ])
 
+    def test_longer_training_keeps_provider_ttl_and_passes_deadline_and_final_step(self):
+        with patch.object(room, "inventory", return_value=[]), \
+                patch.object(room, "exec_to_log") as execute, \
+                patch.object(room, "collect", return_value=[]) as collect:
+            room.run(self.modal, self.dataset, self.state, pose_opt=True, max_steps=30000, max_seconds=4200)
+        self.assertEqual(self.modal.Sandbox.create.call_args.kwargs["timeout"], 7200)
+        training = execute.call_args_list[-1]
+        command = training.args[1]
+        self.assertEqual(command[command.index("--max-steps") + 1], "30000")
+        self.assertEqual(command[command.index("--max-seconds") + 1], "4200")
+        self.assertEqual(command[command.index("--max-gaussians") + 1], "500000")
+        self.assertIn("--pose-opt", command)
+        self.assertEqual(training.args[2], 4300)
+        collect.assert_called_once_with(self.sb, self.state / "download", max_steps=30000)
+        self.sb.terminate.assert_called_once_with(wait=True)
+
+    def test_invalid_training_bounds_fail_before_allocating(self):
+        for steps, seconds in ((30001, 900), (30000, 4201), (0, 900), (3000, 0), (True, 900)):
+            with self.subTest(steps=steps, seconds=seconds), self.assertRaises(ValueError):
+                room.run(self.modal, self.dataset, self.state, max_steps=steps, max_seconds=seconds)
+        self.modal.App.lookup.assert_not_called()
+        self.modal.Sandbox.create.assert_not_called()
+
     def test_unsupported_policy_stops_before_setup_or_dataset_transfer(self):
         self.sb._experimental_set_outbound_network_policy.side_effect = RuntimeError("fixture")
         self.sb.filesystem.stat.side_effect = FileNotFoundError("fixture")
@@ -301,6 +324,22 @@ class CollectionTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "512MiB"):
                 room.collect(sb, Path(temp))
             sb.filesystem.copy_to_local.assert_not_called()
+
+    def test_longer_profile_collects_its_final_ply_and_metrics(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            sb = Mock()
+            sb.filesystem.list_files.side_effect = [
+                [SimpleNamespace(name="val_step29999.json")], [SimpleNamespace(name="val_step29999_0000.png")]]
+            sb.filesystem.stat.return_value.size = 7
+            def copy(remote, local):
+                local.parent.mkdir(parents=True, exist_ok=True)
+                local.write_bytes(b"fixture")
+            sb.filesystem.copy_to_local.side_effect = copy
+            artifacts = room.collect(sb, Path(temporary) / "download", max_steps=30000)
+            names = [artifact["path"] for artifact in artifacts]
+            self.assertIn("result/ply/point_cloud_29999.ply", names)
+            self.assertNotIn("result/ply/point_cloud_2999.ply", names)
+            self.assertIn("result/stats/val_step29999.json", names)
 
 
 class DiagnosticTests(unittest.TestCase):

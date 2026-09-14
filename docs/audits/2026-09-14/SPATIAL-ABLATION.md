@@ -30,11 +30,15 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 | Run | Pose optimization | Steps | Frames | PSNR dB | SSIM | LPIPS | Trainer seconds | Metered USD |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | Sept 11 baseline | Off | 3,000 | 153 | 19.65985680 | 0.81097144 | 0.55676222 | 209.441 | 0.57381695 |
-| A | On | 3,000 | 153 | Pending | Pending | Pending | Pending | Pending |
+| A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | Provisional; pending closed-hour billing |
+| A02 | On | 3,000 | 153 | Pending | Pending | Pending | Pending | Pending |
 
 A replaces exactly one trainer argument, `--no-pose-opt` with `--pose-opt`.
 Simply deleting the former is ineffective: the pinned trainer defaults false.
-Keep the 900-second training watchdog and 500,000 Gaussian cap for A.
+Keep the 900-second training watchdog and 500,000 Gaussian cap for A. The
+explicit B profile admits 30,000 steps with a 4,200-second training watchdog;
+neither changes A's actual command. B requires a completed, cleaned A with its
+collected metric artifact verified before it can be planned.
 
 If A is insufficient, B changes training to 30,000 steps; C uses more frames
 only if a suitable same-room capture exists; D tests real SfM if needed. The
@@ -65,18 +69,39 @@ available, the manual harness retains its full bound against the $25 total.
 No automatic retry, marker resets, duplicate allocation on a lost reply, secret
 in the GPU, network after media, or changes to the 7,200-second sandbox TTL.
 
+The configured sandbox rate is $2.4555168/hour: L4 plus four physical CPU
+cores and 32 GiB, using Sandbox rates and the 1.15 US region multiplier. The
+brief's approximately $1.24/hour combines the cheaper Function CPU/RAM rates
+without that multiplier. The baseline's actual charge implies $2.44298/hour,
+consistent with the sandbox profile. At that shape a 40-minute run is about
+$1.64, not a full $6 hold. Sources: https://modal.com/pricing and
+https://modal.com/docs/guide/region-selection.
+
 All four historical sandboxes had terminal provider polls and both spatial apps
 had zero active tasks. The successful baseline explicitly deleted its remote
 directory and terminated. The earlier billing-killed failed attempt's original
 deletion receipt was unsuccessful; its terminal poll is not proof of that
 separate deletion operation. Original receipts remain unchanged.
 
+A01 allocated at 20:11:37 UTC. Its setup process returned 143 at 20:17:07,
+before network closure or any media transfer. Independent provider readback
+identified `GENERIC_STATUS_FAILURE` / `Worker disappeared.` despite numeric
+exit code 0. No active sandbox remained. The original directory-removal call
+failed; explicit termination/readback completed at 20:20:41. This is an
+infrastructure failure with no PSNR/SSIM, not a failed pose-quality hypothesis.
+An independent SHA-bound receipt establishes that private input transfer was
+never reached. A02 is an explicitly reviewed fresh allocation with the same
+training configuration; the original reservation and failed-cleanup receipt
+remain intact. The provider's current billing limits were not the cause.
+
 ## Release status
 
 No winner yet. All production gates remain disabled. A source toggle alone is
 insufficient: the queue provider must explicitly pass `--pose-opt` if it wins.
-The queue currently discards evaluation statistics during temporary cleanup;
-preserve a bounded quality receipt before the app-queue acceptance run.
+The worker now has a bounded, allowlisted numeric quality receipt in CPU logs
+before conversion and temporary cleanup. It contains the job/provider identity,
+fixed evaluator settings and validated PSNR/SSIM/LPIPS, never raw logs, media,
+geometry or credentials. This remains undeployed until a quality winner exists.
 
 Current capture UI has a saved-photo counter, not green coverage targets or
 8/16 completion. Automatic stopping at 400 frames/600 seconds records an
