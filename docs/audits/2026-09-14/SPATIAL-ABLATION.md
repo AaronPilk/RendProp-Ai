@@ -27,13 +27,13 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
   ghosting still need a real-room acceptance capture; these frames cannot prove
   them.
 
-| Run | Pose optimization | Steps | Frames | PSNR dB | SSIM | LPIPS | Trainer seconds | Metered USD |
+| Run | Pose optimization | Steps | Frames | PSNR dB | SSIM | LPIPS | Training wrapper seconds | Metered USD |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | Sept 11 baseline | Off | 3,000 | 153 | 19.65985680 | 0.81097144 | 0.55676222 | 209.441 | 0.57381695 |
 | A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | 0.21150668 |
 | A02 | On | 3,000 | 153 | 19.15759087 | 0.80769598 | 0.56202793 | 252.094 | 0.64541049 |
 | B01 | On | 30,000 | 153 | 21.47684288 | 0.80856246 | 0.38908443 | 2,425.635 | 2.07333106 |
-| D01, real SfM | On | 30,000 | 153 | Pending | Pending | Pending | Pending | Full lifetime hold retained |
+| D01, real SfM | On | 30,000 | 153 | 19.96911621 | 0.78203511 | 0.40026075 | 2,564.228 | 2.22848905 |
 
 A02 is a valid negative result: PSNR changed by −0.502266 dB, SSIM by
 −0.003275, and LPIPS by +0.005266. An independent comparison confirmed the
@@ -65,13 +65,17 @@ SSIM decreases by 0.002409. Views 0007 and 0014 recover substantial interior
 detail. View 0000 still has severe stretched or duplicated geometry around the
 telescope, plant, mirror rim and window. This prevents acceptance despite the
 better average PSNR. Conversion with the unchanged pinned CPU SOG converter
-is being measured locally; it is not proof of Modal conversion performance.
+was measured locally; it is not proof of Modal conversion performance.
 At 21:53:20 UTC it was still running after 632 seconds, exceeding the current
 600-second production conversion allowance. No real SfM ran concurrently
 during those first 632 seconds. Local D preprocessing started afterward, so
 the remaining conversion elapsed time may include CPU contention. Preserve
 the private timing observation rather than treating the full local elapsed
 time as an isolated Modal benchmark.
+The CPU converter reached its explicit 3,600-second timeout at 22:42:48 UTC;
+its process was confirmed absent. The original receipt is preserved, with a
+separate corrected receipt documenting later concurrency with local SfM,
+synthetic work and Metal conversion. No CPU SOG was produced.
 Separately, the same pinned converter on the local Apple M4 Pro GPU produced
 an 8,575,332-byte SOG in 13.578 seconds, with all three SH bands and ten
 clustering iterations unchanged. This is a compression-backend validation,
@@ -164,6 +168,17 @@ active B sandboxes. Historical usage plus A and B is **$4.61026902**. With D's
 full **$4.9110336** hold retained, **$15.47869738** remains available. Local
 SfM and local converter checks incur no provider charge.
 
+At 23:00:52 and 23:02:15 UTC, identical closed-hour readings attributed
+**$2.22848905** to D01 and **$0.02592446** to converter01's pre-media
+preflight failure. All completed historical usage, training and export probes
+now total **$6.86468253**, leaving **$18.13531747** before the next probe.
+Converter02 was explicitly planned from clean source `7bde89c`, preserving
+converter01's exact PLY and resource/compression profile with only the
+driver-version parser correction. Its 1,800-second priced compute bound is
+$1.2277584; the unchanged manual ledger conservatively holds $4.9110336.
+Completed costs plus this outstanding hold are **$11.77571613**. No additional
+GPU may be allocated until this provider's cleanup is reconciled.
+
 ## Release status
 
 No winner yet. All production gates remain disabled. The candidate queue
@@ -224,8 +239,8 @@ evaluation records and committed helper hashes passed the manual allocation
 guard. D01 then allocated once from frozen `84f4c10`, retaining B's settings
 and dependency baseline. Its exact 164 dependency versions were verified
 after network denial, all 157 dataset files were transferred, and training
-started at 22:08:51 UTC. No D quality metrics exist yet. All previous sandbox
-lifetimes were reconciled before this allocation.
+started at 22:08:51 UTC. All previous sandbox lifetimes were reconciled before
+this allocation.
 It uses official COLMAP/pycolmap 4.2.0 in a separate CPU environment: SIFT,
 deterministic temporal/nearby pairs, triangulation, then camera-position-prior
 bundle adjustment with fixed intrinsics. The 133 training images alone supply
@@ -233,5 +248,65 @@ features, matches, tracks and point colors. The original 20 evaluation image
 and camera records stay unchanged. The explicit isotropic 1-metre position
 prior is an assumption, not measured ARKit uncertainty. D changes both seed
 initialization and training poses, so it is a pipeline ablation. Synthetic
-checks establish feasibility only; D is not a quality result or deployment
-decision.
+checks establish feasibility only; quality requires the completed training
+and viewer evidence below.
+
+D01 completed and explicitly terminated at 22:52:03 UTC. The wrapper took
+2,564.228 seconds; its training-loop receipt reports 2,504.630 seconds. All
+157 uploaded inputs, 164 dependency versions, unchanged B training arguments,
+26 collected artifact hashes and all 20 original evaluation canvases passed
+independent verification. Directory deletion succeeded; fresh exact-provider
+checks confirmed terminal 137 and zero active D sandboxes. Its 500,000-point
+PLY is 118,001,477 bytes, SHA-256
+`78c1ab7ba15ffbcf882ab4b867f9a1c7efd60afc2d5019822ff8439b932e625f`.
+
+D is worse than B on all three aggregate metrics: PSNR −1.507727 dB,
+SSIM −0.026527, LPIPS +0.011176. Relative to the original baseline, PSNR is
+only +0.309259 dB while SSIM falls by 0.028936. The fixed backlit view still
+has severe duplicated mirror, telescope and plant geometry. The pinned local
+Metal converter produced an 8,613,998-byte, three-SH SOG in 13.146 seconds.
+It loads in the production viewer without browser errors; the same saved
+desktop movement sequence was recorded. The initial view and interior pan
+show conspicuous smears and duplicated surfaces. D01 is rejected. Neither
+the screenshots nor the recorded sequence imply phone/app-queue acceptance.
+
+The first bounded L4 export probe, converter01, failed during public device
+preflight before any private PLY transfer. Vulkan found the NVIDIA L4, but the
+checker rejected its valid packed decimal/hex driver-version representation.
+Remote directory deletion and terminal 137 were confirmed. A narrowly tested
+parser correction accepts matching uint32/hex pairs; all converter profile,
+dependency, allocation, network and cleanup settings remain unchanged. Any
+subsequent probe requires its own explicit plan and allocation; there is no
+automatic retry.
+
+Converter02 succeeded on the NVIDIA L4 with that parser correction. The
+converter process took **18.081663 seconds**; the complete remote helper took
+19.105372 seconds, and the controller stage took 19.384346 seconds. It retained
+500,000 Gaussians, three SH bands and ten clustering iterations, producing an
+8,610,236-byte SOG, SHA-256
+`417febc7c3f703a580c2950b53abb8da6fe3926f0961ab31c23686cfada45e22`.
+The helper verified exact L4/Vulkan identity before private transfer, positive
+engine-tracked GPU use (112.9 MB), no CPU fallback, input/output hashes, archive
+integrity and the 32 MiB output cap. Independent verification passed. The
+provider was explicitly terminated at 23:07:54 UTC after directory cleanup;
+a fresh 23:10:40 SDK check confirmed terminal 137 and zero active app sandboxes.
+Its 157.675-second provider lifetime is not an invoice. Keep the full hold
+until closed-hour billing is stable after September 15 00:00 UTC.
+The actual cloud-exported SOG also loaded in the production decoder with no
+browser errors; controls rendered and Top-down navigation worked. Its private
+viewer was closed afterward. The D01 geometry defects remain visible.
+
+D2's local CPU preparation was explicitly started from clean `40e1413`, with
+helper SHA-256 `c9a3f826c60d86943d58c6458662860fcdb80e80249526d63c2dc594b1d300d0`.
+It copies the same D1 training-only feature/match database, estimates unknown
+camera poses through incremental registration, aligns using training camera
+centers, then reuses the unchanged D1 position-prior bundle adjustment. Fixed
+intrinsics, all 153 JPEGs, 133 training entries, 20 original evaluation camera
+records and trainer settings remain fixed. This is a pipeline ablation:
+incremental mapping includes its internal bundle adjustment, triangulation,
+filtering and component selection. The original-pose fallback is explicitly
+enabled before execution, because image 88 has no positive-inlier connections;
+every fallback camera must retain its exact original record and zero tracks.
+The largest selected component and all missing/fallback IDs must be reviewed
+before another paid training allocation. This preparation is local CPU only,
+bounded to 1,800 seconds, with no cloud charge or quality acceptance implied.
