@@ -30,8 +30,8 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 | Run | Pose optimization | Steps | Frames | PSNR dB | SSIM | LPIPS | Trainer seconds | Metered USD |
 |---|---|---:|---:|---:|---:|---:|---:|---:|
 | Sept 11 baseline | Off | 3,000 | 153 | 19.65985680 | 0.81097144 | 0.55676222 | 209.441 | 0.57381695 |
-| A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | Provisional; pending closed-hour billing |
-| A02 | On | 3,000 | 153 | 19.15759087 | 0.80769598 | 0.56202793 | 252.094 | Pending closed-hour billing |
+| A01 setup failure | Not reached | Not reached | 0 transferred | Unavailable | Unavailable | Unavailable | Not reached | 0.21150668 |
+| A02 | On | 3,000 | 153 | 19.15759087 | 0.80769598 | 0.56202793 | 252.094 | 0.64541049 |
 | B01 | On | 30,000 | 153 | Running | Running | Running | Running | Full lifetime hold retained |
 
 A02 is a valid negative result: PSNR changed by −0.502266 dB, SSIM by
@@ -49,6 +49,13 @@ B01 started at 20:48:50 UTC from a clean detached execution checkout of
 30,000 steps; the wall-clock watchdog is 4,200 seconds. Step-dependent trainer
 schedules retain the pinned implementation's defaults. No intermediate
 checkpoint or hidden tuning change is introduced.
+
+B's dependency verification passed before media transfer. Training started at
+21:00:34 UTC. The recorded baseline and A02 SOG previews both load with the
+production decoder/viewer and no browser errors, using the same private
+loopback harness, 1280×720 viewport, initial camera and saved UI movement
+sequence. Both remain visibly blurred. Recorded desktop navigation is
+supplemental evidence, not a physical-phone or app-queue acceptance result.
 
 A replaces exactly one trainer argument, `--no-pose-opt` with `--pose-opt`.
 Simply deleting the former is ineffective: the pinned trainer defaults false.
@@ -111,6 +118,12 @@ never reached. A02 is an explicitly reviewed fresh allocation with the same
 training configuration; the original reservation and failed-cleanup receipt
 remain intact. The provider's current billing limits were not the cause.
 
+At 21:03 UTC, two unchanged provider readings for the closed 20:00–21:00 hour
+attributed $0.21150668 to A01 and $0.64541049 to A02. Both exact providers were
+terminal, with zero active sandboxes in their apps. Historical usage plus A is
+**$2.53693796**; after retaining B's full $4.9110336 hold, **$17.55202844** remains
+available. These are gross metered usage amounts, not a monthly final invoice.
+
 ## Release status
 
 No winner yet. All production gates remain disabled. A source toggle alone is
@@ -119,6 +132,9 @@ The worker now has a bounded, allowlisted numeric quality receipt in CPU logs
 before conversion and temporary cleanup. It contains the job/provider identity,
 fixed evaluator settings and validated PSNR/SSIM/LPIPS, never raw logs, media,
 geometry or credentials. This remains undeployed until a quality winner exists.
+Production setup now has the same 164 public Python version pins as A02 and
+verifies the exact installed set after network denial and before media transfer.
+The dependency file is included in both deployment and durable source inventories.
 
 Current capture UI has a saved-photo counter, not green coverage targets or
 8/16 completion. Automatic stopping at 400 frames/600 seconds records an
