@@ -376,6 +376,19 @@ class RemoteValidationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             remote.validate_vulkan(text + "deviceName = NVIDIA L4\n")
 
+    def test_vulkan_observed_packed_driver_version_requires_matching_hex(self):
+        text = "deviceName = NVIDIA L4\nvendorID = 0x10de\ndeviceType = PHYSICAL_DEVICE_TYPE_DISCRETE_GPU\n"
+        text += "driverID = DRIVER_ID_NVIDIA_PROPRIETARY\n"
+        text += "driverVersion = 2434253120 (0x9117c140)\ndriverInfo = 580.95.05\n"
+        result = remote.validate_vulkan(text)
+        self.assertEqual(result["driver_version_uint32"], 2434253120)
+        self.assertEqual(result["driver_info_version"], "580.95.05")
+        self.assertEqual(result["driver_version"], "2434253120 (0x9117c140)")
+        with self.assertRaises(ValueError):
+            remote.validate_vulkan(text.replace("0x9117c140", "0x9117c141"))
+        with self.assertRaises(ValueError):
+            remote.validate_vulkan(text.replace("2434253120 (0x9117c140)", "4294967296 (0x100000000)"))
+
     def test_bounded_cpu_child_timeout_and_output_limit(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "test.log"

@@ -126,11 +126,21 @@ def validate_vulkan(text):
             and values("driverID") == ["DRIVER_ID_NVIDIA_PROPRIETARY"],
             "exact NVIDIA L4 Vulkan device required")
     version = values("driverVersion")
-    require(len(version) == 1 and re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,4}", version[0]),
-            "numeric Vulkan driver version required")
-    return {"physical_device_count": 1, "vendor_id": 0x10DE, "nvidia_l4": True,
-            "nvidia_proprietary_driver": True, "driver_version": version[0],
-            "vulkan_available": True}
+    require(len(version) == 1, "one numeric Vulkan driver version required")
+    dotted = re.fullmatch(r"[0-9]+(?:\.[0-9]+){0,4}", version[0])
+    packed = re.fullmatch(r"([0-9]+) \(0x([0-9a-fA-F]{1,8})\)", version[0])
+    require(dotted or (packed and 0 <= int(packed[1]) <= 0xFFFFFFFF
+                       and int(packed[1]) == int(packed[2], 16)),
+            "numeric Vulkan driver version or matching uint32/hex pair required")
+    result = {"physical_device_count": 1, "vendor_id": 0x10DE, "nvidia_l4": True,
+              "nvidia_proprietary_driver": True, "driver_version": version[0],
+              "vulkan_available": True}
+    if packed:
+        result["driver_version_uint32"] = int(packed[1])
+    info = values("driverInfo")
+    if len(info) == 1 and re.fullmatch(r"[0-9]+(?:\.[0-9]+){1,4}", info[0]):
+        result["driver_info_version"] = info[0]
+    return result
 
 
 def validate_sog(path, gaussian_count):
