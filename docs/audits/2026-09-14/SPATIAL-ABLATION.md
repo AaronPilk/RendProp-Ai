@@ -11,8 +11,10 @@ The branch `feat/spatial-quality-ablation-20260914` includes Claude's fetched
 - Exact September 11 prepared dataset: 153 images, 9,226 ARKit feature seeds.
 - Pinned gsplat `937e29912570c372bed6747a5c9bf85fed877bae`; MCMC; NVIDIA L4;
   PyTorch 2.7.1+cu128; CUDA 12.8; seed 42; native 1920×1440; data factor 1.
-- Original image and all three binary model checksums are unchanged. No world
-  normalization, appearance change, new initialization, or image filtering.
+- In A/B, original image and all three binary model checksums are unchanged.
+  No world normalization, appearance change, new initialization or image
+  filtering is introduced. D retains the JPEGs and evaluation records while
+  explicitly changing training camera geometry and initialization.
 - Evaluation is every eighth sorted image: 000001, 000009, …, 000153.jpg;
   133 training images and 20 **loss-held-out** images. Initialization includes
   1,092 held-out seed colors (470 seeds observed only in held-out images), as
@@ -102,7 +104,8 @@ neither changes A's actual command. B requires a completed, cleaned A with its
 collected metric artifact verified before it can be planned.
 
 If A is insufficient, B changes training to 30,000 steps; C uses more frames
-only if a suitable same-room capture exists; D tests real SfM if needed. The
+only if additional frames from the original capture exist and preserve the
+original held-out cohort; D tests real SfM if needed. The
 original capture contains exactly 153 frames. An unrelated older 256-frame
 session has no overlapping image hashes and cannot substitute for C.
 
@@ -347,11 +350,12 @@ and 179.935063 degrees; frames 56, 58, 59 and 60 moved 1.505–1.879 m and
 179.476–179.786 degrees. The next largest position change is only 0.117982 m.
 These are differences from ARKit, not independent ground-truth errors. The
 source frames include both visible blur and fairly sharp, repetitive furnishings
-or blinds, so blur alone does not explain the reversed camera estimates.
+or blinds. The reversals also affect relatively clear frames; their cause has
+not been isolated.
 Expanded matching found no new positive-inlier pair for frames 2, 3, 4 or 88.
 
 Root rejected D3 before GPU allocation: the problematic early views remain
-unsupported, and the newly registered cameras include implausible reversals.
+unsupported, and D3 camera estimates include implausible reversals.
 **D3 PSNR/SSIM/LPIPS are unavailable because no trainer ran; cloud cost is $0.**
 Independent verification passed all five committed source hashes, frozen D2
 geometry options, exact dry plan, 153 original JPEGs/intrinsics, 20 held-out
@@ -435,3 +439,47 @@ feature tracks and camera refinement, but none of the tested SfM profiles has
 passed acceptance either. Better coverage and reliable pose validation are
 needed before further paid training or enabling the feature. No result establishes
 Matterport-level quality, text legibility or an end-to-end phone queue success.
+
+
+## Final metered spend and handoff
+
+At September 15 **00:00:13.897** and **00:01:29.255 UTC**, provider readings for
+the completed 23:00–00:00 interval were identical, 75.358 seconds apart.
+Converter02 cost **$0.10369512**: CPU $0.02756010, L4 $0.03884440 and memory
+$0.03729062. Fresh exact-provider readback at 00:00:14.246 confirmed terminal
+137 and zero active app sandboxes; original successful directory cleanup is
+preserved. The private billing receipt SHA-256 is
+`fc4aca8ee44277c0f65c4272e1792bb18dae7bd59cdf73ff69c69fbf7b1f5e1e`.
+Root verified its observation/provider hashes and resource-cost sum.
+
+| Completed use | Gross metered USD |
+|---|---:|
+| Three historical failed attempts, inseparable app/hour aggregate | 1.09974939 |
+| September 11 baseline | 0.57381695 |
+| Historical disabled worker CPU usage | 0.00645445 |
+| A01 infrastructure failure, before media | 0.21150668 |
+| A02 pose optimization | 0.64541049 |
+| B01 30,000 steps | 2.07333106 |
+| D01 real SfM and 30,000 steps | 2.22848905 |
+| Converter01 pre-media device-check failure | 0.02592446 |
+| Converter02 successful L4 export | 0.10369512 |
+| D1/D2/D3 local CPU preparation and local conversions | 0.00000000 |
+| **Total** | **6.96837765** |
+| **Pending holds** | **0.00000000** |
+| **Remaining under the authorized $25 ceiling** | **18.03162235** |
+
+These are gross provider-metered charges, not reservation amounts; account
+credits do not reduce the experiment ledger. The monthly invoice is not yet
+closed. All ten owned GPU allocations have terminal evidence. Historical
+attempt04 and A01 retain their original failed deletion outcomes; terminal
+compute is not retroactively described as a successful file-removal operation.
+Completed training/export jobs have successful explicit directory removal and
+provider termination. All task-owned local viewer servers were also stopped.
+
+There is **no quality winner and no enabled deployment**. The exact current
+runtime values above remain unchanged. The tested GPU export candidate, frozen
+experiments, migration draft and negative evidence are preserved on
+`feat/spatial-quality-ablation-20260914`; no shared branch was force-pushed.
+Further training waits for better capture input rather than spending the
+remaining budget on camera estimates already rejected during CPU review.
+The real phone/app-queue acceptance run is still outstanding.
