@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import CoreLocation
+import MapKit
 
 // MARK: - Form data shared by New Listing and Edit
 
@@ -86,6 +87,24 @@ struct ListingFieldsForm<Middle: View>: View {
     var locationAction: (() -> Void)? = nil
     var locating = false
     @ViewBuilder var middle: () -> Middle
+
+    /// Step 2's buttons are gated on Step 1 being filled in. When someone taps
+    /// a blocked button we move the keyboard TO the field that is blocking it
+    /// rather than swallowing the tap — a dead tap teaches nothing and reads as
+    /// a broken app (owner feedback, 14 Sep).
+    ///
+    /// The blocked button lives in `NewListingView`, which passes Step 2 in as
+    /// `middle`, so the PARENT owns the focus and hands it down. The fallback
+    /// keeps the other callers (`ListingEditSheet`, `AddVideoFlowView`) working
+    /// without one.
+    var addressFocus: FocusState<Bool>.Binding? = nil
+    @FocusState private var ownAddressFocus: Bool
+    private var addressFocused: FocusState<Bool>.Binding { addressFocus ?? $ownAddressFocus }
+
+    /// Address type-ahead. Only ever consulted for real-estate style spaces —
+    /// a gym or a restaurant is named, not addressed, and offering street
+    /// suggestions under "Name of your gym" would be noise.
+    @StateObject private var completer = AddressCompleter()
 
     private var space: SpaceType { form.spaceType }
 
@@ -211,12 +230,68 @@ struct ListingFieldsForm<Middle: View>: View {
             TextField(space.showsPropertyDetails
                       ? "Type the home's address"
                       : "Name or address of your \(space.spaceNoun)", text: $form.address)
+                .focused(addressFocused)
                 .textContentType(space.showsPropertyDetails ? .fullStreetAddress : .organizationName)
                 .textInputAutocapitalization(.words)
                 .submitLabel(.done)
                 .font(.body)
                 .padding(14)
                 .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .onChange(of: form.address) { text in
+                    guard space.showsPropertyDetails else { return }
+                    completer.update(query: text)
+                }
+                .onChange(of: addressFocused.wrappedValue) { focused in
+                    if !focused { completer.clear() }
+                }
+
+            // Suggestions sit directly under the field, so the list is where
+            // the eye already is. Capped at four: more than that and the video
+            // step gets pushed off the screen on a small phone.
+            if space.showsPropertyDetails, addressFocused.wrappedValue, !completer.suggestions.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(completer.suggestions, id: \.self) { item in
+                        Button {
+                            Haptics.selection()
+                            completer.accept()
+                            form.address = AddressCompleter.fullAddress(item)
+                            addressFocused.wrappedValue = false
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: "mappin.circle.fill")
+                                    .foregroundStyle(Theme.accent)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(item.title)
+                                        .font(.rpBody)
+                                        .foregroundStyle(Theme.ink)
+                                        .lineLimit(1)
+                                    if !item.subtitle.isEmpty {
+                                        Text(item.subtitle)
+                                            .font(.rpCaption)
+                                            .foregroundStyle(Theme.inkDim)
+                                            .lineLimit(1)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 11)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(Text("Use \(AddressCompleter.fullAddress(item))"))
+                        if item != completer.suggestions.last {
+                            Divider().overlay(Theme.border).padding(.leading, 40)
+                        }
+                    }
+                }
+                .background(Theme.card, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.border))
+                .accessibilityIdentifier("newListing.addressSuggestions")
+            }
 
             if space.showsPropertyDetails, lookupAvailable != false {
                 propertyLookupRow
@@ -420,13 +495,19 @@ struct NewListingView: View {
     @State private var pendingCoord: CLLocationCoordinate2D?
 
     @State private var form = ListingFormData()
+    /// Owned here because Step 2 (the video buttons) is this view's `middle`,
+    /// and a blocked Step 2 button has to send the keyboard back to Step 1.
+    @FocusState private var addressFocused: Bool
     @State private var pendingAsset: CaptureAsset?
     @State private var createdListing: Listing?
     @State private var goToReview = false
 
     var body: some View {
         ScrollView {
-            ListingFieldsForm(form: $form, locationAction: { useCurrentLocation() }, locating: locating) {
+            ListingFieldsForm(form: $form,
+                              locationAction: { useCurrentLocation() },
+                              locating: locating,
+                              addressFocus: $addressFocused) {
                 videoCard
             }
             .padding()
@@ -449,14 +530,25 @@ struct NewListingView: View {
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
 
-            VideoSourcePicker(enabled: form.isValid) { asset in
-                receive(asset)
+            // ABOVE the buttons, not below them. It used to sit underneath both
+            // — i.e. past where the thumb had already gone — which is why the
+            // owner read the screen as "you can do anything without pressing
+            // add an address".
+            if !form.isValid {
+                Label("Add the \(form.isRealEstate ? "address" : "name") above first — then pick a video.",
+                      systemImage: "arrow.up.circle.fill")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.accent)
+                    .padding(.vertical, 8)
+                    .padding(.horizontal, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .accessibilityIdentifier("newListing.addressFirst")
             }
 
-            if !form.isValid {
-                Label("Type the \(form.isRealEstate ? "address" : "name") first, then pick one.", systemImage: "info.circle")
-                    .font(.rpCaption)
-                    .foregroundStyle(Theme.inkDim)
+            VideoSourcePicker(enabled: form.isValid,
+                              onBlocked: { addressFocused = true }) { asset in
+                receive(asset)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -538,6 +630,10 @@ struct NewListingView: View {
 /// Drone vs handheld is NOT inferred here (decision A8) — Review & Submit asks.
 struct VideoSourcePicker: View {
     var enabled: Bool = true
+    /// Called when someone taps a button that is gated off. The parent moves
+    /// focus to whatever is blocking it. Never nil-op: a tap must always do
+    /// something a person can see.
+    var onBlocked: (() -> Void)? = nil
     var onAsset: (CaptureAsset) -> Void
 
     @State private var showCapture = false
@@ -624,37 +720,52 @@ struct VideoSourcePicker: View {
 
     private func bigActionButton(title: String, subtitle: String, icon: String,
                                  filled: Bool, action: @escaping () -> Void) -> some View {
-        Button {
+        // `off` is "you cannot use this yet, and here is what to do about it".
+        // `busy` is "wait, something is already running" — that one stays truly
+        // disabled because there is nothing useful a tap could do.
+        let off = !enabled
+        return Button {
             Haptics.selection()
+            if off { onBlocked?(); return }
             action()
         } label: {
             HStack(spacing: 14) {
                 Image(systemName: icon)
                     .font(.system(size: 26))
-                    .foregroundStyle(filled ? Color.white : Theme.accent)
+                    .foregroundStyle(off ? Theme.disabledInk : (filled ? Color.white : Theme.accent))
                     .frame(width: 40)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
                         .font(.body.weight(.semibold))
-                        .foregroundStyle(filled ? Color.white : Theme.ink)
+                        .foregroundStyle(off ? Theme.disabledInk : (filled ? Color.white : Theme.ink))
                     Text(subtitle)
                         .font(.rpCaption)
-                        .foregroundStyle(filled ? Color.white.opacity(0.85) : Theme.inkDim)
+                        .foregroundStyle(off ? Theme.disabledInk
+                                             : (filled ? Color.white.opacity(0.85) : Theme.inkDim))
                 }
                 Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(filled ? Color.white.opacity(0.7) : Theme.inkDim)
+                // The chevron promises "this goes somewhere". A blocked button
+                // does not, so it loses it.
+                if !off {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(filled ? Color.white.opacity(0.7) : Theme.inkDim)
+                }
             }
             .padding(16)
             .background(
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(filled ? Theme.accent : Theme.accentSoft)
+                    .fill(off ? Theme.disabledFill : (filled ? Theme.accent : Theme.accentSoft))
             )
-            .opacity(enabled && !busy ? 1 : 0.5)
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(off ? Theme.border : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .opacity(busy ? 0.5 : 1)
         }
         .buttonStyle(ScalePressStyle())
-        .disabled(!enabled || busy)   // no double-imports mid-copy
+        .disabled(busy)   // no double-imports mid-copy; `off` stays tappable on purpose
         .accessibilityLabel(Text("\(title). \(subtitle)"))
     }
 
@@ -999,5 +1110,84 @@ struct DetailFieldsEditor: View {
         case .url: return .URL
         default: return .default
         }
+    }
+}
+
+
+// MARK: - Address autocomplete
+//
+// Owner feedback, 14 Sep: "when you start typing an address it should pull up
+// addresses for you to select." It matters more than it looks — the address is
+// the key every downstream artifact hangs off (the public-records lookup, the
+// map, the share page, the MLS virtual-tour field), so a typo there propagates
+// into all of them. Autocomplete turns a free-text field into a picker and
+// removes a whole class of bad data at the source.
+//
+// MKLocalSearchCompleter is Apple's own, on-device-brokered, needs no API key
+// and costs nothing — no router row, no cost_ledger entry, no vendor.
+@MainActor
+final class AddressCompleter: NSObject, ObservableObject, MKLocalSearchCompleterDelegate {
+    @Published private(set) var suggestions: [MKLocalSearchCompletion] = []
+
+    private let completer = MKLocalSearchCompleter()
+    /// Set while we are writing the field ourselves (a suggestion was tapped),
+    /// so accepting a suggestion does not immediately ask for more.
+    private var suppress = false
+
+    override init() {
+        super.init()
+        completer.delegate = self
+        completer.resultTypes = .address
+    }
+
+    /// Bias results toward where the agent actually is, so local streets rank
+    /// first. Safe to call more than once; ignored without a fix.
+    func focus(on coordinate: CLLocationCoordinate2D?) {
+        guard let coordinate else { return }
+        completer.region = MKCoordinateRegion(
+            center: coordinate,
+            latitudinalMeters: 60_000,
+            longitudinalMeters: 60_000)
+    }
+
+    func update(query: String) {
+        if suppress { suppress = false; return }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Under three characters every street in the country matches.
+        guard trimmed.count >= 3 else {
+            completer.queryFragment = ""
+            suggestions = []
+            return
+        }
+        completer.queryFragment = trimmed
+    }
+
+    /// Call when a suggestion is accepted, before writing it into the field.
+    func accept() {
+        suppress = true
+        suggestions = []
+        completer.queryFragment = ""
+    }
+
+    func clear() {
+        suggestions = []
+        completer.queryFragment = ""
+    }
+
+    /// `title` is the street line, `subtitle` the city/state/ZIP. Joined they
+    /// are what a person would have typed.
+    static func fullAddress(_ c: MKLocalSearchCompletion) -> String {
+        let sub = c.subtitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        return sub.isEmpty ? c.title : "\(c.title), \(sub)"
+    }
+
+    nonisolated func completerDidUpdateResults(_ completer: MKLocalSearchCompleter) {
+        let results = Array(completer.results.prefix(4))
+        Task { @MainActor in self.suggestions = results }
+    }
+
+    nonisolated func completer(_ completer: MKLocalSearchCompleter, didFailWithError error: Error) {
+        // A failed lookup must never block typing — the field still works.
+        Task { @MainActor in self.suggestions = [] }
     }
 }

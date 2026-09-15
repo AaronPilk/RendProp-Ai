@@ -40,6 +40,14 @@ private struct RenderStatusContent: View {
     /// the ring visibly crawls. Say so rather than looking stuck. (Seeded in
     /// `onAppear` — a `@State` default can't read a type member here.)
     @State private var isThrottled = false
+    /// When the CURRENT stage started, so the ETA is per-stage rather than
+    /// across the whole job — each stage resets the ring, so an estimate that
+    /// spanned all three would jump backwards every time one finished.
+    @State private var stageStartedAt: Date?
+    @State private var timedStage: RenderJobState.Stage?
+    /// Ticks so the ETA counts down even while `fraction` sits still. A frozen
+    /// "about 2 minutes left" that stays put for five minutes is a lie.
+    @State private var now = Date()
 
     /// Live copy so the real server share URL (set by publishTour) is picked up.
     private var currentListing: Listing {
@@ -120,6 +128,24 @@ private struct RenderStatusContent: View {
         .navigationBarBackButtonHidden(isWorking)
         .onAppear {
             isThrottled = Self.thermallyThrottled
+            if stageStartedAt == nil, mode == .working {
+                stageStartedAt = Date()
+                timedStage = job?.stage
+            }
+        }
+        // Each stage refills the ring from zero, so the ETA is per stage and
+        // the clock restarts when the stage does. One estimate spanning all
+        // three would jump backwards every time a stage finished.
+        .onChange(of: job?.stage) { stage in
+            guard stage != timedStage else { return }
+            timedStage = stage
+            stageStartedAt = Date()
+            now = Date()
+        }
+        // Drives the ETA countdown. 5 s is often enough to feel alive and rare
+        // enough to cost nothing; it only runs while something is working.
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { tick in
+            if mode == .working { now = tick }
         }
         // `.receive(on:)` is not optional here: the thermal notification is
         // posted on an arbitrary queue, and touching @State off the main thread
@@ -169,14 +195,18 @@ private struct RenderStatusContent: View {
                     .font(.system(size: 34, weight: .semibold))
                     .foregroundStyle(Theme.warn)
             case .working:
-                if job?.stage == .rendering {
-                    Text(fraction.formatted(.percent.precision(.fractionLength(0))))
-                        .font(.system(size: 30, weight: .semibold, design: .rounded))
-                        .monospacedDigit()
-                        .foregroundStyle(Theme.ink)
-                } else {
-                    ProgressView().scaleEffect(1.4)
-                }
+                // The number belongs in EVERY running stage. It used to render
+                // only while `.rendering`, so `.enhancing` and `.publishing` —
+                // the two LONGEST stages — fell through to a bare spinner while
+                // the ring around it was still being driven by the real
+                // fraction. Owner feedback, 15 Sep: "there needs to be a actual
+                // loading bar" and "I had to click skip because it was taking
+                // too long". The data was always there; only this branch hid it.
+                Text(fraction.formatted(.percent.precision(.fractionLength(0))))
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Theme.ink)
+                    .accessibilityLabel(Text("\(Int(fraction * 100)) percent complete"))
             case .idle:
                 Image(systemName: "play.circle")
                     .font(.system(size: 40, weight: .light))
@@ -230,6 +260,20 @@ private struct RenderStatusContent: View {
         VStack(spacing: 8) {
             switch mode {
             case .working:
+                if let step = stepLabel {
+                    Text(step)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                        .multilineTextAlignment(.center)
+                }
+                if let eta = etaText {
+                    Text(eta)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                        .multilineTextAlignment(.center)
+                        .monospacedDigit()
+                        .accessibilityIdentifier("render.eta")
+                }
                 Text(workingCaption)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
@@ -294,6 +338,33 @@ private struct RenderStatusContent: View {
             }
         }
         .padding(.horizontal, 28)
+    }
+
+    /// "Step 2 of 3 · Enhancing" — a ring that refills from zero on every
+    /// stage reads as starting over unless the stage is named and counted.
+    private var stepLabel: String? {
+        switch job?.stage {
+        case .rendering:  return "Step 1 of 3 · Rendering on your phone"
+        case .enhancing:  return "Step 2 of 3 · Enhancing with AI"
+        case .publishing: return "Step 3 of 3 · Publishing"
+        default:          return nil
+        }
+    }
+
+    /// A per-stage estimate from elapsed time and the real fraction. Says
+    /// nothing below 8% — an estimate off two seconds of data is worse than
+    /// no estimate, because people believe it.
+    private var etaText: String? {
+        guard mode == .working, let started = stageStartedAt else { return nil }
+        let f = min(max(fraction, 0), 1)
+        guard f >= 0.08, f < 1 else { return nil }
+        let elapsed = now.timeIntervalSince(started)
+        guard elapsed > 5 else { return nil }
+        let remaining = elapsed / f - elapsed
+        guard remaining.isFinite, remaining > 0 else { return nil }
+        if remaining < 45 { return "Less than a minute left" }
+        let minutes = Int((remaining / 60).rounded())
+        return minutes <= 1 ? "About a minute left" : "About \(minutes) minutes left"
     }
 
     private var workingCaption: String {

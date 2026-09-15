@@ -22,9 +22,13 @@ struct PrimaryButton: View {
             .font(.body)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 16)
-            .background(isDisabled ? Theme.accent.opacity(0.35) : Theme.accent)
-            .foregroundStyle(Color.white)
+            .background(isDisabled ? Theme.disabledFill : Theme.accent)
+            .foregroundStyle(isDisabled ? Theme.disabledInk : Color.white)
             .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(isDisabled ? Theme.border : Color.clear)
+            )
         }
         .buttonStyle(ScalePressStyle())   // same crisp press as every card CTA
         .disabled(isDisabled)
@@ -137,10 +141,13 @@ struct SecondaryButton: View {
             .font(.rpBody)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 13)
-            .background(Theme.accentSoft)
-            .foregroundStyle(Theme.accent)
+            .background(isDisabled ? Theme.disabledFill : Theme.accentSoft)
+            .foregroundStyle(isDisabled ? Theme.disabledInk : Theme.accent)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            .opacity(isDisabled ? 0.5 : 1)
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(isDisabled ? Theme.border : Color.clear)
+            )
         }
         .buttonStyle(ScalePressStyle())
         .disabled(isDisabled)

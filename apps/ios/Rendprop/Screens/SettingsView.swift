@@ -1499,24 +1499,49 @@ struct LeadRow: View {
                     }
                 }
             }
-            HStack(spacing: 14) {
+            // Two SEPARATE actions with their own hit targets. Owner feedback,
+            // 15 Sep: "when I click the phone number it should call not open up
+            // email." The links were always built correctly — the row merged
+            // them. Each one now carries its own contentShape and 44pt minimum
+            // so a thumb lands where the eye aimed, and `.buttonStyle(.plain)`
+            // stops a surrounding List row from swallowing the tap first.
+            HStack(spacing: 8) {
                 if let phone = lead.phone?.trimmingCharacters(in: .whitespaces), !phone.isEmpty,
                    let url = Self.telURL(phone) {
                     Link(destination: url) {
                         Label(phone, systemImage: "phone.fill")
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text("Call \(phone)"))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("lead.call")
                 }
                 if let email = lead.email?.trimmingCharacters(in: .whitespaces), !email.isEmpty,
                    let url = Self.mailURL(email) {
                     Link(destination: url) {
                         Label(email, systemImage: "envelope.fill")
                             .lineLimit(1)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text("Email \(email)"))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("lead.email")
                 }
+                Spacer(minLength: 0)
             }
             .font(.rpCaption.weight(.semibold))
-            .foregroundStyle(Theme.accent)
-            .padding(.top, 2)
             if let source = lead.source?.trimmingCharacters(in: .whitespaces), !source.isEmpty, source != "tour" {
                 Text("via \(source)")
                     .font(.caption2)
@@ -1524,7 +1549,12 @@ struct LeadRow: View {
             }
         }
         .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
+        // NOT `.accessibilityElement(children: .combine)`. That merged the whole
+        // card — both Links included — into ONE element, which made the two
+        // actions indistinguishable to VoiceOver and is the likeliest reason a
+        // tap on the phone number resolved to the mail link. `.contain` keeps
+        // the card grouped while leaving the two actions separately addressable.
+        .accessibilityElement(children: .contain)
     }
 
     /// "eventDate" → "Event date"; "party_size" → "Party size".

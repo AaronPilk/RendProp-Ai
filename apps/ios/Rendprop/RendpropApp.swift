@@ -2622,6 +2622,17 @@ struct HomeDashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                // A brand-new user gets the guide FIRST. The owner's stepdad —
+                // an older broker, exactly the person this has to work for —
+                // opened the app and followed none of the instructions, and the
+                // reason is visible in the order: a marketing hero and a plan
+                // banner came before the thing that says what to do, and a
+                // seven-tile grid came after it. When nothing has been done
+                // yet, nothing outranks the guide.
+                if guideLeadsTheScreen {
+                    firstProjectGuideCard
+                        .modifier(Reveal(index: 0, on: revealed))
+                }
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
                 // Which plan you are on, said where somebody will actually read
@@ -2631,15 +2642,9 @@ struct HomeDashboardView: View {
                 // and after it ends. Plan/PlanBanner.swift.
                 PlanBanner()
                     .modifier(Reveal(index: 0, on: revealed))
-                if !FirstProjectGuide.isHiddenForever {
-                    FirstProjectCard { action in
-                        switch action {
-                        case .startProject:       open(.tour)
-                        case .open(let route):    go(route.listing, route.feature)
-                        case .share(let listing): go(listing, .tour)
-                        }
-                    }
-                    .modifier(Reveal(index: 0, on: revealed))
+                if !guideLeadsTheScreen {
+                    firstProjectGuideCard
+                        .modifier(Reveal(index: 0, on: revealed))
                 }
                 homesSection
                     .modifier(Reveal(index: 1, on: revealed))
@@ -2898,6 +2903,26 @@ struct HomeDashboardView: View {
     }
 
     // MARK: Hero — animated gradient billboard
+
+    /// True while the user has finished none of the five steps. Once they have
+    /// done even one, the guide drops back below the hero — it is a first-run
+    /// aid, not a permanent fixture.
+    private var guideLeadsTheScreen: Bool {
+        !FirstProjectGuide.isHiddenForever
+            && FirstProjectGuide.progress(model: model).completedCount == 0
+    }
+
+    @ViewBuilder private var firstProjectGuideCard: some View {
+        if !FirstProjectGuide.isHiddenForever {
+            FirstProjectCard { action in
+                switch action {
+                case .startProject:       open(.tour)
+                case .open(let route):    go(route.listing, route.feature)
+                case .share(let listing): go(listing, .tour)
+                }
+            }
+        }
+    }
 
     private var heroCard: some View {
         VStack(alignment: .leading, spacing: 12) {

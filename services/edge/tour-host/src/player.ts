@@ -876,6 +876,19 @@ const PLAYER_CSS = `${TOKENS_CSS}
      room names cost the frame nothing, which is the whole point of moving them
      off it. Both are set on #stage and inherited by every overlay inside. */
   #track { position: relative; }
+  #skiptodetails { position: absolute; z-index: 6; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom));
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 14px; min-height: 44px;
+    font: 600 14px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: .01em;
+    color: #fff; background: rgba(12,12,16,.62); border: 1px solid rgba(255,255,255,.22);
+    border-radius: 999px; cursor: pointer; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    transition: opacity .25s ease, transform .25s ease; }
+  #skiptodetails svg { width: 14px; height: 14px; fill: currentColor; }
+  #skiptodetails:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  /* Fades out once the viewer has reached the end card on their own — at that
+     point it is pointing at what they are already looking at. */
+  #skiptodetails[hidden] { display: none; }
+  #skiptodetails.gone { opacity: 0; transform: translateY(6px); pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { #skiptodetails { transition: none; } }
   #stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; background: #000;
     --strip: 0px; --floor: env(safe-area-inset-bottom); }
   #stage.hasstrip { --strip: calc(44px + env(safe-area-inset-bottom)); --floor: var(--strip); }
@@ -1146,12 +1159,23 @@ const ENGINE_CORE_JS = `
 
   /* ---- Track sizing (100svh-safe, toolbar-resize-safe) ---- */
   var duration = Number(CFG.durationS) || 0;
+  /* A 6:50 walkthrough at 420 px/s is 172,200 px of track — about 203 screens
+     on a phone before the end card, the agent card or the LEAD FORM come into
+     reach. Long walkthroughs are the normal case in real estate, not the edge
+     case, so the fix is a ceiling on the track rather than advice to film
+     shorter. MAX_SCREENS viewports is the most anyone should ever have to
+     scroll; past that the scrub rate absorbs the extra duration. */
+  var MAX_SCREENS = 28;
   function sizeTrack(){
     if (!track) return;
     if (unavailable){ track.style.height = ''; return; }
     if (!duration) return;
-    track.style.height = Math.round(duration * PX_PER_SEC + innerHeight) + 'px';
+    var ideal = duration * PX_PER_SEC;
+    var ceiling = Math.max(1, MAX_SCREENS) * innerHeight;
+    track.style.height = Math.round(Math.min(ideal, ceiling) + innerHeight) + 'px';
   }
+  /*__SKIP__*/
+
   addEventListener('resize', sizeTrack, { passive: true });
   if (window.visualViewport) visualViewport.addEventListener('resize', sizeTrack, { passive: true });
   // Size from the server-known duration right away: loadedmetadata never fires
@@ -1764,6 +1788,40 @@ const ENGINE_LEADFORM_JS = `
 
 `;
 
+/**
+ * BRANDED PAGES ONLY, and for the same reason as the lead form: it names the
+ * end card, which does not exist on `/u/`. Leaving it in the shared core put
+ * the literal token "endcard" into the unbranded page and `check-unbranded`
+ * caught it — the gate is right, and the fix is to strip it at the DATA level
+ * rather than hide the control with CSS.
+ */
+const ENGINE_SKIP_JS = `
+  /* ---- Skip to the details ----
+     The flythrough is the hook, not a toll gate. Someone who only wants the
+     price and a phone number should reach them in one tap. */
+  (function(){
+    var skip = document.getElementById('skiptodetails');
+    if (!skip) return;
+    var target = document.getElementById('endcard');
+    if (!target){ skip.hidden = true; return; }
+    skip.addEventListener('click', function(){
+      var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    });
+    /* Once the target is on screen the button has nothing left to offer. */
+    if (typeof IntersectionObserver === 'function') {
+      new IntersectionObserver(function(entries){
+        for (var i = 0; i < entries.length; i++) {
+          skip.classList.toggle('gone', entries[i].isIntersecting);
+        }
+      }, { threshold: 0.12 }).observe(target);
+    }
+  })();
+`;
+
+/** Where ENGINE_SKIP_JS is spliced into ENGINE_CORE_JS. */
+const SKIP_SLOT = "/*__SKIP__*/";
+
 /** Where ENGINE_LEADFORM_JS is spliced into ENGINE_CORE_JS. */
 const LEADFORM_SLOT = "/*__LEADFORM__*/";
 
@@ -1896,10 +1954,14 @@ function engineJs(unbranded: boolean, embed = false): string {
   // ENGINE_CORE_JS opens with `(function(){` and the tail closes it, so the
   // lead-form block is spliced in at the marker inside the same IIFE.
   return unbranded
-    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "").replace(SHARE_SLOT, "")
+    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
+        .replace(SHARE_SLOT, "").replace(SKIP_SLOT, "")
     : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
         .replace(APPLINK_SLOT, ENGINE_APPLINK_JS)
-        .replace(SHARE_SLOT, embed ? "" : ENGINE_SHARE_JS);
+        .replace(SHARE_SLOT, embed ? "" : ENGINE_SHARE_JS)
+        // The end card is not rendered on an embed either, so neither is the
+        // control that points at it.
+        .replace(SKIP_SLOT, embed ? "" : ENGINE_SKIP_JS);
 }
 
 // ===========================================================================
@@ -2982,6 +3044,15 @@ ${accentOverride}
   <div id="stage"${hasStrip ? ` class="hasstrip"` : ""}>
     <video id="scrub" muted playsinline webkit-playsinline preload="auto"
            disablepictureinpicture disableremoteplayback${poster ? ` poster="${escapeAttr(poster)}"` : ""}></video>
+${endcardHtml ? `
+    <!-- The flythrough is the hook, not a toll gate. Someone who only wants the
+         price and a phone number gets there in one tap instead of scrolling the
+         whole tour. Only rendered when there IS an end card to jump to, so the
+         unbranded MLS twin never grows a control that points at nothing. -->
+    <button type="button" id="skiptodetails" aria-label="Skip the flythrough and see the details">
+      See details
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 11.5 3.5 7l1-1L8 9.5 11.5 6l1 1z"/></svg>
+    </button>` : ""}
 
     <div id="loader">
       ${unbranded ? "" : `<div class="mark">RENDPROP</div>`}

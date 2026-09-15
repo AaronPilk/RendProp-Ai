@@ -51,6 +51,26 @@ enum Theme {
     static let fillSubtle = dynamic(light: UIColor.black.withAlphaComponent(0.04),
                                     dark:  UIColor.white.withAlphaComponent(0.07))
 
+    // MARK: Disabled controls
+    //
+    // THE RULE, learned from owner feedback on 15 Sep: on a dark theme, never
+    // signal "disabled" with opacity alone. Half-opacity is a LIGHT-mode idiom
+    // — it works because white shows through. Composited over a near-black
+    // ground, `Theme.accent` at 35% is just a deeper purple, and with the label
+    // still full-strength white it reads as a live primary button. He tapped
+    // one, got silence, and reported "it seems like you can do anything".
+    //
+    // A disabled control must look like a DIFFERENT control, not a dimmer one:
+    // change the fill AND the text. These two are the only correct answer.
+
+    /// Fill for a disabled control. Neutral, never the accent at any alpha.
+    static let disabledFill = dynamic(light: UIColor.black.withAlphaComponent(0.05),
+                                      dark:  UIColor.white.withAlphaComponent(0.07))
+
+    /// Label colour for a disabled control. Never white on a neutral fill.
+    static let disabledInk = dynamic(light: rgb(28, 25, 45, 0.38),
+                                     dark:  UIColor.white.withAlphaComponent(0.38))
+
     /// Soft purple wash (badges, selected states, secondary buttons).
     static let accentSoft = dynamic(light: rgb(124, 58, 237, 0.10),
                                     dark:  rgb(155, 109, 255, 0.20))
