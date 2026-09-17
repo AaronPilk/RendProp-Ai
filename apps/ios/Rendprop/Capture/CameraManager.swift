@@ -1,5 +1,6 @@
 import AVFoundation
 import UIKit
+import Vision
 
 /// AVCaptureSession wrapper: best-format selection (4K/60 → 4K/30 → 1080p/60),
 /// the best hardware stabilization the chosen format supports, luminance
@@ -55,6 +56,19 @@ final class CameraManager: NSObject, ObservableObject {
     @Published var isUltraWide = true               // 0.5× default — the real-estate look
     @Published private(set) var supportsUltraWide = false
 
+    /// SOMEBODY IS IN THE SHOT — the photographer in a mirror or a window, or a
+    /// person walking through. Drives the warning on the capture screen.
+    ///
+    /// Both cases came from the same call. "There's a lot of images where you
+    /// can see my entire body and face in the glare of a window or a mirror,"
+    /// and, separately, "my client would accidentally come out in front of me."
+    /// One detector answers both, and it says what it actually knows — that a
+    /// person is visible — rather than guessing which kind.
+    @Published private(set) var personInShot = false
+    /// Where that happened, on the finished take's clock. Only filled while
+    /// recording; a detection during framing is a warning and nothing more.
+    @Published private(set) var personVisibleRanges: [TimeRange] = []
+
     let session = AVCaptureSession()
 
     /// Called on main when a take is finalized (even a partial one), with its
@@ -91,6 +105,26 @@ final class CameraManager: NSObject, ObservableObject {
     /// False until the first frame of THIS take is written, so a resume does
     /// not restart the motion sidecar at zero.
     private var takeStarted = false
+
+    // --- photographer / bystander detection (Vision, on-device, ~2 Hz) -------
+    /// Built once. Vision requests are reusable and allocating one per frame is
+    /// most of the cost of running one.
+    private lazy var personRequest: VNDetectHumanRectanglesRequest = {
+        let r = VNDetectHumanRectanglesRequest()
+        r.upperBodyOnly = false
+        return r
+    }()
+    /// A face in a small mirror is often all that is visible — shoulders and
+    /// below are out of frame, so the body detector never fires. Cheap enough
+    /// to run alongside in the same handler.
+    private lazy var faceRequest = VNDetectFaceRectanglesRequest()
+    /// Consecutive ~0.5 s samples with and without a person. Hysteresis, because
+    /// a single frame either way is noise and a banner that strobes is worse
+    /// than no banner.
+    private var personHits = 0
+    private var personMisses = 0
+    /// Open range start, on the take's clock; nil when nobody is in shot.
+    private var personRangeStart: Double?
 
     private(set) var activeFPS: Double = 30
     private(set) var activeWidth: Int = 1920
@@ -399,6 +433,8 @@ final class CameraManager: NSObject, ObservableObject {
         bankedSeconds = 0
         takeStarted = false
         elapsed = 0
+        personVisibleRanges.removeAll()
+        personRangeStart = nil
         beginSegment()
     }
 
@@ -407,6 +443,9 @@ final class CameraManager: NSObject, ObservableObject {
     /// joined yet — `resumeRecording()` simply opens the next piece.
     func pauseRecording() {
         guard state == .recording else { return }
+        // Nothing is being written while held, so an open range ends here. It
+        // reopens on resume if they are still in shot.
+        closePersonRange(at: currentRecordedSeconds)
         pendingEnd = .pause
         state = .finalizing
         sessionQueue.async { [weak self] in
@@ -489,6 +528,9 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Hand the finished take back, then reset.
     private func deliverTake() {
+        // Somebody still in shot when Stop was tapped: close the range at the
+        // end of the take rather than dropping it.
+        closePersonRange(at: bankedSeconds)
         let pieces = segments
         segments.removeAll()
         bankedSeconds = 0
@@ -511,6 +553,8 @@ final class CameraManager: NSObject, ObservableObject {
         bankedSeconds = 0
         takeStarted = false
         elapsed = 0
+        personVisibleRanges.removeAll()
+        personRangeStart = nil
     }
 
     // MARK: - Interruptions (calls, Control Center) — never lose footage
@@ -733,6 +777,91 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         DispatchQueue.main.async {
             // Smooth to avoid flicker.
             self.luminance = self.luminance * 0.7 + mean * 0.3
+        }
+
+        detectPeople(in: pixelBuffer)
+    }
+
+    /// IS ANYBODY IN THE SHOT.
+    ///
+    /// Runs on the SAME ~2 Hz buffer the light meter already sampled, on the
+    /// same background queue, so it costs one Vision pass a second and no extra
+    /// camera work. Nothing is uploaded and nothing is stored — the frame is
+    /// read and dropped.
+    ///
+    /// Orientation is `.right` because the tour records in PORTRAIT and the
+    /// video data output hands back a landscape buffer with the top of the
+    /// image on the right. Get this wrong and Vision looks for sideways people
+    /// and finds none, which fails silently and looks exactly like a feature
+    /// that does not work.
+    private func detectPeople(in pixelBuffer: CVPixelBuffer) {
+        // Skip while the phone is complaining about heat: the banner already
+        // owns the screen and the ANE is not where that budget should go.
+        if thermalMessage != nil { return }
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
+                                            orientation: .right, options: [:])
+        do {
+            try handler.perform([personRequest, faceRequest])
+        } catch {
+            return
+        }
+        let bodies = (personRequest.results ?? []).filter { $0.confidence >= 0.45 }
+        let faces  = (faceRequest.results ?? []).filter { $0.confidence >= 0.45 }
+        let found = !bodies.isEmpty || !faces.isEmpty
+        DispatchQueue.main.async { self.ingestPersonSample(found) }
+    }
+}
+
+// MARK: - Person-in-shot bookkeeping (main queue only)
+extension CameraManager {
+    /// Two samples in a row to raise it, four to clear it. Raising fast matters
+    /// — the point is to catch it while they can still step aside. Clearing
+    /// slowly matters more — a mirror they are walking past drops the detection
+    /// for a frame at a time, and a banner that blinks teaches people to ignore
+    /// it.
+    fileprivate func ingestPersonSample(_ found: Bool) {
+        if found {
+            personHits += 1
+            personMisses = 0
+        } else {
+            personMisses += 1
+            personHits = 0
+        }
+
+        if !personInShot, personHits >= 2 {
+            personInShot = true
+            Haptics.warning()
+            if hasTakeInProgress, personRangeStart == nil {
+                personRangeStart = currentRecordedSeconds
+            }
+        } else if personInShot, personMisses >= 4 {
+            personInShot = false
+            closePersonRange(at: currentRecordedSeconds)
+        } else if personInShot, hasTakeInProgress, personRangeStart == nil {
+            // They were already in shot when recording started.
+            personRangeStart = currentRecordedSeconds
+        }
+    }
+
+    /// Close the open range, if any, and keep it only when it is long enough to
+    /// be worth acting on. A sub-second blip is a false positive on a framed
+    /// photograph far more often than it is a person.
+    fileprivate func closePersonRange(at end: Double) {
+        guard let start = personRangeStart else { return }
+        personRangeStart = nil
+        let from = max(0, start)
+        let to = max(from, end)
+        guard to - from >= 0.75 else { return }
+        // Pad each side a little: the detector is sure a beat after they enter
+        // and a beat after they leave, and an eraser needs the whole of them.
+        let padded = TimeRange(startS: max(0, from - 0.5), endS: to + 0.5)
+        // Merge into the previous range when they touch, so a person walking
+        // past three mirrors in a hallway is not three jobs where one will do.
+        if var last = personVisibleRanges.last, padded.startS <= last.endS + 1.0 {
+            last.endS = max(last.endS, padded.endS)
+            personVisibleRanges[personVisibleRanges.count - 1] = last
+        } else {
+            personVisibleRanges.append(padded)
         }
     }
 }

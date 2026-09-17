@@ -46,6 +46,8 @@ struct CaptureView: View {
         let sidecar: URL?
         let tags: [RoomTag]
         let seconds: Double
+        /// Where somebody was visible, on this take's clock.
+        var people: [TimeRange] = []
     }
 
     var body: some View {
@@ -218,11 +220,13 @@ struct CaptureView: View {
                 if let message = camera.interruptionMessage { banner(message, color: Theme.bad) }
                 if let message = camera.storageMessage { banner(message, color: Theme.bad) }
                 if isSideways { banner("Hold your phone upright — tours record in portrait", color: Theme.warn) }
+                PersonWarning(visible: camera.personInShot)
                 LightWarning(luminance: camera.luminance)
             }
             .padding(.horizontal)
             .animation(.easeInOut(duration: 0.25), value: camera.luminance < 0.18)
             .animation(.easeInOut(duration: 0.25), value: isSideways)
+            .animation(.easeInOut(duration: 0.25), value: camera.personInShot)
 
             Spacer()
 
@@ -392,6 +396,21 @@ struct CaptureView: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(Color.white.opacity(0.85))
 
+                // Said here rather than swallowed. Retaking a 90-second
+                // walkthrough is cheap; finding yourself in the hallway mirror
+                // after the tour is published is not.
+                if !take.people.isEmpty {
+                    let n = take.people.count
+                    let secs = Int(take.people.reduce(0) { $0 + $1.durationS }.rounded())
+                    Label("Someone was in shot — \(n) \(n == 1 ? "moment" : "moments"), about \(secs)s. Worth a retake if it was you in a mirror.",
+                          systemImage: "person.crop.circle.badge.exclamationmark")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .multilineTextAlignment(.leading)
+                        .padding(.horizontal)
+                        .accessibilityLabel(Text("Someone was visible in \(n) moments, about \(secs) seconds in total."))
+                }
+
                 if let joinWarning {
                     Label(joinWarning, systemImage: "exclamationmark.triangle.fill")
                         .font(.rpCaption)
@@ -553,7 +572,8 @@ struct CaptureView: View {
         Analytics.track("capture_finished", ["space_type": SpaceType.current.rawValue,
                                              "duration_s": String(Int(camera.elapsed)),
                                              "pauses": String(pauses)])
-        let take = TakeReview(url: url, sidecar: sidecar, tags: tags, seconds: camera.elapsed)
+        let take = TakeReview(url: url, sidecar: sidecar, tags: tags, seconds: camera.elapsed,
+                              people: camera.personVisibleRanges)
 
         // Muted looping preview of the take behind the buttons.
         let player = AVQueuePlayer()
@@ -579,6 +599,7 @@ struct CaptureView: View {
                                                               deleteOnFailure: false)
                 asset.motionSidecarURL = take.sidecar
                 asset.roomTags = take.tags
+                asset.personVisibleRanges = take.people
                 if asset.fps <= 0 { asset.fps = fallbackFPS }
                 await MainActor.run {
                     stopReviewPlayback()

@@ -105,6 +105,31 @@ struct PaceRing: View {
 }
 
 // MARK: - Light warning
+/// SOMEBODY IS IN THE SHOT.
+///
+/// Amber, not red: this is not an error, it is a thing to glance at and fix by
+/// taking one step. Reported twice on the same call — the photographer visible
+/// "in the glare of a window or a mirror", and a client who "would accidentally
+/// come out in front of me". Catching it here costs nothing; erasing it
+/// afterwards costs money and never looks as good as not being there.
+struct PersonWarning: View {
+    let visible: Bool
+
+    var body: some View {
+        if visible {
+            Label("Someone's in the shot — check mirrors and windows",
+                  systemImage: "person.crop.circle.badge.exclamationmark")
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(Theme.warn.opacity(0.92), in: Capsule())
+                .foregroundStyle(.black)
+                .transition(.opacity)
+                .accessibilityLabel(Text("Someone is visible in the shot. Check mirrors and windows."))
+        }
+    }
+}
+
 struct LightWarning: View {
     let luminance: Double   // 0–1
 
