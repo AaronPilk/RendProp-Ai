@@ -483,10 +483,25 @@ struct ListingFieldsForm<Middle: View>: View {
 
 // MARK: - New listing (address → video → review)
 
-/// Stupid-simple: type the address, then one of two big buttons — Record or
-/// Upload. Everything else is optional and out of the way. The listing is
-/// created ONLY once a usable video exists (decision A4) — cancelling a
-/// picker never leaves a "Not finished" card behind.
+/// Stupid-simple: type the address, then pick how you want to start — record a
+/// walkthrough, upload one, or go straight to photos. Everything else is
+/// optional and out of the way.
+///
+/// DECISION A4, AMENDED 17 Sep 2026. A4 said the listing is created ONLY once
+/// a usable video exists, so that cancelling a picker never left a "Not
+/// finished" card behind. The cost of that rule was found by a working agent
+/// on her first run: there was no way to create a listing at all without
+/// shooting a video first, and the photo screen — the only thing she wanted —
+/// sat behind a listing she could not create. Her words: "she can't create a
+/// home listing without uploading a video first, which breaks the entire
+/// system down from the very beginning."
+///
+/// The rule A4 was actually protecting is kept: the listing is created when
+/// someone COMMITS to something, never when a picker is dismissed. Tapping
+/// "Start with photos" IS that commitment — it is a deliberate button press,
+/// not a cancelled sheet — so it creates the listing and goes straight to the
+/// photo screen. Not every property needs a video, and the app no longer
+/// pretends otherwise.
 struct NewListingView: View {
     @EnvironmentObject var model: AppModel
 
@@ -501,6 +516,10 @@ struct NewListingView: View {
     @State private var pendingAsset: CaptureAsset?
     @State private var createdListing: Listing?
     @State private var goToReview = false
+    /// The photos-first path: the listing exists, there is no video yet, and
+    /// the next screen is its photo library rather than Review & Submit.
+    @State private var photosListing: Listing?
+    @State private var goToPhotos = false
 
     var body: some View {
         ScrollView {
@@ -521,12 +540,20 @@ struct NewListingView: View {
                 ReviewSubmitView(listing: listing, asset: asset)
             }
         }
+        .navigationDestination(isPresented: $goToPhotos) {
+            if let listing = photosListing {
+                // Opens ON the photo library, not on the listing screen with
+                // photos buried in the toolbox two scrolls down. That scroll is
+                // the exact thing the field report called out.
+                FlythroughDetailView(listing: listing, openPhotosOnAppear: true)
+            }
+        }
     }
 
     // Step 2 — video (two big buttons, shared with AddVideoFlowView)
     private var videoCard: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("Step 2 · The video", systemImage: "video.fill")
+            Label("Step 2 · Photos or video", systemImage: "photo.on.rectangle.angled")
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
 
@@ -535,7 +562,7 @@ struct NewListingView: View {
             // owner read the screen as "you can do anything without pressing
             // add an address".
             if !form.isValid {
-                Label("Add the \(form.isRealEstate ? "address" : "name") above first — then pick a video.",
+                Label("Add the \(form.isRealEstate ? "address" : "name") above first — then pick how you want to start.",
                       systemImage: "arrow.up.circle.fill")
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -547,7 +574,8 @@ struct NewListingView: View {
             }
 
             VideoSourcePicker(enabled: form.isValid,
-                              onBlocked: { addressFocused = true }) { asset in
+                              onBlocked: { addressFocused = true },
+                              onPhotosFirst: { startWithPhotos() }) { asset in
                 receive(asset)
             }
         }
@@ -580,6 +608,44 @@ struct NewListingView: View {
         let stateZip = [p.administrativeArea, p.postalCode].compactMap { $0 }.joined(separator: " ")
         if !stateZip.isEmpty { parts.append(stateZip) }
         return parts.joined(separator: ", ")
+    }
+
+    /// "Start with photos" → create the listing now (once) and go straight to
+    /// its photo library. No video is attached and none is required; the
+    /// listing screen keeps offering one until there is.
+    private func startWithPhotos() {
+        guard form.isValid else { addressFocused = true; return }
+        // Re-tapping must not mint a second listing for the same address, and
+        // must not resurrect one the user has since deleted.
+        if let existing = photosListing,
+           model.listings.contains(where: { $0.id == existing.id }) {
+            photosListing = existing
+            goToPhotos = true
+            return
+        }
+        // The video path may have already created this listing (came back from
+        // Review, now wants photos instead) — reuse it rather than duplicate it.
+        if let existing = createdListing,
+           model.listings.contains(where: { $0.id == existing.id }) {
+            model.modify(existing.id, sync: false) {
+                form.apply(to: &$0)
+                if let coordinate = pendingCoord {
+                    $0.latitude = coordinate.latitude
+                    $0.longitude = coordinate.longitude
+                }
+            }
+            photosListing = model.listings.first(where: { $0.id == existing.id }) ?? existing
+            goToPhotos = true
+            return
+        }
+        let listing = form.makeListing(coordinate: pendingCoord)
+        model.add(listing)
+        createdListing = listing
+        photosListing = listing
+        Analytics.track("listing_started_with_photos",
+                        ["space_type": SpaceType.current.rawValue])
+        Haptics.selection()
+        goToPhotos = true
     }
 
     /// A usable video exists → NOW create the listing (once) with everything
@@ -634,6 +700,11 @@ struct VideoSourcePicker: View {
     /// focus to whatever is blocking it. Never nil-op: a tap must always do
     /// something a person can see.
     var onBlocked: (() -> Void)? = nil
+    /// Non-nil ONLY on the create screen, where "no video yet" is a real
+    /// starting point. On a listing that already exists (`AddVideoFlowView`)
+    /// the photo library is one tap away in the toolbox, so this stays nil and
+    /// the third button does not render.
+    var onPhotosFirst: (() -> Void)? = nil
     var onAsset: (CaptureAsset) -> Void
 
     @State private var showCapture = false
@@ -666,6 +737,21 @@ struct VideoSourcePicker: View {
                 filled: false
             ) {
                 showCapture = true
+            }
+
+            // THE THIRD WAY. Not every property needs a video and not every
+            // agent has time to shoot one — this creates the listing and opens
+            // its photos, and the walkthrough can come later or never.
+            if let onPhotosFirst {
+                bigActionButton(
+                    title: "Start with photos",
+                    subtitle: "No video yet — add photos now, film whenever you like",
+                    icon: "photo.stack.fill",
+                    filled: false
+                ) {
+                    onPhotosFirst()
+                }
+                .accessibilityIdentifier("newListing.startWithPhotos")
             }
 
             if let p = importProgress {

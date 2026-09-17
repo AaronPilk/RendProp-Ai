@@ -45,6 +45,13 @@ final class MotionRecorder: ObservableObject {
     private var samples: [Sample] = []
     private var isLogging = false
     private var startUptime: TimeInterval = 0
+    /// Total seconds spent PAUSED so far in this take. Subtracted from every
+    /// sample's timestamp so the sidecar's clock matches the STITCHED video
+    /// rather than wall time — without it, a 30-second pause would put every
+    /// later sample 30 seconds past the frame it belongs to.
+    private var pausedAccum: TimeInterval = 0
+    /// Uptime at which the current pause began; 0 when not paused.
+    private var pauseStart: TimeInterval = 0
 
     // Smoothing state — motion queue only (`maxConcurrentOperationCount = 1`,
     // so `ingest` is serial). The published values are derived from these.
@@ -104,7 +111,7 @@ final class MotionRecorder: ObservableObject {
 
         lock.lock()
         if isLogging {
-            let t = m.timestamp - startUptime
+            let t = m.timestamp - startUptime - pausedAccum
             if t >= 0 {
                 samples.append(Sample(t: t,
                                       qw: m.attitude.quaternion.w, qx: m.attitude.quaternion.x,
@@ -138,6 +145,34 @@ final class MotionRecorder: ObservableObject {
         lock.lock()
         samples.removeAll(keepingCapacity: true)
         startUptime = now
+        pausedAccum = 0
+        pauseStart = 0
+        isLogging = true
+        lock.unlock()
+    }
+
+    /// The take is paused. Stop appending samples and start the pause clock —
+    /// nothing recorded between here and `resumeLogging()` exists in the
+    /// stitched video, so nothing recorded here belongs in the sidecar either.
+    func pauseLogging() {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        if isLogging {
+            isLogging = false
+            pauseStart = now
+        }
+        lock.unlock()
+    }
+
+    /// Recording again. Bank the paused interval and keep going on the same
+    /// timeline — sample t continues from where the last segment stopped.
+    func resumeLogging() {
+        let now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        if pauseStart > 0 {
+            pausedAccum += now - pauseStart
+            pauseStart = 0
+        }
         isLogging = true
         lock.unlock()
     }
@@ -146,6 +181,8 @@ final class MotionRecorder: ObservableObject {
     func cancelLogging() {
         lock.lock()
         isLogging = false
+        pausedAccum = 0
+        pauseStart = 0
         samples.removeAll(keepingCapacity: true)
         lock.unlock()
     }
@@ -162,6 +199,8 @@ final class MotionRecorder: ObservableObject {
     func endLogging(besideVideoAt videoURL: URL, fps: Double, width: Int, height: Int) -> URL? {
         lock.lock()
         isLogging = false
+        pausedAccum = 0
+        pauseStart = 0
         let snapshot = samples
         samples.removeAll(keepingCapacity: false)
         lock.unlock()

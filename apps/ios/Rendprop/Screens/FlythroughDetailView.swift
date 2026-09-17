@@ -98,11 +98,23 @@ struct FlythroughDetailView: View {
     // listing no longer belongs to the selected industry.
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     let listing: Listing
+    /// Land ON the photo library instead of on this screen.
+    ///
+    /// Set only by the "Start with photos" path on the create screen. A working
+    /// agent's first run: she created a listing, was handed a video button and
+    /// nothing else, and found photos only by scrolling down to the toolbox
+    /// afterwards. When photos are what she asked for, photos are what opens —
+    /// once, so backing out of them lands here rather than bouncing straight
+    /// back in.
+    var openPhotosOnAppear: Bool = false
 
     @State private var zillowText = ""
     @State private var zillowSeeded = false
     @State private var zillowError: String?
     @State private var showRoomTagger = false
+    /// Drives the photos screen when this view was opened photos-first.
+    @State private var showPhotosScreen = false
+    @State private var didAutoOpenPhotos = false
     @State private var tagsBeforeEdit: [RoomTag] = []
     @State private var chapterSyncNote: String?
     @State private var playerRefresh = UUID()
@@ -371,6 +383,13 @@ struct FlythroughDetailView: View {
                 listOnGoogle = currentListing.allowSearchIndexing ?? SearchIndexingDefault.value
                 listOnGoogleSeeded = true
             }
+            // Photos-first: push the photo library the moment this screen
+            // appears, exactly once. `didAutoOpenPhotos` is what stops the pop
+            // back from re-pushing it and trapping the user in a loop.
+            if openPhotosOnAppear && !didAutoOpenPhotos && !currentListing.isSample {
+                didAutoOpenPhotos = true
+                showPhotosScreen = true
+            }
             geocodeIfNeeded()
             // Still called on every appearance — coming back from AI Photo
             // Studio, Reel Studio or the floor-plan scanner is a push/pop, so
@@ -379,6 +398,9 @@ struct FlythroughDetailView: View {
             // `loadFiles`, which checks five modification dates on a background
             // thread and does nothing at all when none of them moved.
             loadFiles()
+        }
+        .navigationDestination(isPresented: $showPhotosScreen) {
+            PhotoStudioView(listing: currentListing, entry: .photos)
         }
         .fullScreenCover(item: $openedFile) { item in
             ListingFileViewer(item: item)

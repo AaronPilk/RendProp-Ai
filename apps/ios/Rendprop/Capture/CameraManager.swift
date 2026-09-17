@@ -13,6 +13,19 @@ import UIKit
 final class CameraManager: NSObject, ObservableObject {
     enum CaptureState: Equatable {
         case idle, configuring, ready, recording
+        /// Mid-take, nothing being written, everything recorded so far kept.
+        ///
+        /// WHY THIS EXISTS: a working agent filming a walkthrough had her client
+        /// walk into frame and had no way to hold the take — her only options
+        /// were to keep filming the client or start the whole house again. Her
+        /// words: "a good feature would be to be able to pause the video and
+        /// then restart it in case you have run into a person."
+        ///
+        /// `AVCaptureMovieFileOutput` has no pause on iOS, so a pause ENDS the
+        /// current file and a resume starts another; the pieces are joined back
+        /// into one take when the recording stops. Room tags and the motion
+        /// sidecar are kept on the JOINED clock, not on wall time.
+        case paused
         /// The movie file is being written out after Stop — the button stays
         /// disabled until the delegate hands the file back (audit F-D-21).
         case finalizing
@@ -44,11 +57,19 @@ final class CameraManager: NSObject, ObservableObject {
 
     let session = AVCaptureSession()
 
-    /// Called on main when a recording file is finalized (even a partial one).
-    var onFinish: ((URL) -> Void)?
-    /// Called on main the moment the first frame is written — the motion
-    /// sidecar clock starts here so gyro samples line up with frame 0.
+    /// Called on main when a take is finalized (even a partial one), with its
+    /// pieces IN ORDER. A take with no pauses has exactly one; joining them is
+    /// the caller's job, because "what counts as a take" is a capture-screen
+    /// question and this class only knows about files.
+    var onFinish: (([URL]) -> Void)?
+    /// Called on main the moment the FIRST frame of a take is written — the
+    /// motion sidecar clock starts here so gyro samples line up with frame 0.
+    /// Does not fire again when a paused take resumes.
     var onRecordingStarted: (() -> Void)?
+    /// Called on main when a paused take starts writing again.
+    var onRecordingResumed: (() -> Void)?
+    /// Called on main when a take was thrown away — no file is handed back.
+    var onDiscarded: (() -> Void)?
 
     private let sessionQueue = DispatchQueue(label: "com.rendprop.capture.session")
     private let lumaQueue = DispatchQueue(label: "com.rendprop.capture.luma")
@@ -58,6 +79,18 @@ final class CameraManager: NSObject, ObservableObject {
     private var recordTimer: Timer?
     private var frameCounter = 0
     private var usesHEVC = false
+
+    /// What the delegate should do with the file it is about to hand back.
+    private enum SegmentEnd { case pause, finish, discard }
+    private var pendingEnd: SegmentEnd = .finish
+    /// The pieces of the take in progress, oldest first.
+    private var segments: [URL] = []
+    /// Seconds already banked in completed pieces — the take's clock is this
+    /// plus whatever the movie output has written since the last resume.
+    private var bankedSeconds: TimeInterval = 0
+    /// False until the first frame of THIS take is written, so a resume does
+    /// not restart the motion sidecar at zero.
+    private var takeStarted = false
 
     private(set) var activeFPS: Double = 30
     private(set) var activeWidth: Int = 1920
@@ -326,9 +359,21 @@ final class CameraManager: NSObject, ObservableObject {
     /// Seconds of the take written so far — read the movie output's own clock
     /// (not the 250 ms UI timer) so room tags land where the tap happened.
     var currentRecordedSeconds: TimeInterval {
-        guard state == .recording || state == .finalizing else { return 0 }
+        // Paused counts: a room tag tapped while held still belongs at the
+        // point the take had reached.
+        guard state == .recording || state == .paused || state == .finalizing else { return 0 }
+        guard state == .recording else { return bankedSeconds }
         let t = movieOutput.recordedDuration
-        return (t.isValid && t.seconds.isFinite && t.seconds >= 0) ? t.seconds : elapsed
+        guard t.isValid, t.seconds.isFinite, t.seconds >= 0 else { return elapsed }
+        return bankedSeconds + t.seconds
+    }
+
+    /// True while a take is in progress, recording or held.
+    var hasTakeInProgress: Bool { state == .recording || state == .paused }
+
+    /// Seconds of headroom left in this take, across all its pieces.
+    private var remainingSeconds: TimeInterval {
+        max(1, Self.maxRecordingSeconds - bankedSeconds)
     }
 
     func startRecording() {
@@ -349,26 +394,123 @@ final class CameraManager: NSObject, ObservableObject {
         }
         storageMessage = nil
         MediaImporter.excludeFromBackup(FileStore.recordingsDir)
-        let url = FileStore.newRecordingURL()
-        state = .recording
+        // Fresh take: nothing banked, nothing started, no leftovers.
+        segments.removeAll()
+        bankedSeconds = 0
+        takeStarted = false
         elapsed = 0
+        beginSegment()
+    }
+
+    /// Hold the take. The current file is closed (iOS has no real pause on
+    /// `AVCaptureMovieFileOutput`) but nothing is thrown away and nothing is
+    /// joined yet — `resumeRecording()` simply opens the next piece.
+    func pauseRecording() {
+        guard state == .recording else { return }
+        pendingEnd = .pause
+        state = .finalizing
+        sessionQueue.async { [weak self] in
+            self?.movieOutput.stopRecording()
+        }
+    }
+
+    /// Carry on into the same take.
+    func resumeRecording() {
+        guard state == .paused else { return }
+        guard session.isRunning else { return }
+        // Storage is re-checked here for the same reason it is checked at the
+        // start: a long hold is exactly when a phone fills up.
+        let free = FileStore.freeSpaceBytes()
+        guard free > 300_000_000 else {
+            storageMessage = "Not enough storage left to keep recording — only \(Formatters.bytes(free)) free. Stop here to keep what you have."
+            Haptics.warning()
+            return
+        }
+        storageMessage = nil
+        beginSegment()
+    }
+
+    /// Open the next piece of the current take.
+    private func beginSegment() {
+        guard session.isRunning else { return }
+        let url = FileStore.newRecordingURL()
+        pendingEnd = .finish
+        state = .recording
+        let banked = bankedSeconds
+        // The 10-minute ceiling is on the TAKE, not on each piece — a paused
+        // take must not get a fresh ten minutes every time it resumes.
+        let cap = remainingSeconds
+        recordTimer?.invalidate()
         recordTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self, case .recording = self.state else { return }
             let t = self.movieOutput.recordedDuration
-            self.elapsed = (t.isValid && t.seconds.isFinite) ? t.seconds : self.elapsed + 0.25
+            self.elapsed = (t.isValid && t.seconds.isFinite) ? banked + t.seconds : self.elapsed + 0.25
         }
         sessionQueue.async { [weak self] in
             guard let self else { return }
+            self.movieOutput.maxRecordedDuration = CMTime(seconds: cap, preferredTimescale: 600)
             self.movieOutput.startRecording(to: url, recordingDelegate: self)
         }
     }
 
     func stopRecording() {
+        // Stopping while held: there is no file in flight, so finish with the
+        // pieces already banked instead of waiting for a delegate callback that
+        // will never come.
+        if state == .paused {
+            recordTimer?.invalidate(); recordTimer = nil
+            deliverTake()
+            return
+        }
         guard state == .recording else { return }
+        pendingEnd = .finish
         state = .finalizing
         sessionQueue.async { [weak self] in
             self?.movieOutput.stopRecording()
         }
+    }
+
+    /// Throw the whole take away — every piece of it — and go back to ready.
+    func cancelTake() {
+        if state == .paused {
+            recordTimer?.invalidate(); recordTimer = nil
+            discardTake()
+            state = .ready
+            onDiscarded?()
+            return
+        }
+        guard state == .recording else { return }
+        pendingEnd = .discard
+        state = .finalizing
+        sessionQueue.async { [weak self] in
+            self?.movieOutput.stopRecording()
+        }
+    }
+
+    /// Hand the finished take back, then reset.
+    private func deliverTake() {
+        let pieces = segments
+        segments.removeAll()
+        bankedSeconds = 0
+        takeStarted = false
+        state = .ready
+        if pieces.isEmpty {
+            onDiscarded?()
+        } else {
+            onFinish?(pieces)
+        }
+    }
+
+    /// Delete every piece of the take in progress.
+    private func discardTake() {
+        for url in segments {
+            try? FileManager.default.removeItem(at: url)
+            MotionRecorder.deleteSidecar(for: url)
+        }
+        segments.removeAll()
+        bankedSeconds = 0
+        takeStarted = false
+        elapsed = 0
     }
 
     // MARK: - Interruptions (calls, Control Center) — never lose footage
@@ -482,7 +624,17 @@ extension CameraManager: AVCaptureFileOutputRecordingDelegate {
     func fileOutput(_ output: AVCaptureFileOutput,
                     didStartRecordingTo fileURL: URL,
                     from connections: [AVCaptureConnection]) {
-        DispatchQueue.main.async { self.onRecordingStarted?() }
+        DispatchQueue.main.async {
+            // The sidecar clock starts at the first frame of the TAKE. A resume
+            // continues that clock (`resumeLogging`), it does not restart it —
+            // restarting would put every later sample at the wrong frame.
+            if self.takeStarted {
+                self.onRecordingResumed?()
+            } else {
+                self.takeStarted = true
+                self.onRecordingStarted?()
+            }
+        }
     }
 
     func fileOutput(_ output: AVCaptureFileOutput,
@@ -493,16 +645,46 @@ extension CameraManager: AVCaptureFileOutputRecordingDelegate {
         // playable partial file. Never discard footage here (master spec 4.2) —
         // the capture screen lets the user keep or retake it.
         let fileExists = FileManager.default.fileExists(atPath: outputFileURL.path)
+        let written = fileExists ? Self.durationSeconds(of: outputFileURL) : 0
         DispatchQueue.main.async {
             self.recordTimer?.invalidate()
             self.recordTimer = nil
-            self.state = .ready
-            if fileExists {
-                self.onFinish?(outputFileURL)
-            } else if let error {
-                self.state = .failed(error.localizedDescription)
+            // A piece with no frames in it is not footage — it is what a pause
+            // tapped a fraction of a second after resume produces. Banking it
+            // would put a zero-length segment in the join.
+            if fileExists && written > 0.05 {
+                self.segments.append(outputFileURL)
+                self.bankedSeconds += written
+                self.elapsed = self.bankedSeconds
+            } else if fileExists {
+                try? FileManager.default.removeItem(at: outputFileURL)
+            }
+            switch self.pendingEnd {
+            case .pause:
+                self.pendingEnd = .finish
+                self.state = .paused
+            case .discard:
+                self.pendingEnd = .finish
+                self.discardTake()
+                self.state = .ready
+                self.onDiscarded?()
+            case .finish:
+                if self.segments.isEmpty, let error {
+                    self.state = .failed(error.localizedDescription)
+                    self.takeStarted = false
+                    return
+                }
+                self.deliverTake()
             }
         }
+    }
+
+    /// The real written length of a finished piece. `movieOutput.recordedDuration`
+    /// has already been reset by the time this runs, so it is read off the file.
+    private static func durationSeconds(of url: URL) -> TimeInterval {
+        let t = AVURLAsset(url: url).duration
+        guard t.isValid, t.seconds.isFinite, t.seconds > 0 else { return 0 }
+        return t.seconds
     }
 }
 

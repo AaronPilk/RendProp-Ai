@@ -318,9 +318,47 @@ const PROFILES: Record<SpaceType, Profile> = {
   },
 };
 
+/**
+ * THE MATERIAL-FACT LINE.
+ *
+ * Every prompt above locks the ARCHITECTURE — walls, dimensions, window and
+ * door placement. None of them locked the CONDITION, and that is a different
+ * thing: an inpainting model asked to tidy a room will happily smooth a cracked
+ * wall or a water stain on the way past, because a clean wall is what "tidy"
+ * looks like in its training data. Nothing in this file told it not to.
+ *
+ * The rule comes from a licensed agent — the owner's mother, on the 17 Sep call,
+ * describing what she is and is not allowed to do: "You can do things for like
+ * maybe design of the house, but you cannot remove things that are there... If
+ * there's a huge crack in the wall, you're not supposed to fix that. That should
+ * be in the picture." Her other example is the power pole in the backyard that
+ * agents were editing out by hand long before any of this existed. The owner's
+ * answer on the same call: "No, we will never do that."
+ *
+ * That is not only an ethics position. A defect removed from a listing photo is
+ * a misrepresentation of a material fact, which is the thing that ends licences
+ * — and it is the one edit no disclosure sentence makes acceptable, because the
+ * buyer's complaint is not "this was AI", it is "the house is not what you
+ * showed me". So it is enforced here, in the prompt itself, on every route.
+ */
+const CONDITION_LOCK =
+  "CRITICAL — MATERIAL FACTS: never repair, patch, hide, clean away, smooth over or " +
+  "remove any DEFECT or PERMANENT FEATURE of the property. Cracks, holes, dents, " +
+  "stains, water marks, damp, mould, rust, peeling or chipped paint, damaged, worn or " +
+  "missing flooring, cracked or broken glass, dated or damaged fixtures and finishes, " +
+  "and any sign of wear or disrepair must remain EXACTLY as photographed. The same " +
+  "applies to permanent surroundings: power poles and lines, utility boxes and meters, " +
+  "antennas and satellite dishes, air-conditioning units, pool cages, fences, sheds, " +
+  "driveways, neighbouring buildings and whatever is visible through a window or a " +
+  "doorway all stay. If you cannot make the requested change without altering one of " +
+  "these, make the smaller change and leave the feature alone. " +
+  "The ONE exception, and only when it is what was asked for: grass, planting and the " +
+  "sky may be improved. Nothing about the building, the hardscape or the surroundings may. ";
+
 const LOCK =
   "Do not change the building's architecture, structure, dimensions, walls, or " +
-  "window/door placement. Photorealistic, natural, consistent perspective and shadows.";
+  "window/door placement. " + CONDITION_LOCK +
+  "Photorealistic, natural, consistent perspective and shadows.";
 
 // Staging must NEVER remodel the room — only add furnishings.
 const STAGE_LOCK =
@@ -328,7 +366,29 @@ const STAGE_LOCK =
   "windows, doors, ceiling, flooring material, trim, built-ins, light fixtures, the view " +
   "through the windows, camera angle, and perspective. Only ADD furniture and decor; do not " +
   "remodel, repaint, resurface, or alter the structure or lighting direction in any way. " +
+  CONDITION_LOCK +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
+
+/**
+ * The photographer, reflected.
+ *
+ * Reported by the same agent on the same call: "There's a lot of images where
+ * you can see my entire body and face in the glare of a window or a mirror."
+ * An agent shooting her own listing is in every mirrored surface in the house,
+ * and a person in a listing photo is both unprofessional and, under the HUD
+ * guidance this product already follows, something AI media should not be
+ * rendering at all.
+ *
+ * It rides declutter rather than becoming its own mode ON PURPOSE: a new edit
+ * mode is a new billable route, a new ledger row, a new provenance kind and a
+ * new disclosure sentence, and "a person who is not part of the property" is
+ * already what declutter means. No new cost, no new surface.
+ */
+const REFLECTION_CLAUSE =
+  "Also remove any person visible in the photo, including the photographer or a " +
+  "phone or camera reflected in mirrors, windows, glass, screens, tiles, appliances " +
+  "or any other glossy surface — rebuild the reflection as the empty surface would " +
+  "look, reflecting only the room itself. ";
 
 // The proven real-estate prompt set — VERBATIM from the shipped version (the
 // industry templates below are for the other space types only).
@@ -349,7 +409,8 @@ const RE_PROMPTS: Record<string, string> = {
   declutter:
     "Remove all clutter, mess, and personal items from this real-estate photo: shoes, bags, " +
     "boxes, cords, laundry, dishes, papers, toys, toiletries, fridge magnets, and stray items " +
-    "on floors, counters, and surfaces. Keep the room, furniture, decor, and architecture " +
+    "on floors, counters, and surfaces. " + REFLECTION_CLAUSE +
+    "Keep the room, furniture, decor, and architecture " +
     "IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. " +
     "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
 };
@@ -396,6 +457,7 @@ function prompts(p: Profile): Record<string, string> {
       "and everything else identical. " + LOCK,
     declutter:
       `Remove all clutter, mess, and personal items from this ${p.photo}: ${p.clutter}. ` +
+      REFLECTION_CLAUSE +
       `Keep ${p.keep} IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. ` +
       "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
   };

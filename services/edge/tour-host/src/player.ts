@@ -347,7 +347,12 @@ function alteredItems(tour: Tour): AlteredItem[] {
 function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
   if (items.length) {
     const n = items.length;
-    return `${n} item${n === 1 ? "" : "s"} in this tour ${n === 1 ? "was" : "were"} digitally altered or AI-generated.`;
+    const head = `${n} item${n === 1 ? "" : "s"} in this tour ${n === 1 ? "was" : "were"} digitally altered or AI-generated.`;
+    // Say that the originals are RIGHT HERE and can be compared, not merely
+    // that something was altered. A disclosure nobody opens discloses nothing.
+    return items.some((it) => it.original)
+      ? `${head} Drag to compare with the unedited photo.`
+      : head;
   }
   return "Some imagery in this tour has been virtually staged or digitally decluttered.";
 }
@@ -362,14 +367,33 @@ function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
  */
 function beforeAfter(it: AlteredItem): string {
   if (!it.original) return "";
-  const before = `<figure><img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async"><figcaption>Before — unaltered original</figcaption></figure>`;
+  const before = `<figure class="disc-f disc-f-b"><img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async"><figcaption>Before — how it really looks</figcaption></figure>`;
   if (!it.altered) return `<div class="disc-ba one">${before}</div>`;
   const after = VIDEO_KINDS.has(it.kind)
     ? `<video src="${escapeAttr(it.altered)}" controls playsinline preload="none"></video>`
     : `<img src="${escapeAttr(it.altered)}" alt="After — ${escapeAttr(it.label)}" loading="lazy" decoding="async">`;
-  return `<div class="disc-ba">
+  const afterFigure = `<figure class="disc-f disc-f-a">${after}<figcaption>After — ${escapeHtml(it.phrase)}</figcaption></figure>`;
+
+  // A still paired with a still can be DRAGGED; a still paired with a video
+  // cannot, so an aerial or a reel stays a plain pair.
+  //
+  // WHY THIS IS A DRAG AND NOT TWO PICTURES. A buyer looking at a decluttered
+  // room, then standing in the real one, sees a different house — that is the
+  // complaint that produced this, from the person whose own listing photos
+  // were the test. Two images side by side are compared by memory; one image
+  // with a line through it is compared by eye, and the difference is exactly
+  // the thing that has to be obvious.
+  //
+  // NOTE FOR ANYONE EDITING THIS: no `<input type="range">`. `<input` is a
+  // forbidden token on the MLS-safe `/u/` twin and this section renders there
+  // too, so the control is an ARIA slider on a div — keyboard included.
+  if (VIDEO_KINDS.has(it.kind)) {
+    return `<div class="disc-ba">${before}${afterFigure}</div>`;
+  }
+  return `<div class="disc-ba" data-ba>
         ${before}
-        <figure>${after}<figcaption>After — ${escapeHtml(it.phrase)}</figcaption></figure>
+        ${afterFigure}
+        <span class="disc-ui" aria-hidden="true"><span class="disc-line"></span><span class="disc-grip"></span></span>
       </div>`;
 }
 
@@ -417,7 +441,7 @@ function renderDisclosureSection(tour: Tour): string {
       <div class="disc-body">
         ${lead}
         ${list}
-        <p class="lp-fine">Where an unaltered original exists it is linked above. Layout, dimensions and permanent features are not changed by any edit listed here.</p>
+        <p class="lp-fine">Where an unaltered original exists it is shown and linked above. Edits change styling and furnishing only: layout, dimensions and permanent features — including anything a buyer would want to know about — are never removed or repaired by any edit listed here.</p>
       </div>
     </details>
   </div></section>`;
@@ -1242,6 +1266,53 @@ const ENGINE_CORE_JS = `
   var discEl = document.getElementById('disc');
   if (discEl && window.matchMedia && matchMedia('(max-width: 719px)').matches){
     discEl.removeAttribute('open');
+  }
+
+  /* ---- Before/after drag. Upgrades the side-by-side pair in place; if this
+     never runs, the pair is still there and still compliant. Built on a div
+     with role=slider rather than a range form control ON PURPOSE: the opening
+     tag of one is a forbidden token on the unbranded twin, and this section
+     renders on both pages. ---- */
+  var baEls = document.querySelectorAll('[data-ba]');
+  for (var bi = 0; bi < baEls.length; bi++) initBeforeAfter(baEls[bi]);
+  function initBeforeAfter(el){
+    var pos = 50, dragging = false;
+    el.classList.add('on');
+    el.setAttribute('role', 'slider');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', 'Drag to compare the unedited photo with the edited one');
+    el.setAttribute('aria-valuemin', '0');
+    el.setAttribute('aria-valuemax', '100');
+    function setPos(v){
+      pos = v < 0 ? 0 : (v > 100 ? 100 : v);
+      el.style.setProperty('--p', pos + '%');
+      var r = Math.round(pos);
+      el.setAttribute('aria-valuenow', String(r));
+      el.setAttribute('aria-valuetext', r + '% edited version shown');
+    }
+    function fromX(x){
+      var r = el.getBoundingClientRect();
+      if (r.width <= 0) return;
+      setPos(((x - r.left) / r.width) * 100);
+    }
+    el.addEventListener('pointerdown', function(e){
+      dragging = true;
+      if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch(err){} }
+      fromX(e.clientX);
+    });
+    el.addEventListener('pointermove', function(e){ if (dragging) fromX(e.clientX); });
+    el.addEventListener('pointerup', function(){ dragging = false; });
+    el.addEventListener('pointercancel', function(){ dragging = false; });
+    el.addEventListener('keydown', function(e){
+      var step = e.shiftKey ? 10 : 2, k = e.key;
+      if (k === 'ArrowLeft' || k === 'ArrowDown') setPos(pos - step);
+      else if (k === 'ArrowRight' || k === 'ArrowUp') setPos(pos + step);
+      else if (k === 'Home') setPos(0);
+      else if (k === 'End') setPos(100);
+      else return;
+      e.preventDefault();
+    });
+    setPos(50);
   }
 
   /* ---- Overlays ---- */
@@ -2420,6 +2491,38 @@ function renderIndustrySection(tour: Tour, unbranded = false): string {
 }
 
 /** The full editorial page below the flythrough. */
+/**
+ * HOW OLD IS THIS MEDIA.
+ *
+ * The complaint, from the agent who reported it about her OWN move: every photo
+ * of the house she rented "looked absolutely perfect", the photos turned out to
+ * have been taken five years earlier, and "the house looked completely
+ * different from how it looked in my image". Her fix, in her words: "there's
+ * like a time stamp on the picture of the date that it was taken."
+ *
+ * Nothing on the page said when any of it was shot, and `published_at` was in
+ * the payload the whole time and rendered nowhere. It is the publication date,
+ * not the shutter date, so the sentence says publication and claims nothing
+ * more — an overstated provenance line is the same failure in a nicer suit.
+ *
+ * Renders on `/f/` and `/u/` alike: when the media was made is property
+ * information, not branding.
+ */
+function mediaDateNote(tour: Tour): string {
+  const raw = first(tour.published_at);
+  if (!raw) return "";
+  const when = new Date(raw);
+  if (!(when instanceof Date) || Number.isNaN(when.getTime())) return "";
+  // Anything in the future, or older than the web, is a bad row — say nothing
+  // rather than print a date that undermines the point of printing a date.
+  const year = when.getUTCFullYear();
+  if (year < 2020 || when.getTime() > Date.now() + 86_400_000) return "";
+  const text = when.toLocaleDateString("en-US", {
+    year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
+  });
+  return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
+}
+
 function renderListingSections(tour: Tour, unbranded = false): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
@@ -2462,10 +2565,10 @@ function renderListingSections(tour: Tour, unbranded = false): string {
   const imgs = galleryItems(tour);
   if (imgs.length) {
     out.push(sec("gallery", "Gallery", "A closer look",
-      `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}</div>`));
+      `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}${mediaDateNote(tour)}</div>`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Every room, one scroll" : "Every area, one scroll",
-      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>`));
+      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
   }
 
   // Social reel (vertical cut) — appears when a reel_url is set. Never on
@@ -2755,6 +2858,41 @@ export const EDITORIAL_CSS = `
   .disc-ba figure { border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08); background:#000; }
   .disc-ba img, .disc-ba video { display:block; width:100%; height:auto; aspect-ratio:4/3; object-fit:cover; }
   .disc-ba figcaption { padding:8px 10px; font-size:11.5px; color:var(--ink-dim); background:var(--card); }
+  .disc-ui { display:none; }
+  .lp-mediadate { margin-top:16px; }
+  .lp-mediadate time { color:var(--ink); font-weight:600; }
+
+  /* ---- Before/after, dragged (progressive enhancement) ----
+     Without JS the two figures stay exactly as above: side by side, both
+     complete, both captioned — the compliant presentation, unchanged. With
+     JS the same two figures are re-laid on top of each other with a
+     draggable divider. No second copy of either
+     image, so nothing extra is downloaded to get the interaction.
+     The .on class below is added by the engine. ---- */
+  .disc-ba.on { position:relative; display:block; --p:50%; touch-action:pan-y;
+                border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08);
+                background:#000; cursor:ew-resize; aspect-ratio:4/3; user-select:none; }
+  .disc-ba.on .disc-f { position:absolute; inset:0; margin:0; border:0; border-radius:0; overflow:hidden; }
+  .disc-ba.on .disc-f img { width:100%; height:100%; aspect-ratio:auto; object-fit:cover; pointer-events:none; }
+  /* The edited version is revealed from the divider rightwards. */
+  .disc-ba.on .disc-f-a { clip-path:inset(0 0 0 var(--p)); }
+  .disc-ba.on figcaption { position:absolute; top:10px; padding:5px 9px; border-radius:999px;
+                           font-size:11px; font-weight:650; letter-spacing:.02em; color:#fff;
+                           background:rgba(0,0,0,.62); backdrop-filter:blur(6px); white-space:nowrap;
+                           max-width:46%; overflow:hidden; text-overflow:ellipsis; }
+  .disc-ba.on .disc-f-b figcaption { left:10px; }
+  .disc-ba.on .disc-f-a figcaption { right:10px; }
+  .disc-ba.on .disc-ui { display:block; position:absolute; inset:0; pointer-events:none; }
+  .disc-line { position:absolute; top:0; bottom:0; left:var(--p); width:2px; margin-left:-1px;
+               background:rgba(255,255,255,.92); box-shadow:0 0 0 1px rgba(0,0,0,.35); }
+  .disc-grip { position:absolute; top:50%; left:var(--p); width:38px; height:38px; margin:-19px 0 0 -19px;
+               border-radius:50%; background:rgba(255,255,255,.95); box-shadow:0 2px 10px rgba(0,0,0,.45); }
+  .disc-grip::before, .disc-grip::after { content:""; position:absolute; top:50%; width:0; height:0;
+               border-top:5px solid transparent; border-bottom:5px solid transparent; margin-top:-5px; }
+  .disc-grip::before { left:9px; border-right:6px solid #111; }
+  .disc-grip::after  { right:9px; border-left:6px solid #111; }
+  .disc-ba.on:focus-visible { outline:2px solid var(--accent-3); outline-offset:3px; }
+  @media (max-width: 719px){ .disc-ba.on { aspect-ratio:3/4; } }
   .disc-orig { display:inline-block; margin-top:12px; font-size:13px; font-weight:650; color:var(--accent-3); text-decoration:none; }
   .disc-orig:hover { text-decoration:underline; }
   .disc-noorig { display:inline-block; margin-top:12px; font-size:12.5px; color:var(--faint); }
