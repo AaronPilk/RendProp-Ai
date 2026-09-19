@@ -88,3 +88,20 @@ regression entrypoint is
 automatically discovers it). Full local edge output is retained at
 `/tmp/call-edge-active-photo-final.log`. No live provider or production database
 was called by these checks.
+
+CI run35473762115 at155aa0e passed the PostgreSQL16 service-container job,
+including fresh migration replay, active-photo immutability checks, reflection
+51+51 assertions,46 parallel transactions/43 checks, historical double replay and
+both266-invariant runs with only155 kept red. The edge job passed all850 tests and
+function typechecks. Logs: `/tmp/call-service-db-35473762115.log` and
+`/tmp/call-edge-35473762115.log`.
+
+The separate disposable publication runner then failed its first negative fixture:
+`negative_astra_paid_gates.sql` correctly refused `rendprop_replay`, because it
+accepts only the owned `rendprop_audit` database. This was introduced by the new
+second-database harness: its connection remained on the replay database after
+inventory checks. The bounded repair restores the original owned audit connection
+before paid/publication negative controls. No database-name guard, SQL assertion
+or migration was weakened. A new control-flow regression fails specifically at
+`negative-paid-gates` against155aa0e and passes after repair (32 runner tests).
+Full native verification and subsequent CI confirmation are recorded separately.

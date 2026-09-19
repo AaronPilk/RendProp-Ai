@@ -145,6 +145,7 @@ def main():
     connection = ["-h", str(sockets), "-p", "55439", "-U", "postgres"]
     psql = [bins["psql"], "-X", "--no-password", *connection, "-d", "rendprop_audit",
             "-v", "ON_ERROR_STOP=1"]
+    audit_psql = psql
     started = False
     prior_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
     def interrupted(signum, _frame):
@@ -200,6 +201,10 @@ def main():
                                              "staleKeptRed": stale})
             counts.append(len(names))
         require(counts[0] == counts[1], "Invariant count changed on replay")
+        # Destructive negative fixtures deliberately accept only the original
+        # owned audit database. Restore that connection after replay inventory
+        # checks; do not weaken the fixtures' independent database-name guard.
+        psql = audit_psql
         paid = run("negative-paid-gates", psql + ["-f", str(sqlroot / "tests/negative_astra_paid_gates.sql")])
         require("PASS: exact paid-plan predicates registered 6 expected outcomes across baseline and 2 negative fixtures; all mutations rolled back." in paid,
                 "Paid gate negative fixture did not complete")

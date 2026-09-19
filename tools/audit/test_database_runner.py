@@ -238,6 +238,16 @@ class InventoryTests(RunnerCase):
         row = next(row for row in commands if row['name']=='invariants-replayed')
         self.assertEqual(row['command'][row['command'].index('-d')+1], 'rendprop_replay')
 
+    def test_destructive_fixtures_return_to_guarded_original_audit_database(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        commands = result.receipt['commands']
+        after_replay = commands[next(i for i,row in enumerate(commands) if row['name']=='invariants-replayed')+1:]
+        fixtures = [row for row in after_replay if '-d' in row['command']]
+        self.assertGreaterEqual(len(fixtures), 17, 'Expected paid, publication, restore and invariant negative fixtures')
+        for row in fixtures:
+            self.assertEqual(row['command'][row['command'].index('-d')+1], 'rendprop_audit', row['name'])
+
     def test_one_fewer_and_one_more_counts_reject(self):
         for names in (NAMES[:-1], NAMES + ['extra synthetic assertion']):
             with self.subTest(count=len(names)):
