@@ -104,16 +104,16 @@ const ids = (steps: ChainStep[]) => steps.map((s) => `${s.provider}/${s.model}`)
 
 // ── 1. FLAG OFF → exactly the legacy step, byte-identical to today ──────────
 
-Deno.test("flag OFF returns exactly the note='legacy' step for the task", async () => {
+Deno.test("non-photo flag OFF preserves exactly the note='legacy' step for the task", async () => {
   const seen: string[] = [];
   const realFetch = globalThis.fetch;
 
   const legacyRow = {
     id: "11111111-1111-1111-1111-111111111111",
-    task: "photo.sky",
+    task: "video.reel_clip",
     position: 99,
-    provider: "gemini",
-    model: "gemini-2.5-flash-image",
+    provider: "fal",
+    model: "bytedance/seedance/v1/pro/fast/image-to-video",
     unit: "image",
     unit_cents: 3.9,
     capabilities: ["prompt-edit"],
@@ -141,11 +141,11 @@ Deno.test("flag OFF returns exactly the note='legacy' step for the task", async 
 
   try {
     resetRouterCache();
-    const chain = await resolveRoute("photo.sky", { plan: "pro", needs: ["mask"] });
+    const chain = await resolveRoute("video.reel_clip", { plan: "pro", needs: ["mask"] });
 
     assertEquals(chain.length, 1, "flag-off must return exactly one step");
-    assertEquals(chain[0].provider, "gemini");
-    assertEquals(chain[0].model, "gemini-2.5-flash-image");
+    assertEquals(chain[0].provider, "fal");
+    assertEquals(chain[0].model, "bytedance/seedance/v1/pro/fast/image-to-video");
     assertEquals(chain[0].unit_cents, 3.9);
 
     // …but it is handed back ENABLED: everything resolveRoute returns is a step
@@ -158,7 +158,7 @@ Deno.test("flag OFF returns exactly the note='legacy' step for the task", async 
     const routeQuery = seen.find((u) => u.includes("/ai_routes"));
     assert(routeQuery, "resolveRoute must query ai_routes");
     assertStringIncludes(routeQuery!, "note=eq.legacy");
-    assertStringIncludes(routeQuery!, "task=eq.photo.sky");
+    assertStringIncludes(routeQuery!, "task=eq.video.reel_clip");
 
     // ctx.needs is NOT applied on the legacy path — the legacy step is today's
     // behaviour verbatim, and today's code does no capability filtering.

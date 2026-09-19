@@ -108,14 +108,25 @@ matches on the exact pair.
 — it mirrors `APP_AI_UNIT_CENTS.veo_aerial_clip`, which is how `/ai-video` bills
 it today. The flag-ON Veo row is 10¢ per second.
 
-### Known gap: `bria/video/erase/prompt`
+### Video reflection removal: `bria/video/erase/prompt`
 
-`/ai-video`'s video-declutter path has **no route row**. §3 defines no
-video-declutter task, and the repo has no committed price for Bria
-(`admin/index.ts` lists `unit_cost_cents: null`; `/ai-video` writes no ledger row
-for it). Seeding a row would have meant inventing a price. **That path must keep
-its hardcoded model** until a price lands — then add a `video.declutter` task
-(chain row + `note='legacy'` row) in a follow-up migration.
+The account-authenticated fal pricing API was checked2026-09-19: **$0.14 per
+input second USD** (`unit_price:0.14`, `unit:"seconds"`), matching the
+[public model page](https://fal.ai/models/bria/video/erase/prompt). This replaces
+the old4¢/clip image-inpainting placeholder. It is a verified unit rate, not a
+reconciled invoice. No pricing-page claim is derived from the old estimate.
+
+Migration0055 provides durable, service-only video jobs with atomic reel-quota
+receipts, per-batch240¢ COGS holds, exact-window one-time allowance refunds,
+cancellation tombstones, and one accepted full-video provenance pair. Confirmed
+provider receipts record `duration_s ×14` cents once with `price_estimated:false`
+and `billing_reconciled:false`. An uncertain submit is never automatically
+re-dispatched; its user allowance is refunded and its cost hold retained for
+reconciliation. Source clips must be positive, finite and strictly shorter than
+five seconds (the app targets4.8s). Full walkthroughs never go to this model.
+
+This purpose-specific path retains the existing hardcoded Bria model. No router
+row, disabled provider, route flag or customer-facing price is enabled here.
 
 ---
 
@@ -159,3 +170,15 @@ customer media off them if somebody enables one early.
   `deno test --allow-env --allow-net _shared/router.test.ts` to that job.
 * No adapter calls `resolveRoute()` yet; nothing writes `provider_health` in
   production, so `p95_latency_ms` will read `null` until ADAPT lands.
+
+## 2026-09-19 addendum: active photo fallback (0056)
+
+`0056_active_photo_fallback.sql` assigns the exact `legacy` marker to the six
+already-enabled Gemini3.1 photo routes. It changes no models, prices, flags or
+disabled rows. The existing active rows retain 6.7¢ pricing. The photo resolver
+requires an enabled, eligible database row even when the router flag is off;
+missing authorization fails closed with 503, and the handler refunds its quota.
+Non-photo legacy behavior remains outside this repair. See
+`docs/audit/CALL-20260919-CI-DATABASE.md` for the rejected disabled-row proposal,
+immutable-data assertions and migration replay evidence. The normal edge CI job
+now discovers both the router tests and the new executable photo fallback tests.

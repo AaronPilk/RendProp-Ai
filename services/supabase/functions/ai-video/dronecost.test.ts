@@ -492,8 +492,8 @@ Deno.test("formatDurationLimit: a cap is said as a rule, not as a measurement", 
 
 const INDEX_SRC = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
 const DRONE_ROUTE = INDEX_SRC.slice(
-  INDEX_SRC.indexOf('seg[0] === "drone"'),
-  INDEX_SRC.indexOf('seg[0] === "declutter"'),
+  INDEX_SRC.indexOf("// ---- POST /ai-video/drone ----"),
+  INDEX_SRC.indexOf("// ---- POST /ai-video/aerial ----"),
 );
 
 Deno.test("wiring: the drone route actually calls the guard", () => {

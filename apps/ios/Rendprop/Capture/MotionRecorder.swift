@@ -1,9 +1,10 @@
 import CoreMotion
 import Foundation
 
-/// 100Hz device-motion logging → `<video>.motion.json` sidecar, time-synced to
-/// the recording clock (logging starts from the movie output's
-/// `didStartRecordingTo` callback, so t=0 is the first written frame).
+/// 100Hz device-motion logging → `<video>.motion.json` sidecar. Each segment
+/// uses its estimated host anchor and measured joined offset, and the final
+/// file duration bounds its samples. Frame-exact sensor alignment requires a
+/// physical-device trace; delegate timing alone does not prove it.
 ///
 /// STATUS, honestly (audit F-D-10): the sidecar is WRITE-ONLY today. The
 /// on-device engine does not read it, and nothing uploads it — the schema's
@@ -39,19 +40,16 @@ final class MotionRecorder: ObservableObject {
 
     private let manager = CMMotionManager()
     private let queue = OperationQueue()
-    /// Guards everything the motion queue and the main thread both touch:
-    /// `samples`, `isLogging`, `startUptime` (audit F-D-10: unlocked reads).
+    /// Guards samples and segment state shared with the serial motion queue.
     private let lock = NSLock()
     private var samples: [Sample] = []
-    private var isLogging = false
-    private var startUptime: TimeInterval = 0
-    /// Total seconds spent PAUSED so far in this take. Subtracted from every
-    /// sample's timestamp so the sidecar's clock matches the STITCHED video
-    /// rather than wall time — without it, a 30-second pause would put every
-    /// later sample 30 seconds past the frame it belongs to.
-    private var pausedAccum: TimeInterval = 0
-    /// Uptime at which the current pause began; 0 when not paused.
-    private var pauseStart: TimeInterval = 0
+    private struct Segment {
+        let startUptime: TimeInterval
+        let joinedOffset: TimeInterval
+        let firstSampleIndex: Int
+    }
+    private var segment: Segment?
+    private var finalizedThrough: TimeInterval = 0
 
     // Smoothing state — motion queue only (`maxConcurrentOperationCount = 1`,
     // so `ingest` is serial). The published values are derived from these.
@@ -110,9 +108,12 @@ final class MotionRecorder: ObservableObject {
         smoothedPitch = smoothedPitch * 0.85 + pitchValue * 0.15
 
         lock.lock()
-        if isLogging {
-            let t = m.timestamp - startUptime - pausedAccum
-            if t >= 0 {
+        if let segment {
+            let local = m.timestamp - segment.startUptime
+            let t = segment.joinedOffset + local
+            // A queued sample from before this segment must never be remapped
+            // using its new joined offset. Ordered timestamps are an invariant.
+            if local >= 0, t.isFinite, t >= (samples.last?.t ?? 0) {
                 samples.append(Sample(t: t,
                                       qw: m.attitude.quaternion.w, qx: m.attitude.quaternion.x,
                                       qy: m.attitude.quaternion.y, qz: m.attitude.quaternion.z,
@@ -136,53 +137,51 @@ final class MotionRecorder: ObservableObject {
 
     // MARK: - Recording sync
 
-    /// Call when the movie output reports its first written frame.
-    /// CMDeviceMotion.timestamp is on the same uptime clock as
-    /// ProcessInfo.systemUptime, so samples align to the movie's start within a
-    /// frame.
+    /// Reset a fresh take; a segment callback supplies its media-clock anchor.
     func beginLogging() {
-        let now = ProcessInfo.processInfo.systemUptime
         lock.lock()
         samples.removeAll(keepingCapacity: true)
-        startUptime = now
-        pausedAccum = 0
-        pauseStart = 0
-        isLogging = true
+        segment = nil
+        finalizedThrough = 0
         lock.unlock()
     }
 
-    /// The take is paused. Stop appending samples and start the pause clock —
-    /// nothing recorded between here and `resumeLogging()` exists in the
-    /// stitched video, so nothing recorded here belongs in the sidecar either.
-    func pauseLogging() {
-        let now = ProcessInfo.processInfo.systemUptime
+    /// The camera estimates frame-zero host time from its recording clock
+    /// before dispatching the delegate callback to main. The joined offset is
+    /// the sum of finalized file durations, never elapsed wall time or UI taps.
+    /// Absolute sensor-to-movie synchronization still needs a device trace.
+    func beginSegment(atUptime start: TimeInterval, joinedOffset: TimeInterval) {
         lock.lock()
-        if isLogging {
-            isLogging = false
-            pauseStart = now
+        if start.isFinite, joinedOffset.isFinite, joinedOffset >= finalizedThrough, segment == nil {
+            segment = Segment(startUptime: start, joinedOffset: joinedOffset, firstSampleIndex: samples.count)
         }
         lock.unlock()
     }
 
-    /// Recording again. Bank the paused interval and keep going on the same
-    /// timeline — sample t continues from where the last segment stopped.
-    func resumeLogging() {
-        let now = ProcessInfo.processInfo.systemUptime
+    /// Freeze at the actual finalized media duration, including frames written
+    /// after Pause/Stop was tapped. Discard samples beyond that file endpoint.
+    func finishSegment(duration: TimeInterval) {
         lock.lock()
-        if pauseStart > 0 {
-            pausedAccum += now - pauseStart
-            pauseStart = 0
+        if let segment {
+            let length = duration.isFinite ? max(0, duration) : 0
+            let end = segment.joinedOffset + length
+            if segment.firstSampleIndex < samples.count {
+                let kept = samples[segment.firstSampleIndex...].filter {
+                    $0.t >= segment.joinedOffset && $0.t < end
+                }
+                samples.replaceSubrange(segment.firstSampleIndex..., with: kept)
+            }
+            finalizedThrough = end
         }
-        isLogging = true
+        segment = nil
         lock.unlock()
     }
 
     /// Stop logging without writing anything (discarded take).
     func cancelLogging() {
         lock.lock()
-        isLogging = false
-        pausedAccum = 0
-        pauseStart = 0
+        segment = nil
+        finalizedThrough = 0
         samples.removeAll(keepingCapacity: true)
         lock.unlock()
     }
@@ -198,12 +197,28 @@ final class MotionRecorder: ObservableObject {
     @discardableResult
     func endLogging(besideVideoAt videoURL: URL, fps: Double, width: Int, height: Int) -> URL? {
         lock.lock()
-        isLogging = false
-        pausedAccum = 0
-        pauseStart = 0
-        let snapshot = samples
+        segment = nil
+        // Only measured, completed segments may be persisted. This also makes
+        // an early caller fail closed instead of keeping export-time samples.
+        let snapshot = samples.filter { $0.t >= 0 && $0.t < finalizedThrough }
         samples.removeAll(keepingCapacity: false)
+        finalizedThrough = 0
         lock.unlock()
+        return Self.write(snapshot, besideVideoAt: videoURL, fps: fps, width: width, height: height)
+    }
+
+    /// A pause checkpoint retains the in-memory take while serializing only
+    /// finalized media. Ordered with endLogging/copy/delete on the file queue.
+    @discardableResult
+    func checkpointLogging(besideVideoAt videoURL: URL, fps: Double, width: Int, height: Int) -> URL? {
+        lock.lock()
+        let snapshot = samples.filter { $0.t >= 0 && $0.t < finalizedThrough }
+        lock.unlock()
+        return Self.write(snapshot, besideVideoAt: videoURL, fps: fps, width: width, height: height)
+    }
+
+    private static func write(_ snapshot: [Sample], besideVideoAt videoURL: URL,
+                              fps: Double, width: Int, height: Int) -> URL? {
         guard !snapshot.isEmpty else { return nil }
 
         let sidecar = Sidecar(version: 1, sampleRateHz: 100,
@@ -216,6 +231,25 @@ final class MotionRecorder: ObservableObject {
             try? data.write(to: url, options: .atomic)
         }
         return url
+    }
+
+    /// Rebind a joined take's aggregate sidecar without deleting its recoverable
+    /// source. Awaiting the same file queue includes any checkpoint still writing.
+    static func copySidecar(from sourceVideoURL: URL, to destinationVideoURL: URL) async -> URL? {
+        await withCheckedContinuation { continuation in
+            fileQueue.async {
+                let source = sidecarURL(for: sourceVideoURL)
+                let target = sidecarURL(for: destinationVideoURL)
+                do {
+                    let original = try JSONDecoder().decode(Sidecar.self, from: Data(contentsOf: source))
+                    let copy = Sidecar(version: original.version, sampleRateHz: original.sampleRateHz,
+                                       videoFile: destinationVideoURL.lastPathComponent, fps: original.fps,
+                                       width: original.width, height: original.height, samples: original.samples)
+                    try JSONEncoder().encode(copy).write(to: target, options: .atomic)
+                    continuation.resume(returning: target)
+                } catch { continuation.resume(returning: nil) }
+            }
+        }
     }
 
     /// `<video>.motion.json` beside the video — the same path `endLogging` writes.

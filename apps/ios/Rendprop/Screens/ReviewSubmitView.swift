@@ -24,6 +24,8 @@ struct ReviewSubmitView: View {
     @State private var entitlementsChecked = false
     @State private var showRerenderConfirm = false
     @State private var entitlementTask: Task<Void, Never>?
+    @State private var reflection: ReflectionRemoval?
+    @State private var showReflectionRemoval = false
 
     /// Explicit footage type (decision A8). Prefilled by a metadata heuristic,
     /// always correctable — it decides stabilization + the retime factor.
@@ -61,6 +63,7 @@ struct ReviewSubmitView: View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
                 captureSummary
+                reflectionSection
                 roomTags
                 tierPicker
                 submitSection
@@ -72,6 +75,13 @@ struct ReviewSubmitView: View {
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showRoomTagger) {
             RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
+        }
+        .sheet(isPresented: $showReflectionRemoval) {
+            if let reflection {
+                ReflectionRemovalView(controller: reflection, listing: listing) { result in
+                    asset = result
+                }
+            }
         }
         .navigationDestination(isPresented: $goToStatus) {
             if let render {
@@ -88,11 +98,32 @@ struct ReviewSubmitView: View {
         .task { await loadEntitlements() }
         .onDisappear { entitlementTask?.cancel(); entitlementTask = nil }
         .sessionConnectionNotice()
-        .onAppear(perform: detectSourceIfNeeded)
+        .onAppear {
+            detectSourceIfNeeded()
+            reflection = ReflectionRemoval.controller(listingID: listing.id, asset: asset)
+        }
         .aiConsentGate()
     }
 
     // MARK: - Sections
+
+    @ViewBuilder private var reflectionSection: some View {
+        if let reflection, !reflection.source.personVisibleRanges.isEmpty || reflection.work != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("People and reflections", systemImage: "person.crop.rectangle")
+                    .font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text(asset.id == reflection.work?.result?.id
+                     ? "An edited version is selected. Your original remains available."
+                     : "People were detected in \(String(format: "%.1f", ReflectionVideo.plan(ranges: reflection.source.personVisibleRanges, duration: reflection.source.durationS).reduce(0) { $0 + $1.durationS })) seconds of this take. Choose intervals for optional AI removal and review the result.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                SecondaryButton(title: reflection.work == nil ? "Review detected intervals" : "Open saved reflection edit",
+                                systemImage: "slider.horizontal.3", isDisabled: isRendering) {
+                    showReflectionRemoval = true
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+    }
 
     private var captureSummary: some View {
         VStack(alignment: .leading, spacing: 12) {

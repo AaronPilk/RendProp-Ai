@@ -68,6 +68,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// Where that happened, on the finished take's clock. Only filled while
     /// recording; a detection during framing is a warning and nothing more.
     @Published private(set) var personVisibleRanges: [TimeRange] = []
+    /// An unavailable detector is not evidence that nobody is present.
+    @Published private(set) var personDetectionUnavailableMessage: String?
 
     let session = AVCaptureSession()
 
@@ -76,12 +78,18 @@ final class CameraManager: NSObject, ObservableObject {
     /// the caller's job, because "what counts as a take" is a capture-screen
     /// question and this class only knows about files.
     var onFinish: (([URL]) -> Void)?
-    /// Called on main the moment the FIRST frame of a take is written — the
-    /// motion sidecar clock starts here so gyro samples line up with frame 0.
+    /// Called on main when the file delegate reports a fresh take started.
+    /// The separately captured host anchor arrives through onSegmentStarted.
     /// Does not fire again when a paused take resumes.
     var onRecordingStarted: (() -> Void)?
     /// Called on main when a paused take starts writing again.
     var onRecordingResumed: (() -> Void)?
+    /// Host-clock estimate for segment frame zero and the measured joined offset.
+    /// Captured in the file delegate, before dispatching to the main queue.
+    var onSegmentStarted: ((TimeInterval, TimeInterval) -> Void)?
+    /// Measured file duration; freezes motion before a pause checkpoint or join.
+    var onSegmentFinished: ((TimeInterval) -> Void)?
+    var onSegmentsChanged: (([URL], TimeInterval) -> Void)?
     /// Called on main when a take was thrown away — no file is handed back.
     var onDiscarded: (() -> Void)?
 
@@ -91,7 +99,6 @@ final class CameraManager: NSObject, ObservableObject {
     private let videoDataOutput = AVCaptureVideoDataOutput()
     private var device: AVCaptureDevice?
     private var recordTimer: Timer?
-    private var frameCounter = 0
     private var usesHEVC = false
 
     /// What the delegate should do with the file it is about to hand back.
@@ -105,18 +112,21 @@ final class CameraManager: NSObject, ObservableObject {
     /// False until the first frame of THIS take is written, so a resume does
     /// not restart the motion sidecar at zero.
     private var takeStarted = false
+    private var activeSegmentURL: URL?
+    private var activeSegmentStartUptime: TimeInterval?
+    private var segmentGeneration = UUID()
 
     // --- photographer / bystander detection (Vision, on-device, ~2 Hz) -------
-    /// Built once. Vision requests are reusable and allocating one per frame is
-    /// most of the cost of running one.
+    /// Reused to avoid per-frame request allocation. Actual inference energy
+    /// and thermal cost still need a physical-device profile.
     private lazy var personRequest: VNDetectHumanRectanglesRequest = {
         let r = VNDetectHumanRectanglesRequest()
         r.upperBodyOnly = false
         return r
     }()
     /// A face in a small mirror is often all that is visible — shoulders and
-    /// below are out of frame, so the body detector never fires. Cheap enough
-    /// to run alongside in the same handler.
+    /// below are out of frame, so the body detector can miss it. Both requests
+    /// share a handler; this is not a claim that their inference cost is free.
     private lazy var faceRequest = VNDetectFaceRectanglesRequest()
     /// Consecutive ~0.5 s samples with and without a person. Hysteresis, because
     /// a single frame either way is noise and a banner that strobes is worse
@@ -125,6 +135,22 @@ final class CameraManager: NSObject, ObservableObject {
     private var personMisses = 0
     /// Open range start, on the take's clock; nil when nobody is in shot.
     private var personRangeStart: Double?
+    private var rawPersonRanges: [TimeRange] = []
+    private var lastPersonSampleTime: Double?
+    private var lastPersonSourceTime: TimeInterval = -.infinity
+    /// The luma queue reads this immutable snapshot, never main-owned UI state.
+    private struct DetectionContext {
+        let generation: UUID
+        let available: Bool
+        let segmentStart: TimeInterval?
+        let joinedOffset: TimeInterval
+    }
+    private let detectionLock = NSLock()
+    private var detectionContext = DetectionContext(generation: UUID(), available: true,
+                                                    segmentStart: nil, joinedOffset: 0)
+    private var detectionAvailable = true
+    /// Luma queue only. A time cadence stays at 2 Hz at both 30 and 60 FPS.
+    private var lastDetectionUptime: TimeInterval = -.infinity
 
     private(set) var activeFPS: Double = 30
     private(set) var activeWidth: Int = 1920
@@ -150,6 +176,8 @@ final class CameraManager: NSObject, ObservableObject {
     }
 
     func stop() {
+        segmentGeneration = UUID()
+        publishDetectionContext()
         sessionQueue.async { [weak self] in
             guard let self else { return }
             if self.session.isRunning { self.session.stopRunning() }
@@ -163,6 +191,8 @@ final class CameraManager: NSObject, ObservableObject {
         state = .configuring
         observeInterruptions()
         observeThermal()
+        thermalChanged()
+        publishDetectionContext()
         sessionQueue.async { [weak self] in
             self?.configureSession()
         }
@@ -407,7 +437,7 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Seconds of headroom left in this take, across all its pieces.
     private var remainingSeconds: TimeInterval {
-        max(1, Self.maxRecordingSeconds - bankedSeconds)
+        max(0, Self.maxRecordingSeconds - bankedSeconds)
     }
 
     func startRecording() {
@@ -434,7 +464,9 @@ final class CameraManager: NSObject, ObservableObject {
         takeStarted = false
         elapsed = 0
         personVisibleRanges.removeAll()
+        rawPersonRanges.removeAll()
         personRangeStart = nil
+        lastPersonSampleTime = nil
         beginSegment()
     }
 
@@ -443,9 +475,8 @@ final class CameraManager: NSObject, ObservableObject {
     /// joined yet — `resumeRecording()` simply opens the next piece.
     func pauseRecording() {
         guard state == .recording else { return }
-        // Nothing is being written while held, so an open range ends here. It
-        // reopens on resume if they are still in shot.
-        closePersonRange(at: currentRecordedSeconds)
+        // Close against the finalized file's duration, not the button tap.
+        // Frames written while stopRecording is in flight still belong here.
         pendingEnd = .pause
         state = .finalizing
         sessionQueue.async { [weak self] in
@@ -456,7 +487,15 @@ final class CameraManager: NSObject, ObservableObject {
     /// Carry on into the same take.
     func resumeRecording() {
         guard state == .paused else { return }
-        guard session.isRunning else { return }
+        guard session.isRunning else {
+            interruptionMessage = "Camera is unavailable. Wait for it to recover, then tap Resume again, or tap Stop to keep what you recorded."
+            Haptics.warning()
+            return
+        }
+        guard remainingSeconds >= 1.0 / max(1, activeFPS) else {
+            deliverTake()
+            return
+        }
         // Storage is re-checked here for the same reason it is checked at the
         // start: a long hold is exactly when a phone fills up.
         let free = FileStore.freeSpaceBytes()
@@ -471,14 +510,26 @@ final class CameraManager: NSObject, ObservableObject {
 
     /// Open the next piece of the current take.
     private func beginSegment() {
-        guard session.isRunning else { return }
+        guard session.isRunning else {
+            interruptionMessage = "Camera is unavailable. Wait for it to recover and try again. Your recorded pieces are kept."
+            return
+        }
+        // Floor to whole frames, then to CMTime ticks. Never round a segment
+        // allowance up past the remaining ten-minute take budget.
+        let frameCount = floor(remainingSeconds * max(1, activeFPS))
+        let capTicks = Int64(floor(frameCount / max(1, activeFPS) * 600))
+        guard capTicks > 0 else { deliverTake(); return }
         let url = FileStore.newRecordingURL()
+        activeSegmentURL = url
+        activeSegmentStartUptime = nil
+        segmentGeneration = UUID()
+        lastPersonSourceTime = -.infinity
+        publishDetectionContext()
         pendingEnd = .finish
         state = .recording
         let banked = bankedSeconds
         // The 10-minute ceiling is on the TAKE, not on each piece — a paused
         // take must not get a fresh ten minutes every time it resumes.
-        let cap = remainingSeconds
         recordTimer?.invalidate()
         recordTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self, case .recording = self.state else { return }
@@ -487,7 +538,7 @@ final class CameraManager: NSObject, ObservableObject {
         }
         sessionQueue.async { [weak self] in
             guard let self else { return }
-            self.movieOutput.maxRecordedDuration = CMTime(seconds: cap, preferredTimescale: 600)
+            self.movieOutput.maxRecordedDuration = CMTime(value: capTicks, timescale: 600)
             self.movieOutput.startRecording(to: url, recordingDelegate: self)
         }
     }
@@ -531,10 +582,15 @@ final class CameraManager: NSObject, ObservableObject {
         // Somebody still in shot when Stop was tapped: close the range at the
         // end of the take rather than dropping it.
         closePersonRange(at: bankedSeconds)
+        personVisibleRanges = PersonRangeTimeline.normalized(rawPersonRanges, duration: bankedSeconds)
         let pieces = segments
         segments.removeAll()
         bankedSeconds = 0
         takeStarted = false
+        activeSegmentURL = nil
+        activeSegmentStartUptime = nil
+        segmentGeneration = UUID()
+        publishDetectionContext()
         state = .ready
         if pieces.isEmpty {
             onDiscarded?()
@@ -554,7 +610,13 @@ final class CameraManager: NSObject, ObservableObject {
         takeStarted = false
         elapsed = 0
         personVisibleRanges.removeAll()
+        rawPersonRanges.removeAll()
         personRangeStart = nil
+        lastPersonSampleTime = nil
+        activeSegmentURL = nil
+        activeSegmentStartUptime = nil
+        segmentGeneration = UUID()
+        publishDetectionContext()
     }
 
     // MARK: - Interruptions (calls, Control Center) — never lose footage
@@ -622,6 +684,7 @@ final class CameraManager: NSObject, ObservableObject {
     @objc private func thermalChanged() {
         let thermalState = ProcessInfo.processInfo.thermalState
         DispatchQueue.main.async {
+            self.setPersonDetectionAvailable(thermalState != .serious && thermalState != .critical)
             switch thermalState {
             case .serious, .critical:
                 Haptics.warning()
@@ -668,16 +731,26 @@ extension CameraManager: AVCaptureFileOutputRecordingDelegate {
     func fileOutput(_ output: AVCaptureFileOutput,
                     didStartRecordingTo fileURL: URL,
                     from connections: [AVCaptureConnection]) {
+        // Anchor before a busy main queue can delay the notification. The
+        // movie output's own elapsed time accounts for already-written frames.
+        // Sensor-to-file pipeline latency still needs physical-device validation.
+        let now = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+        let recorded = output.recordedDuration.seconds
+        let start = now - (recorded.isFinite && recorded >= 0 ? recorded : 0)
         DispatchQueue.main.async {
-            // The sidecar clock starts at the first frame of the TAKE. A resume
-            // continues that clock (`resumeLogging`), it does not restart it —
-            // restarting would put every later sample at the wrong frame.
+            guard self.activeSegmentURL == fileURL else { return }
+            self.activeSegmentStartUptime = start
+            // Reset only once per take. Every piece then receives its own host
+            // anchor and measured joined offset through onSegmentStarted.
             if self.takeStarted {
                 self.onRecordingResumed?()
             } else {
                 self.takeStarted = true
                 self.onRecordingStarted?()
             }
+            self.onSegmentStarted?(start, self.bankedSeconds)
+            self.interruptionMessage = nil
+            self.publishDetectionContext()
         }
     }
 
@@ -691,22 +764,37 @@ extension CameraManager: AVCaptureFileOutputRecordingDelegate {
         let fileExists = FileManager.default.fileExists(atPath: outputFileURL.path)
         let written = fileExists ? Self.durationSeconds(of: outputFileURL) : 0
         DispatchQueue.main.async {
+            guard self.activeSegmentURL == outputFileURL else { return }
             self.recordTimer?.invalidate()
             self.recordTimer = nil
-            // A piece with no frames in it is not footage — it is what a pause
-            // tapped a fraction of a second after resume produces. Banking it
-            // would put a zero-length segment in the join.
-            if fileExists && written > 0.05 {
+            self.onSegmentFinished?(written)
+            // A single recorded frame still belongs to the user. Preserve an
+            // unreadable file too: failure to probe its duration is not proof
+            // that it contains no footage, and the recovery view can export it.
+            if fileExists && written > 0 {
                 self.segments.append(outputFileURL)
                 self.bankedSeconds += written
                 self.elapsed = self.bankedSeconds
             } else if fileExists {
-                try? FileManager.default.removeItem(at: outputFileURL)
+                self.segments.append(outputFileURL)
+                if self.pendingEnd != .discard { self.pendingEnd = .finish }
             }
+            self.closePersonRange(at: self.bankedSeconds)
+            self.personVisibleRanges = PersonRangeTimeline.normalized(self.rawPersonRanges,
+                                                                      duration: self.bankedSeconds)
+            self.activeSegmentURL = nil
+            self.activeSegmentStartUptime = nil
+            self.segmentGeneration = UUID()
+            self.publishDetectionContext()
+            self.onSegmentsChanged?(self.segments, self.bankedSeconds)
             switch self.pendingEnd {
             case .pause:
                 self.pendingEnd = .finish
-                self.state = .paused
+                if self.remainingSeconds < 1.0 / max(1, self.activeFPS) {
+                    self.deliverTake()
+                } else {
+                    self.state = .paused
+                }
             case .discard:
                 self.pendingEnd = .finish
                 self.discardTake()
@@ -737,9 +825,16 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     func captureOutput(_ output: AVCaptureOutput,
                        didOutput sampleBuffer: CMSampleBuffer,
                        from connection: AVCaptureConnection) {
-        frameCounter += 1
-        guard frameCounter % 15 == 0,
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid, pts.seconds.isFinite else { return }
+        guard let captureClock = session.synchronizationClock else { return }
+        let hostTime = CMSyncConvertTime(pts, from: captureClock, to: CMClockGetHostTimeClock()).seconds
+        guard hostTime.isFinite, hostTime - lastDetectionUptime >= 0.5,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+        lastDetectionUptime = hostTime
+        detectionLock.lock()
+        let context = detectionContext
+        detectionLock.unlock()
 
         // Only the 8-bit bi-planar formats have a one-byte-per-pixel Y plane;
         // a 10-bit (x420) buffer would be read as garbage. Bail instead.
@@ -779,25 +874,25 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             self.luminance = self.luminance * 0.7 + mean * 0.3
         }
 
-        detectPeople(in: pixelBuffer)
+        detectPeople(in: pixelBuffer, sourceTime: hostTime, context: context)
     }
 
     /// IS ANYBODY IN THE SHOT.
     ///
     /// Runs on the SAME ~2 Hz buffer the light meter already sampled, on the
-    /// same background queue, so it costs one Vision pass a second and no extra
-    /// camera work. Nothing is uploaded and nothing is stored — the frame is
-    /// read and dropped.
+    /// same background queue. Its measured energy cost still requires a real
+    /// device test. Nothing is uploaded; the frame is read and dropped.
     ///
     /// Orientation is `.right` because the tour records in PORTRAIT and the
     /// video data output hands back a landscape buffer with the top of the
     /// image on the right. Get this wrong and Vision looks for sideways people
     /// and finds none, which fails silently and looks exactly like a feature
     /// that does not work.
-    private func detectPeople(in pixelBuffer: CVPixelBuffer) {
+    private func detectPeople(in pixelBuffer: CVPixelBuffer, sourceTime: TimeInterval,
+                              context: DetectionContext) {
         // Skip while the phone is complaining about heat: the banner already
         // owns the screen and the ANE is not where that budget should go.
-        if thermalMessage != nil { return }
+        guard context.available else { return }
         let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer,
                                             orientation: .right, options: [:])
         do {
@@ -808,18 +903,56 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         let bodies = (personRequest.results ?? []).filter { $0.confidence >= 0.45 }
         let faces  = (faceRequest.results ?? []).filter { $0.confidence >= 0.45 }
         let found = !bodies.isEmpty || !faces.isEmpty
-        DispatchQueue.main.async { self.ingestPersonSample(found) }
+        DispatchQueue.main.async {
+            guard self.detectionAvailable, self.segmentGeneration == context.generation,
+                  sourceTime > self.lastPersonSourceTime else { return }
+            self.lastPersonSourceTime = sourceTime
+            let joinedTime = context.segmentStart.map { context.joinedOffset + sourceTime - $0 }
+            if let joinedTime, !joinedTime.isFinite || joinedTime < context.joinedOffset { return }
+            self.ingestPersonSample(found, at: joinedTime)
+        }
     }
 }
 
 // MARK: - Person-in-shot bookkeeping (main queue only)
 extension CameraManager {
+    private func publishDetectionContext() {
+        let snapshot = DetectionContext(generation: segmentGeneration, available: detectionAvailable,
+                                        segmentStart: activeSegmentStartUptime, joinedOffset: bankedSeconds)
+        detectionLock.lock()
+        detectionContext = snapshot
+        detectionLock.unlock()
+    }
+
+    private func setPersonDetectionAvailable(_ available: Bool) {
+        guard detectionAvailable != available else { return }
+        if !available {
+            // Only observed time is evidence. Never extend a stale positive
+            // through the period when heat has disabled inference.
+            if let time = lastPersonSampleTime { closePersonRange(at: time) }
+            personInShot = false
+            personHits = 0
+            personMisses = 0
+            personDetectionUnavailableMessage = "Person detection is paused while the phone cools. Check mirrors and windows yourself; these seconds are not checked."
+        } else {
+            personDetectionUnavailableMessage = nil
+        }
+        detectionAvailable = available
+        // Invalidate work already running under the previous availability.
+        segmentGeneration = UUID()
+        lastPersonSourceTime = -.infinity
+        publishDetectionContext()
+    }
+
     /// Two samples in a row to raise it, four to clear it. Raising fast matters
     /// — the point is to catch it while they can still step aside. Clearing
     /// slowly matters more — a mirror they are walking past drops the detection
     /// for a frame at a time, and a banner that blinks teaches people to ignore
     /// it.
-    fileprivate func ingestPersonSample(_ found: Bool) {
+    fileprivate func ingestPersonSample(_ found: Bool, at joinedTime: Double?) {
+        guard detectionAvailable, state != .finalizing else { return }
+        let recordingTime = state == .recording ? joinedTime : nil
+        if let recordingTime { lastPersonSampleTime = recordingTime }
         if found {
             personHits += 1
             personMisses = 0
@@ -831,38 +964,53 @@ extension CameraManager {
         if !personInShot, personHits >= 2 {
             personInShot = true
             Haptics.warning()
-            if hasTakeInProgress, personRangeStart == nil {
-                personRangeStart = currentRecordedSeconds
+            if let recordingTime, personRangeStart == nil {
+                personRangeStart = recordingTime
             }
         } else if personInShot, personMisses >= 4 {
             personInShot = false
-            closePersonRange(at: currentRecordedSeconds)
-        } else if personInShot, hasTakeInProgress, personRangeStart == nil {
+            if let recordingTime { closePersonRange(at: recordingTime) }
+        } else if personInShot, let recordingTime, personRangeStart == nil {
             // They were already in shot when recording started.
-            personRangeStart = currentRecordedSeconds
+            personRangeStart = recordingTime
         }
     }
 
-    /// Close the open range, if any, and keep it only when it is long enough to
-    /// be worth acting on. A sub-second blip is a false positive on a framed
-    /// photograph far more often than it is a person.
+    /// Retain raw spans until the actual media length is known. Filtering each
+    /// piece here would erase adjacent short spans separated only by a pause.
     fileprivate func closePersonRange(at end: Double) {
         guard let start = personRangeStart else { return }
         personRangeStart = nil
-        let from = max(0, start)
-        let to = max(from, end)
-        guard to - from >= 0.75 else { return }
-        // Pad each side a little: the detector is sure a beat after they enter
-        // and a beat after they leave, and an eraser needs the whole of them.
-        let padded = TimeRange(startS: max(0, from - 0.5), endS: to + 0.5)
-        // Merge into the previous range when they touch, so a person walking
-        // past three mirrors in a hallway is not three jobs where one will do.
-        if var last = personVisibleRanges.last, padded.startS <= last.endS + 1.0 {
-            last.endS = max(last.endS, padded.endS)
-            personVisibleRanges[personVisibleRanges.count - 1] = last
-        } else {
-            personVisibleRanges.append(padded)
+        guard start.isFinite, end.isFinite, end > start else { return }
+        rawPersonRanges.append(TimeRange(startS: max(0, start), endS: max(0, end)))
+    }
+}
+
+/// Media-bound, finite, ordered and non-overlapping intervals. Merge raw
+/// adjacent spans before minimum-length rejection; add padding only afterwards.
+enum PersonRangeTimeline {
+    static func normalized(_ ranges: [TimeRange], duration: Double) -> [TimeRange] {
+        guard duration.isFinite, duration > 0 else { return [] }
+        let clipped = ranges.compactMap { range -> TimeRange? in
+            guard range.startS.isFinite, range.endS.isFinite else { return nil }
+            let start = min(duration, max(0, range.startS))
+            let end = min(duration, max(0, range.endS))
+            return end > start ? TimeRange(startS: start, endS: end) : nil
+        }.sorted { $0.startS < $1.startS }
+        var merged: [TimeRange] = []
+        for range in clipped {
+            if let last = merged.last, range.startS <= last.endS + 1 {
+                merged[merged.count - 1].endS = max(last.endS, range.endS)
+            } else { merged.append(range) }
         }
+        var result: [TimeRange] = []
+        for range in merged where range.endS - range.startS >= 0.75 {
+            let padded = TimeRange(startS: max(0, range.startS - 0.5), endS: min(duration, range.endS + 0.5))
+            if let last = result.last, padded.startS <= last.endS {
+                result[result.count - 1].endS = max(last.endS, padded.endS)
+            } else { result.append(padded) }
+        }
+        return result
     }
 }
 

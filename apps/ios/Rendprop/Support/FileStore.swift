@@ -26,7 +26,9 @@ enum FileStore {
     static func newRecordingURL() -> URL {
         let stamp = ISO8601DateFormatter().string(from: Date())
             .replacingOccurrences(of: ":", with: "-")
-        return recordingsDir.appendingPathComponent("walkthrough-\(stamp).mov")
+        // A paused segment and its join can be created in the same second.
+        // Reusing a timestamp-only name let join cleanup delete the new take.
+        return recordingsDir.appendingPathComponent("walkthrough-\(stamp)-\(UUID().uuidString).mov")
     }
 
     /// Path of `url` relative to Documents (e.g. "Recordings/tour-ab12.mp4").

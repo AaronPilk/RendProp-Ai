@@ -50,13 +50,20 @@ test('production uses only the material-disclosure v2 key', () => {
 
 test('all current UI launch overrides target v2; historical receipts are not rewritten', () => {
   const directory = new URL('../../apps/ios/RendpropUITests/', import.meta.url);
-  let configured = 0;
+  const configured = [];
   for (const name of readdirSync(directory).filter((name) => name.endsWith('.swift'))) {
     const source = readFileSync(new URL(name, directory), 'utf8');
     assert.doesNotMatch(source, /ai\.thirdPartyProcessing\.consent\.v1/, name);
-    if (source.includes('-ai.thirdPartyProcessing.consent.v2')) configured += 1;
+    if (source.includes('-ai.thirdPartyProcessing.consent.v2')) configured.push(name);
+    if (name === 'CaptureRecoveryTests.swift') {
+      assert.match(source, /"-ai\.thirdPartyProcessing\.consent\.v2", "NO"/,
+        'offline capture recovery fixtures keep cloud AI consent declined');
+    }
   }
-  assert.equal(configured, 8, 'review every current consent launch fixture');
+  assert.deepEqual(configured.sort(), [
+    'CaptureRecoveryTests.swift', 'CoachShot.swift', 'GuideShot.swift', 'IndustryWalk.swift',
+    'OnboardingTour.swift', 'PaywallShot.swift', 'RendpropUITests.swift', 'ReviewerWalk.swift', 'StoreShots.swift',
+  ], 'review every current consent launch fixture explicitly');
 });
 
 test('actual consent grant, relaunch, revoke, decline and cancel with isolated persisted defaults', () => {

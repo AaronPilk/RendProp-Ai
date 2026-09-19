@@ -259,6 +259,7 @@ export const DRONE_DISCLOSURE = "Drone-style movement is simulated. No drone foo
 
 /** kind → the plain-words phrase appended to the asset label. */
 const KIND_PHRASE: Record<string, string> = {
+  video_reflection_removal: "people and reflections removed with AI",
   virtual_stage: "virtually staged",
   declutter: "digitally decluttered",
   photo_edit: "digitally edited",
@@ -269,6 +270,7 @@ const KIND_PHRASE: Record<string, string> = {
 
 /** kind → the model family in plain words (A2). */
 const KIND_FAMILY: Record<string, string> = {
+  video_reflection_removal: "AI video edit",
   virtual_stage: "AI image edit",
   declutter: "AI image edit",
   photo_edit: "AI image edit",
@@ -279,6 +281,7 @@ const KIND_FAMILY: Record<string, string> = {
 
 /** kind → a label to fall back on when the provenance row has none. */
 const KIND_FALLBACK_LABEL: Record<string, string> = {
+  video_reflection_removal: "Walkthrough reflection removal",
   virtual_stage: "Virtual staging",
   declutter: "Digital declutter",
   photo_edit: "Listing photo",
@@ -287,7 +290,7 @@ const KIND_FALLBACK_LABEL: Record<string, string> = {
   other: "Altered media",
 };
 
-const VIDEO_KINDS = new Set(["aerial", "reel"]);
+const VIDEO_KINDS = new Set(["aerial", "reel", "video_reflection_removal"]);
 
 interface AlteredItem {
   kind: string;
@@ -350,9 +353,10 @@ function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
     const head = `${n} item${n === 1 ? "" : "s"} in this tour ${n === 1 ? "was" : "were"} digitally altered or AI-generated.`;
     // Say that the originals are RIGHT HERE and can be compared, not merely
     // that something was altered. A disclosure nobody opens discloses nothing.
-    return items.some((it) => it.original)
-      ? `${head} Drag to compare with the unedited photo.`
-      : head;
+    if (items.some((it) => it.original && VIDEO_KINDS.has(it.kind))) {
+      return `${head} Compare the edited media with the unedited originals below.`;
+    }
+    return items.some((it) => it.original) ? `${head} Drag to compare with the unedited photo.` : head;
   }
   return "Some imagery in this tour has been virtually staged or digitally decluttered.";
 }
@@ -367,7 +371,10 @@ function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
  */
 function beforeAfter(it: AlteredItem): string {
   if (!it.original) return "";
-  const before = `<figure class="disc-f disc-f-b"><img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async"><figcaption>Before — how it really looks</figcaption></figure>`;
+  const originalMedia = it.kind === "video_reflection_removal"
+    ? `<video src="${escapeAttr(it.original)}" aria-label="Unedited original walkthrough" controls playsinline preload="none"></video>`
+    : `<img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async">`;
+  const before = `<figure class="disc-f disc-f-b">${originalMedia}<figcaption>Before — how it really looks</figcaption></figure>`;
   if (!it.altered) return `<div class="disc-ba one">${before}</div>`;
   const after = VIDEO_KINDS.has(it.kind)
     ? `<video src="${escapeAttr(it.altered)}" controls playsinline preload="none"></video>`
@@ -441,7 +448,7 @@ function renderDisclosureSection(tour: Tour): string {
       <div class="disc-body">
         ${lead}
         ${list}
-        <p class="lp-fine">Where an unaltered original exists it is shown and linked above. Edits change styling and furnishing only: layout, dimensions and permanent features — including anything a buyer would want to know about — are never removed or repaired by any edit listed here.</p>
+        <p class="lp-fine">Where an unaltered original exists it is shown and linked above. Edits may change styling and furnishing or remove visible people and their reflections. Layout, dimensions and permanent features — including anything a buyer would want to know about — must be preserved. Compare the original to judge the result.</p>
       </div>
     </details>
   </div></section>`;
@@ -1280,15 +1287,28 @@ const ENGINE_CORE_JS = `
     el.classList.add('on');
     el.setAttribute('role', 'slider');
     el.setAttribute('tabindex', '0');
-    el.setAttribute('aria-label', 'Drag to compare the unedited photo with the edited one');
+    el.setAttribute('aria-label', 'Compare photos: amount of original shown');
     el.setAttribute('aria-valuemin', '0');
     el.setAttribute('aria-valuemax', '100');
+    // Both complete photos share the original's frame. Contain an edited
+    // image with a different ratio; never crop away a property's edge details.
+    var beforeImg = el.querySelector('.disc-f-b img');
+    var afterImg = el.querySelector('.disc-f-a img');
+    function fitFrame(){
+      var image = beforeImg && beforeImg.naturalWidth > 0 ? beforeImg : afterImg;
+      if (image && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        el.style.aspectRatio = image.naturalWidth + ' / ' + image.naturalHeight;
+      }
+    }
+    if (beforeImg) beforeImg.addEventListener('load', fitFrame);
+    if (afterImg) afterImg.addEventListener('load', fitFrame);
+    fitFrame();
     function setPos(v){
       pos = v < 0 ? 0 : (v > 100 ? 100 : v);
       el.style.setProperty('--p', pos + '%');
       var r = Math.round(pos);
       el.setAttribute('aria-valuenow', String(r));
-      el.setAttribute('aria-valuetext', r + '% edited version shown');
+      el.setAttribute('aria-valuetext', r + '% original, ' + (100 - r) + '% edited');
     }
     function fromX(x){
       var r = el.getBoundingClientRect();
@@ -2873,7 +2893,7 @@ export const EDITORIAL_CSS = `
                 border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08);
                 background:#000; cursor:ew-resize; aspect-ratio:4/3; user-select:none; }
   .disc-ba.on .disc-f { position:absolute; inset:0; margin:0; border:0; border-radius:0; overflow:hidden; }
-  .disc-ba.on .disc-f img { width:100%; height:100%; aspect-ratio:auto; object-fit:cover; pointer-events:none; }
+  .disc-ba.on .disc-f img { width:100%; height:100%; aspect-ratio:auto; object-fit:contain; pointer-events:none; }
   /* The edited version is revealed from the divider rightwards. */
   .disc-ba.on .disc-f-a { clip-path:inset(0 0 0 var(--p)); }
   .disc-ba.on figcaption { position:absolute; top:10px; padding:5px 9px; border-radius:999px;
@@ -2892,7 +2912,6 @@ export const EDITORIAL_CSS = `
   .disc-grip::before { left:9px; border-right:6px solid #111; }
   .disc-grip::after  { right:9px; border-left:6px solid #111; }
   .disc-ba.on:focus-visible { outline:2px solid var(--accent-3); outline-offset:3px; }
-  @media (max-width: 719px){ .disc-ba.on { aspect-ratio:3/4; } }
   .disc-orig { display:inline-block; margin-top:12px; font-size:13px; font-weight:650; color:var(--accent-3); text-decoration:none; }
   .disc-orig:hover { text-decoration:underline; }
   .disc-noorig { display:inline-block; margin-top:12px; font-size:12.5px; color:var(--faint); }

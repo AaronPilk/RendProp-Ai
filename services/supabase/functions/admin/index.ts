@@ -364,18 +364,13 @@ const PROVIDERS: ProviderSpec[] = [
       {
         sku: "bria/video/erase/prompt",
         label: "Bria video eraser — prompt object removal (source must be < 5s)",
-        unit: "clip",
-        // ESTIMATE, not a vendor-confirmed price (audit item 3) — see the long
-        // comment on APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated.
-        unit_cost_cents: APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated,
-        trigger: "POST /ai-video/declutter",
-        source:
-          "No vendor-confirmed price exists for Bria anywhere in the repo (HANDOFF-DB.md " +
-          "'Known gap: bria/video/erase/prompt'). This is ESTIMATED_UNIT_COST_CENTS.declutter " +
-          "reused as an explicitly-marked placeholder (ledger.ts) so the route's spend reaches " +
-          "cost_ledger — feature 'video_declutter', meta.price_estimated:true — instead of being " +
-          "silently unrecorded. It is still metered against the reel allowance " +
-          "(ai-video/index.ts capFor()). Replace with Bria's real per-clip price when known.",
+        unit: "input second",
+        unit_cost_cents: APP_AI_UNIT_CENTS.bria_declutter_per_s,
+        trigger: "POST /ai-video/declutter (opt-in reflection clips)",
+        source: "Authenticated fal GET /v1/models/pricing?endpoint_id=bria%2Fvideo%2Ferase%2Fprompt " +
+          "verified2026-09-19: $0.14/second USD. Durable jobs meter the reel allowance, " +
+          "reserve at most240c per batch, and record confirmed provider receipts at duration×14c. " +
+          "Cancelling returns user allowance, never provider COGS; invoice reconciliation is separate.",
       },
     ],
   },
@@ -677,9 +672,8 @@ const FEATURE_LABELS: Record<string, string> = {
   reel: "AI reel clip",
   aerial: "AI aerial",
   drone_render: "Drone-glide render (Topaz)",
-  // audit item 3: video-declutter (Bria) now writes a ledger row too, at an
-  // ESTIMATED price (see APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated).
-  video_declutter: "AI video declutter (Bria, estimated price)",
+  // Account-verified input-second rate; invoice reconciliation stays explicit in ledger metadata.
+  video_declutter: "AI video reflection removal (Bria)",
   stream_store: "Stream storage",
   stream_deliver: "Stream delivery",
 };
