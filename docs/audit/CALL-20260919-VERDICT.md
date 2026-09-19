@@ -87,9 +87,12 @@ baseline checks confirm defects; they are not fixed-product acceptance tests.
   a defect reproducer. Timing harness and native TSAN complete; no race reported
   with the real `@Published` wrapper.
 
-**Not completed:** real ten-minute 4K thermal/battery testing, physical iPhone
-interruption/lens/format validation, and real model before/after comparisons
-for CONDITION_LOCK. Prompt assembly tests do not prove image quality. Different
+**Still open:** real ten-minute 4K thermal/battery testing and physical iPhone
+interruption/lens/format validation. Eight real model requests subsequently
+completed: both prompt versions fail permanent-detail preservation in two of
+three staging outputs on the same fixture. See the
+[real quality report](CALL-20260919-PHOTO-QUALITY.md); this does not establish
+a CONDITION_LOCK regression, and the quality gate is not green. Different
 dimensions alone successfully exported in the join experiment; mismatch failure
 is not a proven finding. The detailed reports distinguish other asynchronous
 ordering hypotheses from executable findings.

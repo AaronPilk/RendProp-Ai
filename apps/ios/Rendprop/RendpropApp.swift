@@ -1940,6 +1940,7 @@ enum PersistentStore {
         var bytes: Int64
         var isDrone: Bool
         var roomTags: [RoomTag]
+        var personVisibleRanges: [TimeRange]
     }
 
     fileprivate struct PersistedTour: Codable {
@@ -1983,7 +1984,8 @@ enum PersistentStore {
                 relPath: FileStore.relativePath(for: a.localURL),
                 motionRelPath: a.motionSidecarURL.map { FileStore.relativePath(for: $0) },
                 durationS: a.durationS, fps: a.fps, width: a.width, height: a.height,
-                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags)
+                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags,
+                personVisibleRanges: a.personVisibleRanges)
         }
         for (id, t) in tours where realIDs.contains(id) {
             state.tours[id] = PersistedTour(
@@ -2094,7 +2096,8 @@ enum PersistentStore {
                 id: a.id, localURL: localURL,
                 motionSidecarURL: a.motionRelPath.map { FileStore.url(fromRelativePath: $0) },
                 durationS: a.durationS, fps: a.fps, width: a.width, height: a.height,
-                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags)
+                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags,
+                personVisibleRanges: a.personVisibleRanges)
         }
         for (id, t) in state.tours {
             let url = FileStore.url(fromRelativePath: t.relPath)
@@ -2119,7 +2122,7 @@ enum PersistentStore {
 // save() uses; encoding stays synthesized, so the JSON shape is unchanged.
 extension PersistentStore.PersistedAsset {
     enum CodingKeys: String, CodingKey {
-        case id, relPath, motionRelPath, durationS, fps, width, height, bytes, isDrone, roomTags
+        case id, relPath, motionRelPath, durationS, fps, width, height, bytes, isDrone, roomTags, personVisibleRanges
     }
 
     init(from decoder: Decoder) throws {
@@ -2135,6 +2138,14 @@ extension PersistentStore.PersistedAsset {
         isDrone       = try c.decodeIfPresent(Bool.self, forKey: .isDrone) ?? false
         // Losing chapters beats losing the video: salvage what decodes.
         roomTags      = ((try? c.decodeIfPresent([RoomTag].self, forKey: .roomTags)) ?? nil) ?? []
+        // Older snapshots have no detections. A malformed detection never costs
+        // the video; only finite, ordered ranges inside its timeline survive.
+        let ranges = rpSalvagedArray(TimeRange.self, from: c, forKey: .personVisibleRanges)
+        let timelineEnd = durationS
+        personVisibleRanges = ranges.filter {
+            $0.startS.isFinite && $0.endS.isFinite && $0.startS >= 0 &&
+            $0.endS > $0.startS && $0.endS <= timelineEnd
+        }
     }
 }
 

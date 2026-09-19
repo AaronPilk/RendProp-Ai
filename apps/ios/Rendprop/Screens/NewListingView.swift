@@ -619,7 +619,15 @@ struct NewListingView: View {
         // must not resurrect one the user has since deleted.
         if let existing = photosListing,
            model.listings.contains(where: { $0.id == existing.id }) {
-            photosListing = existing
+            model.modify(existing.id, sync: false) {
+                form.apply(to: &$0)
+                if let coordinate = pendingCoord {
+                    $0.latitude = coordinate.latitude
+                    $0.longitude = coordinate.longitude
+                }
+            }
+            photosListing = model.listings.first(where: { $0.id == existing.id }) ?? existing
+            createdListing = photosListing
             goToPhotos = true
             return
         }

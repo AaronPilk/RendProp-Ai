@@ -961,6 +961,36 @@ final class LiveAPIClient: APIClient {
 
     // MARK: - AI video (ai-video edge function — async fal submit + poll)
 
+    func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote {
+        let target = url(["ai-video", "declutter", "quote"],
+                         query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])
+        return try decode(await execute(makeRequest(url: target), session: aiSession))
+    }
+
+    func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
+                           idempotencyKey: UUID) async throws -> AIVideoJob {
+        try await submitAIVideo(path: "declutter", body: [
+            "asset_id": assetID, "listing_id": listingID.uuidString,
+            "batch_id": batchID.uuidString, "purpose": "reflection_removal",
+            "prompt": "the photographer and people reflected in mirrors or windows"
+        ], fallbackKind: "declutter", idempotencyKey: idempotencyKey.uuidString)
+    }
+
+    func cancelReflectionBatch(_ batchID: UUID) async throws {
+        _ = try await execute(makeRequest(url: url(["ai-video", "declutter", "cancel"]),
+                                           method: "POST", json: ["batch_id": batchID.uuidString]), session: aiSession)
+    }
+
+    func applyReflectionBatch(_ batchID: UUID, originalAssetID: String,
+                              alteredAssetID: String) async throws -> ReflectionApplication {
+        let data = try await execute(makeRequest(url: url(["ai-video", "declutter", "apply"]),
+                                                  method: "POST", json: [
+            "batch_id": batchID.uuidString, "original_asset_id": originalAssetID,
+            "altered_asset_id": alteredAssetID
+        ]), session: aiSession)
+        return try decode(data)
+    }
+
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
                       idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["asset_id": assetID, "tier": tier]
@@ -1080,7 +1110,7 @@ final class LiveAPIClient: APIClient {
                 throw APIError.decoding   // completed but no video url
             }
             return .completed(videoURL: videoURL)
-        case "failed":
+        case "failed", "cancelled":
             return .failed(dto.error ?? "The AI video job failed.")
         default:
             // "processing" and anything unknown → keep polling (tolerant decode).

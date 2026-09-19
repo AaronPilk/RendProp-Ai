@@ -4,7 +4,8 @@
 // jobs (CPU/wall limits), so every generate route SUBMITS to fal's queue and
 // returns 202 with fal's own { request_id, status_url, response_url } VERBATIM.
 // The app polls GET /ai-video/status with those URLs until completed/failed.
-// Stateless v1: nothing is persisted server-side; the app holds the ids.
+// Reflection removal uses durable jobs in erase.ts; other legacy routes retain
+// the stateless transport described below.
 //
 //   POST /ai-video/drone      { asset_id, tier?: "1080p60"|"4k30"|"4k60", target_fps? }
 //       Topaz Video AI upscale+interpolation → buttery "drone glide" master.
@@ -13,8 +14,12 @@
 //       used to be sent as 8K, audit F-supabase-17). The most expensive tap in
 //       the product, and the one with hard COST CEILINGS — see COST SAFETY
 //       below and ./dronecost.ts. The 202 carries `estimated_cost`.
-//   POST /ai-video/declutter  { asset_id, prompt?, space_type? }
-//       Bria video eraser (prompt-based object removal). Source must be < 5 s.
+//   POST /ai-video/declutter  { asset_id, listing_id, batch_id, purpose:"reflection_removal", prompt? }
+//       Stable UUID Idempotency-Key required. Bria source must be <5s.
+//   GET /ai-video/declutter/quote?listing_id=...
+//   POST /ai-video/declutter/cancel { request_id | batch_id }
+//   POST /ai-video/declutter/apply { batch_id, original_asset_id, altered_asset_id }
+//       Apply records truthful linked video provenance only after user acceptance.
 //   POST /ai-video/aerial     { image_b64?, mime?, asset_id?, space_type, region?, time_of_day?, motion?,
 //                               style?, seconds?=6, aspect?: "16:9"|"9:16" }
 //       Establishing shot. GROUNDED when a photo is given: Seedance image-to-
@@ -89,13 +94,15 @@
 // HUD wording — see _shared/fairhousing.ts, SCOPE. The PROMPT still uses the
 // same `space` it always did.
 //
-// PROVENANCE. `aerial`, `reel-clip` and `declutter` record one media_provenance
+// PROVENANCE. `aerial` and `reel-clip` record one media_provenance
 // row (migration 0012) at SUBMIT time — the fal job is async, so the row is
 // written when we know the model, the kind and the disclosure, and the app
 // attaches the finished asset later via PATCH /me/compliance/:id. The 202 body
 // carries `disclosure` and `provenance`. `aerial` discloses with HousingWire's
 // exact wording: "Drone-style movement is simulated. No drone footage was
 // captured." — the sentence the app and both tour pages must show.
+// Reflection removal records a full original/edited video pair only at explicit
+// acceptance, after every selected clip has completed (erase.ts + migration0055).
 // `drone` (Topaz upscale + frame interpolation) is deliberately NOT recorded:
 // it re-times and sharpens footage the agent actually captured, which is the
 // basic-enhancement carve-out in CA AB 723, not synthesis. Revisit if Topaz
@@ -230,7 +237,8 @@ import { ProviderError } from "../_shared/providers/common.ts";
 import { type ContentBlock, anthropicMessages, imageBlock } from "../_shared/providers/anthropic.ts";
 import { openaiChat } from "../_shared/providers/openai.ts";
 import { falSubmitEcho } from "../_shared/providers/fal.ts";
-import { persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
+import { persistResult, persistedUrl, routedR2Key } from "../_shared/providers/common.ts";
+import { createEraseHandler, extractEraseJob } from "./erase.ts";
 import type { GenerateInput, JobRef } from "../_shared/providers/types.ts";
 import {
   extractJobToken,
@@ -602,7 +610,6 @@ const FAL_QUEUE_BASE = "https://queue.fal.run";
 const FAL_KEY = Deno.env.get("FAL_KEY");
 
 const MODEL_DRONE = "fal-ai/topaz/upscale/video";
-const MODEL_DECLUTTER = "bria/video/erase/prompt";
 const MODEL_AERIAL_T2V = "fal-ai/veo3.1/fast";
 const MODEL_I2V = "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
 
@@ -610,10 +617,6 @@ const MODEL_I2V = "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video";
 // per-output-second rate card) now live in ./dronecost.ts next to the ceilings
 // that read them, so the price and the cap it feeds cannot drift apart. Both
 // are imported above; nothing about their values changed.
-
-// Bria hard limit: "duration must be less than 5s" (input schema). We disable
-// auto_trim (never silently cut the user's clip) and pre-flight the duration.
-const BRIA_MAX_SECONDS = 5;
 
 // ── AI router glue (docs/AI-ROUTER-CONTRACT.md) ──────────────────────────────
 //
@@ -726,28 +729,6 @@ const SCENE_NOUN: Record<SpaceType, string> = {
   retail: "store",
   fitness: "fitness studio",
   other: "space",
-};
-
-/** What "clutter" means per industry, for the Bria eraser default prompt. */
-const DECLUTTER_PROMPT: Record<SpaceType, string> = {
-  real_estate:
-    "remove clutter, shoes, bags, boxes, cords, laundry, dishes, and personal items " +
-    "from the floor and surfaces; keep the room, furniture, and architecture unchanged",
-  venue:
-    "remove stray chairs, cables, cases, trash, cleaning equipment and clutter from the floor " +
-    "and surfaces; keep the space, its fixtures, and architecture unchanged",
-  restaurant:
-    "remove clutter from tables and floors: stray napkins, bus tubs, condiment bottles, receipts, " +
-    "cords and trash; keep the tables, chairs, decor, and architecture unchanged",
-  retail:
-    "remove boxes, stock carts, packaging, cords, signage clutter and trash from the floor and " +
-    "surfaces; keep the fixtures, displays, products, and architecture unchanged",
-  fitness:
-    "remove stray towels, water bottles, bags, loose weight plates, cords and clutter from the " +
-    "floor; keep the equipment, mats, mirrors, and architecture unchanged",
-  other:
-    "remove clutter, boxes, cords, trash, and personal items from the floor and surfaces; " +
-    "keep the space, furniture, and architecture unchanged",
 };
 
 // The reel prompt — its anti-hallucination scaffolding, its per-shot camera
@@ -863,14 +844,6 @@ interface DroneBody {
   tier?: string;
   target_fps?: number;
 }
-interface DeclutterBody {
-  asset_id?: string;
-  prompt?: string;
-  space_type?: string;
-  /** Compliance (W2-B3). Defaults to the asset's own listing. */
-  listing_id?: string;
-  label?: string;
-}
 interface AerialBody {
   image_b64?: string;
   mime?: string;
@@ -964,6 +937,19 @@ interface DriftBody {
   attempt?: number;
 }
 
+const eraseHandler = createEraseHandler({
+  rpc: async (name, args) => await adminClient().rpc(name, args),
+  resolveAsset: async (id, req) => await resolvePublicAsset(userClient(req), id, req),
+  fetch: (url, init) => fetch(url, init),
+  falKey: () => Deno.env.get("FAL_KEY")?.trim() ?? "",
+  persist: async (url, key) => {
+    await persistResult("fal", { status: "done", result_url: url, mime: "video/mp4" }, key);
+    const publicUrl = publicR2Url(key);
+    assert(publicUrl, 503, "The edited clip could not be made available", "upstream");
+    return publicUrl;
+  },
+});
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
 
@@ -971,6 +957,20 @@ Deno.serve(async (req) => {
     const user = await getUser(req); // auth required on every route (also guards the FAL key)
     const db = userClient(req); // RLS: the caller only sees their own org's assets
     const seg = pathSegments(req, "ai-video");
+
+    // Reflection removal has durable, caller-scoped jobs. Other video routes
+    // keep their existing status transport and allowance behavior.
+    const eraseAction = seg[0] === "declutter"
+      ? (req.method === "POST" && seg.length === 1 ? "submit"
+        : req.method === "GET" && seg[1] === "quote" && seg.length === 2 ? "quote"
+        : req.method === "POST" && seg[1] === "cancel" && seg.length === 2 ? "cancel"
+        : req.method === "POST" && seg[1] === "apply" && seg.length === 2 ? "apply" : null)
+      : null;
+    const eraseId = req.method === "GET" && seg.length === 1 && seg[0] === "status" ? extractEraseJob(req) : null;
+    if (eraseAction || eraseId) {
+      const orgId = await orgForUser(user.id, preferredOrg(req));
+      return await eraseHandler(req, { orgId, userId: user.id }, eraseAction ?? "status", eraseId ?? undefined);
+    }
 
     // NOTE: quota is NOT charged up front. Each generate route validates its
     // body (and resolves its asset) FIRST, then calls guardGenerate()
@@ -1114,110 +1114,6 @@ Deno.serve(async (req) => {
         // unaffected. Every refusal above carries the same figures in its error
         // details, so the client has one shape to read either way.
         estimated_cost: estimate,
-      }, 202);
-    }
-
-    // ---- POST /ai-video/declutter ----
-    if (req.method === "POST" && seg.length === 1 && seg[0] === "declutter") {
-      const body = await readJson<DeclutterBody>(req);
-      assert(body.asset_id, 400, "asset_id is required");
-
-      const asset = await resolvePublicAsset(db, body.asset_id, req);
-      // Bria rejects ≥5 s clips AFTER we would have charged the meter: without
-      // probed metadata we cannot pre-flight, so require it (audit F-supabase-29).
-      if (asset.duration_s == null) {
-        throw new HttpError(409, "This asset has no probed duration — re-upload it with duration_s so the clip can be pre-checked", "conflict");
-      }
-      if (asset.duration_s >= BRIA_MAX_SECONDS) {
-        throw new HttpError(
-          400,
-          `Bria's video eraser only accepts clips under ${BRIA_MAX_SECONDS}s and auto-trim is ` +
-            `disabled so your full clip is processed — this asset is ${asset.duration_s}s. ` +
-            `Trim the clip to under ${BRIA_MAX_SECONDS}s and try again.`,
-        );
-      }
-      const space = spaceTypeOf(body.space_type ?? asset.space_type);
-
-      // A free-text erase instruction is checked, then WRAPPED — it can no
-      // longer replace the guardrails (see header). The gate is scoped by the
-      // asset's LISTING type (header, FAIR HOUSING).
-      const userErase = cleanPrompt(body.prompt);
-      if (userErase) assertFairHousing(userErase, "This erase instruction", asset.space_type ?? space);
-      const erasePrompt = userErase
-        ? guardedUserPrompt(userErase, space, "Erase objects from")
-        : `${DECLUTTER_PROMPT[space]}. ${GUARDRAILS}`;
-
-      // NOT ROUTED, deliberately: §3 defines no video-declutter task, so a route
-      // row would invent a chain the router's contract doesn't actually seed.
-      // This path stays hardcoded to Bria — see the COST LEDGER note below for
-      // pricing (audit item 3 changed that half of the "stays as shipped" story;
-      // the ROUTING half is unchanged).
-      const charge = await guardGenerate(user.id, req, "declutter"); // validated — charge, then submit
-      let sub: Awaited<ReturnType<typeof falSubmit>>;
-      try {
-        sub = await falSubmit(MODEL_DECLUTTER, {
-          video_url: asset.url,
-          prompt: erasePrompt,
-          auto_trim: false, // never silently cut the video — process the full clip
-          preserve_audio: true,
-          output_container_and_codec: "mp4_h264",
-        });
-      } catch (e) {
-        // The submit itself failed — fal never accepted the job, so hand the
-        // reel-allowance charge back (audit item 2). See refundGenerateCharge.
-        await refundGenerateCharge(charge);
-        throw e;
-      }
-
-      // COST LEDGER (audit item 3): this route consumed the shared reel quota
-      // and called a real provider, then wrote NOTHING to cost_ledger — so a
-      // heavy user of this route could spend real Bria money that never showed
-      // up in the org's monthly COGS total or GET /admin/spend. No unit price
-      // for Bria is committed ANYWHERE in this repo (confirmed against
-      // admin/index.ts's own bria row, unit_cost_cents: null, and
-      // HANDOFF-DB.md's "Known gap: bria/video/erase/prompt" — §3 of the router
-      // contract never defined a video-declutter task either). Rather than
-      // inventing a number, this reuses APP_AI_UNIT_CENTS
-      // .bria_declutter_per_clip_estimated — itself a pointer to the existing,
-      // already-committed ESTIMATED_UNIT_COST_CENTS.declutter figure (Flux
-      // Fill/Kontext masked inpaint, ~$0.04/image) — as an explicitly-marked
-      // placeholder so the row exists and is auditable instead of silently
-      // absent. meta.price_estimated flags it for every consumer of this table.
-      // Replace with Bria's real per-clip price the moment one is obtained, and
-      // mirror the change into admin/index.ts's bria row + HANDOFF-DB.md in the
-      // same commit (see docs/handoff/audit-fixes.md).
-      await recordAppAiCost(adminClient(), {
-        orgId: charge.orgId,
-        provider: "fal",
-        feature: "video_declutter",
-        model: MODEL_DECLUTTER,
-        units: 1,
-        unitCents: APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated,
-        meta: {
-          space_type: space,
-          request_id: sub.request_id,
-          price_estimated: true,
-          price_basis:
-            "No committed Bria price exists in the repo; reusing ESTIMATED_UNIT_COST_CENTS.declutter " +
-            "as an order-of-magnitude stand-in — see HANDOFF-DB.md 'Known gap: bria/video/erase/prompt'.",
-        },
-      });
-
-      const prov = await recordProvenance(req, {
-        listingId: body.listing_id ?? asset.listing_id,
-        kind: "declutter",
-        label: body.label ?? null,
-        modelId: MODEL_DECLUTTER,
-        edit: "declutter",
-        promptSummary: userErase ?? null,
-      });
-      return json({
-        ...sub,
-        kind: "declutter",
-        model_id: MODEL_DECLUTTER,
-        space_type: space,
-        disclosure: prov.disclosure,
-        provenance: { id: prov.id, recorded: prov.recorded, ...(prov.reason ? { reason: prov.reason } : {}) },
       }, 202);
     }
 

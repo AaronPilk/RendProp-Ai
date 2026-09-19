@@ -164,7 +164,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
     /// `media_provenance.id` (a server UUID string).
     let id: String
     var listingID: UUID? = nil
-    /// photo_edit | virtual_stage | declutter | aerial | reel | other.
+    /// photo_edit | virtual_stage | declutter | aerial | reel | video_reflection_removal | other.
     var kind: String
     /// "Living room", "Aerial intro" — may be null; fall back to `displayLabel`.
     var label: String? = nil
@@ -188,7 +188,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
     /// services/supabase/functions/tours/index.ts, for the routes that send the
     /// raw `model_id` instead.
     static func modelFamily(_ kind: String) -> String {
-        (kind == "aerial" || kind == "reel") ? "AI video" : "AI image edit"
+        (kind == "aerial" || kind == "reel" || kind == "video_reflection_removal") ? "AI video" : "AI image edit"
     }
 
     /// Human name for a `kind` — used when the row carries no label.
@@ -199,6 +199,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
         case "declutter":     return "Decluttered photo"
         case "aerial":        return "Aerial intro"
         case "reel":          return "Reel clip"
+        case "video_reflection_removal": return "Walkthrough reflection removal"
         default:              return "Altered media"
         }
     }
@@ -1015,6 +1016,13 @@ protocol APIClient: Sendable {
     /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
+
+    func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote
+    func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
+                           idempotencyKey: UUID) async throws -> AIVideoJob
+    func cancelReflectionBatch(_ batchID: UUID) async throws
+    func applyReflectionBatch(_ batchID: UUID, originalAssetID: String,
+                              alteredAssetID: String) async throws -> ReflectionApplication
 
     /// POST /ai-video/drift — THE QUALITY GATE.
     ///

@@ -8,9 +8,8 @@ import UIKit
 ///
 /// Flow: record → (pause/resume, any number of times) → (finalizing) →
 /// "Use this take / Retake" review → onComplete.
-/// X while recording stops AND discards the take (after a confirm); a
-/// discarded or retaken file (and its motion sidecar) is deleted on the spot,
-/// so no orphan captures pile up in Documents (audit F-D-16).
+/// X while recording discards only after confirmation. Completed pieces are
+/// journaled before joining and remain available in Saved takes after relaunch.
 ///
 /// PAUSE exists because a real walkthrough is not a clean run: a client walks
 /// into frame, a door sticks, someone says something. iOS has no pause on
@@ -34,10 +33,14 @@ struct CaptureView: View {
     @State private var showDiscardConfirm = false
     /// Joining the pieces of a paused take back into one file.
     @State private var isJoining = false
-    /// Set only when the join failed and the review card is showing one piece
-    /// instead of the whole take. Never silently swallowed — footage is the one
-    /// thing this screen must not lose quietly.
-    @State private var joinWarning: String?
+    @State private var recordingRecovery: RecoverableTake?
+    @State private var recovery: RecoverableTake?
+    @State private var recoveryError: String?
+    @State private var savedTakes: [RecoverableTake] = []
+    @State private var otherRecordings: [TakeRecoveryStore.OtherRecording] = []
+    @State private var unreadableRecoveries = 0
+    @State private var showSavedTakes = false
+    @State private var showRecoveryCloseConfirm = false
 
     let onComplete: (CaptureAsset) -> Void
 
@@ -46,6 +49,9 @@ struct CaptureView: View {
         let sidecar: URL?
         let tags: [RoomTag]
         let seconds: Double
+        let fps: Double
+        let formatLabel: String
+        let recovery: RecoverableTake
         /// Where somebody was visible, on this take's clock.
         var people: [TimeRange] = []
     }
@@ -83,16 +89,36 @@ struct CaptureView: View {
             }
         }
         .statusBarHidden()
+        .interactiveDismissDisabled(isFinalizing || isSavingTake || takeInProgress || (recovery.map { !isDurablySaved($0) } ?? false))
+        .overlay {
+            if let recovery { recoveryOverlay(recovery) }
+        }
+        .overlay(alignment: .bottom) {
+            if isInfoState, recovery == nil { savedTakesButton.padding(.bottom, 24) }
+        }
+        .sheet(isPresented: $showSavedTakes) { savedTakesSheet }
+        .onChange(of: tags) { updated in
+            guard var checkpoint = recordingRecovery else { return }
+            checkpoint.tags = updated
+            recordingRecovery = checkpoint
+            do { try TakeRecoveryStore.save(checkpoint) }
+            catch { recoveryError = "The take is on your phone, but its recovery details couldn’t be saved. Stop and export its parts before leaving." }
+        }
         .onAppear {
             IdleTimer.hold()                       // the screen must not sleep mid-take
             camera.onFinish = handleFinished
             camera.onRecordingStarted = { motion.beginLogging() }   // sidecar t=0 = first frame
-            camera.onRecordingResumed = { motion.resumeLogging() }  // same clock, pause skipped
+            camera.onSegmentStarted = { motion.beginSegment(atUptime: $0, joinedOffset: $1) }
+            camera.onSegmentFinished = { motion.finishSegment(duration: $0) }
+            camera.onSegmentsChanged = checkpointTake
             camera.onDiscarded = {
                 motion.cancelLogging()
+                if let recordingRecovery { TakeRecoveryStore.forgetDiscarded(recordingRecovery.id) }
+                recordingRecovery = nil
                 tags.removeAll()
                 Haptics.selection()
             }
+            refreshSavedTakes()
             camera.start()
             motion.startUpdates()
         }
@@ -102,6 +128,9 @@ struct CaptureView: View {
             camera.onFinish = nil
             camera.onRecordingStarted = nil
             camera.onRecordingResumed = nil
+            camera.onSegmentStarted = nil
+            camera.onSegmentFinished = nil
+            camera.onSegmentsChanged = nil
             camera.onDiscarded = nil
             motion.stopUpdates()
             camera.stop()
@@ -116,13 +145,20 @@ struct CaptureView: View {
         } message: {
             Text("The footage recorded so far will be deleted.")
         }
+        .confirmationDialog("Close without a saved recovery record?", isPresented: $showRecoveryCloseConfirm,
+                            titleVisibility: .visible) {
+            Button("Close") { dismiss() }
+            Button("Stay and save the parts", role: .cancel) {}
+        } message: {
+            Text("Nothing will be deleted, but these parts may not appear in Saved takes after closing. Save each part to Files first.")
+        }
     }
 
     private var isRecording: Bool { camera.state == .recording }
     private var isPaused: Bool { camera.state == .paused }
     /// A take exists — recording or held. Stop always applies; so does tagging.
     private var takeInProgress: Bool { isRecording || isPaused }
-    private var isFinalizing: Bool { camera.state == .finalizing }
+    private var isFinalizing: Bool { camera.state == .finalizing || isJoining }
 
     private var isInfoState: Bool {
         switch camera.state {
@@ -156,6 +192,8 @@ struct CaptureView: View {
                 }
                 .disabled(isFinalizing)
                 .accessibilityLabel(Text(takeInProgress ? "Stop and discard take" : "Close"))
+
+                if !takeInProgress { savedTakesButton.disabled(isFinalizing) }
 
                 Spacer()
 
@@ -217,8 +255,10 @@ struct CaptureView: View {
             // Banners
             VStack(spacing: 8) {
                 if let message = camera.thermalMessage { banner(message, color: Theme.warn) }
+                if let message = camera.personDetectionUnavailableMessage { banner(message, color: Theme.warn) }
                 if let message = camera.interruptionMessage { banner(message, color: Theme.bad) }
                 if let message = camera.storageMessage { banner(message, color: Theme.bad) }
+                if let recoveryError { banner(recoveryError, color: Theme.warn) }
                 if isSideways { banner("Hold your phone upright — tours record in portrait", color: Theme.warn) }
                 PersonWarning(visible: camera.personInShot)
                 LightWarning(luminance: camera.luminance)
@@ -246,8 +286,9 @@ struct CaptureView: View {
                             .overlay(Circle().strokeBorder(camera.isUltraWide ? Theme.accent : .white.opacity(0.25),
                                                            lineWidth: 1))
                     }
+                    .disabled(takeInProgress || isFinalizing)
                     .accessibilityLabel(Text(camera.isUltraWide ? "Ultra-wide lens on" : "Standard lens"))
-                    Spacer()
+            Spacer()
                 }
                 PaceRing(pace: motion.pace, isRecording: isRecording)
             }
@@ -302,7 +343,6 @@ struct CaptureView: View {
                 camera.resumeRecording()
                 Haptics.selection()
             } else {
-                motion.pauseLogging()
                 camera.pauseRecording()
                 Haptics.selection()
             }
@@ -389,8 +429,8 @@ struct CaptureView: View {
                 HStack(spacing: 18) {
                     Label(Formatters.duration(take.seconds), systemImage: "timer")
                     Label("\(take.tags.count) \(take.tags.count == 1 ? "tag" : "tags")", systemImage: "tag")
-                    if !camera.formatLabel.isEmpty {
-                        Label(camera.formatLabel, systemImage: "video")
+                    if !take.formatLabel.isEmpty {
+                        Label(take.formatLabel, systemImage: "video")
                     }
                 }
                 .font(.caption.weight(.semibold))
@@ -409,14 +449,6 @@ struct CaptureView: View {
                         .multilineTextAlignment(.leading)
                         .padding(.horizontal)
                         .accessibilityLabel(Text("Someone was visible in \(n) moments, about \(secs) seconds in total."))
-                }
-
-                if let joinWarning {
-                    Label(joinWarning, systemImage: "exclamationmark.triangle.fill")
-                        .font(.rpCaption)
-                        .foregroundStyle(Theme.warn)
-                        .multilineTextAlignment(.leading)
-                        .padding(.horizontal)
                 }
 
                 if let reviewError {
@@ -447,7 +479,7 @@ struct CaptureView: View {
                     Button {
                         retake(take)
                     } label: {
-                        Text("Retake")
+                        Text("Record another")
                             .fontWeight(.semibold)
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 13)
@@ -458,12 +490,136 @@ struct CaptureView: View {
                     .disabled(isSavingTake)
                 }
 
-                Text("Retake deletes this file. Tags are re-recorded on the next take.")
+                Text("Your original parts stay in Saved takes, including after you close the app.")
                     .font(.caption2)
                     .foregroundStyle(Color.white.opacity(0.6))
                     .multilineTextAlignment(.center)
             }
             .padding(24)
+        }
+    }
+
+    // MARK: - Saved takes and failed-join recovery
+
+    @ViewBuilder private var savedTakesButton: some View {
+        if !savedTakes.isEmpty || !otherRecordings.isEmpty || unreadableRecoveries > 0 {
+            Button { refreshSavedTakes(); showSavedTakes = true } label: {
+                Label("Saved takes", systemImage: "tray.full")
+                    .font(.caption.weight(.semibold))
+                    .padding(10)
+                    .background(.ultraThinMaterial, in: Capsule())
+            }
+            .accessibilityIdentifier("capture.saved-takes")
+        }
+    }
+
+    private var savedTakesSheet: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Text("Original recordings are kept here so you can retry a join or save each part to Files.")
+                        .font(.subheadline)
+                }
+                ForEach(savedTakes) { take in
+                    Button {
+                        showSavedTakes = false
+                        stopReviewPlayback()
+                        review = nil
+                        recoveryError = nil
+                        recovery = take
+                    } label: {
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(take.createdAt, style: .date).font(.headline)
+                            Text("\(take.piecePaths.count) \(take.piecePaths.count == 1 ? "part" : "parts") · \(Formatters.duration(take.seconds))")
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                if !otherRecordings.isEmpty {
+                    Section {
+                        ForEach(otherRecordings) { recording in
+                            ShareLink(item: recording.url) {
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        if let date = recording.createdAt {
+                                            Text(date.formatted(date: .abbreviated, time: .shortened))
+                                        } else { Text("Recording") }
+                                        Text(Formatters.bytes(Int64(recording.bytes))).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "square.and.arrow.up")
+                                }
+                            }
+                        }
+                    } header: {
+                        Text("Other recordings on this phone")
+                    } footer: {
+                        Text("These files have no saved-take record. Some may be parts from an older app version. Save them individually; their order has not been guessed.")
+                    }
+                }
+                if unreadableRecoveries > 0 {
+                    Text("\(unreadableRecoveries) saved \(unreadableRecoveries == 1 ? "take needs" : "takes need") help opening. The recovery records and original files have been kept. Contact Aaron@pilk.ai before clearing app data.")
+                        .foregroundStyle(Theme.warn)
+                }
+            }
+            .navigationTitle("Saved takes")
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { showSavedTakes = false } } }
+        }
+    }
+
+    private func recoveryOverlay(_ take: RecoverableTake) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                Label(isDurablySaved(take) ? "Your take is saved" : "Save your video parts", systemImage: "tray.full.fill").font(.rpTitle)
+                Text("\(take.piecePaths.count) \(take.piecePaths.count == 1 ? "part" : "parts") · \(Formatters.duration(take.seconds))")
+                    .font(.headline)
+                Text("Retry joining the parts into one video, or save each part to Files. Your originals will stay on this phone.")
+                    .font(.rpBody)
+                if let recoveryError { Text(recoveryError).foregroundStyle(Theme.warn) }
+                if isJoining {
+                    ProgressView("Checking and joining your take…")
+                } else {
+                    Button(take.piecePaths.count == 1 ? "Review this take" : "Retry join") { joinSavedTake(take) }
+                        .buttonStyle(.borderedProminent)
+                        .accessibilityIdentifier("capture.retry-join")
+                }
+                ForEach(Array(take.pieces.enumerated()), id: \.offset) { index, url in
+                    if FileManager.default.fileExists(atPath: url.path) {
+                        ShareLink(item: url) {
+                            Label("Save part \(index + 1)", systemImage: "square.and.arrow.up")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isJoining)
+                    } else {
+                        Label("Part \(index + 1) is missing from this phone", systemImage: "exclamationmark.triangle")
+                            .foregroundStyle(Theme.warn)
+                    }
+                }
+                Button(isDurablySaved(take) ? "Keep for later" : "Close…") {
+                    if isDurablySaved(take) {
+                        recovery = nil
+                        recoveryError = nil
+                        refreshSavedTakes()
+                        dismiss()
+                    } else {
+                        showRecoveryCloseConfirm = true
+                    }
+                }
+                .disabled(isJoining)
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Theme.bg.ignoresSafeArea())
+        .foregroundStyle(Theme.ink)
+        .interactiveDismissDisabled(isJoining || !isDurablySaved(take))
+    }
+
+    private func isDurablySaved(_ take: RecoverableTake) -> Bool {
+        savedTakes.contains {
+            $0.id == take.id && $0.piecePaths == take.piecePaths &&
+            $0.tags == take.tags && $0.people == take.people && $0.seconds == take.seconds
         }
     }
 
@@ -530,58 +686,116 @@ struct CaptureView: View {
 
     // MARK: - Finalize
 
-    /// The camera handed back the finished take as its pieces, in order (one
-    /// piece if it was never paused, an interrupted partial, or the 10-minute
-    /// cap). Join them if there is more than one, then show the review card.
+    private func refreshSavedTakes() {
+        let library = TakeRecoveryStore.load()
+        savedTakes = library.takes
+        otherRecordings = library.otherRecordings
+        unreadableRecoveries = library.unreadableCount
+    }
+
+    /// Called after each finalized segment, including Pause. The journal keeps
+    /// the ordered parts reachable even if the process exits before Stop.
+    private func checkpointTake(_ urls: [URL], seconds: Double) {
+        guard let first = urls.first else { return }
+        let sidecar = motion.checkpointLogging(besideVideoAt: first, fps: camera.activeFPS,
+                                                width: camera.activeWidth, height: camera.activeHeight)
+        let checkpoint = makeRecovery(urls, seconds: seconds, sidecar: sidecar)
+        recordingRecovery = checkpoint
+        do {
+            try TakeRecoveryStore.save(checkpoint)
+            recoveryError = nil
+        } catch {
+            recoveryError = "Recovery details couldn’t be saved. Your video parts are still on this phone. Stop and save the parts before leaving."
+        }
+        refreshSavedTakes()
+    }
+
+    private func makeRecovery(_ urls: [URL], seconds: Double, sidecar: URL?) -> RecoverableTake {
+        RecoverableTake(id: recordingRecovery?.id ?? UUID(),
+                        createdAt: recordingRecovery?.createdAt ?? Date(),
+                        piecePaths: urls.map { FileStore.relativePath(for: $0) },
+                        sidecarPath: sidecar.map { FileStore.relativePath(for: $0) },
+                        tags: tags, people: camera.personVisibleRanges,
+                        seconds: seconds, fps: camera.activeFPS,
+                        width: camera.activeWidth, height: camera.activeHeight)
+    }
+
+    /// Freeze metadata and stop gyro logging BEFORE awaiting export. Joining
+    /// never reads another take's mutable CameraManager or room-tag state.
     private func handleFinished(_ urls: [URL]) {
-        guard !urls.isEmpty else { return }
-        let pauses = urls.count - 1
-        if pauses == 0 {
-            present(take: urls[0], pauses: 0)
+        guard let first = urls.first, !isJoining else { return }
+        let sidecar = motion.endLogging(besideVideoAt: first, fps: camera.activeFPS,
+                                        width: camera.activeWidth, height: camera.activeHeight)
+        let take = makeRecovery(urls, seconds: camera.elapsed, sidecar: sidecar)
+        recordingRecovery = nil
+        recovery = take
+        joinSavedTake(take)
+    }
+
+    private func joinSavedTake(_ take: RecoverableTake) {
+        guard !isJoining else { return }
+        isJoining = true
+        recoveryError = nil
+        recovery = take
+        do {
+            // Never allocate a joined replacement until all original paths and
+            // metadata have a durable recovery record.
+            try TakeRecoveryStore.save(take)
+        } catch {
+            isJoining = false
+            refreshSavedTakes()
+            recoveryError = "The recovery record couldn’t be saved. Nothing was deleted. Save each part to Files, then free some storage and retry."
             return
         }
-        isJoining = true
+        refreshSavedTakes()
         Task {
-            let joined = await TakeJoiner.join(urls)
+            // A single piece still receives the same complete media validation.
+            // A prior joined output is retained; retry never overwrites it.
+            let joined = await TakeJoiner.join(take.pieces)
+            var completed = take
+            if let joined, let first = take.pieces.first, joined != first,
+               let copiedSidecar = await MotionRecorder.copySidecar(from: first, to: joined) {
+                completed.sidecarPath = FileStore.relativePath(for: copiedSidecar)
+            }
+            let frozenCompleted = completed
             await MainActor.run {
-                isJoining = false
-                if let joined {
-                    // The pieces have been copied into the joined file; keeping
-                    // them would double the storage of every paused take.
-                    for piece in urls { Self.deleteTake(piece) }
-                    present(take: joined, pauses: pauses)
-                } else {
-                    // NEVER LOSE FOOTAGE (master spec 4.2). The join failed, so
-                    // hand back the first piece — the start of the walkthrough —
-                    // and say plainly that the rest is still on the phone rather
-                    // than pretending this is the whole take.
-                    joinWarning = "The \(pauses == 1 ? "pause" : "pauses") couldn\u{2019}t be joined, so this is the first part of your take. Nothing was deleted — record again if you need it in one piece."
-                    present(take: urls[0], pauses: pauses)
+                guard let joined else {
+                    isJoining = false
+                    recoveryError = "These parts couldn’t be joined safely. Every original has been kept. Retry, or save the parts individually."
+                    return
                 }
+                var saved = frozenCompleted
+                if !take.pieces.contains(joined) { saved.joinedPath = FileStore.relativePath(for: joined) }
+                do {
+                    try TakeRecoveryStore.save(saved)
+                } catch {
+                    isJoining = false
+                    recovery = saved
+                    recoveryError = "The video joined, but its recovery details couldn’t be saved. Every original remains available below. Free some storage and retry."
+                    return
+                }
+                // onComplete has no durable-save acknowledgement. Retain all
+                // original parts even after Use this take; never optimistically
+                // delete the user's only independent copy of a walkthrough.
+                isJoining = false
+                recovery = nil
+                refreshSavedTakes()
+                present(take: joined, recovery: saved)
             }
         }
     }
 
-    /// Write the sidecar beside the final file and put the review card up.
-    private func present(take url: URL, pauses: Int) {
-        let sidecar = motion.endLogging(besideVideoAt: url,
-                                        fps: camera.activeFPS,
-                                        width: camera.activeWidth,
-                                        height: camera.activeHeight)
-        Haptics.success()   // the one "clip saved" haptic (CameraManager no longer fires its own)
-        Analytics.track("capture_finished", ["space_type": SpaceType.current.rawValue,
-                                             "duration_s": String(Int(camera.elapsed)),
-                                             "pauses": String(pauses)])
-        let take = TakeReview(url: url, sidecar: sidecar, tags: tags, seconds: camera.elapsed,
-                              people: camera.personVisibleRanges)
-
-        // Muted looping preview of the take behind the buttons.
+    private func present(take url: URL, recovery saved: RecoverableTake) {
+        Haptics.success()
+        let label = "\(min(saved.width, saved.height) >= 2160 ? "4K" : "\(min(saved.width, saved.height))p") · \(Int(saved.fps.rounded())) fps"
+        let take = TakeReview(url: url, sidecar: saved.sidecar, tags: saved.tags,
+                              seconds: saved.seconds, fps: saved.fps, formatLabel: label,
+                              recovery: saved, people: saved.people)
         let player = AVQueuePlayer()
         player.isMuted = true
         reviewLooper = AVPlayerLooper(player: player, templateItem: AVPlayerItem(url: url))
         reviewPlayer = player
         player.play()
-
         reviewError = nil
         review = take
     }
@@ -590,7 +804,7 @@ struct CaptureView: View {
         guard !isSavingTake else { return }
         isSavingTake = true
         reviewError = nil
-        let fallbackFPS = camera.activeFPS
+        let fallbackFPS = take.fps
         Task {
             do {
                 // Validates the file (duration, video track, dimensions,
@@ -609,7 +823,7 @@ struct CaptureView: View {
             } catch {
                 await MainActor.run {
                     isSavingTake = false
-                    reviewError = "This take can't be used — \(error.localizedDescription) Try recording again."
+                    reviewError = "This take can't be used — \(error.localizedDescription) Your originals remain in Saved takes."
                 }
             }
         }
@@ -617,10 +831,12 @@ struct CaptureView: View {
 
     private func retake(_ take: TakeReview) {
         stopReviewPlayback()
-        Self.deleteTake(take.url)
+        // Record another keeps this completed take recoverable.
         tags.removeAll()
         reviewError = nil
-        joinWarning = nil
+        recoveryError = nil
+        recordingRecovery = nil
+        refreshSavedTakes()
         review = nil
         Haptics.selection()
     }
@@ -644,62 +860,124 @@ struct CaptureView: View {
 
 // MARK: - Joining a paused take
 
-/// Joins the pieces of a paused take into one file.
-///
-/// PASSTHROUGH, not a re-encode. Every piece came out of the same capture
-/// session with the same format, codec and dimensions, so the frames can be
-/// copied into one container — a 4K 10-minute take re-encodes for minutes and
-/// loses quality doing it, and neither is acceptable at the moment somebody
-/// taps Stop.
+/// A join is all-or-nothing. Originals remain in TakeRecoveryStore until the
+/// user can recover them; this helper never deletes or overwrites an input.
 enum TakeJoiner {
-    /// Returns the joined file, or nil if anything about the join failed — the
-    /// caller keeps the pieces in that case and says so.
+    private struct Video {
+        let asset: AVURLAsset
+        let track: AVAssetTrack
+        let duration: CMTime
+        let transform: CGAffineTransform
+        let width: Int32
+        let height: Int32
+        let codec: FourCharCode
+        let samples: Int64
+    }
+
+    private static func inspect(_ url: URL) async throws -> Video? {
+        guard FileManager.default.fileExists(atPath: url.path),
+              ((try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0) > 0 else { return nil }
+        let asset = AVURLAsset(url: url)
+        guard try await asset.load(.isPlayable) else { return nil }
+        let tracks = try await asset.loadTracks(withMediaType: .video)
+        guard tracks.count == 1, let track = tracks.first else { return nil }
+        let duration = try await asset.load(.duration)
+        let range = try await track.load(.timeRange)
+        let formats = try await track.load(.formatDescriptions)
+        guard duration.isValid, duration.seconds.isFinite, duration.seconds > 0,
+              range.start.isValid, abs(range.start.seconds) < 0.001,
+              range.duration.isValid, abs(range.duration.seconds - duration.seconds) < 0.05,
+              let format = formats.first else { return nil }
+        let dimensions = CMVideoFormatDescriptionGetDimensions(format)
+        let codec = CMFormatDescriptionGetMediaSubType(format)
+        guard dimensions.width > 0, dimensions.height > 0,
+              formats.allSatisfy({
+                  let d = CMVideoFormatDescriptionGetDimensions($0)
+                  return d.width == dimensions.width && d.height == dimensions.height &&
+                      CMFormatDescriptionGetMediaSubType($0) == codec
+              }) else { return nil }
+        let transform = try await track.load(.preferredTransform)
+        guard [transform.a, transform.b, transform.c, transform.d, transform.tx, transform.ty].allSatisfy(\.isFinite),
+              let samples = try sampleCount(asset: asset, track: track), samples > 0 else { return nil }
+        return Video(asset: asset, track: track, duration: duration, transform: transform,
+                     width: dimensions.width, height: dimensions.height, codec: codec, samples: samples)
+    }
+
+    /// Read compressed sample buffers without decoding 4K frames into memory.
+    /// The completed output must contain every sample from every input.
+    private static func sampleCount(asset: AVAsset, track: AVAssetTrack) throws -> Int64? {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: nil)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { return nil }
+        reader.add(output)
+        guard reader.startReading() else { return nil }
+        var count: Int64 = 0
+        while let sample = output.copyNextSampleBuffer() {
+            if Task.isCancelled { reader.cancelReading(); return nil }
+            let (next, overflow) = count.addingReportingOverflow(Int64(CMSampleBufferGetNumSamples(sample)))
+            guard !overflow else { reader.cancelReading(); return nil }
+            count = next
+        }
+        return reader.status == .completed ? count : nil
+    }
+
+    /// Returns only a complete, verified output. Missing, damaged or mismatched
+    /// pieces fail the whole join and remain available for recovery/export.
     static func join(_ urls: [URL]) async -> URL? {
-        guard urls.count > 1 else { return urls.first }
+        guard !urls.isEmpty else { return nil }
+        let inputPaths = urls.map { $0.resolvingSymlinksInPath().standardizedFileURL.path }
+        guard Set(inputPaths).count == urls.count else { return nil }
+        var videos: [Video] = []
+        do {
+            for url in urls {
+                guard !Task.isCancelled, let video = try await inspect(url) else { return nil }
+                if let first = videos.first {
+                    guard video.width == first.width, video.height == first.height,
+                          video.codec == first.codec, video.transform == first.transform else { return nil }
+                }
+                videos.append(video)
+            }
+        } catch { return nil }
+        guard let first = videos.first else { return nil }
+        if videos.count == 1 { return first.duration.seconds <= MediaImporter.maxDurationSeconds ? urls[0] : nil }
         let composition = AVMutableComposition()
         guard let track = composition.addMutableTrack(withMediaType: .video,
-                                                      preferredTrackID: kCMPersistentTrackID_Invalid)
-        else { return nil }
-
+                                                      preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
         var cursor = CMTime.zero
-        var orientation: CGAffineTransform?
-        for url in urls {
-            let asset = AVURLAsset(url: url)
-            guard let source = try? await asset.loadTracks(withMediaType: .video).first,
-                  let duration = try? await asset.load(.duration),
-                  duration.isValid, duration.seconds.isFinite, duration.seconds > 0
-            else { continue }
-            do {
-                try track.insertTimeRange(CMTimeRange(start: .zero, duration: duration),
-                                          of: source, at: cursor)
-            } catch {
-                continue
+        var expectedSamples: Int64 = 0
+        do {
+            for video in videos {
+                try track.insertTimeRange(CMTimeRange(start: .zero, duration: video.duration), of: video.track, at: cursor)
+                cursor = CMTimeAdd(cursor, video.duration)
+                let (next, overflow) = expectedSamples.addingReportingOverflow(video.samples)
+                guard !overflow else { return nil }
+                expectedSamples = next
             }
-            // Portrait capture writes its rotation as a track transform. Taking
-            // it from the first piece keeps the joined file upright; without it
-            // the whole take plays on its side.
-            if orientation == nil { orientation = try? await source.load(.preferredTransform) }
-            cursor = CMTimeAdd(cursor, duration)
-        }
-        guard cursor.seconds > 0 else { return nil }
-        if let orientation { track.preferredTransform = orientation }
-
+        } catch { return nil }
+        guard cursor.seconds <= MediaImporter.maxDurationSeconds else { return nil }
+        track.preferredTransform = first.transform
         let out = FileStore.newRecordingURL()
-        try? FileManager.default.removeItem(at: out)
-        guard let export = AVAssetExportSession(asset: composition,
-                                                presetName: AVAssetExportPresetPassthrough)
-        else { return nil }
+        guard !inputPaths.contains(out.resolvingSymlinksInPath().standardizedFileURL.path),
+              !FileManager.default.fileExists(atPath: out.path) else { return nil }
+        var keepOutput = false
+        defer { if !keepOutput { try? FileManager.default.removeItem(at: out) } }
+        guard let export = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough) else { return nil }
         export.outputURL = out
         export.outputFileType = .mov
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             export.exportAsynchronously { continuation.resume() }
         }
-        guard export.status == .completed,
-              FileManager.default.fileExists(atPath: out.path) else {
-            try? FileManager.default.removeItem(at: out)
-            return nil
-        }
+        guard !Task.isCancelled, export.status == .completed else { return nil }
+        do {
+            guard let result = try await inspect(out), result.samples == expectedSamples,
+                  result.duration.seconds <= MediaImporter.maxDurationSeconds,
+                  abs(result.duration.seconds - cursor.seconds) < 0.05,
+                  result.width == first.width, result.height == first.height,
+                  result.codec == first.codec, result.transform == first.transform else { return nil }
+        } catch { return nil }
         MediaImporter.excludeFromBackup(FileStore.recordingsDir)
+        keepOutput = true
         return out
     }
 }

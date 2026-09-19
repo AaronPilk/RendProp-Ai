@@ -633,10 +633,15 @@ Deno.serve(async (req) => {
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
       // Refuse before spending tokens polishing something we would never run.
-      assertFairHousing(rough, "That idea", await gateSpace());
+      const promptSpace = await gateSpace();
+      assertFairHousing(rough, "That idea", promptSpace);
       const helperCharge = await guardHelper(user.id, req);
       try {
-        return json({ prompt: await improvePrompt(rough, space), space_type: space });
+        const improved = await improvePrompt(rough, space);
+        // A safe request can still produce an unsafe suggestion. Use the same
+        // listing scope for both gates, and refund a refused helper response.
+        assertFairHousing(improved, "The suggested edit", promptSpace);
+        return json({ prompt: improved, space_type: space });
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;

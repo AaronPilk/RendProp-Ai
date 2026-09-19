@@ -205,3 +205,44 @@ The comparison should report actual numbers and repeatability; this audit sets
 no invented acceptable battery threshold. Any Task 2 cost estimate must use
 normalized intervals, separately acknowledge unobserved footage, and remain
 opt-in as the handoff requires.
+
+## Local repairs and fixed regressions
+
+The audited September 17 implementation remains reproducible with `timing/run.py`,
+which now reads `7bcc624` through `git show` by default. The repaired working
+tree is separately exercised by:
+
+```sh
+python3 tools/audit/call-20260919/timing/regression.py
+```
+
+The fixed run compiles the real changed camera functions and complete motion
+recorder, retaining only the framework/input doubles. It produced these results:
+
+- The finalizing trace now preserves `[1, 10]`.
+- Adjacent half-second spans across Pause merge to `[0.5, 2]` before filtering.
+  Invalid/non-finite spans are rejected; final padding is clamped to media length.
+- Heat freezes evidence at the last sampled time, clears the stale positive and
+  exposes an unavailable message. The previous sixty-second false range becomes
+  `[0, 3.5]`. No inference runs while thermal availability is false.
+- Source timestamps converted through the capture synchronization clock control
+  ranges; queued results from an old segment/availability generation are ignored.
+  Both 30 and 60 FPS produce **20 handler calls in ten seconds**.
+- Measured segment durations supply joined offsets. The retained sidecar times
+  are **9.9, 10.3, 10.5**: the written stop tail stays, a stale pre-pause callback
+  is rejected, and pause/join samples are excluded. The actual sidecar write,
+  checkpoint and asynchronous rebind were decoded; the source sidecar remains.
+- A stopped camera session now gives actionable Resume/Stop feedback. Exhausted
+  or less-than-one-frame headroom delivers the existing pieces; whole-frame and
+  CMTime flooring keeps all requested take totals at or below **600 seconds**.
+  No footage is trimmed to conceal an overrun. Single-frame and unprobeable files
+  are retained for the recovery flow rather than silently deleted.
+
+Receipt: `tools/audit/call-20260919/timing/receipt-fixed.json` (temporary evidence
+directory `rendprop-call-timing-fixed-bcgvw3s2`). Native Swift parsing and
+`git diff --check` also passed. These checks do not replace the full iOS build,
+the other capture/recovery regressions, or the physical-device evidence above.
+In particular, the file delegate's host anchor remains an **estimate**; a
+per-segment timeline removes accumulated pause drift but does not prove exact
+sensor-to-movie alignment. The controller callbacks freeze motion before the
+capture view begins joining, with UI wiring owned by the recovery repair.

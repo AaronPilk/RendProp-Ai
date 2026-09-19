@@ -265,6 +265,18 @@ jobs:
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
           done
 
+      - name: Durable video reflection jobs and idempotent migration replay
+        run: |
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0055_video_reflection_jobs.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+
+      - name: Concurrent reflection receipts, cancellation and cost fences
+        run: |
+          createdb --template=rendprop erase_audit
+          trap 'dropdb --if-exists erase_audit' EXIT
+          python3 tools/audit/call-20260919/web/erase-concurrency.py psql -X --no-password -v ON_ERROR_STOP=1 -d erase_audit
+
       # The adversarial battery: privileged surface, grants, plan coherence
       # (enforced == published), lifecycle schema, and a mutating fixture that
       # exercises signup → publish → quota → chapters → leads → delete.

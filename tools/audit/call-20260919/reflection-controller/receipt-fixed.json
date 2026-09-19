@@ -1,0 +1,32 @@
+{
+  "baseline": false,
+  "sourceSHA256": {
+    "apps/ios/Rendprop/Render/ReflectionRemoval.swift": "ce0743bd585b1d8ff3450c1bc97542aa2e2e92cd7b766bd622d752f662371718",
+    "apps/ios/Rendprop/Networking/ReflectionAPI.swift": "89c7775a77120dedf6c6655e8478443e014be538cf73a80f0f39036ffe8b51c6",
+    "tools/audit/call-20260919/reflection-controller/checks.swift": "30480e7b3182e55efc4b47942f973e9d8fd97c3a273645b6a338a9e460fb880b"
+  },
+  "commands": [
+    {
+      "label": "compile",
+      "exit": 0
+    },
+    {
+      "label": "execute",
+      "exit": 0
+    }
+  ],
+  "result": {
+    "accountSwitchRejectsLateUploadAndIsolatesController": true,
+    "cancelAfterApplyCommitRecoversReceiptWithoutSelectingEdit": true,
+    "definitiveSecondClip400RefundsWholeBatch": true,
+    "definitiveSecondClip402RefundsWholeBatch": true,
+    "fullOriginalCopiedAndNoAutomaticAcceptance": true,
+    "journalWriteFailureStillCancelsOnServer": true,
+    "lateCancelledExtractPoisonsNewBatch": false,
+    "lostSubmitRelaunchUsesSameClipUUID": true,
+    "offlineRefundRemainsPendingUntilAcknowledged": true,
+    "onlyExplicitSubsequentAcceptanceChangesModel": true,
+    "rateLimitedSecondClipRemainsResumable": true,
+    "unusableProviderOutputAutomaticallyRequestsBatchRefund": true
+  }
+}
