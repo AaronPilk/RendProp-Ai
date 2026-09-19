@@ -92,23 +92,43 @@ def main():
         if baseline_present:
             before = out / 'baseline' / 'me'
             before.mkdir(parents=True)
-            (before.parent / '_shared').symlink_to(functions / '_shared', target_is_directory=True)
-            # Reuse unchanged actual shared helpers, not handwritten replacement
-            # implementations. Every shared source is compared with the baseline.
-            for path in sorted((functions / '_shared').glob('*.ts')):
-                saved = subprocess.run([git, 'show', f'{BASE}:{path.relative_to(root)}'], cwd=root,
+            # The historical handler must run with its OWN actual helpers.
+            # Current helpers legitimately evolved (0044 entitlements, etc.);
+            # symlinking them into the old handler would confound the control.
+            prefix = 'services/supabase/functions/'
+            names = subprocess.check_output([git, 'ls-tree', '-r', '--name-only', BASE,
+                                              prefix + '_shared', prefix + 'me'], cwd=root, env=env, text=True)
+            baseline_paths = {}
+            for name in names.splitlines():
+                relative = Path(name).relative_to(prefix)
+                if relative.suffix != '.ts' or relative.name.endswith(('.test.ts', '_test.ts')):
+                    continue
+                assert relative.parts[0] in ('me', '_shared') and '..' not in relative.parts
+                saved = subprocess.run([git, 'show', f'{BASE}:{name}'], cwd=root,
                                        env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-                assert saved.returncode == 0 and saved.stdout == path.read_bytes(), f'Shared helper changed since baseline: {path.name}'
-            for name in ['index.ts', 'logic.ts']:
-                saved = subprocess.run([git, 'show', f'{BASE}:services/supabase/functions/me/{name}'], cwd=root,
-                                       env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-                assert saved.returncode == 0
-                (before / name).write_bytes(saved.stdout)
+                assert saved.returncode == 0, f'Missing historical source: {name}'
+                target = before.parent / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(saved.stdout)
+                baseline_paths[name] = target
+            assert (before / 'index.ts').is_file() and (before / 'logic.ts').is_file()
+            assert (before.parent / '_shared/supabase.ts').is_file()
+            receipt['baselineSourceHashes'] = {name: hashlib.sha256(path.read_bytes()).hexdigest()
+                                               for name, path in baseline_paths.items()}
+            receipt['baselineDependencyMode'] = 'Exact historical Git tree; no current-helper symlinks'
             (before / 'deletion.test.ts').write_bytes((functions / 'me/deletion.test.ts').read_bytes())
+            receipt['baselineFixtureSHA256'] = hashlib.sha256((before / 'deletion.test.ts').read_bytes()).hexdigest()
+            # Cache only the historical entrypoint dependencies. Handler/test
+            # execution below still denies network, process spawn and writes.
+            run('prepare-baseline-dependencies', [deno, 'install', '--no-config', '--no-lock', '--node-modules-dir=none',
+                                                  '--entrypoint', str(before / 'deletion.test.ts')],
+                0, environment=preparation_env)
             baseline = run('before-stale-handler', deno_test + ['--filter', 'adoption winner', str(before / 'deletion.test.ts')], 1)
             assert 'adopted workspace was destroyed from stale ownership' in baseline
             assert re.search(rf'0 passed \| 1 failed \| {BASELINE_FILTERED_OUT} filtered out', baseline), 'Unexpected baseline execution count'
             receipt['baselineControl'] = {'executed': True, 'detected': True}
+            assert all(hashlib.sha256(path.read_bytes()).hexdigest() == receipt['baselineSourceHashes'][name]
+                       for name, path in baseline_paths.items()), 'Historical source changed during test'
         else:
             receipt['baselineControl'] = {'executed': False,
                                           'reason': f'commit {BASE} not in local git objects; --skip-baseline-control given'}
@@ -116,6 +136,8 @@ def main():
         after = run('after-handler-and-logic', deno_test + [str(functions / 'me/deletion.test.ts'), str(functions / 'me/logic.test.ts')], 0)
         # Match the summary, not test titles containing words like "ignored".
         assert re.search(rf'^ok \| {FULL_SUITE} passed \| 0 failed \([^\n]+\)$', after, re.MULTILINE), 'Unexpected complete-suite summary'
+        assert all(hashlib.sha256(path.read_bytes()).hexdigest() == receipt['sourceHashes'][str(path.relative_to(root))]
+                   for path in paths), 'Current source changed during test'
         receipt['accepted'] = True
     finally:
         (out / 'receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')

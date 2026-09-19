@@ -105,3 +105,35 @@ before paid/publication negative controls. No database-name guard, SQL assertion
 or migration was weakened. A new control-flow regression fails specifically at
 `negative-paid-gates` against155aa0e and passes after repair (32 runner tests).
 Full native verification and subsequent CI confirmation are recorded separately.
+
+At0069e45 the full native publication runner passed:
+`/tmp/rendprop-db-audit-acp1vpuy/receipt.json` records57 migrations,49 historical
+replays,266 invariants twice, six paid-gate negative outcomes, worker publication
+22 checks across four restored/positive runs, upload publication19 checks twice,
+and each deliberately broken ownership/video/scalar/upload/entitlement guard
+caught. The owned cluster stopped. CI35473979713 confirmed these SQL checks,
+service-container migration checks and850 edge tests, then exposed an older
+handler-harness limitation in a later step.
+
+`run_deletion_handler_regression.py` required every current shared helper to equal
+baf77f9 while symlinking those helpers into its historical handler. That premise
+was already false at7bcc624: current `entitlements.ts` equals7bcc624 byte-for-byte
+and differs from baf77f9 (0044's industry-aware entitlements). The repair now
+materializes33 production TypeScript files from the exact historical Git tree,
+hashes them separately, and runs the old handler with its own helpers. The same
+current adversarial fixture still must catch the old adoption-race failure with
+exactly one failed/38 filtered tests. Current code and current helpers must pass
+all53 handler/logic tests. Both expectations pass; neither auth behavior nor the
+expected failure reason/count changed. Source hashes are rechecked after tests.
+Only dependency caching permits network; handler runs deny network/process/write
+permissions and inherit no provider credentials.
+
+Receipts are outside Git:
+- `/tmp/rendprop-deletion-handler-t455gi_7/receipt.json`: historical failure detected,
+  current53/0 pass; separate historical/current source hashes.
+- `/tmp/call-deletion-handler-provenance.json`: exact pre-existing helper drift.
+- `/tmp/rendprop-spatial-edge-7o9bq7xe/receipt.json`: remaining35 spatial edge tests
+  pass and a copied output-hash mutant is rejected.
+- `/tmp/rendprop-upload-pg-3iwziltn/receipt.json`: remaining26 real upload SQL tests
+  pass, four deliberately broken guards are detected, four restorations pass,
+  and the owned socket-only cluster stops.
