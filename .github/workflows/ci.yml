@@ -268,8 +268,11 @@ jobs:
       - name: Durable video reflection jobs and idempotent migration replay
         run: |
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
           psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0055_video_reflection_jobs.sql
+          psql -v ON_ERROR_STOP=1 -q -1 -f services/supabase/migrations/0056_active_photo_fallback.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
 
       - name: Concurrent reflection receipts, cancellation and cost fences
         run: |
@@ -299,20 +302,28 @@ jobs:
           fi
           echo "invariants: green apart from the documented kept-red #155 (agent-reel ceiling)"
 
-      # Production already has every migration applied. Anything that may be
-      # re-applied there — the re-committed 0005b/0008b and everything from 0009
-      # onward (new migrations join automatically) — must be a safe no-op on a
-      # database that already has it. 0001–0008 are frozen history and are not
-      # replayed (0001's CREATE POLICY and 0006's ADD CONSTRAINT are one-shot).
-      - name: Replay the re-appliable migrations on the migrated database
+      # Replay each historical version before a later migration replaces it.
+      #0050's old overload is intentionally superseded by0051; applying0050
+      #backwards onto the final schema is not a supported production sequence.
+      - name: Replay migrations twice at their historical schema points
+        env:
+          PGDATABASE: rendprop_replay
         run: |
-          for f in services/supabase/migrations/0005b_*.sql services/supabase/migrations/0008b_*.sql \
-                   $(ls services/supabase/migrations/*.sql | LC_ALL=C sort | awk '$0 >= "services/supabase/migrations/0009"'); do
-            echo "== replay $f"
+          createdb rendprop_replay
+          psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
+          for f in $(ls services/supabase/migrations/*.sql | LC_ALL=C sort); do
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
+            case "$f" in
+              */0005b_*|*/0008b_*) psql -v ON_ERROR_STOP=1 -q -1 -f "$f" ;;
+              *) if [[ "$f" > "services/supabase/migrations/0009" ]]; then psql -v ON_ERROR_STOP=1 -q -1 -f "$f"; fi ;;
+            esac
           done
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
+          psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql
 
       - name: Invariants after the replay (same answers, one overload per RPC)
+        env:
+          PGDATABASE: rendprop_replay
         run: |
           # invariants.sql raises when any assertion is red. Exactly one is red
           # on purpose — #155, the agent-reel token headroom the owner has not

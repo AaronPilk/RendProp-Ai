@@ -35,7 +35,76 @@ Final receipts:
 - Persistence: `/tmp/rendprop-call-persistence-fixed-3mq_1ndo/receipt.json`.
 - Re-executed original defects: `/tmp/rendprop-call-join-axddiimw/receipt.json` and `/tmp/rendprop-call-persistence-dxv2obwk/receipt.json`.
 
-The receipts include source hashes and exact compile/run commands. All synthetic media and compiled programs remain outside Git. Full iOS build and interactive saved-take UI verification belong to the parent integration report; these native checks do not substitute for them.
+The receipts include source hashes and exact compile/run commands. All synthetic media and compiled programs remain outside Git. These native checks do not substitute for a full iOS build or interactive verification.
+
+## Focused recovery UI verification
+
+`CaptureRecoveryTests` uses a newly created iPhone 17 Pro / iOS 26.4 simulator,
+`30F48F80-F4B7-430D-9036-25245F1ADECE`, and the existing `-uiTesting` mock. Camera
+and microphone are explicitly denied. `seed_recovery_ui.py` created two ordered
+synthetic 0.3-second video parts, a recovery journal, and one unindexed legacy
+movie. No existing simulator or customer media was seeded or cleared.
+
+The UI test exposed and reproduced an additional candidate-repair defect:
+after relaunch, Retry join produced a valid 320×240, 0.600000-second output and
+journaled it, but the camera-state switch kept rendering **Camera access is off**
+instead of **Use this take**. The sources and metadata remained intact. The
+correction gives completed review precedence over camera permission/failure;
+recovery does not need access to the camera. A filename-based accessibility ID
+also lets the test select the exact legacy export when repeated joins have
+retained additional outputs.
+
+Pre-fix evidence: `/tmp/rendprop-recovery-ui-before-review.xcresult`, its adjacent
+`.log`, `-sources.json`, `-files.json`, and exported `-attachments/` directory.
+The earlier `/tmp/rendprop-recovery-ui-before.xcresult` is retained separately as
+a harness failure: iOS exposed **Save to Files** as a Cell, while the initial
+test queried a Button. The screenshot and hierarchy showed that export was
+available; the test selector was corrected without changing product behavior.
+
+**Final full build-for-testing PASS; focused XCUITest PASS: 1 test, 0 failures,
+169.479 seconds.** It traversed Add a home → Record a walkthrough with camera
+permission denied, opened Saved takes and the ordered recovery, used Keep for
+later, terminated/relaunched the app, retried the join, and reached an enabled
+Use this take button with an actual playable preview. It then opened the exact
+legacy movie and ordered second part in the system share controller, revealed
+Save to Files for both, dismissed the share controller, and used Keep for later.
+No external destination or recipient was selected and no destination-file write
+is claimed.
+
+The final integrity check confirmed that all three synthetic originals and the
+earlier joined output remain byte-for-byte unchanged. All seeded journal
+metadata, including ordered parts, room tag and person range, survived. The
+latest joined movie decodes to **18 frames / 0.600000 seconds / 320×240**. Tested
+source and app-binary hashes remained unchanged through the final run. The
+review and per-part Save to Files screenshots were inspected visually.
+
+Final evidence:
+
+- Full build log: `/tmp/rendprop-recovery-ui-final-build.log`.
+- Focused run: `/tmp/rendprop-recovery-ui-final.xcresult` and `.log`.
+- Source/binary/media/journal integrity: `/tmp/rendprop-recovery-ui-final-receipt.json`.
+- Screenshots and tree: `/tmp/rendprop-recovery-ui-final-attachments/`.
+- Recovery review screenshot: `F1CB9A4B-04EA-4395-BFE5-5898C6F64BBD.png` in that directory.
+- Correct second-part export screenshot: `62735E9C-6160-4F2A-967D-3077F1558E55.png` in that directory.
+
+Failed intermediate evidence remains intact. The first corrected-build run,
+`/tmp/rendprop-recovery-ui-fixed.xcresult` / `.log`, stalled in XCTest's app
+relaunch while the host load average reached 389; it was interrupted. Only this
+isolated simulator was rebooted, without erasing it, and all five then-existing
+media/journal files retained identical hashes. The retry in
+`/tmp/rendprop-recovery-ui-fixed-reboot.xcresult` passed recovery/review and legacy
+export, then hit a second harness issue: its app-wide swipe targeted the
+background while iOS presented the second part in a compact share popover.
+The screenshot already showed the correct video and Save Video action. The
+final test instead taps the observed View More cell and scrolls the activity
+controller's own collection, then verifies Save to Files. Product sources and
+the app binary were unchanged for this harness correction.
+
+Only the isolated simulator was shut down after verification. Fixtures,
+journals, result bundles and screenshots remain available. Instructions are in
+`tools/audit/call-20260919/join/RECOVERY-UI.md`. This UI verification does not
+replace real-device camera interruption/thermal testing or prove a real export
+destination was written.
 
 ## ReflectionVideo peer changes and evidence
 

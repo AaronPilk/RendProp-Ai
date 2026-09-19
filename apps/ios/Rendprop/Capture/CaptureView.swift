@@ -60,32 +60,32 @@ struct CaptureView: View {
         ZStack {
             // Camera chrome stays dark (it sits over live video); the
             // permission/error states use the app's light background.
-            (isInfoState ? Theme.bg : Color.black).ignoresSafeArea()
+            (isInfoState && review == nil ? Theme.bg : Color.black).ignoresSafeArea()
 
-            switch camera.state {
-            case .denied:
-                permissionDenied
-            case .restricted:
-                permissionRestricted
-            case .failed(let message):
-                failure(message)
-            default:
-                // Camera chrome is ALWAYS dark, regardless of the app's
-                // appearance: forcing the dark trait here makes materials
-                // render as dark smoke and every adaptive Theme token resolve
-                // to its bright dark-mode variant — correct over live video
-                // in both app modes.
-                Group {
-                    CameraPreview(session: camera.session)
-                        .ignoresSafeArea()
-                    ThirdsGrid().ignoresSafeArea()
-                    if let review {
-                        reviewOverlay(review)
-                    } else {
+            // A recovered movie can be reviewed without camera permission or
+            // a working capture device. Camera errors must not hide the result.
+            if let review {
+                reviewOverlay(review)
+                    .environment(\.colorScheme, .dark)
+            } else {
+                switch camera.state {
+                case .denied:
+                    permissionDenied
+                case .restricted:
+                    permissionRestricted
+                case .failed(let message):
+                    failure(message)
+                default:
+                    // Camera chrome stays dark over the live preview in both
+                    // app appearance modes.
+                    Group {
+                        CameraPreview(session: camera.session)
+                            .ignoresSafeArea()
+                        ThirdsGrid().ignoresSafeArea()
                         overlays
                     }
+                    .environment(\.colorScheme, .dark)
                 }
-                .environment(\.colorScheme, .dark)
             }
         }
         .statusBarHidden()
@@ -94,7 +94,7 @@ struct CaptureView: View {
             if let recovery { recoveryOverlay(recovery) }
         }
         .overlay(alignment: .bottom) {
-            if isInfoState, recovery == nil { savedTakesButton.padding(.bottom, 24) }
+            if isInfoState, recovery == nil, review == nil { savedTakesButton.padding(.bottom, 24) }
         }
         .sheet(isPresented: $showSavedTakes) { savedTakesSheet }
         .onChange(of: tags) { updated in
@@ -550,6 +550,7 @@ struct CaptureView: View {
                                     Image(systemName: "square.and.arrow.up")
                                 }
                             }
+                            .accessibilityIdentifier("capture.other-recording.\(recording.url.lastPathComponent)")
                         }
                     } header: {
                         Text("Other recordings on this phone")

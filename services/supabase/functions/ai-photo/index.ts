@@ -176,7 +176,7 @@ async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
 
 /**
  * Hand back everything a FAILED edit charged (audit item 2 / F-E-16, mirrors
- * ai-chapters/index.ts refundCharge exactly). Call ONLY when the provider
+ * ai-chapters/index.ts refundCharge exactly). Call ONLY when route resolution or the provider
  * chain threw — once runChain returns a value the provider ran and billed,
  * and the ledger write right after it is what records that; nothing past that
  * point is ever refunded. Best effort and never throws — see refundRateLimit().
@@ -529,11 +529,9 @@ export function needsForPhotoEdit(edit: string, hasMask: boolean): string[] {
 }
 
 /**
- * The last-resort step: what THIS deploy runs today, hardcoded.
- *
- * resolveRoute() answers `[]` if the routing table is unreadable, and a
- * database blip must not take photo editing down. GEMINI_IMAGE_MODEL still
- * wins here, exactly as it does today.
+ * Retained descriptor for the shared resolver API. Photo tasks now require
+ * an enabled database route; resolveChain never executes these constants
+ * when photo authorization is absent (0056).
  */
 export function legacyPhotoStep(task: string): RouteStep {
   return {
@@ -588,6 +586,9 @@ Deno.serve(async (req) => {
     // below happens only once we know the request would actually reach Gemini.
     const body = await readJson<Body>(req);
     const edit = String(body.edit ?? "twilight").trim().toLowerCase();
+    // Plain-object prompt lookup must not accept inherited keys as edit modes.
+    assert(["twilight", "sky", "lawn", "declutter", "stage", "custom", "suggest", "improve_prompt"].includes(edit),
+      400, "Choose a supported photo editing tool.");
     const mime = String(body.mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
     const space = spaceTypeOf(body.space_type);
     const profile = PROFILES[space];
@@ -686,25 +687,31 @@ Deno.serve(async (req) => {
     // resolveRoute on every task that takes free text, and it is the one thing
     // no routing decision may skip.
     //
-    // Flag OFF: resolveRoute returns exactly the legacy step (gemini
-    // gemini-2.5-flash-image), the gemini adapter rebuilds today's payload byte
-    // for byte, and this is a no-op. Flag ON: the seeded chain runs, each
+    // Flag OFF: resolveRoute requires the enabled, eligible photo fallback
+    // (0056). Flag ON: the seeded chain runs, each
     // attempt is reported for the circuit breaker, and the ledger row carries
     // the provider/model that actually ran.
     const task = `photo.${edit}`;
     const maskB64 = typeof body.mask_b64 === "string" && body.mask_b64.length > 0 ? body.mask_b64 : null;
     const maskMime = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
     const routerOn = await routerEnabled();
-    const steps = await resolveChain(
-      task,
-      {
-        plan,
-        needs: needsForPhotoEdit(edit, maskB64 !== null),
-        // A photograph of somebody's home: never a vendor that trains on it.
-        carries_customer_media: true,
-      },
-      legacyPhotoStep(task),
-    );
+    let steps: RouteStep[];
+    try {
+      steps = await resolveChain(
+        task,
+        {
+          plan,
+          needs: needsForPhotoEdit(edit, maskB64 !== null),
+          // A photograph of somebody's home: never a vendor that trains on it.
+          carries_customer_media: true,
+        },
+        legacyPhotoStep(task),
+      );
+    } catch (e) {
+      // No authorized route means no provider ran; return both quota charges.
+      await refundEditCharge(charge);
+      throw e;
+    }
 
     const genInput: GenerateInput = {
       task,
@@ -774,7 +781,7 @@ Deno.serve(async (req) => {
     // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
     // spend console and the per-org monthly COGS view read for app AI. The
     // provider/model/price come from the step that ACTUALLY ran (contract §4);
-    // with the flag off that is gemini @ 3.9c/image, exactly as before.
+    // with the flag off, 0056 selects the existing 6.7c Gemini photo route.
     // Best effort — a failed insert must never fail an edit the caller has paid
     // for (see recordAppAiCost). Only reached on success, so a failure above
     // (which F-E-16 refunds) writes no row: no double-count.

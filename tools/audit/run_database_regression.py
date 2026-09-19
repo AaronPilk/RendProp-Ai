@@ -169,10 +169,22 @@ def main():
         receipt["invariantRuns"] = []
         for phase in ("initial", "replayed"):
             if phase == "replayed":
-                replay = [p for p in migrations if p.name.startswith(("0005b_", "0008b_")) or p.name >= "0009"]
-                for migration in replay:
-                    run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
+                # Reapply each historical version where it actually existed.
+                # Replaying0050 against0051's replacement overload is not a
+                # supported production migration order; do not rewrite history
+                # merely to make that artificial state accept old SQL.
+                run("createdb-replay", [bins["createdb"], "--no-password", *connection, "rendprop_replay"])
+                psql = [bins["psql"], "-X", "--no-password", *connection, "-d", "rendprop_replay",
+                        "-v", "ON_ERROR_STOP=1"]
+                run("bootstrap-replay", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
+                replay = []
+                for migration in migrations:
+                    run("historical-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
+                    if migration.name.startswith(("0005b_", "0008b_")) or migration.name >= "0009":
+                        run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
+                        replay.append(migration)
                 receipt["replayedMigrations"] = len(replay)
+                receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
             output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
             # Preserve a genuine red suite, but still test migration replay.
             # A SQL/load error is not a completed red suite and aborts here.

@@ -35,9 +35,9 @@ def main():
     generated = out / "ControllerChecks.swift"
     generated.write_text(fixture.replace("// REAL_CONTROLLER", controller).replace("// REAL_API", api_path.read_text()))
     binary = out / "controller-checks"
-    receipt = {"baseline": args.baseline, "sourceSHA256": {
-        str(p.relative_to(ROOT)): hashlib.sha256(p.read_bytes()).hexdigest()
-        for p in [source_path, api_path, HERE / "checks.swift"]}, "commands": []}
+    receipt = {"baseline": args.baseline, "sourceSHA256": [
+        {"path": str(p.relative_to(ROOT)), "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+        for p in [source_path, api_path, HERE / "checks.swift"]], "commands": []}
     for label, command in [
         ("compile", ["xcrun", "swiftc", "-swift-version", "5", "-parse-as-library", generated, "-o", binary]),
         ("execute", [binary, out / "documents", "baseline" if args.baseline else "fixed"]),

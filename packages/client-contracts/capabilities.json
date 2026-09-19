@@ -14,6 +14,7 @@
     {"id":"provenance","methods":["provenance","complianceCSV","attachProvenanceMedia"],"web":"Evidence panel and export; immutable originals and server verified disclosure","status":"planned"},
     {"id":"copy","methods":["aiCopyScript","aiCopyShotlist"],"web":"Script and shotlist from existing planner; no duplicated agentreel implementation","status":"planned"},
     {"id":"video","methods":["aiVideoDrone","aiVideoAerial","aiVideoReelClip","aiVideoStatus","aiVideoDrift"],"web":"Per-clip generation and jobs from approved existing routes","status":"planned"},
+    {"id":"video-reflection-removal","methods":["reflectionQuote","removeReflections","cancelReflectionBatch","applyReflectionBatch"],"web":"Planned opt-in interval editor using the shared quote, durable clip jobs, whole-batch cancellation and full-video disclosure receipt; retain originals and require explicit comparison and acceptance; browser editing and cross-device recovery are not verified","status":"planned"},
     {"id":"audio","methods":["aiVoices","aiVoiceTTS"],"web":"Same licensed voice list and metered voiceover route","status":"planned"},
     {"id":"assistance","methods":["aiChapters","coach"],"web":"Chapter suggestions and coach with exact wire keys","status":"planned"},
     {"id":"admin-read","methods":["adminSpend","adminProviders","adminUsage","adminHealth","adminRouting"],"web":"Server-authorized operations console; not a brokerage role","status":"planned"},

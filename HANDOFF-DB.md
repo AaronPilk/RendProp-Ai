@@ -170,3 +170,15 @@ customer media off them if somebody enables one early.
   `deno test --allow-env --allow-net _shared/router.test.ts` to that job.
 * No adapter calls `resolveRoute()` yet; nothing writes `provider_health` in
   production, so `p95_latency_ms` will read `null` until ADAPT lands.
+
+## 2026-09-19 addendum: active photo fallback (0056)
+
+`0056_active_photo_fallback.sql` assigns the exact `legacy` marker to the six
+already-enabled Gemini3.1 photo routes. It changes no models, prices, flags or
+disabled rows. The existing active rows retain 6.7¢ pricing. The photo resolver
+requires an enabled, eligible database row even when the router flag is off;
+missing authorization fails closed with 503, and the handler refunds its quota.
+Non-photo legacy behavior remains outside this repair. See
+`docs/audit/CALL-20260919-CI-DATABASE.md` for the rejected disabled-row proposal,
+immutable-data assertions and migration replay evidence. The normal edge CI job
+now discovers both the router tests and the new executable photo fallback tests.

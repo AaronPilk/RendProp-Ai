@@ -50,10 +50,9 @@ final class CaptureRecoveryTests: XCTestCase {
         app.buttons["Record another"].tap()
         openLibrary()
 
-        // The one unindexed fixture is the only library row with a byte size.
-        // Opening the system share sheet proves the original is exportable;
-        // no external destination or recipient is selected.
-        let legacy = app.buttons.matching(NSPredicate(format: "label CONTAINS[c] 'KB'")).firstMatch
+        // Target the exact original even if earlier retries retained additional
+        // joined outputs. No external destination or recipient is selected.
+        let legacy = app.buttons["capture.other-recording.walkthrough-legacy-ui.mov"]
         XCTAssertTrue(legacy.waitForExistence(timeout: 5), app.debugDescription)
         legacy.tap()
         assertShareSheet("04-legacy-file-export")
@@ -97,8 +96,16 @@ final class CaptureRecoveryTests: XCTestCase {
 
     private func assertShareSheet(_ name: String) {
         let save = app.cells["Save to Files"]
-        if !save.waitForExistence(timeout: 5) {
-            app.swipeUp()
+        if !save.waitForExistence(timeout: 2) {
+            // iOS can anchor this activity controller as a compact popover.
+            // An app-wide swipe hits the recovery screen behind it. Expand
+            // the actual observed action row, then scroll its own collection.
+            let more = app.cells["View More"]
+            XCTAssertTrue(more.waitForExistence(timeout: 3), app.debugDescription)
+            more.tap()
+            if !save.waitForExistence(timeout: 2) {
+                app.collectionViews["activityCollectionView"].swipeUp()
+            }
         }
         XCTAssertTrue(save.waitForExistence(timeout: 5), app.debugDescription)
         shot(name)
@@ -107,6 +114,9 @@ final class CaptureRecoveryTests: XCTestCase {
     private func dismissShareSheet() {
         let close = app.buttons["header.closeButton"]
         if close.exists { close.tap() }
+        else if app.otherElements["PopoverDismissRegion"].exists {
+            app.otherElements["PopoverDismissRegion"].tap()
+        }
         else {
             let cancel = app.buttons["Cancel"]
             XCTAssertTrue(cancel.exists, app.debugDescription)

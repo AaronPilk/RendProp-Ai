@@ -226,6 +226,18 @@ class InventoryTests(RunnerCase):
         self.assertEqual([row['count'] for row in result.receipt['invariantRuns']], [COUNT, COUNT])
         self.assertEqual(result.receipt['invariantRuns'][0]['names'], NAMES)
 
+    def test_replay_uses_second_database_at_historical_schema_points(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        commands = result.receipt['commands']
+        names = [row['name'] for row in commands]
+        self.assertLess(names.index('historical-0050_brokerage_contracts'), names.index('replay-0050_brokerage_contracts'))
+        self.assertLess(names.index('replay-0050_brokerage_contracts'), names.index('historical-0051_brokerage_price_floor'))
+        self.assertIn('replay-0055_video_reflection_jobs', names)
+        self.assertIn('replay-0056_active_photo_fallback', names)
+        row = next(row for row in commands if row['name']=='invariants-replayed')
+        self.assertEqual(row['command'][row['command'].index('-d')+1], 'rendprop_replay')
+
     def test_one_fewer_and_one_more_counts_reject(self):
         for names in (NAMES[:-1], NAMES + ['extra synthetic assertion']):
             with self.subTest(count=len(names)):
