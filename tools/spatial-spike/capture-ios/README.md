@@ -3,7 +3,8 @@
 This local capture implementation supplies the input for the one-room spatial
 spike. The owner chose delivery inside the existing Rendprop TestFlight app
 (`com.rendprop.app`), using the explicit `SPATIAL_CAPTURE_LAB` build overlay.
-The normal Rendprop project does not include the shared capture implementation.
+The normal Rendprop project now includes the same shared capture implementation
+for the product's gated spatial workflow; the overlay also exposes local lab capture.
 The capture feature adds no production-service imports, credentials, analytics,
 networking, account/purchase gate, or package dependency.
 
@@ -132,7 +133,10 @@ Re-audit this declaration whenever storage or timing code changes.
 2. Walk slowly around the room looking at the walls, floor, objects, and corners
    from overlapping viewpoints. Translation matters; standing in place and
    spinning does not establish useful baselines. Avoid mirrors and motion blur.
-3. Aim for roughly 150–250 saved images, then tap **Stop and save**. At most one
+3. Aim for roughly 300–350 saved photos with overlapping views, then tap **Stop
+   and save** once the room is covered. Revisit doorways and corners from different
+   positions and include upper and lower surfaces. A larger photo count alone
+   does not prove coverage. At most one
    normal-tracking frame is selected every 0.5 seconds. The stop control always
    remains available, including when tracking is limited.
 4. **Export completed capture** validates every file before presenting the system
@@ -143,9 +147,20 @@ Re-audit this declaration whenever storage or timing code changes.
    its other documents. Do not upload room images
    anywhere until the owner has selected the GPU destination and authorized it.
 
-There are hard caps of 400 frames, ten minutes, and 50,000 feature points per
-frame. Hitting a cap preserves files with `limit_reached` or `failed`, which is
-not exportable as successful input. Stop normally before reaching a cap.
+There are hard caps of 400 photos, ten minutes, and 50,000 feature points per
+frame. Reaching the photo or time ceiling ends admission and drains all queued
+writes before saving the manifest. It records `status: complete` with the optional
+`stop_reason` (`frame_limit` or `duration_limit`), then runs the same full-file
+validation as a manual stop. A write error, corrupt file, or insufficient saved
+input still prevents export. The reason describes why admission stopped; it is
+not proof that a capture is valid or that room coverage is adequate.
+
+After an automatic ceiling, the product waits for **Use this scan** before
+handoff; the standalone target waits for **Export completed capture**. Both
+re-read and validate the archive on that explicit action. Historical
+`limit_reached` attempts are not relabelled and remain unexportable. Exceeding the
+feature-point bound remains a failure. Stop when coverage is sufficient rather
+than filling the cap deliberately.
 
 Backgrounding, a phone call, AR session interruption, or ARKit relocalization
 ends this capture with `interrupted`; there is no resume or merge in Phase A.
@@ -169,7 +184,9 @@ Each capture UUID is one AR world-coordinate epoch:
 `manifest.json` has format `rendprop-arkit-capture`, schema version `1`, status,
 session identifier, coordinate conventions, device/OS description, cadence/caps,
 saved byte count, feature-point observation count, skipped-frame counts, and an
-ordered `frames` array of relative JSON sidecar paths. The training adapter must
+ordered `frames` array of relative JSON sidecar paths. New normal ceiling stops
+also include the optional `stop_reason`; older manifests without it remain
+readable. The training adapter must
 require `status == "complete"`; app export additionally requires at least 20
 saved images and one feature-point observation. These are file-validity minima,
 not a reconstruction-quality guarantee. The training adapter separately requires

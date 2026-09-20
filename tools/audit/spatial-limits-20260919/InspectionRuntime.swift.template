@@ -1,0 +1,123 @@
+import Foundation
+
+enum HarnessFS { static var capturesRoot = URL(fileURLWithPath: "/unused-test-boundary") }
+
+// Delay only entry into the actual archive validator. Its file/identity/JPEG
+// checks execute unchanged after release. No sleep simulates a race outcome.
+final class ValidationGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var didEnter = false
+    let release = DispatchSemaphore(value: 0)
+    var entered: Bool { lock.lock(); defer { lock.unlock() }; return didEnter }
+    func wait() {
+        lock.lock(); didEnter = true; lock.unlock()
+        precondition(release.wait(timeout: .now() + 30) == .success, "test validation gate timed out")
+    }
+}
+enum ArchiveBarrier {
+    static var gate: ValidationGate?
+    static func beforeValidation() { gate?.wait() }
+}
+final class AuthBoundary { var userID: String? = "owner-A" }
+/* ACTUAL_NOTICE_AND_HANDOFF */
+
+@MainActor final class InspectionHarness {
+    let auth = AuthBoundary()
+    var captureHandoff: SpatialCaptureHandoff?
+    var captureOpenedAt: Date?
+    var captureOwner: String?
+    var captureHandedOff = false
+    var captureInspectionID = UUID()
+    var limitNotice: SpatialLimitNotice?
+    var message: String?
+    var viewer: String?
+    var reviewing: String?
+    var inspectionTask: Task<Void, Never>?
+    var enqueues: [(URL, String?)] = []
+    func enqueue(_ url: URL, capturedOwner: String?) async { enqueues.append((url, capturedOwner)) }
+    /* ACTUAL_METHODS_AND_ACTIONS */
+}
+
+@MainActor enum InspectionChecks {
+    static var rows: [[String: Any]] = []
+    static func check(_ value: @autoclosure () -> Bool, _ text: String) throws {
+        let passed = value(); rows.append(["check": text, "passed": passed])
+        guard passed else { throw CaptureError.invalid(text) }
+    }
+    static func entered(_ gate: ValidationGate) async throws {
+        let until = Date().addingTimeInterval(15)
+        while !gate.entered && Date() < until { try await Task.sleep(nanoseconds: 1_000_000) }
+        try check(gate.entered, "actual detached inspection reached the gated full validator")
+    }
+}
+
+@main enum InspectionRuntime {
+    @MainActor static func main() async {
+        let output = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        let source = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
+            for scenario in ["same-presentation", "new-scan-active", "new-scan-closed", "new-scan-succeeded", "account-away-and-back"] {
+                let view = InspectionHarness()
+                let beforeStart = view.captureInspectionID
+                view.tapScan()
+                try InspectionChecks.check(view.captureInspectionID != beforeStart, "\(scenario): actual scan button rotates inspection identity")
+                let archiveRoot = output.appendingPathComponent(scenario + "/Captures", isDirectory: true)
+                try FileManager.default.createDirectory(at: archiveRoot, withIntermediateDirectories: true)
+                let fixture = archiveRoot.appendingPathComponent(source.lastPathComponent, isDirectory: true)
+                try FileManager.default.copyItem(at: source, to: fixture)
+                let manifestURL = fixture.appendingPathComponent("manifest.json")
+                var manifest = try JSONSerialization.jsonObject(with: Data(contentsOf: manifestURL)) as! [String: Any]
+                manifest["started_at"] = ISO8601DateFormatter().string(from: Date())
+                try JSONSerialization.data(withJSONObject: manifest).write(to: manifestURL)
+                HarnessFS.capturesRoot = archiveRoot
+                let gate = ValidationGate(); ArchiveBarrier.gate = gate
+                view.captureHandoff = nil // SwiftUI clears the item before onDismiss.
+                view.dismissCapture()
+                try await InspectionChecks.entered(gate)
+                try InspectionChecks.check(view.limitNotice == nil && view.enqueues.isEmpty, "\(scenario): waiting validation publishes nothing and starts no upload")
+                if scenario.hasPrefix("new-scan") {
+                    let beforeB = view.captureInspectionID
+                    view.tapScan()
+                    try InspectionChecks.check(view.captureInspectionID != beforeB, "\(scenario): real second-scan action invalidates A")
+                    if scenario == "new-scan-closed" {
+                        // Binding change before B's separate onDismiss callback:
+                        // neither active-sheet nor handoff flag can reject A now.
+                        view.captureHandoff = nil
+                    } else if scenario == "new-scan-succeeded" {
+                        let handoffB = view.captureHandoff!
+                        let beforeSuccess = view.captureInspectionID
+                        view.verified(URL(fileURLWithPath: "/synthetic-room-B"), handoff: handoffB)
+                        try InspectionChecks.check(view.captureInspectionID != beforeSuccess && view.captureHandedOff && view.captureHandoff == nil, "accepted real handoff invalidates A and closes B")
+                    }
+                } else if scenario == "account-away-and-back" {
+                    let old = view.captureInspectionID
+                    view.auth.userID = "owner-B"; view.accountChanged()
+                    try InspectionChecks.check(view.captureInspectionID != old, "actual account-change action invalidates pending inspection")
+                    let away = view.captureInspectionID
+                    view.auth.userID = "owner-A"; view.accountChanged()
+                    try InspectionChecks.check(view.captureInspectionID != away, "returning to the same account rotates identity again")
+                }
+                gate.release.signal()
+                await view.inspectionTask?.value
+                ArchiveBarrier.gate = nil
+                if scenario == "same-presentation" {
+                    try InspectionChecks.check(view.limitNotice?.usableCapture == fixture && view.limitNotice?.ownerID == "owner-A", "same presentation publishes the fully validated cap for explicit use")
+                } else {
+                    try InspectionChecks.check(view.limitNotice == nil, "\(scenario): late A cannot publish a stale cap notice")
+                }
+                if scenario == "new-scan-succeeded" {
+                    await Task.yield()
+                    try InspectionChecks.check(view.enqueues.count == 1 && view.enqueues[0].0.path == "/synthetic-room-B", "only accepted B hands off; inspection never enqueues A")
+                } else {
+                    try InspectionChecks.check(view.enqueues.isEmpty, "\(scenario): archive inspection never automatically starts upload")
+                }
+            }
+            try JSONSerialization.data(withJSONObject: InspectionChecks.rows, options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("inspection.json"))
+            print("PASS actual inspection and caller actions: \(InspectionChecks.rows.count) checks across 5 delayed-validator traces")
+        } catch {
+            try? JSONSerialization.data(withJSONObject: ["checks": InspectionChecks.rows, "error": error.localizedDescription], options: [.prettyPrinted, .sortedKeys]).write(to: output.appendingPathComponent("inspection-failure.json"))
+            fputs("FAIL \(error)\n", stderr); exit(1)
+        }
+    }
+}

@@ -22,7 +22,7 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
     private var qualitySkips = 0
     private var lowTextureFrames = 0
     var onStatus: ((String) -> Void)?
-    var onFinished: ((URL?, String, Bool) -> Void)?
+    var onFinished: ((URL?, String, Bool, CaptureStopReason?) -> Void)?
 
     private final class SessionFiles {
         let root: URL
@@ -74,7 +74,7 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
         delegateQueue.async { self.finishOnDelegateQueue(status: status, detail: detail) }
     }
 
-    private func finishOnDelegateQueue(status: String, detail: String) {
+    private func finishOnDelegateQueue(status: String, detail: String, stopReason: CaptureStopReason? = nil) {
         guard let files = active else { return }
         active = nil // Stop admission immediately; queued writer work is drained before finalization.
         let skippedTracking = trackingSkips
@@ -84,6 +84,7 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
         writerQueue.async {
             files.manifest.status = files.writeError == nil ? status : "failed"
             files.manifest.status_detail = files.writeError ?? detail
+            files.manifest.stop_reason = stopReason
             files.manifest.finished_at = ISO8601DateFormatter().string(from: Date())
             files.manifest.skipped_tracking_frames = skippedTracking
             files.manifest.skipped_busy_frames = skippedBusy
@@ -94,23 +95,37 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
             do {
                 try self.writeManifest(files)
                 var ready = false
-                var message = "\(files.manifest.frames.count) frames saved. \(files.manifest.status_detail)"
+                var message = "\(files.manifest.frames.count) photos saved. \(files.manifest.status_detail)"
                 if files.manifest.status == "complete" {
                     do { _ = try NativeRasterWriter.validateCapture(at: files.root); ready = true }
                     catch { message += " \(error.localizedDescription)" }
                 }
-                DispatchQueue.main.async { self.onFinished?(files.root, message, ready) }
+                DispatchQueue.main.async { self.onFinished?(files.root, message, ready, stopReason) }
             } catch {
-                DispatchQueue.main.async { self.onFinished?(files.root, "Final manifest could not be saved: \(error.localizedDescription). Files are preserved; export is unavailable.", false) }
+                DispatchQueue.main.async { self.onFinished?(files.root, "Final manifest could not be saved: \(error.localizedDescription). Files are preserved; export is unavailable.", false, stopReason) }
             }
         }
     }
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
         guard let files = active else { return }
+        guard frame.timestamp.isFinite else {
+            finishOnDelegateQueue(status: "failed", detail: "Camera timing is invalid. Your saved photos are preserved.")
+            return
+        }
         if firstTimestamp == nil { firstTimestamp = frame.timestamp }
-        guard frame.timestamp - (firstTimestamp ?? frame.timestamp) < 600, nextIndex <= 400 else {
-            finishOnDelegateQueue(status: "limit_reached", detail: "Reached the 400-frame or 10-minute spike limit. Files preserved; start a new shorter capture.")
+        let elapsed = frame.timestamp - (firstTimestamp ?? frame.timestamp)
+        guard elapsed.isFinite, elapsed >= 0 else {
+            finishOnDelegateQueue(status: "failed", detail: "Camera timing changed unexpectedly. Your saved photos are preserved.")
+            return
+        }
+        if elapsed >= 600 || nextIndex > 400 {
+            let reason: CaptureStopReason = nextIndex > 400 ? .frameLimit : .durationLimit
+            // All admitted writes drain first. A normal ceiling can finish a
+            // complete scan; failed writes and full-file validation still gate it.
+            finishOnDelegateQueue(status: "complete", detail: reason == .frameLimit
+                ? "The 400-photo limit was reached. Check your coverage before using this scan."
+                : "The 10-minute limit was reached. Check your coverage before using this scan.", stopReason: reason)
             return
         }
         guard case .normal = frame.camera.trackingState else { trackingSkips += 1; return }
@@ -190,8 +205,10 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
                     let count = files.manifest.frames.count
                     DispatchQueue.main.async {
                         self.onStatus?(admittedLowTexture
-                            ? "\(count) frames saved. This view has little detail—include furniture, corners or doorways as you move. Stop when ready."
-                            : "\(count) frames saved. Walk slowly around the room; aim for 150–250 varied frames. Stop when ready.")
+                            ? "\(count) photos saved. Include furniture, corners or doorways as you move. Stop when the room is covered."
+                            : count >= 300
+                                ? "\(count) photos saved. Check that you covered the room, then tap Stop and save. Capture ends at 400 photos."
+                                : "\(count) photos saved. Move slowly and keep some of the same room details in view. Aim for 300–350 photos.")
                     }
                 } catch {
                     files.writeError = error.localizedDescription

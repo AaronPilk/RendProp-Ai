@@ -109,6 +109,11 @@ struct FrameRecord: Codable {
     }
 }
 
+enum CaptureStopReason: String, Codable {
+    case frameLimit = "frame_limit"
+    case durationLimit = "duration_limit"
+}
+
 struct CaptureManifest: Codable {
     var schema_version = 1
     var format = "rendprop-arkit-capture"
@@ -124,6 +129,9 @@ struct CaptureManifest: Codable {
     var feature_points_note = "ARKit estimated feature points are initialization hints, not a reconstructed mesh."
     var status = "recording"
     var status_detail = "Capture in progress."
+    // Why normal admission ended; this never substitutes for file validation.
+    // Older and interrupted/failed captures remain readable without this field.
+    var stop_reason: CaptureStopReason? = nil
     let started_at: String
     var finished_at: String?
     let device_model: String

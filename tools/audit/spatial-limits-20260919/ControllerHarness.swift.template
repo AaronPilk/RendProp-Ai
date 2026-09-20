@@ -1,0 +1,139 @@
+import Foundation
+
+// UIKit boundary only: actual completion, button action, button refresh, export
+// verifier and CaptureControls execute below. No remote or paid API is present.
+final class ButtonBoundary {
+    struct Configuration { var title = "" }
+    var isEnabled = false
+    var isHidden = false
+    var configuration: Configuration? = Configuration()
+}
+final class LabelBoundary { var text: String? }
+final class UIDocumentPickerViewController {
+    let urls: [URL]
+    let asCopy: Bool
+    init(forExporting urls: [URL], asCopy: Bool) { self.urls = urls; self.asCopy = asCopy }
+}
+
+@MainActor final class ControllerHarness {
+    let start = ButtonBoundary(), stop = ButtonBoundary(), export = ButtonBoundary(), saved = ButtonBoundary()
+    let status = LabelBoundary()
+    var controls = CaptureControls()
+    var finishedURL: URL?
+    #if FIXED
+    var finishedStopReason: CaptureStopReason?
+    #endif
+    var onVerifiedCapture: ((URL) -> Void)?
+    var previewReleases = 0
+    var idleRestores = 0
+    var localCopies: [[URL]] = []
+    func releasePreview() { previewReleases += 1 }
+    func restoreIdleTimer() { idleRestores += 1 }
+    func present(_ picker: UIDocumentPickerViewController, animated: Bool) {
+        precondition(picker.asCopy)
+        localCopies.append(picker.urls)
+    }
+    func clickExport() { exportTapped() }
+    func beginRecording() { precondition(controls.beginStart()); precondition(controls.captureStarted()) }
+    /* ACTUAL_COMPLETION */
+    /* ACTUAL_EXPORT_METHODS */
+}
+
+@MainActor enum ControllerRegression {
+    static func settled(_ controller: ControllerHarness) async throws {
+        try await Checks.wait("controller's actual export verifier settles") { controller.controls.phase != .verifyingExport }
+    }
+    static func run(frameCap: Scenario, duration: Scenario, results: [[String: Any]]) async throws {
+        let actualCaptureRoot = HarnessFS.capturesRoot
+        let controllerRoot = HarnessFS.root.appendingPathComponent("controller/Captures", isDirectory: true)
+        try FileManager.default.createDirectory(at: controllerRoot, withIntermediateDirectories: true)
+        for sample in results {
+            let source = URL(fileURLWithPath: sample["root"] as! String)
+            try FileManager.default.copyItem(at: source, to: controllerRoot.appendingPathComponent(source.lastPathComponent))
+        }
+        HarnessFS.capturesRoot = controllerRoot
+        defer { HarnessFS.capturesRoot = actualCaptureRoot }
+        var handedOff: [URL] = []
+        let cap = ControllerHarness()
+        cap.onVerifiedCapture = { handedOff.append($0) }
+        cap.beginRecording()
+        let capURL = controllerRoot.appendingPathComponent(frameCap.root.lastPathComponent)
+        #if FIXED
+        cap.deliver(url: capURL, ready: true, reason: .frameLimit)
+        try Checks.check(handedOff.isEmpty && cap.controls.phase == .finished(exportable: true), "valid frame cap does not automatically hand off for generation")
+        try Checks.check(cap.export.isEnabled && !cap.export.isHidden && cap.export.configuration?.title == "Use this scan", "valid cap exposes an enabled explicit Use this scan control")
+        try Checks.check(cap.previewReleases == 1 && cap.idleRestores == 1, "automatic stop releases preview and restores idle timer")
+        cap.clickExport()
+        try await settled(cap)
+        try Checks.check(handedOff == [capURL], "one explicit cap export performs real archive validation then one handoff")
+
+        let durationCap = ControllerHarness()
+        var durationHandoffs = 0
+        durationCap.onVerifiedCapture = { _ in durationHandoffs += 1 }
+        durationCap.beginRecording()
+        let durationURL = controllerRoot.appendingPathComponent(duration.root.lastPathComponent)
+        durationCap.deliver(url: durationURL, ready: true, reason: .durationLimit)
+        try Checks.check(durationHandoffs == 0 && durationCap.export.isEnabled && !durationCap.export.isHidden, "duration cap also waits for explicit use")
+        // Corrupt only the isolated controller COPY after completion; originals
+        // in recorder fixtures remain untouched and their hashes are rechecked.
+        try Data("changed after initial validation".utf8).write(to: durationURL.appendingPathComponent("images/000021.jpg"))
+        durationCap.clickExport()
+        try await settled(durationCap)
+        try Checks.check(durationHandoffs == 0 && durationCap.controls.phase == .finished(exportable: false), "explicit use revalidates and blocks newly corrupted images")
+        try Checks.check(FileManager.default.fileExists(atPath: durationURL.appendingPathComponent("images/000021.jpg").path), "failed export retains the changed source file")
+
+        for sample in results where sample["completionReady"] as? Bool == false {
+            let failed = ControllerHarness()
+            var calls = 0
+            failed.onVerifiedCapture = { _ in calls += 1 }
+            failed.beginRecording()
+            failed.deliver(url: URL(fileURLWithPath: sample["root"] as! String), ready: false, reason: .durationLimit)
+            failed.clickExport()
+            try Checks.check(calls == 0 && !failed.export.isEnabled, "\(sample["name"]!): invalid completion cannot hand off even with a cap reason")
+        }
+        let closed = ControllerHarness()
+        var closedHandoffs = 0
+        closed.onVerifiedCapture = { _ in closedHandoffs += 1 }
+        closed.beginRecording(); _ = closed.controls.endPresentation()
+        closed.deliver(url: capURL, ready: true, reason: .frameLimit)
+        try Checks.check(closed.controls.isClosed && closedHandoffs == 0 && closed.finishedURL == nil, "late completion cannot revive a closed capture controller")
+
+        let capManifest = try CaptureArchive.local().manifest(id: capURL.lastPathComponent)
+        let entries = try CaptureArchive.local().page(offset: 0).entries
+        try Checks.check(capManifest.stop_reason == .frameLimit && entries.first(where: { $0.id == capURL.lastPathComponent })?.stopReason == .frameLimit, "stop reason persists through manifest decoding and archive listing")
+        // A legacy cap is still visible but cannot be promoted by metadata alone.
+        var legacy = try JSONSerialization.jsonObject(with: Data(contentsOf: capURL.appendingPathComponent("manifest.json"))) as! [String: Any]
+        legacy["status"] = "limit_reached"; legacy.removeValue(forKey: "stop_reason")
+        try JSONSerialization.data(withJSONObject: legacy).write(to: capURL.appendingPathComponent("manifest.json"))
+        try Checks.check((try CaptureArchive.local().manifest(id: capURL.lastPathComponent)).stop_reason == nil, "legacy manifests decode without stop_reason")
+        try Checks.check((try? CaptureArchive.local().validateForExport(id: capURL.lastPathComponent)) == nil, "legacy limit_reached files remain unexportable without weakening the validator")
+        #else
+        cap.deliver(url: capURL, ready: false)
+        try Checks.check(handedOff.isEmpty && !cap.export.isEnabled && cap.export.isHidden, "baseline capped capture has no usable handoff/export action")
+        #endif
+
+        let manualSample = results.first { $0["name"] as? String == "manual" }!
+        let manualURL = controllerRoot.appendingPathComponent(URL(fileURLWithPath: manualSample["root"] as! String).lastPathComponent)
+        let manual = ControllerHarness()
+        var manualHandoffs: [URL] = []
+        manual.onVerifiedCapture = { manualHandoffs.append($0) }
+        manual.beginRecording()
+        #if FIXED
+        manual.deliver(url: manualURL, ready: true, reason: nil)
+        #else
+        manual.deliver(url: manualURL, ready: true)
+        #endif
+        try await settled(manual)
+        try Checks.check(manualHandoffs == [manualURL], "explicit manual stop preserves the previous validated handoff behavior")
+        let local = ControllerHarness()
+        local.beginRecording()
+        #if FIXED
+        local.deliver(url: manualURL, ready: true, reason: nil)
+        #else
+        local.deliver(url: manualURL, ready: true)
+        #endif
+        try Checks.check(local.localCopies.isEmpty && local.export.isEnabled && !local.export.isHidden, "standalone export waits for its explicit button")
+        local.clickExport(); try await settled(local)
+        try Checks.check(local.localCopies == [[manualURL]], "standalone explicit export presents a copy after real full validation")
+    }
+}

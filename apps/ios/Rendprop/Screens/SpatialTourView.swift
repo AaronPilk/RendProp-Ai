@@ -21,6 +21,7 @@ struct SpatialTourView: View {
     @State private var captureOpenedAt: Date?
     @State private var captureOwner: String?
     @State private var captureHandedOff = false
+    @State private var captureInspectionID = UUID()
     @State private var limitNotice: SpatialLimitNotice?
     @State private var capability: SpatialCapability?
     @State private var capabilityError: String?
@@ -99,11 +100,13 @@ struct SpatialTourView: View {
             // the recorder's limit? Say so in plain words instead of silence.
             guard !captureHandedOff, let since = captureOpenedAt else { captureOpenedAt = nil; return }
             let owner = captureOwner
+            let inspectionID = captureInspectionID
             captureOpenedAt = nil
-            Task { await inspectCaptures(since: since, owner: owner) }
+            Task { await inspectCaptures(since: since, owner: owner, inspectionID: inspectionID) }
         }) { handoff in
             SpatialProductCapture(roomLabel: trimmedLabel) { url in
                 guard handoff.accepts(presentationID: captureHandoff?.id, currentOwner: auth.userID) else { return }
+                invalidateCaptureInspection()
                 captureHandedOff = true
                 captureHandoff = nil
                 Task { await enqueue(url, capturedOwner: handoff.ownerID) }
@@ -144,7 +147,9 @@ struct SpatialTourView: View {
             viewer = nil
             reviewing = nil
             captureHandoff = nil
-            limitNotice = nil
+            captureOpenedAt = nil
+            captureOwner = nil
+            invalidateCaptureInspection()
             message = nil
         }
     }
@@ -169,11 +174,11 @@ struct SpatialTourView: View {
             Toggle("Upload on Wi-Fi only", isOn: $wifiOnly)
                 .font(.rpBody).tint(Theme.accent)
                 .accessibilityIdentifier("spatial.wifiOnly")
-            Text("Keep the phone steady, walk slowly, and avoid people, mirrors and personal documents. Scan each room separately. A scan stops by itself after 400 photos or 10 minutes, so keep each room short.")
+            Text("Keep the phone steady and walk slowly. Keep some of the same furniture or doorway in view as you move, and revisit corners from different positions. Avoid people, mirrors and personal documents. Aim for 300–350 photos per room; the scan stops at 400 photos or 10 minutes.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
             Button {
                 message = nil
-                limitNotice = nil
+                invalidateCaptureInspection()
                 captureHandedOff = false
                 captureOpenedAt = Date()
                 captureOwner = auth.userID
@@ -244,9 +249,8 @@ struct SpatialTourView: View {
     }
 
     /// The recorder stopped a scan at its own ceiling (400 photos / 10 min).
-    /// Today it never marks such a capture exportable, so the honest answer is
-    /// "scan again, shorter"; if a later recorder does mark it exportable the
-    /// owner may continue with what was saved.
+    /// Only a completely revalidated archive can be offered for explicit upload.
+    /// Historical or damaged limit-stopped attempts remain saved and blocked.
     private func limitCard(_ notice: SpatialLimitNotice) -> some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("Your scan reached the limit", systemImage: "hourglass.bottomhalf.filled")
@@ -260,7 +264,7 @@ struct SpatialTourView: View {
                 }.tint(Theme.accent).disabled(preparing).accessibilityIdentifier("spatial.limit.upload")
                 Button("Scan again instead") { limitNotice = nil }.tint(Theme.accent)
             } else {
-                Text("Scans stop by themselves after 400 photos or 10 minutes, and this one did. The photos are saved on this phone, but a scan that hits the limit can't be uploaded, so please scan this room again with a shorter, slower walk.")
+                Text("This scan reached the 400-photo or 10-minute limit, but it could not be verified for upload. Its photos remain saved on this phone. Scan the room again with a shorter, slower walk.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 Button("OK") { limitNotice = nil }.tint(Theme.accent)
             }
@@ -414,11 +418,16 @@ struct SpatialTourView: View {
             await refresh()
         } catch { message = error.localizedDescription }
     }
+    /// Invalidate delayed archive checks when their capture context changes.
+    @MainActor private func invalidateCaptureInspection() {
+        captureInspectionID = UUID()
+        limitNotice = nil
+    }
     /// After the capture sheet closes without a verified room, look at what
     /// the recorder saved since it opened. Only a limit-stopped scan gets a
     /// notice; interrupted or failed attempts already told the owner on the
     /// capture screen.
-    @MainActor private func inspectCaptures(since: Date, owner: String?) async {
+    @MainActor private func inspectCaptures(since: Date, owner: String?, inspectionID: UUID) async {
         let found = await Task.detached(priority: .utility) { () -> (usable: URL?, hit: Bool) in
             guard let archive = try? CaptureArchive.local() else { return (nil, false) }
             var newest: CaptureArchiveEntry?
@@ -432,12 +441,16 @@ struct SpatialTourView: View {
                 guard page.hasMore else { break }
                 offset += CaptureArchive.pageSize
             }
-            guard let newest, newest.status == "limit_reached" else { return (nil, false) }
-            // Exportable only if the recorder says so; today it never does for
-            // a limit-stopped scan, and this must not second-guess it.
+            guard let newest, newest.status == "limit_reached" ||
+                    (newest.status == "complete" && newest.stopReason != nil) else { return (nil, false) }
+            // New normal ceiling stops use complete + stop_reason. Historical
+            // limit_reached attempts remain blocked; every file is reread here.
             return (try? archive.validateForExport(id: newest.id), true)
         }.value
-        guard found.hit, auth.userID == owner else { return }
+        // Full-file validation may finish after another scan or an account
+        // switch. A prior presentation must never offer its room for upload.
+        guard found.hit, auth.userID == owner, captureInspectionID == inspectionID,
+              captureHandoff == nil, !captureHandedOff else { return }
         limitNotice = SpatialLimitNotice(usableCapture: found.usable, ownerID: owner)
     }
     @MainActor private func open(_ job: SpatialJob) async {
