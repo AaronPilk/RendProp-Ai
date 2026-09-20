@@ -6,6 +6,7 @@ struct CaptureArchiveEntry {
     let frameCount: Int?
     let status: String
     let issue: String?
+    var stopReason: CaptureStopReason? = nil
 }
 
 struct CaptureArchivePage {
@@ -101,7 +102,7 @@ struct CaptureArchive {
             do {
                 let manifest = try manifest(id: id)
                 entries.append(CaptureArchiveEntry(id: id, createdAt: ISO8601DateFormatter().date(from: manifest.started_at),
-                    frameCount: manifest.frames.count, status: manifest.status, issue: nil))
+                    frameCount: manifest.frames.count, status: manifest.status, issue: nil, stopReason: manifest.stop_reason))
             } catch {
                 // A corrupt/incomplete attempt remains visible; it is not hidden
                 // or reclassified as a completed room. Do not display user paths.

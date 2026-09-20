@@ -20,13 +20,14 @@ final class SpatialCaptureViewController: UIViewController {
     private let status = UILabel()
     private var controls = CaptureControls()
     private var finishedURL: URL?
+    private var finishedStopReason: CaptureStopReason?
     private var idleTimerBeforeCapture: Bool?
 
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .black
         status.text = ARWorldTrackingConfiguration.isSupported
-            ? (onVerifiedCapture == nil ? "Local Phase A capture. Walk slowly around one room, then stop. Files stay on this phone." : "Walk slowly around one room. Keep the camera level and avoid mirrors. Stop when you have covered the room.")
+            ? (onVerifiedCapture == nil ? "Walk slowly around one room. Revisit doorways and corners from different positions, then stop. Files stay on this phone." : "Walk slowly around one room. Keep the phone steady and revisit doorways and corners. Stop when the room is covered.")
             : "A physical iPhone supporting AR world tracking is required. The simulator cannot capture a room."
         status.accessibilityIdentifier = "spatial.status"
         start.accessibilityIdentifier = "spatial.start"
@@ -59,19 +60,26 @@ final class SpatialCaptureViewController: UIViewController {
             stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
         ])
         recorder.onStatus = { [weak self] message in if self?.controls.isRecording == true { self?.status.text = message } }
-        recorder.onFinished = { [weak self] url, message, ready in
-            guard let self, !self.controls.isClosed else { return }
-            self.releasePreview()
-            self.restoreIdleTimer()
-            self.controls.captureFinished(exportable: ready)
-            self.finishedURL = url
-            self.status.text = message
-            self.refreshControls()
-            if ready, let url, self.onVerifiedCapture != nil, self.controls.beginExport() {
-                self.verifyAndExport(id: url.lastPathComponent)
-            }
+        recorder.onFinished = { [weak self] url, message, ready, stopReason in
+            self?.captureFinished(url: url, message: message, exportable: ready, stopReason: stopReason)
         }
         NotificationCenter.default.addObserver(self, selector: #selector(willResignActive), name: UIApplication.willResignActiveNotification, object: nil)
+    }
+
+    private func captureFinished(url: URL?, message: String, exportable: Bool, stopReason: CaptureStopReason?) {
+        guard !controls.isClosed else { return }
+        releasePreview()
+        restoreIdleTimer()
+        controls.captureFinished(exportable: exportable)
+        finishedURL = url
+        finishedStopReason = stopReason
+        status.text = message
+        refreshControls()
+        // An automatic ceiling is not a request to start paid generation.
+        // Show the existing export/use control and wait for an explicit tap.
+        if exportable, stopReason == nil, let url, onVerifiedCapture != nil, controls.beginExport() {
+            verifyAndExport(id: url.lastPathComponent)
+        }
     }
 
     @objc private func startTapped() {
@@ -82,6 +90,7 @@ final class SpatialCaptureViewController: UIViewController {
         }
         guard controls.beginStart() else { return }
         finishedURL = nil
+        finishedStopReason = nil
         refreshControls()
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
             DispatchQueue.main.async {
@@ -200,7 +209,8 @@ final class SpatialCaptureViewController: UIViewController {
         start.isEnabled = controls.startEnabled
         stop.isEnabled = controls.stopEnabled
         export.isEnabled = controls.exportEnabled
-        export.isHidden = onVerifiedCapture != nil
+        export.isHidden = onVerifiedCapture != nil && finishedStopReason == nil
+        export.configuration?.title = onVerifiedCapture != nil ? "Use this scan" : "Export completed capture"
         saved.isEnabled = controls.startEnabled
     }
 
