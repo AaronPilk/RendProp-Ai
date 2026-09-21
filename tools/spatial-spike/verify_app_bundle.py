@@ -9,10 +9,10 @@ if not __debug__:
     raise SystemExit("FAIL: run bundle verification without Python -O")
 
 
-def verify(bundle: Path, build: str, lab: bool) -> None:
+def verify(bundle: Path, build: str, lab: bool, version: str = "1.0") -> None:
     info = plistlib.loads((bundle / "Info.plist").read_bytes())
     assert info["CFBundleIdentifier"] == "com.rendprop.app", "wrong app identifier"
-    assert info["CFBundleShortVersionString"] == "1.0", "wrong marketing version"
+    assert info["CFBundleShortVersionString"] == version, "wrong marketing version"
     assert info["CFBundleVersion"] == build, "wrong build number"
     assert info["MinimumOSVersion"] == "16.0", "shipping compatibility changed"
     assert info["UIRequiredDeviceCapabilities"] == ["arm64"], "global AR/LiDAR restriction introduced"
@@ -44,6 +44,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("bundle", type=Path)
     parser.add_argument("--build", required=True)
+    parser.add_argument("--version", default="1.0", help="Expected marketing version")
     parser.add_argument("--lab", action="store_true")
     args = parser.parse_args()
-    verify(args.bundle, args.build, args.lab)
+    verify(args.bundle, args.build, args.lab, args.version)
