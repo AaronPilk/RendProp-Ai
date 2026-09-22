@@ -1,0 +1,142 @@
+[
+ {
+  "position": 1,
+  "folder": "01 Virtual Staging (before + after)",
+  "feature": "Virtual Staging",
+  "before_after": true,
+  "source_reel": 8
+ },
+ {
+  "position": 2,
+  "folder": "02 Twilight Shot (before + after)",
+  "feature": "Twilight Shot",
+  "before_after": true,
+  "source_reel": 5
+ },
+ {
+  "position": 3,
+  "folder": "03 The Flythrough",
+  "feature": "The Flythrough",
+  "before_after": false,
+  "source_reel": 1
+ },
+ {
+  "position": 4,
+  "folder": "04 The Share Link",
+  "feature": "The Share Link",
+  "before_after": false,
+  "source_reel": 2
+ },
+ {
+  "position": 5,
+  "folder": "05 Reels In Your Voice",
+  "feature": "Reels In Your Voice",
+  "before_after": false,
+  "source_reel": 9
+ },
+ {
+  "position": 6,
+  "folder": "06 Room Tags",
+  "feature": "Room Tags",
+  "before_after": false,
+  "source_reel": 3
+ },
+ {
+  "position": 7,
+  "folder": "07 Blue Sky (before + after)",
+  "feature": "Blue Sky",
+  "before_after": true,
+  "source_reel": 4
+ },
+ {
+  "position": 8,
+  "folder": "08 Tidy The Room (before + after)",
+  "feature": "Tidy The Room",
+  "before_after": true,
+  "source_reel": 7
+ },
+ {
+  "position": 9,
+  "folder": "09 Aerial Intro",
+  "feature": "Aerial Intro",
+  "before_after": false,
+  "source_reel": 10
+ },
+ {
+  "position": 10,
+  "folder": "10 Every AI Edit Is Labelled",
+  "feature": "Every AI Edit Is Labelled",
+  "before_after": false,
+  "source_reel": 17
+ },
+ {
+  "position": 11,
+  "folder": "11 Floor Plan",
+  "feature": "Floor Plan",
+  "before_after": false,
+  "source_reel": 11
+ },
+ {
+  "position": 12,
+  "folder": "12 Green Lawn (before + after)",
+  "feature": "Green Lawn",
+  "before_after": true,
+  "source_reel": 6
+ },
+ {
+  "position": 13,
+  "folder": "13 Two Links Every Time",
+  "feature": "Two Links Every Time",
+  "before_after": false,
+  "source_reel": 12
+ },
+ {
+  "position": 14,
+  "folder": "14 Lead Capture",
+  "feature": "Lead Capture",
+  "before_after": false,
+  "source_reel": 14
+ },
+ {
+  "position": 15,
+  "folder": "15 Your Card On Every Tour",
+  "feature": "Your Card On Every Tour",
+  "before_after": false,
+  "source_reel": 13
+ },
+ {
+  "position": 16,
+  "folder": "16 No Account Needed",
+  "feature": "No Account Needed",
+  "before_after": false,
+  "source_reel": 16
+ },
+ {
+  "position": 17,
+  "folder": "17 Not Only Homes",
+  "feature": "Not Only Homes",
+  "before_after": false,
+  "source_reel": 15
+ },
+ {
+  "position": 18,
+  "folder": "18 Your Content Stays Yours",
+  "feature": "Your Content Stays Yours",
+  "before_after": false,
+  "source_reel": 20
+ },
+ {
+  "position": 19,
+  "folder": "19 The Plans",
+  "feature": "The Plans",
+  "before_after": false,
+  "source_reel": 18
+ },
+ {
+  "position": 20,
+  "folder": "20 7 Days Free",
+  "feature": "7 Days Free",
+  "before_after": false,
+  "source_reel": 19
+ }
+]

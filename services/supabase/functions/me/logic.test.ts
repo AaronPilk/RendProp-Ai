@@ -42,6 +42,10 @@ function emptyPayload(): DeletionPayload {
 Deno.test("payloadEmpty: a freshly-constructed empty payload is empty", () => {
   assertEquals(payloadEmpty(emptyPayload()), true);
 });
+Deno.test("payloadEmpty: a retained Auth identity prevents completion", () => {
+  assertEquals(payloadEmpty({ ...emptyPayload(), auth_user_id: "synthetic-user" }), false);
+  assertEquals(payloadEmpty({ ...emptyPayload(), auth_user_id: null }), true);
+});
 
 Deno.test("payloadEmpty: false while ANY one field still holds work", () => {
   assertEquals(payloadEmpty({ ...emptyPayload(), r2: [{ bucket: "b", key: "k" }] }), false);

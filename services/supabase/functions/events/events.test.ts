@@ -79,6 +79,39 @@ Deno.test("scrub: output is clipped and whitespace-collapsed", () => {
   assertEquals(scrubString("x".repeat(500), 40).length, 40);
 });
 
+// REGRESSION, 2026-09-13. Build 23 reported "1.0.2 (23)" and the row in
+// app_events read "[redacted])". The phone rule (a digit, 6+ of [digits spaces
+// dots parens dashes], a digit) matches any three-component version with a
+// build number. Two-component versions escaped by one character, which is why
+// 1.0 (16) looked fine and this was invisible until 1.0.1 shipped. It broke
+// every version-keyed analytic — admin_cohorts and admin_churn group by
+// app_version.
+Deno.test("scrubMeta: a real version number survives intact", () => {
+  for (const v of [
+    "1.0 (16)",       // survived before the fix, by luck
+    "1.0.1 (22)",     // did not
+    "1.0.2 (23)",     // the one found live
+    "2.0.10 (105)",
+    "1.2.3.4 (9999)",
+    "1.0",
+    "18.7.3",
+    "26.6.2",
+  ]) {
+    assertEquals(scrubMeta(v), v, `version "${v}" must reach the database unchanged`);
+  }
+});
+
+// The pass-through is a whole-string match, so it cannot be used as a way to
+// smuggle anything past the scrubber by prefixing it with a version.
+Deno.test("scrubMeta: the version pass-through is anchored, not a bypass", () => {
+  assertEquals(scrubMeta("1.0.2 (23) call 4155550132"), "[redacted]) call [redacted]");
+  assertEquals(scrubMeta("4155550132"), "[redacted]");
+  assertEquals(scrubMeta("+1 (415) 555-0132"), "[redacted]");
+  assertEquals(scrubMeta("1.0.2 (23) a@b.com"), "[redacted]) [redacted]");
+  // Longer than MAX_META_STRING: not eligible for the pass-through.
+  assertEquals(scrubMeta("1".repeat(45)), "[redacted]");
+});
+
 Deno.test("scrubMeta: clips to 40 and nulls an empty result", () => {
   assertEquals(scrubMeta("iOS 26.4"), "iOS 26.4");
   assertEquals(scrubMeta("v".repeat(90))!.length, 40);
@@ -151,14 +184,45 @@ Deno.test("whitelist: no schema key can hold a person, a place or a file", () =>
 
 Deno.test("vocabulary: exactly the names in the launch contract", () => {
   assertEquals([...ALLOWED_EVENT_NAMES].sort(), [
-    "aerial_made", "ai_photo_edit", "app_open", "capture_finished", "capture_started",
+    "aerial_made", "ai_clip_rejected", "ai_photo_edit", "ai_prompt_improved",
+    "ai_script_written",
+    "anonymous_adopt", "anonymous_session_failed", "anonymous_session_started",
+    "app_open", "capture_finished", "capture_started",
     "coach_action_tapped", "coach_message_sent", "coach_opened",
-    "crash", "error", "gear_item_tapped", "gear_opened", "guide_completed",
-    "guide_step_tapped", "home_created", "paywall_viewed",
-    "purchase_completed", "purchase_failed", "purchase_started", "reel_made",
+    "crash", "error", "file_saved", "gear_item_tapped", "gear_opened",
+    "guide_completed", "guide_step_tapped", "home_created",
+    "listing_link_used", "paywall_viewed", "property_lookup",
+    "purchase_completed", "purchase_failed", "purchase_started",
+    "reel_made", "reel_planned",
     "render_finished", "restore", "review_prompt_shown", "signin", "signup",
-    "tour_published", "voiceover_added",
+    "tour_published", "tour_viewer_opened", "voiceover_added",
   ]);
+});
+
+// The four names the shipped iOS build already emits (2026-09-12). Each case
+// is the payload the real call site passes, so the whitelist cannot drift away
+// from the app without this failing.
+Deno.test("vocabulary: the four shipped iOS events keep exactly their own props", () => {
+  const cases: Array<[string, Record<string, unknown>, Record<string, unknown>]> = [
+    // FlythroughDetailView.swift: ["kind": "animate", "status": verdict.rawValue]
+    ["ai_clip_rejected", { kind: "animate", status: "unavailable" },
+     { kind: "animate", status: "unavailable" }],
+    // TourViewerView.swift: ["kind": leadSlug == nil ? "portfolio" : "tour"]
+    ["tour_viewer_opened", { kind: "tour" }, { kind: "tour" }],
+    // NewListingView.swift: ["source": parsed.source.rawValue]
+    ["listing_link_used", { source: "zillow" }, { source: "zillow" }],
+    // NewListingView.swift: ["ok", "filled", "cached"] — all sent as strings.
+    ["property_lookup", { ok: "true", filled: "3", cached: "false" },
+     { ok: "true", filled: "3", cached: "false" }],
+  ];
+  for (const [name, sent, kept] of cases) {
+    assert(isAllowedEvent(name), `${name} is not in the vocabulary`);
+    assertEquals(sanitizeProps(name, sent).props, kept);
+    // An unknown key is still dropped silently, never a 400.
+    const extra = sanitizeProps(name, { ...sent, address: "1600 Pennsylvania Ave" });
+    assertEquals(extra.dropped, 1);
+    assertEquals(extra.props, kept);
+  }
 });
 
 Deno.test("vocabulary: anything else is refused", () => {

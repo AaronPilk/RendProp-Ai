@@ -95,7 +95,7 @@ final class PaywallShot: XCTestCase {
         // skipped gates, same deterministic light appearance. Keys verified
         // against source: RendpropApp.swift @AppStorage("hasOnboarded"),
         // RootTabView @AppStorage("space.type"), @AppStorage("appearance"),
-        // AIConsent "ai.thirdPartyProcessing.consent.v1".
+        // AIConsent "ai.thirdPartyProcessing.consent.v2".
         //
         // `-uiTesting` does not touch StoreKit: PurchaseManager.loadProducts()
         // calls `Product.products(for: RendpropProducts.all)` unconditionally,
@@ -105,7 +105,7 @@ final class PaywallShot: XCTestCase {
             "-hasOnboarded", "YES",
             "-space.type", "real_estate",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
         ]
         app.launch()
     }

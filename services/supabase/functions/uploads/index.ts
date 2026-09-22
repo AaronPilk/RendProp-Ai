@@ -1,133 +1,55 @@
-// uploads — create capture_assets + hand back R2 upload URLs (owner).
-//
-// Bytes never pass through Supabase; the app streams straight to R2.
-//
-// Audit P0-2 hardening (round 2 — the presigned-URL TOCTOU is now closed):
-//   • aws4fetch's signQuery signs ONLY `host`, so a presigned PUT can bind
-//     neither content-type nor content-length. Enforcement is therefore
-//     server-side: single PUTs land on a STAGING key, /complete HEAD-verifies
-//     it (exists, size == declared, content-type in the allowlist), then
-//     server-side-COPIES it to the final key and deletes staging. The final key
-//     never gets a PUT URL, so the still-valid staging URL can only overwrite an
-//     orphan that is never served — no post-verification swap.
-//   • Only owner/admin/agent may upload (marketing is read-only, audit P0-7).
-//   • Ticket limits are charged PER FILE, plus a per-org daily BYTE budget.
-//   • Multipart: part numbers bounded to 1…parts_total, completion requires the
-//     exact unique part set; the object assembles at the final key under an
-//     uploadId with no outstanding single-PUT URL, so it is verified in place.
-//   • Membership is verified with the user client (RLS), then rows are written
-//     with the service client — direct Data-API writes on capture_assets are
-//     revoked in migration 0007, so this function is the only write path.
-//   • Residual (manual gate): an R2 lifecycle rule on the `_staging/` prefix to
-//     reap abandoned staged objects.
-//
-// Fix wave 1 (2026-09-03, audit F-E-01 / F-supabase-01 / -18 / F-E-05):
-//   • `content_type` is accepted (allow-listed) on every ticket and the row
-//     records whether the CLIENT declared it (content_type_declared). At
-//     /complete the observed type must be allow-listed; it must ALSO equal the
-//     declared type only when the client declared one. Before this, the app's
-//     single-PUT (`video/quicktime` header) against a render ticket (server
-//     default `video/mp4`) was rejected and DELETED — no tour ≤64 MB could be
-//     published.
-//   • `role:"render"` may carry `kind:"photo"`: the tour POSTER, stored in the
-//     public renders bucket at renders/<org>/<listing>/<asset>.<jpg|png|webp>
-//     and referenced by publish-app via `poster_asset_id` (server-verified).
-//
-// Compliance wave 2 (2026-09-04, W2-B4):
-//   • `role:"original"` — the UNTOUCHED source of an AI-altered photo, stored in
-//     the PUBLIC renders bucket at
-//     renders/<org>/<listing>/original-<asset>.<jpg|png|webp>. California
-//     AB 723 (1 Jan 2026) requires not just disclosure of digitally altered
-//     listing imagery but ACCESS TO THE ORIGINAL unaltered version, and
-//     NorthstarMLS (10 Jul 2026) wants an unaltered "Before" image for every
-//     altered room — neither is satisfiable from the private uploads bucket,
-//     which has no public URL. So the original is published like the poster and
-//     its `asset_id` goes to `POST /ai-photo { original_asset_id }` (or
-//     `PATCH /me/compliance/:id`), where the server derives the R2 key.
-//     Verification is the poster's path exactly — browser-servable types only
-//     (jpeg|png|webp; a HEIC "View original" link would not open) — but the
-//     full 50 MB photo ceiling, because an original is a full-resolution photo,
-//     not a 1280 px thumbnail. `role:"original"` is always `kind:"photo"`.
-//   • /complete is idempotent: a replay on an already-completed asset returns
-//     200 + the row when no NEW staged object exists (a lost response no longer
-//     strands the upload); a multipart whose R2 assembly already happened
-//     (NoSuchUpload on retry) is verified at the final key and completed.
-//   • Errors carry `{ error, code }` (see _shared/http.ts).
-//
-// Fix wave p12-E (2026-09-04, audit F-E-06):
-//   • POST /uploads now HONOURS `Idempotency-Key`. The app has sent a stable
-//     key per logical ticket since fix wave 1 and this route ignored it, so
-//     every retry (lost response, expired staging URL, relaunch) minted
-//     another capture_assets row + R2 key + multipart session and charged the
-//     org's daily ticket AND byte budgets again — five PUT failures on one
-//     walkthrough cost five orphan rows and 5x its bytes. A retry with the
-//     same key and the same (bytes, kind, bucket) now REPLAYS the ticket:
-//     200 + the same `asset_id`/`storage_key` (`replayed: true`), with a fresh
-//     15-min staging PUT URL for singles and the still-open `upload_id` for
-//     multipart. Replay covers uploads still IN FLIGHT only (migration 0014's
-//     partial unique index) — a completed asset is /complete's own replay case.
-//
-// Audit fix wave (2026-09-07, P0-2 residual — content-type smuggling + overcharge):
-//   • MIME normalization no longer launders a parameterized type into an
-//     accepted bare one. A CLIENT-declared `content_type` (here and on
-//     /batch) must now be a bare `type/subtype` — `;`, whitespace or a
-//     parameter is a 400 naming the field, never silently truncated. The
-//     file's own comment used to claim `"video/mp4;evil"` "must not launder
-//     into video/mp4" while `mediaType()` did exactly that; see
-//     content_type.ts for the two parsers (client-declared vs.
-//     server-observed) that make the claim true. `/complete`'s comparison is
-//     unchanged in effect — the OBSERVED R2 Content-Type still has its
-//     parameter parsed off before the allowlist + declared-type check — but is
-//     now honest about why: that header is a fact about the object, not a
-//     client-shaped field, and the declared side it's compared against can no
-//     longer carry a parameter itself.
-//   • Upload budget (tickets + MiB) is now REFUNDED when the charge it paid
-//     for produces no usable asset: the DB insert (or, for multipart, the R2
-//     CreateMultipartUpload call) fails after the charge, or this request
-//     loses an Idempotency-Key race and relays a concurrent ticket instead of
-//     minting its own. Previously the charge landed unconditionally before
-//     the insert, so any of those failure modes burned the org's daily
-//     ticket/byte allowance for an asset that was never created (an
-//     overcharge, not a bypass — the allowlist/size checks were never at
-//     risk). `chargeUploadBudget` itself is also now self-correcting: if the
-//     byte-budget charge fails right after the ticket-count charge succeeded,
-//     the ticket charge is handed back too, so a byte-capped org never also
-//     loses a ticket for nothing.
-//
-//   POST /uploads                                     (+ Idempotency-Key header)
-//     { listing_id, filename, bytes, sha256?, kind:"video"|"photo", content_type?, multipart?, role:"capture"|"render"|"original" }
-//     video>64MB (or multipart:true) -> { asset_id, mode:"multipart", upload_id, storage_key, part_size, part_count, content_type }
-//     otherwise                      -> { asset_id, mode:"single", put_url, storage_key, content_type }
-//     idempotent replay              -> 200, the same body + `replayed: true`
-//
-//   POST /uploads/batch
-//     { listing_id, kind:"photo", files:[{filename,bytes,sha256?,content_type?}] }
-//     -> { assets:[{ index, asset_id, put_url, storage_key, content_type }] }
-//
-//   POST /uploads/:asset_id/part-urls   { numbers:[1,2,…] } -> { urls:[{ number, url }] }
-//   POST /uploads/:asset_id/complete    multipart: { parts:[{number,etag}], … } | single: { … } -> asset (200; idempotent replay returns the same row)
-//   POST /uploads/:asset_id/abort       { } -> { ok:true }
+// Upload transport v2: service-only reservations authorize one exact-size
+// gateway dispatch per journaled operation. No reusable R2 PUT URL fallback.
+// Requires 0037 + configured gateway and drained legacy URLs before rollout.
+// Cancellation releases only undispatched held bytes; cleanup is journaled,
+// asynchronous, and does not refund physical writes or promise zero ingress cost.
+// With 0042 a cut single/part transfer stays on its ticket: renew/part-urls
+// re-issue the same journaled operation (bounded attempts) once the gateway
+// rejected it or the server observed its key/part absent; a 409 marks the
+// attempt cap, 503 stays reserved for state that cannot be proven yet.
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
-import { durableRateLimit, refundRateLimit } from "../_shared/ratelimit.ts";
-import { adminClient, assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
-import { baseMediaType, isContentTypeDeclared, requireBareContentType } from "./content_type.ts";
 import {
-  abortMultipartUpload,
+  assert,
+  HttpError,
+  json,
+  pathSegments,
+  readJson,
+  respondError,
+} from "../_shared/http.ts";
+import {
+  adminClient,
+  assertNotDeleting,
+  getUser,
+  isServiceRole,
+  userClient,
+} from "../_shared/supabase.ts";
+import {
+  baseMediaType,
+  isContentTypeDeclared,
+  requireBareContentType,
+} from "./content_type.ts";
+import { canonicalParts, sameParts } from "./publication.ts";
+import {
+  confirmedTransfers,
+  recordedOperation,
+  reserveAssets,
+  row,
+  settleReservation,
+  transferURL,
+  transportConfiguration,
+  uploadRPC,
+} from "./transport.ts";
+import { sweepUploads } from "./maintenance.ts";
+import {
   choosePartSize,
   completeMultipartUpload,
   copyObject,
   createMultipartUpload,
-  deleteObject,
   extFromFilename,
   headObject,
-  isNoSuchUpload,
-  presignPut,
-  presignUploadPart,
   R2_BUCKET_RENDERS,
   R2_BUCKET_UPLOADS,
-  R2_MAX_PARTS,
 } from "../_shared/r2.ts";
 
 /** Map a capture_assets.bucket tag → the actual R2 bucket name. */
@@ -135,20 +57,47 @@ function r2BucketFor(bucket: unknown): string {
   return bucket === "renders" ? R2_BUCKET_RENDERS : R2_BUCKET_UPLOADS;
 }
 
-// Single-PUT uploads land on a STAGING key first; /complete verifies the staged
-// object and server-side-copies it to the final key, which never receives a
-// presigned PUT URL. This is the real close of the audit's TOCTOU: aws4fetch's
-// signQuery only signs `host`, so content-type/content-length can't be bound
-// into a presigned URL — the object must be verified server-side AND made
-// unreachable to the still-valid PUT URL afterward. Abandoned staging objects
-// are reaped by an R2 lifecycle rule on the `_staging/` prefix (manual gate).
-const stagingKey = (finalKey: string) => `_staging/${finalKey}`;
+// All terminal transitions compete on the same row predicate. In particular,
+// abort/mismatch must win THIS fence before deleting any assembled object.
+// deno-lint-ignore no-explicit-any
+function pendingAsset(
+  admin: any,
+  asset: Record<string, unknown>,
+  patch: Record<string, unknown>,
+) {
+  return admin.from("capture_assets").update(patch).eq("id", asset.id)
+    .eq("storage_key", asset.storage_key).eq("uploaded", false).eq(
+      "upload_aborted",
+      false,
+    );
+}
+
+// deno-lint-ignore no-explicit-any
+async function reloadAsset(
+  admin: any,
+  assetId: string,
+): Promise<Record<string, unknown>> {
+  const { data, error } = await admin.from("capture_assets").select("*").eq(
+    "id",
+    assetId,
+  ).maybeSingle();
+  if (error || !data) {
+    throw new HttpError(
+      503,
+      "Upload state could not be confirmed — retry completion",
+    );
+  }
+  return data;
+}
 
 /** Marketing is read-only (audit P0-7): only owner/admin/agent may upload. */
 // deno-lint-ignore no-explicit-any
 async function requireWriteRole(admin: any, userId: string, orgId: string) {
   const { data, error } = await admin
-    .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();
+    .from("memberships").select("role").eq("user_id", userId).eq(
+      "org_id",
+      orgId,
+    ).maybeSingle();
   if (error) throw new HttpError(500, `Role lookup failed: ${error.message}`);
   const role = data?.role;
   if (!role || role === "marketing") {
@@ -164,10 +113,18 @@ async function requireWriteRole(admin: any, userId: string, orgId: string) {
  * ticket-creating routes).
  */
 // deno-lint-ignore no-explicit-any
-async function requireAssetWriteRole(db: any, admin: any, userId: string, asset: Record<string, unknown>) {
+async function requireAssetWriteRole(
+  db: any,
+  admin: any,
+  userId: string,
+  asset: Record<string, unknown>,
+) {
   const { data, error } = await db
-    .from("listings").select("org_id").eq("id", asset.listing_id as string).maybeSingle();
-  if (error) throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+    .from("listings").select("org_id").eq("id", asset.listing_id as string)
+    .maybeSingle();
+  if (error) {
+    throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+  }
   if (!data) throw new HttpError(404, "Listing not found");
   await requireWriteRole(admin, userId, data.org_id as string);
 }
@@ -177,79 +134,26 @@ const MULTIPART_THRESHOLD = 64 * 1024 * 1024; // 64 MB
 const MAX_PART_URLS_PER_CALL = 256;
 const MAX_PHOTOS_PER_BATCH = 200;
 
-// Staging PUT URLs are short-lived: a still-valid URL can re-PUT to the staging
-// key after /complete, creating an unserved orphan that still costs storage.
-// 15 min covers a real upload; the _staging/ lifecycle rule reaps the rest.
-const STAGING_PUT_TTL_SECONDS = 900;
-
 // Hard size ceilings + a content-type allowlist so a caller can't presign an
 // arbitrary-type or absurdly large object.
 const MAX_VIDEO_BYTES = 12 * 1024 * 1024 * 1024; // 12 GB (a 4K / 9-min walkthrough is ~8 GB)
 const MAX_PHOTO_BYTES = 50 * 1024 * 1024; // 50 MB
 const MAX_POSTER_BYTES = 10 * 1024 * 1024; // 10 MB — a 1280px JPEG is ~300 KB
 const ALLOWED_VIDEO_TYPES = ["video/mp4", "video/quicktime", "video/x-m4v"];
-const ALLOWED_PHOTO_TYPES = ["image/jpeg", "image/png", "image/heic", "image/heif", "image/webp"];
+const ALLOWED_PHOTO_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/heic",
+  "image/heif",
+  "image/webp",
+];
 // Posters are served to browsers as og:image / <video poster>: HEIC is out.
 const ALLOWED_POSTER_TYPES = ["image/jpeg", "image/png", "image/webp"];
-const POSTER_EXT: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
-
-// Per-org daily budgets. Tickets are charged per FILE; bytes per MiB declared.
-// A heavy team (20 listings/day × 70 photos + a few walkthroughs) stays well
-// under both; an abusive account hits a wall.
-const MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY = 2000;
-const MAX_UPLOAD_MB_PER_ORG_PER_DAY = 204_800; // 200 GB/day
-
-const MB = 1024 * 1024;
-
-/**
- * Charge the org's daily ticket + byte budgets atomically-ish (two counters).
- *
- * If the ticket-count charge succeeds but the byte-budget charge then fails,
- * the ticket charge is handed back before throwing: without this, a byte-
- * capped org would ALSO lose a ticket from its daily allowance for a request
- * that is about to be rejected outright (audit P0-2 residual — the same
- * "charged for nothing" defect this file's callers now guard against via
- * `refundUploadBudget`, just one layer down).
- */
-async function chargeUploadBudget(orgId: string, fileCount: number, totalBytes: number) {
-  const tickets = await durableRateLimit(
-    `uploads:${orgId}`,
-    MAX_UPLOAD_TICKETS_PER_ORG_PER_DAY,
-    86400,
-    fileCount,
-  );
-  if (!tickets) throw new HttpError(429, "Daily upload limit reached for this workspace", "rate_limited");
-  const mb = Math.max(1, Math.ceil(totalBytes / MB));
-  const bytesOk = await durableRateLimit(
-    `uploadmb:${orgId}`,
-    MAX_UPLOAD_MB_PER_ORG_PER_DAY,
-    86400,
-    mb,
-  );
-  if (!bytesOk) {
-    await refundRateLimit(`uploads:${orgId}`, 86400, fileCount);
-    throw new HttpError(429, "Daily upload data budget reached for this workspace", "rate_limited");
-  }
-}
-
-/**
- * Hand back what `chargeUploadBudget` charged, for a ticket whose DB insert
- * (or, for multipart, the R2 CreateMultipartUpload call) FAILED after the
- * charge — or that lost an Idempotency-Key race to a concurrent identical
- * ticket and is relaying THAT ticket's response instead of minting its own.
- * Either way this call produced no new asset, so the allowance must not stick
- * (audit P0-2 residual: budget was charged before the asset insert, so a
- * later DB/R2 failure consumed the org's ticket/byte allowance for nothing).
- *
- * Best-effort and never throws — `refundRateLimit` itself never throws, and a
- * failed refund must not turn "the asset failed" into a 500 instead of the
- * real reason.
- */
-async function refundUploadBudget(orgId: string, fileCount: number, totalBytes: number): Promise<void> {
-  const mb = Math.max(1, Math.ceil(totalBytes / MB));
-  await refundRateLimit(`uploads:${orgId}`, 86400, fileCount);
-  await refundRateLimit(`uploadmb:${orgId}`, 86400, mb);
-}
+const POSTER_EXT: Record<string, string> = {
+  "image/jpeg": "jpg",
+  "image/png": "png",
+  "image/webp": "webp",
+};
 
 /** Bound + validate one file's claimed size/type for its kind. */
 function validateFileMeta(
@@ -263,14 +167,29 @@ function validateFileMeta(
   // it is a full-resolution photo, so it gets the photo ceiling, not the 10 MB
   // poster one (W2-B4).
   const what = opts.original ? "original" : opts.poster ? "poster" : kind;
-  const maxBytes = opts.poster ? MAX_POSTER_BYTES : kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
-  assert(bytes != null && Number.isFinite(bytes) && bytes > 0 && bytes <= maxBytes, 400,
-    `bytes is required and must be between 1 and ${maxBytes} for a ${what}${label}`);
+  const maxBytes = opts.poster
+    ? MAX_POSTER_BYTES
+    : kind === "photo"
+    ? MAX_PHOTO_BYTES
+    : MAX_VIDEO_BYTES;
+  assert(
+    bytes != null && Number.isSafeInteger(bytes) && bytes > 0 &&
+      bytes <= maxBytes,
+    400,
+    `bytes is required and must be between 1 and ${maxBytes} for a ${what}${label}`,
+  );
   const allowed = (opts.poster || opts.original)
     ? ALLOWED_POSTER_TYPES
-    : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
-  assert(allowed.includes(contentType), 400,
-    `content_type "${contentType}" is not an allowed ${what} type${label} (allowed: ${allowed.join(", ")})`);
+    : kind === "photo"
+    ? ALLOWED_PHOTO_TYPES
+    : ALLOWED_VIDEO_TYPES;
+  assert(
+    allowed.includes(contentType),
+    400,
+    `content_type "${contentType}" is not an allowed ${what} type${label} (allowed: ${
+      allowed.join(", ")
+    })`,
+  );
 }
 
 /** Sanitize optional completion metadata (client-claimed, bounded). */
@@ -290,10 +209,14 @@ function metadataPatch(body: CompleteBody): Record<string, unknown> {
       if (Number.isInteger(v) && v > 0 && v <= 16384) patch[k] = v;
     }
   }
-  if (typeof body.codec === "string" && body.codec.length <= 32) patch.codec = body.codec;
+  if (typeof body.codec === "string" && body.codec.length <= 32) {
+    patch.codec = body.codec;
+  }
   if (typeof body.is_drone === "boolean") patch.is_drone = body.is_drone;
   if (typeof body.has_gyro === "boolean") patch.has_gyro = body.has_gyro;
-  if (typeof body.sha256 === "string" && /^[a-f0-9]{64}$/i.test(body.sha256)) patch.sha256 = body.sha256.toLowerCase();
+  if (typeof body.sha256 === "string" && /^[a-f0-9]{64}$/i.test(body.sha256)) {
+    patch.sha256 = body.sha256.toLowerCase();
+  }
   return patch;
 }
 
@@ -310,13 +233,20 @@ interface CreateBody {
    *  an AI-altered photo → public renders bucket, key `original-<asset>.<ext>`
    *  (always kind photo; CA AB 723 access-to-the-original). default "capture" =
    *  raw walkthrough/photo → private uploads bucket. */
-  role?: "capture" | "render" | "original";
+  role?: "capture" | "render" | "original" | "gallery";
 }
 
 interface BatchBody {
   listing_id: string;
   kind?: "photo" | "video";
-  files?: Array<{ filename?: string; bytes?: number; sha256?: string; content_type?: string }>;
+  files?: Array<
+    {
+      filename?: string;
+      bytes?: number;
+      sha256?: string;
+      content_type?: string;
+    }
+  >;
 }
 
 interface PartUrlsBody {
@@ -338,654 +268,379 @@ interface CompleteBody {
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return handleOptions();
-
   try {
-    const user = await getUser(req); // auth required; membership enforced via RLS reads below
-    const db = userClient(req); // READS (RLS-scoped) — proves membership
-    const admin = adminClient(); // WRITES (0007 revokes the direct path)
+    const route = pathSegments(req, "uploads");
+    if (req.method === "POST" && route.length === 1 && route[0] === "sweep") {
+      if (!isServiceRole(req)) {
+        throw new HttpError(403, "Service role required");
+      }
+      const receipt = await sweepUploads(adminClient());
+      return json(receipt, receipt.failed ? 503 : 200);
+    }
+    const user = await getUser(req),
+      db = userClient(req),
+      admin = adminClient();
     const seg = pathSegments(req, "uploads");
+    if (req.method !== "POST") throw new HttpError(405, "POST required");
 
-    // ---- POST /uploads/batch (photos) ----
-    if (req.method === "POST" && seg.length === 1 && seg[0] === "batch") {
-      const body = await readJson<BatchBody>(req);
-      assert(body.listing_id, 400, "listing_id is required");
-      const files = body.files ?? [];
-      assert(files.length > 0, 400, "files[] is required");
-      assert(files.length <= MAX_PHOTOS_PER_BATCH, 400, `at most ${MAX_PHOTOS_PER_BATCH} files per batch`);
-      // Batch is the PHOTO path (single PUT each). Video belongs on POST /uploads,
-      // whose multipart mode is the only safe way past R2's 5 GB single-PUT cap
-      // (audit F-supabase-19).
-      assert(body.kind !== "video", 400, "kind:\"video\" is not supported in a batch — use POST /uploads per video");
-      const kind = "photo" as const;
-
+    if (!seg.length || (seg.length === 1 && seg[0] === "batch")) {
+      // No presigned R2 fallback: a missing gateway is a pre-reservation error.
+      transportConfiguration();
+      const body = await readJson<CreateBody & BatchBody>(req);
       const listing = await requireListing(db, body.listing_id);
       await requireWriteRole(admin, user.id, listing.org_id);
-      await assertNotDeleting(user.id); // no new media once deletion starts
-
-      // Validate every file BEFORE charging or creating anything. A CLIENT-
-      // declared content_type must be a bare type/subtype (audit P0-2
-      // residual) — requireBareContentType 400s naming the exact field on
-      // anything else, it never launders a parameter away.
-      let totalBytes = 0;
-      const metas: Array<{ contentType: string; declared: boolean }> = [];
-      for (let i = 0; i < files.length; i++) {
-        const f = files[i];
-        const field = `files[${i}].content_type`;
-        const declared = isContentTypeDeclared(f.content_type);
-        const ct = declared ? requireBareContentType(f.content_type as string, field) : "image/jpeg";
-        validateFileMeta(kind, f.bytes, ct, ` (files[${i}])`);
-        totalBytes += f.bytes ?? 0;
-        metas.push({ contentType: ct, declared });
-      }
-
-      // Per-file + per-byte budget (audit P0-2: was one unit per batch).
-      await chargeUploadBudget(listing.org_id, files.length, totalBytes);
-
-      // Everything from here on can still fail (DB insert) after the charge
-      // above — refund it on any failure so a partial/failed batch never costs
-      // the org an allowance for assets it never got (audit P0-2 residual:
-      // "budget charged before the asset insert" overcharge). The batch is
-      // all-or-nothing on the RESPONSE already (one file's insert failure
-      // throws before any assets[] is returned), so refunding the FULL
-      // charged amount on any failure matches what the client actually got.
-      const assets = [];
-      try {
-        for (let i = 0; i < files.length; i++) {
-          const f = files[i];
-          const assetId = crypto.randomUUID();
-          const ext = extFromFilename(f.filename, kind);
-          const { contentType, declared } = metas[i];
-          const storageKey = `uploads/${listing.org_id}/${listing.id}/${assetId}.${ext}`;
-          const { error } = await admin.from("capture_assets").insert({
-            id: assetId,
-            listing_id: listing.id,
-            kind,
-            storage_key: storageKey,
-            sha256: f.sha256 ?? null,
-            bytes: f.bytes ?? null,
-            content_type: contentType,
-            content_type_declared: declared,
-            uploaded: false,
-          });
-          if (error) throw new HttpError(400, `Asset create failed (#${i}): ${error.message}`);
-          // PUT targets the STAGING key; /complete verifies then copies to the
-          // final key. (contentType is advisory — /complete's HEAD check enforces.)
-          const putUrl = await presignPut({
-            bucket: R2_BUCKET_UPLOADS,
-            key: stagingKey(storageKey),
-            expiresIn: STAGING_PUT_TTL_SECONDS,
-            contentType,
-          });
-          assets.push({ index: i, asset_id: assetId, put_url: putUrl, storage_key: storageKey, content_type: contentType });
-        }
-      } catch (e) {
-        await refundUploadBudget(listing.org_id, files.length, totalBytes);
-        throw e;
-      }
-      return json({ assets }, 201);
-    }
-
-    // ---- POST /uploads/:asset_id/part-urls ----
-    if (req.method === "POST" && seg.length === 2 && seg[1] === "part-urls") {
-      const assetId = seg[0];
-      const body = await readJson<PartUrlsBody>(req);
-      const asset = await requireAsset(db, assetId);
-      await requireAssetWriteRole(db, admin, user.id, asset);
-      assert(asset.upload_id, 409, "Asset is not a multipart upload");
-
-      const partsTotal = Number(asset.parts_total ?? R2_MAX_PARTS);
-      const numbers = (body.numbers ?? []).filter((n) =>
-        Number.isInteger(n) && n >= 1 && n <= partsTotal
-      );
-      assert(numbers.length > 0, 400, `numbers[] is required (1…${partsTotal})`);
-      assert(numbers.length <= MAX_PART_URLS_PER_CALL, 400, `at most ${MAX_PART_URLS_PER_CALL} part numbers per call`);
-
-      const bucket = r2BucketFor(asset.bucket);
-      const urls = [];
-      for (const number of numbers) {
-        const url = await presignUploadPart({
-          bucket,
-          key: asset.storage_key as string,
-          uploadId: asset.upload_id as string,
-          partNumber: number,
-          expiresIn: 3600,
-        });
-        urls.push({ number, url });
-      }
-      return json({ urls });
-    }
-
-    // ---- POST /uploads/:asset_id/complete ----
-    if (req.method === "POST" && seg.length === 2 && seg[1] === "complete") {
-      const assetId = seg[0];
-      const body = await readJson<CompleteBody>(req);
-      const asset = await requireAsset(db, assetId);
-      await requireAssetWriteRole(db, admin, user.id, asset);
-      const bucket = r2BucketFor(asset.bucket);
-      const key = asset.storage_key as string;
-      const kind: "video" | "photo" = asset.kind === "photo" ? "photo" : "video";
-      const isMultipart = !!asset.upload_id;
-
-      // Completion is one-shot for the OBJECT (a second staged object must never
-      // be promoted over a verified final key — audit round 4) but the CALL is
-      // idempotent: a replay after a lost response returns the completed row so
-      // the client can move on (audit F-E-05). Only a NEW staged object turns a
-      // replay into a 409.
-      if (asset.uploaded === true) {
-        const staged = await headObject(bucket, stagingKey(key));
-        if (staged.exists) {
-          throw new HttpError(
-            409,
-            "This upload is already complete; a new staged object cannot replace it — create a new upload ticket",
-            "conflict",
-            { already_complete: true },
-          );
-        }
-        const { data: row, error: rErr } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
-        if (rErr || !row) throw new HttpError(500, `Asset reload failed: ${rErr?.message ?? "not found"}`);
-        return json(row, 200);
-      }
-
-      // A ticket with no declared size can't be size-verified — the equality
-      // check would be skipped and any size would pass. Refuse it.
-      const claimedBytes = asset.bytes != null ? Number(asset.bytes) : null;
+      await assertNotDeleting(user.id);
+      const batch = seg[0] === "batch";
+      const files = batch ? body.files : [body];
       assert(
-        claimedBytes != null && Number.isFinite(claimedBytes) && claimedBytes > 0,
-        409,
-        "This asset has no declared byte count — create a new upload ticket",
+        Array.isArray(files) && files.length > 0 &&
+          files.length <= MAX_PHOTOS_PER_BATCH,
+        400,
+        "files[] must contain 1..200 photos",
       );
-
-      // Multipart assembles at the FINAL key under an uploadId that is now being
-      // completed — there is no outstanding single-PUT URL to that key, so it is
-      // verified in place. Single PUTs land on the STAGING key and are verified
-      // there, then copied to the final key (which never had a PUT URL).
-      const verifyKey = isMultipart ? key : stagingKey(key);
-
-      if (isMultipart) {
-        const partsTotal = Number(asset.parts_total ?? 0);
-        assert(partsTotal >= 1, 409, "Asset has no recorded part count");
-        const parts = (body.parts ?? []).filter((p) =>
-          p && Number.isInteger(p.number) && p.number >= 1 && p.number <= partsTotal &&
-          typeof p.etag === "string" && p.etag.length > 0 && p.etag.length <= 256
-        );
-        const nums = [...new Set(parts.map((p) => p.number))].sort((a, b) => a - b);
+      if (batch) {
         assert(
-          parts.length === partsTotal && nums.length === partsTotal &&
-            nums[0] === 1 && nums[nums.length - 1] === partsTotal,
+          body.kind !== "video",
           400,
-          `parts[] must contain each part 1…${partsTotal} exactly once`,
+          "Use one multipart ticket per video",
         );
-        // Idempotent assembly (audit F-supabase-18): if an earlier attempt
-        // already completed the multipart in R2 (then died before the row
-        // update), the final object exists at the declared size — don't send
-        // Complete again (R2 would answer NoSuchUpload forever).
-        const already = await headObject(bucket, key);
-        const assembled = already.exists && already.bytes === claimedBytes;
-        if (!assembled) {
-          try {
-            await completeMultipartUpload({
-              bucket,
-              key,
-              uploadId: asset.upload_id as string,
-              parts: parts.map((p) => ({ partNumber: p.number, etag: p.etag })),
-            });
-          } catch (e) {
-            if (!isNoSuchUpload(e)) throw e;
-            const now = await headObject(bucket, key);
-            if (!(now.exists && now.bytes === claimedBytes)) {
-              throw new HttpError(
-                409,
-                "The multipart session has expired and no assembled object was found — start a new upload",
-                "conflict",
-              );
-            }
-          }
-        }
       }
-
-      // Server-side verification: the object must exist and match what the
-      // ticket declared. Client claims stop here (audit P0-2).
-      const head = await headObject(bucket, verifyKey);
-      if (!head.exists) {
-        throw new HttpError(409, "No uploaded object found for this asset — upload the file, then complete");
+      const specs = files.map((file) =>
+        uploadSpec(
+          batch ? { ...file, listing_id: listing.id, kind: "photo" } : body,
+          listing.id,
+          listing.org_id,
+          batch ? null : idempotencyKey(req),
+        )
+      );
+      // Every asset and its budget reservation commit in one DB transaction.
+      // A partial batch error cannot leave rows whose allowance was refunded.
+      const assets = await reserveAssets(admin, user.id, specs);
+      const tickets = [];
+      for (const asset of assets) {
+        tickets.push(await ticketResponse(admin, asset));
       }
-      // A single upload with no ETag can't be promoted safely: copyObject would
-      // fall back to an UNCONDITIONAL copy and the HEAD→copy race reopens.
-      if (!isMultipart && !head.etag) {
-        throw new HttpError(502, "Storage did not return an ETag for the staged object — retry the upload");
-      }
-
-      // Public photos in the renders bucket are either the tour POSTER or the
-      // unaltered ORIGINAL behind an AI edit. There is no role column, so the
-      // two are told apart by the key this function minted (`original-<uuid>`):
-      // both are browser-served (jpeg|png|webp), but an original carries the
-      // full 50 MB photo ceiling instead of the poster's 10 MB (W2-B4).
-      const isRendersPhoto = kind === "photo" && asset.bucket === "renders";
-      const isOriginal = isRendersPhoto &&
-        /(^|\/)original-[^/]*$/.test(String(asset.storage_key ?? ""));
-      const isPoster = isRendersPhoto && !isOriginal;
-      const maxBytes = isPoster ? MAX_POSTER_BYTES : kind === "photo" ? MAX_PHOTO_BYTES : MAX_VIDEO_BYTES;
-      const sizeOk = head.bytes != null && head.bytes > 0 && head.bytes <= maxBytes &&
-        head.bytes === claimedBytes;
-      const allowed = isRendersPhoto ? ALLOWED_POSTER_TYPES : kind === "photo" ? ALLOWED_PHOTO_TYPES : ALLOWED_VIDEO_TYPES;
-      const whatIsIt = isOriginal ? "original" : isPoster ? "poster" : kind;
-      // `declaredType` is always already clean: the ticket's content_type was
-      // refused at creation unless it was a bare type/subtype
-      // (requireBareContentType, content_type.ts) — audit P0-2 residual, the
-      // client's OWN declaration can no longer launder a parameter into an
-      // accepted bare type ("video/mp4;evil" is now a 400 at creation, full
-      // stop). `observedType` is a different kind of value: it is the REAL
-      // Content-Type header the uploader's PUT set on the object, which the
-      // presigned URL never binds (r2.ts — aws4fetch's signQuery signs only
-      // `host`) and which a genuine HTTP client can legitimately suffix with a
-      // parameter (e.g. "; charset=…"). There is no client-supplied field to
-      // reject here, only a fact about the object to interpret, so its
-      // parameter is parsed off (baseMediaType) and the base type is what has
-      // to EXACTLY match the allowlist and the (already-clean) declared type —
-      // this can only narrow what's accepted, never launder a disallowed type in.
-      // Agreement with the ticket's type is required only when the CLIENT
-      // declared it: a server-defaulted type is a guess, and rejecting a
-      // perfectly valid mp4 for arriving as video/quicktime deleted every
-      // sub-64 MB tour the app tried to publish (audit F-E-01).
-      const observedType = baseMediaType(head.contentType);
-      const declaredType = baseMediaType(asset.content_type);
-      const declaredByClient = asset.content_type_declared === true;
-      const allowedOk = allowed.includes(observedType);
-      const matchOk = !declaredByClient || declaredType === "" || observedType === declaredType;
-      if (!sizeOk || !allowedOk || !matchOk) {
-        // The staged/assembled object doesn't match its ticket — remove it so a
-        // lying client can't park arbitrary content behind a validated row.
-        await deleteObject(bucket, verifyKey).catch(() => {});
-        await admin.from("capture_assets").update({ uploaded: false, upload_id: null }).eq("id", assetId);
-        const why = !sizeOk
-          ? `Uploaded object size ${head.bytes ?? "?"} does not match the declared ${claimedBytes ?? "?"} bytes`
-          : !allowedOk
-          ? `Uploaded object content-type "${observedType}" is not an allowed ${whatIsIt} type (allowed: ${allowed.join(", ")})`
-          : `Uploaded object content-type "${observedType}" does not match the declared type "${declaredType}" — PUT with the declared Content-Type or declare the real one on the ticket`;
-        throw new HttpError(400, why, "validation", { observed_type: observedType, declared_type: declaredType });
-      }
-
-      // Single PUT: promote the verified staging object to the final key (which
-      // has no presigned PUT URL) and delete staging. The still-valid staging
-      // PUT URL can now only overwrite an orphan that is never served — the
-      // TOCTOU the audit flagged is closed. Multipart is already at the final key.
-      if (!isMultipart) {
-        // Conditional on the ETag we just HEAD-verified: if anything re-PUT the
-        // staging key between HEAD and here, R2 returns 412 and we refuse
-        // (audit: the HEAD→copy gap was itself a race window).
-        await copyObject(bucket, verifyKey, key, head.etag);
-        await deleteObject(bucket, verifyKey).catch(() => {});
-      }
-
-      const patch: Record<string, unknown> = {
-        ...metadataPatch(body),
-        uploaded: true,
-        upload_id: null,
-        bytes: head.bytes, // server-observed truth
-        content_type: observedType,
-      };
-      // Conditional on still-not-uploaded: two concurrent completes can't both
-      // claim the transition (they'd have copied identical verified bytes, but
-      // exactly one may own the row's state change).
-      const { data, error } = await admin
-        .from("capture_assets")
-        .update(patch)
-        .eq("id", assetId)
-        .eq("uploaded", false)
-        .select()
-        .maybeSingle();
-      if (error) throw new HttpError(400, `Complete failed: ${error.message}`);
-      if (!data) {
-        // Lost the race to a concurrent complete of the same verified bytes —
-        // that request owns the transition; this one still succeeds.
-        const { data: row } = await admin.from("capture_assets").select("*").eq("id", assetId).maybeSingle();
-        if (row?.uploaded === true) return json(row, 200);
-        throw new HttpError(409, "This upload was already completed by another request");
-      }
-      return json(data, 200);
+      return batch
+        ? json({ assets: tickets.map((t, index) => ({ ...t, index })) }, 201)
+        : json(tickets[0], assets[0].replayed === true ? 200 : 201);
     }
 
-    // ---- POST /uploads/:asset_id/abort ----
-    if (req.method === "POST" && seg.length === 2 && seg[1] === "abort") {
-      const assetId = seg[0];
-      const asset = await requireAsset(db, assetId);
-      await requireAssetWriteRole(db, admin, user.id, asset);
-      // Aborting a COMPLETED asset used to flip uploaded=false while leaving the
-      // final object live in R2 — the row said "not uploaded" while the media
-      // was still publicly reachable (audit round 4). Deleting is a separate,
-      // deliberate operation.
-      assert(asset.uploaded !== true, 409, "This upload is already complete and cannot be aborted");
-      const bucket = r2BucketFor(asset.bucket);
-      if (asset.upload_id) {
-        // If R2 already assembled the object (Complete succeeded, row update
-        // didn't), the right move is /complete, not abort — otherwise the
-        // assembled object becomes an unreferenced orphan (audit F-supabase-18).
-        const claimed = asset.bytes != null ? Number(asset.bytes) : null;
-        const final = await headObject(bucket, asset.storage_key as string);
-        if (final.exists && claimed != null && final.bytes === claimed) {
-          throw new HttpError(409, "This upload has already been assembled — call /complete instead of /abort", "conflict");
-        }
-        await abortMultipartUpload({
-          bucket,
-          key: asset.storage_key as string,
-          uploadId: asset.upload_id as string,
-        });
-      } else {
-        // Single PUT: drop any staged bytes so an aborted upload leaves nothing.
-        await deleteObject(bucket, stagingKey(asset.storage_key as string)).catch(() => {});
-      }
-      await admin.from("capture_assets").update({ upload_id: null, uploaded: false }).eq("id", assetId);
-      return json({ ok: true });
+    assert(seg.length === 2, 405, "Unsupported uploads path");
+    const assetId = seg[0], asset = await requireAsset(db, assetId);
+    await requireAssetWriteRole(db, admin, user.id, asset);
+    const bucket = r2BucketFor(asset.bucket);
+    if (seg[1] === "renew") {
+      // Lookup by immutable asset id, not the POST /uploads idempotency index:
+      // that index excludes completed rows, so completion racing a re-ticket
+      // request could otherwise allocate and charge for a second reservation.
+      if (asset.uploaded === true) return json(await ticketResponse(admin, asset));
+      transportConfiguration();
+      assert(asset.transport_version === 2, 409,
+        "Legacy upload must be reticketed after rollout cleanup");
+      assert(asset.upload_aborted !== true, 409,
+        "This upload was aborted — create a new ticket");
+      return json(await ticketResponse(admin, asset, true));
     }
-
-    // ---- POST /uploads (single or multipart init) ----
-    if (req.method === "POST" && seg.length === 0) {
-      const body = await readJson<CreateBody>(req);
-      assert(body.listing_id, 400, "listing_id is required");
-      const role: "capture" | "render" | "original" =
-        body.role === "render" ? "render" : body.role === "original" ? "original" : "capture";
-      // An `original` is by definition the untouched PHOTO behind an AI edit.
-      const kind: "video" | "photo" =
-        role === "original" ? "photo" : body.kind === "photo" ? "photo" : "video";
-      const isOriginal = role === "original";
-      const isPoster = role === "render" && kind === "photo";
-      // Both public roles land in the renders bucket — that bucket is the only
-      // one with a public base URL, and "access to the original" must be a link.
-      const bucketTag = role === "capture" ? "uploads" : "renders";
-      const r2Bucket = r2BucketFor(bucketTag);
-
-      const listing = await requireListing(db, body.listing_id);
-      await requireWriteRole(admin, user.id, listing.org_id);
-      await assertNotDeleting(user.id); // no new media once deletion starts
-
-      // Content type: the client's declaration when given — a bare
-      // type/subtype ONLY, or the ticket is refused (audit P0-2 residual; see
-      // content_type.ts) — otherwise a server default that /complete treats
-      // as a guess.
-      const declaredByClient = isContentTypeDeclared(body.content_type);
-      const contentType = declaredByClient
-        ? requireBareContentType(body.content_type as string, "content_type")
-        : isPoster || isOriginal
-        ? "image/jpeg"
-        : role === "render"
-        ? "video/mp4"
+    if (seg[1] === "abort") {
+      assert(
+        asset.uploaded !== true,
+        409,
+        "This upload is already complete and cannot be aborted",
+      );
+      const cancelled = asset.transport_version === 2
+        ? await settleReservation(admin, assetId, false)
+        : row(
+          await uploadRPC(admin, "cancel_legacy_upload", {
+            p_asset: assetId,
+            p_actor: user.id,
+          }),
+        );
+      // Honest cancellation receipt. Storage cleanup is durable and asynchronous;
+      // it is NOT reported as already deleted or refunded physical bytes.
+      return json({
+        ok: true,
+        upload_aborted: cancelled.upload_aborted,
+        cleanup_pending: true,
+      });
+    }
+    if (seg[1] === "part-urls") {
+      transportConfiguration();
+      assert(
+        asset.transport_version === 2 && asset.uploaded !== true &&
+          asset.upload_aborted !== true,
+        409,
+        "This upload is no longer accepting parts",
+      );
+      assert(asset.upload_id, 409, "Multipart initialization is not confirmed");
+      const body = await readJson<PartUrlsBody>(req), numbers = body.numbers;
+      const count = Number(asset.parts_total);
+      assert(
+        Array.isArray(numbers) && numbers.length > 0 &&
+          numbers.length <= MAX_PART_URLS_PER_CALL &&
+          new Set(numbers).size === numbers.length && numbers.every((n) =>
+            Number.isInteger(n) && n >= 1 && n <= count
+          ),
+        400,
+        `numbers[] must be unique members of 1…${count}`,
+      );
+      return json({
+        urls: await Promise.all(numbers.map(async (number) => ({
+          number,
+          url: await transferURL(admin, assetId, "part", number),
+        }))),
+      });
+    }
+    assert(seg[1] === "complete", 405, "Unsupported uploads path");
+    if (asset.uploaded === true) return json(await reloadAsset(admin, assetId));
+    assert(
+      asset.transport_version === 2,
+      409,
+      "Legacy upload must be reticketed after rollout cleanup",
+    );
+    assert(
+      asset.upload_aborted !== true,
+      409,
+      "This upload was aborted — create a new ticket",
+    );
+    const body = await readJson<CompleteBody>(req);
+    const transfers = await confirmedTransfers(admin, assetId);
+    const isMultipart = asset.parts_total != null;
+    let completed: Record<string, unknown>;
+    if (isMultipart) {
+      const actual = canonicalParts(
+        transfers.map((t) => ({ number: t.part, etag: t.etag })),
+        Number(asset.parts_total),
+      );
+      const requested = canonicalParts(body.parts, Number(asset.parts_total));
+      assert(
+        sameParts(actual, requested),
+        409,
+        "Completion must match the server-confirmed part receipts",
+      );
+      const { data, error } = await pendingAsset(admin, asset, {
+        completion_parts: actual,
+      })
+        .is("completion_parts", null).select().maybeSingle();
+      if (error) {
+        throw new HttpError(503, "Multipart manifest could not be confirmed");
+      }
+      const frozen = data ?? await reloadAsset(admin, assetId);
+      if (frozen.uploaded === true) return json(frozen);
+      assert(
+        frozen.upload_aborted !== true &&
+          sameParts(
+            canonicalParts(frozen.completion_parts, Number(asset.parts_total)),
+            actual,
+          ),
+        409,
+        "Multipart manifest changed before assembly",
+      );
+      completed = await recordedOperation(
+        admin,
+        assetId,
+        "assemble",
+        async () => {
+          await completeMultipartUpload({
+            bucket,
+            key: String(asset.storage_key),
+            uploadId: String(asset.upload_id),
+            parts: actual.map((p) => ({ partNumber: p.number, etag: p.etag })),
+          });
+          const head = await headObject(bucket, String(asset.storage_key));
+          assert(
+            head.exists && head.bytes === Number(asset.bytes) && head.etag &&
+              ALLOWED_VIDEO_TYPES.includes(baseMediaType(head.contentType)) &&
+              baseMediaType(head.contentType) === asset.content_type,
+            502,
+            "Assembly receipt could not be verified",
+          );
+          return { etag: head.etag };
+        },
+      );
+    } else {
+      const transfer = transfers[0],
+        head = await headObject(bucket, String(transfer.object_key));
+      const type = baseMediaType(head.contentType),
+        declared = baseMediaType(asset.content_type);
+      const maximum = asset.kind === "photo"
+        ? (asset.bucket === "renders" &&
+            !String(asset.storage_key).split("/").pop()?.startsWith("original-")
+          ? MAX_POSTER_BYTES
+          : MAX_PHOTO_BYTES)
+        : MAX_VIDEO_BYTES;
+      const kind = asset.kind === "photo" ? "photo" : "video";
+      const publicPhoto = kind === "photo" && asset.bucket === "renders";
+      const allowed = publicPhoto
+        ? ALLOWED_POSTER_TYPES
         : kind === "photo"
-        ? "image/jpeg"
-        : "video/quicktime";
-
-      // Bound the size and require a known media type BEFORE charging.
-      validateFileMeta(kind, body.bytes, contentType, "", { poster: isPoster, original: isOriginal });
-
-      // ---- Idempotent ticket replay (audit F-E-06) ----
-      // The app sends a STABLE Idempotency-Key per logical ticket, so a
-      // re-ticket after a lost response, an expired staging PUT URL or a
-      // relaunch must NOT mint a second capture_assets row + R2 key +
-      // multipart session and charge the org's daily ticket/byte budget
-      // again. Replay is scoped to uploads still IN FLIGHT; once /complete
-      // has run, that route's own replay path (F-E-05) owns the case.
-      const idem = idempotencyKey(req);
-      const want = { bytes: body.bytes ?? null, kind, bucketTag, contentType };
-      if (idem) {
-        const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
-        if (replay) return json(replay, 200);
-      }
-
-      await chargeUploadBudget(listing.org_id, 1, body.bytes ?? 0);
-
-      // From here down, ANY failure (DB insert, or the R2 CreateMultipartUpload
-      // call below) must hand the just-taken charge back — audit P0-2 residual:
-      // budget used to be spent unconditionally before the insert, so a later
-      // DB/R2 failure consumed the org's ticket/byte allowance for an asset
-      // that never came to exist. Losing an Idempotency-Key race and relaying
-      // the WINNING request's ticket instead (the two `replay` branches below)
-      // is refunded the same way: this call still produced no asset of its own.
-      try {
-        const assetId = crypto.randomUUID();
-        const ext = isPoster || isOriginal
-          ? (POSTER_EXT[contentType] ?? "jpg")
-          : role === "render"
-          ? "mp4"
-          : extFromFilename(body.filename, kind);
-        // The `original-` prefix is how /complete (and provenance) tell an
-        // original apart from a poster: capture_assets has no role column, so
-        // the distinction has to be SERVER-DERIVED from the key we mint here.
-        const basename = isOriginal ? `original-${assetId}` : assetId;
-        const storageKey = `${bucketTag}/${listing.org_id}/${listing.id}/${basename}.${ext}`;
-
-        const useMultipart =
-          kind === "video" && (body.multipart === true || (body.bytes ?? 0) > MULTIPART_THRESHOLD);
-
-        if (useMultipart) {
-          assert(body.bytes && body.bytes > 0, 400, "bytes is required for a multipart upload");
-          const partSize = choosePartSize(body.bytes!);
-          const partCount = Math.ceil(body.bytes! / partSize);
-          const uploadId = await createMultipartUpload({ bucket: r2Bucket, key: storageKey, contentType });
-
-          const { data: asset, error } = await admin
-            .from("capture_assets")
-            .insert({
-              id: assetId,
-              listing_id: listing.id,
-              kind,
-              bucket: bucketTag,
-              storage_key: storageKey,
-              sha256: body.sha256 ?? null,
-              bytes: body.bytes ?? null,
-              content_type: contentType,
-              content_type_declared: declaredByClient,
-              upload_id: uploadId,
-              part_size: partSize,
-              parts_total: partCount,
-              uploaded: false,
-              idem_key: idem,
-            })
-            .select()
-            .single();
-          if (error) {
-            // Lost a race to a concurrent ticket with the SAME key (unique index
-            // uq_capture_assets_idem): that request owns the session — replay it
-            // and tear down the multipart we just opened, or it leaks in R2.
-            await abortMultipartUpload({ bucket: r2Bucket, key: storageKey, uploadId }).catch(() => {});
-            if (idem) {
-              const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
-              if (replay) {
-                await refundUploadBudget(listing.org_id, 1, body.bytes ?? 0);
-                return json(replay, 200);
-              }
-            }
-            throw new HttpError(400, `Asset create failed: ${error.message}`);
-          }
-          return json({
-            asset_id: asset.id,
-            mode: "multipart",
-            upload_id: uploadId,
-            storage_key: storageKey,
-            part_size: partSize,
-            part_count: partCount,
-            content_type: contentType,
-          }, 201);
+        ? ALLOWED_PHOTO_TYPES
+        : ALLOWED_VIDEO_TYPES;
+      if (
+        !head.exists || Number(asset.bytes) > maximum ||
+        head.bytes !== Number(asset.bytes) || head.etag !== transfer.etag ||
+        !allowed.includes(type) ||
+        (asset.content_type_declared === true && declared !== type)
+      ) {
+        try {
+          await settleReservation(admin, assetId, false);
+        } catch (error) {
+          const winner = await reloadAsset(admin, assetId);
+          if (winner.uploaded === true) return json(winner);
+          throw error;
         }
-
-        // Single PUT (photos, posters + small video/render).
-        const { data: asset, error } = await admin
-          .from("capture_assets")
-          .insert({
-            id: assetId,
-            listing_id: listing.id,
-            kind,
-            bucket: bucketTag,
-            storage_key: storageKey,
-            sha256: body.sha256 ?? null,
-            bytes: body.bytes ?? null,
-            content_type: contentType,
-            content_type_declared: declaredByClient,
-            uploaded: false,
-            idem_key: idem,
-          })
-          .select()
-          .single();
-        if (error) {
-          // Concurrent ticket with the same key won the unique index — replay it.
-          if (idem) {
-            const replay = await replayTicket(admin, listing.id, idem, want, r2Bucket);
-            if (replay) {
-              await refundUploadBudget(listing.org_id, 1, body.bytes ?? 0);
-              return json(replay, 200);
-            }
-          }
-          throw new HttpError(400, `Asset create failed: ${error.message}`);
-        }
-
-        // PUT targets the STAGING key; /complete verifies then copies to the
-        // final key (which never gets a PUT URL — closes the TOCTOU).
-        const putUrl = await presignPut({
-          bucket: r2Bucket,
-          key: stagingKey(storageKey),
-          expiresIn: STAGING_PUT_TTL_SECONDS,
-          contentType,
-        });
-        return json({
-          asset_id: asset.id,
-          mode: "single",
-          put_url: putUrl,
-          storage_key: storageKey,
-          content_type: contentType,
-        }, 201);
-      } catch (e) {
-        await refundUploadBudget(listing.org_id, 1, body.bytes ?? 0);
-        throw e;
+        throw new HttpError(
+          400,
+          "Stored upload does not match its confirmed size, ETag or content type",
+        );
       }
+      completed = await recordedOperation(
+        admin,
+        assetId,
+        "copy",
+        async (op) => {
+          await copyObject(
+            bucket,
+            String(transfer.object_key),
+            String(op.object_key),
+            head.etag,
+            type,
+          );
+          return { etag: String(head.etag), contentType: type };
+        },
+      );
     }
-
-    throw new HttpError(405, `Method ${req.method} not allowed on this path`);
-  } catch (err) {
-    return respondError(err);
+    return json(
+      await settleReservation(admin, assetId, true, String(completed.id), {
+        ...metadataPatch(body),
+        content_type: String(completed.content_type ?? asset.content_type),
+      }),
+    );
+  } catch (error) {
+    return respondError(error);
   }
 });
 
-// ── Ticket idempotency (audit F-E-06) ────────────────────────────────────────
-// POST /uploads used to ignore Idempotency-Key entirely, so every retry of one
-// logical ticket created another capture_assets row, another R2 key, another
-// multipart session, and charged the org's daily ticket + byte budgets again.
-// These four helpers give the route the same replay lookup create_render_job
-// has had since migration 0006 (see migration 0014 for the column + index).
-
-/** The caller's Idempotency-Key, or null when absent/out of the 8…128 bound. */
 function idempotencyKey(req: Request): string | null {
-  const raw = req.headers.get("idempotency-key")?.trim();
-  if (!raw || raw.length < 8 || raw.length > 128) return null;
-  return raw;
+  const key = req.headers.get("idempotency-key");
+  if (key === null) return null;
+  assert(
+    key === key.trim() && key.length >= 8 && key.length <= 128,
+    400,
+    "Invalid Idempotency-Key",
+  );
+  return key;
 }
 
-/**
- * The still-IN-FLIGHT ticket for this (listing, key), if any. Completed assets
- * are deliberately excluded: the key is derived client-side from the file path
- * and size, so re-uploading a re-rendered tour to the same path must not be
- * wedged forever by a row that already finished (and /complete has its own
- * idempotent replay for the completed case — F-E-05).
- */
-// deno-lint-ignore no-explicit-any
-async function findInFlightTicket(admin: any, listingId: string, idem: string) {
-  const { data, error } = await admin
-    .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type")
-    .eq("listing_id", listingId)
-    .eq("idem_key", idem)
-    .eq("uploaded", false)
-    .maybeSingle();
-  // A lookup failure must not block the upload — fall through to a fresh
-  // ticket (the pre-0014 behaviour), never fail the request.
-  if (error) return null;
-  return (data as Record<string, unknown> | null) ?? null;
-}
-
-/**
- * True when the replayed request really is the SAME upload: same declared
- * size, same media kind, same destination bucket, same content type.
- *
- * The content-type check matters: the replay hands back the PRIOR row's
- * storage key (whose extension was chosen from the prior type) and /complete
- * compares the observed type against the row's declared one — replaying across
- * a type change would fail verification, delete the object, and send the client
- * straight back here for the same replay. A multipart row whose session was
- * aborted (`upload_id` cleared by /abort) is likewise not replayable: there is
- * nothing left in R2 to continue.
- */
-function ticketMatches(
-  prior: Record<string, unknown>,
-  want: { bytes: number | null; kind: "video" | "photo"; bucketTag: string; contentType: string },
-): boolean {
-  if (prior.parts_total != null && prior.upload_id == null) return false; // aborted multipart
-  const priorBytes = prior.bytes != null ? Number(prior.bytes) : null;
-  if (priorBytes == null || want.bytes == null || priorBytes !== Number(want.bytes)) return false;
-  if ((prior.kind ?? "video") !== want.kind) return false;
-  if ((prior.bucket ?? "uploads") !== want.bucketTag) return false;
-  // prior.content_type was itself stored only after requireBareContentType
-  // accepted it (or is a server default), so it is already clean — this is
-  // just a defensive, honest re-parse of a stored value, not a re-launder of
-  // client input (see content_type.ts's header).
-  if (baseMediaType(prior.content_type) !== want.contentType) return false;
-  return true;
-}
-
-/** Hand back the SAME ticket, with a freshly presigned staging URL for singles. */
-async function reissueTicket(prior: Record<string, unknown>, r2Bucket: string) {
-  const storageKey = prior.storage_key as string;
-  const contentType = (prior.content_type as string | null) ?? undefined;
-  if (prior.upload_id) {
-    // Multipart: the R2 session is still open — part URLs come from
-    // /part-urls, which the client re-requests per batch anyway.
-    return {
-      asset_id: prior.id,
-      mode: "multipart",
-      upload_id: prior.upload_id,
-      storage_key: storageKey,
-      part_size: prior.part_size,
-      part_count: prior.parts_total,
-      content_type: contentType ?? null,
-      replayed: true,
-    };
-  }
-  const putUrl = await presignPut({
-    bucket: r2Bucket,
-    key: stagingKey(storageKey),
-    expiresIn: STAGING_PUT_TTL_SECONDS,
-    contentType,
+function uploadSpec(
+  body: CreateBody,
+  listingId: string,
+  orgId: string,
+  idem: string | null,
+) {
+  const role = body.role ?? "capture";
+  assert(
+    ["capture", "render", "original", "gallery"].includes(role),
+    400,
+    "Invalid upload role",
+  );
+  const publicPhoto = role === "original" || role === "gallery" ||
+    role === "render" && body.kind === "photo";
+  const kind = publicPhoto || body.kind === "photo" ? "photo" : "video";
+  const bucket = role === "capture" ? "uploads" : "renders";
+  const declared = isContentTypeDeclared(body.content_type);
+  const contentType = declared
+    ? requireBareContentType(body.content_type as string, "content_type")
+    : kind === "photo"
+    ? "image/jpeg"
+    : role === "capture"
+    ? "video/quicktime"
+    : "video/mp4";
+  validateFileMeta(kind, body.bytes, contentType, "", {
+    poster: publicPhoto && role !== "original",
+    original: role === "original",
   });
+  const id = crypto.randomUUID();
+  const ext = publicPhoto
+    ? POSTER_EXT[contentType]
+    : role === "render"
+    ? "mp4"
+    : extFromFilename(body.filename, kind);
+  const name = role === "original"
+    ? `original-${id}`
+    : role === "gallery"
+    ? `gallery-${id}`
+    : id;
+  const multipart = kind === "video" &&
+    (body.multipart === true || Number(body.bytes) > MULTIPART_THRESHOLD);
+  const partSize = multipart ? choosePartSize(Number(body.bytes)) : null;
   return {
-    asset_id: prior.id,
-    mode: "single",
-    put_url: putUrl,
-    storage_key: storageKey,
-    content_type: contentType ?? null,
-    replayed: true,
+    id,
+    listing_id: listingId,
+    kind,
+    bucket,
+    storage_key: `${bucket}/${orgId}/${listingId}/${name}.${ext}`,
+    bytes: body.bytes,
+    content_type: contentType,
+    content_type_declared: declared,
+    sha256:
+      typeof body.sha256 === "string" && /^[a-f0-9]{64}$/i.test(body.sha256)
+        ? body.sha256.toLowerCase()
+        : null,
+    part_size: partSize,
+    parts_total: partSize ? Math.ceil(Number(body.bytes) / partSize) : null,
+    idem_key: idem,
   };
 }
 
-/**
- * The whole replay decision in one place, so no caller can hand back a ticket
- * without checking that it is the same upload.
- *
- * Returns the response body for a genuine replay, or null when the caller
- * should mint a fresh ticket. A row holding the key for a DIFFERENT file has
- * its key released first (leniently — 409ing here would put the client in a
- * retry loop it cannot escape); if that release fails, the subsequent insert
- * collides on the unique index and lands back here, where `ticketMatches`
- * still refuses to replay the wrong asset.
- */
-async function replayTicket(
-  // deno-lint-ignore no-explicit-any
-  admin: any,
-  listingId: string,
-  idem: string,
-  want: { bytes: number | null; kind: "video" | "photo"; bucketTag: string; contentType: string },
-  r2Bucket: string,
-): Promise<Record<string, unknown> | null> {
-  const prior = await findInFlightTicket(admin, listingId, idem);
-  if (!prior) return null;
-  if (ticketMatches(prior, want)) return await reissueTicket(prior, r2Bucket);
-  await admin.from("capture_assets").update({ idem_key: null }).eq("id", prior.id as string);
-  return null;
+// deno-lint-ignore no-explicit-any
+async function ticketResponse(admin: any, asset: Record<string, unknown>, recovery = false) {
+  const base = {
+    asset_id: asset.id,
+    storage_key: asset.storage_key,
+    content_type: asset.content_type,
+    replayed: asset.replayed === true,
+    transport_version: asset.transport_version,
+    uploaded: asset.uploaded === true,
+  };
+  if (asset.uploaded === true) return {
+    ...base, mode: asset.parts_total != null ? "multipart" : "single",
+    upload_id: asset.upload_id, part_size: asset.part_size, part_count: asset.parts_total,
+  };
+  if (asset.parts_total != null) {
+    const op = await recordedOperation(
+      admin,
+      String(asset.id),
+      "init",
+      async (planned) => {
+        const uploadId = await createMultipartUpload({
+          bucket: r2BucketFor(asset.bucket),
+          key: String(planned.object_key),
+          contentType: String(asset.content_type),
+        });
+        return { etag: "multipart-initialized", uploadId };
+      },
+    );
+    let confirmedParts: Array<{number: number; etag: string}> | undefined;
+    if (recovery) {
+      const { data, error } = await admin.from("upload_operations")
+        .select("part,etag").eq("asset_id", asset.id).eq("kind", "part").eq("state", "stored");
+      if (error || !Array.isArray(data)) throw new HttpError(503, "Part receipts could not be recovered");
+      confirmedParts = data.map((part: {part: number; etag: string}) => ({ number: part.part, etag: part.etag }));
+    }
+    return {
+      ...base,
+      mode: "multipart",
+      upload_id: op.upload_id,
+      part_size: asset.part_size,
+      part_count: asset.parts_total,
+      ...(confirmedParts ? { confirmed_parts: confirmedParts } : {}),
+    };
+  }
+  return {
+    ...base,
+    mode: "single",
+    put_url: await transferURL(admin, String(asset.id), "single"),
+  };
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
@@ -1000,7 +655,9 @@ async function requireListing(db: any, listingId: string) {
     .eq("id", listingId)
     .is("deleted_at", null)
     .maybeSingle();
-  if (error) throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+  if (error) {
+    throw new HttpError(400, `Listing lookup failed: ${error.message}`);
+  }
   if (!data) throw new HttpError(404, "Listing not found");
   return data as { id: string; org_id: string };
 }
@@ -1009,7 +666,9 @@ async function requireListing(db: any, listingId: string) {
 async function requireAsset(db: any, assetId: string) {
   const { data, error } = await db
     .from("capture_assets")
-    .select("id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type, content_type_declared")
+    .select(
+      "id, listing_id, storage_key, upload_id, part_size, parts_total, kind, bucket, bytes, uploaded, content_type, content_type_declared, upload_aborted, completion_parts, transport_version",
+    )
     .eq("id", assetId)
     .maybeSingle();
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);

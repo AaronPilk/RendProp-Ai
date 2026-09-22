@@ -1,4 +1,78 @@
-# RENDPROP — MASTER CONTEXT & CHAT LOG
+# RENDPROP — current engineering context and historical chat log
+
+## Current entry point — 2026-09-10 evening
+
+**The July snapshot below is historical, not current build instructions.** Its
+sandbox limitations, provider assumptions, pricing, bundle fallback and “backend
+stubbed” statements must not be carried into a new build. The current app is
+deployed. Current fixes are being tested on Git branches, not silently shipped.
+
+Read in this order:
+
+1. [`../GPT-AGENT-BRIEF.md`](../GPT-AGENT-BRIEF.md): standing product/build rules.
+2. [`../audits/2026-09-10/STATUS.md`](../audits/2026-09-10/STATUS.md): current
+   integration, actual passing/failing tests, open defects and next work.
+3. [`CONTEXT-PROTOCOL.md`](CONTEXT-PROTOCOL.md): source/test/deployment handoff
+   discipline so switching models does not turn an unfinished step into a claim.
+4. [`../releases/TESTFLIGHT-18-20260910.md`](../releases/TESTFLIGHT-18-20260910.md):
+   installed internal build18, source `ed0131b`, actual receipt and its limits.
+
+Active integration branch: `audit/full-regression-20260910`, pushed to
+`AaronPilk/RendProp-Ai`. The foundation is also separately available on
+`integration/web-editor-foundation-20260910`. Fetch and inspect before changing
+branches; another agent is working concurrently. Do not force-push shared work.
+
+Owner priorities: an in-app navigable reconstructed spatial tour, continued
+whole-app/backend/non-camera testing, consistent brand/UX, and durable Markdown
+handoffs for Claude/Fable. No camera simulator busywork. Do not touch the pending
+Apple submission; build16 remains the last independently verified review build.
+Build18 is internal TestFlight and is **capture/export only**, not 3D processing.
+
+The owner's 256-frame export is valid and prepared privately for reconstruction.
+No trained real-room artifact exists yet. Files stay outside Git. The completed
+web architecture/style contracts are not a shipped agent web app or a completed
+editing engine. Scope and evidence live in the current audit documents, not in
+aspirational descriptions of features.
+
+Latest verified code checkpoint: **`a9b13b1f1b66fee1f52fdd566e7de82f8b272b3b`**.
+Later commits are documentation-only.602 edge tests and21 entrypoint checks
+pass both locally and on hosted Deno2.9.6 after two fixture-compatibility fixes.
+180 local worker checks pass; the hosted Linux job passes199 including19 actual
+HDR assertions. Actual disposable
+SQL applies38/replays30 migrations, passes22 worker checks four times and19
+upload checks twice, and detects four deliberately removed guards. Overall
+invariants remain197/198 for the agent-reel700-token headroom mismatch.
+The immutable upload/signed metadata and atomic worker publication repairs are
+integrated, not deployed. Rebuilt focused iOS consent/Ask AI tests pass2/2 with
+all5 required images inspected; those fixes are not in installed build18.
+
+Do not revive superseded findings: completed-upload publication and stale-worker
+publication were repaired locally; the whole upload-cost/cleanup category is
+not closed. The proposed zero-duration-ready case was disproved by an existing
+constraint;30.001→30.00 is the real scalar mismatch, now covered. Read the latest
+database report before interpreting older negative-control logs. Public
+privacy/Terms reconciliation remains a proposal, not published legal policy.
+
+Hosted CI has now actually run, not merely been wired: final run34546654166 has7
+passing jobs/3 failing jobs, overall failure. Both database jobs retain the
+known headroom failure; the scanner has six historical hits with value-free
+classifications in CI-RUN-34544905277.md. See HOSTED-CI-20260910.md for run/job
+links and the repaired fixture failures; do not interpret a local pass as a
+green full workflow or a production release.
+
+Latest product fix: **a9b13b1**, public lead-form bounded confirmation. It
+preserves brand/inputs, prevents duplicate submit, requires an actual success
+envelope and UUID (except the intentional honeypot), and handles uncertain
+15-second timeout without automatically sending again. Root's integrated host
+typecheck,2,266 assertions/12 self-tests and2-file asset gate pass;418 assertions
+cover31 emitted-form scenarios. The same-source hosted run also passed the
+host suite, clean install, typecheck, dry-run bundle and production dependency
+audit. Exact evidence is in STATUS and HOSTED-CI-20260910.md. This is source
+pushed to GitHub, not a Cloudflare deploy.
+
+---
+
+## Historical snapshot follows — retained for decision history only
 
 > Single catch-up file. Read this first in any new session. It captures what Rendprop is,
 > every decision made, the current build state, known issues, and what's next — so we never

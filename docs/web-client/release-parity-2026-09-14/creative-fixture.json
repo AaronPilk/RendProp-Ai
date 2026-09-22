@@ -1,0 +1,39 @@
+{
+  "proof": "Real Creative Studio UI with isolated native-contract fixtures; no paid provider calls or public publishing",
+  "checks": [
+    "Photo source upload precedes generation; edited result saves with original and provenance to property gallery",
+    "Shot plan uses selected cloud photos, persists editable script and hands the saved ordered plan to the editor; spoken base video, real transcript and timed cutaways restore and hand off without replacing the base footage",
+    "Unsaved text survives property switching and newer phone draft requires explicit conflict choice",
+    "Reviewed script creates cloud narration with timed caption download",
+    "Queued video restores via trusted job ID, imports cloud output, and reviews sampled frames before publication permission",
+    "Chapter suggestions can be reviewed and applied only to matching source tour",
+    "Contextual coach answers questions with property counts and no media payload",
+    "Desktop and narrow-screen layout fit without horizontal overflow"
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "layout": {
+    "width": 390,
+    "scroll": 390,
+    "overflow": [
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "width": 74.921875,
+        "right": 461.703125
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "width": 119.328125,
+        "right": 585.03125
+      },
+      {
+        "tag": "BUTTON",
+        "cls": "",
+        "width": 112.671875,
+        "right": 701.703125
+      }
+    ]
+  }
+}

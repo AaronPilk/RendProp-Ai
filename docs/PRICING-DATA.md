@@ -10,6 +10,17 @@ table at the end. Where a price could not be fetched, the row says so and uses t
 repo's number, marked **[REPO]**. All repo facts are cited as `file:line`. Nothing was
 run or spent.
 
+> **2026-09-12 rework.** The allowances below are the 6 Sep launch line-up and every margin table
+> is computed from them; they are kept as written. The owner-approved line-up from 12 Sep 2026
+> (prices unchanged) is: **Starter** 4 tour renders / 100 AI photo edits / 6 reel clips / 2 aerial
+> intros / 1 seat; **Pro** 10 / 200 / 12 / 4 / 1 seat; **Team** 25 / 400 / 25 / 8 / 2 drone-glide
+> upscales / **2 seats** (was 3). The free week is now per industry — real estate 3 tour renders,
+> 60 photo edits, 4 reel clips, 2 aerial intros; single-location businesses 1 tour render, 60
+> photo edits, 4 reel clips, 1 aerial intro — and the lapsed `free` plan is 1 tour render a month.
+> Every allowance in this rework is at or below its launch value, so every worst-case cost line
+> below is an upper bound and every margin a lower bound for the new plans. Re-run the tables
+> when the numbers next move; do not read the old ones as current.
+
 **Assumptions used everywhere**
 
 | # | Assumption | Basis |
@@ -36,7 +47,7 @@ run or spent.
 | **Reel clip** (one animated photo, 5 s, 1080p) | fal `bytedance/seedance/v1/pro/fast/image-to-video` → fal `minimax/hailuo-02/standard` (768p, 4.5¢/s) | **$0.243 per 1080p 5-second clip** ($1.00 per 1M video tokens) | 5 s, 1080p, 16:9 or 9:16 | **26.7¢** per clip → a 5-clip reel ≈ **$1.34** | fal Seedance page, 6 Sep 2026 |
 | **Aerial intro — photo attached ("grounded")** | fal Seedance i2v → fal `veo3.1/fast/image-to-video` | $0.243 / 5 s = **4.86¢ per second** | 6 s default | **32.1¢** (8 s: 42.8¢) | fal Seedance page, 6 Sep 2026 |
 | **Aerial intro — no photo, or Seedance down** | fal `veo3.1/fast` (t2v) / `veo3.1/fast/image-to-video` | **$0.10 per second** at 720p/1080p without audio ($0.15 with audio; $0.30 at 4K) | 6 s = $0.60; 8 s = $0.80; audio off | **66¢ (6 s) · 88¢ (8 s) — the worst-case aerial** | fal Veo 3.1 Fast pages, 6 Sep 2026 |
-| **Drone-glide upscale** (Team only, 2/mo; trial/free 1/mo) | fal `topaz/upscale/video`, model Proteus | **$0.01/s ≤720p · $0.02/s 720p–1080p · $0.08/s above 1080p; ×2 at 60 fps** | 90 s tour | **1080p60 $3.96 · 4K30 $7.92 · 4K60 $15.84**. Tail: a 300 s tour at 4K60 = **$48.00** per tap — there is no duration guard on `/ai-video/drone` (`ai-video/index.ts:515-600`: the route checks the 4K resolution ceiling, never the duration) | fal Topaz page + API schema, 6 Sep 2026 |
+| **Drone-glide upscale** (Team only, 2/mo — unchanged in the 2026-09-12 rework; trial/free 1/mo at launch) | fal `topaz/upscale/video`, model Proteus | **$0.01/s ≤720p · $0.02/s 720p–1080p · $0.08/s above 1080p; ×2 at 60 fps** | 90 s tour | **1080p60 $3.96 · 4K30 $7.92 · 4K60 $15.84**. Tail: a 300 s tour at 4K60 = **$48.00** per tap — there is no duration guard on `/ai-video/drone` (`ai-video/index.ts:515-600`: the route checks the 4K resolution ceiling, never the duration) | fal Topaz page + API schema, 6 Sep 2026 |
 | **AI voiceover** (ElevenLabs, ≤1,000 characters) | elevenlabs `with-timestamps` (only vendor with per-character alignment; no fallback) | Creator plan **$22/mo for 121k credits = 18.2¢ per 1k characters** (1 credit = 1 character on Multilingual v2/v3; Flash v2.5 is 0.5). Pro plan $99/600k = 16.5¢ | 1,000 chars worst; ~350 chars (a 25-second script) expected | **20¢ worst · 7¢ expected**. Note the $22 plan is a fixed cost: the first ~121 max-length voiceovers a month are inside it | elevenlabs.io/pricing, 6 Sep 2026; credit ratio from texttolab.com (May 2026, third party). The repo's 22¢ (`0018:376`) predates the 121k allotment |
 | **Room chapters** (auto room labels, one run per tour) | Gemini `gemini-3.6-flash` low-res 1 fps → `gemini-3.1-flash-lite` | Gemini 3.6 Flash **$0.75 in / $3.75 out per 1M tokens** through 31 Dec 2026, then $1.50 / $7.50 | ~1.4¢ per 2-minute tour [REPO seed `0018:442`]; 0.0117¢/s legacy (`ai-chapters/index.ts:109`) | **1.5¢** (a 20-minute video, the ceiling, ≈ 15¢) | Gemini pricing page, 6 Sep 2026 |
 | **Tour render — server side only** | Render on device ($0). Upload to R2, host from a Cloudflare Worker + Supabase edge fn | R2 **$0.015/GB-month**, Class A **$4.50/M**, Class B **$0.36/M**, **egress free**; Workers Paid $5/mo incl. 10M req, +$0.30/M | 1 GB stored, ~70 Class A ops, 1,000 views (~10 range GETs + 1 Worker request each) | **1.9¢ in month one**, then **1.5¢ per tour per month for as long as it is kept** (see §2.4) | Cloudflare R2 + Workers pricing, 6 Sep 2026 |
@@ -59,15 +70,15 @@ Not routed from the app, so not in the tables: Anthropic QC judge (worker only, 
 
 ## 2. Per-plan economics
 
-Allowances are copied from `apps/ios/Rendprop/Purchases/Products.swift:101-103` (= `plan_entitlements`, `0010:69-75`).
+Allowances were copied from `apps/ios/Rendprop/Purchases/Products.swift:101-103` (= `plan_entitlements`, `0010:69-75`) on 6 Sep 2026. **2026-09-12 rework:** the line-up is now Starter 4 / 100 / 6 / 2 / 0 / 1 seat, Pro 10 / 200 / 12 / 4 / 0 / 1 seat, Team 25 / 400 / 25 / 8 / 2 / **2 seats** (same column order as the table; prices unchanged). The table and the sections that follow keep the launch numbers they were computed from.
 
 | Plan | Price | Tour renders | AI photo edits | Reel clips | Aerial intros | Drone-glide upscales | Seats | + voiceovers (A6) | + chapter runs (A6) |
 |---|---|---|---|---|---|---|---|---|---|
-| Starter | $49/mo · $490/yr | 8 | 150 | 8 | 2 | 0 | 1 | 8 | 8 |
-| Pro | $99/mo · $990/yr | 25 | 300 | 20 | 6 | 0 | 1 | 20 | 25 |
-| Team | $249/mo (yearly not sold at launch) | 80 | 600 | 40 | 15 | 2 | 3 | 40 | 80 |
+| Starter (6 Sep; now 4 / 100 / 6 / 2) | $49/mo · $490/yr | 8 | 150 | 8 | 2 | 0 | 1 | 8 | 8 |
+| Pro (6 Sep; now 10 / 200 / 12 / 4) | $99/mo · $990/yr | 25 | 300 | 20 | 6 | 0 | 1 | 20 | 25 |
+| Team (6 Sep; now 25 / 400 / 25 / 8, 2 seats) | $249/mo (yearly not sold at launch) | 80 | 600 | 40 | 15 | 2 | 3 | 40 | 80 |
 
-**Seats.** Team's 3 seats share one allowance: every monthly meter is keyed by workspace (`reelmo:<org>`, `aerialmo:<org>`, `dronemo:<org>` in `ai-video/index.ts:119,178`; same pattern in `ai-photo`, `ai-voice`, `ai-chapters`), never by user. Three people on Team draw down the same 600 edits. Team is therefore $83 per seat with a per-seat cost ceiling of one third of the numbers below. No invite UI ships in 1.0; seats are a server-side membership count.
+**Seats.** Team's 3 seats at launch (2 seats since the 2026-09-12 rework) share one allowance: every monthly meter is keyed by workspace (`reelmo:<org>`, `aerialmo:<org>`, `dronemo:<org>` in `ai-video/index.ts:119,178`; same pattern in `ai-photo`, `ai-voice`, `ai-chapters`), never by user. Three people on Team draw down the same 600 edits. Team is therefore $83 per seat with a per-seat cost ceiling of one third of the numbers below. No invite UI ships in 1.0; seats are a server-side membership count.
 
 ### 2.1 Worst case — 100% of every allowance, dearest route
 
@@ -142,7 +153,7 @@ Per month of service the yearly plan nets 16.7% less; Apple pays the whole year'
 ### 2.4 Two costs that are not in the monthly tables
 
 - **Storage accrues.** Tours are kept after a plan lapses (pricing FAQ, `pricing.html:302-304`), so R2 grows by ~1 GB per published tour, forever. A Pro subscriber publishing 25 tours a month is paying $4.50/mo in storage by month 12 (300 GB × $0.015); at 35% use, $1.57. Team at 100%: $14.40/mo by month 12. Small, but it is the only cost that keeps growing after revenue stops. A retention rule for lapsed workspaces (e.g. archive masters after 12 months unpaid) is worth a line in the roadmap.
-- **Trial and lapsed ("free") workspaces spend money at $0 revenue.** `trial` and `free` both carry 10 edits, 1 clip, **2 aerials and 1 drone-glide upscale** a month (`0013:28-32`; `tests/invariants.sql:182-183` asserts it). Worst case per workspace: **$18.68/mo** ($15.84 of it the upscale), expected-route $9.51, and $2.84 with the upscale removed. The server-side trial starts at sign-in with no card (`0010:226-240`); only Apple's introductory offer requires one. Every sign-up that never buys keeps this allowance every month.
+- **Trial and lapsed ("free") workspaces spend money at $0 revenue.** `trial` and `free` both carry 10 edits, 1 clip, **2 aerials and 1 drone-glide upscale** a month (`0013:28-32`; `tests/invariants.sql:182-183` asserts it). Worst case per workspace: **$18.68/mo** ($15.84 of it the upscale), expected-route $9.51, and $2.84 with the upscale removed. The server-side trial starts at sign-in with no card (`0010:226-240`); only Apple's introductory offer requires one. Every sign-up that never buys keeps this allowance every month. *2026-09-12 rework:* the free week is now per industry (real estate 3 tour renders / 60 photo edits / 4 reel clips / 2 aerial intros; single-location businesses 1 / 60 / 4 / 1) and the lapsed `free` plan is 1 tour render a month — re-check `0013` and `tests/invariants.sql` against those numbers before reusing the figures in this bullet.
 
 ### 2.5 Apple's cut and the Small Business Program
 
@@ -177,7 +188,7 @@ Per month of service the yearly plan nets 16.7% less; Apple pays the whole year'
 | **Nodalview** | Phone app: photos, video, 360 tours, floor plans (EU-centric) | Credit-based: photo 1 credit, **video 15 credits**, floor plan 15; "as little as €0.60 per credit" → a video ≈ €9; annual −10% | 14-day trial | nodalview.com/pricing, 6 Sep 2026 |
 | **Arvaum Studio** | Desktop AI photo editor by a working RE photographer | **$29/mo (90 credits) · $49 (175) · $149 (600)**; packs from $22; "~$0.30 per edit" | 5 free generations; 30-day trial on Starter | arvaum.io, 6 Sep 2026 |
 
-**What this says about $49 / $99 / $249.** No competitor bundles the whole chain. Priced à la carte at these rates, Starter's 150 AI edits alone are $49–79 a month at Collov or Virtual Staging AI, or $750+ at BoxBrownie; Pro at $99 sits below Reel-E Growth ($129 for 10 listings of reels) and AutoReel Growth ($139) while adding the tour, the photo studio and hosting; Team at $249 is AutoReel Pro's price with three seats, tours, floor plans and leads on top. The two direct "phone video → listing video" apps (Momenzo $33/mo, Nodalview ≈ €9 per video) are cheaper but stop at the MP4: no hosted tour, no leads, no AI photo studio, no floor plan.
+**What this says about $49 / $99 / $249.** No competitor bundles the whole chain. Priced à la carte at these rates, Starter's 150 AI edits alone are $49–79 a month at Collov or Virtual Staging AI, or $750+ at BoxBrownie; Pro at $99 sits below Reel-E Growth ($129 for 10 listings of reels) and AutoReel Growth ($139) while adding the tour, the photo studio and hosting; Team at $249 is AutoReel Pro's price with three seats (two since the 2026-09-12 rework), tours, floor plans and leads on top. The two direct "phone video → listing video" apps (Momenzo $33/mo, Nodalview ≈ €9 per video) are cheaper but stop at the MP4: no hosted tour, no leads, no AI photo studio, no floor plan.
 
 ---
 
@@ -188,7 +199,7 @@ Per month of service the yearly plan nets 16.7% less; Apple pays the whole year'
 **Where the margin is thin.**
 1. **Team, because of the drone-glide upscale.** Two 90-second 4K60 upscales are $31.68 — a third of Team's worst-case cost and 18% of its net revenue — and one tap on a 300-second tour is $48 with no server-side duration guard. Team's worst-case margin is 42% (30% cut) / 53% (15% cut); without Topaz it would be 61% / 68%.
 2. **Aerial intros**, per unit: the dearest single action after Topaz (88¢ at 8 s on Veo, 3× a reel clip). At 2 / 6 / 15 a month the dollar exposure is small ($1.76 / $5.28 / $13.20), so this is a per-unit thin margin, not a plan problem.
-3. **Reels**, by expectation rather than cost: a 5-clip reel is $1.34, fine — but the allowance is **8 clips**, and rendprop.com/pricing sells it as "**8 reels** with your voiceover" (`pricing.html:141`; the app's paywall correctly says "8 reel clips", `Products.swift:128`). If Starter delivered 8 five-clip reels its worst case would be $22.80 and the margin 34%. Fix the wording, not the allowance.
+3. **Reels**, by expectation rather than cost: a 5-clip reel is $1.34, fine — but the allowance is **8 clips**, and rendprop.com/pricing sells it as "**8 reels** with your voiceover" (`pricing.html:141`; the app's paywall correctly says "8 reel clips", `Products.swift:128`). If Starter delivered 8 five-clip reels its worst case would be $22.80 and the margin 34%. Fix the wording, not the allowance. *(Done in the 2026-09-12 rework: every web and App Store surface now says "reel clips", and Starter's allowance is 6 clips.)*
 4. **Yearly Pro at the 30% cut** is the thinnest priced row (44% worst case) — acceptable, and it becomes 54% under the Small Business Program.
 
 **Which allowance is the risk.** Two, in this order:
@@ -200,9 +211,9 @@ Photo edits are the biggest *line* (59% of Starter's worst case) but the cheapes
 1. **Enrol in the App Store Small Business Program before the first sale** — https://developer.apple.com/app-store/small-business-program/enroll/ — accept Schedule 2 in App Store Connect, declare associated accounts. Rendprop qualifies as a new developer; the 15% rate starts 15 days after the end of the fiscal month the enrolment is approved, so approval in September means October sales at 15%. It lifts worst-case margin by 8–11 points on every plan and is worth $1,485 a month per 100 Pro subscribers.
 2. **After launch, in the first server patch (no app change):** (a) add a duration guard on `/ai-video/drone` — refuse or double-charge above 180 s, which caps a 4K60 tap at $28.80 instead of $48; (b) set `topaz_per_month = 0` on `free` (leave `trial` alone — App Review lands on `trial`, `0013:12-18`) and update `tests/invariants.sql:182-183` in the same commit. Both are row/function edits behind the app's stable contract.
 3. **When Apple grants the extended price points, relaunch Team once:** Team yearly at $2,490 (already defined, `RendpropProducts.notSoldAtLaunch`) and Team monthly at **$299** — worst-case margin goes from 42% to 52% (30% cut) or 53% to 61% (15% cut), and $299 is still under AutoReel Pro ($249) plus one Matterport Professional. Do it as one lineup change, not two.
-4. **Copy fix on rendprop.com/pricing** (marketing site, not the binary): "8 reels" → "8 reel clips" on all three tiers so the page matches the paywall and the server. Do this before the first paying customer to avoid refund disputes.
+4. **Copy fix on rendprop.com/pricing** (marketing site, not the binary): "8 reels" → "8 reel clips" on all three tiers so the page matches the paywall and the server. Do this before the first paying customer to avoid refund disputes. *(Done — the 2026-09-12 rework says "reel clips" on every web and App Store surface.)*
 
-**What NOT to change before launch.** The three prices; the allowance numbers (they live in four places that must move together — `Products.swift`, `plan_entitlements`, `pricing.html`, `tests/invariants.sql`); the product ids and the single `rendprop_plans` subscription group; the 7-day introductory offer; the `trial` row (its allowances are the App Review 3.1.1 mitigation); the router's "best" policy on Pro and Team (switching them to "cheapest" saves about $5 a month at 100% use and costs the quality that justifies the price); and the ai_routes prices — the ledger records what actually ran, so they only order the cheapest policy. One thing to *verify* rather than change: the router flag must be ON in production (or `GEMINI_IMAGE_MODEL` moved off `gemini-2.5-flash-image`) before **2 Oct 2026**, when the legacy image model shuts down (`0018:469-471`; API-COST-SHEET §2.6).
+**What NOT to change before launch.** *(2026-09-12 rework: the allowance numbers did move, all four places together, and the prices did not — see the note at the top.)* The three prices; the allowance numbers (they live in four places that must move together — `Products.swift`, `plan_entitlements`, `pricing.html`, `tests/invariants.sql`); the product ids and the single `rendprop_plans` subscription group; the 7-day introductory offer; the `trial` row (its allowances are the App Review 3.1.1 mitigation); the router's "best" policy on Pro and Team (switching them to "cheapest" saves about $5 a month at 100% use and costs the quality that justifies the price); and the ai_routes prices — the ledger records what actually ran, so they only order the cheapest policy. One thing to *verify* rather than change: the router flag must be ON in production (or `GEMINI_IMAGE_MODEL` moved off `gemini-2.5-flash-image`) before **2 Oct 2026**, when the legacy image model shuts down (`0018:469-471`; API-COST-SHEET §2.6).
 
 ---
 

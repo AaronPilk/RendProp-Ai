@@ -1,0 +1,223 @@
+[00:00] Start from the beginning and go very quickly on everything that you experienced with the app.
+[00:06] When I first opened the app and I had to add my home, so I added the house,
+[00:12] the very first thing, all I saw was an option was to take a video or upload a video.
+[00:18] It did not say, do you want to take pictures right now?
+[00:22] So I did my video and then after my video tour, then I have to scroll down
+[00:29] and go to an area called toolboxes
+[00:32] and I see something called photos.
+[00:34] I can click on photos and then there it says take a photo.
+[00:39] But it didn't give me the choice when I first opened the app
+[00:42] if I wanted to take pictures or video.
+[00:46] It only asked me if I wanted the video.
+[00:49] So I feel like as a user,
+[00:51] the very first homepage should be take pictures,
+[00:54] take a video.
+[00:57] You shouldn't have to scroll down and find
+[00:59] how to add photos like not everybody wants to do the video.
+[01:03] Some people are going to use it to just take pictures.
+[01:06] Well, a better way to do it is to click add home and then create the home.
+[01:14] Right. So you type in the address or I know.
+[01:17] But hold on. This is being recorded.
+[01:19] So I need to be able to send this to my
+[01:21] systems because I have file structures that understand this.
+[01:26] You're correct the the way that it works right now and the hold on mom
+[01:31] I'm speaking this way because it says if I was speaking to an AI system. That's how I'm speaking right now
+[01:38] It's it's almost as if the app is built in a confusing banner to the average
+[01:45] user on a UX standpoint
+[01:48] Where when they click at home?
+[01:51] They either have to be at the address and they can use current location
+[01:56] then it uses current location, then I type it in.
+[02:00] Well, it's annoying to have to type in the address
+[02:03] and right now there's not a feature installed
+[02:07] where you can start typing the address in
+[02:09] and it pulls Google Maps or Apple Maps data,
+[02:13] which I know we can pull Apple Maps data almost immediately
+[02:17] because we're already integrated through API systems
+[02:19] with Apple and we already have the feature installed.
+[02:22] So we need to add that.
+[02:23] secondary, what my mom is explaining is definitely correct.
+[02:30] The average user should be able to create the home listing
+[02:35] and they don't need to necessarily take a five minute video
+[02:41] to even create the listing because some of these homes
+[02:44] could be 15,000 square feet,
+[02:47] which means they need to like map out
+[02:50] how they're gonna walk as a drone
+[02:53] and it could be 12 to 15 minutes long.
+[02:56] Or if it's a 1,900 square foot apartment,
+[02:59] it'd be three minutes.
+[03:00] If it's a 1,000 square foot house or apartment or condo,
+[03:05] it could be a minute and 45 seconds.
+[03:09] So the logic side of the schema breakdown
+[03:12] and how the whole graphify system operates
+[03:16] needs to be optimized a little bit more.
+[03:21] Maybe my mom is in a rush
+[03:24] and doesn't want to take the video,
+[03:25] but just wants to take the pictures.
+[03:27] But she can't create a home listing
+[03:29] without uploading a video first,
+[03:31] which breaks the entire system down from the very beginning.
+[03:34] It makes it so it doesn't work at all.
+[03:37] And I understand that we create this like special URL link
+[03:41] that you can post on social media.
+[03:45] And the whole point is to drive leads and show conversions
+[03:50] and the whole digital marketing bullshit
+[03:52] that I've spoke to you about.
+[03:55] But it doesn't work that way
+[03:56] when you're an actual real estate agent.
+[04:01] My mom is 57 years old,
+[04:03] doesn't necessarily need to like create a full video.
+[04:10] Maybe she just needs the pictures.
+[04:13] And maybe you're a 30 year old
+[04:15] who owns a photography company
+[04:17] and actually needs to take all the videos
+[04:19] and all the pictures and everything.
+[04:21] there needs to be some sort of logical alignment
+[04:25] where we determine who's taking what
+[04:32] or we have to rethink what the most logical route is
+[04:36] on a user experience aspect.
+[04:39] Which means that you need to go in
+[04:41] and you need to reevaluate the code
+[04:44] and simulate and test every aspect of the app
+[04:49] and then report back to me and rebuild everything
+[04:52] with the new UX structure, keeping UI intact.
+[04:59] Okay, I'm done talking.
+[05:01] Now, this is my mom speaking
+[05:05] after I asked the question of,
+[05:09] is there any other advice you can give?
+[05:12] Go.
+[05:15] I think when I open the app and I wanna, I'm at a house,
+[05:19] I can add the house.
+[05:22] I don't mind typing in the address
+[05:24] if it can't find my location.
+[05:26] That's fine. I don't mind typing that in and adding my property.
+[05:29] But then it should ask me, what do I want to do next?
+[05:33] Do I want to take a video or do I want to do pictures?
+[05:36] Not every property needs a video.
+[05:40] I did when I first did it, I found the option to make a video,
+[05:45] but I did not get the option to take pictures until the video was already
+[05:49] created. Yeah.
+[05:52] So basically and then also I need the video I
+[05:56] Would take the video and my client would accidentally come out in front of me
+[06:02] I need a feature
+[06:03] I think a good feature would be to be able to pause the video and then restart it in case you have run into
+[06:11] Sot to an area or a person or something and also it needs to be able to take out
+[06:19] any images of
+[06:21] The photographer from the glare of men mirrors or windows. There's a lot of images where you can see my entire
+[06:30] Body and face in the glare of a window or a mirror
+[06:37] Now
+[06:38] Have you done anything else with the app because I know Richard?
+[06:43] No, right now. I have not opened anything else or done anything
+[06:46] All I did was take my own video and then start to add in my pictures
+[06:51] but that's as far as I got.
+[06:54] I will do more with the app later, so.
+[06:57] Claude, this is, and Codex, this is Aaron speaking.
+[07:03] Richard tested the declutter feature out yesterday.
+[07:06] It worked to my understanding very well.
+[07:09] It also made the front yard have very green grass,
+[07:16] but he did express something that we need to determine
+[07:23] determine and like think about and it is that when somebody sees these pictures and then
+[07:31] they go and look at the house it's going to be like a night and day difference.
+[07:36] So we almost need a feature where on our landing page we have this like scrolling left and
+[07:44] right feature where it says actuality which would mean how it looks now or like before
+[07:54] and then what it could look like or maybe after.
+[07:59] So that way they could envision the investment of the home
+[08:03] or like what it could look like, I guess.
+[08:06] I don't really know how to explain this.
+[08:09] One second, mom.
+[08:11] I don't really know how to explain this.
+[08:15] I'm sorry, I know how to explain this.
+[08:17] So Claude, I'm done speaking.
+[08:20] Mom, do you now speak and tell Claude you're speaking?
+[08:25] Claude, this is mom.
+[08:27] And our systems for the MLS systems, if you're going to have photos where you were really
+[08:37] taking out a lot of stuff and decluttering and making any changes, we have to have somewhere
+[08:43] stamped on the image.
+[08:44] We already have that.
+[08:45] Even if it's AI generated.
+[08:46] Mom, I'm going to catch you up real quick.
+[08:47] Yeah, everything says, this is guideline law.
+[08:51] So then what normally would happen is a picture.
+[08:55] there would be the actual pictures,
+[08:58] and then there would be AI-generated pictures
+[09:00] to say this is what the home would look like.
+[09:02] So I need to apply, this is Claude, this is Aaron again.
+[09:06] I need to, or we need to apply both images,
+[09:13] which it already does, but the problem is,
+[09:17] which we discussed yesterday,
+[09:20] is that you're creating a specific Cloudflare URL link,
+[09:25] and then creating a landing page.
+[09:27] We already discussed how it's compressing
+[09:29] file rates and images and videos or lower quality.
+[09:40] We also need to add the ability for them to be able to click
+[09:44] before and after because it needs to be
+[09:47] specifically declared and known very well that this is the original image,
+[09:53] this is the after image.
+[09:55] the agent can download the after image to create everything for like Zillow or realtor.com
+[10:03] or wherever they're listing the home or MLS which will automatically come with the stamp
+[10:11] on the image that says AI enhanced or it would say like virtually staged or like AI enhanced.
+[10:24] And exactly, AI enhanced is typically what it says.
+[10:28] So we need to think about the logical side
+[10:30] on how we create the system to be most adaptable,
+[10:36] most legal, and easiest to use on the realtor side
+[10:43] and also on the consumer side without fooling the consumer.
+[10:49] And I'll give you an example, Claude.
+[10:52] I looked at a house when I moved down here
+[10:56] to St. Petersburg, Florida.
+[10:57] Every picture of the home looked absolutely perfect.
+[11:01] This was before AI even existed, or GPT,
+[11:06] or any, because Chat GPT was the first real
+[11:09] AI generation model that came out.
+[11:12] All of those photos were professionally edited,
+[11:16] which means there was no laws created yet
+[11:19] on AI enhancements.
+[11:21] We now have to deal with AI enhancement laws.
+[11:25] And when I came down here,
+[11:27] the house looked completely different
+[11:30] from how it looked in my image.
+[11:32] And I was pissed at my landlord.
+[11:34] We want to remove that friction on the real estate agent.
+[11:40] So we have to think of a way that we can create logical UX
+[11:43] and UI aspects for all of this.
+[11:48] This is actually, hold on, I'm done speaking now.
+[11:51] I'm speaking to my mom.
+[11:52] You're not actually perfect as a real estate agent.
+[11:56] We are not allowed, we are,
+[11:57] we're not legally allowed to fool a consumer.
+[12:01] Yeah, but my example to Claude literally 30 seconds ago
+[12:06] was an example before there was AI enhancement.
+[12:11] You can say as a realtor,
+[12:14] you're not allowed to fool the consumer,
+[12:17] but before 2021,
+[12:22] which is when I moved here,
+[12:25] most things were done by hand, right?
+[12:28] Well, so like even then you could remove things.
+[12:30] So you're not supposed to, like,
+[12:32] let's say that there's a big, huge power pole
+[12:34] in the backyard, okay?
+[12:38] Agents were removing the power pole, right?
+[12:45] Okay, now that's a whole different aspect.
+[12:47] All right, keep going.
+[12:49] So you just can't do things.
+[12:51] You can do things for like maybe design of the house,
+[12:55] but you cannot remove things that are there.
+[13:01] Like you can't trick the consumer.
+[13:05] If it's a, if there's a huge crack in the wall,
+[13:10] you're not supposed to fix that.
+[13:12] That should be in the picture.
+[13:13] No, we will never do that.
+[13:15] That's right.
+[13:16] So the thing that I was giving for the house
+[13:21] that we moved into is the pictures
+[13:23] taken five years before so it always needs to be there's like a time stamp on
+[13:28] the picture of the date that it was taken or the year or something like yeah
+[13:34] right you know what I mean cuz like I'm trying to give like an actual example of
+[13:37] my experience now and all right that's exactly why I Aaron I wanted to talk to
+[13:43] you but I didn't mean for this to happen so I'd like to quit recording Christ all
+[13:48] right whatever fine now I'm gonna go back and work a kid God no don't go
+[13:52] back and work. Let me finish testing what I got to do. I haven't even hardly touched.
+[13:58] You just need to let me get through a test before you start making changes.
+[14:01] No, move on. Like a thinking path that was good, but you cut it off now. So I can hear
+[14:08] you're making dinner or something. I know. I was just calling you to make sure
+[14:13] you're okay. You're killing me. The more I talk to you, so you are drinking, right?
+[14:19] I brought a couple of beers today. Yeah, yeah, but no liver, you know, walked public and got some beer.
+[14:28] What?

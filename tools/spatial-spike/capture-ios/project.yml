@@ -1,0 +1,55 @@
+name: SpatialSpikeCapture
+options:
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    CODE_SIGN_STYLE: Automatic
+    GENERATE_INFOPLIST_FILE: NO
+    INFOPLIST_FILE: Info.plist
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  SpatialSpikeCapture:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Resources/Assets.xcassets
+      - path: Resources/PrivacyInfo.xcprivacy
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rendprop.spatialspike.capture
+        TARGETED_DEVICE_FAMILY: "1"
+        SUPPORTS_MACCATALYST: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+  SpatialSpikeCaptureUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: UITests
+    dependencies:
+      - target: SpatialSpikeCapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.rendprop.spatialspike.capture.uitests
+        TEST_TARGET_NAME: SpatialSpikeCapture
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: ""
+        TARGETED_DEVICE_FAMILY: "1"
+schemes:
+  SpatialSpikeCapture:
+    build:
+      targets:
+        SpatialSpikeCapture: all
+        SpatialSpikeCaptureUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SpatialSpikeCaptureUITests
+      captureScreenshotsAutomatically: false
+    archive:
+      config: Release

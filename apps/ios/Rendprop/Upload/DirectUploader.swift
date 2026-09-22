@@ -4,6 +4,133 @@ import CryptoKit
 /// Helpers for the presigned PUT / multipart path. Every file read here is
 /// BOUNDED — nothing loads a whole walkthrough (2–8 GB) into memory.
 enum DirectUploader {
+    /// Shared foreground path for gallery/original/poster/batch photos. A lost
+    /// completion reply is not another PUT; it resumes the exact saved ticket.
+    /// A second explicit call may replace a retired legacy ticket after the
+    /// exact per-ticket cancellation receipt. No operation deletes the source.
+    static func uploadPhoto(fileURL: URL, listingID: UUID, role: String,
+                            contentType: String, keyPrefix: String, api: APIClient,
+                            journalStore: DirectUploadJournal = .shared,
+                            transfer: (URLRequest, URL) async throws -> URLResponse = { request, file in
+                                try await URLSession.shared.upload(for: request, fromFile: file).1
+                            }, delay: (UInt64) async throws -> Void = { try await Task.sleep(nanoseconds: $0) }) async throws -> String {
+        let bytes = FileStore.fileSize(fileURL)
+        guard bytes > 0, let digest = sha256(of: fileURL) else { throw UploadRecovery.Failure.invalidTicket }
+        if Config.useLiveBackend && Config.enableAuth {
+            // An anonymous session may still be connecting on first launch.
+            // Bind the journal AFTER that normal connection, never to a nil
+            // placeholder owner that will change during the ticket request.
+            guard await AuthStore.shared.ensureSession() else { throw CancellationError() }
+        }
+        let owner = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
+        let key = keyPrefix + ":" + sha256Hex("\(listingID.uuidString)|\(role)|\(digest)|\(bytes)")
+        let journalKey = photoJournalKey(owner: owner ?? "anonymous-pending", listingID: listingID,
+            role: role, keyPrefix: keyPrefix, digest: digest, bytes: bytes)
+        func checkOwner() throws {
+            try Task.checkCancellation()
+            guard AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
+        }
+        func create() async throws -> UploadTicket {
+            try checkOwner()
+            return try await api.requestUpload(filename: fileURL.lastPathComponent, bytes: bytes,
+                listingID: listingID, sha256: digest, kind: "photo", role: role,
+                contentType: contentType, idempotencyKey: key)
+        }
+        if !Config.useLiveBackend { return try await create().assetID }
+        let store = journalStore
+        try await store.acquire(journalKey)
+        do {
+            var record = try await store.load(journalKey) ?? UploadRecovery.Journal()
+            let explicitResume = record.ticket != nil
+            // A ticket that already ran a whole call dry may be retired and
+            // replaced on THIS later, explicit attempt — once. The flag is
+            // cleared in memory now so a ticket saved by this call starts with
+            // a clean slate; a failed call below sets it again.
+            let allowReplacement = record.recoveryExhausted == true
+            record.recoveryExhausted = nil
+            if record.ticket == nil { record.ticket = try await create(); try await store.save(record, for: journalKey) }
+            guard let initial = record.ticket, initial.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
+            if record.completed { try checkOwner(); await store.release(journalKey); return initial.assetID }
+            var metadata = UploadMetadata(); metadata.bytes = bytes; metadata.sha256 = digest
+            var lastError: Error = UploadRecovery.Failure.invalidTicket
+            for attempt in 0..<3 {
+                try checkOwner()
+                if attempt > 0 { try await delay(UInt64(attempt) * 1_000_000_000) }
+                do {
+                    if record.dispatched || record.ticket?.replayed != false {
+                        let result = try await UploadRecovery.reconcile(journal: record,
+                            allowLegacyCancellation: explicitResume,
+                            allowRetiredReplacement: allowReplacement,
+                            persistCancellation: { id in
+                                try checkOwner()
+                                record.cancellationAuthorizedFor = id
+                                try await store.save(record, for: journalKey)
+                            }, complete: { id in
+                                try checkOwner()
+                                try await api.completeUpload(assetID: id, parts: nil, metadata: metadata)
+                            }, renew: { id in try checkOwner(); return try await api.renewUpload(assetID: id) },
+                            cancel: { id in try checkOwner(); try await api.abortUpload(assetID: id) }, create: create)
+                        switch result {
+                        case .complete(let id):
+                            record.completed = true; try await store.save(record, for: journalKey)
+                            try checkOwner(); await store.release(journalKey); return id
+                        case .ticket(let ticket):
+                            record.ticket = ticket
+                            try await store.save(record, for: journalKey)
+                        }
+                    }
+                    guard let ticket = record.ticket, let put = ticket.putURL,
+                          put.scheme == "https", ticket.mode == .single else { throw UploadRecovery.Failure.invalidTicket }
+                    try checkOwner()
+                    // Persist BEFORE handing bytes to URLSession: app death or
+                    // network handover afterward is always reconciled first.
+                    record.dispatched = true
+                    try await store.save(record, for: journalKey)
+                    let response = try await transfer(photoPutRequest(url: put, contentType: contentType), fileURL)
+                    try checkOwner()
+                    let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+                    guard (200..<300).contains(status) else { throw APIError.badResponse(status) }
+                    try await api.completeUpload(assetID: ticket.assetID, parts: nil, metadata: metadata)
+                    record.completed = true; try await store.save(record, for: journalKey)
+                    try checkOwner(); await store.release(journalKey); return ticket.assetID
+                } catch is CancellationError { throw CancellationError() }
+                catch {
+                    lastError = error
+                    if error is UploadRecovery.Failure { throw error }
+                    // Retry means reconcile on the next iteration, never reuse
+                    // this PUT URL. A service rollout may legitimately pause it.
+                    // These are the request's own fault (or the session's), not
+                    // the ticket's: they stop the call without marking the
+                    // ticket exhausted, so the next attempt reconciles it as
+                    // usual instead of paying for a replacement.
+                    if let status = (error as? APIError)?.status,
+                       [400, 401, 402, 405, 413].contains(status) { throw error }
+                    // The row is gone or the server aborted the ticket: no
+                    // further round on it can help, so stop paying for them.
+                    if UploadRecovery.isRetired(error) { break }
+                }
+            }
+            // Every round on this reservation ran dry, or the server retired it.
+            // `dispatched` stays as it is — the next attempt must still probe
+            // `/complete` before anything else — but that next, explicit attempt
+            // is now allowed to abort this ticket and reserve afresh. Before
+            // this mark, a dead ticket under a content key made the same photo
+            // impossible to upload ever again. The error itself is thrown so the
+            // caller can say what happened.
+            record.recoveryExhausted = true
+            try? await store.save(record, for: journalKey)
+            throw lastError
+        } catch {
+            await store.release(journalKey)
+            throw error
+        }
+    }
+    /// One shared definition for writes and later, read-only photo identity lookup.
+    static func photoJournalKey(owner: String, listingID: UUID, role: String, keyPrefix: String,
+                                digest: String, bytes: Int64) -> String {
+        "\(owner)|\(keyPrefix):" + sha256Hex("\(listingID.uuidString)|\(role)|\(digest)|\(bytes)")
+    }
+
     /// Streaming SHA-256 — never loads the file into memory. Run off-main.
     static func sha256(of url: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
@@ -93,10 +220,8 @@ enum DirectUploader {
         return request
     }
 
-    /// Single-PUT request for a photo (contract §2.5) — also used for the tour
-    /// POSTER (`kind:"photo", role:"render"`). Photo PUT URLs are presigned WITH
-    /// the content-type header, so the value must mirror what the ticket
-    /// declared exactly or the signature fails.
+    /// Photo PUTs mirror the declared type. v2 enforces it at the gateway;
+    /// legacy host-only presigning never bound Content-Type in the signature.
     static func photoPutRequest(url: URL, contentType: String) -> URLRequest {
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"

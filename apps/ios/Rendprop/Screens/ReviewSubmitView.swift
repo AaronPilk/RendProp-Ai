@@ -22,8 +22,10 @@ struct ReviewSubmitView: View {
     @State private var render: Render?
     @State private var entitlements: Entitlements?
     @State private var entitlementsChecked = false
-    @State private var showSignIn = false
     @State private var showRerenderConfirm = false
+    @State private var entitlementTask: Task<Void, Never>?
+    @State private var reflection: ReflectionRemoval?
+    @State private var showReflectionRemoval = false
 
     /// Explicit footage type (decision A8). Prefilled by a metadata heuristic,
     /// always correctable — it decides stabilization + the retime factor.
@@ -49,7 +51,7 @@ struct ReviewSubmitView: View {
     }
 
     private var lockReason: String {
-        if Config.enableAuth && !auth.isSignedIn { return "Sign in to see which tiers your plan includes." }
+        if Config.enableAuth && !auth.isSignedIn { return "Not connected yet — Smooth is always included." }
         if entitlements == nil {
             return entitlementsChecked ? "Couldn't check your plan right now — Smooth is always included."
                                        : "Checking your plan…"
@@ -61,6 +63,7 @@ struct ReviewSubmitView: View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
                 captureSummary
+                reflectionSection
                 roomTags
                 tierPicker
                 submitSection
@@ -73,8 +76,12 @@ struct ReviewSubmitView: View {
         .sheet(isPresented: $showRoomTagger) {
             RoomTaggerView(videoURL: asset.localURL, tags: $asset.roomTags)
         }
-        .sheet(isPresented: $showSignIn) {
-            SignInView()
+        .sheet(isPresented: $showReflectionRemoval) {
+            if let reflection {
+                ReflectionRemovalView(controller: reflection, listing: listing) { result in
+                    asset = result
+                }
+            }
         }
         .navigationDestination(isPresented: $goToStatus) {
             if let render {
@@ -88,12 +95,35 @@ struct ReviewSubmitView: View {
         } message: {
             Text("This replaces the current tour with a new render using these settings. A published link keeps working until the new tour is published.")
         }
-        .task(id: auth.isSignedIn) { await loadEntitlements() }
-        .onAppear(perform: detectSourceIfNeeded)
+        .task { await loadEntitlements() }
+        .onDisappear { entitlementTask?.cancel(); entitlementTask = nil }
+        .sessionConnectionNotice()
+        .onAppear {
+            detectSourceIfNeeded()
+            reflection = ReflectionRemoval.controller(listingID: listing.id, asset: asset)
+        }
         .aiConsentGate()
     }
 
     // MARK: - Sections
+
+    @ViewBuilder private var reflectionSection: some View {
+        if let reflection, !reflection.source.personVisibleRanges.isEmpty || reflection.work != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("People and reflections", systemImage: "person.crop.rectangle")
+                    .font(.rpHeadline).foregroundStyle(Theme.ink)
+                Text(asset.id == reflection.work?.result?.id
+                     ? "An edited version is selected. Your original remains available."
+                     : "People were detected in \(String(format: "%.1f", ReflectionVideo.plan(ranges: reflection.source.personVisibleRanges, duration: reflection.source.durationS).reduce(0) { $0 + $1.durationS })) seconds of this take. Choose intervals for optional AI removal and review the result.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                SecondaryButton(title: reflection.work == nil ? "Review detected intervals" : "Open saved reflection edit",
+                                systemImage: "slider.horizontal.3", isDisabled: isRendering) {
+                    showReflectionRemoval = true
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+    }
 
     private var captureSummary: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -198,7 +228,7 @@ struct ReviewSubmitView: View {
                         .fixedSize(horizontal: false, vertical: true)
                     if Config.enableAuth && !auth.isSignedIn {
                         Spacer(minLength: 4)
-                        Button("Sign in") { showSignIn = true }
+                        Button("Retry connection") { auth.retrySessionConnection() }
                             .font(.rpCaption.weight(.semibold))
                             .foregroundStyle(Theme.accent)
                     }
@@ -213,7 +243,19 @@ struct ReviewSubmitView: View {
         let locked = t.usesServerAI && aiTiersLocked
         let selected = tier == t
         return Button {
-            guard !locked else { return }
+            if locked {
+                guard entitlements == nil, entitlementTask == nil else { return }
+                // Remember the selected tier while connection/plan lookup
+                // is pending. Never ask for an identity to resolve an outage.
+                entitlementTask = Task { @MainActor in
+                    defer { entitlementTask = nil }
+                    await loadEntitlements()
+                    guard !Task.isCancelled, !aiTiersLocked,
+                          await AIConsent.shared.ensureGranted() else { return }
+                    tier = t
+                }
+                return
+            }
             // Guideline 5.1.2(i): the AI tiers upload the finished master and
             // hand it to Topaz Labs for motion smoothing + upscale. Picking one
             // is the moment to ask; Smooth (on-device) never leaves the phone.
@@ -266,7 +308,7 @@ struct ReviewSubmitView: View {
             .opacity(locked ? 0.55 : 1)
         }
         .buttonStyle(.plain)
-        .disabled(locked)
+        .disabled(locked && entitlements != nil)
         .accessibilityLabel(Text(locked ? "\(t.displayName). Team plan." : t.displayName))
         .accessibilityAddTraits(selected ? [.isSelected] : [])
     }
@@ -310,7 +352,7 @@ struct ReviewSubmitView: View {
         } else {
             VStack(spacing: 10) {
                 PrimaryButton(title: "Create my tour", systemImage: "sparkles") { start() }
-                Text("Renders right on your phone. Publishing the share link needs a free sign-in.")
+                Text("Renders right on your phone. The share link publishes when connected — no registration needed.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
                     .multilineTextAlignment(.center)
@@ -323,7 +365,7 @@ struct ReviewSubmitView: View {
     private func loadEntitlements() async {
         guard Config.useLiveBackend else { return }
         entitlementsChecked = false
-        guard !Config.enableAuth || auth.isSignedIn else {
+        guard await auth.ensureSession(), !Task.isCancelled else {
             entitlements = nil
             entitlementsChecked = true
             if tier != .smooth { tier = .smooth }
@@ -472,6 +514,7 @@ struct RoomTaggerView: View {
             .background(Theme.bg)
             .navigationTitle("Tag \(areaNounPlural)")
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.roomTagger)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     // Discard BEFORE `dismiss()`, not only in `onDisappear`:

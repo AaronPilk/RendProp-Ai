@@ -10,9 +10,10 @@
 -- users through the real signup trigger and deletes them at the end). Output is
 -- one row per assertion; any `pass = f` is a release blocker.
 --
--- Numbers in the "plan coherence" section are the PUBLISHED entitlements from
--- services/edge/tour-host/public/pricing.html. Change them there and here
--- together — that is the whole point of the check ("enforced == published").
+-- Paid plan quantities mirror services/edge/tour-host/public/pricing.html.
+-- Signup-trial/lapsed-free quantities mirror migration 0032, not an Apple
+-- introductory offer on a purchased plan. Keep the independent literal matrix
+-- here: deriving expected values from the same table would test nothing.
 
 \set ON_ERROR_STOP on
 
@@ -89,7 +90,7 @@ select 'server-only tables reject tenant writes',
 from unnest(array['public.render_jobs','public.renders','public.capture_assets',
                   'public.capture_chapters','public.cost_ledger','public.metering',
                   'public.rate_limits','public.deletion_requests','public.leads',
-                  'public.plan_entitlements']) t;
+                  'public.plan_entitlements','public.plan_entitlement_overrides']) t;
 
 insert into _inv(name, pass, note)
 select 'tenant RPCs are executable by authenticated, not by anon',
@@ -160,32 +161,39 @@ where (lat is not null and lat <> round(lat::numeric, 3))
    or (lng is not null and lng <> round(lng::numeric, 3));
 
 -- ── Plan coherence: enforced must equal published (pricing.html) ─────────────
+-- Paid sizes are the 2026-09-12 rework (migration 0044): prices unchanged,
+-- allowances 4/10/25 renders, 100/200/400 edits, 6/12/25 reels, 2/4/8 aerials,
+-- Team 2 seats + 2 Topaz. The base trial/free rows are still 0032's; the
+-- single-location trial override lives in plan_entitlement_overrides and is
+-- asserted in the 0044 section at the end of this file.
 
 insert into _inv(name, pass, note)
-select 'render caps match rendprop.com/pricing (8/25/80; trial 1)',
-       plan_render_cap('solo') = 8 and plan_render_cap('starter') = 8
-       and plan_render_cap('pro') = 25 and plan_render_cap('team') = 80
-       and plan_render_cap('trial') = 1,
+select 'render caps match paid plans and 0032 signup trial/free (4/10/25; trial 3; free 1)',
+       plan_render_cap('solo') = 4 and plan_render_cap('starter') = 4
+       and plan_render_cap('pro') = 10 and plan_render_cap('team') = 25
+       and plan_render_cap('trial') = 3 and plan_render_cap('free') = 1,
        format('solo=%s starter=%s pro=%s team=%s trial=%s free=%s',
               plan_render_cap('solo'), plan_render_cap('starter'), plan_render_cap('pro'),
               plan_render_cap('team'), plan_render_cap('trial'), plan_render_cap('free'));
 
 insert into _inv(name, pass, note)
-select 'plan_entitlements match rendprop.com/pricing for every metered feature',
-       coalesce(bool_and(ok), false),
+select 'plan_entitlements match paid plans and 0032 trial/free for every metered feature',
+       count(*) = 6 and coalesce(bool_and(ok), false),
        coalesce(string_agg(plan, ', ') filter (where not ok), '')
 from (
-  select e.plan,
-         (e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month, e.topaz_per_month, e.seats)
-           = (x.edits, x.reels, x.aerials, x.topaz, x.seats) as ok
-    from plan_entitlements e
-    join (values ('trial',   10, 1,  2, 1, 1),
-                 ('free',    10, 1,  2, 1, 1),
-                 ('starter',150, 8,  2, 0, 1),
-                 ('solo',   150, 8,  2, 0, 1),
-                 ('pro',    300, 20, 6, 0, 1),
-                 ('team',   600, 40, 15, 2, 3)) as x(plan, edits, reels, aerials, topaz, seats)
-      on x.plan = e.plan
+  select x.plan,
+         ((e.renders_per_month, e.photo_edits_per_month, e.reels_per_month,
+           e.aerials_per_month, e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+           is not distinct from
+          (x.renders, x.edits, x.reels, x.aerials, x.topaz, x.seats, x.cogs, x.price)) as ok
+    from (values ('trial',   3,  60, 4,  2, 1, 1, 1200,     0),
+                 ('free',    1,   5, 0,  0, 0, 1,  300,     0),
+                 ('starter', 4, 100, 6,  2, 0, 1, 1200,  4900),
+                 ('solo',    4, 100, 6,  2, 0, 1, 1200,  4900),
+                 ('pro',    10, 200,12,  4, 0, 1, 2400,  9900),
+                 ('team',   25, 400,25,  8, 2, 2, 6000, 24900))
+           as x(plan, renders, edits, reels, aerials, topaz, seats, cogs, price)
+    left join plan_entitlements e on x.plan = e.plan
 ) s;
 
 insert into _inv(name, pass, note)
@@ -305,9 +313,33 @@ from pg_proc where proname = 'create_render_job';
 
 insert into _inv(name, pass, note)
 select 'media_provenance exists with the disclosure columns',
-       count(*) = 14, format('%s columns', count(*))
+       count(*) = 16, format('%s columns', count(*))
 from information_schema.columns
 where table_schema = 'public' and table_name = 'media_provenance';
+-- 14 at 0012; 16 since 0029 added `qc` + `qc_checked_at` (the AI drift check's
+-- verdict, stored next to the disclosure sentence it qualifies). This count
+-- exists to catch ACCIDENTAL drift in the compliance spine, so a migration that
+-- deliberately grows it updates the number here in the same commit.
+
+-- 0029: the verdict is evidence ABOUT the tenant's media, so the tenant must
+-- never be able to write one. record_media_qc() is service-role only — the same
+-- grant shape as log_job_cost / bump_rate / refund_rate — while the column
+-- stays readable through the existing org-member SELECT policy.
+insert into _inv(name, pass, note)
+select 'media_provenance carries the drift verdict (qc, qc_checked_at)',
+       count(*) = 2, format('%s of 2 found', count(*))
+from information_schema.columns
+where table_schema = 'public' and table_name = 'media_provenance'
+  and column_name in ('qc', 'qc_checked_at');
+
+insert into _inv(name, pass, note)
+select 'record_media_qc is a role-scoped definer no tenant can execute',
+       (select count(*) = 1 from pg_proc
+         where proname = 'record_media_qc' and prosecdef
+           and 'search_path=public' = any(coalesce(proconfig, array[]::text[])))
+       and not has_function_privilege('authenticated', 'public.record_media_qc(uuid,uuid,jsonb)', 'EXECUTE')
+       and not has_function_privilege('anon', 'public.record_media_qc(uuid,uuid,jsonb)', 'EXECUTE')
+       and has_function_privilege('service_role', 'public.record_media_qc(uuid,uuid,jsonb)', 'EXECUTE'), '';
 
 insert into _inv(name, pass, note)
 select 'media_provenance.disclosure is NOT NULL (a row can never be silent)',
@@ -483,7 +515,7 @@ where n.nspname = 'public' and c.relkind = 'r' and not c.relrowsecurity
   and c.relname in ('profiles','orgs','memberships','listings','capture_assets',
                     'capture_chapters','photos','render_jobs','renders',
                     'cost_ledger','leads','metering','rate_limits','deletion_requests',
-                    'plan_entitlements');
+                    'plan_entitlements','plan_entitlement_overrides');
 
 -- ── MUTATING: rate limiter semantics (cleans up after itself) ────────────────
 
@@ -559,7 +591,7 @@ begin
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded)
     values (v_listing, 'photo', 'renders', 'renders/_inv/p.jpg', 100, true) returning id into v_poster;
 
-  -- App publishes are free: the trial cap is 1 render/month and BOTH must succeed.
+  -- App publishes do not consume the 0032 signup-trial cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000002', 'app');
   insert into _inv(name, pass, note)
@@ -595,15 +627,26 @@ begin
     values ('fail_render_job marks an unpublished app job failed',
             v_job2.status = 'failed' and v_job2.error->>'message' = 'publish failed in test', v_job2.status);
 
-  -- Worker jobs DO count: the first fits the trial cap, the second must hit RP402.
-  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000001', 'worker');
-  insert into _inv(name, pass, note)
-    values ('worker job #1 fits the trial cap (app jobs did not count)', v_job.source = 'worker', v_job.source);
+  -- Exactly THREE cloud renders fit the 0032 trial quota. Finish each fixture
+  -- job before asking for the next: leaving three in-flight would make #4 fail
+  -- the independent RP429 guard first and would not test the monthly RP402 cap.
+  -- This org is the signup default (space_type = real_estate), so 0044's
+  -- industry-aware trial leaves it on the base row; the one-tour single-location
+  -- trial is exercised on its own fitness fixture in the 0044 section below.
+  for v_n in 1..3 loop
+    v_job := create_render_job(v_listing, v_asset, 'smooth', '{}',
+                              '_inv-wrk-' || lpad(v_n::text, 6, '0'), 'worker');
+    insert into _inv(name, pass, note)
+      values (format('worker job #%s fits the 0032 trial cap (app jobs did not count)', v_n),
+              v_job.source = 'worker', v_job.source);
+    update render_jobs set status = 'ready', progress = 1, finished_at = now()
+      where id = v_job.id;
+  end loop;
   begin
-    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000002', 'worker');
-    insert into _inv(name, pass, note) values ('worker job #2 exceeds the trial cap (RP402)', false, 'no error raised');
+    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-wrk-000004', 'worker');
+    insert into _inv(name, pass, note) values ('worker job #4 exceeds the trial cap (RP402)', false, 'no error raised');
   exception when others then
-    insert into _inv(name, pass, note) values ('worker job #2 exceeds the trial cap (RP402)', sqlerrm like 'RP402%', sqlerrm);
+    insert into _inv(name, pass, note) values ('worker job #4 exceeds the trial cap (RP402)', sqlerrm like 'RP402%', sqlerrm);
   end;
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000003', 'app');
   insert into _inv(name, pass, note)
@@ -664,8 +707,8 @@ begin
 end $fx$;
 
 -- ── MUTATING: job lease + disclosure outcome (0015/0016) ─────────────────────
--- A third throwaway user on a plan with head-room (the trial cap of 1 would
--- mask RP429 behind RP402), exercising the two behaviours 0015/0016 changed.
+-- A third throwaway user on a plan with head-room, so the monthly quota cannot
+-- interfere with the separate lease scenarios that 0015/0016 changed.
 -- Worker jobs point at an UPLOADS-bucket asset, which is what the worker's own
 -- claim filter requires; the publish path needs a RENDERS-bucket one.
 
@@ -1128,7 +1171,10 @@ begin
   insert into _inv(name, pass, note) values ('an admin reads the rate_limits usage counters across orgs', n = 2, n::text);
 
   set role authenticated; select count(*) into n from plan_entitlements; reset role;
-  insert into _inv(name, pass, note) values ('an admin reads plan_entitlements', n = 6, n::text);
+  set role authenticated;
+  select array_agg(plan order by plan)=array['brokerage','free','pro','solo','starter','team','trial'] into b from plan_entitlements;
+  reset role;
+  insert into _inv(name, pass, note) values ('an admin reads plan_entitlements', n = 7 and b, n::text || ' exact known plans including brokerage');
 
   set role authenticated; select is_admin() into b; reset role;
   insert into _inv(name, pass, note) values ('is_admin() is true for an allowlisted owner', b is true, b::text);
@@ -1236,9 +1282,12 @@ from plan_routing_policy;
 -- The flag-off answer is looked up by `note = 'legacy'` with LIMIT 1, so a
 -- second row would make "what runs today" depend on a sort order.
 insert into _inv(name, pass, note)
-select 'at most ONE legacy row per task, and every legacy row is disabled',
+select 'at most ONE legacy row per task; photo fallback active, non-photo legacy disabled',
        coalesce(bool_and(n = 1), true) and
-       (select coalesce(bool_and(not enabled), true) from ai_routes where note = 'legacy'),
+       (select coalesce(bool_and(case
+          when task in ('photo.sky','photo.twilight','photo.lawn','photo.declutter','photo.stage','photo.custom')
+            then enabled and provider='gemini' and model='gemini-3.1-flash-image'
+          else not enabled end), true) from ai_routes where note = 'legacy'),
        coalesce(string_agg(task || '=' || n, ', '), 'no legacy rows')
 from (select task, count(*) n from ai_routes where note = 'legacy' group by task) s;
 
@@ -1286,6 +1335,157 @@ select 'every ai_routes row carries a legal privacy_tier and min_plan',
 from ai_routes
 where privacy_tier not in ('no_retention','retained_30d','trains_by_default')
    or min_plan not in ('free','trial','starter','solo','pro','team');
+
+-- ── 0030: ai_routes.params ──────────────────────────────────────────────────
+--
+-- The column that turns "this model needs a different request shape" from a
+-- deploy into a row. Pinned here the way 0029 pinned media_provenance.qc: the
+-- adapters read it by name, so a rename or a type change has to fail in CI and
+-- not at 3am against a vendor's 400.
+
+insert into _inv(name, pass, note)
+select 'ai_routes carries the per-step vendor knobs (params jsonb, nullable)',
+       count(*) = 1, format('%s of 1 found', count(*))
+from information_schema.columns
+where table_schema = 'public' and table_name = 'ai_routes'
+  and column_name = 'params' and data_type = 'jsonb' and is_nullable = 'YES';
+
+-- NULL means "whatever the adapter does by default", which is what makes 0030
+-- additive — so it must stay legal. 0030 seeds two Astra writing routes and
+-- 0034 adds the agent-reel writing route. Only those three specific first-seat
+-- rows carry params; three arbitrary rows or two copies of one task cannot pass.
+insert into _inv(name, pass, note)
+select 'only the three explicit 0030/0034 Astra writing seats carry params',
+       count(*) filter (where params is not null) = 3
+   and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
+                        and position = 1 and task = 'copy.shotlist') = 1
+   and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
+                        and position = 1 and task = 'copy.reel_script') = 1
+   and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
+                        and position = 1 and task = 'copy.agent_reel') = 1,
+       format('%s row(s) with params: %s', count(*) filter (where params is not null),
+              coalesce(string_agg(format('%s/%s', task, model), ', ')
+                       filter (where params is not null), 'none'))
+from ai_routes;
+
+-- A params blob is an OBJECT. The adapters read `[]`, `"low"` and `3` as "no
+-- params" and would silently do nothing with them, so the check constraint
+-- refuses them at the door rather than letting a well-meaning row mean nothing.
+insert into _inv(name, pass, note)
+select 'ai_routes.params is constrained to a JSON object (or null)',
+       count(*) = 1, format('%s of 1', count(*))
+from pg_constraint
+where conrelid = 'public.ai_routes'::regclass and conname = 'ai_routes_params_object_check';
+
+insert into _inv(name, pass, note)
+select 'no ai_routes.params is a non-object (the constraint is actually holding)',
+       count(*) = 0,
+       coalesce(string_agg(format('%s/%s=%s', task, model, jsonb_typeof(params)), '; '), 'all objects or null')
+from ai_routes
+where params is not null and jsonb_typeof(params) <> 'object';
+
+-- Every key an adapter will ACT on. A key outside this set is not an error —
+-- _shared/providers/params.ts treats it as absent, deliberately, so a future
+-- knob can be seeded before the deploy that reads it — but a row full of keys
+-- nothing reads is almost always a typo, and it is worth seeing here.
+insert into _inv(name, pass, note)
+select 'every seeded params key is one an adapter actually reads',
+       count(*) = 0,
+       coalesce(string_agg(format('%s/%s has %s', task, model, k), '; '), 'all keys recognised')
+from ai_routes r, lateral jsonb_object_keys(r.params) k
+where r.params is not null and k not in ('effort', 'max_output_tokens');
+
+-- 0030: and it is gated to PAYING plans. min_plan is the only working plan
+-- lever — router.ts's defaultPolicyFor() is dead code, so the cheapest-policy
+-- protection free and trial tiers should get does not exist. Without this,
+-- a free signup reaches a 10c model on a route with no per-call quota.
+-- Shared with the rollback-only negative fixture: it mutates the real test
+-- rows and executes these SAME registered predicates, not copied test logic.
+\ir invariant_astra_paid_gates.sql
+
+-- ── 0030: gpt-6-astra takes position 1 on the two writing routes ────────────
+--
+-- THIS IS ALSO THE POSITION-SHIFT IDEMPOTENCY TEST, and it is why CI's
+-- apply → invariants → replay → invariants shape matters: the shift moves
+-- 1,2,3 down to 2,3,4 and a second application that shifted again would leave a
+-- gap at 2 (and Sonnet at 3), which the contiguity assertion below catches.
+insert into _inv(name, pass, note)
+select 'gpt-6-astra is step 1 of both writing routes, with an effort and a ceiling',
+       count(*) = 2, format('%s of 2: %s', count(*),
+                            coalesce(string_agg(format('%s=%sc %s', task, unit_cents, params::text), ', '), 'none'))
+from ai_routes
+where provider = 'openai' and model = 'gpt-6-astra' and position = 1 and enabled
+  and task in ('copy.shotlist', 'copy.reel_script')
+  and params ? 'effort' and params ? 'max_output_tokens';
+
+-- effort:"none" is the adapter default and the exact thing that makes a
+-- reasoning model refuse or answer badly. Seeding it on an astra row would be
+-- paying the premium price for the crippled answer.
+insert into _inv(name, pass, note)
+select 'no gpt-6-astra row is seeded with reasoning effort "none"',
+       count(*) = 0, coalesce(string_agg(task, ', '), 'none')
+from ai_routes
+where model = 'gpt-6-astra' and params ->> 'effort' = 'none';
+
+-- The ceiling has to clear the VISIBLE answer the caller asks for, because a
+-- reasoning model spends reasoning tokens out of the same budget: ai-copy asks
+-- for 1,600 tokens of shot list (MAX_SHOTLIST_TOKENS) and 700 of script
+-- (MAX_TOKENS), and 700 for agent-reel (MAX_AGENT_REEL_TOKENS). The 0034
+-- agent-reel seed currently violates this headroom rule (700 == 700). Keep that
+-- failure visible; updating stale route counts is not permission to enlarge
+-- a provider budget or weaken > to >=. It must also stay under the code clamp.
+insert into _inv(name, pass, note)
+select 'each astra ceiling clears its route''s visible answer and stays under the code clamp',
+       coalesce(bool_and(ceiling > visible and ceiling <= 8000), false),
+       coalesce(string_agg(format('%s ceiling=%s visible=%s', task, ceiling, visible), ', '), '(no rows)')
+from (
+  select task,
+         (params ->> 'max_output_tokens')::int as ceiling,
+         case task when 'copy.shotlist' then 1600 else 700 end as visible
+    from ai_routes
+   where model = 'gpt-6-astra' and params ? 'max_output_tokens'
+) s;
+
+-- The failover Astra is worth having. Position 2 must be a DIFFERENT provider,
+-- so a bad day at OpenAI does not take the route down with it, and it must be
+-- cheap — the whole safety story is "if the expensive first seat refuses our
+-- request shape, the answer still arrives, from the row that was step 1 before".
+insert into _inv(name, pass, note)
+select 'position 2 on both astra routes is a cheaper step from another vendor',
+       count(*) = 2, format('%s of 2: %s', count(*),
+                            coalesce(string_agg(format('%s -> %s/%s %sc', task, provider, model, unit_cents), ', '), 'none'))
+from ai_routes a
+where a.position = 2 and a.enabled and a.task in ('copy.shotlist', 'copy.reel_script')
+  and a.provider <> 'openai'
+  and a.unit_cents < (select unit_cents from ai_routes b
+                       where b.task = a.task and b.position = 1 and b.model = 'gpt-6-astra');
+
+-- Contiguous 1..4 with nothing parked in the shift's staging band (>= 1000).
+-- A double-shifted replay leaves 1,3,4,5; a half-applied one leaves a row at
+-- 1001. Either way this is the assertion that says so.
+insert into _inv(name, pass, note)
+select 'the shifted writing chains are contiguous 1..4 (a replayed shift is not)',
+       count(*) = 2,
+       coalesce(string_agg(format('%s: %s', task, positions), ' | '), 'no rows')
+from (
+  select task, array_agg(position order by position) as positions
+    from ai_routes
+   where task in ('copy.shotlist', 'copy.reel_script')
+   group by task
+  having array_agg(position order by position) = array[1,2,3,4]
+) s;
+
+-- Astra is TEXT-ONLY OUT (OpenAI model docs, 2026-09-07): it cannot generate a
+-- video and cannot return an edited image, so it has no business on any route
+-- that produces media. And it must never displace the judge — that check runs
+-- on EVERY generation, and haiku at 0.66c against astra at ~4.5c is a 7x tax on
+-- the one thing whose job is to be cheap enough to always run.
+insert into _inv(name, pass, note)
+select 'gpt-6-astra is seeded ONLY on the three 0030/0034 text-out writing tasks',
+       count(*) = 0,
+       coalesce(string_agg(format('%s (%s)', task, position), ', '), 'text routes only')
+from ai_routes
+where model = 'gpt-6-astra' and task not in ('copy.shotlist', 'copy.reel_script', 'copy.agent_reel');
 
 -- ── 0018 grants ─────────────────────────────────────────────────────────────
 -- Model ids and list prices are not secret, so `authenticated` READS the two
@@ -1674,6 +1874,1204 @@ begin
   delete from apple_subscriptions where original_transaction_id like '\_inv-OT-%';
   delete from orgs where id in (oA, oB, oM, oX);
 end $ap$;
+
+-- ── 0044: plan rework + the industry-aware free week ─────────────────────────
+--
+-- The paid matrix itself is pinned above ("plan_entitlements match paid plans").
+-- What 0044 adds is the ONE plan that reads orgs.space_type: a single-location
+-- business (venue, restaurant, retail, fitness, other) gets a 1-tour trial from
+-- plan_entitlement_overrides, real estate keeps the 0032 base row. Paid plans
+-- and free are not industry-aware. org_entitlement() is what
+-- create_render_job() and log_job_cost() now read; plan_entitlement(),
+-- plan_render_cap() and org_seats_allowed() stay plan-only. Deliberately placed
+-- after the kept-red astra ceiling assertion so that one keeps its number.
+
+insert into _inv(name, pass, note)
+select 'plan_entitlement_overrides holds exactly the five single-location trial rows (1/60/4/1/1, 1000¢)',
+       (select count(*) from plan_entitlement_overrides) = 5 and coalesce(bool_and(ok), false),
+       format('%s row(s) total; wrong or missing: %s',
+              (select count(*) from plan_entitlement_overrides),
+              coalesce(string_agg(space_type, ', ') filter (where not ok), 'none'))
+from (
+  select x.space_type,
+         ((o.plan, o.renders_per_month, o.photo_edits_per_month, o.reels_per_month,
+           o.aerials_per_month, o.topaz_per_month, o.seats, o.cogs_ceiling_cents)
+           is not distinct from
+          ('trial', 1, 60, 4, 1, 1, null::integer, 1000)) as ok
+    from unnest(array['venue','restaurant','retail','fitness','other']) as x(space_type)
+    left join plan_entitlement_overrides o on o.plan = 'trial' and o.space_type = x.space_type
+) s;
+
+-- Same posture as plan_entitlements (0010 §2): world-readable, tenant-unwritable.
+insert into _inv(name, pass, note)
+select 'plan_entitlement_overrides: RLS on, one SELECT-all policy, tenants read but never write',
+       (select relrowsecurity from pg_class where oid = 'public.plan_entitlement_overrides'::regclass)
+       and (select count(*) from pg_policy where polrelid = 'public.plan_entitlement_overrides'::regclass) = 1
+       and (select count(*) from pg_policy
+             where polrelid = 'public.plan_entitlement_overrides'::regclass
+               and polcmd = 'r' and pg_get_expr(polqual, polrelid) = 'true') = 1
+       and has_table_privilege('authenticated','public.plan_entitlement_overrides','SELECT')
+       and has_table_privilege('anon','public.plan_entitlement_overrides','SELECT')
+       and not (has_table_privilege('authenticated','public.plan_entitlement_overrides','INSERT')
+             or has_table_privilege('authenticated','public.plan_entitlement_overrides','UPDATE')
+             or has_table_privilege('authenticated','public.plan_entitlement_overrides','DELETE')
+             or has_table_privilege('anon','public.plan_entitlement_overrides','INSERT')
+             or has_table_privilege('anon','public.plan_entitlement_overrides','UPDATE')
+             or has_table_privilege('anon','public.plan_entitlement_overrides','DELETE')), '';
+
+-- Both space_type columns 0044 touches are constrained to the six industries
+-- functions/listings/index.ts and the iOS SpaceType know, and VALIDATED (the
+-- generic "all CHECK constraints are validated" assertion above covers the
+-- flag; this one pins the value set so a seventh industry is a deliberate edit).
+insert into _inv(name, pass, note)
+select 'orgs.space_type and plan_entitlement_overrides.space_type are CHECKed to the six industries',
+       count(*) = 2 and bool_and(convalidated)
+       and bool_and(pg_get_constraintdef(oid) like '%real_estate%' and pg_get_constraintdef(oid) like '%venue%'
+                and pg_get_constraintdef(oid) like '%restaurant%' and pg_get_constraintdef(oid) like '%retail%'
+                and pg_get_constraintdef(oid) like '%fitness%' and pg_get_constraintdef(oid) like '%other%'),
+       format('%s of 2: %s', count(*), coalesce(string_agg(conname || ' valid=' || convalidated, ', '), 'none'))
+from pg_constraint
+where contype = 'c'
+  and ((conrelid = 'public.orgs'::regclass and conname = 'orgs_space_type_check')
+    or (conrelid = 'public.plan_entitlement_overrides'::regclass
+        and conname = 'plan_entitlement_overrides_space_type_check'));
+
+-- Same shape as effective_plan() (0010 §3 / 0019 §5): invoker, pinned path,
+-- callable by authenticated and the service role, never by anon.
+insert into _inv(name, pass, note)
+select 'org_entitlement(uuid) mirrors effective_plan(): invoker, search_path pinned, authenticated + service_role only',
+       count(*) = 1
+       and bool_and(not prosecdef
+                and 'search_path=public' = any(coalesce(proconfig, array[]::text[]))
+                and provolatile = 's'
+                and has_function_privilege('authenticated', oid, 'EXECUTE')
+                and has_function_privilege('service_role', oid, 'EXECUTE')
+                and not has_function_privilege('anon', oid, 'EXECUTE')),
+       format('%s overload(s)', count(*))
+from pg_proc
+where pronamespace = 'public'::regnamespace and proname = 'org_entitlement';
+
+-- The two enforcement points read the org-aware row. The plan-only helpers
+-- (and seats, which are NOT industry-aware) never touch the override table.
+insert into _inv(name, pass, note)
+select 'create_render_job and log_job_cost read org_entitlement(); the plan-only helpers ignore the override table',
+       (select count(*) from pg_proc where proname = 'create_render_job'
+         and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_render_cap(%') = 1
+       and (select count(*) from pg_proc where proname = 'log_job_cost'
+             and prosrc like '%from public.org_entitlement(v_org)%' and prosrc not like '%plan_entitlement(v_plan)%') = 1
+       and (select count(*) from pg_proc
+             where pronamespace = 'public'::regnamespace
+               and proname in ('plan_entitlement', 'plan_render_cap', 'org_seats_allowed', 'effective_plan')
+               and prosrc like '%plan_entitlement_overrides%') = 0, '';
+
+-- ── MUTATING: what a single-location workspace is actually allowed to spend ──
+-- Three throwaway orgs prove the lookup; one throwaway user (through the real
+-- signup trigger) proves the enforcement — the render cap in create_render_job
+-- and the spend ceiling in log_job_cost — the same way the 0032 real-estate
+-- fixture above does for three tours. Cleans up after itself.
+
+do $ind$
+declare
+  u4 uuid := '0f1e2d3c-4b5a-4968-8776-655443322113';
+  oRE uuid; oFit uuid; v_org uuid; v_listing uuid; v_asset uuid;
+  e plan_entitlements; v_job render_jobs; v_cost numeric; msg text; ok boolean; n int;
+begin
+  -- Defensive cleanup from an aborted earlier run.
+  delete from cost_ledger where meta->>'_inv' = 'industry';
+  delete from orgs where id in (select org_id from memberships where user_id = u4);
+  delete from auth.users where id = u4;
+  delete from orgs where name like '\_inv industry %';
+
+  -- (a) the lookup. A real-estate org (the signup default) reads the 0032 base
+  -- row; a fitness org on the same plan reads the single-location override.
+  insert into orgs (name, plan, plan_source) values ('_inv industry RE', 'trial', 'trial') returning id into oRE;
+  insert into orgs (name, plan, plan_source, space_type)
+    values ('_inv industry FIT', 'trial', 'trial', 'fitness') returning id into oFit;
+
+  e := org_entitlement(oRE);
+  insert into _inv(name, pass, note)
+    values ('org_entitlement on a real-estate trial org is the 0032 base row (3/60/4/2/1, 1 seat, 1200¢)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+              is not distinct from ('trial', 3, 60, 4, 2, 1, 1, 1200, 0),
+            e::text);
+
+  e := org_entitlement(oFit);
+  insert into _inv(name, pass, note)
+    values ('org_entitlement on a fitness trial org is the single-location free week (1/60/4/1/1, 1 seat, 1000¢)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+              is not distinct from ('trial', 1, 60, 4, 1, 1, 1, 1000, 0),
+            e::text);
+
+  -- Only the trial is industry-aware: an expired single-location trial is
+  -- plain free, and a paid single-location org is the plain paid row.
+  update orgs set trial_ends_at = now() - interval '1 day' where id = oFit;
+  e := org_entitlement(oFit);
+  insert into _inv(name, pass, note)
+    values ('an expired single-location trial reads the plain free row (the override does not follow it)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents)
+              is not distinct from ('free', 1, 5, 0, 0, 0, 1, 300),
+            e::text);
+  update orgs set plan = 'pro', plan_source = 'manual', trial_ends_at = null where id = oFit;
+  e := org_entitlement(oFit);
+  insert into _inv(name, pass, note)
+    values ('a paid single-location org reads the plain paid row (paid plans are not industry-aware)',
+            (e.plan, e.renders_per_month, e.photo_edits_per_month, e.reels_per_month, e.aerials_per_month,
+             e.topaz_per_month, e.seats, e.cogs_ceiling_cents, e.price_cents)
+              is not distinct from ('pro', 10, 200, 12, 4, 0, 1, 2400, 9900),
+            e::text);
+
+  -- (b) the column is a real enum now.
+  ok := false; msg := null;
+  begin
+    insert into orgs (name, plan, plan_source, space_type) values ('_inv industry BAD', 'trial', 'trial', 'spa');
+  exception when check_violation then ok := true; msg := sqlerrm;
+  end;
+  insert into _inv(name, pass, note)
+    values ('orgs.space_type rejects a value outside the six industries (spa)',
+            ok and msg like '%orgs_space_type_check%', coalesce(msg, 'NO ERROR RAISED'));
+
+  -- (c) enforcement. A fitness workspace through the real signup trigger:
+  -- exactly ONE cloud render fits, the second is the same RP402 the app already
+  -- handles, and an app publish is still free at the cap.
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u4, 'inv-fixture4@example.com', '{"full_name":"Gym Fixture"}');
+  select m.org_id into v_org from memberships m where m.user_id = u4;
+  update orgs set space_type = 'fitness' where id = v_org;
+  perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
+
+  insert into listings (org_id, agent_id, address) values (v_org, u4, '1 Gym Way') returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/gym.mp4', 1000, true, 30) returning id into v_asset;
+
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000001', 'worker');
+  insert into _inv(name, pass, note)
+    values ('worker job #1 fits the single-location (fitness) trial cap', v_job.source = 'worker', v_job.source);
+  update render_jobs set status = 'ready', progress = 1, finished_at = now() where id = v_job.id;
+  begin
+    perform create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000002', 'worker');
+    insert into _inv(name, pass, note)
+      values ('worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)', false, 'no error raised');
+  exception when others then
+    insert into _inv(name, pass, note)
+      values ('worker job #2 exceeds the single-location trial cap (RP402, 1 of 1)',
+              sqlerrm like 'RP402%' and sqlerrm like '%trial plan (1 of 1)%', sqlerrm);
+  end;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-fit-000003', 'app');
+  insert into _inv(name, pass, note)
+    values ('an app publish is still free on a single-location trial at its render cap', v_job.source = 'app', '');
+
+  -- The spend ceiling is the override's 1000¢, not the base trial's 1200¢: a
+  -- 1001¢ line (fine under 1200¢) is refused, a 999¢ line lands.
+  select rj.* into v_job from render_jobs rj where rj.idem_key = '_inv-fit-000001';
+  ok := false; msg := null;
+  begin
+    perform log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 1001, '{"_inv":"industry"}'::jsonb, 5000);
+  exception when others then msg := sqlerrm; ok := msg like 'RP402: monthly AI spend ceiling reached for the trial plan (0¢ of 1000¢)%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('log_job_cost enforces the single-location trial ceiling (1000¢, not the base 1200¢)',
+            ok, coalesce(msg, 'NO ERROR RAISED'));
+  v_cost := log_job_cost(v_job.id, v_org, 'render', 'fal', '_inv', 1, 999, '{"_inv":"industry"}'::jsonb, 5000);
+  select count(*) into n from cost_ledger where meta->>'_inv' = 'industry';
+  insert into _inv(name, pass, note)
+    values ('and a line inside that ceiling is recorded', v_cost = 999 and n = 1, format('total=%s rows=%s', v_cost, n));
+
+  -- Cleanup (children cascade from listings/orgs; profiles cascade from
+  -- auth.users; cost_ledger only SET NULLs on org/job deletion).
+  perform set_config('request.jwt.claims', '', true);
+  delete from cost_ledger where meta->>'_inv' = 'industry';
+  delete from listings where id = v_listing;
+  delete from orgs where id in (oRE, oFit, v_org);
+  delete from auth.users where id = u4;
+end $ind$;
+
+-- ── 0046: commercial telemetry (activation, cohorts, churn) ─────────────────
+--
+-- Appended at the END on purpose: every assertion above keeps its number, so
+-- the one the owner keeps red (#155, the agent-reel ceiling) is still #155 and
+-- KEPT_RED in tools/audit/run_database_regression.py still names it by string.
+
+insert into _inv(name, pass, note)
+select 'orgs.first_tour_published_at exists, is timestamptz and is nullable',
+       count(*) = 1, coalesce(string_agg(data_type || '/' || is_nullable, ', '), '(missing)')
+from information_schema.columns
+where table_schema = 'public' and table_name = 'orgs'
+  and column_name = 'first_tour_published_at'
+  and data_type = 'timestamp with time zone' and is_nullable = 'YES';
+
+insert into _inv(name, pass, note)
+select 'apple_subscriptions.cancelled_at / cancel_reason exist and are nullable',
+       count(*) = 2, coalesce(string_agg(column_name || '=' || data_type || '/' || is_nullable, ', '), '(missing)')
+from information_schema.columns
+where table_schema = 'public' and table_name = 'apple_subscriptions'
+  and column_name in ('cancelled_at', 'cancel_reason')
+  and is_nullable = 'YES';
+
+-- Both publish paths are live (functions/renders/index.ts -> publish_render,
+-- services/worker/worker.py -> publish_worker_render). A later migration that
+-- re-creates either one from an older body would silently stop stamping half
+-- the activations, and every cohort number would quietly drop with it.
+insert into _inv(name, pass, note)
+select 'both publish paths stamp orgs.first_tour_published_at',
+       count(*) = 2, coalesce(string_agg(proname, ', '), '(missing)')
+from pg_proc
+where proname in ('publish_render', 'publish_worker_render')
+  and prosrc like '%first_tour_published_at%';
+
+insert into _inv(name, pass, note)
+select 'apply_apple_entitlement records the cancellation and clears it on a win-back',
+       count(*) = 1, ''
+from pg_proc
+where proname = 'apply_apple_entitlement'
+  and prosrc like '%cancelled_at%' and prosrc like '%cancel_reason%';
+
+insert into _inv(name, pass, note)
+select 'admin_cohorts / admin_churn / org_is_real are service_role-only definers',
+       coalesce(bool_and(
+         prosecdef
+         and 'search_path=public' = any(coalesce(proconfig, array[]::text[]))
+         and not has_function_privilege('authenticated', oid, 'execute')
+         and not has_function_privilege('anon', oid, 'execute')
+         and has_function_privilege('service_role', oid, 'execute')), false)
+         and count(*) = 3,
+       coalesce(string_agg(proname, ', '), '(missing)')
+from pg_proc
+where pronamespace = 'public'::regnamespace
+  and proname in ('admin_cohorts', 'admin_churn', 'org_is_real');
+
+insert into _inv(name, pass, note)
+select 'exactly one overload of each 0046 RPC (no PostgREST ambiguity)',
+       coalesce(bool_and(n = 1), false), coalesce(string_agg(proname || '=' || n, ', '), '(missing)')
+from (select proname, count(*) as n
+        from pg_proc
+       where pronamespace = 'public'::regnamespace
+         and proname in ('admin_cohorts', 'admin_churn', 'org_is_real')
+       group by proname) s;
+
+-- ── MUTATING: activation, the orphan predicate, cancellation and both reports ─
+-- Three throwaway users through the REAL signup trigger (so the orphan under
+-- test has the owner membership handle_new_user() always gives it), one org
+-- known only by an upload reservation, and real publish_render() /
+-- apply_apple_entitlement() calls. Cleans up after itself.
+
+do $tel$
+declare
+  u5 uuid := '0f1e2d3c-4b5a-4968-8776-655443322114';
+  u6 uuid := '0f1e2d3c-4b5a-4968-8776-655443322115';
+  u7 uuid := '0f1e2d3c-4b5a-4968-8776-655443322116';
+  oA uuid; oB uuid; oOrphan uuid; oUP uuid; oRN uuid;
+  v_listing uuid; v_asset uuid; v_listing_b uuid;
+  v_job render_jobs; v_render renders;
+  v_exp timestamptz := date_trunc('second', now()) + interval '30 days';
+  v_stamp timestamptz; v_first timestamptz; v_cancel timestamptz;
+  v_created_a timestamptz; v_created_b timestamptz;
+  r jsonb; b jsonb; s public.apple_subscriptions%rowtype;
+  msg text; ok boolean; n bigint;
+begin
+  -- Defensive cleanup from an aborted earlier run.
+  delete from apple_subscriptions where original_transaction_id like '\_inv-CO-%';
+  delete from upload_reservations where org_id in (select id from orgs where name like '\_inv cohort %');
+  delete from orgs where id in (select org_id from memberships where user_id in (u5, u6, u7));
+  delete from auth.users where id in (u5, u6, u7);
+  delete from orgs where name like '\_inv cohort %';
+
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u5, 'inv-cohort-a@example.com', '{"full_name":"Cohort A"}');
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u6, 'inv-cohort-b@example.com', '{"full_name":"Cohort B"}');
+  -- The orphan shape the audit found: an Apple sign-in mints a NEW user, so
+  -- handle_new_user() creates a FRESH org with an owner membership, and
+  -- adopt_anonymous_org() re-points the ANONYMOUS org's membership instead —
+  -- leaving this one owned but empty forever.
+  insert into auth.users (id, email, raw_user_meta_data)
+    values (u7, 'inv-cohort-orphan@example.com', '{"full_name":"Cohort Orphan"}');
+  select m.org_id into oA      from memberships m where m.user_id = u5;
+  select m.org_id into oB      from memberships m where m.user_id = u6;
+  select m.org_id into oOrphan from memberships m where m.user_id = u7;
+
+  -- (a) a REAL publish stamps the activation fact, and a second one cannot move it.
+  perform set_config('request.jwt.claims', json_build_object('sub', u5, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oA, u5, '1 Cohort Way') returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/cohort.mp4', 1000, true, 30) returning id into v_asset;
+
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-co-000001', 'app');
+  v_render := publish_render(v_job.id, 30, 2.0, '[]', null);
+  select first_tour_published_at into v_stamp from orgs where id = oA;
+  insert into _inv(name, pass, note)
+    values ('a real publish stamps orgs.first_tour_published_at with the render''s publish time',
+            v_stamp is not null and v_stamp = v_render.published_at,
+            coalesce(v_stamp::text, '<null>') || ' vs render ' || coalesce(v_render.published_at::text, '<null>'));
+
+  v_first := v_stamp;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-co-000002', 'app');
+  perform publish_render(v_job.id, 30, 2.0, '[]', null);
+  select first_tour_published_at into v_stamp from orgs where id = oA;
+  insert into _inv(name, pass, note)
+    values ('a second publish does NOT move first_tour_published_at',
+            v_stamp = v_first, coalesce(v_stamp::text, '<null>'));
+  perform set_config('request.jwt.claims', '', true);
+
+  -- (b) the orphan predicate. The orphan HAS its owner membership — that is the
+  -- whole point: a membership test would not exclude it, emptiness does.
+  insert into orgs (name, plan, plan_source) values ('_inv cohort uploads-only', 'trial', 'trial')
+    returning id into oUP;
+  insert into upload_reservations (asset_id, org_id, listing_id, actor_id, day, spec, held_bytes)
+    values (gen_random_uuid(), oUP, gen_random_uuid(), gen_random_uuid(), current_date, '{}'::jsonb, 0);
+  insert into listings (org_id, agent_id, address) values (oB, u6, '2 Cohort Way') returning id into v_listing_b;
+
+  insert into _inv(name, pass, note)
+    values ('org_is_real excludes an empty org that still holds its owner membership',
+            org_is_real(oOrphan) = false
+              and exists (select 1 from memberships m where m.org_id = oOrphan and m.role = 'owner'),
+            'is_real=' || org_is_real(oOrphan)::text);
+  insert into _inv(name, pass, note)
+    values ('org_is_real includes a working workspace and one known only by an upload reservation',
+            org_is_real(oA) and org_is_real(oB) and org_is_real(oUP),
+            format('A=%s B=%s upload-only=%s', org_is_real(oA), org_is_real(oB), org_is_real(oUP)));
+
+  -- (c) the cancellation fact. oA buys and keeps paying; oB buys and lapses.
+  r := apply_apple_entitlement(oA, null, '_inv-CO-1', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
+  insert into _inv(name, pass, note)
+    values ('an active subscription carries no cancelled_at', s.cancelled_at is null, coalesce(s.cancelled_at::text, '<null>'));
+
+  -- Same expiry, so this is a genuine second delivery and not the stale arm.
+  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T2',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
+  v_cancel := s.cancelled_at;
+  insert into _inv(name, pass, note)
+    values ('the first transition to expired stamps cancelled_at and cancel_reason',
+            s.cancelled_at is not null and s.cancel_reason = 'EXPIRED',
+            coalesce(s.cancelled_at::text, '<null>') || ' / ' || coalesce(s.cancel_reason, '<null>'));
+
+  -- The REASON is the discriminator here, not the clock: now() is transaction
+  -- time, so a re-stamp inside this fixture would keep the same timestamp but
+  -- would carry GRACE_PERIOD_EXPIRED instead of the EXPIRED that got there first.
+  r := apply_apple_entitlement(oB, null, '_inv-CO-2', 'T3',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'expired', v_exp, false, 'GRACE_PERIOD_EXPIRED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-2';
+  insert into _inv(name, pass, note)
+    values ('a later terminal signal does NOT move cancelled_at',
+            s.cancelled_at = v_cancel and s.cancel_reason = 'EXPIRED',
+            coalesce(s.cancelled_at::text, '<null>') || ' / ' || coalesce(s.cancel_reason, '<null>'));
+
+  -- Auto-renew off while STILL entitled is a cancellation too — the number a
+  -- retention effort needs before the subscription actually ends.
+  insert into orgs (name, plan, plan_source) values ('_inv cohort renew-off', 'trial', 'trial')
+    returning id into oRN;
+  r := apply_apple_entitlement(oRN, null, '_inv-CO-4', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'active', v_exp, false,
+        'DID_CHANGE_RENEWAL_STATUS');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-4';
+  insert into _inv(name, pass, note)
+    values ('auto_renew turned off is a cancellation even while the status is still active',
+            s.status = 'active' and s.cancelled_at is not null
+              and s.cancel_reason = 'DID_CHANGE_RENEWAL_STATUS',
+            format('%s / %s / %s', s.status, coalesce(s.cancelled_at::text, '<null>'),
+                   coalesce(s.cancel_reason, '<null>')));
+  -- A second subscription in billing grace, for admin_churn's in_grace count.
+  r := apply_apple_entitlement(oRN, null, '_inv-CO-5', 'T1',
+        'com.rendprop.app.starter.monthly', 'starter', 'Production', 'grace', v_exp, true, 'DID_FAIL_TO_RENEW');
+
+  -- A win-back clears both columns, so they always describe the CURRENT state.
+  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T1',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp, true, 'SUBSCRIBED');
+  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T2',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'expired', v_exp, false, 'EXPIRED');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
+  ok := s.cancelled_at is not null;
+  r := apply_apple_entitlement(oA, null, '_inv-CO-3', 'T3',
+        'com.rendprop.app.pro.monthly', 'pro', 'Production', 'active', v_exp + interval '30 days', true, 'DID_RENEW');
+  select * into s from apple_subscriptions where original_transaction_id = '_inv-CO-3';
+  insert into _inv(name, pass, note)
+    values ('a win-back clears cancelled_at and cancel_reason',
+            ok and s.cancelled_at is null and s.cancel_reason is null,
+            format('stamped=%s now=%s/%s', ok, coalesce(s.cancelled_at::text, '<null>'),
+                   coalesce(s.cancel_reason, '<null>')));
+
+  -- (d) the cohort table. Age the two workspaces into two different buckets and
+  -- give A a known 2-hour time-to-activate, so the arithmetic is checkable
+  -- rather than merely present. Only the dates move; the facts above stand.
+  v_created_a := date_trunc('second', now()) - interval '40 days';
+  v_created_b := date_trunc('second', now()) - interval '10 days';
+  update orgs set created_at = v_created_a,
+                  first_tour_published_at = v_created_a + interval '2 hours' where id = oA;
+  update orgs set created_at = v_created_b where id = oB;
+  update orgs set created_at = v_created_b where id = oOrphan;
+
+  r := admin_cohorts(interval '90 days', 'week');
+  select e into b from jsonb_array_elements(r->'buckets') e
+   where e->>'bucket_start' = to_char(date_trunc('week', v_created_a) at time zone 'UTC',
+                                      'YYYY-MM-DD"T"HH24:MI:SS"Z"');
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts reports the activated+paying cohort exactly (1 org, activated in 2h, paying)',
+            b is not null
+              and (b->>'orgs')::bigint = 1 and (b->>'activated')::bigint = 1
+              and (b->>'activated_within_24h')::bigint = 1 and (b->>'activated_within_7d')::bigint = 1
+              and (b->>'median_hours_to_activate')::numeric = 2.0
+              and (b->>'ever_paid')::bigint = 1 and (b->>'paying_now')::bigint = 1
+              and (b->>'churned')::bigint = 0 and (b->>'partial')::boolean = false,
+            coalesce(b::text, '(bucket missing)'));
+
+  select e into b from jsonb_array_elements(r->'buckets') e
+   where e->>'bucket_start' = to_char(date_trunc('week', v_created_b) at time zone 'UTC',
+                                      'YYYY-MM-DD"T"HH24:MI:SS"Z"');
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts reports the never-activated, lapsed cohort exactly (1 org, 0 activated, churned)',
+            b is not null
+              and (b->>'orgs')::bigint = 1 and (b->>'activated')::bigint = 0
+              and b->>'median_hours_to_activate' is null
+              and (b->>'ever_paid')::bigint = 1 and (b->>'paying_now')::bigint = 0
+              and (b->>'churned')::bigint = 1,
+            coalesce(b::text, '(bucket missing)'));
+
+  select count(*) into n from orgs o
+   where o.created_at >= now() - interval '90 days' and o.created_at <= now() and org_is_real(o.id);
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts counts exactly the REAL orgs in the window and reports the orphans it excluded',
+            (r->'summary'->>'orgs')::bigint = n
+              and (r->'summary'->>'orphan_orgs_excluded')::bigint >= 1
+              and (r->'summary'->>'activated')::bigint >= 1,
+            format('summary=%s independent_real_count=%s', r->'summary', n));
+
+  ok := false; msg := null;
+  begin
+    r := admin_cohorts(interval '90 days', 'fortnight');
+  exception when others then msg := sqlerrm; ok := msg like 'RP400%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('admin_cohorts refuses a bucket outside day/week/month', ok, coalesce(msg, 'NO ERROR RAISED'));
+
+  -- (e) the churn report.
+  r := admin_churn(interval '30 days');
+  insert into _inv(name, pass, note)
+    values ('admin_churn counts the cancellation and groups it by plan and by reason',
+            (r->>'cancellations')::bigint >= 2
+              and r->'by_plan'   @> '[{"plan":"starter"}]'::jsonb
+              and r->'by_reason' @> '[{"reason":"EXPIRED"}]'::jsonb
+              and r->'by_reason' @> '[{"reason":"DID_CHANGE_RENEWAL_STATUS"}]'::jsonb,
+            r::text);
+  insert into _inv(name, pass, note)
+    values ('admin_churn reports the grace count and the preceding window with a delta',
+            (r->>'in_grace')::bigint >= 1
+              and r->'previous' ? 'cancellations' and r->'previous' ? 'by_plan'
+              and r->'previous' ? 'from' and r->'previous' ? 'to'
+              and (r->>'delta_total')::bigint
+                    = (r->>'cancellations')::bigint - (r->'previous'->>'cancellations')::bigint,
+            r::text);
+
+  -- Cleanup (listings/renders/jobs cascade from orgs; apple_subscriptions only
+  -- SET NULLs its org_id, and upload_reservations has no cascading FK at all).
+  delete from apple_subscriptions where original_transaction_id like '\_inv-CO-%';
+  delete from upload_reservations where org_id = oUP;
+  delete from orgs where id in (oA, oB, oOrphan, oUP, oRN);
+  delete from auth.users where id in (u5, u6, u7);
+end $tel$;
+
+-- ── MUTATING: 0048 brokerage — bulk seats, the ledger, overview, org audit ───
+--
+-- Appended AFTER the kept-red astra assertion so every existing assertion keeps
+-- its number (the kept-red one is #155 and run_database_regression.py names it
+-- by string, but the inventory is positional and a mid-file insert would move
+-- every later row).
+--
+-- Two workspaces, because the two halves ask different questions:
+--   oBrk   the brokerage being reported on. Three memberships are inserted
+--          DIRECTLY, not through the invite path: `team` is 2 seats (0044 §1)
+--          and there is no brokerage tier yet — the exact gap 0048's header
+--          declines to close inside a schema migration. The seat cap is enforced
+--          by the RPCs, not by a constraint, so a direct insert is the honest
+--          way to build a three-person team for a READ test.
+--   oSeat  the seat arithmetic, where every membership and invite arrives
+--          through the real functions so the numbers mean something.
+do $brk$
+declare
+  uOwn  uuid := '0f1e2d3c-4b5a-4968-8776-655443322121';
+  uAdm  uuid := '0f1e2d3c-4b5a-4968-8776-655443322122';
+  uAg   uuid := '0f1e2d3c-4b5a-4968-8776-655443322123';
+  uOut  uuid := '0f1e2d3c-4b5a-4968-8776-655443322124';
+  uSeat uuid := '0f1e2d3c-4b5a-4968-8776-655443322125';
+  uJoin uuid := '0f1e2d3c-4b5a-4968-8776-655443322126';
+  uLose uuid := '0f1e2d3c-4b5a-4968-8776-655443322127';
+  oBrk uuid; oOut uuid; oSeat uuid; oAdmOwn uuid;
+  v_listing uuid; v_asset uuid; v_prov uuid;
+  v_job render_jobs; v_render renders;
+  r jsonb; m jsonb; row_json jsonb;
+  code text; msg text; msg2 text; msg3 text; ok boolean;
+  used_before integer; used_after integer; invites_before bigint; invites_after bigint;
+  n bigint;
+begin
+  -- Defensive cleanup from an aborted earlier run.
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose));
+  delete from org_seat_events where user_id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose);
+  delete from auth.users where id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose);
+
+  insert into auth.users (id, email, raw_user_meta_data) values
+    (uOwn,  'inv-brk-owner@example.com',   '{"full_name":"Bea Broker"}'),
+    (uAdm,  'inv-brk-admin@example.com',   '{"full_name":"Ada Admin"}'),
+    (uAg,   'inv-brk-agent@example.com',   '{"full_name":"Gus Agent"}'),
+    (uOut,  'inv-brk-outside@example.com', '{"full_name":"Ozzy Outside"}'),
+    (uSeat, 'inv-brk-seat@example.com',    '{"full_name":"Sam Seat"}'),
+    (uJoin, 'inv-brk-join@example.com',    '{"full_name":"Jo Joiner"}'),
+    (uLose, 'inv-brk-lose@example.com',    '{"full_name":"Lee Loser"}');
+  select org_id into oBrk    from memberships where user_id = uOwn;
+  select org_id into oAdmOwn from memberships where user_id = uAdm;
+  select org_id into oOut    from memberships where user_id = uOut;
+  select org_id into oSeat   from memberships where user_id = uSeat;
+  update orgs set plan = 'team', plan_source = 'apple' where id in (oBrk, oOut, oSeat);
+
+  insert into memberships (user_id, org_id, role) values (uAdm, oBrk, 'admin'), (uAg, oBrk, 'agent');
+
+  -- ── (a) the ledger caught every seat the trigger could see ────────────────
+  select count(*) into n from org_seat_events
+   where org_id = oBrk and event = 'occupied' and not backfilled;
+  insert into _inv(name, pass, note)
+    values ('the seat ledger records every membership as it is created, not only invited ones',
+            n = 3, format('%s occupied rows for 3 memberships', n));
+
+  -- ── (b) the brokerage's work. The agent publishes; the owner and the admin
+  -- do not; an unrelated org publishes too and must never be counted here.
+  perform set_config('request.jwt.claims', json_build_object('sub', uAg, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oBrk, uAg, '9 Brokerage Row')
+    returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/brk.mp4', 1000, true, 30)
+    returning id into v_asset;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-brk-000001', 'app');
+  v_render := publish_render(v_job.id, 30, 2.0, '[]', null);
+  perform set_config('request.jwt.claims', '', true);
+
+  -- The AI-altered asset the compliance officer has to be able to find. It is
+  -- the AGENT's, and the assertions below read it as the OWNER and the ADMIN.
+  insert into media_provenance (org_id, listing_id, kind, label, model_id, edit, disclosure, altered_key)
+    values (oBrk, v_listing, 'photo_edit', 'Living room', 'inv-model', 'twilight',
+            provenance_disclosure('photo_edit', 'twilight'), 'renders/_inv/brk-altered.jpg')
+    returning id into v_prov;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', uOut, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oOut, uOut, '1 Somewhere Else')
+    returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/out.mp4', 1000, true, 30)
+    returning id into v_asset;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-brk-000002', 'app');
+  perform publish_render(v_job.id, 30, 2.0, '[]', null);
+  perform set_config('request.jwt.claims', '', true);
+
+  r := brokerage_overview(oBrk, uOwn, interval '30 days');
+  select x into m from jsonb_array_elements(r->'members') x where x->>'user_id' = uAg::text;
+  insert into _inv(name, pass, note)
+    values ('brokerage_overview credits the published tour to the listing''s agent and excludes another org''s',
+            m is not null
+              and (m->>'tours_published')::bigint = 1
+              and (m->>'ai_assets_published')::bigint = 1
+              and (m->>'published_nothing')::boolean = false
+              and (r->'totals'->>'tours_published')::bigint = 1
+              and (r->'totals'->>'ai_assets_published')::bigint = 1
+              and not exists (select 1 from jsonb_array_elements(r->'members') y
+                               where y->>'user_id' = uOut::text),
+            format('agent=%s totals=%s', m, r->'totals'));
+
+  insert into _inv(name, pass, note)
+    values ('brokerage_overview reports seats used/allowed/pending and who published nothing',
+            (r->'seats'->>'allowed')::integer = 2
+              and (r->'seats'->>'used')::integer = 3
+              and (r->'seats'->>'pending')::integer = 0
+              and (r->'totals'->>'members')::bigint = 3
+              and (r->'totals'->>'members_published_nothing')::bigint = 2
+              and (r->'totals'->>'members_published_nothing_ever')::bigint = 2,
+            format('seats=%s totals=%s', r->'seats', r->'totals'));
+
+  -- ── (c) the org-wide compliance record ────────────────────────────────────
+  r := compliance_audit(oBrk, uAdm, now() - interval '1 day', now() + interval '1 day');
+  select x into row_json from jsonb_array_elements(r->'rows') x where x->>'id' = v_prov::text;
+  insert into _inv(name, pass, note)
+    values ('compliance_audit hands an ADMIN another member''s AI asset with the agent named and the disclosure',
+            row_json is not null
+              and row_json->>'agent_id' = uAg::text
+              and row_json->>'agent_name' = 'Gus Agent'
+              and row_json->>'altered_key' = 'renders/_inv/brk-altered.jpg'
+              and row_json->>'disclosure' = provenance_disclosure('photo_edit', 'twilight')
+              and (r->>'truncated')::boolean = false,
+            coalesce(row_json::text, '(row missing) ' || (r->>'count')));
+
+  ok := false; msg := null;
+  begin
+    perform compliance_audit(oBrk, uAg, null, null);
+  exception when others then msg := sqlerrm; ok := msg like 'RP403%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('compliance_audit refuses a plain member of the same org', ok,
+            coalesce(msg, 'NO ERROR RAISED'));
+
+  -- ── (d) a plain member is refused by every new brokerage RPC ──────────────
+  msg := null; msg2 := null; msg3 := null;
+  begin perform create_org_invites_bulk(oBrk, uAg, array['inv-brk-nope@example.com'], 'agent');
+  exception when others then msg := sqlerrm; end;
+  begin perform brokerage_overview(oBrk, uAg, interval '30 days');
+  exception when others then msg2 := sqlerrm; end;
+  begin perform remove_org_member(oBrk, uAg, uAdm);
+  exception when others then msg3 := sqlerrm; end;
+  insert into _inv(name, pass, note)
+    values ('a non-owner is refused by create_org_invites_bulk, brokerage_overview and remove_org_member',
+            msg like 'RP403%' and msg2 like 'RP403%' and msg3 like 'RP403%',
+            format('bulk=%s overview=%s remove=%s', coalesce(msg, 'NO ERROR'),
+                   coalesce(msg2, 'NO ERROR'), coalesce(msg3, 'NO ERROR')));
+
+  -- ── (e) seat arithmetic, through the real functions only ──────────────────
+  -- oSeat is on `team` = 2 seats, and its owner already holds one.
+  r := create_org_invites_bulk(
+         oSeat, uSeat,
+         array['Inv-Brk-Join@Example.com', 'not an email', 'inv-brk-seat@example.com'], 'agent');
+  code := (select x->>'code' from jsonb_array_elements(r->'results') x where x->>'outcome' = 'issued');
+  insert into _inv(name, pass, note)
+    values ('a bulk invite with one valid and one invalid address issues exactly one and reports both',
+            (r->>'issued')::integer = 1
+              and (r->>'requested')::integer = 3
+              and jsonb_array_length(r->'results') = 3
+              and (r->'results'->0->>'outcome') = 'issued'
+              and (r->'results'->0->>'email') = 'inv-brk-join@example.com'
+              and (r->'results'->1->>'outcome') = 'invalid'
+              and (r->'results'->2->>'outcome') = 'already_a_member'
+              and code ~ '^[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}-[23456789ABCDEFGHJKMNPQRSTVWXYZ]{4}$'
+              and (r->'seats'->>'used')::integer = 2
+              and (r->'seats'->>'pending')::integer = 1,
+            r::text);
+
+  used_before := org_seats_used(oSeat);
+  select count(*) into invites_before from org_invites
+   where org_id = oSeat and accepted_at is null and revoked_at is null and expires_at > now();
+  ok := false; msg := null;
+  begin
+    perform create_org_invites_bulk(oSeat, uSeat,
+              array['inv-brk-x1@example.com', 'inv-brk-x2@example.com'], 'agent');
+  exception when others then msg := sqlerrm; ok := msg like 'RP402%';
+  end;
+  used_after := org_seats_used(oSeat);
+  select count(*) into invites_after from org_invites
+   where org_id = oSeat and accepted_at is null and revoked_at is null and expires_at > now();
+  insert into _inv(name, pass, note)
+    values ('a bulk invite that would exceed the plan''s seats issues NOTHING and moves no count',
+            ok and used_after = used_before and invites_after = invites_before
+              and not exists (select 1 from org_invites
+                               where org_id = oSeat and email like 'inv-brk-x%'),
+            format('%s | used %s→%s live invites %s→%s', coalesce(msg, 'NO ERROR RAISED'),
+                   used_before, used_after, invites_before, invites_after));
+
+  -- The code minted in SQL must be the same credential functions/team/codes.ts
+  -- mints: same alphabet, same length, same sha256-of-the-undashed-form.
+  r := accept_org_invite(uJoin, encode(sha256(convert_to(replace(code, '-', ''), 'UTF8')), 'hex'));
+  select count(*) into n from memberships where org_id = oSeat and user_id = uJoin;
+  insert into _inv(name, pass, note)
+    values ('a code minted by create_org_invites_bulk is accepted verbatim by accept_org_invite',
+            (r->>'ok')::boolean and r->>'org_id' = oSeat::text and r->>'role' = 'agent' and n = 1,
+            r::text);
+
+  -- Two people, one code, one seat: the serialised form of the F02 race 0033
+  -- closed. The loser is refused inside the same org lock and NO second
+  -- membership exists — which is the fact that actually grants access.
+  ok := false; msg := null;
+  begin
+    perform accept_org_invite(uLose, encode(sha256(convert_to(replace(code, '-', ''), 'UTF8')), 'hex'));
+  exception when others then msg := sqlerrm; ok := msg like 'RP404%';
+  end;
+  select count(*) into n from memberships where org_id = oSeat;
+  insert into _inv(name, pass, note)
+    values ('two members racing the last seat produce exactly one membership',
+            ok and n = 2
+              and exists (select 1 from memberships where org_id = oSeat and user_id = uJoin)
+              and not exists (select 1 from memberships where org_id = oSeat and user_id = uLose),
+            format('%s | memberships in oSeat=%s', coalesce(msg, 'NO ERROR RAISED'), n));
+
+  -- ── (f) the ledger outlives the member ────────────────────────────────────
+  r := remove_org_member(oBrk, uOwn, uAdm);
+  select count(*) into n from memberships where org_id = oBrk and user_id = uAdm;
+  insert into _inv(name, pass, note)
+    values ('the seat ledger still names a revoked member after removal, and who removed them',
+            n = 0
+              and exists (select 1 from org_seat_events e
+                           where e.org_id = oBrk and e.user_id = uAdm and e.event = 'released'
+                             and e.member_name = 'Ada Admin'
+                             and e.member_email = 'inv-brk-admin@example.com'
+                             and e.actor_id = uOwn),
+            coalesce((select jsonb_agg(to_jsonb(e) - 'id')::text from org_seat_events e
+                       where e.org_id = oBrk and e.user_id = uAdm), '(no ledger rows)'));
+
+  -- And it must survive the person deleting their account entirely: the profile
+  -- goes, `memberships` cascades with it, and a foreign key on user_id would
+  -- have taken the evidence too.
+  delete from orgs where id = oAdmOwn;
+  delete from auth.users where id = uAdm;
+  select count(*) into n from profiles where id = uAdm;
+  insert into _inv(name, pass, note)
+    values ('the seat ledger survives the member''s profile being deleted outright',
+            n = 0
+              and exists (select 1 from org_seat_events e
+                           where e.org_id = oBrk and e.user_id = uAdm
+                             and e.member_name = 'Ada Admin'),
+            format('profiles rows left=%s ledger rows=%s', n,
+                   (select count(*) from org_seat_events e
+                     where e.org_id = oBrk and e.user_id = uAdm)));
+
+  -- ── (g) the new surface is not client-reachable ───────────────────────────
+  insert into _inv(name, pass, note)
+    values ('the brokerage RPCs and the seat ledger are service-role only',
+            not exists (select 1 from unnest(array[
+                  'public.create_org_invites_bulk(uuid,uuid,text[],text)',
+                  'public.remove_org_member(uuid,uuid,uuid)',
+                  'public.brokerage_overview(uuid,uuid,interval)',
+                  'public.compliance_audit(uuid,uuid,timestamptz,timestamptz)',
+                  'public.mint_org_invite_code()',
+                  'public.record_org_seat_event(uuid,uuid,text,text,uuid)']) f
+                 where has_function_privilege('authenticated', f, 'EXECUTE')
+                    or has_function_privilege('anon', f, 'EXECUTE'))
+              -- The two INTERNAL helpers are out of even service_role's reach:
+              -- one mints a credential, the other forges a ledger row.
+              and not exists (select 1 from unnest(array[
+                  'public.mint_org_invite_code()',
+                  'public.record_org_seat_event(uuid,uuid,text,text,uuid)',
+                  'public.org_seat_event_log()']) f
+                 where has_function_privilege('service_role', f, 'EXECUTE'))
+              and (select bool_and(has_function_privilege('service_role', f, 'EXECUTE'))
+                     from unnest(array[
+                       'public.create_org_invites_bulk(uuid,uuid,text[],text)',
+                       'public.remove_org_member(uuid,uuid,uuid)',
+                       'public.brokerage_overview(uuid,uuid,interval)',
+                       'public.compliance_audit(uuid,uuid,timestamptz,timestamptz)']) f)
+              and not has_table_privilege('authenticated', 'public.org_seat_events', 'SELECT')
+              and not has_table_privilege('anon', 'public.org_seat_events', 'SELECT')
+              -- Append-only: nothing may rewrite or erase a ledger row.
+              and not has_table_privilege('service_role', 'public.org_seat_events', 'UPDATE')
+              and not has_table_privilege('service_role', 'public.org_seat_events', 'DELETE')
+              and (select relrowsecurity from pg_class
+                    where oid = 'public.org_seat_events'::regclass),
+            '');
+
+  -- Cleanup. Deleting the orgs takes their ledger rows with them (org_id
+  -- cascades); the rows for uAdm live under oBrk and go with it.
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uOwn, uAg, uOut, uSeat, uJoin, uLose));
+  delete from orgs where id in (oBrk, oOut, oSeat);
+  delete from org_seat_events where user_id in (uOwn, uAdm, uAg, uOut, uSeat, uJoin, uLose);
+  delete from auth.users where id in (uOwn, uAg, uOut, uSeat, uJoin, uLose);
+end $brk$;
+
+-- ── 0047: lifecycle messaging (the outbox, the triggers, the tick) ───────────
+--
+-- MUTATING, and — uniquely in this file — it also runs a genuine SECOND AND
+-- THIRD DATABASE SESSION over dblink. That is not showing off: notification_
+-- claim_batch()'s whole promise is "FOR UPDATE SKIP LOCKED, so two concurrent
+-- drains cannot hand the same row to two providers", and SKIP LOCKED skips rows
+-- locked by OTHER transactions. A single-session test of it proves nothing at
+-- all. Everything this fixture has written up to that point is invisible outside
+-- its own transaction, so the rows the two claimers race for are created by the
+-- remote session too (see §(f)). `create extension if not exists dblink` is the
+-- one schema change this file makes; it is guarded, and if the extension is not
+-- available the assertion FAILS LOUDLY naming it rather than skipping quietly.
+
+do $notif$
+declare
+  uNO uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000001';  -- owner
+  uNA uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000002';  -- admin
+  uNM uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000003';  -- marketing (gets nothing)
+  uCL uuid := 'd7c1f4aa-0047-4aa1-9c11-000000000004';  -- the dblink claim fixture
+  oNO uuid; oCL uuid;
+  v_listing uuid; v_asset uuid; v_job render_jobs; v_render renders;
+  v_lead uuid; v_lead2 uuid; v_row notification_outbox; v_id uuid;
+  r jsonb; ok boolean; msg text; n bigint; n2 bigint;
+  v_conn text; v_sock text;
+  ids_a uuid[]; ids_b uuid[]; mine uuid[]; overlap_ids uuid[];
+  i integer;
+begin
+  -- Defensive cleanup from an aborted earlier run (the dblink fixture below
+  -- COMMITS, so it can survive a failure of this block).
+  delete from notification_log where user_id in (uNO, uNA, uNM, uCL);
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uNO, uNA, uNM, uCL));
+  delete from auth.users where id in (uNO, uNA, uNM, uCL);
+
+  insert into auth.users (id, email, raw_user_meta_data) values
+    (uNO, 'inv-notify-owner@example.com',     '{"full_name":"Ned Owner"}'),
+    (uNA, 'inv-notify-admin@example.com',     '{"full_name":"Ana Admin"}'),
+    (uNM, 'inv-notify-marketing@example.com', '{"full_name":"Mo Marketing"}');
+  select org_id into oNO from memberships where user_id = uNO;
+  insert into memberships (user_id, org_id, role) values (uNA, oNO, 'admin'), (uNM, oNO, 'marketing');
+
+  -- ── (a) posture ───────────────────────────────────────────────────────────
+  -- The four tables hold push tokens, message queues and a delivery history
+  -- across every tenant. A single SELECT grant to `authenticated` would let one
+  -- signed-in customer enumerate another's device tokens.
+  insert into _inv(name, pass, note)
+    values ('the four notification tables are service-role only, with RLS on and no tenant grants',
+            not exists (select 1 from unnest(array[
+                  'public.notification_devices','public.notification_preferences',
+                  'public.notification_outbox','public.notification_log']) t
+                 cross join unnest(array['SELECT','INSERT','UPDATE','DELETE']) p
+                 where has_table_privilege('authenticated', t, p)
+                    or has_table_privilege('anon', t, p))
+              and (select bool_and(c.relrowsecurity) from pg_class c
+                    where c.oid in ('public.notification_devices'::regclass,
+                                    'public.notification_preferences'::regclass,
+                                    'public.notification_outbox'::regclass,
+                                    'public.notification_log'::regclass))
+              -- The drain reads devices and the queue with the service role;
+              -- every WRITE still goes through an RPC.
+              and has_table_privilege('service_role', 'public.notification_devices', 'SELECT')
+              and not has_table_privilege('service_role', 'public.notification_devices', 'INSERT')
+              and not has_table_privilege('service_role', 'public.notification_outbox', 'INSERT'),
+            '');
+
+  insert into _inv(name, pass, note)
+    values ('every notification RPC is SECURITY DEFINER and service-role only',
+            -- Callable RPCs and trigger functions have different privilege models.
+            -- Redaction is deliberately SECURITY INVOKER; it can only be fired
+            -- through its terminal-state outbox trigger, never called as an RPC.
+            (select count(*)=11 and bool_and(p.prosecdef
+                    and not has_function_privilege('authenticated',p.oid,'EXECUTE')
+                    and not has_function_privilege('anon',p.oid,'EXECUTE')
+                    and has_function_privilege('service_role',p.oid,'EXECUTE'))
+               from pg_proc p where p.pronamespace='public'::regnamespace
+                 and p.proname like 'notification\_%'
+                 and p.prorettype<>'trigger'::regtype)
+              and (select not p.prosecdef and p.prorettype='trigger'::regtype
+                     from pg_proc p where p.oid='public.notification_redact_code()'::regprocedure)
+              and exists(select 1 from pg_trigger t where t.tgrelid='public.notification_outbox'::regclass
+                    and t.tgfoid='public.notification_redact_code()'::regprocedure
+                    and t.tgname='notification_redact_code_trg' and t.tgenabled='O'
+                    and (t.tgtype::integer & 19)=19)
+              and (select p.prosecdef and p.prorettype='trigger'::regtype
+                     from pg_proc p where p.oid='public.notification_on_lead_insert()'::regprocedure),
+            '');
+
+  -- notification_log is the PERMANENT record. 0022 schedules purge_app_events()
+  -- and nothing else; if anything ever starts deleting from this table, the
+  -- "did we tell this customer" question loses its answer.
+  insert into _inv(name, pass, note)
+    values ('nothing in the database deletes from notification_log',
+            not exists (select 1 from pg_proc p
+                         where p.pronamespace = 'public'::regnamespace
+                           and p.prosrc ~* 'delete\s+from\s+(public\.)?notification_log'),
+            coalesce((select string_agg(p.proname, ', ') from pg_proc p
+                       where p.pronamespace = 'public'::regnamespace
+                         and p.prosrc ~* 'delete\s+from\s+(public\.)?notification_log'), 'none'));
+
+  -- ── (b) the lead trigger — the message that saves the subscription ────────
+  perform set_config('request.jwt.claims', json_build_object('sub', uNO, 'role', 'authenticated')::text, true);
+  insert into listings (org_id, agent_id, address) values (oNO, uNO, '412 Marina Blvd')
+    returning id into v_listing;
+  insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded, duration_s)
+    values (v_listing, 'video', 'renders', 'renders/_inv/notify.mp4', 1000, true, 30)
+    returning id into v_asset;
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-notify-000001', 'app');
+  v_render := publish_render(v_job.id, 30, 2.0, '[]', null);
+  perform set_config('request.jwt.claims', '', true);
+
+  insert into leads (render_id, listing_id, org_id, name, phone)
+    values (v_render.id, v_listing, oNO, 'Nina Patel', '+14155550142')
+    returning id into v_lead;
+
+  select count(*) into n from notification_outbox
+   where category = 'lead_received' and dedupe_key like 'lead_received:' || v_lead::text || ':%';
+  insert into _inv(name, pass, note)
+    values ('a lead insert queues exactly one message for the owner and the admin, and none for a marketing seat',
+            n = 2
+              and exists (select 1 from notification_outbox o where o.user_id = uNO
+                           and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text)
+              and exists (select 1 from notification_outbox o where o.user_id = uNA
+                           and o.dedupe_key = 'lead_received:' || v_lead::text || ':' || uNA::text)
+              and not exists (select 1 from notification_outbox o where o.user_id = uNM),
+            format('%s rows; marketing rows=%s', n,
+                   (select count(*) from notification_outbox o where o.user_id = uNM)));
+
+  select * into v_row from notification_outbox
+   where dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text;
+  insert into _inv(name, pass, note)
+    values ('the lead message carries the buyer''s name and the listing, which is what makes it worth sending',
+            v_row.payload -> 'data' ->> 'lead_name' = 'Nina Patel'
+              and v_row.payload -> 'data' ->> 'listing_address' = '412 Marina Blvd'
+              and v_row.payload ->> 'deep_link' = '/f/' || v_render.slug
+              and v_row.channel = 'email'   -- no device registered yet
+              and v_row.state = 'queued',
+            v_row.payload::text);
+
+  -- The publish that happened above queued its own message, once per render.
+  select count(*) into n from notification_outbox
+   where category = 'render_ready' and dedupe_key like 'render_ready:' || v_render.id::text || ':%';
+  perform set_config('request.jwt.claims', json_build_object('sub', uNO, 'role', 'authenticated')::text, true);
+  v_job := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-notify-000002', 'app');
+  perform publish_render(v_job.id, 30, 2.0, '[]', null);   -- a SECOND, different render
+  perform set_config('request.jwt.claims', '', true);
+  select count(*) into n2 from notification_outbox
+   where category = 'render_ready' and dedupe_key like 'render_ready:' || v_render.id::text || ':%';
+  insert into _inv(name, pass, note)
+    values ('a publish queues render_ready for the owner and the admin, keyed so that render can never be announced twice',
+            n = 2 and n2 = 2,
+            format('first render: %s rows, still %s after another publish', n, n2));
+
+  -- ── (c) the dedupe key is the invariant, not a convention ────────────────
+  r := notification_enqueue(oNO, uNO, 'lead_received', '{}'::jsonb,
+        'lead_received:' || v_lead::text || ':' || uNO::text, null);
+  select count(*) into n2 from notification_outbox
+   where dedupe_key = 'lead_received:' || v_lead::text || ':' || uNO::text;
+  insert into _inv(name, pass, note)
+    values ('dedupe_key refuses the same event a second time and writes no row',
+            r->>'state' = 'duplicate' and n2 = 1 and (r->>'id')::uuid = v_row.id,
+            r::text || ' rows=' || n2::text);
+
+  -- ── (d) a person can turn any category off, and mute all of them ─────────
+  perform notification_set_preferences(uNO, '{"lead_received": false}'::jsonb);
+  select count(*) into n from notification_outbox;
+  r := notification_enqueue(oNO, uNO, 'lead_received', '{}'::jsonb, '_inv-NOTIF-off', null);
+  select count(*) into n2 from notification_outbox;
+  insert into _inv(name, pass, note)
+    values ('a category switched off makes notification_enqueue return skipped and write no row',
+            r->>'state' = 'skipped' and r->>'reason' = 'category_off' and n2 = n
+              and not exists (select 1 from notification_outbox where dedupe_key = '_inv-NOTIF-off'),
+            r::text);
+
+  -- …and the switch is per category: the others still go through.
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-still-on', null);
+  insert into _inv(name, pass, note)
+    values ('switching one category off leaves the other five on',
+            r->>'state' = 'queued', r::text);
+
+  perform notification_set_preferences(uNA,
+    jsonb_build_object('muted_until', (now() + interval '2 hours')::text));
+  r := notification_enqueue(oNO, uNA, 'lead_received', '{}'::jsonb, '_inv-NOTIF-muted', null);
+  insert into _inv(name, pass, note)
+    values ('muted_until silences every category, the transactional ones included',
+            r->>'state' = 'skipped' and r->>'reason' = 'muted'
+              and not exists (select 1 from notification_outbox where dedupe_key = '_inv-NOTIF-muted'),
+            r::text);
+  perform notification_set_preferences(uNA, '{"muted_until": null}'::jsonb);
+  perform notification_set_preferences(uNO, '{"lead_received": true}'::jsonb);
+
+  -- ── (e) claim → mark → the permanent log, and the retry policy ───────────
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-send', null);
+  v_id := (r->>'id')::uuid;
+  select count(*) into n from notification_log;
+  perform notification_mark(v_id, 'sent', null, 'apns-inv-1');
+  select * into v_row from notification_outbox where id = v_id;
+  select count(*) into n2 from notification_log;
+  insert into _inv(name, pass, note)
+    values ('notification_mark writes the permanent, content-free notification_log row only for a delivered message',
+            v_row.state = 'sent' and v_row.sent_at is not null and n2 = n + 1
+              and exists (select 1 from notification_log g
+                           where g.user_id = uNO and g.provider_message_id = 'apns-inv-1'
+                             and g.category = 'render_ready' and g.channel = 'email'),
+            format('state=%s log %s -> %s', v_row.state, n, n2));
+
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-retry', null);
+  v_id := (r->>'id')::uuid;
+  update notification_outbox set attempts = 1, state = 'sending', claimed_at = now() where id = v_id;
+  select * into v_row from notification_mark(v_id, 'failed', 'provider 503', null);
+  ok := v_row.state = 'queued' and v_row.scheduled_for > now() and v_row.last_error = 'provider 503';
+  update notification_outbox set attempts = 5, state = 'sending', claimed_at = now() where id = v_id;
+  select * into v_row from notification_mark(v_id, 'failed', 'provider 503 again', null);
+  insert into _inv(name, pass, note)
+    values ('a failed send is retried with a backoff while attempts remain, and only then sticks as failed',
+            ok and v_row.state = 'failed',
+            format('first=%s final=%s', ok, v_row.state));
+
+  -- The sweep is the janitor no drain can be: a drain that died holding a row
+  -- is the one thing nothing else would ever move.
+  update notification_outbox
+     set state = 'sending', claimed_at = now() - interval '30 minutes', last_error = null
+   where id = v_id;
+  r := notification_sweep();
+  select * into v_row from notification_outbox where id = v_id;
+  insert into _inv(name, pass, note)
+    values ('notification_sweep returns a sending row stuck over 10 minutes to queued',
+            v_row.state = 'queued' and v_row.claimed_at is null
+              and (r->>'reclaimed')::bigint >= 1,
+            format('%s / %s', v_row.state, r));
+
+  update notification_outbox
+     set state = 'queued', scheduled_for = now() - interval '96 hours' where id = v_id;
+  r := notification_sweep();
+  select * into v_row from notification_outbox where id = v_id;
+  insert into _inv(name, pass, note)
+    values ('notification_sweep expires a queued row that is long past its usefulness',
+            v_row.state = 'expired' and (r->>'expired')::bigint >= 1,
+            format('%s / %s', v_row.state, r));
+
+  -- A token APNs rejected is retired, and the channel choice follows: with no
+  -- live device the next message goes to e-mail instead of nowhere.
+  perform notification_register_device(uNO, 'AABBCCDD00112233445566778899AABB', null, 'sandbox', 'en-US', '1.0.1');
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-push', null);
+  ok := r->>'channel' = 'push';
+  select notification_disable_device('AABBCCDD00112233445566778899AABB', '410 Unregistered') into n;
+  r := notification_enqueue(oNO, uNO, 'render_ready', '{}'::jsonb, '_inv-NOTIF-push2', null);
+  insert into _inv(name, pass, note)
+    values ('a registered device makes the channel push, and a token APNs rejected is retired rather than retried',
+            ok and n = 1 and r->>'channel' = 'email'
+              and exists (select 1 from notification_devices d
+                           where d.user_id = uNO and d.disabled_at is not null
+                             and d.disabled_reason = '410 Unregistered'),
+            format('push_first=%s disabled=%s then=%s', ok, n, r->>'channel'));
+
+  -- ── (f) TWO CONCURRENT CONNECTIONS ───────────────────────────────────────
+  -- See this section's header for why this has to leave the current session.
+  ok := true; msg := null;
+  begin
+    execute 'create extension if not exists dblink';
+  exception when others then
+    ok := false;
+    msg := 'dblink is not available on this server (' || sqlstate || ' — ' || sqlerrm
+        || '); the two-connection claim test could not run';
+  end;
+
+  if ok then
+    v_sock := btrim(split_part(current_setting('unix_socket_directories'), ',', 1));
+    v_conn := 'dbname=' || current_database()
+           || ' port=' || current_setting('port')
+           || ' user=' || current_user;
+    if v_sock <> '' then v_conn := v_conn || ' host=' || v_sock; end if;
+
+    begin
+      perform dblink_connect('inv_claim_a', v_conn);
+      perform dblink_connect('inv_claim_b', v_conn);
+
+      -- A COMMITTED workspace of its own: a second session cannot see a row
+      -- this transaction has not committed, which is the whole difficulty.
+      perform dblink_exec('inv_claim_a', format(
+        'delete from public.orgs where id in (select org_id from public.memberships where user_id = %L)', uCL));
+      perform dblink_exec('inv_claim_a', format('delete from auth.users where id = %L', uCL));
+      perform dblink_exec('inv_claim_a', format(
+        'insert into auth.users (id, email, raw_user_meta_data) values (%L, %L, %L)',
+        uCL, 'inv-notify-claim@example.com', '{"full_name":"Claim Fixture"}'));
+      select t.org_id into oCL from dblink('inv_claim_a',
+        format('select org_id from public.memberships where user_id = %L', uCL)) as t(org_id uuid);
+
+      for i in 1..4 loop
+        perform 1 from dblink('inv_claim_a', format(
+          'select public.notification_enqueue(%L::uuid, %L::uuid, ''render_ready'', ''{}''::jsonb, %L, null)::text',
+          oCL, uCL, '_inv-CL-' || i::text)) as t(x text);
+      end loop;
+
+      -- Claimer A opens a transaction and takes two rows, HOLDING their locks.
+      perform dblink_exec('inv_claim_a', 'begin');
+      select array_agg(t.id) into ids_a from dblink('inv_claim_a',
+        'select id from public.notification_claim_batch(2)') as t(id uuid);
+      -- Claimer B, a different session, asks for everything. FOR UPDATE SKIP
+      -- LOCKED is the only reason it does not block on, or steal, A's two.
+      select array_agg(t.id) into ids_b from dblink('inv_claim_b',
+        'select id from public.notification_claim_batch(10)') as t(id uuid);
+      perform dblink_exec('inv_claim_a', 'commit');
+      perform dblink_disconnect('inv_claim_a');
+      perform dblink_disconnect('inv_claim_b');
+    exception when others then
+      ok := false;
+      msg := 'the two-connection claim test failed to run (' || sqlstate || ' — ' || sqlerrm || ')';
+      begin perform dblink_disconnect('inv_claim_a'); exception when others then null; end;
+      begin perform dblink_disconnect('inv_claim_b'); exception when others then null; end;
+    end;
+  end if;
+
+  if ok then
+    select array_agg(o.id) into mine from notification_outbox o where o.dedupe_key like '\_inv-CL-%';
+    select array_agg(x) into overlap_ids
+      from unnest(coalesce(ids_a, '{}')) x where x = any(coalesce(ids_b, '{}'));
+    select count(*) into n from notification_outbox o
+     where o.dedupe_key like '\_inv-CL-%' and o.state = 'sending' and o.attempts = 1;
+    insert into _inv(name, pass, note)
+      values ('notification_claim_batch under two concurrent connections hands each row to exactly one claimer',
+              coalesce(array_length(mine, 1), 0) = 4
+                and coalesce(array_length(ids_a, 1), 0) = 2
+                and coalesce(array_length(overlap_ids, 1), 0) = 0
+                and (select count(*) from unnest(mine) m
+                      where m = any(coalesce(ids_a, '{}')) or m = any(coalesce(ids_b, '{}'))) = 4
+                and n = 4,
+              format('A=%s B=%s overlap=%s claimed_once=%s',
+                     coalesce(array_length(ids_a, 1), 0), coalesce(array_length(ids_b, 1), 0),
+                     coalesce(array_length(overlap_ids, 1), 0), n));
+  else
+    insert into _inv(name, pass, note)
+      values ('notification_claim_batch under two concurrent connections hands each row to exactly one claimer',
+              false, coalesce(msg, 'the two-connection claim test did not run'));
+  end if;
+
+  -- ── (g) the scheduled tick, twice ────────────────────────────────────────
+  -- Its whole safety story is that a re-run — a cron catch-up, a hand call, two
+  -- schedulers briefly overlapping — cannot send a second copy of anything.
+  update orgs set plan = 'trial', plan_source = 'trial',
+                  trial_ends_at = date_trunc('second', now()) + interval '20 hours'
+   where id = oNO;
+  r := notification_tick();
+  select count(*) into n from notification_outbox
+   where category = 'free_week_ending' and org_id = oNO;
+  ok := (r->>'free_week_ending')::int >= 1;
+  r := notification_tick();
+  select count(*) into n2 from notification_outbox
+   where category = 'free_week_ending' and org_id = oNO;
+  insert into _inv(name, pass, note)
+    values ('the trial-ending tick queues one message per owner/admin and a second run queues none',
+            ok and n = 2 and n2 = 2 and (r->>'free_week_ending')::int = 0,
+            format('first run queued %s rows, second run added %s (tick said %s)',
+                   n, n2 - n, r->>'free_week_ending'));
+
+  -- The other three scheduled categories, on the same org, with the same rule.
+  insert into rate_limits (key, window_start, count, window_seconds)
+    values ('aiphotomo:' || oNO::text, now(), 9999, 2592000)
+    on conflict (key) do update set count = excluded.count, window_start = excluded.window_start;
+  -- The nudge is for a workspace that has NEVER published, and this one did in
+  -- §(b). Clearing 0046's activation stamp is what makes it eligible — the same
+  -- state a real 48-hour-old workspace with nothing in it is in.
+  update orgs set created_at = now() - interval '60 hours', first_tour_published_at = null
+   where id = oNO;
+  insert into upload_reservations (asset_id, org_id, listing_id, actor_id, day, spec, held_bytes, expires_at)
+    values (gen_random_uuid(), oNO, v_listing, uNO, current_date, '{}'::jsonb, 0, now() - interval '2 hours');
+  r := notification_tick();
+  select count(*) into n from notification_outbox where org_id = oNO
+     and category in ('allowance_low','first_tour_nudge','upload_stuck');
+  r := notification_tick();
+  select count(*) into n2 from notification_outbox where org_id = oNO
+     and category in ('allowance_low','first_tour_nudge','upload_stuck');
+  insert into _inv(name, pass, note)
+    values ('allowance_low, first_tour_nudge and upload_stuck each queue once and are not re-sent on the next tick',
+            -- 5: allowance_low and first_tour_nudge go to both the owner and the
+            -- admin; upload_stuck goes only to the person who started the upload.
+            n = 5 and n2 = n
+              and exists (select 1 from notification_outbox where org_id = oNO and category = 'allowance_low'
+                           and payload -> 'data' ->> 'feature' = 'photo_edits'
+                           and (payload -> 'data' ->> 'used')::int = (payload -> 'data' ->> 'cap')::int)
+              and exists (select 1 from notification_outbox where org_id = oNO and category = 'first_tour_nudge')
+              and exists (select 1 from notification_outbox where org_id = oNO and category = 'upload_stuck'),
+            format('%s rows after the first tick, %s after the second', n, n2));
+
+  -- An unknown category is a programming error and IS raised; a refusal a
+  -- person chose is not. The two must never be confused, or a lead insert can
+  -- be rolled back by somebody's settings.
+  ok := false; msg := null;
+  begin
+    r := notification_enqueue(oNO, uNO, 'marketing_blast', '{}'::jsonb, '_inv-NOTIF-bad', null);
+  exception when others then msg := sqlerrm; ok := msg like 'RP400%';
+  end;
+  insert into _inv(name, pass, note)
+    values ('notification_enqueue raises only for a programming error, never for a refusal a person chose',
+            ok, coalesce(msg, 'NO ERROR RAISED'));
+
+  -- Cleanup. Deleting the orgs takes their outbox rows with them (user_id and
+  -- org_id both cascade); notification_log is ON DELETE SET NULL by design, so
+  -- its rows are removed by hand here rather than left as null-keyed history in
+  -- a disposable audit database.
+  delete from notification_log where user_id in (uNO, uNA, uNM, uCL);
+  delete from rate_limits where key = 'aiphotomo:' || oNO::text;
+  delete from upload_reservations where org_id in (oNO, oCL);
+  delete from orgs where id in (select org_id from memberships
+                                 where user_id in (uNO, uNA, uNM, uCL));
+  delete from orgs where id in (oNO, oCL);
+  delete from auth.users where id in (uNO, uNA, uNM, uCL);
+end $notif$;
 
 drop table if exists _inv_tasks;
 

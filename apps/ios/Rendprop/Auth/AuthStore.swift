@@ -26,7 +26,31 @@ import os
 final class AuthStore: ObservableObject {
     static let shared = AuthStore()
 
+    /// TRUE WHEN THERE IS A SESSION OF ANY KIND, including an anonymous one.
+    /// From first launch onward this is true, which is the point: it is what
+    /// every "can I call the server" check reads, and after Guideline 5.1.1(v)
+    /// none of those may require a registration.
     @Published var isSignedIn: Bool
+
+    /// TRUE ONLY WITH A REAL APPLE IDENTITY on the session.
+    ///
+    /// The distinction exists because Apple rejected 1.0 for conflating them.
+    /// Ask `isIdentified` ONLY for things genuinely bound to a person across
+    /// devices — restoring a subscription onto a second phone, deleting the
+    /// account. NEVER to gate content, a feature, or a purchase; that is the
+    /// rejection, restated.
+    @Published var isIdentified: Bool = false
+
+    /// Guards the launch bootstrap so two callers cannot mint two anonymous
+    /// users for one device.
+    @MainActor private var anonymousBootstrap: Task<Void, Never>?
+    @Published private(set) var sessionConnectionState: SessionConnection.State = .idle
+    /// Every asynchronous session commit must still belong to this generation.
+    @MainActor private var sessionEpoch: UInt64 = 0
+    @MainActor private lazy var connection = SessionConnection(
+        attempt: { [weak self] in await self?.establishSession() ?? false },
+        stateChanged: { [weak self] in self?.sessionConnectionState = $0 }
+    )
     /// The person's name (from Apple's one-time `fullName`, or the server's
     /// profile name). Empty when unknown — the UI shows "Signed in with Apple".
     @Published var displayName: String
@@ -40,10 +64,37 @@ final class AuthStore: ObservableObject {
     @Published var orgName: String
     /// Supabase user id (JWT `sub`) of the current/last session. Non-secret.
     @Published private(set) var userID: String?
+    /// Non-secret recovery status, never a gate on guest features/purchases.
+    @Published private(set) var adoptionRecoveryMessage: String?
+    @MainActor private lazy var adoptionRecovery: AnonymousAdoptionRecovery? = {
+        guard let api = Config.apiBaseURL,
+              let auth = Config.supabaseURL?.appendingPathComponent("auth/v1") else { return nil }
+        return AnonymousAdoptionRecovery(apiBase: api, authBase: auth, anonKey: Config.supabaseAnonKey,
+            read: { try SecureStore.getChecked(Keys.pendingAdoption) },
+            write: { SecureStore.set(Keys.pendingAdoption, $0) },
+            remove: { SecureStore.remove(Keys.pendingAdoption) },
+            send: { request in
+                let (bytes, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+                return (bytes, http)
+            }, changed: { [weak self] message in self?.adoptionRecoveryMessage = message },
+            prepareLocal: { [weak self] pending in self?.onPrepareAdoption?(pending) == true },
+            finishLocal: { [weak self] pending, orgID in self?.onConfirmAdoption?(pending, orgID) == true },
+            discardLocal: { [weak self] operationID in self?.onDiscardAdoption?(operationID) })
+    }()
 
     /// Fired (main thread) when a DIFFERENT account signs in than the one that
     /// last used this device — the app clears per-account listing state.
-    var onAccountChanged: (() -> Void)?
+    var onAccountChanged: (@MainActor (UUID) -> Void)?
+    var onPrepareAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending) -> Bool)?
+    var onConfirmAdoption: (@MainActor (AnonymousAdoptionRecovery.Pending, UUID) -> Bool)?
+    var onAdoptionStorageReady: (@MainActor () -> Bool)?
+    /// Fired (main thread) after a pending handoff's Keychain record was
+    /// discarded without a receipt (sign-out, clear/delete, or a stale record
+    /// found at sign-in), with its operation id when it could still be read.
+    /// The app releases the local bindings it captured for that operation so
+    /// its listings are no longer held for a transfer that will never finish.
+    var onDiscardAdoption: (@MainActor (UUID?) -> Void)?
 
     /// Single-flight guard so concurrent callers share one network refresh.
     @MainActor private var refreshInFlight: Task<Bool, Never>?
@@ -67,6 +118,7 @@ final class AuthStore: ObservableObject {
         /// finding 8 / TN3194). Not a session credential — see
         /// `submitAppleAuthorizationCode`.
         static let pendingAppleAuthCode = "auth.pendingAppleAuthCode"
+        static let pendingAdoption = "auth.pendingAnonymousAdoption.v1"
     }
 
     // MARK: - Keychain-backed secret storage
@@ -78,7 +130,11 @@ final class AuthStore: ObservableObject {
     /// the previous rotated refresh token in place, which then 400'd on the
     /// next refresh and forced a sign-out.
     private enum SecureStore {
-        private static let service = "com.rendprop.app.auth"
+        private static var service: String {
+            Config.isSessionNetworkTesting
+                ? "com.rendprop.app.auth.phase1.\(Config.sessionTestRun)"
+                : "com.rendprop.app.auth"
+        }
 
         private static func baseQuery(_ key: String) -> [String: Any] {
             [kSecClass as String: kSecClassGenericPassword,
@@ -87,6 +143,12 @@ final class AuthStore: ObservableObject {
         }
 
         static func get(_ key: String) -> String? {
+            try? getChecked(key)
+        }
+
+        /// A locked/unreadable Keychain is not an empty recovery slot. Refuse
+        /// replacement rather than losing a handoff whose value cannot be read.
+        static func getChecked(_ key: String) throws -> String? {
             var query = baseQuery(key)
             query[kSecReturnData as String] = true
             query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -97,6 +159,7 @@ final class AuthStore: ObservableObject {
                   let str = String(data: data, encoding: .utf8) else {
                 if status != errSecItemNotFound {
                     AuthStore.log.error("Keychain read failed for \(key, privacy: .public): \(Int(status))")
+                    throw AnonymousAdoptionRecovery.RecoveryError.storage
                 }
                 return nil
             }
@@ -125,11 +188,14 @@ final class AuthStore: ObservableObject {
             return true
         }
 
-        static func remove(_ key: String) {
+        @discardableResult
+        static func remove(_ key: String) -> Bool {
             let status = SecItemDelete(baseQuery(key) as CFDictionary)
             if status != errSecSuccess && status != errSecItemNotFound {
                 AuthStore.log.error("Keychain delete failed for \(key, privacy: .public): \(Int(status))")
+                return false
             }
+            return true
         }
     }
 
@@ -137,6 +203,7 @@ final class AuthStore: ObservableObject {
     /// UserDefaults slot so pre-Keychain sessions survive the update.
     private static func secret(_ key: String) -> String? {
         if let v = SecureStore.get(key) { return v }
+        if Config.isSessionNetworkTesting { return nil } // never migrate a real credential into fixtures
         if let legacy = UserDefaults.standard.string(forKey: key) {
             if SecureStore.set(key, legacy) {
                 UserDefaults.standard.removeObject(forKey: key)
@@ -150,14 +217,24 @@ final class AuthStore: ObservableObject {
     private static func storedRefreshToken() -> String? { secret(Keys.refreshToken) }
 
     init() {
-        let hasToken = Self.storedAccessToken() != nil
+        // The screenshot walk uses no credentials. Reading an old simulator
+        // Keychain token here let auto-refresh replace the mock identity (or
+        // sign it out) halfway through a walk, and could make a real auth call.
+        let offlineWalk = Config.isUITesting && !Config.isSessionNetworkTesting
+        let hasToken = !offlineWalk && Self.storedAccessToken() != nil
         // Dev stub stays "signed in"; real auth gates on a persisted token.
         // UI WALK: `-uiTesting` makes every API client a MockAPIClient (see
         // Config.makeAPIClient), which answers every route with no token. Report
         // a session so Settings draws Plan & usage and the owner-console rows —
         // otherwise the walk photographs an empty screen. A launch argument can
         // only come from Xcode / `xcodebuild test`, never from a shipped build.
-        self.isSignedIn = Config.isUITesting ? true : (Config.enableAuth ? hasToken : true)
+        self.isSignedIn = (Config.isUITesting && !Config.isSessionNetworkTesting) ? true : (Config.enableAuth ? hasToken : true)
+        // Read straight off the stored JWT rather than a remembered flag: the
+        // token IS the truth about which kind of session this is, and a
+        // remembered bool can outlive it.
+        self.isIdentified = Config.isUITesting && !Config.isSessionNetworkTesting
+            ? true
+            : (Config.enableAuth ? Self.tokenIsIdentified(Self.storedAccessToken()) : true)
         let storedName = UserDefaults.standard.string(forKey: Keys.userName) ?? ""
         // The pre-audit placeholder "Dev Agent" must never surface as a name.
         let name = storedName == "Dev Agent" ? "" : storedName
@@ -171,15 +248,22 @@ final class AuthStore: ObservableObject {
         // `validAccessToken()` before every request, and this store also
         // refreshes shortly before every expiry while the app runs and
         // immediately on each return to the foreground.
-        if Config.enableAuth {
+        if Config.enableAuth && !offlineWalk {
             foregroundObserver = NotificationCenter.default.addObserver(
                 forName: UIApplication.didBecomeActiveNotification,
                 object: nil, queue: .main
             ) { [weak self] _ in
                 guard let self else { return }
-                Task { await self.refreshIfNeeded() }
+                Task {
+                    await self.refreshIfNeeded()
+                    await self.retryPendingAdoptionIfNeeded()
+                }
             }
-            Task { @MainActor [weak self] in self?.scheduleAutoRefresh() }
+            Task { @MainActor [weak self] in
+                self?.scheduleAutoRefresh()
+                await self?.refreshIfNeeded()
+                await self?.retryPendingAdoptionIfNeeded()
+            }
         }
     }
 
@@ -239,8 +323,13 @@ final class AuthStore: ObservableObject {
 
     // MARK: - Session lifecycle
 
+    /// Read-only fence for a multi-request cloud sync. Includes sign-out and
+    /// same-account reauthentication, so A → B → A cannot apply A's old response.
+    @MainActor var syncSessionRevision: UInt64 { sessionEpoch }
+
     @MainActor
     private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?) {
+        sessionEpoch &+= 1
         // Account-switch detection BEFORE persisting: the JWT `sub` identifies
         // the Supabase user. A different `sub` than the last one on this device
         // means the cached serverID/shareSlug/shareURL on listings belong to a
@@ -257,11 +346,12 @@ final class AuthStore: ObservableObject {
                 orgName = ""
                 UserDefaults.standard.removeObject(forKey: Keys.userName)
                 UserDefaults.standard.removeObject(forKey: Keys.orgName)
-                onAccountChanged?()
+                if let id = UUID(uuidString: sub) { onAccountChanged?(id) }
             }
         }
         Self.persistTokens(access: accessToken, refresh: refreshToken, expiresAt: expiresAt)
         isSignedIn = true
+        isIdentified = Self.tokenIsIdentified(accessToken)
         scheduleAutoRefresh()   // re-arm for the new expiry
     }
 
@@ -269,17 +359,30 @@ final class AuthStore: ObservableObject {
     /// display name and account id stay so re-signing into the SAME account
     /// keeps its listings' server ids; a different account triggers
     /// `onAccountChanged` on its first session.
+    ///
+    /// A pending workspace handoff goes too. The next activation mints a fresh
+    /// anonymous user, so the handoff's saved source could never match again —
+    /// left behind (as it used to be), it made every later Apple sign-in on
+    /// this phone fail with a 409 conflict, for good. Dropping it also drops
+    /// the stale anonymous refresh token it carried. The same applies to the
+    /// forced sign-out on a revoked refresh token, which comes through here.
     @MainActor
     func signOut() {
         // Cancel any in-flight refresh FIRST — otherwise a refresh that resolves
         // after sign-out would call applySession and re-persist tokens, silently
         // signing the user back in (audit 2026-08-26).
+        sessionEpoch &+= 1
+        anonymousBootstrap?.cancel()
+        anonymousBootstrap = nil
+        connection.cancelAll()
         refreshInFlight?.cancel()
         refreshInFlight = nil
         autoRefreshTask?.cancel()
         autoRefreshTask = nil
         Self.clearTokens()
+        discardPendingAdoption()
         isSignedIn = Config.enableAuth ? false : true
+        isIdentified = Config.enableAuth ? false : true
     }
 
     /// Remember the person's name (Apple returns `fullName` ONLY on the first
@@ -338,6 +441,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     @discardableResult
     func refreshIfNeeded(leeway: TimeInterval = 60) async -> Bool {
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return true }
         guard Config.enableAuth, isSignedIn else { return true }   // dev stub / signed out
         guard Self.storedRefreshToken() != nil else {
             if let expiry = Self.tokenExpiresAt, Date() >= expiry {
@@ -358,6 +462,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     @discardableResult
     func forceRefresh() async -> Bool {
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return true }
         guard Config.enableAuth, isSignedIn else { return true }
         guard Self.storedRefreshToken() != nil else {
             signOut()
@@ -380,7 +485,9 @@ final class AuthStore: ObservableObject {
     /// tokens (Supabase rotates the refresh token on every use). A definitive
     /// 4xx (revoked/expired refresh token) signs the user out so the publish
     /// gate re-prompts; network errors keep the session for a later retry.
+    @MainActor
     private func performRefresh() async -> Bool {
+        let epoch = sessionEpoch
         guard let refreshToken = Self.storedRefreshToken(),
               let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty,
@@ -398,16 +505,16 @@ final class AuthStore: ObservableObject {
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
             guard let http = resp as? HTTPURLResponse else { return false }
-            if Task.isCancelled { return false }   // signed out while refreshing — never resurrect
+            guard !Task.isCancelled, sessionEpoch == epoch else { return false }
             if (200..<300).contains(http.statusCode),
                let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) {
-                await applySession(accessToken: session.accessToken,
+                applySession(accessToken: session.accessToken,
                                    refreshToken: session.refreshToken ?? refreshToken,
                                    expiresAt: session.expiryDate)
                 return true
             }
             if [400, 401, 403].contains(http.statusCode) {
-                await signOut()   // refresh token revoked/expired — session is dead
+                signOut()   // only this generation's revoked token can sign it out
             }
             return false
         } catch {
@@ -420,6 +527,7 @@ final class AuthStore: ObservableObject {
     @MainActor
     private func scheduleAutoRefresh() {
         autoRefreshTask?.cancel()
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return }
         guard Config.enableAuth,
               Self.storedRefreshToken() != nil else { return }
         autoRefreshTask = Task { [weak self] in
@@ -534,7 +642,16 @@ final class AuthStore: ObservableObject {
     /// `nonce` is the RAW nonce whose SHA256 was put on the Apple request —
     /// GoTrue re-hashes and compares it to the token's `nonce` claim. Throws
     /// `APIError.server` with GoTrue's own message on a rejected exchange.
+    @MainActor
     func exchangeAppleIdentityToken(idToken: String, nonce: String? = nil) async throws {
+        // A late anonymous/refresh response cannot replace the chosen identity.
+        sessionEpoch &+= 1
+        let epoch = sessionEpoch
+        anonymousBootstrap?.cancel()
+        anonymousBootstrap = nil
+        connection.cancelAll()
+        refreshInFlight?.cancel()
+        refreshInFlight = nil
         guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
               !Config.supabaseAnonKey.isEmpty else {
             throw APIError.notConfigured
@@ -555,6 +672,7 @@ final class AuthStore: ObservableObject {
         req.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, resp) = try await URLSession.shared.data(for: req)
+        guard !Task.isCancelled, sessionEpoch == epoch else { throw CancellationError() }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         guard (200..<300).contains(http.statusCode) else {
             throw Self.authError(status: http.statusCode, data: data)
@@ -562,9 +680,238 @@ final class AuthStore: ObservableObject {
         guard let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) else {
             throw APIError.decoding
         }
-        await applySession(accessToken: session.accessToken,
+        // A whole Keychain envelope commits before either active credential is
+        // replaced. Failure leaves this device's anonymous session intact.
+        // A Keychain read error must not masquerade as "no anonymous work".
+        // The legacy fallback is consulted only after a successful absent read.
+        let priorAccess = try SecureStore.getChecked(Keys.accessToken) ?? Self.storedAccessToken()
+        let priorAnonymous = priorAccess.flatMap { Self.tokenIsIdentified($0) ? nil : $0 }
+        if let priorAnonymous {
+            guard let recovery = adoptionRecovery else { throw APIError.notConfigured }
+            do {
+                let priorRefresh = try SecureStore.getChecked(Keys.refreshToken) ?? Self.storedRefreshToken()
+                do {
+                    try recovery.prepare(sourceAccess: priorAnonymous,
+                                         sourceRefresh: priorRefresh,
+                                         destinationAccess: session.accessToken)
+                } catch AnonymousAdoptionRecovery.RecoveryError.conflict,
+                        AnonymousAdoptionRecovery.RecoveryError.malformed {
+                    // A saved handoff for an anonymous user this phone no
+                    // longer holds — sign-out has since minted a fresh one, and
+                    // builds before this one left the record behind on sign-out
+                    // — or one too broken to read. It can never match again;
+                    // rejecting the sign-in over it (the old behaviour) locked
+                    // the person out of their own Apple ID for good. Drop it,
+                    // then hand off THIS session's work as usual. A Keychain
+                    // that refuses the delete still fails closed below.
+                    guard recovery.discard() else { throw AnonymousAdoptionRecovery.RecoveryError.storage }
+                    try recovery.prepare(sourceAccess: priorAnonymous,
+                                         sourceRefresh: priorRefresh,
+                                         destinationAccess: session.accessToken)
+                }
+            } catch {
+                throw APIError.server(status: 409, code: "conflict",
+                    message: "Your original workspace could not be safely saved for transfer. It remains on this device. Please retry before switching accounts.")
+            }
+        }
+        applySession(accessToken: session.accessToken,
                            refreshToken: session.refreshToken,
                            expiresAt: session.expiryDate)
+        await retryPendingAdoptionIfNeeded()
+    }
+
+    // MARK: - Anonymous sessions (Guideline 5.1.1(v))
+
+    /// Does this JWT belong to a REAL identity rather than an anonymous one?
+    ///
+    /// Supabase stamps `is_anonymous` into the access token's claims, so the
+    /// answer is in the token and needs no round trip. A token we cannot parse
+    /// is treated as NOT identified, which is the safe direction: the worst
+    /// case is offering somebody an optional sign-in they have already done.
+    nonisolated static func tokenIsIdentified(_ jwt: String?) -> Bool {
+        guard let jwt else { return false }
+        let parts = jwt.split(separator: ".")
+        guard parts.count >= 2 else { return false }
+        var b64 = String(parts[1]).replacingOccurrences(of: "-", with: "+")
+                                  .replacingOccurrences(of: "_", with: "/")
+        while b64.count % 4 != 0 { b64 += "=" }
+        guard let data = Data(base64Encoded: b64),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return false }
+        // Absent means a token minted before anonymous sessions existed — those
+        // are all real identities.
+        return (obj["is_anonymous"] as? Bool) != true
+    }
+
+    /// The anonymous session, minted at launch when there is none.
+    ///
+    /// `POST /auth/v1/signup` with an EMPTY BODY is GoTrue's anonymous sign-up:
+    /// no email, no phone, no password, no personal information of any kind. It
+    /// creates a real `auth.users` row, and `handle_new_user` gives it an org,
+    /// so every metered route works from the first launch without anybody
+    /// registering anything.
+    ///
+    /// The launch and feature callers share the same retry loop. Feature
+    /// callers await ensureSession instead of interpreting "not yet" as a
+    /// reason to ask for an Apple identity.
+    @MainActor
+    func signInAnonymouslyIfNeeded() {
+        guard Config.enableAuth, !Config.isUITesting || Config.isSessionNetworkTesting else { return }
+        guard !isSignedIn, anonymousBootstrap == nil else { return }
+        let task = Task { [weak self] in
+            _ = await self?.ensureSession()
+        }
+        anonymousBootstrap = task
+        Task { [weak self] in
+            await task.value
+            if self?.anonymousBootstrap == task { self?.anonymousBootstrap = nil }
+        }
+    }
+
+    /// Suspends this action until connected, without requiring registration.
+    /// Each caller may cancel independently. A transient failure keeps the
+    /// original action waiting and exposes connection retry in the UI.
+    @MainActor
+    func ensureSession() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if !Config.enableAuth || (Config.isUITesting && !Config.isSessionNetworkTesting) { return true }
+        if isSignedIn, let expiry = Self.tokenExpiresAt,
+           expiry.timeIntervalSinceNow > 60 { return true }
+        return await connection.connect()
+    }
+
+    @MainActor
+    func retrySessionConnection() { connection.retryNow() }
+
+    @MainActor
+    private func establishSession() async -> Bool {
+        guard !Task.isCancelled else { return false }
+        if isSignedIn { return await refreshIfNeeded() && isSignedIn }
+        return await attemptAnonymousSignIn()
+    }
+
+    /// How many signup POSTs this launch has made since the last one that
+    /// landed. `SessionConnection` retries with a growing delay, so this is the
+    /// attempt number the two `anonymous_session_*` events report — a count of
+    /// tries, never anything about a person (there is no person yet).
+    @MainActor private var anonymousAttempts = 0
+
+    /// One signup POST. `true` when a session landed.
+    @MainActor
+    private func attemptAnonymousSignIn() async -> Bool {
+        let epoch = sessionEpoch
+        guard let authBase = Config.supabaseURL?.appendingPathComponent("auth/v1"),
+              !Config.supabaseAnonKey.isEmpty else { return false }
+        // GUIDELINE 5.1.1(v) COMPLIANCE MONITORING. Every launch opens one of
+        // these sessions and every feature depends on it, so "did the
+        // no-registration path work in the field" has to be answerable. The
+        // server declares both names; the only prop is a try count.
+        anonymousAttempts &+= 1
+        let attempt = anonymousAttempts
+        Analytics.track("anonymous_session_started", ["attempt": String(attempt)])
+        var req = URLRequest(url: authBase.appendingPathComponent("signup"))
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        req.httpBody = Data("{}".utf8)
+        req.timeoutInterval = 20
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              let http = resp as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+              let session = try? JSONDecoder().decode(SupabaseSession.self, from: data)
+        else {
+            Analytics.track("anonymous_session_failed", ["attempts": String(attempt)])
+            return false
+        }
+        // NOT a failure: the session landed and was then superseded (sign-in,
+        // sign-out, account switch). Reporting it as one would make the field
+        // numbers say the opposite of what happened.
+        guard !Task.isCancelled, sessionEpoch == epoch else { return false }
+        applySession(accessToken: session.accessToken,
+                           refreshToken: session.refreshToken,
+                           expiresAt: session.expiryDate)
+        anonymousAttempts = 0
+        return true
+    }
+
+    /// The anonymous token, read BEFORE Sign in with Apple replaces the session.
+    ///
+    /// Native Apple sign-in through `grant_type=id_token` mints a NEW user and
+    /// does not link to the anonymous one — `linkIdentity` is a browser
+    /// redirect flow that does not cover this path. Without the hand-off, an
+    /// agent who published a tour and THEN signed in would lose the link to
+    /// their own published tour.
+    nonisolated static func anonymousTokenForAdoption() -> String? {
+        guard let token = storedAccessToken(), !tokenIsIdentified(token) else { return nil }
+        return token
+    }
+
+    /// Launch, foreground and optional sign-in all use one destination-fenced
+    /// recovery path. Logout preserves pending credentials but never uses them
+    /// as the active session. A receipt, not a 2xx/no-op, permits removal.
+    @MainActor
+    func retryPendingAdoptionIfNeeded() async {
+        guard !Config.isUITesting || Config.isSessionNetworkTesting else { return }
+        guard Config.enableAuth, Config.useLiveBackend, let recovery = adoptionRecovery else { return }
+        // Launch can reach Auth before AppModel has loaded its metadata. Do
+        // not confirm/clear recovery against an empty, not-yet-loaded library.
+        guard onAdoptionStorageReady?() == true else { return }
+        // Read BEFORE the attempt. `retry` removes the Keychain envelope only
+        // on a verified receipt, so "there was one, and afterwards there is
+        // not" IS the adoption having landed — no extra state and no second
+        // source of truth to drift.
+        let before: AnonymousAdoptionRecovery.Pending? = try? recovery.pending()
+        let token = Self.storedAccessToken() ?? ""
+        let epoch = sessionEpoch
+        await recovery.retry(destinationAccess: token, isCurrent: { [weak self] in
+            self?.sessionEpoch == epoch && self?.isSignedIn == true
+        })
+        guard let before else { return }
+        let after: AnonymousAdoptionRecovery.Pending? = try? recovery.pending()
+        let landed = (after == nil)
+        // GUIDELINE 5.1.1(v) COMPLIANCE MONITORING. An anonymous workspace that
+        // does NOT survive Sign in with Apple is the person losing the tour they
+        // already published, so the field needs to be able to say how often this
+        // lands. Only the operation's outcome travels — never a token, a user id
+        // or an org id. A handoff that is still waiting is reported once per
+        // operation per launch, so a foreground-refresh loop cannot spam it.
+        if landed {
+            Analytics.track("anonymous_adopt", ["ok": "true", "adopted": "true"])
+            reportedAdoptionFailures.remove(before.operationID)
+        } else if !reportedAdoptionFailures.contains(before.operationID) {
+            reportedAdoptionFailures.insert(before.operationID)
+            Analytics.track("anonymous_adopt", ["ok": "false", "adopted": "false"])
+        }
+    }
+
+    /// Operations this launch has already reported an unfinished handoff for.
+    @MainActor private var reportedAdoptionFailures: Set<UUID> = []
+
+    /// Drop a saved workspace handoff without a receipt: sign-out (explicit or
+    /// forced), "Clear local data" and "Delete account" all end the session it
+    /// was waiting on, and the next activation's fresh anonymous user could
+    /// never match it. The record — the only copy of the old anonymous
+    /// session's tokens — leaves the Keychain; nothing is copied anywhere.
+    /// Returns false only when the Keychain refused the delete (logged by
+    /// status code), in which case the record is still there.
+    @MainActor
+    @discardableResult
+    func discardPendingAdoption() -> Bool {
+        guard let recovery = adoptionRecovery else { return SecureStore.remove(Keys.pendingAdoption) }
+        return recovery.discard()
+    }
+
+    @MainActor
+    func reportUnreadableAdoptionBindings() {
+        adoptionRecoveryMessage = "Workspace recovery metadata could not be read. Your saved data was preserved. Please get recovery help before retrying cloud publishing."
+    }
+
+    /// Non-secret existence check only. A confirmed local journal can outlive
+    /// its cleared Keychain envelope; it must not block arbitrary future
+    /// account switches forever. Read failures remain failures, not absence.
+    @MainActor
+    func hasPendingAdoption(operationID: UUID) throws -> Bool {
+        guard let recovery = adoptionRecovery else { throw AnonymousAdoptionRecovery.RecoveryError.storage }
+        return try recovery.pending()?.operationID == operationID
     }
 
     /// GoTrue error bodies vary (`{error, error_description}`, `{msg}`,

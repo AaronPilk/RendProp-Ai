@@ -1,0 +1,35 @@
+# A separate generated project prevents a normal `xcodegen generate` / App Store
+# archive from silently picking up an unfinished experiment. Both projects still
+# identify as Rendprop; only this explicit TestFlight artifact exposes local capture.
+include:
+  - project.yml
+name: RendpropSpatialTestFlight
+settings:
+  base:
+    # Build 30 shipped the capture repairs. This release also restores Studio
+    # continuity. Recheck Apple inventory before upload; never auto-renumber.
+    CURRENT_PROJECT_VERSION: "31"
+targets:
+  Rendprop:
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"
+  RendpropUITests:
+    settings:
+      base:
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"
+schemes:
+  RendpropSpatialTestFlight:
+    build:
+      targets:
+        Rendprop: all
+        RendpropUITests: [test]
+    run:
+      config: Release
+    test:
+      config: Release
+      targets:
+        - RendpropUITests
+      captureScreenshotsAutomatically: false
+    archive:
+      config: Release

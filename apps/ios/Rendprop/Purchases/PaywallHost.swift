@@ -16,9 +16,11 @@ enum PaywallReason: Equatable, Sendable {
     case upgrade
     /// A 402 from the server: this month's allowance for `feature` is used up.
     /// `feature` is one of the `plan_entitlements` keys — renders, photo_edits,
-    /// reels, aerials, drone — or a plain noun the caller passes.
+    /// reels, aerials, drone, seats — or a plain noun the caller passes.
     case quota(feature: String)
-    /// The 7-day trial has ended.
+    /// The free week (server plan `trial`) has ended. NOT the StoreKit
+    /// introductory offer — that one is the "7-day free trial" on a paid plan,
+    /// and this sheet must never call the week by that name.
     case trialEnded
     /// A tier the current plan does not include at all.
     case featureLocked(String)
@@ -38,10 +40,14 @@ enum PaywallReason: Equatable, Sendable {
         switch self {
         case .upgrade:
             return nil
+        case .quota(let feature) where PaywallReason.isSeats(feature):
+            // Seats are a plan size, not a monthly allowance: "this month"
+            // would promise a reset that never comes (Team/TeamView.swift).
+            return "Every seat on your plan is taken. Pick a plan with more seats."
         case .quota(let feature):
             return "You've used all your \(PaywallReason.featureNoun(feature)) this month. Pick a plan to keep going."
         case .trialEnded:
-            return "Your free trial has ended. Pick a plan to keep making tours."
+            return "Your free week has ended. Pick a plan to keep making tours."
         case .featureLocked(let name):
             return "\(name) isn't in your current plan. Pick a plan that includes it."
         }
@@ -56,9 +62,16 @@ enum PaywallReason: Equatable, Sendable {
         case "reels", "reel":             return "reel clips"
         case "aerials", "aerial":         return "aerial intros"
         case "drone", "topaz":            return "drone-glide upscales"
+        case "seats", "seat":             return "seats"
         case "":                          return "monthly allowance"
         default:                          return raw.replacingOccurrences(of: "_", with: " ")
         }
+    }
+
+    /// The one `plan_entitlements` key that is not a monthly meter.
+    static func isSeats(_ raw: String) -> Bool {
+        let key = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return key == "seats" || key == "seat"
     }
 }
 

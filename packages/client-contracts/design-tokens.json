@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "sources": ["docs/brand/README.md", "docs/marketing/instagram-carousels/src/slidekit.py"],
+  "color": {
+    "ground": "#0B0D10", "surface": "#161820", "text": "#F2F3F5",
+    "muted": "#9698A6", "accent": "#7C3AED", "accentText": "#A97CF2",
+    "onAccent": "#FFFFFF", "focus": "#D9C6FA"
+  },
+  "contrastPairs": [
+    {"foreground": "text", "background": "ground", "minimum": 4.5},
+    {"foreground": "text", "background": "surface", "minimum": 4.5},
+    {"foreground": "muted", "background": "surface", "minimum": 4.5},
+    {"foreground": "accentText", "background": "surface", "minimum": 4.5},
+    {"foreground": "onAccent", "background": "accent", "minimum": 4.5},
+    {"foreground": "focus", "background": "surface", "minimum": 3.0}
+  ],
+  "font": {
+    "heading": "Manrope, system-ui, sans-serif",
+    "body": "Inter, system-ui, sans-serif",
+    "binaryRedistributionVerified": false,
+    "sizeRem": {"body": 1, "small": 0.875, "label": 0.875, "h3": 1.25, "h2": 1.75, "h1": 2.5},
+    "bodyLineHeight": 1.5
+  },
+  "spacePx": [0, 4, 8, 12, 16, 24, 32, 48, 64],
+  "radiusPx": {"control": 8, "panel": 12},
+  "focus": {"widthPx": 3, "offsetPx": 3, "color": "focus"},
+  "target": {"minimumPx": 44},
+  "motion": {"standardMs": 160, "reducedMs": 0, "autoplayPreview": false}
+}

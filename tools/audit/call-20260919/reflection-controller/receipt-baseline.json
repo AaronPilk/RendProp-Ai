@@ -1,0 +1,30 @@
+{
+  "baseline": true,
+  "sourceSHA256": [
+    {
+      "path": "tools/audit/call-20260919/reflection-controller/BaselineReflectionRemoval.swift",
+      "sha256": "eba8c02326017e10815d803d1aa99ed20916807caf1baa1faf35ab3a217a19db"
+    },
+    {
+      "path": "apps/ios/Rendprop/Networking/ReflectionAPI.swift",
+      "sha256": "89c7775a77120dedf6c6655e8478443e014be538cf73a80f0f39036ffe8b51c6"
+    },
+    {
+      "path": "tools/audit/call-20260919/reflection-controller/checks.swift",
+      "sha256": "30480e7b3182e55efc4b47942f973e9d8fd97c3a273645b6a338a9e460fb880b"
+    }
+  ],
+  "commands": [
+    {
+      "label": "compile",
+      "exit": 0
+    },
+    {
+      "label": "execute",
+      "exit": 0
+    }
+  ],
+  "result": {
+    "lateCancelledExtractPoisonsNewBatch": true
+  }
+}

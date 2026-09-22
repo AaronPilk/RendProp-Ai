@@ -5,6 +5,29 @@ import Foundation
 /// returns a plausible value; the AI video features report honestly that they
 /// need the live backend instead of handing back a fake file.
 actor MockAPIClient: APIClient {
+    // Screenshot walks can open the real empty/error UI without pretending that
+    // an offline capture produced a model or a publicly shareable room.
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob] { [] }
+    func spatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func startSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob { throw SpatialClientError.noLiveService }
+    // The offline demo plays a switched-on service so the UI walk exercises the
+    // real product screen (the simulator still reports it cannot capture and the
+    // library stays empty — nothing is faked). `-ui.spatial disabled` plays the
+    // switched-off backend so a walk can prove the Home tile disappears.
+    func spatialCapability() async throws -> SpatialCapability {
+        let args = ProcessInfo.processInfo.arguments
+        if let i = args.firstIndex(of: "-ui.spatial"), i + 1 < args.count, args[i + 1] == "disabled" {
+            return SpatialCapability(enabled: false, reason: "mock")
+        }
+        return SpatialCapability(enabled: true, reason: "ok")
+    }
     private var renders: [UUID: (render: Render, startedAt: Date)] = [:]
     /// Listings created/updated offline, keyed by id — so `listings()` and
     /// `updateListing` round-trip like a real server would.
@@ -62,6 +85,9 @@ actor MockAPIClient: APIClient {
                         metadata: UploadMetadata) async throws {}
 
     func abortUpload(assetID: String) async throws {}
+    func renewUpload(assetID: String) async throws -> UploadTicket {
+        UploadTicket(assetID: assetID, mode: .single, uploaded: true)
+    }
 
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
         // Offline: synthetic slots so callers get the right shape. The placeholder
@@ -134,6 +160,18 @@ actor MockAPIClient: APIClient {
         UsageSummary(aiSpendCents: 0, renderCount: 0, leadCount: 0, planName: nil,
                      entitlements: nil, userName: nil, orgName: nil, brandName: nil,
                      isAdmin: true, role: "owner")
+    }
+
+    func propertyLookup(address: String) async throws -> PropertyLookup {
+        // Offline dev and the UI walk: a plausible record, so the screenshot run
+        // exercises the filled state rather than the empty one. Never a live
+        // call — the real one is metered.
+        _ = address
+        return PropertyLookup(
+            configured: true, cached: true, source: "mock",
+            facts: PropertyFacts(matchedAddress: nil, beds: 4, baths: 3, sqft: 2480,
+                                 lotSqft: 8712, yearBuilt: 1998, propertyType: "Single Family",
+                                 lastSalePriceCents: 61_500_000, lastSaleDate: "2021-06-14"))
     }
 
     func leads(listingServerID: UUID?) async throws -> [Lead] {
@@ -318,10 +356,11 @@ actor MockAPIClient: APIClient {
                 trialEndsAt: nil,
                 spendCentsMonth: 299.84, cogsCeilingCents: 5000,
                 spendShareOfCeiling: 0.06,
-                rendersUsed: 12, rendersCap: 40,
-                photoEditsUsed: 88, photoEditsCap: 300,
-                reelsUsed: 3, reelsCap: 15,
-                aerialsUsed: 1, aerialsCap: 10,
+                // Pro caps as of migration 0044 (Products.swift `allowances`).
+                rendersUsed: 6, rendersCap: 10,
+                photoEditsUsed: 88, photoEditsCap: 200,
+                reelsUsed: 3, reelsCap: 12,
+                aerialsUsed: 1, aerialsCap: 4,
                 droneUsed: 0, droneCap: 0,
                 jobsInFlight: 1, jobsOrphaned: 0,
                 blocked: false, blockedReasons: []),
@@ -331,10 +370,12 @@ actor MockAPIClient: APIClient {
                 trialEndsAt: Self.iso(Date().addingTimeInterval(-3 * 86_400)),
                 spendCentsMonth: 118.9, cogsCeilingCents: 800,
                 spendShareOfCeiling: 0.1486,
-                rendersUsed: 1, rendersCap: 1,
-                photoEditsUsed: 10, photoEditsCap: 10,
-                reelsUsed: 0, reelsCap: 1,
-                aerialsUsed: 0, aerialsCap: 2,
+                // The real-estate free week (3 tours, 60 edits, 4 clips, 2
+                // aerial intros), used up — which is what blocks it.
+                rendersUsed: 3, rendersCap: 3,
+                photoEditsUsed: 60, photoEditsCap: 60,
+                reelsUsed: 2, reelsCap: 4,
+                aerialsUsed: 1, aerialsCap: 2,
                 droneUsed: 0, droneCap: 1,
                 jobsInFlight: 1, jobsOrphaned: 1,
                 blocked: true,
@@ -932,16 +973,196 @@ actor MockAPIClient: APIClient {
         ]
     }
 
-    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
+    // MARK: - AI copy (offline: plausible words, and the same refusals)
+
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String {
+        _ = listingServerID   // offline: nothing to scope a gate against
         // Offline dev: echo the idea back, embellished, so the replace-the-field
         // UX runs end-to-end.
         try? await Task.sleep(nanoseconds: 700_000_000)
-        let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !rough.isEmpty else {
-            return "Brighten the room with soft natural light, keeping every surface true to the photo."
+        let idea = rough.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !idea.isEmpty else {
+            throw APIError.server(status: 400, code: "validation", message: "rough is required")
         }
-        return rough + " — with balanced natural light, true-to-life colors, and crisp detail. "
+        // The fair-housing gate lives on the server, so offline CANNOT be the
+        // place an agent learns the rule — the same reasoning as `aiVoiceTTS`
+        // below. A rough idea that steers gets refused here too, rather than
+        // being politely rewritten into a prompt the live backend will bounce.
+        if let offending = Self.offlineFairHousingHit(idea) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This can't be turned into an edit prompt: the phrase \"\(offending)\" describes "
+                    + "who should live in the home or what the neighborhood's people are like, rather than "
+                    + "the space in the photo. Describe what you want CHANGED about the picture. "
+                    + "(Offline check — the server's is the authoritative one.)")
+        }
+        let area = (roomHint ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let place = area.isEmpty ? "" : " in the \(area.lowercased())"
+        return idea + place + " — with balanced natural light, true-to-life colors, and crisp detail. "
             + "Keep the layout and architecture exactly as photographed."
+    }
+
+    /// Offline dev: a believable script built from the SAME facts the live
+    /// route gets, so the whole "Write my script" path — button, replace
+    /// confirmation, the character counter, the address substitution — is
+    /// exercisable with no backend.
+    ///
+    /// It returns the literal `{address}` placeholder exactly as the server
+    /// does. That is deliberate: the substitution is the app's job, and a mock
+    /// that helpfully filled it in would hide a broken substitution until the
+    /// first live call.
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult {
+        try? await Task.sleep(nanoseconds: 900_000_000)   // feel like a real write
+
+        // Refuse what the live server refuses. A tagline like "great for
+        // families" would produce a script that reads back fine here and is
+        // then rejected by the TTS gate the moment the agent taps "Make the
+        // voice" — which teaches the rule at the worst possible moment.
+        var seededParts: [String] = Array(request.facts.details.values)
+        if let tagline = request.facts.tagline { seededParts.append(tagline) }
+        let seeded = seededParts.joined(separator: " ")
+        if let offending = Self.offlineFairHousingHit(seeded) {
+            throw APIError.server(
+                status: 400, code: "unsupported_edit",
+                message: "This \(request.spaceType == SpaceType.realEstate.rawValue ? "home" : "listing")'s "
+                    + "own details contain the phrase \"\(offending)\", which describes who should live "
+                    + "there rather than the property itself, so a script can't be written from them. "
+                    + "Fair-housing law applies to a spoken script exactly as it does to a written "
+                    + "listing description. Edit that detail and try again. "
+                    + "(Offline check — the server's is the authoritative one.)")
+        }
+        // Refusals a person can act on — these messages are shown VERBATIM by
+        // `AIFailure`, so they are written for the agent, not for a log.
+        guard request.photoCount > 0 else {
+            throw APIError.server(
+                status: 400, code: "validation",
+                message: "Pick the photos for your reel first — the script is written to fit them.")
+        }
+        // The SERVER's window (5-90), not the client's own 10-45 clamp — this
+        // stands in for the server, so it refuses what the server refuses.
+        guard request.targetSeconds >= 5, request.targetSeconds <= 90 else {
+            throw APIError.server(
+                status: 400, code: "validation",
+                message: "A script can only be written for a reel between 5 and 90 seconds long.")
+        }
+
+        let realEstate = request.spaceType == SpaceType.realEstate.rawValue
+        var parts: [String] = ["Welcome to {address}."]
+        let facts = Self.mockFactsLine(request.facts)
+        if !facts.isEmpty { parts.append(facts) }
+        if let tagline = request.facts.tagline?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tagline.isEmpty {
+            parts.append(tagline.hasSuffix(".") ? tagline : tagline + ".")
+        }
+        let tour = Self.mockTourLine(request.roomTags)
+        if !tour.isEmpty { parts.append(tour) }
+        if let region = request.facts.region?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !region.isEmpty {
+            parts.append("All of it, right here in \(region).")
+        }
+        parts.append(realEstate ? "Come see it in person." : "Come see it for yourself.")
+
+        let script = parts.joined(separator: " ")
+        return AIScriptResult(
+            script: script,
+            characters: script.count,
+            estimatedSeconds: Double(script.count) / AIScriptResult.charactersPerSecond,
+            model: "mock-copy (offline sample)")
+    }
+
+    /// Offline dev: a believable EDIT, so the whole shot-plan path — the varied
+    /// motions, the burned-in shot captions, the varied pacing, the `{address}`
+    /// substitution inside a caption — is exercisable with no backend.
+    ///
+    /// The motions cycle deliberately. Six identical clips is the exact defect
+    /// the shot list exists to fix, so a mock that returned one motion for every
+    /// photo would hide a broken plan until the first live reel.
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList {
+        // Same script, same refusals, same shape — the shot list is a superset of
+        // the script route and must not disagree with it about anything.
+        let script = try await aiCopyScript(
+            AIScriptRequest(listingServerID: request.listingServerID,
+                            spaceType: request.spaceType,
+                            facts: request.facts,
+                            roomTags: request.photos.compactMap { $0.room },
+                            photoCount: request.photos.count,
+                            targetSeconds: request.targetSeconds,
+                            tone: request.tone))
+
+        let sentences = script.script
+            .replacingOccurrences(of: ". ", with: ".\u{1}")
+            .components(separatedBy: "\u{1}")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+
+        // A hero opener that holds, then quicker detail shots — the pacing a
+        // realtor's editor actually uses. The moves come from `REEL_MOTIONS` (the
+        // real vocabulary `/ai-video/reel-clip` renders) and never repeat back to
+        // back, because six identical clips is the exact defect this route
+        // exists to fix.
+        let motions = ["push_in", "orbit_left", "tilt_up", "rack_focus",
+                       "static_parallax", "pull_back"]
+        let count = request.photos.count
+        var shots: [AIShot] = []
+        for (index, photo) in request.photos.enumerated() {
+            let isOpener = index == 0
+            let isCloser = index == count - 1
+            let room = photo.room?.trimmingCharacters(in: .whitespacesAndNewlines)
+            // NEVER `{address}` in a caption — the live route drops one outright
+            // (COPY-ASSIST-CONTRACT §4.4), and a mock that produced one would
+            // teach the client to expect a substitution the server never asks
+            // for. The token belongs in the spoken line, and it is there.
+            let text: String
+            if isOpener {
+                text = "TAKE THE TOUR"
+            } else if isCloser {
+                text = "BOOK YOUR SHOWING"
+            } else if let room, !room.isEmpty {
+                text = room.uppercased()
+            } else {
+                text = ""            // "" is a normal answer — not every shot carries a caption
+            }
+            shots.append(AIShot(photoID: photo.id,
+                                order: index + 1,                 // 1-based, per the contract
+                                motion: motions[index % motions.count],
+                                room: (room?.isEmpty == false) ? room : nil,
+                                onScreenText: text.isEmpty ? nil : text,
+                                seconds: (isOpener || isCloser) ? 6.0 : 4.0,
+                                voiceLine: index < sentences.count ? sentences[index] : nil))
+        }
+        return AIShotList(shots: shots, script: script.script,
+                          characters: script.characters,
+                          estimatedSeconds: script.estimatedSeconds,
+                          model: "mock-copy (offline sample)")
+    }
+
+    /// "3 beds, 2 baths, 2,100 square feet, $1,175,000." — spoken units, not
+    /// the card's abbreviations, because this is read aloud. Empty when the
+    /// listing has none of them (every non-real-estate type).
+    private static func mockFactsLine(_ f: AICopyFacts) -> String {
+        var bits: [String] = []
+        if let beds = f.beds, beds > 0 { bits.append("\(beds) bed\(beds == 1 ? "" : "s")") }
+        if let baths = f.baths, baths > 0 {
+            let whole = baths.truncatingRemainder(dividingBy: 1) == 0
+                ? String(Int(baths)) : String(baths)
+            bits.append("\(whole) bath\(baths == 1 ? "" : "s")")
+        }
+        if let sqft = f.sqft, sqft > 0 { bits.append("\(sqft.formatted()) square feet") }
+        if let price = f.priceLabel?.trimmingCharacters(in: .whitespacesAndNewlines), !price.isEmpty {
+            bits.append(price)
+        }
+        return bits.isEmpty ? "" : bits.joined(separator: ", ") + "."
+    }
+
+    /// The first few tagged areas, in the walk order the caller sent them in.
+    private static func mockTourLine(_ tags: [String]) -> String {
+        let names = tags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+            .prefix(3)
+        guard !names.isEmpty else { return "" }
+        return "We start at the " + names.joined(separator: ", then the ") + "."
     }
 
     // MARK: - AI video (offline stubs — the real flows run only on LiveAPIClient)
@@ -956,9 +1177,19 @@ actor MockAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         Self.mockAIVideoJob(kind: "reel", grounded: true)
+    }
+
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
+        // Offline dev + the UI walk: pass, so the screenshot run is not gated
+        // on a judge that has no network. The LIVE client is the one under
+        // test for this behaviour.
+        _ = request
+        return DriftVerdict(status: .pass, publishable: true, action: "publish",
+                            message: "", reason: nil)
     }
 
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus {

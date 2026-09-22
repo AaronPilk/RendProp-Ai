@@ -20,7 +20,7 @@ import {
   assertEquals,
   assertStringIncludes,
 } from "https://deno.land/std@0.224.0/assert/mod.ts";
-import type { ChainStep, HealthMap, RouteContext } from "./router.ts";
+import type { ChainStep, HealthMap, RouteContext, RouteStep } from "./router.ts";
 
 // supabase.ts reads its env at module load, so the env must exist BEFORE
 // router.ts is evaluated — hence the dynamic import. (`import type` above is
@@ -29,7 +29,7 @@ Deno.env.set("SUPABASE_URL", "https://router-test.invalid");
 Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "test-service-role-key");
 Deno.env.set("SUPABASE_ANON_KEY", "test-anon-key");
 
-const { orderSteps, resolveRoute, resetRouterCache, healthKey, pickLedgerProvider } = await import(
+const { orderSteps, resolveRoute, resetRouterCache, healthKey, paramsOf, pickLedgerProvider } = await import(
   "./router.ts"
 );
 
@@ -53,6 +53,7 @@ function step(over: Partial<ChainStep> & { provider: string; model: string }): C
     privacy_tier: "retained_30d",
     enabled: true,
     retire_after: null,
+    params: null, // 0030: no row in the ordering fixtures carries vendor knobs
     ...over,
   };
 }
@@ -103,16 +104,16 @@ const ids = (steps: ChainStep[]) => steps.map((s) => `${s.provider}/${s.model}`)
 
 // ── 1. FLAG OFF → exactly the legacy step, byte-identical to today ──────────
 
-Deno.test("flag OFF returns exactly the note='legacy' step for the task", async () => {
+Deno.test("non-photo flag OFF preserves exactly the note='legacy' step for the task", async () => {
   const seen: string[] = [];
   const realFetch = globalThis.fetch;
 
   const legacyRow = {
     id: "11111111-1111-1111-1111-111111111111",
-    task: "photo.sky",
+    task: "video.reel_clip",
     position: 99,
-    provider: "gemini",
-    model: "gemini-2.5-flash-image",
+    provider: "fal",
+    model: "bytedance/seedance/v1/pro/fast/image-to-video",
     unit: "image",
     unit_cents: 3.9,
     capabilities: ["prompt-edit"],
@@ -140,11 +141,11 @@ Deno.test("flag OFF returns exactly the note='legacy' step for the task", async 
 
   try {
     resetRouterCache();
-    const chain = await resolveRoute("photo.sky", { plan: "pro", needs: ["mask"] });
+    const chain = await resolveRoute("video.reel_clip", { plan: "pro", needs: ["mask"] });
 
     assertEquals(chain.length, 1, "flag-off must return exactly one step");
-    assertEquals(chain[0].provider, "gemini");
-    assertEquals(chain[0].model, "gemini-2.5-flash-image");
+    assertEquals(chain[0].provider, "fal");
+    assertEquals(chain[0].model, "bytedance/seedance/v1/pro/fast/image-to-video");
     assertEquals(chain[0].unit_cents, 3.9);
 
     // …but it is handed back ENABLED: everything resolveRoute returns is a step
@@ -157,7 +158,7 @@ Deno.test("flag OFF returns exactly the note='legacy' step for the task", async 
     const routeQuery = seen.find((u) => u.includes("/ai_routes"));
     assert(routeQuery, "resolveRoute must query ai_routes");
     assertStringIncludes(routeQuery!, "note=eq.legacy");
-    assertStringIncludes(routeQuery!, "task=eq.photo.sky");
+    assertStringIncludes(routeQuery!, "task=eq.video.reel_clip");
 
     // ctx.needs is NOT applied on the legacy path — the legacy step is today's
     // behaviour verbatim, and today's code does no capability filtering.
@@ -323,4 +324,101 @@ Deno.test("pickLedgerProvider returns the step that actually ran", () => {
     provider: "kie",
     model: "bytedance/v1-pro-fast-image-to-video",
   });
+});
+
+// ── 8. ai_routes.params (0030) — the superset column the adapters read ──────
+//
+// `params` lives on ChainStep, not on RouteStep, for the same reason `position`
+// does: docs/AI-ROUTER-CONTRACT.md §1 is frozen and other functions build
+// against it. paramsOf() is the ONE documented place a §1-typed step is read
+// for it, so these tests are what stop that widening from becoming a cast
+// scattered through the adapters.
+
+Deno.test("paramsOf reads the superset column off a §1-typed step", () => {
+  const withKnobs = step({
+    provider: "openai",
+    model: "gpt-6-astra",
+    params: { effort: "low", max_output_tokens: 2400 },
+  });
+  // Consumed as the frozen RouteStep the contract declares — which is exactly
+  // how ai-copy, coach and ai-video hold it.
+  const asContract: RouteStep = withKnobs;
+  assertEquals(paramsOf(asContract), { effort: "low", max_output_tokens: 2400 });
+
+  // The ~70 rows that carry nothing, and the in-code fallback steps functions
+  // build for the flag-off path, which have no such field at all.
+  assertEquals(paramsOf(step({ provider: "gemini", model: "gemini-3.8-flash" })), null);
+  assertEquals(paramsOf({ provider: "anthropic", model: "claude-sonnet-5" } as RouteStep), null);
+  assertEquals(paramsOf(null), null);
+  assertEquals(paramsOf(undefined), null);
+});
+
+Deno.test("a params blob that is not a JSON OBJECT reads as absent", () => {
+  // jsonb will store all of these. None of them is a params blob, and an
+  // adapter must see "nothing" rather than reach a vendor with a malformed
+  // body — the check constraint in 0030 refuses them at the door, and this is
+  // the belt to that pair of braces.
+  for (const bad of [[], ["effort"], "low", 7, true, null]) {
+    assertEquals(paramsOf({ params: bad } as unknown as RouteStep), null, `${JSON.stringify(bad)}`);
+  }
+  // An EMPTY object is a legal blob — it simply names no knob.
+  assertEquals(paramsOf({ params: {} } as unknown as RouteStep), {});
+});
+
+Deno.test("resolveRoute carries params through from the row, normalised", async () => {
+  const realFetch = globalThis.fetch;
+  const row = (over: Record<string, unknown>) => ({
+    id: "22222222-2222-2222-2222-222222222222",
+    task: "copy.shotlist",
+    position: 1,
+    provider: "openai",
+    model: "gpt-6-astra",
+    unit: "call",
+    unit_cents: 10.0,
+    capabilities: ["text", "compliant"],
+    max_latency_s: 120,
+    min_plan: "free",
+    same_model_as: null,
+    privacy_tier: "retained_30d",
+    enabled: true,
+    retire_after: null,
+    note: null,
+    ...over,
+  });
+
+  const resolveWith = async (params: unknown) => {
+    let routeQuery = "";
+    globalThis.fetch = ((input: string | URL | Request, _init?: RequestInit) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/ai_routes")) routeQuery = url;
+      const body = url.includes("/app_config")
+        ? JSON.stringify({ value: { enabled: true } }) // flag ON
+        : url.includes("/ai_routes")
+        ? JSON.stringify([row({ params })])
+        : "[]";
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { "Content-Type": "application/json" } }),
+      );
+    }) as typeof fetch;
+    resetRouterCache();
+    const chain = await resolveRoute("copy.shotlist", { plan: "pro" });
+    return { chain, routeQuery };
+  };
+
+  try {
+    const good = await resolveWith({ effort: "low", max_output_tokens: 2400 });
+    // The column is actually SELECTed — a missing name here means every params
+    // row silently behaves as if it had none.
+    assertStringIncludes(decodeURIComponent(good.routeQuery), "params");
+    assertEquals(good.chain.length, 1);
+    assertEquals(paramsOf(good.chain[0]), { effort: "low", max_output_tokens: 2400 });
+
+    // Normalised on the way OUT of the row, once, so no adapter has to.
+    assertEquals(paramsOf((await resolveWith(null)).chain[0]), null);
+    assertEquals(paramsOf((await resolveWith(["low"])).chain[0]), null);
+    assertEquals(paramsOf((await resolveWith("low")).chain[0]), null);
+  } finally {
+    globalThis.fetch = realFetch;
+    resetRouterCache();
+  }
 });

@@ -87,7 +87,7 @@ SUBSCRIPTION_GROUP_DISPLAY_NAME = "Rendprop Plans"
 
 REVIEW_NOTE = (
     "Unlocks the monthly allowance shown in Settings → Plan & usage "
-    "(tour renders, AI photo edits, reels, aerial intros). The paywall is "
+    "(tour renders, AI photo edits, reel clips, aerial intros). The paywall is "
     "Settings → Plan & usage → Upgrade plan."
 )
 
@@ -105,7 +105,7 @@ SUBSCRIPTIONS = [
         "usd": "249.00",
         "groupLevel": 1,
         "displayName": "Team Monthly",
-        "description": "80 tours, 600 photo edits, 3 seats monthly.",
+        "description": "25 tours, 400 edits, 25 reel clips, 2 seats.",
     },
     {
         "productId": "com.rendprop.app.team.annual",
@@ -114,7 +114,7 @@ SUBSCRIPTIONS = [
         "usd": "2490.00",
         "groupLevel": 1,
         "displayName": "Team Yearly",
-        "description": "80 tours, 600 photo edits, 3 seats monthly.",
+        "description": "25 tours, 400 edits, 25 reel clips, 2 seats.",
     },
     {
         "productId": "com.rendprop.app.pro.monthly",
@@ -123,7 +123,7 @@ SUBSCRIPTIONS = [
         "usd": "99.00",
         "groupLevel": 2,
         "displayName": "Pro Monthly",
-        "description": "25 tours, 300 photo edits, 20 reels monthly.",
+        "description": "10 tours, 200 edits, 12 reel clips a month.",
     },
     {
         "productId": "com.rendprop.app.pro.annual",
@@ -132,7 +132,7 @@ SUBSCRIPTIONS = [
         "usd": "990.00",
         "groupLevel": 2,
         "displayName": "Pro Yearly",
-        "description": "25 tours, 300 photo edits, 20 reels monthly.",
+        "description": "10 tours, 200 edits, 12 reel clips a month.",
     },
     {
         "productId": "com.rendprop.app.starter.monthly",
@@ -141,7 +141,7 @@ SUBSCRIPTIONS = [
         "usd": "49.00",
         "groupLevel": 3,
         "displayName": "Starter Monthly",
-        "description": "8 tours, 150 photo edits, 8 reels monthly.",
+        "description": "4 tours, 100 edits, 6 reel clips a month.",
     },
     {
         "productId": "com.rendprop.app.starter.annual",
@@ -150,7 +150,7 @@ SUBSCRIPTIONS = [
         "usd": "490.00",
         "groupLevel": 3,
         "displayName": "Starter Yearly",
-        "description": "8 tours, 150 photo edits, 8 reels monthly.",
+        "description": "4 tours, 100 edits, 6 reel clips a month.",
     },
 ]
 

@@ -1,0 +1,299 @@
+{
+  "status": "deployed",
+  "project": "ymgqpbnjpztwjsyvceld",
+  "functions": [
+    "studio",
+    "listings",
+    "tours",
+    "ai-voice"
+  ],
+  "verifyJwt": true,
+  "finishedAt": "2026-09-14T18:34:48.948Z",
+  "allStagedSourcesMatchCheckout": true,
+  "effectiveSources": [
+    {
+      "path": "_shared/agentcard.ts",
+      "sha256": "6fce25024a093805010eef47727f3b43542765efc435ccd9ba2cffeb52ae4c0a"
+    },
+    {
+      "path": "_shared/apple.ts",
+      "sha256": "23d78360f6c9a7b417e8b4a8fa2070226da5669dbbda852f9cb48d4751f94913"
+    },
+    {
+      "path": "_shared/applejws.test.ts",
+      "sha256": "50ff9fd674ca0cf9f45374a09a6ca963a3c2dac7a4ad945eb8f1165b9c22d675"
+    },
+    {
+      "path": "_shared/applejws.ts",
+      "sha256": "ca1984500fb58f8cb3a27389cf8fe4ab312664bad52653b1853b1ea87e4f7eac"
+    },
+    {
+      "path": "_shared/cors.ts",
+      "sha256": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c"
+    },
+    {
+      "path": "_shared/drift.ts",
+      "sha256": "b4c813ece18ffd455c80f31b1e173b5f82212a832a00145957d5f1d2b93fba7d"
+    },
+    {
+      "path": "_shared/entitlements.ts",
+      "sha256": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e"
+    },
+    {
+      "path": "_shared/fairhousing.test.ts",
+      "sha256": "232135251e5ea432282089184898fb24542f010485e1fbb79366bea90257c6da"
+    },
+    {
+      "path": "_shared/fairhousing.ts",
+      "sha256": "9a5a36739a2cbf166d89b9e816910f24abe7336043f6d398052da48a4e9eedeb"
+    },
+    {
+      "path": "_shared/ghl.ts",
+      "sha256": "d71f56382b5a0ba4ffc476c2cba342cc760f8b25b997007e62c72694eba30aea"
+    },
+    {
+      "path": "_shared/http.test.ts",
+      "sha256": "54072e9ebaa4199ec19d38565c2250f3828641fba0695df71ff2d3bed4a83b5a"
+    },
+    {
+      "path": "_shared/http.ts",
+      "sha256": "d215a595f409506730a529d753d58a9ff6efc68dfc053913adfb5c6527eeb6a9"
+    },
+    {
+      "path": "_shared/ledger.ts",
+      "sha256": "c3f038ebe44f081026cf99a751674f7018a67dd86e772022d5a9b70309888e5c"
+    },
+    {
+      "path": "_shared/property/provider.ts",
+      "sha256": "772747a500fe361e5ac3aa3acf78b731e4ed1aa5a3889d6653d9269b618f9c26"
+    },
+    {
+      "path": "_shared/property/rentcast.ts",
+      "sha256": "2be15e6c36b3319546a7b4420f3a615ea1acc660819315e4284db34282948960"
+    },
+    {
+      "path": "_shared/provenance.ts",
+      "sha256": "05be585a586070285846ddda9df9b4dcc83e9b8b10dc2f852d5f5eb6f07c457b"
+    },
+    {
+      "path": "_shared/providers/anthropic.ts",
+      "sha256": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792"
+    },
+    {
+      "path": "_shared/providers/chain.ts",
+      "sha256": "7b175cad83ea88adc66f07e67aa6acecfa15d162e58ef78f94f55650c4dce471"
+    },
+    {
+      "path": "_shared/providers/common.ts",
+      "sha256": "9f8769c90025d07f2cdea9ef746892ea4e0aa56bea8f1e4d5bd4a6de353cf8f4"
+    },
+    {
+      "path": "_shared/providers/elevenlabs.ts",
+      "sha256": "e8aec5792e94316a01a0f9d262a4245bdfec210ccd1b4d47e28bb25ad037f4e3"
+    },
+    {
+      "path": "_shared/providers/fal.ts",
+      "sha256": "a2948288a435c12669ae3140ec71f0c9b87ff783d3c53245e68accc8bcf9f3b5"
+    },
+    {
+      "path": "_shared/providers/gemini.ts",
+      "sha256": "5bf189ea7857b87c512024273d76329088c8007507ad8925976a4cdd3d8afe23"
+    },
+    {
+      "path": "_shared/providers/higgsfield.ts",
+      "sha256": "c25f4f408b3e7765e05a5439b0832449fd164cb1e9595d07d171cde7b8305606"
+    },
+    {
+      "path": "_shared/providers/index.ts",
+      "sha256": "fb7e8a959cfcbbf2e7075ffb0bce3b61f04455d47db4b67a611c70960e264b9f"
+    },
+    {
+      "path": "_shared/providers/jobtoken.ts",
+      "sha256": "c83e3a39139841a44f03751abab481d868a7d40b550048a1c59e4a868d4ca06c"
+    },
+    {
+      "path": "_shared/providers/kie.ts",
+      "sha256": "7f6a8bd26629a92586d462411bcae81d6aad3cf72b06564f2157fff83b4b469c"
+    },
+    {
+      "path": "_shared/providers/openai.ts",
+      "sha256": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c"
+    },
+    {
+      "path": "_shared/providers/openai_responses_test.ts",
+      "sha256": "737df0b9a9279837c501762abe155a30f0ccc506c8882e98c11d69d5aed34270"
+    },
+    {
+      "path": "_shared/providers/params.ts",
+      "sha256": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c"
+    },
+    {
+      "path": "_shared/providers/providers_test.ts",
+      "sha256": "cca7e28e5d48ba13f8943ea586ebebe07fbb9fd9960f15228d4fb6e8f23e06b2"
+    },
+    {
+      "path": "_shared/providers/types.ts",
+      "sha256": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd"
+    },
+    {
+      "path": "_shared/r2.ts",
+      "sha256": "56ff4869091aab6c44836ed22d5e396101d5cdc72fe62e841a11fb424c68d49a"
+    },
+    {
+      "path": "_shared/ratelimit.ts",
+      "sha256": "d8833a1cd766fe624950e18f62fd822c70df55efeb47de4447f5562a8f0c1430"
+    },
+    {
+      "path": "_shared/router.test.ts",
+      "sha256": "49230593d284c2a2fed986238d97a2456a19b86bdd2802e9e6b780611c3743ce"
+    },
+    {
+      "path": "_shared/router.ts",
+      "sha256": "6df807c3761eb096f29f5e807c7da013b554a35148b15efdb567f83a211016e7"
+    },
+    {
+      "path": "_shared/spacetypes.ts",
+      "sha256": "df1f0702b774224365eb10215d1448a942243109074403d30ebdee4e5aacc211"
+    },
+    {
+      "path": "_shared/stream.ts",
+      "sha256": "8fc011bfe4f4680c1401daa7673b5fdbdfc4b8051b1aff685f27a695f98300e6"
+    },
+    {
+      "path": "_shared/supabase.ts",
+      "sha256": "cfe93768d4e8fb945f2dceb4c3d941e8e49404e391eef5ef231b43c2a7609f66"
+    },
+    {
+      "path": "ai-voice/index.ts",
+      "sha256": "d11c65b769814eb2814cc496ea49573137aef55c3a62a3c1aa29ebe7b4f756da"
+    },
+    {
+      "path": "ai-voice/shared-result.test.ts",
+      "sha256": "2470c02721afee282e9a8d4f176115c8a99614878f9c991ab15d5f9e3dff562f"
+    },
+    {
+      "path": "ai-voice/shared-result.ts",
+      "sha256": "4756a995168a326198195e1bd0dd7984cb88f8804831b44a53d224595da81e19"
+    },
+    {
+      "path": "ai-voice/storage-reservation.test.ts",
+      "sha256": "4069455324f82012ec29dbff6886e6f32edb2d6bb94f1aa854699b0a53de0bc2"
+    },
+    {
+      "path": "ai-voice/storage-reservation.ts",
+      "sha256": "a577ebcb9dbf12595ad839cb3d939fda4a3041667c3765af471b1227bc9914db"
+    },
+    {
+      "path": "listings/create.test.ts",
+      "sha256": "adfccae87c68a83d2b94d79290a998ee283f51b94866c4233823050f9b4b8257"
+    },
+    {
+      "path": "listings/create.ts",
+      "sha256": "be69ab140a24140bf60c5ebb5318d8f547c460544b0febeda451d0b6035a9197"
+    },
+    {
+      "path": "listings/index.ts",
+      "sha256": "70b4aaca21779a4893dab0660ffdab6bab1c8f2a698df3126fedbd4cbd0c63f1"
+    },
+    {
+      "path": "spatial/chapters.ts",
+      "sha256": "4c13c856024b217f158c154f54130a8913f2ebfee3ca1c89fa844ce0816d0ba7"
+    },
+    {
+      "path": "spatial/contract.ts",
+      "sha256": "2fb25fa537de1ce4bad2af6ce01d0ffbe7ba52c9a2fd341d01b28fb2cab1815d"
+    },
+    {
+      "path": "studio/README.md",
+      "sha256": "b3c86173dd57d6f7dc6d083fb256bf0acbfa86e77384463ee6c56767b047d0c8"
+    },
+    {
+      "path": "studio/context.ts",
+      "sha256": "9d31d41ff0091cd14c68df5da7e1c609a223d30f3d8e1b864ef0b8fde8926f79"
+    },
+    {
+      "path": "studio/creative-quality.test.ts",
+      "sha256": "382a058b33ada518ce8e98c54ad91bd7767312ca456eb5e11bcbf6625b01a440"
+    },
+    {
+      "path": "studio/creative-quality.ts",
+      "sha256": "e19e0c387e930cbf6ba92004523ba2c92cabecacc92a481e1c26139eaa86bff1"
+    },
+    {
+      "path": "studio/creative.test.ts",
+      "sha256": "87eadbe1c73936dbcebd5206d44948b97e6707ff3afc5501c4760a332065fc7a"
+    },
+    {
+      "path": "studio/creative.ts",
+      "sha256": "d82103de246dcf793c30933d6c5db329cabd4b22c03a778e9058ddf5efdac58b"
+    },
+    {
+      "path": "studio/documents.test.ts",
+      "sha256": "b9c9e7c5efc4863d4942b90fb7f611cecbae278877666d64c7cfc3ee68598b00"
+    },
+    {
+      "path": "studio/documents.ts",
+      "sha256": "efc1e546072bb6bf8318edb9fc3210147f338eb84e70cd881f5ff113d12da682"
+    },
+    {
+      "path": "studio/edit-output.test.ts",
+      "sha256": "b54c01f144b0bb37b2b5e2ed40c7ab8371d1a658a9d020c9dbdcbe81dc5111d7"
+    },
+    {
+      "path": "studio/edit-output.ts",
+      "sha256": "8c293143eae6e4bf5f9c0ce99a301c0c661084e4c326bfe62011b4d30cad1063"
+    },
+    {
+      "path": "studio/generated-proof.test.ts",
+      "sha256": "7dd5c2466e83b907d69ba48172f40d0a091e3fe4ce53c375e1ba99aed5ad7546"
+    },
+    {
+      "path": "studio/generated-proof.ts",
+      "sha256": "123b88b2f36a0fb664c7a907a2fe7ddaa10ae1b32349c666b87a811e5872409e"
+    },
+    {
+      "path": "studio/handler.test.ts",
+      "sha256": "3bacf316bd3f63abb111e5c1e8763a9947bdccdb19c1854867f6a1bbca4a194f"
+    },
+    {
+      "path": "studio/handler.ts",
+      "sha256": "ea539466b0d41eb91f695cff5a87f2fe31dae940036f8d1dfcc7174f4c19d4ae"
+    },
+    {
+      "path": "studio/index.ts",
+      "sha256": "9247bd7a6c566c7443b2176c45ddb2c0da1bfde899155afdc251197e00cb7a30"
+    },
+    {
+      "path": "studio/listing-actions.test.ts",
+      "sha256": "9ce1d607783ec39ec5a8ec66357e1e24c5acd723879751926ed31cb7b8b5835a"
+    },
+    {
+      "path": "studio/listing-actions.ts",
+      "sha256": "12df2e8bda3848ed89439c8d00a3a47a47854c165427771be0ae83721f4909ae"
+    },
+    {
+      "path": "studio/listing-state.ts",
+      "sha256": "9011a6cfe2c98a90f600e78d58be720a92f9682058b5a7c014ebab45562182cf"
+    },
+    {
+      "path": "studio/repository.test.ts",
+      "sha256": "d4cfeaf371e39321d82d226bf954aff4df1d6c4f3d79ef6bf22c14c9ebac906b"
+    },
+    {
+      "path": "studio/repository.ts",
+      "sha256": "e334bd8026a9265ca7475ac9af83cf1fc09f46f3119c304303c4bda8fa5d3af7"
+    },
+    {
+      "path": "tours/cta.ts",
+      "sha256": "6b952efd34beb6a1467d9f531d6d2ca77373bde70f8481899e2e587104ee46a5"
+    },
+    {
+      "path": "tours/index.ts",
+      "sha256": "1e342d689286dcc907470e5b9546b693f17e400eb73a8aafb8e39dbb76ac2969"
+    }
+  ],
+  "deploymentTimes": [
+    "2026-09-14T18:26:45.039Z",
+    "2026-09-14T18:34:48.948Z"
+  ]
+}

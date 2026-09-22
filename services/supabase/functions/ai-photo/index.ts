@@ -29,6 +29,14 @@
 //       guardrails are appended server-side as usual. (The image is not needed
 //       for this mode and is ignored if sent.)
 //
+//       SUPERSEDED BY `POST /ai-copy/edit-prompt` (2026-09-07), which does the
+//       same job with an org burst limiter, a cost_ledger row and the LISTING's
+//       space_type. This mode is kept because SHIPPED APP BUILDS STILL CALL IT
+//       and nothing the client sees may change — but it is now a thin forward:
+//       the words come from the one shared polisher, ai-copy/prompt.ts
+//       `editPromptInstruction()`, so the two cannot drift. New clients should
+//       call /ai-copy/edit-prompt. See docs/COPY-ASSIST-CONTRACT.md.
+//
 // Needs the GEMINI_API_KEY function secret. Returns the edited image inline
 // (base64, with Gemini's ACTUAL mime type) so the app can show a before/after.
 // Errors carry { error, code } — 402 plan_required / 429 quota_exceeded carry
@@ -90,6 +98,13 @@ import {
   routedR2Key,
 } from "../_shared/providers/common.ts";
 import type { GenerateInput } from "../_shared/providers/types.ts";
+// THE SHARED PROMPT POLISHER. Yes, this reaches into a sibling function's
+// folder — the same mechanism `../_shared/…` uses (both live under functions/
+// and both are followed by the bundler at deploy). ai-copy/prompt.ts imports
+// NOTHING, precisely so it can be pulled in here without dragging ai-copy's
+// handler, its router glue or its Supabase clients into this function's bundle.
+// See ai-copy/prompt.ts's header and improvePrompt() below.
+import { MAX_PROMPT_INPUT, MAX_PROMPT_OUTPUT, editPromptInstruction } from "../ai-copy/prompt.ts";
 
 // Denial-of-wallet guard: image edits bill Gemini per call (~3.9¢ each).
 const EDIT_MAX_PER_WINDOW = 40;
@@ -161,7 +176,7 @@ async function guardEdit(userId: string, req: Request): Promise<EditCharge> {
 
 /**
  * Hand back everything a FAILED edit charged (audit item 2 / F-E-16, mirrors
- * ai-chapters/index.ts refundCharge exactly). Call ONLY when the provider
+ * ai-chapters/index.ts refundCharge exactly). Call ONLY when route resolution or the provider
  * chain threw — once runChain returns a value the provider ran and billed,
  * and the ledger write right after it is what records that; nothing past that
  * point is ever refunded. Best effort and never throws — see refundRateLimit().
@@ -303,9 +318,47 @@ const PROFILES: Record<SpaceType, Profile> = {
   },
 };
 
+/**
+ * THE MATERIAL-FACT LINE.
+ *
+ * Every prompt above locks the ARCHITECTURE — walls, dimensions, window and
+ * door placement. None of them locked the CONDITION, and that is a different
+ * thing: an inpainting model asked to tidy a room will happily smooth a cracked
+ * wall or a water stain on the way past, because a clean wall is what "tidy"
+ * looks like in its training data. Nothing in this file told it not to.
+ *
+ * The rule comes from a licensed agent — the owner's mother, on the 17 Sep call,
+ * describing what she is and is not allowed to do: "You can do things for like
+ * maybe design of the house, but you cannot remove things that are there... If
+ * there's a huge crack in the wall, you're not supposed to fix that. That should
+ * be in the picture." Her other example is the power pole in the backyard that
+ * agents were editing out by hand long before any of this existed. The owner's
+ * answer on the same call: "No, we will never do that."
+ *
+ * That is not only an ethics position. A defect removed from a listing photo is
+ * a misrepresentation of a material fact, which is the thing that ends licences
+ * — and it is the one edit no disclosure sentence makes acceptable, because the
+ * buyer's complaint is not "this was AI", it is "the house is not what you
+ * showed me". So it is enforced here, in the prompt itself, on every route.
+ */
+const CONDITION_LOCK =
+  "CRITICAL — MATERIAL FACTS: never repair, patch, hide, clean away, smooth over or " +
+  "remove any DEFECT or PERMANENT FEATURE of the property. Cracks, holes, dents, " +
+  "stains, water marks, damp, mould, rust, peeling or chipped paint, damaged, worn or " +
+  "missing flooring, cracked or broken glass, dated or damaged fixtures and finishes, " +
+  "and any sign of wear or disrepair must remain EXACTLY as photographed. The same " +
+  "applies to permanent surroundings: power poles and lines, utility boxes and meters, " +
+  "antennas and satellite dishes, air-conditioning units, pool cages, fences, sheds, " +
+  "driveways, neighbouring buildings and whatever is visible through a window or a " +
+  "doorway all stay. If you cannot make the requested change without altering one of " +
+  "these, make the smaller change and leave the feature alone. " +
+  "The ONE exception, and only when it is what was asked for: grass, planting and the " +
+  "sky may be improved. Nothing about the building, the hardscape or the surroundings may. ";
+
 const LOCK =
   "Do not change the building's architecture, structure, dimensions, walls, or " +
-  "window/door placement. Photorealistic, natural, consistent perspective and shadows.";
+  "window/door placement. " + CONDITION_LOCK +
+  "Photorealistic, natural, consistent perspective and shadows.";
 
 // Staging must NEVER remodel the room — only add furnishings.
 const STAGE_LOCK =
@@ -313,7 +366,29 @@ const STAGE_LOCK =
   "windows, doors, ceiling, flooring material, trim, built-ins, light fixtures, the view " +
   "through the windows, camera angle, and perspective. Only ADD furniture and decor; do not " +
   "remodel, repaint, resurface, or alter the structure or lighting direction in any way. " +
+  CONDITION_LOCK +
   "Photorealistic materials with shadows and reflections that match the room's existing light.";
+
+/**
+ * The photographer, reflected.
+ *
+ * Reported by the same agent on the same call: "There's a lot of images where
+ * you can see my entire body and face in the glare of a window or a mirror."
+ * An agent shooting her own listing is in every mirrored surface in the house,
+ * and a person in a listing photo is both unprofessional and, under the HUD
+ * guidance this product already follows, something AI media should not be
+ * rendering at all.
+ *
+ * It rides declutter rather than becoming its own mode ON PURPOSE: a new edit
+ * mode is a new billable route, a new ledger row, a new provenance kind and a
+ * new disclosure sentence, and "a person who is not part of the property" is
+ * already what declutter means. No new cost, no new surface.
+ */
+const REFLECTION_CLAUSE =
+  "Also remove any person visible in the photo, including the photographer or a " +
+  "phone or camera reflected in mirrors, windows, glass, screens, tiles, appliances " +
+  "or any other glossy surface — rebuild the reflection as the empty surface would " +
+  "look, reflecting only the room itself. ";
 
 // The proven real-estate prompt set — VERBATIM from the shipped version (the
 // industry templates below are for the other space types only).
@@ -334,7 +409,8 @@ const RE_PROMPTS: Record<string, string> = {
   declutter:
     "Remove all clutter, mess, and personal items from this real-estate photo: shoes, bags, " +
     "boxes, cords, laundry, dishes, papers, toys, toiletries, fridge magnets, and stray items " +
-    "on floors, counters, and surfaces. Keep the room, furniture, decor, and architecture " +
+    "on floors, counters, and surfaces. " + REFLECTION_CLAUSE +
+    "Keep the room, furniture, decor, and architecture " +
     "IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. " +
     "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
 };
@@ -381,6 +457,7 @@ function prompts(p: Profile): Record<string, string> {
       "and everything else identical. " + LOCK,
     declutter:
       `Remove all clutter, mess, and personal items from this ${p.photo}: ${p.clutter}. ` +
+      REFLECTION_CLAUSE +
       `Keep ${p.keep} IDENTICAL — same walls, windows, doors, flooring, fixtures, camera angle, and lighting. ` +
       "Seamlessly fill revealed floor/surface areas to match the surrounding material and light. " + LOCK,
   };
@@ -452,11 +529,9 @@ export function needsForPhotoEdit(edit: string, hasMask: boolean): string[] {
 }
 
 /**
- * The last-resort step: what THIS deploy runs today, hardcoded.
- *
- * resolveRoute() answers `[]` if the routing table is unreadable, and a
- * database blip must not take photo editing down. GEMINI_IMAGE_MODEL still
- * wins here, exactly as it does today.
+ * Retained descriptor for the shared resolver API. Photo tasks now require
+ * an enabled database route; resolveChain never executes these constants
+ * when photo authorization is absent (0056).
  */
 export function legacyPhotoStep(task: string): RouteStep {
   return {
@@ -483,8 +558,11 @@ function provenanceKind(edit: string): ProvenanceKind {
 }
 
 const MAX_CUSTOM_PROMPT = 600;
-const MAX_IMPROVE_INPUT = 300;  // rough idea in
-const MAX_IMPROVE_OUTPUT = 400; // polished instruction out
+// The improve_prompt caps now come from the SHARED polisher module so this
+// function and POST /ai-copy/edit-prompt cannot disagree about them. Same
+// numbers as before (300 in / 400 out) — this is a re-export, not a change.
+const MAX_IMPROVE_INPUT = MAX_PROMPT_INPUT;   // rough idea in
+const MAX_IMPROVE_OUTPUT = MAX_PROMPT_OUTPUT; // polished instruction out
 
 /** Wrap a user's free-text instruction with the guardrails every edit gets. */
 function customPrompt(p: Profile, userText: string): string {
@@ -508,6 +586,9 @@ Deno.serve(async (req) => {
     // below happens only once we know the request would actually reach Gemini.
     const body = await readJson<Body>(req);
     const edit = String(body.edit ?? "twilight").trim().toLowerCase();
+    // Plain-object prompt lookup must not accept inherited keys as edit modes.
+    assert(["twilight", "sky", "lawn", "declutter", "stage", "custom", "suggest", "improve_prompt"].includes(edit),
+      400, "Choose a supported photo editing tool.");
     const mime = String(body.mime ?? "image/jpeg").split(";")[0].trim().toLowerCase();
     const space = spaceTypeOf(body.space_type);
     const profile = PROFILES[space];
@@ -553,10 +634,15 @@ Deno.serve(async (req) => {
       assert(rough.length <= MAX_IMPROVE_INPUT, 400,
              `prompt too long (max ${MAX_IMPROVE_INPUT} chars)`);
       // Refuse before spending tokens polishing something we would never run.
-      assertFairHousing(rough, "That idea", await gateSpace());
+      const promptSpace = await gateSpace();
+      assertFairHousing(rough, "That idea", promptSpace);
       const helperCharge = await guardHelper(user.id, req);
       try {
-        return json({ prompt: await improvePrompt(rough, profile), space_type: space });
+        const improved = await improvePrompt(rough, space);
+        // A safe request can still produce an unsafe suggestion. Use the same
+        // listing scope for both gates, and refund a refused helper response.
+        assertFairHousing(improved, "The suggested edit", promptSpace);
+        return json({ prompt: improved, space_type: space });
       } catch (e) {
         await refundHelperCharge(helperCharge);
         throw e;
@@ -601,25 +687,31 @@ Deno.serve(async (req) => {
     // resolveRoute on every task that takes free text, and it is the one thing
     // no routing decision may skip.
     //
-    // Flag OFF: resolveRoute returns exactly the legacy step (gemini
-    // gemini-2.5-flash-image), the gemini adapter rebuilds today's payload byte
-    // for byte, and this is a no-op. Flag ON: the seeded chain runs, each
+    // Flag OFF: resolveRoute requires the enabled, eligible photo fallback
+    // (0056). Flag ON: the seeded chain runs, each
     // attempt is reported for the circuit breaker, and the ledger row carries
     // the provider/model that actually ran.
     const task = `photo.${edit}`;
     const maskB64 = typeof body.mask_b64 === "string" && body.mask_b64.length > 0 ? body.mask_b64 : null;
     const maskMime = String(body.mask_mime ?? "image/png").split(";")[0].trim().toLowerCase();
     const routerOn = await routerEnabled();
-    const steps = await resolveChain(
-      task,
-      {
-        plan,
-        needs: needsForPhotoEdit(edit, maskB64 !== null),
-        // A photograph of somebody's home: never a vendor that trains on it.
-        carries_customer_media: true,
-      },
-      legacyPhotoStep(task),
-    );
+    let steps: RouteStep[];
+    try {
+      steps = await resolveChain(
+        task,
+        {
+          plan,
+          needs: needsForPhotoEdit(edit, maskB64 !== null),
+          // A photograph of somebody's home: never a vendor that trains on it.
+          carries_customer_media: true,
+        },
+        legacyPhotoStep(task),
+      );
+    } catch (e) {
+      // No authorized route means no provider ran; return both quota charges.
+      await refundEditCharge(charge);
+      throw e;
+    }
 
     const genInput: GenerateInput = {
       task,
@@ -689,7 +781,7 @@ Deno.serve(async (req) => {
     // ONE org-scoped cost_ledger row with job_id = NULL. This is what the owner
     // spend console and the per-org monthly COGS view read for app AI. The
     // provider/model/price come from the step that ACTUALLY ran (contract §4);
-    // with the flag off that is gemini @ 3.9c/image, exactly as before.
+    // with the flag off, 0056 selects the existing 6.7c Gemini photo route.
     // Best effort — a failed insert must never fail an edit the caller has paid
     // for (see recordAppAiCost). Only reached on success, so a failure above
     // (which F-E-16 refunds) writes no row: no double-count.
@@ -810,23 +902,28 @@ async function suggestEdits(imageB64: string, mime: string, profile: Profile): P
   return out;
 }
 
-function improveInstruction(p: Profile): string {
-  return (
-    `You polish rough photo-edit requests from ${p.audience} into precise instructions ` +
-    `for an AI photo editor working on a real ${p.photo}.\n\n` +
-    "Rewrite the user's idea as ONE clear, imperative edit instruction: concrete about what " +
-    "changes and what stays, photorealistic, plausible for a real place, no camera jargon, " +
-    "no markdown, no quotes, a single paragraph of at most 400 characters. Keep the user's " +
-    "intent exactly — never invent extra changes they did not ask for. Do NOT add boilerplate " +
-    "about preserving architecture; the system appends that separately.\n\n" +
-    'Reply with STRICT JSON only: {"prompt":"<rewritten instruction>"}'
-  );
-}
-
-/** edit:"improve_prompt" — rewrite a rough custom-edit idea into a precise one. */
-async function improvePrompt(rough: string, profile: Profile): Promise<string> {
+/**
+ * edit:"improve_prompt" — rewrite a rough custom-edit idea into a precise one.
+ *
+ * THIN FORWARD TO THE SHARED POLISHER (2026-09-07). The instruction this used
+ * to build locally now lives in ai-copy/prompt.ts `editPromptInstruction()`,
+ * which POST /ai-copy/edit-prompt builds from as well, so there is ONE
+ * prompt-polisher rather than two that drift apart the first time either is
+ * improved. The shared version is also STRONGER: it asks for the same density
+ * of direction a preset carries (what changes / what stays IDENTICAL /
+ * materials, shadows and reflections that match the existing light), which is
+ * the asymmetry this whole feature exists to close — a preset edit got ~60
+ * words of engineered direction while a custom edit got one sentence.
+ *
+ * NOTHING THE CLIENT SEES MOVES. Shipped app builds still call
+ * `edit:"improve_prompt"` on THIS function; the request body, the response
+ * shape ({ prompt, space_type }), the caps (300 in / 400 out), the gate order,
+ * the model (TEXT_MODEL) and the helper limiter are all unchanged. Only the
+ * words inside the prompt changed.
+ */
+async function improvePrompt(rough: string, space: SpaceType): Promise<string> {
   const raw = await geminiText(
-    [{ text: improveInstruction(profile) + "\n\nUser's idea: " + rough }],
+    [{ text: editPromptInstruction(space) + "\n\nUser's idea: " + rough }],
     true,
   );
 

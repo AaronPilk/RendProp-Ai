@@ -14,6 +14,78 @@ import UniformTypeIdentifiers
 import AVFoundation   // Reel Studio: composition + stitch + export
 import AVKit          // Reel Studio / Aerial intro: VideoPlayer preview
 
+/// Retains one feature tap while anonymous session creation reconnects. A
+/// second tap cannot enqueue the same paid action twice, and leaving the
+/// feature cancels only this waiter, not another screen's shared signup.
+@MainActor
+private final class FeatureSessionAction: ObservableObject {
+    @Published private(set) var isWaiting = false
+    private var task: Task<Void, Never>?
+    private var generation = UUID()
+
+    func run(_ action: @escaping @MainActor () -> Void) {
+        guard task == nil else { return }
+        let attempt = UUID()
+        generation = attempt
+        isWaiting = true
+        task = Task { [weak self] in
+            let connected = await AuthStore.shared.ensureSession()
+            guard let self, self.generation == attempt else { return }
+            self.task = nil
+            self.isWaiting = false
+            guard connected, !Task.isCancelled else { return }
+            action()
+        }
+    }
+
+    func cancel() {
+        generation = UUID()
+        task?.cancel()
+        task = nil
+        isWaiting = false
+    }
+}
+
+/// The workspace's remembered answer to "List this tour on Google".
+///
+/// WHY A REMEMBERED DEFAULT AT ALL. The hosted page is `noindex, nofollow`
+/// until its owner opts in, and that is right: it carries their name, phone,
+/// e-mail and a street address. But an agent who wants their listings findable
+/// wants ALL of them findable, and making them answer the same question on
+/// every tour is how a good default becomes a chore people click through.
+///
+/// So: OFF for a workspace that has never answered, then whatever they last
+/// chose. Per WORKSPACE, not per install — a phone that signs into a different
+/// account starts at OFF again rather than inheriting a stranger's answer,
+/// which is the only direction it is safe to be wrong in. It is a local
+/// convenience, never the published state: what the page does is decided by the
+/// listing's own `allowSearchIndexing`, which is what actually gets sent.
+enum SearchIndexingDefault {
+    private static let valueKey = "tour.searchIndexing.default"
+    private static let ownerKey = "tour.searchIndexing.defaultOwner"
+
+    /// The current workspace's identity, as far as this device can tell.
+    /// Empty before any session exists — which reads as "not the workspace
+    /// that saved a default", i.e. OFF.
+    @MainActor private static var owner: String {
+        AuthStore.shared.userID ?? ""
+    }
+
+    @MainActor static var value: Bool {
+        let defaults = UserDefaults.standard
+        guard let saved = defaults.string(forKey: ownerKey), !saved.isEmpty, saved == owner else {
+            return false
+        }
+        return defaults.bool(forKey: valueKey)
+    }
+
+    @MainActor static func remember(_ allowed: Bool) {
+        let defaults = UserDefaults.standard
+        defaults.set(allowed, forKey: valueKey)
+        defaults.set(owner, forKey: ownerKey)
+    }
+}
+
 struct FlythroughDetailView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
@@ -26,23 +98,49 @@ struct FlythroughDetailView: View {
     // listing no longer belongs to the selected industry.
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     let listing: Listing
+    /// Land ON the photo library instead of on this screen.
+    ///
+    /// Set only by the "Start with photos" path on the create screen. A working
+    /// agent's first run: she created a listing, was handed a video button and
+    /// nothing else, and found photos only by scrolling down to the toolbox
+    /// afterwards. When photos are what she asked for, photos are what opens —
+    /// once, so backing out of them lands here rather than bouncing straight
+    /// back in.
+    var openPhotosOnAppear: Bool = false
 
     @State private var zillowText = ""
     @State private var zillowSeeded = false
     @State private var zillowError: String?
     @State private var showRoomTagger = false
+    /// Drives the photos screen when this view was opened photos-first.
+    @State private var showPhotosScreen = false
+    @State private var didAutoOpenPhotos = false
     @State private var tagsBeforeEdit: [RoomTag] = []
     @State private var chapterSyncNote: String?
     @State private var playerRefresh = UUID()
     @State private var showAerialIntro = false
+    /// The toolbox's "Make a reel" tile presents Reel Studio DIRECTLY now.
+    ///
+    /// It used to be `NavigationLink { PhotoStudioView(listing:, intent: .reel) }`
+    /// — the reel tile routed THROUGH the photo studio and relied on a "Make a
+    /// reel" card at the bottom of that screen to finish the journey. That is
+    /// the whole reason the reel card lived in AI Photo Studio, and it is why
+    /// the owner's read after the 4,000 sq ft field test was that the photo
+    /// studio "just opens the photo-to-reel feature". Reel Studio is its own
+    /// screen; the tile goes there.
+    @State private var showReelStudio = false
     @State private var showEdit = false
     @State private var showDeleteConfirm = false
     @State private var isDeleting = false
     /// Which of the two links a QR sheet is being shown for (nil = none).
     @State private var qrTarget: QRTarget?
-    @State private var showSignIn = false
+    @StateObject private var connection = FeatureSessionAction()
     @State private var isPublishing = false
     @State private var publishFailure: AIFailure?
+    /// "List this tour on Google". Seeded in `onAppear` from this listing's own
+    /// answer, or from the workspace default when it has never been asked.
+    @State private var listOnGoogle = false
+    @State private var listOnGoogleSeeded = false
 
     // MARK: Compliance (W2-C2) — the org's AI provenance rows for THIS listing
     @State private var provenance: [ProvenanceRecord] = []
@@ -52,6 +150,40 @@ struct FlythroughDetailView: View {
     @State private var auditExport: AuditExport?
     @State private var complianceNote: String?
     @State private var isSavingOriginals = false
+
+    // MARK: Files (the 4,000 sq ft field test)
+    /// Every file this listing has produced, read off disk on appear. NOT computed
+    /// inside `body`: a directory scan per re-render is exactly what
+    /// `PhotoStudioView.loadExisting()` avoids by loading into state once.
+    @State private var mediaItems: [ListingMediaItem] = []
+    /// The file being viewed. ONE binding for every kind — `ListingFileViewer`
+    /// switches internally — so `body` grows a single presentation modifier.
+    @State private var openedFile: ListingMediaItem?
+    /// Result of a Save-to-Photos from the files list (success or the reason it
+    /// failed), shown under the section rather than in an alert. `filesNoteOK`
+    /// only decides the icon and the colour — a green tick reads as done from
+    /// across a room in a way that a grey sentence never did.
+    @State private var filesNote: String?
+    @State private var filesNoteOK = true
+    @State private var isSavingFile = false
+    /// Which files have gone to Photos during THIS visit to the screen, so their
+    /// button can say "Saved" instead of inviting a second copy.
+    ///
+    /// Deliberately NOT persisted and deliberately not a claim about the library:
+    /// the user can delete a photo in Photos, and an app that remembered "Saved"
+    /// across launches would be lying about somebody else's camera roll. Within
+    /// one visit it is exactly true, and that is the moment it is needed.
+    @State private var savedFiles: Set<String> = []
+    /// What the last scan saw, so an appearance that changed nothing does no
+    /// work at all (the build-9 lag report — `onAppear` fires on every push AND
+    /// every pop back, and walking into a studio and straight out again used to
+    /// re-read every directory this listing owns).
+    @State private var filesStamp: ListingMediaItem.ScanStamp?
+    /// The scan in flight. Held so a fast push/pop can't land two results out
+    /// of order: the next `loadFiles` cancels the previous one, and a cancelled
+    /// scan drops its result rather than overwriting a newer list.
+    @State private var filesTask: Task<Void, Never>?
+
     /// Retained for the life of the screen — a temporary CLGeocoder is released
     /// before its callback fires (F-A-26).
     @State private var geocoder = CLGeocoder()
@@ -207,8 +339,6 @@ struct FlythroughDetailView: View {
         currentListing.serverShareURL
     }
 
-    private var needsSignIn: Bool { Config.enableAuth && !auth.isSignedIn }
-
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
@@ -218,8 +348,17 @@ struct FlythroughDetailView: View {
                 } else {
                     nextStepCard
                 }
+                searchIndexingCard
+                if !currentListing.isSample, currentListing.serverID != nil {
+                    NavigationLink { CloudMediaView(listing: currentListing) } label: {
+                        Label("Cloud files from Studio & iPhone", systemImage: "icloud.and.arrow.down")
+                            .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(16)
+                            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                }
                 complianceSection
                 toolboxSection
+                filesSection
                 if !currentListing.isSample {
                     manageSection
                 }
@@ -233,7 +372,10 @@ struct FlythroughDetailView: View {
         .background(Theme.bg)
         .navigationTitle(currentListing.address)
         .navigationBarTitleDisplayMode(.inline)
-        .disabled(isDeleting)
+        .askAI(.listing)
+        .disabled(isDeleting || connection.isWaiting)
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
+        .onDisappear { connection.cancel() }
         .onAppear {
             // Seed the Zillow field ONCE — re-seeding on every appearance wiped
             // an in-progress paste when a sheet closed (F-A-26).
@@ -241,7 +383,55 @@ struct FlythroughDetailView: View {
                 zillowText = currentListing.zillowURL ?? ""
                 zillowSeeded = true
             }
+            // Same once-only rule: this listing's own answer if it has one,
+            // otherwise the workspace default (which is OFF until somebody
+            // says otherwise).
+            if !listOnGoogleSeeded {
+                listOnGoogle = currentListing.allowSearchIndexing ?? SearchIndexingDefault.value
+                listOnGoogleSeeded = true
+            }
+            // Photos-first: push the photo library the moment this screen
+            // appears, exactly once. `didAutoOpenPhotos` is what stops the pop
+            // back from re-pushing it and trapping the user in a loop.
+            if openPhotosOnAppear && !didAutoOpenPhotos && !currentListing.isSample {
+                didAutoOpenPhotos = true
+                showPhotosScreen = true
+            }
             geocodeIfNeeded()
+            // Still called on every appearance — coming back from AI Photo
+            // Studio, Reel Studio or the floor-plan scanner is a push/pop, so
+            // this is where a file made in one of them first becomes visible
+            // here. It is no longer a directory sweep on the main thread: see
+            // `loadFiles`, which checks five modification dates on a background
+            // thread and does nothing at all when none of them moved.
+            loadFiles()
+        }
+        .navigationDestination(isPresented: $showPhotosScreen) {
+            PhotoStudioView(listing: currentListing, entry: .photos)
+        }
+        .fullScreenCover(item: $openedFile) { item in
+            ListingFileViewer(item: item)
+        }
+        // "Make a reel" opens REEL STUDIO, with this listing's photos and its
+        // aerial intro — the same two things `PhotoStudioView` used to hand it
+        // one screen further along.
+        //
+        // `extraClipURLs` is the aerial-as-intro fix and MUST NOT regress: the
+        // path most people take is this tile, and before that fix the aerial
+        // could only be used as a reel intro from inside the aerial sheet.
+        // `photos:` is read at presentation time (a fullScreenCover builds its
+        // content when it is presented), so a photo added since this screen
+        // appeared is included — the same live read `PhotoStudioView` did with
+        // its own `photos` state.
+        //
+        // `force: true` on dismiss for the same reason the aerial sheet uses it:
+        // a finished reel is a new file in this listing's folder, written while
+        // this screen stayed put, so the FILES scan cannot trust its stamp.
+        .fullScreenCover(isPresented: $showReelStudio, onDismiss: { loadFiles(force: true) }) {
+            ReelStudioView(listing: currentListing,
+                           photos: EnhancedPhoto.loadAll(listingID: currentListing.id),
+                           extraClipURLs: currentListing.aerialURL.map { [$0] } ?? [])
+                .environmentObject(model)
         }
         .task { await loadCompliance() }
         .onChange(of: spaceTypeRaw) { _ in
@@ -255,7 +445,13 @@ struct FlythroughDetailView: View {
                                suggest: roomTagSuggestSource)
             }
         }
-        .sheet(isPresented: $showAerialIntro) {
+        // `force`: this is the one presentation that can have written a file
+        // while the listing screen stayed put, so it skips the stamp check
+        // rather than trusting a directory date written a moment ago. It can
+        // produce TWO kinds — the flyover itself, and a reel from the Reel
+        // Studio cover it presents — so a targeted "reload the aerial" would be
+        // wrong here.
+        .sheet(isPresented: $showAerialIntro, onDismiss: { loadFiles(force: true) }) {
             AerialIntroSheet(listing: currentListing)
                 .environmentObject(model)
         }
@@ -269,9 +465,6 @@ struct FlythroughDetailView: View {
         }
         .sheet(item: $auditExport) { export in
             ShareSheet(items: [export.url])
-        }
-        .sheet(isPresented: $showSignIn) {
-            SignInView(onSignedIn: { publishNow() })
         }
         .confirmationDialog("Delete this \(space.spaceNoun)?", isPresented: $showDeleteConfirm,
                             titleVisibility: .visible) {
@@ -465,6 +658,70 @@ struct FlythroughDetailView: View {
         .card()
     }
 
+    // MARK: - "List this tour on Google"
+    //
+    // THE DEFECT this fixes. A hosted tour is `noindex, nofollow` until its
+    // owner opts that listing in, and that default is correct — the page
+    // carries their name, phone, e-mail and a street address, and putting that
+    // in a permanent public index is their call, not ours. But the opt-in
+    // existed ONLY as a key inside the listing's freeform `details` bag, which
+    // no screen has ever written and no agent could ever find. The structured
+    // data the tour host emits is gated on the same flag, so it did nothing for
+    // anybody either.
+    //
+    // So the question gets asked, once, in plain words, where the decision
+    // actually happens: on the publish/share screen, next to the button that
+    // makes the page public. Default OFF. "Not now" costs nothing: the link
+    // works identically either way — the only thing this changes is whether a
+    // stranger can arrive at it through a search box.
+
+    @ViewBuilder private var searchIndexingCard: some View {
+        if !currentListing.isSample, tour != nil || shareURL != nil {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("SEARCH").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Toggle(isOn: Binding(get: { listOnGoogle },
+                                     set: { setListOnGoogle($0) })) {
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text("List this tour on Google")
+                            .font(.rpBody.weight(.semibold))
+                            .foregroundStyle(Theme.ink)
+                        Text("Turning this on lets Google show this page, which makes the address and your \(space.profileCardName.lowercased()) — your name, phone and email — findable by anyone searching. Your leads, your files and your other tours stay private either way, and your link keeps working whether it's on or off.")
+                            .font(.rpCaption)
+                            .foregroundStyle(Theme.inkDim)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .tint(Theme.accent)
+                .accessibilityIdentifier("listing.listOnGoogle")
+                Text(shareURL == nil
+                     ? "Off unless you turn it on. We'll remember your answer as the default for your next tour."
+                     : "Changing this updates your live page. We'll remember your answer as the default for your next tour.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    /// The answer, written three places: this screen's state, the listing (which
+    /// is what actually reaches the server), and the workspace default for the
+    /// next tour. A live page is PATCHed straight away rather than waiting for
+    /// the next publish — the page is already out there.
+    private func setListOnGoogle(_ allowed: Bool) {
+        listOnGoogle = allowed
+        SearchIndexingDefault.remember(allowed)
+        guard !currentListing.isSample else { return }
+        model.setSearchIndexing(allowed, for: listing.id)
+        Haptics.selection()
+        if currentListing.serverID != nil {
+            // Never throws, never blocks the UI: a failure leaves the listing
+            // dirty and the next sync carries it.
+            Task { await model.syncListing(listing.id) }
+        }
+    }
+
     /// The honest next step for a listing that has no share link yet — a real
     /// action, never a passive "publish to get your link" banner (F-A-08):
     /// rendered tour → Publish; video but no tour → Create tour; nothing → Add
@@ -529,7 +786,7 @@ struct FlythroughDetailView: View {
                 AIFailureCard(failure: failure,
                               retryHint: "Tap Publish tour to try again.",
                               quotaFeature: "renders",
-                              onSignIn: { showSignIn = true })
+                              onReconnect: { publishNow() })
             }
             if isPublishing {
                 HStack(spacing: 10) {
@@ -544,10 +801,7 @@ struct FlythroughDetailView: View {
                     nextStepLabel(hasPublishProblem ? "Retry publish" : "Publish tour", "icloud.and.arrow.up")
                 }
                 .buttonStyle(ScalePressStyle())
-                if needsSignIn {
-                    Text("Publishing needs a free account — you'll be asked to sign in with Apple.")
-                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                }
+                .accessibilityIdentifier("phase1.publish")
             }
         }
         .padding(14)
@@ -607,21 +861,50 @@ struct FlythroughDetailView: View {
     private var toolboxSection: some View {
         let sample = currentListing.isSample
         let createFirst = "Create a \(space.spaceNoun) first"
-        let aerialSub = currentListing.aerialURL != nil ? "Aerial ready" : "AI opening shot"
+        // Read off the FILES scan, not off `currentListing.aerialURL`: that
+        // property does a `fileExists` every time it is touched, and this line
+        // sits in a computed property `body` reads, so it was a stat syscall on
+        // EVERY re-render of this screen — a save, a note, a scroll-driven state
+        // change (the build-9 lag report). The scan already did that check, off
+        // the main thread, and it is the same answer: it only lists an aerial
+        // whose file is really there.
+        let aerialSub = mediaItems.contains { $0.kind == .aerial } ? "Aerial ready" : "AI opening shot"
+        // Same rule as `aerialSub`: read the count off the scan that already
+        // ran, never off a fresh filesystem walk in a computed property `body`
+        // touches (the build-9 lag report).
+        let photoCount = mediaItems.filter { $0.kind == .photo }.count
+        let photosTileSub = photoCount == 0
+            ? "Add and brighten"
+            : "\(photoCount) photo\(photoCount == 1 ? "" : "s") \u{00B7} add more"
         return VStack(alignment: .leading, spacing: 10) {
             Text("TOOLBOX").font(.rpKicker).foregroundStyle(Theme.inkDim)
                 .frame(maxWidth: .infinity, alignment: .leading)
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
                                 GridItem(.flexible(), spacing: 10)], spacing: 10) {
-                NavigationLink { PhotoStudioView(listing: currentListing) } label: {
-                    toolCard("AI Photo Studio", sample ? createFirst : "Sky · tidy · furniture",
+                // TWO TILES. Getting photos in is one job; changing them with
+                // AI is a different job with a different cost, and putting both
+                // behind one door is what made "AI Photo Studio" open on a wall
+                // of thumbnails instead of on the list of what the AI can do.
+                NavigationLink { PhotoStudioView(listing: currentListing, entry: .photos) } label: {
+                    toolCard("Photos", sample ? createFirst : photosTileSub,
+                             "photo.stack", RPGradient.photo, dimmed: sample)
+                }
+                .buttonStyle(ScalePressStyle())
+                .disabled(sample)
+                .accessibilityIdentifier("detail.photos")
+
+                NavigationLink { PhotoStudioView(listing: currentListing, entry: .studio) } label: {
+                    toolCard("AI Photo Studio", sample ? createFirst : "Declutter · staging · sky",
                              "wand.and.stars", RPGradient.photo, ai: true, dimmed: sample)
                 }
                 .buttonStyle(ScalePressStyle())
                 .disabled(sample)
                 .accessibilityIdentifier("detail.photoStudio")
 
-                NavigationLink { PhotoStudioView(listing: currentListing, intent: .reel) } label: {
+                // STRAIGHT to Reel Studio — not through AI Photo Studio.
+                // `detail.reelStudio` stays on this tile (RendpropUITests taps
+                // it by that identifier); what changed is where it lands.
+                Button { showReelStudio = true } label: {
                     toolCard("Make a reel", sample ? createFirst : "Video + your voice",
                              "film.stack", RPGradient.reel, ai: true, dimmed: sample)
                 }
@@ -660,6 +943,367 @@ struct FlythroughDetailView: View {
                 }
                 .buttonStyle(ScalePressStyle())
             }
+        }
+    }
+
+    // MARK: - Files (the 4,000 sq ft field test)
+
+    /// Everything this listing has made, on the listing screen, in one place.
+    ///
+    /// THE DEFECT, in the owner's words after the 4,000 sq ft field test: "I don't
+    /// have any of the photos or videos I made saved, I can't see them after I use
+    /// the feature. Like all those features and photos should be saved in the house
+    /// files. They all cost credits, I can't be losing them."
+    ///
+    /// Every one of these files ALREADY survived relaunch. Not one of them was
+    /// reachable from here. A finished reel sat four navigation levels deep inside
+    /// Reel Studio, behind a sign-in gate, and even there only the newest one was
+    /// ever shown. The aerial was attached to the listing and restored correctly
+    /// with nothing on this screen that read as "your video is in here". The photo
+    /// studio's own grid is the one thing that worked, and this section copies it.
+    ///
+    /// NOT sign-in gated, deliberately: these are files on the agent's own phone
+    /// that he has already paid for, and an expired session is no reason to hide
+    /// them. Samples are excluded — a sample's files are the bundled demo's, not
+    /// his (`loadFiles`).
+    ///
+    /// WHAT THE SECOND PASS CHANGED, and why. Build 8 shipped it as a list of
+    /// rows whose only action was a LONG-PRESS. Reading it cold as a 55-year-old
+    /// agent who is not technical: the names were ours and not his ("Motion
+    /// clip"), the one thing he wants to do — get the video into his camera roll
+    /// — was an invisible gesture, "Saved to Photos" was a grey caption easy to
+    /// miss, and on a listing that had made nothing the whole card vanished, so
+    /// the screen that answers "where did my stuff go?" appeared only to people
+    /// who no longer needed to ask. All four are fixed here; the long-press menu
+    /// stays for anyone who already found it.
+    @ViewBuilder private var filesSection: some View {
+        // SHOWN EVEN WHEN EMPTY (on a real listing). It used to vanish entirely
+        // with no files, which meant the one screen that answers "where did my
+        // stuff go?" only appeared to people who already knew the answer. An
+        // empty FILES card that says what will land in it is the promise; a
+        // missing card is nothing at all. Samples still show none — a sample's
+        // files are the bundled demo's, not his (`loadFiles`).
+        if !currentListing.isSample {
+            VStack(alignment: .leading, spacing: 12) {
+                filesHeader
+                if mediaItems.isEmpty {
+                    // Gated on `filesStamp`, which is nil ONLY until the first
+                    // scan lands. The scan runs off the main thread now (the
+                    // build-9 lag report), so for the frame or two before its
+                    // first result arrives an empty `mediaItems` is not yet an
+                    // answer — and "Nothing here yet." is a claim, not a
+                    // placeholder. Build 8 scanned synchronously and so never
+                    // showed this card to a listing that had files; this keeps
+                    // that exactly true. Nothing about what the card SAYS or
+                    // how it looks changed, only when it is entitled to appear.
+                    if filesStamp != nil { filesEmpty }
+                } else {
+                    Text("Everything you've made for this \(space.spaceNoun), saved on this phone. Tap one to open it. Tap Save to put it in your Photos app.")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    ForEach(fileRows) { item in fileRow(item) }
+                    filePhotoGrid
+                }
+                if let filesNote { filesNoteRow(filesNote) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
+        }
+    }
+
+    private var filesHeader: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text("YOUR FILES").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Spacer(minLength: 8)
+            if !mediaItems.isEmpty {
+                Text("\(mediaItems.count) file\(mediaItems.count == 1 ? "" : "s")")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(Theme.inkDim)
+            }
+        }
+    }
+
+    /// Nothing made yet. Says what WILL appear here and that it is kept — which
+    /// is the whole anxiety this section exists to answer.
+    private var filesEmpty: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Nothing here yet.")
+                .font(.rpBody.weight(.semibold))
+                .foregroundStyle(Theme.ink)
+            Text("Everything you make with the tools above — reels, photos, a flyover, a floor plan — is saved here automatically and stays on this phone. You can put any of it in your Photos app with one tap.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The tour, the reels, the flyover, the moving photos and the floor plan —
+    /// one row each, the shape the photo studio's MOTION CLIPS card already uses.
+    private var fileRows: [ListingMediaItem] { mediaItems.filter { $0.kind != .photo } }
+
+    /// The photos, in the same two-up grid the photo studio shows them in.
+    private var filePhotos: [ListingMediaItem] { mediaItems.filter { $0.kind == .photo } }
+
+    @ViewBuilder private var filePhotoGrid: some View {
+        if !filePhotos.isEmpty {
+            LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                                GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                ForEach(filePhotos) { item in filePhotoCell(item) }
+            }
+        }
+    }
+
+    /// One file: tap the row to open it, tap the button on the right to save it.
+    ///
+    /// The row used to be a single Button with a chevron and a `contextMenu`, so
+    /// the ONLY way to get a reel into the camera roll from here was a long-press
+    /// — an invisible gesture most people over about forty have never been taught
+    /// and none of them will discover. The two controls are SIBLINGS in an HStack
+    /// rather than a button inside a button: SwiftUI's outer button swallows taps
+    /// meant for a nested one, which would have looked like the save button
+    /// simply not working.
+    private func fileRow(_ item: ListingMediaItem) -> some View {
+        HStack(spacing: 10) {
+            Button { openFile(item) } label: {
+                HStack(spacing: 12) {
+                    MediaThumb(item: item)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.title)
+                            .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                        Text(item.blurb)
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                        Text(item.dateLabel)
+                            .font(.caption2).foregroundStyle(Theme.inkDim)
+                            .lineLimit(1).minimumScaleFactor(0.8)
+                    }
+                    Spacer(minLength: 4)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(ScalePressStyle())
+            .accessibilityLabel(Text("\(item.title). \(item.blurb). \(item.dateLabel). Opens it."))
+            fileActionButton(item)
+        }
+        .padding(10)
+        .background(Theme.fillSubtle,
+                    in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .contextMenu { fileMenu(item) }
+    }
+
+    /// Save (everything that is a photo or a video) or Share (the 3D floor plan,
+    /// which Photos cannot hold). Labelled with a WORD, not just a glyph — an
+    /// arrow-into-a-tray means "save" only to people who already knew.
+    @ViewBuilder private func fileActionButton(_ item: ListingMediaItem) -> some View {
+        if item.savesToPhotos {
+            let done = savedFiles.contains(item.id)
+            Button { saveFileToPhotos(item) } label: {
+                filePill(done ? "Saved" : "Save",
+                         done ? "checkmark.circle.fill" : "square.and.arrow.down",
+                         done: done)
+            }
+            .buttonStyle(.plain)
+            .disabled(isSavingFile)
+            .accessibilityLabel(Text(done
+                ? "\(item.title) is in your Photos app"
+                : "Save \(item.title) to your Photos app"))
+        } else {
+            ShareLink(item: item.url) {
+                filePill("Share", "square.and.arrow.up", done: false)
+            }
+            .accessibilityLabel(Text("Share \(item.title)"))
+        }
+    }
+
+    /// A 60×52 target with the word under the glyph. Comfortably past the 44 pt
+    /// minimum in both directions.
+    private func filePill(_ title: String, _ icon: String, done: Bool) -> some View {
+        VStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.system(size: 17, weight: .semibold))
+            Text(title)
+                .font(.caption2.weight(.semibold))
+        }
+        .frame(width: 60, height: 52)
+        .foregroundStyle(done ? Theme.good : Theme.accent)
+        .background(done ? Theme.fillSubtle : Theme.accentSoft,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func filePhotoCell(_ item: ListingMediaItem) -> some View {
+        Button { openFile(item) } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                DetailPhotoThumb(url: item.url, height: 110)
+                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(Theme.border))
+                Text(item.dateLabel)
+                    .font(.caption2).foregroundStyle(Theme.inkDim)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+        }
+        .buttonStyle(ScalePressStyle())
+        // OUTSIDE the button's label, not inside it: an overlay applied here is a
+        // sibling above the button and gets its own taps. Inside the label it
+        // would be swallowed by the row's own gesture.
+        .overlay(alignment: .topTrailing) { photoSaveBadge(item) }
+        .accessibilityLabel(Text("Photo. \(item.dateLabel). Opens before and after."))
+        .contextMenu { fileMenu(item) }
+    }
+
+    /// The photo grid's save button. Small, because the cell is small — but a
+    /// real button in the corner of every picture beats a long-press nobody
+    /// performs.
+    private func photoSaveBadge(_ item: ListingMediaItem) -> some View {
+        let done = savedFiles.contains(item.id)
+        return Button { saveFileToPhotos(item) } label: {
+            Image(systemName: done ? "checkmark.circle.fill" : "square.and.arrow.down")
+                .font(.system(size: 15, weight: .bold))
+                .foregroundStyle(done ? Theme.good : Theme.accent)
+                .frame(width: 40, height: 40)
+                .background(.ultraThinMaterial, in: Circle())
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isSavingFile)
+        .padding(4)
+        .accessibilityLabel(Text(done ? "This photo is in your Photos app"
+                                      : "Save this photo to your Photos app"))
+    }
+
+    /// What happened to the last save, in a colour and with an icon rather than a
+    /// grey caption. "Saved to Photos" was true and easy to miss; naming the app
+    /// it landed in is the difference between a person finding it and a person
+    /// tapping Save a second time.
+    private func filesNoteRow(_ text: String) -> some View {
+        Label(text, systemImage: filesNoteOK ? "checkmark.circle.fill"
+                                             : "exclamationmark.triangle.fill")
+            .font(.rpBody.weight(.semibold))
+            .foregroundStyle(filesNoteOK ? Theme.good : Theme.warn)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(10)
+            .background(Theme.fillSubtle,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .accessibilityAddTraits(.isStaticText)
+    }
+
+    @ViewBuilder private func fileMenu(_ item: ListingMediaItem) -> some View {
+        // Kept as well as the buttons, not instead of them: somebody who already
+        // knows the long-press should still find it there.
+        if item.savesToPhotos {
+            Button { saveFileToPhotos(item) } label: {
+                Label("Save to Photos", systemImage: "square.and.arrow.down")
+            }
+        }
+        ShareLink(item: item.url) {
+            Label("Share", systemImage: "square.and.arrow.up")
+        }
+    }
+
+    private func openFile(_ item: ListingMediaItem) {
+        Haptics.selection()
+        openedFile = item
+    }
+
+    /// Copy one file into the user's Photos library. Videos and photo FILES take
+    /// different `PhotosLibrarySaver` calls — `saveImageFile` writes the exact
+    /// bytes rather than re-encoding, which matters when the "photo" is a
+    /// compliance original a broker may ask for (W2-C2).
+    private func saveFileToPhotos(_ item: ListingMediaItem) {
+        guard !isSavingFile else { return }
+        isSavingFile = true
+        filesNote = nil
+        let url = item.url
+        let isVideo = item.isVideo
+        let what = item.title
+        let id = item.id
+        let kind = item.kind.rawValue
+        Task {
+            do {
+                if isVideo {
+                    try await PhotosLibrarySaver.saveVideo(at: url)
+                } else {
+                    try await PhotosLibrarySaver.saveImageFile(at: url)
+                }
+                await MainActor.run {
+                    isSavingFile = false
+                    savedFiles.insert(id)
+                    filesNoteOK = true
+                    filesNote = "\(what) is now in your Photos app."
+                    Haptics.success()
+                    Analytics.track("file_saved", ["kind": kind, "ok": "true"])
+                }
+            } catch {
+                await MainActor.run {
+                    isSavingFile = false
+                    filesNoteOK = false
+                    filesNote = error.localizedDescription
+                    Analytics.track("file_saved", ["kind": kind, "ok": "false"])
+                }
+            }
+        }
+    }
+
+    /// Read the listing's files off disk. Samples are skipped: a sample's "tour"
+    /// is the bundled demo and its studios are disabled (decision A7), so listing
+    /// files for one would be a promise about media that is not the agent's.
+    ///
+    /// THE BUILD-9 LAG REPORT — "laggy as hell — that will kill the business".
+    /// This function is where that came from, and it was mine. Build 8 called a
+    /// `@MainActor` scan straight from `onAppear`, so before the listing screen
+    /// could draw a single pixel it ran, synchronously, on the main thread:
+    /// three `contentsOfDirectory` calls (one of them twice over the same
+    /// folder), a `fileExists` per photo looking for its "before", and a
+    /// creation-date stat per file — inside the sort comparators, so O(n log n)
+    /// of them. On the owner's listing, seventeen room tags and a large photo
+    /// set, that is comfortably over fifty synchronous filesystem calls in front
+    /// of the first frame, every single time this screen appeared.
+    ///
+    /// Three things changed, and only these three:
+    ///
+    /// 1. The scan runs on a background thread and comes back in ONE hop
+    ///    (`ListingMediaItem.scan`). Nothing about the list it produces changed.
+    /// 2. It is skipped entirely when nothing on disk has moved, which is the
+    ///    common case: `ScanStamp` is five modification dates, and an unchanged
+    ///    stamp returns nil and leaves `mediaItems` — and therefore every row's
+    ///    thumbnail task — exactly as they were.
+    /// 3. `force` says "a screen that could have written a file just closed",
+    ///    which skips the stamp check. Only the aerial sheet needs it: it can
+    ///    write a flyover AND, through its own Reel Studio cover, a reel.
+    ///
+    /// STALENESS is the thing this must not trade for speed, so the stamp covers
+    /// every writer: `reels/`, `Photos/<id>/` (photos AND motion clips),
+    /// `FloorPlans/`, the aerial's own file, and the rendered tour — which lives
+    /// at a path this screen doesn't own and is rewritten IN PLACE by a
+    /// re-render, hence its modification date and not merely its URL. The photo
+    /// studio, the floor-plan scanner and Reel Studio are all pushes, so their
+    /// pop-back runs the stamp check and picks up whatever they wrote.
+    private func loadFiles(force: Bool = false) {
+        let live = currentListing
+        guard !live.isSample else {
+            filesTask?.cancel()
+            filesTask = nil
+            filesStamp = nil
+            mediaItems = []
+            return
+        }
+        // Snapshot everything the scan needs HERE, on the main actor, so the
+        // scan itself never reaches back for the model or the view.
+        let request = ListingMediaItem.ScanRequest(listingID: live.id,
+                                                   tourURL: tour?.url,
+                                                   aerialRelPath: live.aerialRelPath,
+                                                   aerialGeneratedAt: live.aerialGeneratedAt)
+        let since = force ? nil : filesStamp
+        filesTask?.cancel()
+        filesTask = Task {
+            guard let scan = await ListingMediaItem.scan(request, since: since) else { return }
+            guard !Task.isCancelled else { return }
+            filesStamp = scan.stamp
+            // Only publish a list that is actually different. An equal array
+            // still invalidates `@State` and re-runs `body`, which on this screen
+            // means re-laying out every file row for no reason.
+            if scan.items != mediaItems { mediaItems = scan.items }
         }
     }
 
@@ -1065,11 +1709,20 @@ struct FlythroughDetailView: View {
 
     // MARK: - Actions
 
-    /// Publish the EXISTING local render (no re-render) — decision A2. Sign-in
-    /// gate first; progress + the server's real error inline.
+    /// Publish the EXISTING local render (no re-render). Retain this tap while
+    /// the anonymous connection is recovered; registration is never required.
     private func publishNow() {
         guard !isPublishing, tour != nil, !currentListing.isSample else { return }
-        if needsSignIn { showSignIn = true; return }
+        connection.run { publishWithSession() }
+    }
+
+    private func publishWithSession() {
+        guard !isPublishing, tour != nil, !currentListing.isSample else { return }
+        // The toggle above the button is the answer whether or not it was
+        // touched: it is drawn at the workspace's own default, so publishing
+        // without touching it has to mean what it says on screen. A no-op when
+        // the listing already carries this answer.
+        model.setSearchIndexing(listOnGoogle, for: listing.id)
         isPublishing = true
         publishFailure = nil
         Haptics.selection()
@@ -1426,7 +2079,7 @@ struct MapPin: Identifiable {
 
 /// A failure the AI/publish sheets can act on (decision A12): the server's own
 /// message when there is one, plus the status class so the UI can offer the
-/// right next step — "Upgrade plan" on 402, "Sign in" on 401, "try again in a
+/// right next step — "Upgrade plan" on 402, "Retry connection" on 401, "try again in a
 /// few minutes" on 429.
 private struct AIFailure: Identifiable {
     let id = UUID()
@@ -1446,7 +2099,9 @@ private struct AIFailure: Identifiable {
             if case .server(_, _, let m) = api { text = m.trimmingCharacters(in: .whitespacesAndNewlines) }
             if text.isEmpty { text = (api.errorDescription ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
             if text.isEmpty { text = "Something went wrong. Please try again." }
-            message = text
+            message = api.isUnauthorized
+                ? "The connection to your workspace needs to be restored. Your work is still here."
+                : AIFailure.humanReadable(text)
             isQuota = api.isQuota
             isUnauthorized = api.isUnauthorized
             isRateLimited = api.isRateLimited
@@ -1472,6 +2127,49 @@ private struct AIFailure: Identifiable {
         isRateLimited = false
     }
 
+    /// Re-word a failure WITHOUT losing what class of failure it is.
+    ///
+    /// A batch of seventeen declutters that stops on a 402 has to say "9 of 17
+    /// changed" AND still offer Upgrade plan — `init(message:)` would drop
+    /// `isQuota` and leave the alert with an OK button and no way forward, which
+    /// is the worst of both. Copies the three flags verbatim; only the words
+    /// change.
+    init(_ other: AIFailure, title: String? = nil, message: String) {
+        self.title = title ?? other.title
+        self.message = message
+        isQuota = other.isQuota
+        isUnauthorized = other.isUnauthorized
+        isRateLimited = other.isRateLimited
+    }
+
+    /// Server messages are written for a person and are shown verbatim —
+    /// unless the server forwarded a PROVIDER'S message, which is not.
+    ///
+    /// An agent was shown this, in an alert, on top of their listing:
+    ///
+    ///     fal HTTP 422: {"detail":[{"type":"missing","loc":["body","mask_url"],
+    ///     "msg":"Field required","input":{"prompt":"Remove all clutter...
+    ///
+    /// The route behind it is fixed, but the leak is the general problem: any
+    /// provider, any day, can hand us a stack trace and this alert will print
+    /// it. So anything that reads as machine output is replaced here with plain
+    /// words. The original still reaches the log, where it belongs — this
+    /// changes what the AGENT sees, never what we can debug from.
+    ///
+    /// Deliberately conservative: it only fires on shapes no human sentence
+    /// has (a JSON body, a bracketed key path, an "HTTP <code>:" prefix), so a
+    /// real server sentence — "Pick the photos for your reel first" — is
+    /// untouched.
+    static func humanReadable(_ text: String) -> String {
+        let looksMachine =
+            text.contains("{\"") || text.contains("[{") ||
+            text.range(of: #"HTTP \d{3}"#, options: .regularExpression) != nil ||
+            text.contains("\"detail\"") || text.contains("Traceback")
+        guard looksMachine else { return text }
+        return "The AI service refused that request. Nothing was charged for it \u{2014} try again, "
+             + "and if it keeps happening tell us which change you picked."
+    }
+
     /// Transport failures that mean "no network", not "the server said no".
     static func isOffline(_ error: Error) -> Bool {
         guard let urlError = error as? URLError else { return false }
@@ -1485,7 +2183,7 @@ private struct AIFailure: Identifiable {
     /// One-line next step for the status class (empty when there is none).
     var actionHint: String {
         if isQuota { return "This month's allowance for this feature is used up." }
-        if isUnauthorized { return "Your session expired — sign in to continue." }
+        if isUnauthorized { return "The connection to your workspace needs to be restored. Your work is still here." }
         if isRateLimited { return "Try again in a few minutes." }
         return ""
     }
@@ -1497,8 +2195,8 @@ private struct AIFailure: Identifiable {
 }
 
 /// Loud, unmissable failure card with the right next step: the server's message,
-/// Upgrade plan on 402 (opens the pricing page — no prices in-app), Sign in on
-/// 401, wait on 429, otherwise the caller's retry hint.
+/// Upgrade plan on 402, reconnect on 401, wait on 429, otherwise the caller's
+/// retry hint. A failed connection never opens Apple registration.
 private struct AIFailureCard: View {
     let failure: AIFailure
     var retryHint: String = "Adjust the settings and try again."
@@ -1506,7 +2204,7 @@ private struct AIFailureCard: View {
     /// A `plan_entitlements` key — renders | photo_edits | reels | aerials |
     /// drone. Empty = the generic "monthly allowance" wording.
     var quotaFeature: String = ""
-    var onSignIn: () -> Void = {}
+    var onReconnect: () -> Void = {}
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -1538,8 +2236,8 @@ private struct AIFailureCard: View {
                 Text(failure.actionHint)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
-                Button { onSignIn() } label: {
-                    Label("Sign in", systemImage: "person.crop.circle")
+                Button { onReconnect() } label: {
+                    Label("Retry connection", systemImage: "arrow.clockwise")
                         .font(.rpBody.weight(.semibold))
                         .frame(maxWidth: .infinity).padding(.vertical, 12)
                         .background(Theme.accentSoft).foregroundStyle(Theme.accent)
@@ -1860,12 +2558,710 @@ private enum QRCodeMaker {
     }
 }
 
+// MARK: - Listing files (one item type for everything a listing produced)
+
+/// One thing a listing has made, whatever kind of thing it is, so the listing
+/// screen's FILES section can show reels, the aerial intro, AI photos, motion
+/// clips, the floor plan and the rendered tour in one list.
+///
+/// Deliberately thin — identity, a file URL and a date. Every list it is built
+/// from already exists (`ReelStudioView.reelFiles`, `EnhancedPhoto.loadAll`,
+/// `PhotoStudioView.SavedClip.loadAll`, `Listing.aerialURL`, `AppModel.tours`)
+/// and this type only UNIFIES them for display; it is not a second source of
+/// truth about what is on disk.
+/// `Sendable` since the build-9 lag report: the scan that builds these runs
+/// on a background thread and hands the finished array to the main actor in one
+/// hop, and every stored property here is already a value type.
+struct ListingMediaItem: Identifiable, Hashable, Sendable {
+    enum Kind: String, Hashable, Sendable {
+        case tour, reel, aerial, motionClip, photo, floorPlan
+    }
+
+    /// Unique within one listing's list — prefixed by kind so a reel file and a
+    /// photo id can never collide inside a `ForEach`.
+    let id: String
+    let kind: Kind
+    let url: URL
+    /// The untouched "before" beside an AI-edited photo, when there is a separate
+    /// one. Nil for every other kind, and nil for a photo that is its own before.
+    let originalURL: URL?
+    let createdAt: Date
+
+    /// True when opening this plays something rather than showing it.
+    var isVideo: Bool {
+        switch kind {
+        case .tour, .reel, .aerial, .motionClip: return true
+        case .photo, .floorPlan:                 return false
+        }
+    }
+
+    /// What this file is called, in the words the agent would use.
+    ///
+    /// "Motion clip" and "Aerial intro" were OUR words for it — a feature name
+    /// and a pipeline stage. A person who made one of these an hour ago and is
+    /// now looking for it is thinking "the moving photo" and "the flyover", and
+    /// the possessive matters more than it looks: the complaint that started this
+    /// section was "I don't have any of the photos or videos I made saved", and
+    /// "Your reel" answers it in two words where "Reel" does not.
+    var title: String {
+        switch kind {
+        case .tour:       return "Your walkthrough tour"
+        case .reel:       return "Your reel"
+        case .aerial:     return "Your flyover opening"
+        case .motionClip: return "Moving photo"
+        case .photo:      return "Your photo"
+        case .floorPlan:  return "Your floor plan"
+        }
+    }
+
+    /// One plain line saying what this file is FOR — the agent should not have to
+    /// remember which studio made which file, and "what do I do with it" is the
+    /// question a file list actually has to answer.
+    var blurb: String {
+        switch kind {
+        case .tour:       return "The tour people scroll through"
+        case .reel:       return "Post it to Instagram, TikTok or YouTube"
+        case .aerial:     return "The flyover that opens your reel"
+        case .motionClip: return "One photo, turned into video"
+        case .photo:      return "Edited in AI Photo Studio"
+        case .floorPlan:  return "A 3D scan you can spin around"
+        }
+    }
+
+    /// A 3D scan is not a Photos asset, so the only honest action for one is
+    /// Share. Everything else goes to the camera roll, and the button says so.
+    var savesToPhotos: Bool { kind != .floorPlan }
+
+    var icon: String {
+        switch kind {
+        case .tour:       return "play.rectangle.fill"
+        case .reel:       return "film.stack"
+        case .aerial:     return "airplane.departure"
+        case .motionClip: return "play.rectangle.on.rectangle"
+        case .photo:      return "photo"
+        case .floorPlan:  return "cube.transparent"
+        }
+    }
+
+    /// The feature's signature gradient — the same one the tool wears in the
+    /// TOOLBOX grid and on Home, so a file is recognisably from that tool.
+    ///
+    /// A plain computed property on a plain struct: `RPGradient` is not isolated,
+    /// and neither is this, so a non-isolated thumbnail view can read it.
+    var gradient: LinearGradient {
+        switch kind {
+        case .tour, .reel, .motionClip: return RPGradient.reel
+        case .aerial:                   return RPGradient.aerial
+        case .photo:                    return RPGradient.photo
+        case .floorPlan:                return RPGradient.plan
+        }
+    }
+
+    /// "Made 4 Sep at 2:15 PM", or a neutral line when the filesystem has no
+    /// creation date — same wording as `ReelStudioView.reelDateLabel`.
+    var dateLabel: String {
+        guard createdAt != .distantPast else { return "Saved on this phone" }
+        return "Made \(createdAt.formatted(date: .abbreviated, time: .shortened))"
+    }
+}
+
+/// One directory entry plus the ONE attribute this screen sorts on, read once.
+///
+/// THE BUILD-9 LAG REPORT, in the owner's words: "laggy as hell — that will kill
+/// the business". The cause was mine. Every list on this screen used to read a
+/// file's creation date with `url.resourceValues(forKeys:)` INSIDE its sort
+/// comparator, so a folder of n files cost O(n log n) stat syscalls to sort and
+/// then another n to build the rows — and all of it ran on the main actor before
+/// the screen could draw. Reading the date once, into a value, and sorting on
+/// that value is the whole fix; `DiskScan.entries` is the only place that reads
+/// it. `Sendable` because a finished scan crosses back to the main actor.
+private struct DatedFile: Sendable {
+    let url: URL
+    /// `lastPathComponent`, kept so a filter or a tie-break never re-derives it.
+    let name: String
+    let createdAt: Date
+}
+
+/// An `EnhancedPhoto` carrying the creation date the directory read already
+/// produced. A named type rather than a tuple so `EnhancedPhoto.loadAll` can
+/// keep returning plain `[EnhancedPhoto]` for its four existing callers while
+/// the listing screen's FILES scan gets the date for free.
+private struct DatedPhoto {
+    let photo: EnhancedPhoto
+    let createdAt: Date
+}
+
+/// The listing screen's directory reads, in one nonisolated place.
+///
+/// NONISOLATED ON PURPOSE, and file-scope rather than nested inside any `View`:
+/// the whole point of this type is that it can be called from a background task.
+/// A `@MainActor` static reached from a non-isolated context is the exact bug
+/// class the Mac build caught once already (`GearStore.normalizedASIN`), and a
+/// helper that lives inside a `View` is isolated whether or not anybody meant it
+/// to be. Nothing in here touches the model, the view, or any global state.
+private enum DiskScan {
+    /// Every entry in `dir`, with its creation date.
+    ///
+    /// `includingPropertiesForKeys: [.creationDateKey]` is not decoration: it
+    /// makes the filesystem hand the dates back WITH the listing, so the
+    /// `resourceValues` read below is served from the values the enumeration
+    /// already prefetched onto each URL instead of costing a stat per file.
+    /// A missing directory is an empty list, never an error.
+    nonisolated static func entries(of dir: URL) -> [DatedFile] {
+        let urls = (try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: [.creationDateKey])) ?? []
+        return urls.map { url in
+            DatedFile(url: url,
+                      name: url.lastPathComponent,
+                      createdAt: createdAt(of: url))
+        }
+    }
+
+    /// A file's creation date, or `.distantPast` when the filesystem has none —
+    /// which `ListingMediaItem.dateLabel` prints as "Saved on this phone".
+    nonisolated static func createdAt(of url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+    }
+
+    /// A directory's (or file's) modification date, or nil when it isn't there.
+    ///
+    /// This is the whole of the "has anything changed?" test. Adding, removing
+    /// or renaming an entry bumps its directory's modification date, and every
+    /// writer in this app either moves a finished file in or writes it
+    /// atomically (which is a rename), so a new reel, photo, clip or plan always
+    /// shows up here. Overwriting a file's BYTES in place does not bump it — and
+    /// must not: the row's identity, url and creation date are all unchanged,
+    /// and the picture itself is the thumbnail cache's problem, not this list's.
+    nonisolated static func modifiedAt(of url: URL) -> Date? {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+    }
+
+    /// Newest first, ties broken by name — the order every list on this screen
+    /// has always used, now sorting on a date that was read once.
+    nonisolated static func newestFirst(_ files: [DatedFile]) -> [DatedFile] {
+        files.sorted { a, b in
+            a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.name > b.name
+        }
+    }
+
+    /// `clip-*.mp4` in a listing's photo folder, newest first, from a directory
+    /// listing the caller already has. `PhotoStudioView.SavedClip.loadAll` and
+    /// the listing screen's own scan both come through here, so there is one
+    /// glob rather than two — and the listing screen reads `Photos/<id>/` ONCE
+    /// for the clips AND the photos instead of twice.
+    nonisolated static func motionClips(in entries: [DatedFile]) -> [DatedFile] {
+        newestFirst(entries.filter {
+            $0.name.hasPrefix("clip-") && $0.url.pathExtension.lowercased() == "mp4"
+        })
+    }
+}
+
+extension ListingMediaItem {
+    /// Everything a scan needs from the main actor, snapshotted BEFORE it hops
+    /// off. Plain values, every one of them.
+    ///
+    /// This type is the isolation boundary. Build 8 had `loadAll` marked
+    /// `@MainActor` precisely because it reached for statics that were isolated,
+    /// and that annotation is what put fifty-odd filesystem calls in front of the
+    /// first frame. Moving the work off the main actor means the work can no
+    /// longer ASK the model or the view for anything, so everything it needs is
+    /// copied in here first — including the aerial as its Documents-relative
+    /// path rather than as `Listing.aerialURL`, because that property stats the
+    /// file and the stat belongs on the scanning thread.
+    struct ScanRequest: Sendable, Equatable {
+        var listingID: UUID
+        var tourURL: URL?
+        var aerialRelPath: String?
+        var aerialGeneratedAt: Date?
+    }
+
+    /// The cheap answer to "is another scan worth running?".
+    ///
+    /// `onAppear` fires on every push AND every pop back, so walking into AI
+    /// Photo Studio and straight back out used to re-read every directory this
+    /// listing owns for a list that had not changed by one byte. This is five
+    /// modification dates: the four folders a listing's media can appear in, plus
+    /// the rendered tour, which lives at a path this screen does not own and is
+    /// REWRITTEN AT THE SAME PATH by a re-render. The request itself is part of
+    /// the stamp because a new aerial changes the model, not a directory we watch.
+    struct ScanStamp: Sendable, Equatable {
+        var request: ScanRequest
+        var tour: Date?
+        var aerial: Date?
+        var reels: Date?
+        var photos: Date?
+        var plans: Date?
+    }
+
+    /// A finished scan and the stamp that produced it, moved to the main actor
+    /// in ONE hop.
+    struct Scan: Sendable {
+        var items: [ListingMediaItem]
+        var stamp: ScanStamp
+    }
+
+    /// Everything this listing has on disk, newest first — read off the main
+    /// actor. Nil means "nothing has changed since `previous`, keep what you have".
+    ///
+    /// `Task.detached` rather than a bare `nonisolated func`: a non-isolated
+    /// `async` function's executor is a moving target across language modes and
+    /// build settings (Swift 6.2's approachable-concurrency default runs one on
+    /// the CALLER's actor), and this call must land on a background thread under
+    /// every one of them. It is also the pattern already shipping three feet
+    /// further down this file — `AIImagePrep.jpegBase64`, `ImageThumbnails.load`
+    /// — so there is one way of getting off the main actor here, not two.
+    nonisolated static func scan(_ request: ScanRequest,
+                                 since previous: ScanStamp?) async -> Scan? {
+        await Task.detached(priority: .userInitiated) {
+            ListingMediaItem.scanNow(request, since: previous)
+        }.value
+    }
+
+    /// The synchronous body of `scan`. Never call this on the main actor.
+    nonisolated static func scanNow(_ request: ScanRequest,
+                                    since previous: ScanStamp?) -> Scan? {
+        let stamp = currentStamp(for: request)
+        if let previous, previous == stamp { return nil }
+        return Scan(items: scannedItems(for: request), stamp: stamp)
+    }
+
+    private nonisolated static var reelsDirectory: URL {
+        FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+    }
+
+    private nonisolated static var floorPlansDirectory: URL {
+        FileStore.documents.appendingPathComponent("FloorPlans", isDirectory: true)
+    }
+
+    private nonisolated static func currentStamp(for request: ScanRequest) -> ScanStamp {
+        // Written out longhand rather than as one nested expression: this file
+        // has hit the type-checker's expression budget before, and a stamp is
+        // read on every appearance of the screen.
+        var tour: Date?
+        if let tourURL = request.tourURL {
+            tour = DiskScan.modifiedAt(of: tourURL)
+        }
+        var aerial: Date?
+        if let relPath = request.aerialRelPath {
+            aerial = DiskScan.modifiedAt(of: FileStore.url(fromRelativePath: relPath))
+        }
+        let reels = DiskScan.modifiedAt(of: reelsDirectory)
+        let photos = DiskScan.modifiedAt(of: EnhancedPhoto.directory(for: request.listingID))
+        let plans = DiskScan.modifiedAt(of: floorPlansDirectory)
+        return ScanStamp(request: request, tour: tour, aerial: aerial,
+                         reels: reels, photos: photos, plans: plans)
+    }
+
+    /// The list itself. Identical in content and order to what build 8 built on
+    /// the main actor — same globs, same ids, same newest-first ordering, same
+    /// "the aerial's own generated-at beats the file's date" rule. The only
+    /// changes are WHERE it runs and how many syscalls it costs.
+    private nonisolated static func scannedItems(for request: ScanRequest) -> [ListingMediaItem] {
+        let fm = FileManager.default
+        var items: [ListingMediaItem] = []
+
+        if let tourURL = request.tourURL, fm.fileExists(atPath: tourURL.path) {
+            items.append(ListingMediaItem(id: "tour", kind: .tour, url: tourURL,
+                                          originalURL: nil,
+                                          createdAt: DiskScan.createdAt(of: tourURL)))
+        }
+        // EVERY reel, not just the newest — the old "YOUR LAST REEL" card showed
+        // one, four screens deep, and pruning quietly ate the rest.
+        for reel in ReelStudioView.datedReelFiles(for: request.listingID) {
+            items.append(ListingMediaItem(id: "reel-\(reel.name)", kind: .reel,
+                                          url: reel.url, originalURL: nil,
+                                          createdAt: reel.createdAt))
+        }
+        // The aerial is attached to the listing and carries its own generated-at
+        // date, which is truer than the file's when a restore rewrote the file.
+        if let relPath = request.aerialRelPath {
+            let aerial = FileStore.url(fromRelativePath: relPath)
+            if fm.fileExists(atPath: aerial.path) {
+                items.append(ListingMediaItem(id: "aerial-\(aerial.lastPathComponent)",
+                                              kind: .aerial, url: aerial, originalURL: nil,
+                                              createdAt: request.aerialGeneratedAt
+                                                  ?? DiskScan.createdAt(of: aerial)))
+            }
+        }
+        // ONE read of Photos/<listingID>/ for both the motion clips and the
+        // photos. Build 8 enumerated that folder twice — once inside
+        // `SavedClip.loadAll` and once inside `EnhancedPhoto.loadAll` — and then
+        // asked the filesystem whether an `orig-` sibling existed once PER PHOTO.
+        // On a twenty-photo listing that alone was twenty-two syscalls for
+        // information the first listing already contained.
+        let photoDirectory = EnhancedPhoto.directory(for: request.listingID)
+        let photoEntries = DiskScan.entries(of: photoDirectory)
+        for clip in DiskScan.motionClips(in: photoEntries) {
+            items.append(ListingMediaItem(id: "clip-\(clip.name)", kind: .motionClip,
+                                          url: clip.url, originalURL: nil,
+                                          createdAt: clip.createdAt))
+        }
+        for entry in EnhancedPhoto.dated(in: photoEntries, directory: photoDirectory) {
+            let photo = entry.photo
+            let separateOriginal = photo.originalURL.standardizedFileURL
+                != photo.enhancedURL.standardizedFileURL
+            items.append(ListingMediaItem(id: "photo-\(photo.id)", kind: .photo,
+                                          url: photo.enhancedURL,
+                                          originalURL: separateOriginal ? photo.originalURL : nil,
+                                          createdAt: entry.createdAt))
+        }
+        let plan = floorPlansDirectory
+            .appendingPathComponent("\(request.listingID.uuidString).usdz")
+        if fm.fileExists(atPath: plan.path) {
+            items.append(ListingMediaItem(id: "plan", kind: .floorPlan, url: plan,
+                                          originalURL: nil,
+                                          createdAt: DiskScan.createdAt(of: plan)))
+        }
+
+        return items.sorted { a, b in
+            a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
+        }
+    }
+}
+
+/// First-frame posters for the FILES rows, memoized in memory. Same
+/// `AVAssetImageGenerator` recipe `PosterMaker` uses for the hosted page, at row
+/// size. File scope and un-isolated on purpose: it is awaited from a `.task` and
+/// must be free to do its work off the main actor.
+private enum VideoPosters {
+    private static let cache: NSCache<NSString, UIImage> = {
+        let c = NSCache<NSString, UIImage>()
+        c.countLimit = 120
+        c.totalCostLimit = 24 * 1024 * 1024
+        return c
+    }()
+
+    /// Keyed by path + MODIFICATION DATE + size, exactly the way
+    /// `ImageThumbnails.key` is (`Support/FileStore.swift`) rather than by path
+    /// alone. That is not tidiness: the rendered tour is rewritten AT THE SAME
+    /// PATH by every re-render, so a path-only key served the PREVIOUS render's
+    /// first frame for the rest of the process's life. One `attributesOfItem`
+    /// per lookup buys that correctness, and it is the same one stat the photo
+    /// rows already pay through `ImageThumbnails.cached`.
+    private static func key(_ url: URL, maxPixel: CGFloat) -> NSString {
+        let mtime = (try? FileManager.default.attributesOfItem(atPath: url.path)[.modificationDate] as? Date)
+            .flatMap { $0 }?.timeIntervalSince1970 ?? 0
+        return "\(url.path)|\(Int(mtime))|\(Int(maxPixel))" as NSString
+    }
+
+    /// Cached poster if one was already generated (synchronous, main-thread
+    /// safe) — the no-flash fast path `MediaThumb` takes before it awaits.
+    static func cached(_ url: URL, maxPixel: CGFloat) -> UIImage? {
+        cache.object(forKey: key(url, maxPixel: maxPixel))
+    }
+
+    /// A frame a quarter-second in, scaled to `maxPixel`. Nil when the file
+    /// cannot be read — the caller then keeps the kind's gradient tile, which is
+    /// an honest thumbnail for a video that will not open.
+    ///
+    /// GATED (the build-9 lag report). Every video row starts its own `.task` on
+    /// appear, so a listing with a tour, three reels, a flyover and two moving
+    /// photos fired seven `AVAssetImageGenerator`s at once. Each one opens a
+    /// file, parses a container and decodes an H.264 keyframe; seven of those
+    /// competing is exactly the "scrolling is laggy" the owner is describing,
+    /// because they saturate the same cores the scroll is running on. Two at a
+    /// time fills the visible rows in the same wall-clock time without owning
+    /// the machine — the rows above the fold still land first, in order.
+    ///
+    /// The cache probe happens BEFORE the gate on purpose: a poster we already
+    /// have must never queue behind a decode.
+    static func poster(for url: URL, maxPixel: CGFloat) async -> UIImage? {
+        if let hit = cached(url, maxPixel: maxPixel) { return hit }
+        await PosterGate.shared.acquire()
+        let image = await generate(url, maxPixel: maxPixel)
+        await PosterGate.shared.release()
+        guard let image else { return nil }
+        cache.setObject(image, forKey: key(url, maxPixel: maxPixel),
+                        cost: Int(image.size.width * image.size.height * 4))
+        return image
+    }
+
+    /// The decode itself, unchanged from build 8 — same time, same tolerances,
+    /// same `maximumSize`. Only the queueing around it is new.
+    private static func generate(_ url: URL, maxPixel: CGFloat) async -> UIImage? {
+        let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
+        generator.appliesPreferredTrackTransform = true
+        generator.maximumSize = CGSize(width: maxPixel, height: maxPixel)
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 1, preferredTimescale: 600)
+        generator.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+        guard let result = try? await generator.image(at: CMTime(seconds: 0.25, preferredTimescale: 600))
+        else { return nil }
+        return UIImage(cgImage: result.image)
+    }
+}
+
+/// How many poster decodes may be in flight at once.
+///
+/// An `actor` rather than a `DispatchSemaphore`: a semaphore's `wait()` BLOCKS
+/// the thread it is called on, and blocking a cooperative-pool thread to wait
+/// for other work on that same pool is how you get a stall that looks exactly
+/// like the bug this file is fixing. `acquire()` suspends instead, so the thread
+/// goes and does something else.
+///
+/// Deliberately NOT cancellation-aware. A waiter whose row disappeared still
+/// gets its slot, still decodes, and still fills the cache — which is what the
+/// next appearance of that row wants anyway. The queue therefore always drains:
+/// every acquirer reaches `release()`, and `release()` hands the slot straight
+/// to the next waiter rather than dropping it. A gate that could strand a
+/// waiter would leave a thumbnail permanently blank, and a wrong thumbnail is
+/// worse than a slow one.
+private actor PosterGate {
+    static let shared = PosterGate(limit: 2)
+
+    private let limit: Int
+    private var active = 0
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    init(limit: Int) { self.limit = limit }
+
+    func acquire() async {
+        if active < limit {
+            active += 1
+            return
+        }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            waiting.append(continuation)
+        }
+    }
+
+    func release() {
+        if waiting.isEmpty {
+            active -= 1
+        } else {
+            // Hand this slot over rather than freeing and re-taking it: `active`
+            // is already counting the waiter that is about to run.
+            waiting.removeFirst().resume()
+        }
+    }
+}
+
+/// The thumbnail for one FILES row: the video's real first frame, or the photo
+/// itself, with the kind's gradient tile underneath until (or unless) that loads.
+/// Modelled on `DetailPhotoThumb` — nothing decodes inside `body`.
+private struct MediaThumb: View {
+    let item: ListingMediaItem
+    var side: CGFloat = 44
+    var corner: CGFloat = 10
+    @State private var image: UIImage?
+
+    var body: some View {
+        // Same construction as `DetailPhotoThumb` (a fixed-size clear base with
+        // the picture as an OVERLAY, so a `scaledToFill` image cannot grow the
+        // row) over the same gradient tile `clipsCard` uses for its icon.
+        Color.clear
+            .frame(width: side, height: side)
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Image(systemName: item.icon)
+                        .font(.system(size: side * 0.36, weight: .semibold))
+                        .symbolRenderingMode(.hierarchical)
+                        .foregroundStyle(Color.white)
+                }
+            }
+            .background(item.gradient,
+                        in: RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .overlay(alignment: .bottomTrailing) {
+                if item.isVideo, image != nil {
+                    Image(systemName: "play.circle.fill")
+                        .font(.system(size: side * 0.3))
+                        .foregroundStyle(Color.white)
+                        .shadow(color: Color.black.opacity(0.4), radius: 2)
+                        .padding(2)
+                }
+            }
+            .task(id: item.url) { await load() }
+    }
+
+    private func load() async {
+        if item.isVideo {
+            // Same two-step the photo branch below already uses: take a poster we
+            // already have SYNCHRONOUSLY so a row that has been on screen before
+            // paints its real frame immediately, and only suspend (and queue
+            // behind `PosterGate`) when there is genuinely a decode to do.
+            if let hit = VideoPosters.cached(item.url, maxPixel: side * 3) {
+                image = hit
+            } else {
+                image = await VideoPosters.poster(for: item.url, maxPixel: side * 3)
+            }
+        } else if item.kind == .photo {
+            if let hit = ImageThumbnails.cached(item.url, maxPixel: 400) {
+                image = hit
+            } else {
+                image = await ImageThumbnails.load(item.url, maxPixel: 400)
+            }
+        }
+    }
+}
+
+/// Play, save and share one video from the listing's FILES section — the same
+/// three things Reel Studio's finished-reel screen offers, opened straight off
+/// the listing. In the 4,000 sq ft field test there was no way to reach a
+/// finished reel or aerial from this screen at all.
+private struct ListingFilePreview: View {
+    let item: ListingMediaItem
+    @Environment(\.dismiss) private var dismiss
+    @State private var player: AVPlayer?
+    @State private var saved = false
+    @State private var isSaving = false
+    @State private var saveError: String?
+
+    private var saveButtonTitle: String {
+        if saved { return "Saved to your Photos app" }
+        return isSaving ? "Saving…" : "Save to Photos"
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing: 14) {
+                    if let player {
+                        VideoPlayer(player: player)
+                            .frame(height: 420)
+                            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                            .onAppear { player.play() }
+                    }
+                    Text("\(item.blurb) · \(item.dateLabel)")
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.inkDim)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button { save() } label: {
+                        Label(saveButtonTitle,
+                              systemImage: saved ? "checkmark.circle.fill" : "square.and.arrow.down")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 16)
+                            .background(saved ? Theme.good : Theme.accent)
+                            .foregroundStyle(Color.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    .disabled(saved || isSaving)
+                    // Names the APP it landed in. "Saved to Photos" is true and
+                    // reads to a lot of people as "saved, somewhere" — the whole
+                    // point of the tap is that they can now go and post it.
+                    if saved {
+                        Text("Open the Photos app to post it.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                    ShareLink(item: item.url) {
+                        Label("Share", systemImage: "square.and.arrow.up")
+                            .font(.rpBody.weight(.semibold))
+                            .frame(maxWidth: .infinity).padding(.vertical, 13)
+                            .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    }
+                    if let saveError {
+                        Text(saveError)
+                            .font(.rpCaption).foregroundStyle(Theme.warn)
+                            .multilineTextAlignment(.center)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    // An aerial is synthetic footage and says so EVERYWHERE it is
+                    // shown, this screen included (W2-C4). The server's own
+                    // sentence lives with the clip's meta; this is the same
+                    // fallback `AerialIntroSheet` prints when it has none.
+                    if item.kind == .aerial {
+                        Label(AIVideoJob.aerialFallbackDisclosure,
+                              systemImage: "exclamationmark.shield.fill")
+                            .font(.rpCaption.weight(.semibold))
+                            .foregroundStyle(Theme.warn)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Theme.fillSubtle,
+                                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    }
+                }
+                .padding()
+            }
+            .background(Theme.bg)
+            .navigationTitle(item.title)
+            .navigationBarTitleDisplayMode(.inline)
+            .askAI(.files)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Done") {
+                        player?.pause()
+                        dismiss()
+                    }
+                }
+            }
+        }
+        .onAppear { if player == nil { player = AVPlayer(url: item.url) } }
+        .onDisappear { player?.pause() }
+    }
+
+    private func save() {
+        guard !isSaving else { return }
+        isSaving = true
+        saveError = nil
+        let url = item.url
+        Task {
+            do {
+                try await PhotosLibrarySaver.saveVideo(at: url)
+                await MainActor.run {
+                    isSaving = false
+                    saved = true
+                    Haptics.success()
+                }
+            } catch {
+                await MainActor.run {
+                    isSaving = false
+                    saveError = error.localizedDescription
+                }
+            }
+        }
+    }
+}
+
+/// One full-screen cover for every kind of file, so the listing screen grows a
+/// single presentation modifier rather than three (this file has hit the
+/// type-checker's expression budget before, and `body` is already long).
+/// Each branch is a viewer that already exists and already works.
+private struct ListingFileViewer: View {
+    let item: ListingMediaItem
+
+    var body: some View {
+        switch item.kind {
+        case .photo:
+            // The photo studio's own before/after view, unchanged. A photo with no
+            // separate "before" on disk is its own before, exactly as
+            // `EnhancedPhoto.loadAll` records it.
+            PhotoCompareView(photo: EnhancedPhoto(id: item.id,
+                                                  originalURL: item.originalURL ?? item.url,
+                                                  enhancedURL: item.url))
+        case .floorPlan:
+            // The same QuickLook presentation FloorPlanView uses for the USDZ.
+            NavigationStack {
+                USDZQuickLook(url: item.url)
+                    .ignoresSafeArea()
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .cancellationAction) { FileViewerDoneButton() }
+                    }
+            }
+        default:
+            ListingFilePreview(item: item)
+        }
+    }
+}
+
+/// QuickLook has no Done button of its own inside a cover; this is the one
+/// FloorPlanView puts there, factored out so the switch above stays short.
+private struct FileViewerDoneButton: View {
+    @Environment(\.dismiss) private var dismiss
+    var body: some View { Button("Done") { dismiss() } }
+}
+
 // MARK: - Photo studio (phone photos → pro listing images)
 // Deterministic, on-device, zero-cost enhancement (shadow lift, vibrance,
 // contrast, sharpen) plus AI edits through `/ai-photo`. Files live per-listing
 // in Documents/Photos/<listingID>/ (enh-<id>.jpg + orig-<id>.jpg pairs).
 
-struct EnhancedPhoto: Identifiable, Hashable {
+struct EnhancedPhoto: Identifiable, Hashable, Sendable {
     let id: String
     let originalURL: URL
     let enhancedURL: URL
@@ -1881,50 +3277,204 @@ extension EnhancedPhoto {
     /// file creation date (mixing UUID and timestamp ids reordered AI edits vs
     /// ingests unpredictably across relaunches); `orig-<id>.jpg` beside an
     /// `enh-<id>.jpg` is the "before", else the photo is its own before.
-    static func loadAll(listingID: UUID) -> [EnhancedPhoto] {
-        let fm = FileManager.default
+    ///
+    /// SIGNATURE UNCHANGED, deliberately. `PhotoStudioView.loadExisting`, the
+    /// Reel Studio hand-off and `CoachModel.photoCounts` all call this
+    /// synchronously and none of them wanted an `await`; the build-9 lag report
+    /// only asked that it stop costing what it cost, so the body moved onto
+    /// `dated(in:directory:)` and the callers are untouched.
+    nonisolated static func loadAll(listingID: UUID) -> [EnhancedPhoto] {
         let dir = directory(for: listingID)
-        let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.creationDateKey])) ?? []
-        func created(_ url: URL) -> Date {
-            (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-        }
-        return files
-            .filter { $0.lastPathComponent.hasPrefix("enh-") }
-            .map { e -> EnhancedPhoto in
-                let id = e.deletingPathExtension().lastPathComponent
+        return dated(in: DiskScan.entries(of: dir), directory: dir).map(\.photo)
+    }
+
+    /// The scan behind `loadAll`, over a directory listing the caller already
+    /// has, keeping each photo's creation date instead of throwing it away.
+    ///
+    /// TWO syscall bills paid off here, both mine (the build-9 lag report):
+    ///
+    /// 1. The sort used to call `created()` inside the comparator, so a folder of
+    ///    n photos was stat'd O(n log n) times to answer a question with n
+    ///    answers. The date now comes off the enumeration once, in `DatedFile`.
+    /// 2. Finding the "before" used to be a `fileExists` PER PHOTO — twenty
+    ///    photos, twenty syscalls — for a fact the directory listing in front of
+    ///    us already contains. It is a set lookup now.
+    ///
+    /// The result is byte-for-byte the list build 8 produced, including the
+    /// `a.id > b.id` tie-break, which matters on the rare pair of files written
+    /// inside the same filesystem timestamp.
+    nonisolated fileprivate static func dated(in entries: [DatedFile],
+                                              directory dir: URL) -> [DatedPhoto] {
+        let names = Set(entries.map(\.name))
+        return entries
+            .filter { $0.name.hasPrefix("enh-") }
+            .map { file -> DatedPhoto in
+                let id = file.url.deletingPathExtension().lastPathComponent
                     .replacingOccurrences(of: "enh-", with: "")
-                let orig = dir.appendingPathComponent("orig-\(id).jpg")
-                let origURL = fm.fileExists(atPath: orig.path) ? orig : e
-                return EnhancedPhoto(id: id, originalURL: origURL, enhancedURL: e)
+                let preferredOriginal = "orig-\(id).jpg"
+                let originalName = names.contains(preferredOriginal) ? preferredOriginal
+                    : names.sorted().first(where: { $0.hasPrefix("orig-\(id).") })
+                let origURL = originalName.map { dir.appendingPathComponent($0) } ?? file.url
+                return DatedPhoto(photo: EnhancedPhoto(id: id, originalURL: origURL,
+                                                       enhancedURL: file.url),
+                                  createdAt: file.createdAt)
             }
             .sorted { a, b in
-                let da = created(a.enhancedURL), db = created(b.enhancedURL)
-                return da != db ? da > db : a.id > b.id
+                a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.photo.id > b.photo.id
             }
     }
 }
 
-struct PhotoStudioView: View {
-    /// Why the studio was opened — `.reel` rings the "Make a reel" card so the
-    /// deep link lands on the thing the agent tapped for.
-    enum Intent { case photos, reel }
+/// One virtual-staging style, exactly as the staging dialog has always offered
+/// them and in the same order.
+///
+/// FILE SCOPE and `Identifiable` so `ForEach` can take the array straight. `id`
+/// is the exact string `aiEdit(_:_:style:)` / `performEdit` send as `style`, so
+/// the row on the surface cannot drift from what the server is asked for.
+///
+/// The wand's own "Pick a style" dialog and the long-press menu still spell the
+/// four out by hand. That is deliberate for now: the brief was to leave the wand
+/// exactly as it is, and those two lists are already correct. When one of them
+/// is next touched it should be pointed at `StagingStyle.all` instead.
+private struct StagingStyle: Identifiable, Hashable {
+    let id: String
+    let label: String
 
-    /// One place for the words on every edit button, so the empty-state chip,
-    /// the wand menu and the long-press menu can never drift apart. One verb
-    /// each, no jargon. The COMPLIANCE wording is separate and unchanged —
-    /// `provenanceLabel` still writes "Declutter" / "Virtual staging" to the
-    /// disclosure, which is the language a broker's audit log needs.
+    /// Modern / Rustic / Minimalist / Scandinavian. `let` on a file-scope
+    /// `private` type: no actor, no isolation question, readable from anywhere.
+    static let all: [StagingStyle] = [
+        StagingStyle(id: "modern", label: "Modern"),
+        StagingStyle(id: "rustic", label: "Rustic"),
+        StagingStyle(id: "minimalist", label: "Minimalist"),
+        StagingStyle(id: "scandinavian", label: "Scandinavian"),
+    ]
+}
+
+/// One edit the agent picked off the studio's edit bar, waiting for them to say
+/// which photos it applies to.
+///
+/// FILE SCOPE, not nested in `PhotoStudioView`, and deliberately so. A `View` is
+/// `@MainActor`, so a type nested inside one inherits that isolation and every
+/// touch of it from a non-isolated context is an argument the compiler wins —
+/// the Mac build has already caught one call of exactly that shape
+/// (`normalizedASIN`, commit 78c4610). This is plain data with no statics; it
+/// has no reason to be isolated to anything.
+private struct PendingBatchEdit: Identifiable, Equatable {
+    /// The `edit` string `aiEdit`/`performEdit` take — twilight | sky | lawn |
+    /// declutter | stage | custom | animate. Never a new vocabulary.
+    let edit: String
+    /// Staging style, when the edit is `stage`. nil everywhere else.
+    let style: String?
+    /// The words the bar showed, reused verbatim in the selection bar and the
+    /// progress line so the agent never has to match a label to a job.
+    let title: String
+    /// False for edits that must not fan out — "Turn it into video" is a
+    /// ~1-minute poll and a separate charge PER PHOTO, so the grid lets exactly
+    /// one photo be ticked for it.
+    let multiple: Bool
+
+    var id: String { style.map { "\(edit).\($0)" } ?? edit }
+}
+
+/// The one-line verdict left on screen after a batch. `ok` is false when any
+/// photo failed, so the card can stop claiming success it did not have.
+private struct BatchNote: Equatable {
+    let text: String
+    let ok: Bool
+}
+
+/// Live counters for a running batch. `current` is 1-based and is the photo
+/// being worked on right now, so the card reads "photo 3 of 17".
+private struct BatchRun: Equatable {
+    let title: String
+    let total: Int
+    var current: Int = 1
+    var done: Int = 0
+    var failed: Int = 0
+}
+
+struct PhotoStudioView: View {
+    /// WHICH OF THE TWO SCREENS THIS IS.
+    ///
+    /// One view, one set of state, one photo directory - two entry points, and
+    /// they are genuinely two screens, not one screen with a flag on it.
+    ///
+    /// THE DEFECT this fixes is the one the owner reported more times than any
+    /// other: uploading photos and changing photos were the same screen. That
+    /// is why "AI Photo Studio" opened on a wall of thumbnails instead of a
+    /// menu of what the AI can do - the screen had to be a photo manager
+    /// first, so the AI was whatever was left over. Renaming the buttons on it
+    /// (twice) never had a chance, because the problem was never a word.
+    ///
+    ///  * `.photos` - YOUR PHOTOS. Add them, see them, pick the cover, share,
+    ///    delete. Every photo is brightened and sharpened on the way in
+    ///    (`ingest` -> `PhotoEnhancer.enhance`), free and on-device. No AI menu.
+    ///    It is a library.
+    ///  * `.studio` - AI PHOTO STUDIO. Opens on the MODES, full stop. Declutter,
+    ///    Staging (four styles on the surface), Twilight, Sky, Lawn, Ask for
+    ///    anything, Turn it into video. Pick one, and THEN the photos already
+    ///    uploaded appear to be ticked. Mode first, photos second.
+    enum Entry { case photos, studio }
+
+    // `enum Intent { case photos, reel }` and `var intent` are GONE, together
+    // with the reel card they existed to ring. The "Make a reel" tile on the
+    // listing screen (and the app's `.reel` deep-link route) opens
+    // `ReelStudioView` directly now, so there is no longer such a thing as
+    // "the photo studio, opened for a reel". Nothing here reads an intent, so
+    // nothing here carries one.
+
+    /// One place for the words on every edit button, so the always-on edit bar,
+    /// the wand menu and the long-press menu can never drift apart. Plain words,
+    /// no jargon — EXCEPT where the plain word would hide the feature's actual
+    /// name, which is what happened to Declutter (below). The COMPLIANCE wording
+    /// is separate and unchanged — `provenanceLabel` still writes "Declutter" /
+    /// "Virtual staging" to the disclosure, which is the language a broker's
+    /// audit log needs.
     private enum EditWords {
         static let twilight  = "Make it twilight"
         static let sky       = "Make the sky blue"
         static let lawn      = "Make the lawn green"
-        static let declutter = "Tidy the room"
+        /// "Declutter" is the FEATURE'S NAME and has to be visible. Commit 8ee0c6c
+        /// replaced the word outright with "Tidy the room"; in the 4,000 sq ft
+        /// field test the owner searched the UI for "Declutter", could not find it
+        /// anywhere, and reported the feature as removed. The plain-words gloss
+        /// still exists — as a subtitle under the word, never instead of it.
+        static let declutter = "Declutter"
+        static let declutterGloss = "Tidies the room"
         static let animate   = "Turn it into video"
         static let custom    = "Ask for anything"
         static let suggest   = "Suggest edits for this photo"
         static func stage(_ space: SpaceType) -> String {
             space == .realEstate ? "Add furniture" : "Furnish it"
         }
+
+        /// THE FEATURE'S NAME, on the surface, for the same reason `declutter`
+        /// is: the owner calls it staging, the industry calls it staging, and
+        /// `stage(_:)` above returns "Add furniture" on real estate — so the
+        /// word *staging* appeared nowhere an agent could see it. He reported it
+        /// missing alongside Declutter, twice.
+        ///
+        /// `stage(_:)` is NOT replaced: it is still the wand menu's and the
+        /// long-press menu's wording, and it is the plain-words gloss under this
+        /// heading. Word on top, gloss underneath — never the gloss instead of
+        /// the word (see `declutter`).
+        ///
+        /// Off real estate there is no industry term for furnishing a gym, so
+        /// the plain word IS the name; `stagingLabel` still carries the exact
+        /// wording ("Virtual staging" / "Furnish & style") into the disclosure.
+        static func staging(_ space: SpaceType) -> String {
+            space == .realEstate ? "Staging" : "Furnish it"
+        }
+
+        /// The sentence under the staging heading. On real estate it opens with
+        /// the literal words `stage(.realEstate)` used to say, so nothing an
+        /// agent already learned to look for disappeared off the screen.
+        static func stagingGloss(_ space: SpaceType) -> String {
+            space == .realEstate
+                ? "Add furniture in the style you pick — walls and windows stay as they are."
+                : "Puts in sofas, tables and art in the style you pick — walls and windows stay as they are."
+        }
+
     }
 
     /// A photo→motion clip already on disk for this listing
@@ -1937,21 +3487,26 @@ struct PhotoStudioView: View {
         let createdAt: Date
 
         /// Every `clip-*.mp4` in a listing's photo folder, newest first.
+        ///
+        /// SIGNATURE UNCHANGED and still synchronous — the studio calls it from
+        /// `loadExisting()` and again the moment an animation lands, and neither
+        /// wanted an `await`. What changed is where the glob lives: it is
+        /// `DiskScan.motionClips` now, so the listing screen's background scan
+        /// can run the SAME filter without calling in here.
+        ///
+        /// That last part is the point, and it is a Swift 6 isolation point, not
+        /// a taste one. `SavedClip` is nested inside a `View`, and a `View` is
+        /// `@MainActor`; build 8's `ListingMediaItem.loadAll` was annotated
+        /// `@MainActor` for exactly that reason, which is how fifty filesystem
+        /// calls ended up in front of the first frame. Rather than argue about
+        /// whether a nested type inherits its parent's isolation — the Mac build
+        /// has already caught one call of that shape — the shared work moved to
+        /// a file-scope type that is unambiguously non-isolated, and this stays
+        /// a thin main-actor wrapper for the callers that want one.
         static func loadAll(listingID: UUID) -> [SavedClip] {
             let dir = EnhancedPhoto.directory(for: listingID)
-            let files = (try? FileManager.default.contentsOfDirectory(
-                at: dir, includingPropertiesForKeys: [.creationDateKey])) ?? []
-            return files
-                .filter { $0.lastPathComponent.hasPrefix("clip-")
-                    && $0.pathExtension.lowercased() == "mp4" }
-                .map { url in
-                    let created = (try? url.resourceValues(forKeys: [.creationDateKey]))?
-                        .creationDate ?? .distantPast
-                    return SavedClip(id: url.lastPathComponent, url: url, createdAt: created)
-                }
-                .sorted { a, b in
-                    a.createdAt != b.createdAt ? a.createdAt > b.createdAt : a.id > b.id
-                }
+            return DiskScan.motionClips(in: DiskScan.entries(of: dir))
+                .map { SavedClip(id: $0.name, url: $0.url, createdAt: $0.createdAt) }
         }
     }
 
@@ -1959,7 +3514,7 @@ struct PhotoStudioView: View {
     @ObservedObject private var auth = AuthStore.shared
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
-    var intent: Intent = .photos
+    let entry: Entry
 
     private var mainRelPath: String? {
         model.listings.first(where: { $0.id == listing.id })?.mainPhotoRelPath
@@ -1967,6 +3522,28 @@ struct PhotoStudioView: View {
     private func isMain(_ p: EnhancedPhoto) -> Bool {
         mainRelPath == FileStore.relativePath(for: p.enhancedURL)
     }
+
+    // `aerialClipURLs` moved OUT of this screen with the reel card. The aerial
+    // intro still rides into Reel Studio as `extraClipURLs` — it is handed over
+    // by `FlythroughDetailView`'s "Make a reel" cover now, which is the screen
+    // that owns the tile the agent actually taps.
+
+    /// This listing's server row, when it already has one. Sent with the prompt
+    /// assist so the server's fair-housing gate is scoped to THIS listing's real
+    /// space type (COPY-ASSIST-CONTRACT §5) — without it the gate falls back to
+    /// the strictest, housing rules, which is right for a home and would refuse
+    /// a restaurant's "family-style patio".
+    ///
+    /// Read straight off the model rather than through
+    /// `serverListingIDForCompliance`: that helper CREATES the server listing
+    /// when there isn't one, and a text-only prompt rewrite is not a reason to
+    /// make a row on the server. An unsynced listing simply gets the strict
+    /// gate, which fails closed.
+    private var listingServerID: UUID? {
+        guard !listing.isSample else { return nil }
+        return (model.listings.first(where: { $0.id == listing.id }) ?? listing).serverID
+    }
+
     private func setMain(_ p: EnhancedPhoto) {
         model.setMainPhoto(FileStore.relativePath(for: p.enhancedURL), for: listing.id)
         Haptics.success()
@@ -1980,6 +3557,13 @@ struct PhotoStudioView: View {
     private var stagingLabel: String { space == .realEstate ? "Virtual staging" : "Furnish & style" }
 
     @State private var photos: [EnhancedPhoto] = []
+    /// The photos with AI work in flight right now, so each THUMBNAIL can say
+    /// so. `isProcessing` is one bool for the whole screen and its spinner
+    /// renders once, at the top of the scroll view — on a seventeen-photo grid
+    /// that is a thousand points above the photo you just tapped, which is how
+    /// the owner ended up tapping Declutter and having "no idea if it was
+    /// working or not until I got that message".
+    @State private var busyPhotoIDs: Set<String> = []
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var isProcessing = false
@@ -1988,14 +3572,37 @@ struct PhotoStudioView: View {
     @State private var aiFailure: AIFailure?
     @State private var animatedClip: AnimatedClip?   // finished photo→reel clip
     @State private var customEditPhoto: EnhancedPhoto?   // photo awaiting a custom-prompt AI edit
-    @State private var showReelStudio = false            // multi-photo → stitched social reel
     @State private var animateTask: Task<Void, Never>?   // photo→clip poll; cancelled when the studio is left
     @State private var wandPhoto: EnhancedPhoto?         // photo under the visible wand button
     @State private var showWandDialog = false            // wand → change-this-photo chooser
     @State private var stagePhoto: EnhancedPhoto?        // photo awaiting a staging style
     @State private var showStageDialog = false           // staging style chooser
     @State private var suggestResult: SuggestResult?     // AI-suggested edits sheet payload
-    @State private var showSignIn = false                // AI edits run on the user's account
+    @StateObject private var connection = FeatureSessionAction()
+    /// The edit an EDIT-BAR CHIP asked for while there were no photos yet. The
+    /// chips used to be decoration; now one picks a photo and this remembers what
+    /// to do with it the moment the import lands. Cleared on a cancelled picker.
+    @State private var pendingShowcaseEdit: String?
+    /// The staging style that chip carried, when it was a style button. Without
+    /// it, tapping "Rustic" on an empty studio picked a photo and then asked
+    /// which style — a question the agent had already answered.
+    @State private var pendingShowcaseStyle: String?
+    /// The edit chosen from the always-on edit bar and now waiting for the agent
+    /// to say WHICH photos it applies to. Non-nil == the grid is in selection
+    /// mode. With 17 photos on a listing, "tap the wand, pick Declutter"
+    /// seventeen times is the workflow this replaces.
+    @State private var batchEdit: PendingBatchEdit?
+    /// Photo ids ticked in the grid while `batchEdit` is live.
+    @State private var batchSelection: Set<String> = []
+    /// The batch currently running, for the progress card. nil when idle.
+    @State private var batchRun: BatchRun?
+    /// What the last batch did, in one line, kept on screen until the agent
+    /// starts something else. A batch that half-worked has to SAY so.
+    @State private var batchNote: BatchNote?
+    /// Photos a "Ask for anything" batch is waiting to apply its prompt to.
+    /// `CustomEditSheet` edits one photo's worth of prompt; the prompt it
+    /// returns is applied to every photo in here.
+    @State private var customBatchTargets: [EnhancedPhoto] = []
     /// The disclosure sentence the server recorded for each AI edit made this
     /// session, keyed by photo id — shown verbatim in the before/after view
     /// (W2-C4). Not persisted: the durable copy is the provenance row, which the
@@ -2030,7 +3637,7 @@ struct PhotoStudioView: View {
     /// left the grid stuck on "Animating photo…" forever (F-A-12).
     private var isPresentingOverlay: Bool {
         compare != nil || animatedClip != nil || customEditPhoto != nil || suggestResult != nil
-            || showReelStudio || showLibrary || showCamera || showSignIn
+            || showLibrary || showCamera
             || showWandDialog || showStageDialog || showPhotoDeleteConfirm
             || showClipDeleteConfirm
     }
@@ -2060,65 +3667,21 @@ struct PhotoStudioView: View {
     // "unable to type-check this expression in reasonable time").
     private var studioCore: some View {
         ScrollView {
-            VStack(spacing: Theme.spacing) {
-                HStack(spacing: 10) {
-                    addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
-                    addButton("Take a photo", "camera", filled: false) {
-                        if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
-                    }
+            Group {
+                switch entry {
+                case .photos: photosBody
+                case .studio: studioBody
                 }
-
-                // The reel — named, explained and ALWAYS on screen, from zero
-                // photos. It used to appear only after two photos existed, so
-                // the voiceover behind it was invisible to anyone standing here.
-                reelCard
-
-                if photos.isEmpty && !isProcessing {
-                    emptyShowcase
-                }
-
-                if isProcessing {
-                    HStack(spacing: 8) {
-                        ProgressView()
-                        Text(processingText).foregroundStyle(Theme.inkDim)
-                    }
-                    .padding(.vertical, 8)
-                }
-
-                if !photos.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("Tap a photo to see before and after. Tap the wand on a photo to change it.")
-                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
-                        // W2-C4: the agent learns this BEFORE they tap, not after
-                        // a broker asks. Disclosure is automatic, not optional.
-                        Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
-                              systemImage: "checkmark.shield.fill")
-                            .font(.rpCaption.weight(.semibold))
-                            .foregroundStyle(Theme.good)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-
-                photoGrid
-
-                if !photos.isEmpty {
-                    ShareLink(items: photos.map { $0.enhancedURL }) {
-                        Label("Share all photos", systemImage: "square.and.arrow.up")
-                            .font(.rpBody.weight(.semibold))
-                            .frame(maxWidth: .infinity).padding(.vertical, 14)
-                            .background(Theme.accent).foregroundStyle(Color.white)
-                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    }
-                }
-
-                clipsCard
             }
             .padding()
         }
+        .overlay(alignment: .bottom) { workingPill }
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: isProcessing)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: busyPhotoIDs)
         .background(Theme.bg)
-        .navigationTitle("AI Photo Studio")
+        .navigationTitle(entry == .photos ? "Photos" : "AI Photo Studio")
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(entry == .photos ? .photos : .photoStudio)
         .toolbar {
             ToolbarItem(placement: .principal) { studioTitleBar }
         }
@@ -2126,6 +3689,7 @@ struct PhotoStudioView: View {
             loadExisting()
             syncIdleHold()      // a dismissed cover re-appears mid-animate
             seedPhotosForUIWalk()
+            syncGalleryIfPublished()
         }
         .onChange(of: isProcessing) { _ in syncIdleHold() }
         .onDisappear {
@@ -2134,22 +3698,263 @@ struct PhotoStudioView: View {
         }
     }
 
+
+    // MARK: - Screen one: YOUR PHOTOS
+    //
+    // Upload, enhance, keep. This screen never shows an AI menu. The one AI
+    // affordance on it is the wand in a thumbnail's corner, which is a
+    // per-photo shortcut and has always been one. Everything that costs money
+    // and needs a decision lives on the other screen.
+
+    private var photosBody: some View {
+        VStack(spacing: Theme.spacing) {
+            HStack(spacing: 10) {
+                addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
+                addButton("Take a photo", "camera", filled: false) {
+                    if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                }
+            }
+
+            if photos.isEmpty && !isProcessing {
+                photosEmptyState
+            }
+
+            if isProcessing && batchRun == nil {
+                studioSpinnerRow
+            }
+
+            if !photos.isEmpty {
+                photosGridHint
+            }
+
+            photoGrid
+
+            if !photos.isEmpty {
+                openStudioCard
+                shareAllButton
+            }
+
+            clipsCard
+        }
+    }
+
+    private var studioSpinnerRow: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+            Text(processingText).foregroundStyle(Theme.inkDim)
+        }
+        .padding(.vertical, 8)
+    }
+
+    private var shareAllButton: some View {
+        ShareLink(items: photos.map { $0.enhancedURL }) {
+            Label("Share all photos", systemImage: "square.and.arrow.up")
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 14)
+                .background(Theme.accent).foregroundStyle(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+    }
+
+    /// The empty library. It says what happens to a photo when it lands,
+    /// because "it gets brightened automatically, free" is the reason to put
+    /// them here first.
+    private var photosEmptyState: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 30, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white)
+                .frame(width: 60, height: 60)
+                .background(RPGradient.photo,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Add your photos")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+                .multilineTextAlignment(.center)
+            Text("Every photo is brightened and sharpened the moment it lands \u{2014} free, on this phone, no waiting. Then AI Photo Studio can change any of them.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 18)
+    }
+
+    /// The line above the library grid. Three verbs, all of them free.
+    private var photosGridHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tap a photo to see before and after. Tap the star to make it the cover. Tap the wand to change just that one.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Label("Already brightened and sharpened on this phone \u{2014} that part costs nothing.",
+                  systemImage: "sparkles")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.good)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// The door from the library to the studio, on the library screen, named.
+    /// The two are siblings in the toolbox; this is the shortcut for someone
+    /// already standing in front of their photos.
+    private var openStudioCard: some View {
+        NavigationLink { PhotoStudioView(listing: listing, entry: .studio) } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "wand.and.stars")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(Color.white)
+                    .frame(width: 40, height: 40)
+                    .background(RPGradient.photo,
+                                in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Change these with AI")
+                        .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    Text("Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                        .lineLimit(1).minimumScaleFactor(0.8)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.rpCaption.weight(.bold)).foregroundStyle(Theme.inkDim)
+            }
+            .padding(10)
+            .background(Theme.fillSubtle,
+                        in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+        .accessibilityIdentifier("photos.openStudio")
+    }
+
+    // MARK: - Screen two: AI PHOTO STUDIO
+    //
+    // MODE FIRST. The screen opens on what the AI can do, in words, with
+    // nothing else competing for the first screenful. The photos already
+    // uploaded appear only once a mode is chosen - which is the whole point:
+    // "pick Declutter, then tick the photos" instead of "here are your photos,
+    // now go hunting for the verb".
+
+    private var studioBody: some View {
+        VStack(spacing: Theme.spacing) {
+            if photos.isEmpty && !isProcessing {
+                studioNeedsPhotos
+            } else {
+                studioReadyStrip
+            }
+
+            studioEditSection
+
+            if isProcessing && batchRun == nil {
+                studioSpinnerRow
+            }
+
+            // THE GRID IS ONLY HERE ONCE A MODE IS CHOSEN. An AI screen that
+            // opens on a wall of thumbnails is the screen he kept reporting.
+            if batchEdit != nil {
+                studioPickHint
+                photoGrid
+            }
+        }
+        .animation(.spring(response: 0.34, dampingFraction: 0.86), value: batchEdit != nil)
+    }
+
+    /// No photos yet. The studio does not pretend it can do anything, and it
+    /// names the screen that comes first rather than opening a picker and
+    /// hoping.
+    private var studioNeedsPhotos: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "photo.on.rectangle.angled")
+                .font(.system(size: 30, weight: .medium))
+                .symbolRenderingMode(.hierarchical)
+                .foregroundStyle(Color.white)
+                .frame(width: 60, height: 60)
+                .background(RPGradient.photo,
+                            in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            Text("Add photos first")
+                .font(.rpHeadline).foregroundStyle(Theme.ink)
+            Text("Photos live in this home\u{2019}s Photos section \u{2014} they get brightened on the way in. Add them, then pick a change here.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 18)
+    }
+
+    /// One strip at the top of the studio: your photos are here, this is how
+    /// many, this is what happens next. It replaces the grid that used to open
+    /// this screen.
+    private var studioReadyStrip: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.good)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(studioReadyTitle)
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                Text("Pick a change below, then tick the ones to change.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .lineLimit(2).minimumScaleFactor(0.85)
+            }
+            Spacer(minLength: 8)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var studioReadyTitle: String {
+        "\(photos.count) photo\(photos.count == 1 ? "" : "s") ready"
+    }
+
+    /// The line above the grid, in the studio, where the grid means one thing
+    /// only: tick the photos this change applies to.
+    private var studioPickHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Tap the photos you want changed \u{2014} they get a tick. Each one is a separate change, saved beside its original.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
+                  systemImage: "checkmark.shield.fill")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.good)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private var studioSheets: some View {
         studioCore
+        .disabled(connection.isWaiting)
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .sheet(isPresented: $showLibrary) {
             LibraryImagePicker { imgs in ingest(imgs) }.ignoresSafeArea()
         }
         .sheet(isPresented: $showCamera) {
             CameraPicker { img in ingest([img]) }.ignoresSafeArea()
         }
-        .sheet(isPresented: $showSignIn) { SignInView.forAI("AI photo edits") }
         .fullScreenCover(item: $compare) { p in
             PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
         }
         .sheet(item: $animatedClip) { clip in AnimatedClipSheet(clip: clip) }
-        .sheet(item: $customEditPhoto) { p in
-            CustomEditSheet(photo: p, api: model.api) { prompt in
-                aiEdit(p, "custom", prompt: prompt)
+        .sheet(item: $customEditPhoto, onDismiss: { customBatchTargets = [] }) { p in
+            CustomEditSheet(photo: p, api: model.api, space: space,
+                            listingServerID: listingServerID) { prompt in
+                // ONE prompt, one or many photos. `customBatchTargets` is set
+                // only by the edit bar's "Ask for anything" → pick photos → Apply
+                // path; the wand and the long-press menu leave it empty and get
+                // the single-photo behaviour they always had, compare sheet and
+                // all. Same endpoint, same `aiEdit`/`performEdit` body, one
+                // charge per photo either way.
+                let targets = customBatchTargets.isEmpty ? [p] : customBatchTargets
+                customBatchTargets = []
+                if targets.count == 1 {
+                    aiEdit(targets[0], "custom", prompt: prompt)
+                } else {
+                    runBatch(PendingBatchEdit(edit: "custom", style: nil,
+                                              title: EditWords.custom, multiple: true),
+                             targets: targets, prompt: prompt)
+                }
             }
         }
         .sheet(item: $suggestResult) { r in
@@ -2159,10 +3964,11 @@ struct PhotoStudioView: View {
                 else { aiEdit(r.photo, edit) }
             }
         }
-        .fullScreenCover(isPresented: $showReelStudio) {
-            ReelStudioView(listing: listing, photos: photos)
-                .environmentObject(model)
-        }
+        // NO reel cover here any more. Reel Studio is presented by the LISTING
+        // screen's "Make a reel" tile, which is where the aerial intro is handed
+        // over as `extraClipURLs` — that fix (the aerial could otherwise only be
+        // used as a reel intro from inside the aerial sheet) has moved with it,
+        // not been dropped.
     }
 
     var body: some View {
@@ -2236,7 +4042,10 @@ struct PhotoStudioView: View {
                 }
             }
             if f.isUnauthorized {
-                Button("Sign in") { showSignIn = true }
+                Button("Retry connection") {
+                    aiFailure = nil
+                    connection.run {}
+                }
             }
             Button("OK", role: .cancel) { aiFailure = nil }
         } message: { f in
@@ -2247,6 +4056,9 @@ struct PhotoStudioView: View {
         // the disclosure has to be agreed BEFORE the screen can be used. Asked
         // once per device; declining backs out of the studio.
         .aiConsentGate()
+        .onDisappear {
+            if !isPresentingOverlay { connection.cancel() }
+        }
         .task {
             if await AIConsent.shared.ensureGranted() == false { dismiss() }
         }
@@ -2254,21 +4066,124 @@ struct PhotoStudioView: View {
 
     private var photoGrid: some View {
         LazyVGrid(columns: columns, spacing: 12) {
-            ForEach(photos) { p in
-                // Wand overlay is a SIBLING of the thumb button (a Button
-                // inside another Button's label never gets the tap).
-                ZStack(alignment: .bottomTrailing) {
-                    Button { compare = p } label: { thumb(p) }
-                        .buttonStyle(ScalePressStyle())
-                        .accessibilityLabel(Text("Photo — opens before-and-after compare"))
-                        .contextMenu { photoMenu(p) }
-                    wandButton(p)
-                }
-            }
+            ForEach(photos) { p in photoCell(p) }
         }
         // New AI edits and deletions settle into the grid instead of
         // popping — keyed on count so only inserts/removes animate.
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: photos.count)
+    }
+
+    /// One thumb, in whichever of the grid's TWO modes is live.
+    ///
+    /// Normal: tap opens before/after, long-press opens the menu, and the wand
+    /// sits in the corner — all exactly as before, because the wand is a good
+    /// shortcut and nothing about it needed fixing.
+    ///
+    /// Selection: an edit from the bar is waiting for its targets, so a tap
+    /// ticks the photo instead. The wand is not drawn — a tap that changes one
+    /// photo while the screen is asking which photos to change is a trap.
+    @ViewBuilder private func photoCell(_ p: EnhancedPhoto) -> some View {
+        // Wand overlay is a SIBLING of the thumb button (a Button
+        // inside another Button's label never gets the tap).
+        ZStack(alignment: .bottomTrailing) {
+            if batchEdit == nil {
+                Button { compare = p } label: { thumb(p).overlay { busyOverlay(p) } }
+                    .buttonStyle(ScalePressStyle())
+                    .accessibilityLabel(Text(busyPhotoIDs.contains(p.id)
+                                             ? "Photo — the AI is working on this one"
+                                             : "Photo — opens before-and-after compare"))
+                    .contextMenu { photoMenu(p) }
+                if !busyPhotoIDs.contains(p.id) { wandButton(p) }
+                // THE COVER, on the surface. It was a long-press and nothing
+                // else — an invisible gesture for the one picture that
+                // represents the whole home everywhere it is shared. Only on
+                // the library screen: in the studio a tap means "include this
+                // photo in the change", and a second meaning on the same
+                // thumbnail is a trap.
+                if entry == .photos { coverButton(p) }
+            } else {
+                Button { toggleBatchSelection(p) } label: {
+                    thumb(p).overlay { selectionOverlay(p) }
+                }
+                .buttonStyle(ScalePressStyle())
+                .disabled(isProcessing)
+                .accessibilityLabel(Text(batchSelection.contains(p.id)
+                                         ? "Photo, selected. Tap to leave it out."
+                                         : "Photo, not selected. Tap to include it."))
+            }
+        }
+    }
+
+    /// "This one, right now." Drawn ON the photo because that is where the
+    /// agent is looking after they tap the wand on it.
+    @ViewBuilder private func busyOverlay(_ p: EnhancedPhoto) -> some View {
+        if busyPhotoIDs.contains(p.id) {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.black.opacity(0.45))
+                .overlay {
+                    VStack(spacing: 6) {
+                        ProgressView().tint(Color.white)
+                        Text("Working…")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(Color.white)
+                    }
+                }
+                .transition(.opacity)
+        }
+    }
+
+    /// "Is it doing anything at all?" — answerable without scrolling.
+    ///
+    /// Floats over the grid at the bottom of the screen, so it is visible
+    /// wherever the agent happens to be. This and `busyOverlay` answer
+    /// different questions and both are worth their space: one says WHICH
+    /// photo, this one says WHETHER, and the top-of-scroll spinner answered
+    /// neither once you had scrolled past it.
+    @ViewBuilder private var workingPill: some View {
+        if isProcessing || batchRun != nil {
+            HStack(spacing: 8) {
+                ProgressView().tint(Color.white)
+                Text(pillText)
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Color.white)
+                    .lineLimit(1).minimumScaleFactor(0.8)
+            }
+            .padding(.horizontal, 14).padding(.vertical, 10)
+            .background(Color.black.opacity(0.82), in: Capsule())
+            .shadow(color: Color.black.opacity(0.3), radius: 10, y: 4)
+            .padding(.bottom, 14)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+            .allowsHitTesting(false)
+            .accessibilityLabel(Text(pillText))
+        }
+    }
+
+    /// A batch says which photo of how many; a single edit says what it is
+    /// doing. Never a bare "Loading" — the agent is paying per photo and is
+    /// owed a count.
+    private var pillText: String {
+        if let run = batchRun {
+            return "\(run.title) — \(min(run.current, run.total)) of \(run.total)"
+        }
+        return processingText
+    }
+
+    /// The tick (and the dimming) on a photo while an edit picks its targets.
+    private func selectionOverlay(_ p: EnhancedPhoto) -> some View {
+        let selected = batchSelection.contains(p.id)
+        return RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(Color.black.opacity(selected ? 0 : 0.35))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(selected ? Theme.accent : Color.clear, lineWidth: 3)
+            )
+            .overlay(alignment: .topTrailing) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 22, weight: .semibold))
+                    .symbolRenderingMode(.palette)
+                    .foregroundStyle(Color.white, selected ? Theme.accent : Color.black.opacity(0.35))
+                    .padding(8)
+            }
     }
 
     @ViewBuilder private func photoMenu(_ p: EnhancedPhoto) -> some View {
@@ -2302,27 +4217,67 @@ struct PhotoStudioView: View {
         }
     }
 
-    // MARK: - AI calls (all gated on sign-in; every call runs on the user's account)
+    // MARK: - AI calls (await an anonymous or identified workspace session)
 
-    /// Present the sign-in sheet instead of letting the call 401 (F-A-13).
-    private func requireSignIn() -> Bool {
-        if Config.enableAuth && !auth.isSignedIn {
-            showSignIn = true
-            return false
+    private func openCustomEdit(_ p: EnhancedPhoto, batchTargets: [EnhancedPhoto] = []) {
+        connection.run {
+            // Park the batch only after connection succeeds. Cancelling the
+            // wait cannot leak these targets into the next single-photo edit.
+            customBatchTargets = batchTargets
+            customEditPhoto = p
         }
-        return true
-    }
-
-    private func openCustomEdit(_ p: EnhancedPhoto) {
-        guard requireSignIn() else { return }
-        customEditPhoto = p
     }
 
     /// AI edit (twilight | sky | lawn | declutter | stage | custom) via the
-    /// `ai-photo` edge function. `style` rides along for stage, `prompt` for
-    /// custom. Saves the result as a NEW photo (keeps the original) and opens
-    /// the before/after. One job at a time (re-entrancy guard, F-A-22); the
-    /// JPEG work runs off the main actor.
+    /// `ai-photo` edge function, for ONE photo, opening the before/after when it
+    /// lands. `style` rides along for stage, `prompt` for custom. One job at a
+    /// time (re-entrancy guard, F-A-22).
+    ///
+    /// This is now a thin shell around `performEdit`, which is the same body it
+    /// always had. The split exists so the edit bar's "apply to these photos"
+    /// path can run the IDENTICAL code once per photo instead of inventing a
+    /// batch endpoint or a second billing path. Nothing about a single edit
+    /// changed: the guard, the session check, the spinner text, the success
+    /// haptic and the compare sheet are all still here, in this order.
+    private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
+                        style: String? = nil, prompt: String? = nil) {
+        guard !isProcessing else { return }
+        connection.run { aiEditWithSession(p, edit, style: style, prompt: prompt) }
+    }
+
+    private func aiEditWithSession(_ p: EnhancedPhoto, _ edit: String,
+                                   style: String?, prompt: String?) {
+        guard !isProcessing else { return }
+        isProcessing = true
+        batchNote = nil
+        processingText = "Working on your photo…"
+        Task { @MainActor in
+            do {
+                let newPhoto = try await performEdit(p, edit, style: style, prompt: prompt)
+                isProcessing = false
+                Haptics.success()
+                compare = newPhoto   // show the before/after (and its disclosure)
+            } catch {
+                isProcessing = false
+                // The fair-housing denylist speaks for itself — show its
+                // wording, let the user re-word, never retry automatically.
+                let title = (error as? APIError)?.code == "unsupported_edit"
+                    ? "That change isn't allowed" : "That change didn't work"
+                aiFailure = AIFailure(error, title: title)
+            }
+        }
+    }
+
+    /// ONE AI edit, start to finish: prep the JPEG, anchor the listing, publish
+    /// the untouched original for disclosure, call `/ai-photo`, write the result
+    /// beside its "before", insert it into the grid, meter it. Returns the new
+    /// photo. Throws whatever the call threw — the CALLER decides whether that
+    /// is an alert (single edit) or a counted failure (a batch that keeps going).
+    ///
+    /// EXTRACTED VERBATIM from `aiEdit`'s task body, deliberately unchanged in
+    /// every respect that costs money or touches compliance. It does not present
+    /// anything and it does not clear `isProcessing`: a batch owns the spinner
+    /// for its whole run, and only the single-photo path opens the compare view.
     ///
     /// COMPLIANCE (W2-C3). Before the edit runs we publish the UNTOUCHED
     /// original with `role:"original"` and send its asset id as
@@ -2334,12 +4289,15 @@ struct PhotoStudioView: View {
     ///
     /// A `400 unsupported_edit` from the fair-housing denylist surfaces the
     /// server's own wording and is NEVER auto-retried — the user re-words it.
-    private func aiEdit(_ p: EnhancedPhoto, _ edit: String,
-                        style: String? = nil, prompt: String? = nil) {
-        guard !isProcessing else { return }
-        guard requireSignIn() else { return }
-        isProcessing = true
-        processingText = "Working on your photo…"
+    ///
+    /// `@MainActor` is spelled out rather than inherited from `View`. Everything
+    /// in here reads `AppModel`, `@State` or `Analytics`, all three of which are
+    /// main-actor, and this file has already lost one build to an isolation
+    /// guess (commit 78c4610). The long-running work — JPEG encode, upload, the
+    /// model call — is `await`ed and hops off on its own, exactly as before.
+    @MainActor
+    private func performEdit(_ p: EnhancedPhoto, _ edit: String,
+                             style: String?, prompt: String?) async throws -> EnhancedPhoto {
         let api = model.api          // snapshot on the main actor
         let targetDir = dir
         let source = p.enhancedURL
@@ -2356,80 +4314,83 @@ struct PhotoStudioView: View {
         let isSample = listing.isSample
         let disclosureLabel = Self.provenanceLabel(edit: edit, style: style, space: space)
         let spaceRaw = space.rawValue    // THIS listing's type, not the selected one (P2-5)
-        let tapKey = UUID().uuidString   // one idempotency key per user tap
-        Task {
-            do {
-                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
-                    throw AIImagePrep.error("Couldn't read that photo.")
-                }
-                // Anchor + "before", both best effort.
-                var serverListingID: UUID? = nil
-                var originalAssetID: String? = nil
-                if !isSample {
-                    serverListingID = await model.serverListingIDForCompliance(listingLocalID)
-                    if let sid = serverListingID, let unaltered {
-                        await MainActor.run { processingText = "Saving the original for disclosure…" }
-                        originalAssetID = await model.publishOriginalForDisclosure(
-                            listingServerID: sid, fileURL: unaltered)
-                        await MainActor.run { processingText = "Working on your photo…" }
-                    }
-                }
+        let tapKey = UUID().uuidString   // one idempotency key per photo, per run
 
-                var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
-                request.style = style
-                request.prompt = prompt
-                request.spaceType = spaceRaw
-                request.listingServerID = serverListingID
-                request.label = disclosureLabel
-                request.originalAssetID = originalAssetID
-                request.idempotencyKey = tapKey
-                let result = try await api.aiPhotoEdit(request)
-                // Save with the same enh-/orig- convention as ingested photos: a
-                // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
-                // on relaunch. Timestamp id sorts newest-first alongside ingests;
-                // the copied "before" keeps the compare working after relaunch.
-                let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
-                    + "-" + String(UUID().uuidString.prefix(4))
-                let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
-                guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
-                    throw AIImagePrep.error("The AI didn't return an image. Try again.")
-                }
-                let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
-                try? FileManager.default.copyItem(at: source, to: beforeURL)
-                // Never point originalURL at another photo's live file — delete()
-                // removes it, so fall back to self, not the source, if the copy fails.
-                let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
-                    ? beforeURL : outURL
-                let disclosure = result.disclosure
-                await MainActor.run {
-                    let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
-                    photos.insert(newPhoto, at: 0)
-                    if let disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
-                    isProcessing = false
-                    Haptics.success()
-                    compare = newPhoto   // show the before/after (and its disclosure)
-                    Analytics.track("ai_photo_edit", ["task": edit, "ok": "true"])
-                    if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
-                }
-                // Publish the "after" against the same provenance row so the
-                // tour can show the pair side by side (NorthstarMLS). Off the
-                // critical path — the edit is already on screen, and a failure
-                // costs nothing: the original alone satisfies AB 723.
-                if let provenanceID = result.provenanceID, let sid = serverListingID {
-                    await model.attachAlteredPhotoForDisclosure(
-                        provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
-                }
-            } catch {
-                await MainActor.run {
-                    isProcessing = false
-                    // The fair-housing denylist speaks for itself — show its
-                    // wording, let the user re-word, never retry automatically.
-                    let title = (error as? APIError)?.code == "unsupported_edit"
-                        ? "That change isn't allowed" : "That change didn't work"
-                    aiFailure = AIFailure(error, title: title)
-                }
+        // THIS photo is busy, and its thumbnail says so for as long as it is.
+        // `defer` rather than a clear at the end: the throws below are the
+        // whole point — a photo that failed must not be left spinning.
+        busyPhotoIDs.insert(p.id)
+        defer { busyPhotoIDs.remove(p.id) }
+
+        guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 2048, quality: 0.9) else {
+            throw AIImagePrep.error("Couldn't read that photo.")
+        }
+        // Anchor + "before", both best effort.
+        var serverListingID: UUID? = nil
+        var originalAssetID: String? = nil
+        if !isSample {
+            serverListingID = await model.serverListingIDForCompliance(listingLocalID)
+            if let sid = serverListingID, let unaltered {
+                // Put the step on screen and put back whatever line was there —
+                // a batch's line counts photos and must survive this detour.
+                let resume = processingText
+                processingText = "Saving the original for disclosure…"
+                originalAssetID = await model.publishOriginalForDisclosure(
+                    listingServerID: sid, fileURL: unaltered)
+                processingText = resume
             }
         }
+
+        var request = AIPhotoEditRequest(imageBase64: b64, mime: "image/jpeg", edit: edit)
+        request.style = style
+        request.prompt = prompt
+        request.spaceType = spaceRaw
+        request.listingServerID = serverListingID
+        request.label = disclosureLabel
+        request.originalAssetID = originalAssetID
+        request.idempotencyKey = tapKey
+        let result = try await api.aiPhotoEdit(request)
+        // Save with the same enh-/orig- convention as ingested photos: a
+        // UUID-named PNG was skipped by loadExisting (enh- filter) and lost
+        // on relaunch. Timestamp id sorts newest-first alongside ingests;
+        // the copied "before" keeps the compare working after relaunch.
+        let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
+            + "-" + String(UUID().uuidString.prefix(4))
+        let outURL = targetDir.appendingPathComponent("enh-\(id).jpg")
+        guard await AIImagePrep.writeJPEG(base64: result.imageBase64, to: outURL, quality: 0.95) else {
+            throw AIImagePrep.error("The AI didn't return an image. Try again.")
+        }
+        let beforeURL = targetDir.appendingPathComponent("orig-\(id).jpg")
+        try? FileManager.default.copyItem(at: source, to: beforeURL)
+        // Never point originalURL at another photo's live file — delete()
+        // removes it, so fall back to self, not the source, if the copy fails.
+        let originalURL = FileManager.default.fileExists(atPath: beforeURL.path)
+            ? beforeURL : outURL
+
+        let newPhoto = EnhancedPhoto(id: id, originalURL: originalURL, enhancedURL: outURL)
+        photos.insert(newPhoto, at: 0)
+        if let disclosure = result.disclosure, !disclosure.isEmpty { editDisclosures[id] = disclosure }
+        // METERED PER PHOTO, because it is charged per photo. `batch` says how
+        // it was reached; the event, and everything else about it, is the one
+        // `ai_photo_edit` a single wand tap has always sent.
+        Analytics.track("ai_photo_edit",
+                        ["task": edit, "ok": "true", "batch": batchRun == nil ? "false" : "true"])
+        if !isSample { FirstProjectGuide.recordAIPhotoEditCompleted() }
+
+        // Publish the "after" against the same provenance row so the
+        // tour can show the pair side by side (NorthstarMLS). Off the
+        // critical path — the edit is already on screen, and a failure
+        // costs nothing: the original alone satisfies AB 723. Detached from
+        // the caller so photo 4 of 17 is not waiting on photo 3's audit row.
+        if let provenanceID = result.provenanceID, let sid = serverListingID {
+            let appModel = model     // snapshot: an @EnvironmentObject read is a
+                                     // view-graph read, and this outlives the call
+            Task { @MainActor in
+                await appModel.attachAlteredPhotoForDisclosure(
+                    provenanceID: provenanceID, listingServerID: sid, fileURL: outURL)
+            }
+        }
+        return newPhoto
     }
 
     /// The label the public disclosure line carries for a studio edit. Studio
@@ -2456,7 +4417,11 @@ struct PhotoStudioView: View {
     /// tapping one runs the normal aiEdit path.
     private func suggestEdits(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+        connection.run { suggestEditsWithSession(p) }
+    }
+
+    private func suggestEditsWithSession(_ p: EnhancedPhoto) {
+        guard !isProcessing else { return }
         isProcessing = true
         processingText = "Looking at your photo…"
         Haptics.selection()
@@ -2488,7 +4453,11 @@ struct PhotoStudioView: View {
     /// fal result URLs expire, so the download happens immediately on completion.
     private func animate(_ p: EnhancedPhoto) {
         guard !isProcessing else { return }
-        guard requireSignIn() else { return }
+        connection.run { animateWithSession(p) }
+    }
+
+    private func animateWithSession(_ p: EnhancedPhoto) {
+        guard !isProcessing else { return }
         isProcessing = true
         processingText = "Making your video — about a minute…"
         Haptics.selection()
@@ -2499,7 +4468,13 @@ struct PhotoStudioView: View {
         let listingLocalID = listing.id
         let isSample = listing.isSample
         let tapKey = UUID().uuidString
+        // Snapshot on the main actor: `space` reads the listing, and the drift
+        // rubric is scoped by trade (a gym's "equipment appeared" is not a
+        // home's).
+        let spaceRawForDrift = space.rawValue
+        busyPhotoIDs.insert(photoID)
         animateTask = Task {
+            defer { busyPhotoIDs.remove(photoID) }
             do {
                 guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1280, quality: 0.85) else {
                     throw AIImagePrep.error("Couldn't read that photo.")
@@ -2541,6 +4516,43 @@ struct PhotoStudioView: View {
                 if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                     throw AIImagePrep.error("Couldn't download the finished clip (HTTP \(http.statusCode)). Try again.")
                 }
+
+                // ── THE QUALITY GATE ────────────────────────────────────────
+                // Judge the clip before the agent ever sees it. `POST
+                // /ai-video/drift` compares the first, middle and last frames
+                // against the source still on five axes and answers whether it
+                // may be published; until this call existed the route had no
+                // callers at all and every clip was reported `unchecked,
+                // publishable: false` while the app used it anyway.
+                //
+                // FAIL CLOSED: a throw, an unknown status or `.unavailable`
+                // all hold, because "we could not tell whether the AI changed
+                // the house" is not "the AI did not change the house". The
+                // downloaded temp file is dropped on the floor rather than
+                // saved — a clip on disk that must not be published is a trap
+                // the agent finds a week later, next to their listing.
+                await MainActor.run { processingText = "Checking it against your photo…" }
+                let verdict: DriftVerdict
+                do {
+                    verdict = try await api.aiVideoDrift(DriftCheckRequest(
+                        requestID: job.requestId,
+                        kind: "reel",
+                        sourceBase64: b64,
+                        frames: await ClipFrames.extract(from: tmp),
+                        seconds: 5,
+                        spaceType: spaceRawForDrift,
+                        listingServerID: serverListingID))
+                } catch {
+                    verdict = DriftVerdict(status: .unavailable, publishable: false,
+                                           action: "hold", message: "", reason: nil)
+                }
+                guard verdict.mayUse else {
+                    try? FileManager.default.removeItem(at: tmp)
+                    Analytics.track("ai_clip_rejected",
+                                    ["kind": "animate", "status": verdict.status.rawValue])
+                    throw AIImagePrep.error(verdict.refusal)
+                }
+
                 let dest = targetDir.appendingPathComponent(
                     "clip-\(photoID)-\(UUID().uuidString.prefix(4)).mp4")
                 try? FileManager.default.removeItem(at: dest)
@@ -2624,79 +4636,22 @@ struct PhotoStudioView: View {
         return address.isEmpty ? "This \(space.spaceNoun)" : address
     }
 
-    /// Photos need at least two frames before there is anything to stitch.
-    private var canMakeReel: Bool { photos.count >= 2 }
-
-    /// The reel maker — ALWAYS visible, from zero photos, so the feature (and
-    /// the voice + captions inside it) is named before anyone taps anything.
-    /// Disabled until two photos exist, with the reason said plainly.
-    @ViewBuilder private var reelCard: some View {
-        Button { showReelStudio = true } label: { reelCardFace }
-            .buttonStyle(ScalePressStyle())
-            .disabled(!canMakeReel)
-            .accessibilityIdentifier("detail.reelStudio")
-            .accessibilityLabel(Text(canMakeReel
-                                     ? "Make a reel. Your photos become a video with your voice and captions."
-                                     : "Make a reel. Add 2 photos to start."))
-    }
-
-    private var reelCardFace: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            reelCardHeader
-            reelVoiceCallout
-            Text(canMakeReel ? "Ready — \(photos.count) photos" : "Add 2 photos to start")
-                .font(.rpCaption.weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.95))
-        }
-        .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(RPGradient.reel)
-        .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-        // Arrived by tapping "Make a reel" on the listing? Ring the card the
-        // deep link was aiming at, so it is unmistakably the thing to tap.
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
-                .strokeBorder(Color.white.opacity(intent == .reel ? 0.85 : 0), lineWidth: 2)
-        )
-        .opacity(canMakeReel ? 1 : 0.55)
-    }
-
-    private var reelCardHeader: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "film.stack")
-                .font(.system(size: 22, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Color.white)
-                .frame(width: 48, height: 48)
-                .background(Color.white.opacity(0.18),
-                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text("Make a reel").font(.rpHeadline).foregroundStyle(Color.white)
-                    AIPill()
-                }
-                Text("Your photos become a video — add your voice and captions.")
-                    .font(.rpCaption).foregroundStyle(Color.white.opacity(0.9))
-                    .fixedSize(horizontal: false, vertical: true)
-                    .multilineTextAlignment(.leading)
-            }
-            Spacer(minLength: 8)
-            if canMakeReel {
-                Image(systemName: "chevron.right")
-                    .font(.rpCaption.weight(.bold)).foregroundStyle(Color.white.opacity(0.9))
-            }
-        }
-    }
-
-    /// Names the voiceover where the agent actually stands. Before this, the
-    /// word "voice" appeared nowhere until two photos and a tap later.
-    private var reelVoiceCallout: some View {
-        Text("🎙 Voice + captions")
-            .font(.rpCaption.weight(.semibold))
-            .foregroundStyle(Color.white)
-            .padding(.horizontal, 10).padding(.vertical, 6)
-            .background(Color.white.opacity(0.18), in: Capsule())
-    }
+    // `canMakeReel`, `reelCard`, `reelCardFace`, `reelCardHeader` and
+    // `reelVoiceCallout` were all deleted from here.
+    //
+    // They existed for ONE reason: the listing screen's "Make a reel" tile was
+    // `NavigationLink { PhotoStudioView(listing:, intent: .reel) }`, so the reel
+    // journey ran through AI Photo Studio and needed a door at the far end —
+    // and the highlight ring on that door (`intent == .reel`) was there to tell
+    // the agent that the screen they had landed on was not the screen they
+    // asked for. The tile presents `ReelStudioView` itself now, so the door,
+    // the ring and the intent that drove it are all gone. Reels are not a photo
+    // editing feature and they no longer take up room on the photo editing
+    // screen.
+    //
+    // The reel's own copy is NOT lost — "Make a reel", "Video + your voice" and
+    // the voice/captions promise live on the listing tile and inside Reel
+    // Studio's own steps.
 
     /// Motion clips already generated for this listing (F-A-23). Before this,
     /// an "Animate" result was reachable exactly once — the file stayed on the
@@ -2759,6 +4714,36 @@ struct PhotoStudioView: View {
         }
     }
 
+    /// Make this photo the cover, from the grid, in one tap. Filled star on
+    /// the one that already is — so the control is also the indicator, and a
+    /// glance at the grid answers "which one is the cover?" without counting
+    /// badges.
+    private func coverButton(_ p: EnhancedPhoto) -> some View {
+        let isCover = isMain(p)
+        return VStack {
+            Spacer(minLength: 0)
+            HStack {
+                Button {
+                    guard !isCover else { return }
+                    setMain(p)
+                } label: {
+                    Image(systemName: isCover ? "star.fill" : "star")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isCover ? Color.white : Color.white.opacity(0.9))
+                        .frame(width: 32, height: 32)
+                        .background(isCover ? Theme.accent : Color.black.opacity(0.42), in: Circle())
+                        .shadow(color: Color.black.opacity(0.25), radius: 4, x: 0, y: 2)
+                }
+                .buttonStyle(ScalePressStyle())
+                .padding(8)
+                .disabled(isProcessing || isCover)
+                .accessibilityLabel(Text(isCover ? "This is the cover photo"
+                                                 : "Make this the cover photo"))
+                Spacer(minLength: 0)
+            }
+        }
+    }
+
     /// The visible AI entry point on every thumb — opens the same edits as the
     /// long-press menu, no long-press required.
     private func wandButton(_ p: EnhancedPhoto) -> some View {
@@ -2780,58 +4765,541 @@ struct PhotoStudioView: View {
         .accessibilityLabel(Text("Change this photo with AI"))
     }
 
-    /// Empty state = a menu of what the AI can do for THIS kind of space, not a
-    /// blank box (a gym never sees "green lawn").
+    /// The empty state, now that the edit bar above it carries the names. It is
+    /// a prompt to add a photo and nothing else — the menu of what the AI can do
+    /// moved OUT of here, permanently, because being reachable only from here is
+    /// exactly the defect (see `studioEditSection`).
     private var emptyShowcase: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "wand.and.stars")
-                .font(.system(size: 32, weight: .medium))
+        VStack(spacing: 10) {
+            Image(systemName: "photo.stack")
+                .font(.system(size: 30, weight: .medium))
                 .symbolRenderingMode(.hierarchical)
                 .foregroundStyle(Color.white)
-                .frame(width: 64, height: 64)
+                .frame(width: 60, height: 60)
                 .background(RPGradient.photo,
                             in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             Text("Add a photo")
                 .font(.rpHeadline).foregroundStyle(Theme.ink)
                 .multilineTextAlignment(.center)
-            Text(space == .realEstate
-                 ? "Then tap one button to fix the sky, clean the room, or stage it."
-                 : "Then tap one button to fix the sky, tidy the space, or furnish it.")
+            Text("Every change above works the moment you have one. Tap a change now and it picks the photo first.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                 .multilineTextAlignment(.center)
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
-                                GridItem(.flexible(), spacing: 8)], spacing: 8) {
-                showcaseChip("moon.stars.fill", EditWords.twilight)
-                showcaseChip("cloud.sun.fill", EditWords.sky)
-                if space == .realEstate {
-                    showcaseChip("leaf.fill", EditWords.lawn)
-                }
-                showcaseChip("sparkles.rectangle.stack.fill", EditWords.declutter)
-                showcaseChip("sofa.fill", EditWords.stage(space))
-                showcaseChip("play.rectangle.on.rectangle.fill", EditWords.animate)
-                if space != .realEstate {
-                    showcaseChip("text.bubble.fill", EditWords.custom)
-                }
-            }
+                .fixedSize(horizontal: false, vertical: true)
         }
-        .padding(.vertical, 22)
+        .padding(.vertical, 18)
     }
 
-    private func showcaseChip(_ icon: String, _ label: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: icon)
-                .font(.system(size: 14, weight: .semibold))
-                .symbolRenderingMode(.hierarchical)
-                .foregroundStyle(Theme.accent)
-            Text(label)
+    // MARK: - The always-on edit bar
+    //
+    // Every piece below is its own small sub-view. This file has hit the
+    // type-checker's expression budget before ("unable to type-check this
+    // expression in reasonable time") and `studioCore` must stay a short list of
+    // identifiers, so nothing here nests more than it has to.
+
+    /// Everything the AI can do to a photo, NAMED, above the grid, at every
+    /// photo count. Plus the selection bar and progress card the batch path
+    /// needs — bundled into one `studioCore` child on purpose (its VStack is
+    /// already close to `ViewBuilder`'s ten-child limit).
+    @ViewBuilder private var studioEditSection: some View {
+        VStack(spacing: 10) {
+            editBarCard
+            stagingCard
+            if let pending = batchEdit {
+                batchSelectionBar(pending)
+            }
+            if let run = batchRun {
+                batchProgressCard(run)
+            }
+            if let note = batchNote, batchRun == nil {
+                batchNoteCard(note)
+            }
+        }
+    }
+
+    /// The named edits. One tap each — with photos on screen it asks WHICH
+    /// photos; with an empty studio it opens the picker and applies the edit to
+    /// the photo that lands (`startShowcaseEdit`).
+    private var editBarCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Text("CHANGE YOUR PHOTOS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Spacer(minLength: 8)
+                if !photos.isEmpty {
+                    Text("\(photos.count) photo\(photos.count == 1 ? "" : "s")")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+            }
+            editChipGrid
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// The chips themselves. `lawn` is real-estate only — a gym never sees
+    /// "green lawn" (P2-4) — and everything else is offered to every trade,
+    /// INCLUDING "Ask for anything", which used to be hidden from real estate
+    /// for no reason an agent with an odd request would accept.
+    private var editChipGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                            GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            editChip("sparkles.rectangle.stack.fill", EditWords.declutter, "declutter",
+                     sub: EditWords.declutterGloss)
+            editChip("moon.stars.fill", EditWords.twilight, "twilight")
+            editChip("cloud.sun.fill", EditWords.sky, "sky")
+            if space == .realEstate {
+                editChip("leaf.fill", EditWords.lawn, "lawn")
+            }
+            editChip("text.bubble.fill", EditWords.custom, "custom")
+            editChip("play.rectangle.on.rectangle.fill", EditWords.animate, "animate",
+                     multiple: false)
+        }
+    }
+
+    /// STAGING, by its own name, with all four styles on the surface.
+    ///
+    /// Before this the word "staging" appeared nowhere an agent could see:
+    /// `EditWords.stage(.realEstate)` returns "Add furniture", and Modern /
+    /// Rustic / Minimalist / Scandinavian lived one confirmation dialog behind
+    /// another one. Two nested dialogs is not discoverable — the owner reported
+    /// virtual staging missing right beside Declutter. The heading is the
+    /// industry word, the line under it is the plain-words gloss (never instead
+    /// of the word), and the styles are buttons you can read without tapping
+    /// anything.
+    private var stagingCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "sofa.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.accent)
+                Text(EditWords.staging(space).uppercased())
+                    .font(.rpKicker).foregroundStyle(Theme.inkDim)
+                Spacer(minLength: 8)
+            }
+            Text(EditWords.stagingGloss(space))
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            stagingStyleGrid
+            Text("\(stagingLabel) is disclosed on your tour.")
+                .font(.caption2).foregroundStyle(Theme.inkDim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    private var stagingStyleGrid: some View {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 8),
+                            GridItem(.flexible(), spacing: 8)], spacing: 8) {
+            ForEach(StagingStyle.all) { style in
+                stagingStyleChip(style)
+            }
+        }
+    }
+
+    private func stagingStyleChip(_ style: StagingStyle) -> some View {
+        Button { startEdit("stage", style: style.id, title: "\(EditWords.staging(space)) · \(style.label)") } label: {
+            Text(style.label)
                 .font(.rpCaption.weight(.semibold))
                 .foregroundStyle(Theme.ink)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-            Spacer(minLength: 0)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 10)
+                .background(Theme.accentSoft,
+                            in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .padding(.horizontal, 12).padding(.vertical, 10)
-        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .buttonStyle(ScalePressStyle())
+        .disabled(isProcessing)
+        .accessibilityLabel(Text("\(style.label) — pick the photos and the furniture is added to each one."))
+    }
+
+    /// One named edit.
+    ///
+    /// This was `showcaseChip`, and the previous fix already made it a real
+    /// `Button` instead of a decoration. That was necessary and not sufficient:
+    /// it stayed inside `emptyShowcase`, behind `if photos.isEmpty`, so an agent
+    /// with 17 photos on the listing still saw none of these words. `sub` is the
+    /// plain-words gloss UNDER the feature's real name, never instead of it
+    /// (see `EditWords.declutter`).
+    private func editChip(_ icon: String, _ label: String, _ edit: String,
+                          sub: String? = nil, multiple: Bool = true) -> some View {
+        Button { startEdit(edit, style: nil, title: label, multiple: multiple) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.system(size: 14, weight: .semibold))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(Theme.accent)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(label)
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                    if let sub {
+                        Text(sub)
+                            .font(.caption2)
+                            .foregroundStyle(Theme.inkDim)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .buttonStyle(ScalePressStyle())
+        .disabled(isProcessing)
+        .accessibilityLabel(Text(photos.isEmpty
+                                 ? "\(label). Pick a photo and this change is made to it."
+                                 : "\(label). Pick the photos and this change is made to each one."))
+        .accessibilityIdentifier("studio.edit.\(edit)")
+    }
+
+    // MARK: - Choosing which photos an edit applies to
+
+    /// The bar that appears once an edit is chosen and there are photos to
+    /// choose from. Tap thumbs in the grid, then Apply.
+    private func batchSelectionBar(_ pending: PendingBatchEdit) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(pending.multiple
+                 ? "Tap the photos to change, then apply."
+                 : "Tap the photo to use.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            HStack(spacing: 8) {
+                Text(pending.title)
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                Spacer(minLength: 8)
+                Text("\(batchSelection.count) selected")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(batchSelection.isEmpty ? Theme.inkDim : Theme.accent)
+            }
+            batchSelectionButtons(pending)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func batchSelectionButtons(_ pending: PendingBatchEdit) -> some View {
+        HStack(spacing: 8) {
+            if pending.multiple {
+                // `label:` form rather than `Button(<ternary of literals>)`:
+                // `Button(_:action:)` has both a LocalizedStringKey and a
+                // StringProtocol overload, and handing it a ternary is a
+                // needless overload-resolution puzzle in a file that has run
+                // the type-checker out of budget before.
+                Button {
+                    batchSelection = batchSelection.count == photos.count
+                        ? Set<String>() : Set(photos.map(\.id))
+                    Haptics.selection()
+                } label: {
+                    Text(batchSelection.count == photos.count ? "Clear" : "Select all")
+                        .font(.rpCaption.weight(.semibold))
+                        .foregroundStyle(Theme.accent)
+                }
+            }
+            Button { cancelBatchSelection() } label: {
+                Text("Cancel")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.inkDim)
+            }
+            Spacer(minLength: 4)
+            Button { applyBatchSelection(pending) } label: {
+                Text(batchSelection.isEmpty
+                     ? "Apply"
+                     : "Apply to \(batchSelection.count) photo\(batchSelection.count == 1 ? "" : "s")")
+                    .font(.rpCaption.weight(.bold))
+                    .foregroundStyle(Color.white)
+                    .padding(.horizontal, 14).padding(.vertical, 9)
+                    .background(Theme.accent, in: Capsule())
+            }
+            .buttonStyle(ScalePressStyle())
+            .disabled(batchSelection.isEmpty || isProcessing)
+            .opacity(batchSelection.isEmpty || isProcessing ? 0.5 : 1)
+            .accessibilityIdentifier("studio.batchApply")
+        }
+    }
+
+    /// A running batch, with counts. A batch is minutes of work and money per
+    /// photo, so it says which photo it is on and how many have failed WHILE it
+    /// runs, not only at the end.
+    private func batchProgressCard(_ run: BatchRun) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                ProgressView()
+                Text("\(run.title) — photo \(min(run.current, run.total)) of \(run.total)")
+                    .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.ink)
+                    .lineLimit(2).minimumScaleFactor(0.8)
+            }
+            ProgressView(value: Double(run.done + run.failed), total: Double(max(run.total, 1)))
+                .tint(Theme.accent)
+            Text(run.failed == 0
+                 ? "\(run.done) done. Each photo is a separate change, saved beside its original."
+                 : "\(run.done) done, \(run.failed) failed. The rest keep going.")
+                .font(.rpCaption)
+                .foregroundStyle(run.failed == 0 ? Theme.inkDim : Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .card()
+    }
+
+    /// What the last batch actually did. Stays until the agent starts something
+    /// else — a run where 14 of 17 landed has to say so plainly, and must not
+    /// wear a green tick while it says it.
+    private func batchNoteCard(_ note: BatchNote) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: note.ok ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                .foregroundStyle(note.ok ? Theme.good : Theme.warn)
+            Text(note.text)
+                .font(.rpCaption).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 4)
+            Button { batchNote = nil } label: {
+                Image(systemName: "xmark.circle.fill").foregroundStyle(Theme.inkDim)
+            }
+            .accessibilityLabel(Text("Dismiss"))
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    /// The line above the grid. It has to explain the grid's TWO modes now.
+    private var studioGridHint: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(batchEdit == nil
+                 ? "Tap a photo to see before and after. Tap the wand on a photo to change just that one."
+                 : "Tap the photos you want changed — they get a tick.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            // W2-C4: the agent learns this BEFORE they tap, not after
+            // a broker asks. Disclosure is automatic, not optional.
+            Label("Every AI edit is disclosed on your tour, and the untouched original is published with it.",
+                  systemImage: "checkmark.shield.fill")
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.good)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// An edit-bar chip was tapped. Two roads out of here, and neither of them
+    /// is a new way to spend money:
+    ///
+    ///  * NO PHOTOS YET → open the picker, remember the edit (and the staging
+    ///    style, if it was a style button), and run it on the photo that lands.
+    ///  * PHOTOS ON SCREEN → put the grid into selection mode and let the agent
+    ///    say which ones. With 17 photos on a listing, "tap the wand, pick
+    ///    Declutter" seventeen times is the workflow this exists to kill.
+    ///
+    /// Selecting a change and its photos is local work and stays available
+    /// offline. The actual edit runners await the shared anonymous session
+    /// without losing the selected photos or prompt. Consent and quota checks
+    /// remain unchanged.
+    private func startEdit(_ edit: String, style: String?, title: String,
+                           multiple: Bool = true) {
+        guard !isProcessing else { return }
+        batchNote = nil
+        guard !photos.isEmpty else {
+            startShowcaseEdit(edit, style: style)
+            return
+        }
+        batchEdit = PendingBatchEdit(edit: edit, style: style, title: title, multiple: multiple)
+        // Pre-tick the whole listing for the fan-out edits: with 17 photos the
+        // answer is almost always "all of them", and un-ticking three is less
+        // work than ticking fourteen. Never for the one-at-a-time edits.
+        batchSelection = multiple ? Set(photos.map(\.id)) : Set<String>()
+        Haptics.selection()
+    }
+
+    /// A chip was tapped with no photos on screen: open the picker and remember
+    /// the edit, so the photo the agent chooses gets it immediately.
+    private func startShowcaseEdit(_ edit: String, style: String? = nil) {
+        pendingShowcaseEdit = edit
+        pendingShowcaseStyle = style
+        showLibrary = true
+        Haptics.selection()
+    }
+
+    /// Run the edit a chip asked for, now that a photo exists. Called from
+    /// `ingest` AFTER `isProcessing` is cleared, so `aiEdit`'s one-job-at-a-time
+    /// guard (F-A-22) lets it through.
+    private func runPendingShowcaseEdit() {
+        guard let edit = pendingShowcaseEdit else { return }
+        let style = pendingShowcaseStyle
+        pendingShowcaseEdit = nil
+        pendingShowcaseStyle = nil
+        guard let target = photos.first else { return }
+        switch edit {
+        case "animate":
+            animate(target)
+        case "stage":
+            // A style button already answered "which style?" — do not ask again.
+            if let style {
+                aiEdit(target, "stage", style: style)
+                return
+            }
+            // Staging needs a style first. Presenting a dialog in the same event
+            // that dismissed the photo picker silently drops it, so chain it off
+            // the run loop exactly the way the wand menu already does.
+            stagePhoto = target
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showStageDialog = true }
+        case "custom":
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { openCustomEdit(target) }
+        default:
+            aiEdit(target, edit)
+        }
+    }
+
+    /// Tick / untick one photo while an edit is waiting for its targets. The
+    /// one-at-a-time edits (animate) replace the selection instead of adding to
+    /// it — a minute of polling and a separate charge per photo is not something
+    /// to fan out by accident.
+    private func toggleBatchSelection(_ p: EnhancedPhoto) {
+        guard let pending = batchEdit else { return }
+        if !pending.multiple {
+            batchSelection = batchSelection.contains(p.id) ? Set<String>() : Set([p.id])
+        } else if batchSelection.contains(p.id) {
+            batchSelection.remove(p.id)
+        } else {
+            batchSelection.insert(p.id)
+        }
+        Haptics.selection()
+    }
+
+    private func cancelBatchSelection() {
+        batchEdit = nil
+        batchSelection = []
+    }
+
+    /// Apply: turn the ticked ids back into photos, in GRID ORDER (the set has
+    /// no order of its own and the progress line has to match what the agent is
+    /// looking at), then hand them to the right runner.
+    private func applyBatchSelection(_ pending: PendingBatchEdit) {
+        let targets = photos.filter { batchSelection.contains($0.id) }
+        guard !targets.isEmpty else { return }
+        cancelBatchSelection()
+        switch pending.edit {
+        case "animate":
+            // Never batched. `animate` is its own endpoint, its own poll and its
+            // own charge; the chip is `multiple: false` so this is one photo.
+            if let first = targets.first { animate(first) }
+        case "custom":
+            // The prompt comes first, from the sheet, and then goes to every
+            // photo the agent ticked. The sheet previews the first of them.
+            //
+            // The retained action owns its targets while reconnecting. They
+            // become view state only when the prompt can actually open.
+            guard let first = targets.first else { return }
+            openCustomEdit(first, batchTargets: targets)
+        default:
+            runBatch(pending, targets: targets)
+        }
+    }
+
+    /// Run ONE edit over MANY photos, in sequence, on the user's own account.
+    ///
+    /// There is no batch endpoint and no second billing path: this loops
+    /// `performEdit`, which is the exact body `aiEdit` runs for a single photo —
+    /// same `/ai-photo` call, same idempotency key per photo, same original
+    /// published for disclosure per photo, same `ai_photo_edit` event per photo.
+    /// Seventeen photos is seventeen edits, charged and metered as seventeen
+    /// edits, because that is what it is.
+    ///
+    /// FAILURE IS REPORTED HONESTLY. One photo failing does not stop the other
+    /// sixteen — except when the server says the allowance is gone (402) or the
+    /// session expired (401), where continuing would burn fourteen more calls
+    /// that cannot succeed. Those stop the run and surface the SAME alert a
+    /// single edit shows, keeping its Upgrade plan / Retry connection buttons, with a
+    /// line saying how many landed first.
+    private func runBatch(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
+                          prompt: String? = nil) {
+        guard !isProcessing else { return }
+        connection.run { runBatchWithSession(pending, targets: targets, prompt: prompt) }
+    }
+
+    private func runBatchWithSession(_ pending: PendingBatchEdit, targets: [EnhancedPhoto],
+                                     prompt: String?) {
+        guard !isProcessing else { return }
+        guard !targets.isEmpty else { return }
+        isProcessing = true
+        batchNote = nil
+        batchRun = BatchRun(title: pending.title, total: targets.count)
+        processingText = "\(pending.title) — photo 1 of \(targets.count)…"
+        Haptics.selection()
+        // `@MainActor in` explicitly rather than relying on inheritance: every
+        // line in here touches `@State`, `AppModel` or `Analytics`, all three of
+        // which are main-actor, and this file has already lost one build to an
+        // isolation guess (commit 78c4610).
+        Task { @MainActor in
+            var done = 0
+            var failedCount = 0
+            var firstFailure: AIFailure?
+            var stoppedEarly = false
+
+            for (index, photo) in targets.enumerated() {
+                batchRun?.current = index + 1
+                processingText = "\(pending.title) — photo \(index + 1) of \(targets.count)…"
+                do {
+                    _ = try await performEdit(photo, pending.edit,
+                                              style: pending.style, prompt: prompt)
+                    done += 1
+                    batchRun?.done = done
+                } catch {
+                    // The fair-housing denylist speaks for itself — its wording
+                    // is the message, and it is NEVER auto-retried.
+                    let title = (error as? APIError)?.code == "unsupported_edit"
+                        ? "That change isn't allowed" : "That change didn't work"
+                    let failure = AIFailure(error, title: title)
+                    failedCount += 1
+                    batchRun?.failed = failedCount
+                    if firstFailure == nil { firstFailure = failure }
+                    if failure.isQuota || failure.isUnauthorized {
+                        stoppedEarly = true
+                        break
+                    }
+                }
+            }
+
+            isProcessing = false
+            batchRun = nil
+            finishBatch(pending, total: targets.count, done: done,
+                        failed: failedCount, firstFailure: firstFailure,
+                        stoppedEarly: stoppedEarly)
+        }
+    }
+
+    /// What the agent is told when a batch ends. Split out of `runBatch` so the
+    /// task body stays readable and the wording lives in one place.
+    private func finishBatch(_ pending: PendingBatchEdit, total: Int, done: Int,
+                             failed: Int, firstFailure: AIFailure?, stoppedEarly: Bool) {
+        let photoWord = done == 1 ? "photo" : "photos"
+        if failed == 0 {
+            batchNote = BatchNote(
+                text: "\(pending.title) — \(done) \(photoWord) changed. Each one saved beside its original.",
+                ok: true)
+            Haptics.success()
+            return
+        }
+        Haptics.warning()
+        let skipped = stoppedEarly ? total - done - failed : 0
+        var lines = ["\(done) of \(total) photos changed. \(failed) failed."]
+        if skipped > 0 { lines.append("\(skipped) were not attempted.") }
+        if let firstFailure { lines.append("The first failure said: \(firstFailure.message)") }
+        // Keep the failure's CLASS so a 402 still offers the in-app paywall and
+        // a 401 still offers Retry connection — the message changes, the buttons do not.
+        if let firstFailure {
+            aiFailure = AIFailure(firstFailure,
+                                  title: done > 0 ? "Some photos didn't change" : firstFailure.title,
+                                  message: lines.joined(separator: "\n\n"))
+        }
+        if done > 0 {
+            batchNote = BatchNote(text: "\(pending.title) — \(done) of \(total) photos changed, \(failed) failed.",
+                                  ok: false)
+        }
     }
 
     // MARK: - Files
@@ -2839,6 +5307,18 @@ struct PhotoStudioView: View {
     private func loadExisting() {
         photos = EnhancedPhoto.loadAll(listingID: listing.id)
         clips = SavedClip.loadAll(listingID: listing.id)
+    }
+
+    /// Photos added AFTER a tour was published still belong on its page.
+    /// `syncGalleryPhotos` memoises what it has already sent, so this is a
+    /// no-op on every visit but the first one after a change. Only for a
+    /// listing that HAS a public page — there is nothing to add to otherwise.
+    private func syncGalleryIfPublished() {
+        guard entry == .photos, !listing.isSample, !photos.isEmpty else { return }
+        let current = model.listings.first(where: { $0.id == listing.id })
+        guard current?.serverShareURL != nil, let serverID = current?.serverID else { return }
+        let localID = listing.id
+        Task { await model.syncGalleryPhotos(listingLocalID: localID, listingServerID: serverID) }
     }
 
     /// UI walk only (`-uiTesting -ui.seedPhotosDir`): the store screenshots need
@@ -2857,7 +5337,14 @@ struct PhotoStudioView: View {
     }
 
     private func ingest(_ images: [UIImage]) {
-        guard !images.isEmpty else { return }
+        // An empty callback means the picker was cancelled (PHPicker still calls
+        // back with no results). Drop any chip's pending edit rather than firing
+        // it at the next photo the agent adds for some other reason.
+        guard !images.isEmpty else {
+            pendingShowcaseEdit = nil
+            pendingShowcaseStyle = nil
+            return
+        }
         isProcessing = true
         processingText = "Working on your photo…"
         let targetDir = dir
@@ -2884,6 +5371,8 @@ struct PhotoStudioView: View {
                 // First photos added become the card's cover image automatically.
                 if mainRelPath == nil, let first = photos.first { setMain(first) }
                 isProcessing = false
+                // An empty-state chip may have been waiting on this photo.
+                runPendingShowcaseEdit()
             }
         }
     }
@@ -3042,11 +5531,22 @@ struct PhotoCompareView: View {
 struct CustomEditSheet: View {
     let photo: EnhancedPhoto             // the photo this prompt will edit
     let api: APIClient                   // snapshot from the presenting view
+    /// The business type the examples speak in — a gym's starter ideas are not
+    /// a restaurant's. Passed in because this sheet has no listing of its own.
+    let space: SpaceType
+    /// The listing's SERVER id when it has one, so the prompt rewrite is gated
+    /// against this listing's real space type rather than the strictest rules.
+    /// nil is supported and simply fails closed.
+    let listingServerID: UUID?
     let onGenerate: (String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var prompt = ""
+    @StateObject private var connection = FeatureSessionAction()
     @State private var isImproving = false       // "Improve my prompt" in flight
     @State private var improveError: String?
+    /// The area named by the starter chip the person tapped, sent as
+    /// `room_hint`. See `StarterChip` for why this is the room signal we have.
+    @State private var pickedArea: String?
 
     private var trimmed: String {
         prompt.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -3068,6 +5568,8 @@ struct CustomEditSheet: View {
                     .font(.rpCaption)
                     .foregroundStyle(prompt.count >= 600 ? Theme.warn : Theme.inkDim)
                     .frame(maxWidth: .infinity, alignment: .trailing)
+
+                starterChipsRow
 
                 // Rough idea in → sharper prompt back (replaces the field text;
                 // still fully editable before Generate).
@@ -3113,6 +5615,7 @@ struct CustomEditSheet: View {
                 Spacer()
             }
             .padding()
+            .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Custom AI edit")
             .navigationBarTitleDisplayMode(.inline)
@@ -3123,41 +5626,222 @@ struct CustomEditSheet: View {
             }
             .onChange(of: prompt) { newValue in
                 if newValue.count > 600 { prompt = String(newValue.prefix(600)) }
+                // An emptied box means the starter chip that named an area is
+                // gone too: whatever gets typed next may be about a different
+                // room, and a stale `room_hint` is worse than none.
+                if newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    pickedArea = nil
+                }
             }
         }
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
+        .onDisappear { connection.cancel() }
         .presentationDetents([.medium, .large])
     }
 
-    /// Send the rough idea + this photo through `ai-photo` (edit:
-    /// "improve_prompt") and REPLACE the field with the sharper version. The
-    /// user can still edit before Generate; the 600-char cap stays enforced by
-    /// onChange above. The JPEG prep runs off the main actor.
+    // MARK: Starter chips — somewhere to begin when the box is empty
+
+    /// One tappable example instruction.
+    ///
+    /// `area` is the room or area the example is about, and it rides along as
+    /// `room_hint` when the person then asks for a better prompt. It is the
+    /// ONLY room signal this screen has: the photos in the studio are imported
+    /// files with no tag of their own, and the walkthrough's room tags are
+    /// anchored to a TIMELINE (`RoomTag.tMs`) rather than to any still. If a
+    /// photo ever carries its own tag, that becomes the better source and this
+    /// stays as the fallback for a typed idea.
+    struct StarterChip: Identifiable, Hashable {
+        /// What the capsule says. Short — it has to fit on a phone.
+        let label: String
+        /// The area this example is about; nil when it is about the whole shot.
+        let area: String?
+        /// What tapping it puts in the field. A whole, specific instruction —
+        /// the point is to show what "specific" looks like.
+        let text: String
+        var id: String { label }
+    }
+
+    /// Examples in the vocabulary of THIS business type. Drawn from the same
+    /// area names the room tagger offers (`SpaceType.quickTags`) and the detail
+    /// fields the owner already filled in for their industry, so the words are
+    /// ones they use — a gym racks weights, a store faces shelves.
+    ///
+    /// Deliberately NOT the preset edits: twilight, sky, lawn, declutter and
+    /// staging are buttons of their own one screen back. These are the things
+    /// only free text can ask for.
+    ///
+    /// `nonisolated` because it is pure and is read from a view property, not
+    /// from `body`.
+    nonisolated static func starterChips(for space: SpaceType) -> [StarterChip] {
+        switch space {
+        case .realEstate:
+            return [
+                StarterChip(label: "Clear the counters", area: "Kitchen",
+                            text: "Clear everything off the kitchen counters and make the surfaces look freshly wiped. Keep the cabinets, appliances and layout exactly as photographed."),
+                StarterChip(label: "Fresh white walls", area: nil,
+                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window, fixture and piece of furniture exactly where it is."),
+                StarterChip(label: "Warm evening light", area: "Living Room",
+                            text: "Relight the room with warm evening light coming through the windows, keeping the furniture and the architecture exactly as photographed."),
+                StarterChip(label: "Tidy the yard", area: "Backyard",
+                            text: "Tidy the yard: clear the hose, bins and loose items, and make the beds look freshly mulched. Keep the house and the planting exactly as photographed."),
+                StarterChip(label: "Empty the driveway", area: "Exterior",
+                            text: "Remove the cars and the bins from the driveway and the street in front, keeping the house exactly as photographed."),
+            ]
+        case .venue:
+            return [
+                StarterChip(label: "Set it for an event", area: "Main Hall",
+                            text: "Set the room for an evening event: round tables, linens and chairs neatly placed, keeping the room's architecture and fixtures exactly as photographed."),
+                StarterChip(label: "Warm up the lighting", area: "Main Hall",
+                            text: "Relight the room with warm evening lighting and a soft glow on the walls, keeping every fixture exactly as photographed."),
+                StarterChip(label: "Clear the clutter", area: nil,
+                            text: "Remove the stacked chairs, cables and boxes from the shot, keeping the room exactly as photographed."),
+                StarterChip(label: "Dress the patio", area: "Patio",
+                            text: "Dress the patio for a summer evening with string lights and set tables, keeping the building and the planting exactly as photographed."),
+            ]
+        case .restaurant:
+            return [
+                StarterChip(label: "Set the tables", area: "Dining",
+                            text: "Set the dining tables with clean linens, glassware and cutlery, keeping the room's layout and fixtures exactly as photographed."),
+                StarterChip(label: "Warm dinner light", area: "Dining",
+                            text: "Relight the room for dinner service — warm, low light with a glow over each table — keeping every fixture exactly as photographed."),
+                StarterChip(label: "Tidy the bar", area: "Bar",
+                            text: "Clear the bar top and straighten the bottles and glassware behind it, keeping the bar exactly as photographed."),
+                StarterChip(label: "Dress the patio", area: "Patio",
+                            text: "Dress the patio for an evening with string lights and set tables, keeping the building and the planting exactly as photographed."),
+            ]
+        case .retail:
+            return [
+                StarterChip(label: "Face the shelves", area: "Aisles",
+                            text: "Straighten and face every product on the shelves so the aisle looks freshly stocked, keeping the fixtures and the signage exactly as photographed."),
+                StarterChip(label: "Fresh produce", area: "Produce",
+                            text: "Make the produce look freshly stocked and glistening, keeping the display and the store exactly as photographed."),
+                StarterChip(label: "Clear the checkout", area: "Checkout",
+                            text: "Clear the clutter from the checkout counter and tidy the racks beside it, keeping the fixtures exactly as photographed."),
+                StarterChip(label: "Brighter aisles", area: "Aisles",
+                            text: "Brighten the aisle lighting so the shelves read clearly, keeping the colors true and the fixtures exactly as photographed."),
+            ]
+        case .fitness:
+            return [
+                StarterChip(label: "Rack the weights", area: "Weights",
+                            text: "Rack every loose weight and clear the floor, keeping the equipment and the room exactly as photographed."),
+                StarterChip(label: "Wipe it down", area: "Main Floor",
+                            text: "Make the floor and the equipment look freshly cleaned, keeping every machine exactly where it is."),
+                StarterChip(label: "Brighter floor", area: "Main Floor",
+                            text: "Brighten the room so the whole floor reads clearly, keeping the colors true and the equipment exactly as photographed."),
+                StarterChip(label: "Tidy the lockers", area: "Locker Room",
+                            text: "Clear the benches and close the locker doors so the room looks freshly cleaned, keeping the fixtures exactly as photographed."),
+            ]
+        case .other:
+            return [
+                StarterChip(label: "Clear the clutter", area: "Main Area",
+                            text: "Remove the boxes, cables and loose items from the shot, keeping the room exactly as photographed."),
+                StarterChip(label: "Fresh white walls", area: nil,
+                            text: "Repaint the walls a clean warm white and touch up the trim, keeping every window and fixture exactly where it is."),
+                StarterChip(label: "Warm evening light", area: "Main Area",
+                            text: "Relight the room with warm evening light, keeping the furniture and the architecture exactly as photographed."),
+                StarterChip(label: "Tidy the entrance", area: "Entrance",
+                            text: "Tidy the entrance: clear the signage clutter and make the glass and the floor look freshly cleaned, keeping the building exactly as photographed."),
+            ]
+        }
+    }
+
+    /// The examples, shown ONLY while the box is empty.
+    ///
+    /// That is the whole problem they solve — "Ask for anything" opened onto a
+    /// blank field and a 600-char counter, which tells a person how much room
+    /// they have and nothing about what to put in it. Once there are words on
+    /// screen the next move is "Improve my prompt", and a row of examples under
+    /// a half-typed sentence is just noise. Hiding them also means a tap can
+    /// only ever fill an EMPTY field, so no chip can destroy something typed.
+    @ViewBuilder private var starterChipsRow: some View {
+        if trimmed.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Not sure what to ask for? Start with one of these and edit it.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(Self.starterChips(for: space)) { chip in
+                            starterChipButton(chip)
+                        }
+                    }
+                    .padding(.vertical, 1)   // so the capsules aren't clipped
+                }
+            }
+        }
+    }
+
+    private func starterChipButton(_ chip: StarterChip) -> some View {
+        Button { fill(with: chip) } label: {
+            Text(chip.label)
+                .font(.rpCaption.weight(.semibold))
+                .foregroundStyle(Theme.accent)
+                .lineLimit(1)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(Theme.accentSoft, in: Capsule())
+        }
+        .buttonStyle(ScalePressStyle())
+        .disabled(isImproving)
+        .accessibilityLabel(Text("\(chip.label). Puts an example in the box that you can edit."))
+    }
+
+    private func fill(with chip: StarterChip) {
+        prompt = String(chip.text.prefix(600))
+        pickedArea = chip.area
+        Haptics.selection()
+    }
+
+    /// Send the rough idea through `ai-copy/edit-prompt` and REPLACE the field
+    /// with the sharper version. The user can still edit before Generate; the
+    /// 600-char cap stays enforced by onChange above.
+    ///
+    /// NO PHOTO IS ENCODED. This used to base64 a 1024 px JPEG first and hand
+    /// it over — but `improve_prompt` has been text-only on the server since
+    /// audit F-E-16, and `LiveAPIClient` was already dropping the bytes on the
+    /// floor. That left a multi-megabyte encode running on the main path of the
+    /// one AI call in the app that is meant to feel instant.
     private func improvePrompt() {
+        guard !trimmed.isEmpty, !isImproving else { return }
+        connection.run { improvePromptWithSession() }
+    }
+
+    private func improvePromptWithSession() {
         let rough = trimmed
         guard !rough.isEmpty, !isImproving else { return }
         isImproving = true
         improveError = nil
         Haptics.selection()
         let api = self.api
-        let source = photo.enhancedURL
+        let hint = pickedArea            // nil unless a starter chip named an area
+        let serverID = listingServerID
+        let spaceRaw = space.rawValue
         Task {
             do {
-                guard let b64 = await AIImagePrep.jpegBase64(at: source, maxDimension: 1024, quality: 0.8) else {
-                    throw AIImagePrep.error("Couldn't read that photo.")
-                }
-                let improved = try await api.aiImprovePrompt(
-                    imageBase64: b64, mime: "image/jpeg",
-                    prompt: String(rough.prefix(300)))
+                let improved = try await api.aiImprovePrompt(rough: String(rough.prefix(300)),
+                                                             roomHint: hint,
+                                                             listingServerID: serverID)
+                let text = String(improved.prefix(600))
                 await MainActor.run {
-                    prompt = String(improved.prefix(600))
+                    prompt = text
                     isImproving = false
                     Haptics.success()
+                    // No prompt text and no photo id in the props — a length and
+                    // an enum, per Analytics.swift's rule.
+                    Analytics.track("ai_prompt_improved",
+                                    ["space_type": spaceRaw,
+                                     "chars": String(text.count),
+                                     "ok": "true"])
                 }
             } catch {
                 let why = AIFailure(error).fullMessage
                 await MainActor.run {
                     isImproving = false
                     improveError = why
+                    // Deliberately NO reason prop: the server's message is
+                    // written for a person and can quote their own words back.
+                    Analytics.track("ai_prompt_improved",
+                                    ["space_type": spaceRaw, "ok": "false"])
                 }
             }
         }
@@ -3539,24 +6223,85 @@ struct AerialIntroSheet: View {
     /// missing from this screen.
     @State private var disclosureText: String?
     @State private var resultPortrait = false
+    /// The clip's REAL width ÷ height, read off the file once it is on disk.
+    /// Nil until that lands (and again whenever a new clip does).
+    @State private var measuredAspect: CGFloat?
     @State private var player: AVPlayer?
     @State private var savedToPhotos = false
     @State private var isSaving = false
     @State private var saveError: String?
     // Presentation
-    @State private var showSignIn = false
+    @StateObject private var connection = FeatureSessionAction()
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var showCloseConfirm = false
     @State private var showReelStudio = false
     @State private var geocoder = CLGeocoder()
 
-    private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
     private var isGenerating: Bool { phase == .generating }
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     private var noun: String { space.spaceNoun }
     private var hasPhoto: Bool { exteriorURL != nil }
     private var aspect: String { portrait ? "9:16" : "16:9" }
+
+    /// The shape the RESULT player is drawn at.
+    ///
+    /// The owner's screenshot for build 9: a flyover sitting in a portrait-ish
+    /// box with fat black bars down both sides. That was a display bug and only
+    /// a display bug — the clip really is 9:16, the app really did ask for 9:16,
+    /// and `/ai-video/aerial` really does forward that aspect to the provider.
+    /// What was wrong is that the player was given a fixed HEIGHT (460 tall for
+    /// portrait, 220 for wide) across the full width of the sheet, so the box
+    /// was about 0.78 wide-to-tall while the clip inside it was 0.5625.
+    /// `VideoPlayer` letterboxes the video inside whatever frame it is handed,
+    /// so the difference came out as black down both sides. A 16:9 clip in the
+    /// 220 pt box had the same problem in the other direction, just smaller.
+    ///
+    /// So: no fixed height. The container takes the clip's own ratio, measured
+    /// from the file, and falls back to the ratio that was REQUESTED at
+    /// generation time until that measurement lands — never a jump from a wrong
+    /// shape to a right one, just a correction if the two ever disagree. They
+    /// can: a grounded aerial is image-to-video built from the agent's exterior
+    /// photo, and what a provider returns is not guaranteed to be exactly what
+    /// was asked for. Measuring is the only honest answer.
+    private var resultAspect: CGFloat {
+        measuredAspect ?? (resultPortrait ? 9.0 / 16.0 : 16.0 / 9.0)
+    }
+
+    /// The one size limit left, and it is on WIDTH rather than height on
+    /// purpose. A 9:16 clip drawn at the full width of the sheet is about 640 pt
+    /// tall, which pushes "Save to Photos" off the screen; capping the height
+    /// instead would re-create the original bug, because a height cap does not
+    /// narrow the box and the clip would letterbox inside it again. Capping the
+    /// width at `460 × ratio` is the same statement — "no taller than 460" —
+    /// expressed in the axis that keeps the shape exact. For a wide clip the cap
+    /// works out far wider than any phone, so it costs nothing there.
+    private var resultMaxWidth: CGFloat { 460 * resultAspect }
+
+    /// The clip's displayed width ÷ height, with its preferred transform applied
+    /// (a portrait capture is 1920×1080 plus a rotation, not 1080×1920). Same
+    /// recipe as `ReelStudioView.isPortraitVideo`, which answers the coarser
+    /// version of this question for the reel's format toggle.
+    ///
+    /// `nonisolated` and `static`: it touches nothing on the view, and the track
+    /// loads must not be main-actor work.
+    nonisolated private static func displayAspect(of url: URL) async -> CGFloat? {
+        let asset = AVURLAsset(url: url)
+        guard let track = try? await asset.loadTracks(withMediaType: .video).first else { return nil }
+        guard let size = try? await track.load(.naturalSize),
+              let transform = try? await track.load(.preferredTransform) else { return nil }
+        let rect = CGRect(origin: .zero, size: size).applying(transform)
+        let w = abs(rect.width), h = abs(rect.height)
+        guard w > 0, h > 0, w.isFinite, h.isFinite else { return nil }
+        return w / h
+    }
+
+    /// Measure the clip on screen. A failure leaves `measuredAspect` nil, which
+    /// falls back to the requested aspect — the same shape build 9 intended.
+    private func measureResultAspect() async {
+        guard let url = clipURL else { return }
+        measuredAspect = await Self.displayAspect(of: url)
+    }
 
     var body: some View {
         NavigationStack {
@@ -3573,14 +6318,16 @@ struct AerialIntroSheet: View {
                         AIFailureCard(failure: failure,
                                       retryHint: "Adjust the settings above and generate again.",
                                       quotaFeature: "aerials",
-                                      onSignIn: { showSignIn = true })
+                                      onReconnect: { generate() })
                     }
                 }
                 .padding()
             }
+            .disabled(connection.isWaiting)
             .background(Theme.bg)
             .navigationTitle("Aerial intro")
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.aerial)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") {
@@ -3589,9 +6336,11 @@ struct AerialIntroSheet: View {
                 }
             }
         }
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .interactiveDismissDisabled(isGenerating)
         .onAppear(perform: seedIfNeeded)
         .onDisappear {
+            connection.cancel()
             workTask?.cancel()          // the persisted job resumes on the next open
             player?.pause()
             if idleHeld { IdleTimer.release(); idleHeld = false }
@@ -3607,7 +6356,6 @@ struct AerialIntroSheet: View {
         .onChange(of: region) { v in
             if v.count > 80 { region = String(v.prefix(80)) }
         }
-        .sheet(isPresented: $showSignIn) { SignInView.forAI("aerial intros") }
         .sheet(isPresented: $showLibrary) {
             LibraryImagePicker(selectionLimit: 1) { imgs in
                 if let img = imgs.first { saveExterior(img) }
@@ -3694,10 +6442,8 @@ struct AerialIntroSheet: View {
 
     // MARK: - Form
 
-    // The form is ALWAYS visible for a real listing — an agent must be able to
-    // pick the exterior photo and set the shot up before being asked to sign in
-    // (a sign-in wall in front of the whole form hides the one thing that makes
-    // the aerial actually depict THIS property). Only the action is gated.
+    // Setup is available offline. Generate retains its original tap and waits
+    // for an anonymous connection; there is no registration gate.
     @ViewBuilder private var formSection: some View {
         if listing.isSample {
             sampleNotice
@@ -3705,11 +6451,7 @@ struct AerialIntroSheet: View {
             propertyCard
             lookCard
             formatCard
-            if signedIn {
-                generateButton
-            } else {
-                signInBlock
-            }
+            generateButton
             if clipURL != nil {
                 Button("Back to your aerial") { phase = .result }
                     .font(.rpBody)
@@ -3727,24 +6469,6 @@ struct AerialIntroSheet: View {
                 .multilineTextAlignment(.center)
         }
         .padding(.vertical, 12)
-    }
-
-    private var signInBlock: some View {
-        VStack(spacing: 10) {
-            Label("Set the shot up above, then sign in to generate — the AI runs on your account.",
-                  systemImage: "person.crop.circle.badge.exclamationmark")
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-            Button { showSignIn = true } label: {
-                Text("Sign in")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-        }
-        .padding(.vertical, 6)
     }
 
     private var propertyCard: some View {
@@ -3908,6 +6632,7 @@ struct AerialIntroSheet: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .disabled(isSavingPhoto)
+        .accessibilityIdentifier("phase1.aerialGenerate")
     }
 
     // MARK: - Progress
@@ -3950,9 +6675,11 @@ struct AerialIntroSheet: View {
             }
             if let player {
                 VideoPlayer(player: player)
-                    .frame(height: resultPortrait ? 460 : 220)
+                    .aspectRatio(resultAspect, contentMode: .fit)
+                    .frame(maxWidth: resultMaxWidth)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .onAppear { player.play() }
+                    .task(id: clipURL) { await measureResultAspect() }
             }
             if let generatedAt = model.listings.first(where: { $0.id == listing.id })?.aerialGeneratedAt {
                 Text("Generated \(generatedAt.formatted(date: .abbreviated, time: .shortened))")
@@ -4085,7 +6812,12 @@ struct AerialIntroSheet: View {
     // MARK: - Generate (submit → poll → download; fal URLs expire, so download now)
 
     private func generate() {
-        guard signedIn, phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
+        connection.run { generateWithSession() }
+    }
+
+    private func generateWithSession() {
+        guard phase != .generating, !listing.isSample, !isSavingPhoto else { return }
         failure = nil
         statusText = hasPhoto ? "Preparing your photo…" : "Submitting…"
         phase = .generating
@@ -4153,6 +6885,11 @@ struct AerialIntroSheet: View {
     /// Pick up a job that was submitted earlier (the sheet was closed or the app
     /// switched away while it generated).
     private func resume(_ pending: PendingAerialJob) {
+        guard phase != .generating else { return }
+        connection.run { resumeWithSession(pending) }
+    }
+
+    private func resumeWithSession(_ pending: PendingAerialJob) {
         guard phase != .generating else { return }
         phase = .generating
         statusText = "Picking up your aerial…"
@@ -4236,6 +6973,9 @@ struct AerialIntroSheet: View {
             grounded = pending.grounded
             if let storedDisclosure, !storedDisclosure.isEmpty { disclosureText = storedDisclosure }
             resultPortrait = pending.aspect == "9:16"
+            // A new file — drop the previous clip's measurement so the box falls
+            // back to the aspect this job asked for until the new one is read.
+            measuredAspect = nil
             player = AVPlayer(url: dest)
             savedToPhotos = false
             saveError = nil
@@ -4268,6 +7008,118 @@ struct AerialIntroSheet: View {
     }
 }
 
+// MARK: - Parked reel clips (already generated, already BILLED)
+
+/// How many finished reels a listing keeps on this phone.
+///
+/// Was 3. A reel costs a round of AI clips, and until the listing screen grew its
+/// FILES section a finished reel was reachable only four navigation levels deep
+/// inside Reel Studio, behind a sign-in gate — so the fourth reel quietly deleted
+/// the first one before the agent had ever laid eyes on it. That is the whole
+/// complaint from the 4,000 sq ft field test: "they all cost credits, I can't be
+/// losing them." Ten is more than any single listing produced in that test and is
+/// a season's worth of posts for one home; at ~10–40 MB a reel the worst case is a
+/// few hundred MB for a listing the agent can delete outright, and every one of the
+/// ten is now visible on the listing screen, so nothing is pruned before it has
+/// been surfaced.
+///
+/// FILE SCOPE on purpose: `pruneReels` is called from inside a detached (and
+/// therefore non-isolated) task, and a `static let` on `ReelStudioView` — a
+/// `View`, and so `@MainActor` — would be main-actor isolated at that call site.
+/// Same defect class the Mac build caught in `GearStore.normalizedASIN`.
+private let reelsKeptPerListing = 10
+
+/// The shortest and longest a PLANNED shot may run on screen, in seconds. Every
+/// photo clip is generated at a fixed 5 s, so a shot list may tighten a detail to
+/// 3 s or hold a hero to 8 s and no further — below 3 s a shot is a flash frame,
+/// past 8 s a 5 s clip is slowed enough to judder, and the bound keeps the reel's
+/// total close to the length its script was written to fit.
+///
+/// FILE SCOPE, for the same reason `reelsKeptPerListing` is: both are read from
+/// `nonisolated` statics on `ReelStudioView`, and a `static let` on a `View` — and
+/// so on a `@MainActor` type — would be main-actor isolated at those call sites.
+/// That is the exact defect the Mac build caught in `GearStore.normalizedASIN`.
+private let clipTrimSeconds: Double = 3
+private let clipHoldSeconds: Double = 8
+
+/// The exact token the `ai-copy` routes write where the property should be named
+/// (COPY-ASSIST-CONTRACT §5). FILE SCOPE for the same isolation reason as the two
+/// constants above — it is read from a `nonisolated` static.
+private let addressToken = "{address}"
+
+/// Reel clips that were already generated — and already CHARGED — when a reel run
+/// stopped before the stitch. The mp4s are moved out of the run's temp directory
+/// into `Documents/reels/<listingID>-parked/` and recorded under
+/// `reel.clips.<listingID>`, so reopening Reel Studio can finish the reel from work
+/// the agent has already paid for.
+///
+/// THE DEFECT (the 4,000 sq ft field test). Reel Studio's Close button was
+/// unguarded: Close → `dismiss()` → `.onDisappear` → `workTask?.cancel()` → the
+/// build's `catch`, which ran `removeItem(at: tmpDir)` BEFORE it checked for
+/// cancellation and then `return`ed past every piece of error UI. Six clips could
+/// be generated, billed, and silently erased with nothing on screen to say so.
+/// Clips are the expensive half of a reel; the stitch is free and on-device.
+///
+/// Same shape as `PendingAerialJob` — Codable, one UserDefaults key per listing,
+/// `load`/`save`/`clear`, resumed from `onAppear`, guarded Close — with two
+/// deliberate differences. It holds FILES rather than a remote job handle, so it
+/// stores Documents-RELATIVE paths (the container base moves between launches).
+/// And it has NO `maxAge`: a fal job handle really is stale after two hours, but a
+/// finished mp4 the agent paid for never is, and expiring one on a timer would be
+/// this same bug in a slower form. It is cleared when the clips are stitched into a
+/// reel, when the agent explicitly discards them, or when the listing is deleted
+/// (`FileStore.deleteListingFiles` sweeps `reels/<id>-*`, folders included).
+private struct PendingReelClips: Codable {
+    var listingID: UUID
+    var savedAt: Date
+    /// Documents-relative paths, in the order the clips were generated.
+    var relPaths: [String]
+
+    static func key(_ id: UUID) -> String { "reel.clips.\(id.uuidString)" }
+
+    /// `Documents/reels/<listingID>-parked/`. Inside `reels/` deliberately: the
+    /// `<listingID>-` prefix means `FileStore.deleteListingFiles` already sweeps it,
+    /// and `ReelStudioView.reelFiles` already ignores it (that glob keeps only
+    /// `.mp4` FILES, and this is a directory).
+    static func directory(for id: UUID) -> URL {
+        FileStore.documents
+            .appendingPathComponent("reels", isDirectory: true)
+            .appendingPathComponent("\(id.uuidString)-parked", isDirectory: true)
+    }
+
+    /// Absolute URLs of the parked clips that are still really on disk, in order.
+    var clipURLs: [URL] {
+        relPaths
+            .map { FileStore.url(fromRelativePath: $0) }
+            .filter { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    /// The parked set, or nil when there is nothing to resume. A record whose
+    /// files have gone (Clear local data, a listing delete) clears itself rather
+    /// than offering a resume that would stitch nothing.
+    static func load(for id: UUID) -> PendingReelClips? {
+        guard let data = UserDefaults.standard.data(forKey: key(id)),
+              let parked = try? JSONDecoder().decode(PendingReelClips.self, from: data) else { return nil }
+        guard !parked.clipURLs.isEmpty else {
+            clear(for: id)
+            return nil
+        }
+        return parked
+    }
+
+    func save() {
+        guard let data = try? JSONEncoder().encode(self) else { return }
+        UserDefaults.standard.set(data, forKey: Self.key(listingID))
+    }
+
+    /// Forget the record AND delete the parked mp4s. Only ever called once the
+    /// clips are inside a finished reel, or when the agent said to discard them.
+    static func clear(for id: UUID) {
+        UserDefaults.standard.removeObject(forKey: key(id))
+        try? FileManager.default.removeItem(at: directory(for: id))
+    }
+}
+
 // MARK: - Reel Studio (multi-photo → AI motion clips → one stitched social video)
 // Pick 2–8 listing photos; each becomes a 5 s Seedance motion clip via
 // POST /ai-video/reel-clip (sequential submit → poll → download), then the
@@ -4292,13 +7144,33 @@ struct ReelStudioView: View {
     /// reel with no voiceover, exactly as before this feature existed.
     private enum VoiceMode: Hashable { case off, myVoice, aiVoice }
 
-    /// Text burned onto the exported reel. Plain Sendable strings — resolved on
-    /// the main actor in generate(), rendered as CALayers inside stitch.
-    struct ReelCaptions: Sendable {
-        let title: String        // listing address (never empty — safe fallback)
-        let subtitle: String     // beds/baths/sqft or tagline; "" hides the line
-        let watermark: String    // "Made with Rendprop"
+    /// How an AI-written script should sound. The raw values ARE the contract's
+    /// `tone` values — one place, so a rename can't silently send a word the
+    /// server doesn't know.
+    ///
+    /// Kept deliberately unobtrusive in the UI: `defaultTone(for:)` already
+    /// picks the one that suits the space type, so nobody has to touch it, and
+    /// nobody is asked a question before they get their script.
+    private enum ScriptTone: String, CaseIterable, Hashable {
+        case warm, punchy, luxury
+
+        var label: String {
+            switch self {
+            case .warm:   return "Warm"
+            case .punchy: return "Punchy"
+            case .luxury: return "Luxury"
+            }
+        }
     }
+
+    /// Text burned onto the exported reel. Plain Sendable strings — resolved on
+    /// the main actor in generate(), rendered as CALayers inside the composer.
+    ///
+    /// The type itself moved to `Render/ReelComposer.swift` when the stitch did;
+    /// this alias keeps every call site in this screen reading the way it always
+    /// has. A `typealias` carries no isolation of its own, so naming it from
+    /// inside a `@MainActor` `View` costs a non-isolated caller nothing.
+    typealias ReelCaptions = ReelTitleCard
 
     @State private var phase: Phase = .setup
     @State private var selected: [String] = []      // photo ids in tap order = clip order
@@ -4306,6 +7178,14 @@ struct ReelStudioView: View {
     @State private var seededExtras = false
     @State private var portrait = true              // 9:16 (true) vs 16:9 (false)
     @State private var captionsOn = true            // intro title card + Rendprop mark on export
+    /// The BIG burned-in words on each shot — three or four, upper case, held for
+    /// the picture. On by default and deliberately so: this is what separates a
+    /// reel that looks posted from one that looks generated, and the owner's whole
+    /// bet is that the app produces the former without being asked.
+    @State private var bigCaptionsOn = true
+    @State private var bigCaptionStyle: ReelComposer.ShotCaptionStyle = .lowerThird
+    /// Defaults to hard cuts, and the copy under the picker says why.
+    @State private var reelTransition: ReelComposer.Transition = .cut
     @State private var motionPrompt = ""
     @State private var completedClips = 0
     @State private var totalClips = 0
@@ -4317,12 +7197,20 @@ struct ReelStudioView: View {
     @State private var isSaving = false
     @State private var saveError: String?
     @State private var failure: AIFailure?
-    @State private var showSignIn = false
+    @StateObject private var connection = FeatureSessionAction()
     @State private var workTask: Task<Void, Never>?
     /// The newest reel already on disk for this listing (F-A-23). Reels used to
     /// be write-only: the file survived in Documents/reels but the studio always
     /// reopened on an empty setup form, so the last one was unreachable.
     @State private var lastReel: URL?
+    /// Clips from an earlier run of THIS listing's reel that were generated and
+    /// billed but never stitched (the 4,000 sq ft field test). Loaded on open,
+    /// exactly like `AerialIntroSheet` resumes a `PendingAerialJob`.
+    @State private var parkedClips: PendingReelClips?
+    /// Close was tapped while a job was running — ask before cancelling it, the
+    /// way the aerial sheet already does.
+    @State private var showCloseConfirm = false
+    @State private var showDiscardParkedConfirm = false
 
     // MARK: Voiceover step state (optional — see docs/VOICEOVER-CONTRACT.md)
     //
@@ -4347,13 +7235,29 @@ struct ReelStudioView: View {
     @State private var selectedVoiceID = ""
     @State private var loadingVoices = false
     @State private var ttsInFlight = false            // one TTS call per tap (money)
+    // "Write my script" sub-state.
+    @State private var scriptInFlight = false         // one script call per tap
+    @State private var showScriptReplaceConfirm = false
+    /// How the script should sound. Seeded ONCE in `onAppear` from
+    /// `defaultTone(for:)` so the default follows the space type without this
+    /// view needing an `init`, and never touched again — a tone the agent
+    /// picked survives every mode switch and every re-appearance.
+    @State private var tone: ScriptTone = .warm
+    @State private var seededTone = false
+    @State private var nativeSetupRevision = 0
+    @State private var nativeSetupBusy = false
+    @State private var nativeSetupNotice: String?
+    @State private var nativeSetupError: String?
 
-    private var signedIn: Bool { !Config.enableAuth || auth.isSignedIn }
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
     private var canGenerate: Bool { totalSelected >= 2 && totalSelected <= 9 }
+    /// A job is in flight — AI clips are being generated, or the stitch is
+    /// running. Closing now cancels it, so Close asks first (F-A-05 / the
+    /// 4,000 sq ft field test).
+    private var isWorking: Bool { phase == .generating || phase == .stitching }
 
     /// Title + which home this reel is for. iOS 16 has no `navigationSubtitle`,
     /// so the two lines are a principal toolbar item.
@@ -4393,23 +7297,48 @@ struct ReelStudioView: View {
                 }
                 .padding()
             }
+            .disabled(connection.isWaiting || nativeSetupBusy)
             .background(Theme.bg)
             .navigationTitle("Reel Studio")
             .navigationBarTitleDisplayMode(.inline)
+            .askAI(.reelStudio)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { dismiss() }
+                    // UNGUARDED Close was half of the money bug: one tap ran
+                    // dismiss() → onDisappear → workTask?.cancel(), and the
+                    // build's catch deleted every clip already paid for without
+                    // a word on screen. Ask, exactly like AerialIntroSheet.
+                    Button("Close") {
+                        if isWorking { showCloseConfirm = true } else { dismiss() }
+                    }
                 }
                 ToolbarItem(placement: .principal) { reelTitleBar }
             }
         }
-        .interactiveDismissDisabled(phase == .generating || phase == .stitching)
+        .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
+        .interactiveDismissDisabled(isWorking)
         .onAppear {
             if !seededExtras {
                 selectedExtras = extraClipURLs
                 seededExtras = true
             }
+            // The tone that suits this trade, picked once. Guarded like
+            // `seededExtras` above: onAppear can fire again, and it must not
+            // undo a choice the agent made.
+            if !seededTone {
+                tone = Self.defaultTone(for: space)
+                seededTone = true
+            }
             lastReel = Self.newestReel(for: listing.id)
+            if aiScript.isEmpty, let script = CloudVoiceStore.script(listing.id) { aiScript = script }
+            if voiceover == nil, let saved = CloudVoiceStore.voice(listing.id) {
+                voiceover = saved
+                voiceMode = .aiVoice
+                voiceNote = "Narration saved from Studio."
+            }
+            // Pick up clips a previous run generated and was charged for but
+            // never stitched — the reel equivalent of resuming a pending aerial.
+            if !listing.isSample { parkedClips = PendingReelClips.load(for: listing.id) }
         }
         .onChange(of: phase) { p in
             let wantHold = (p == .generating || p == .stitching)
@@ -4427,13 +7356,41 @@ struct ReelStudioView: View {
             }
         }
         .onDisappear {
+            connection.cancel()
             workTask?.cancel()
             player?.pause()
             voPlayer?.pause()
             if recorder.isRecording { recorder.cancel() }
             if idleHeld { IdleTimer.release(); idleHeld = false }
         }
-        .sheet(isPresented: $showSignIn) { SignInView.forAI("reels") }
+        .confirmationDialog("Still making your reel", isPresented: $showCloseConfirm,
+                            titleVisibility: .visible) {
+            Button("Close anyway") {
+                workTask?.cancel()
+                dismiss()
+            }
+            Button("Keep waiting", role: .cancel) {}
+        } message: {
+            Text("Every clip you've already paid for is kept on this phone. Reopen Reel Studio and finish the reel from them — you won't be charged for the same clips twice.")
+        }
+        .confirmationDialog("Discard these clips?", isPresented: $showDiscardParkedConfirm,
+                            titleVisibility: .visible) {
+            Button("Discard clips", role: .destructive) { discardParkedClips() }
+            Button("Keep them", role: .cancel) {}
+        } message: {
+            Text("These clips were already generated and already charged. Deleting them means making them again costs another round of AI.")
+        }
+        // Asked ONLY when there are already words in the box. The likeliest
+        // words are the transcript of a recording the agent made themselves
+        // (carried over when they switch to AI voice), and nothing here is
+        // allowed to throw that away without being told to.
+        .confirmationDialog("Replace what's in the box?", isPresented: $showScriptReplaceConfirm,
+                            titleVisibility: .visible) {
+            Button("Write a new script", role: .destructive) { runScriptWriter() }
+            Button("Keep what I have", role: .cancel) {}
+        } message: {
+            Text("There are already words in the script box. Writing a new one replaces every one of them — including anything carried over from a recording you made.")
+        }
         // Guideline 5.1.2(i) — each selected photo is animated by a
         // third-party video model. Agreed once per device; declining closes
         // the studio.
@@ -4450,16 +7407,123 @@ struct ReelStudioView: View {
     // this file has hit the type-checker's expression budget before, so
     // `setupSection` stays a short list of identifiers and nothing else.
     @ViewBuilder private var setupSection: some View {
+        nativeSetupCard
         setupHeader
 
-        if signedIn {
-            lastReelCard
-            if !extraClipURLs.isEmpty { clipsCard }
-            stepPhotosCard
-            stepVoiceCard
-            stepMakeCard
-        } else {
-            signInPane
+        // Unfinished, ALREADY-PAID-FOR clips come first, and deliberately NOT
+        // behind the sign-in pane: stitching them is on-device AVFoundation work
+        // with no AI call, so an expired session must never stand between the
+        // agent and the reel he has already bought (the 4,000 sq ft field test).
+        parkedClipsCard
+
+        // The reel this listing ALREADY has, also outside the gate and for the
+        // same reason: it is a finished mp4 on this phone that has already been
+        // paid for. Playing, saving or sharing it costs nothing and calls
+        // nothing, so an expired session must not put it behind a sign-in wall —
+        // the same rule the listing screen's FILES section follows.
+        lastReelCard
+
+        if !extraClipURLs.isEmpty { clipsCard }
+        stepPhotosCard
+        stepVoiceCard
+        stepMakeCard
+    }
+
+    @ViewBuilder private var nativeSetupCard: some View {
+        if !listing.isSample && auth.isIdentified {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Continue in Studio", systemImage: "icloud").font(.rpHeadline)
+                Text("Save your script, captions, transitions and photo order for the office. Uploaded photos stay selected across devices. Files saved only on this iPhone still need uploading.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                HStack {
+                    Button("Save setup") { Task { await syncNativeSetup(save: true) } }
+                    Button("Load saved setup") { Task { await syncNativeSetup(save: false) } }
+                    if nativeSetupBusy { ProgressView() }
+                }.buttonStyle(.bordered).disabled(nativeSetupBusy || isWorking || ttsInFlight || scriptInFlight || recorder.isRecording)
+                if let nativeSetupNotice { Text(nativeSetupNotice).font(.rpCaption).foregroundStyle(Theme.accent) }
+                if let nativeSetupError { Text(nativeSetupError).font(.rpCaption).foregroundStyle(.orange) }
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        }
+    }
+
+    @MainActor private func syncNativeSetup(save: Bool) async {
+        guard !nativeSetupBusy, !isWorking, !ttsInFlight, !scriptInFlight, !recorder.isRecording,
+              auth.isIdentified, let cloud = model.api as? WorkspaceSyncAPI else { return }
+        nativeSetupBusy = true; nativeSetupError = nil; nativeSetupNotice = nil
+        defer { nativeSetupBusy = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, epoch = auth.syncSessionRevision
+        do {
+            var live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+            if live.serverID == nil { _ = try await model.ensureServerListing(live) }
+            if (model.listings.first(where: { $0.id == listing.id })?.serverOrgID) == nil { await model.refreshCloudWorkspace() }
+            live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+            guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified,
+                  let sid = live.serverID, let org = live.serverOrgID, live.cloudUnavailable != true else { throw CloudSyncError.identityChanged }
+            if save {
+                guard let ownerID = actor.flatMap(UUID.init(uuidString:)) else { throw CloudSyncError.identityChanged }
+                let selectedIDs = selected
+                guard Set(photos.map(\.id)).count == photos.count else { throw CloudSyncError.invalidResponse }
+                let byID = Dictionary(uniqueKeysWithValues: photos.map { ($0.id, $0) })
+                var sharedPhotos: [NativeReelDraft.Photo] = []
+                for (index, localID) in selectedIDs.enumerated() {
+                    guard let photo = byID[localID] else { throw CloudSyncError.invalidResponse }
+                    nativeSetupNotice = "Checking uploaded photo \(index + 1) of \(selectedIDs.count)…"
+                    let sourceID = try await CloudPhotoReferences.shared.sourceID(fileURL: photo.enhancedURL,
+                        ownerID: ownerID, orgID: org, listingID: sid)
+                    guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified,
+                          selected == selectedIDs else { throw CloudSyncError.identityChanged }
+                    sharedPhotos.append(.init(localId: localID, sourcePhotoId: sourceID))
+                }
+                nativeSetupNotice = "Saving setup to your account…"
+                let voiceID = voiceMode == .off ? nil : voiceover?.sharedReference?.resultID(ownerID: ownerID, listingID: sid)
+                let draft = NativeReelDraft(schema: 1, kind: "native-reel-setup", portrait: portrait, titleCard: captionsOn,
+                    shotCaptions: bigCaptionsOn, captionStyle: bigCaptionStyle.rawValue, transition: reelTransition.rawValue,
+                    motionPrompt: motionPrompt, script: aiScript, tone: tone.rawValue, wordCaptions: wordCaptionsOn,
+                    voiceMode: voiceMode == .off ? "off" : (voiceMode == .myVoice ? "myVoice" : "aiVoice"), voiceResultId: voiceID,
+                    localNarration: voiceMode != .off && voiceover != nil && voiceID == nil,
+                    photos: sharedPhotos,
+                    localExtraClipCount: selectedExtras.count, updatedAt: ISO8601DateFormatter().string(from: Date()))
+                let document = try await cloud.saveCloudNativeReel(draft, listingID: sid, orgID: org, revision: nativeSetupRevision)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
+                nativeSetupRevision = document.revision
+                let localCount = sharedPhotos.filter { $0.sourcePhotoId == nil }.count
+                nativeSetupNotice = localCount == 0 ? "Setup saved to Studio with your uploaded photo selections. No new media was generated."
+                    : "Setup saved. \(localCount) selected photo\(localCount == 1 ? " is" : "s are") still on this iPhone; upload the photos, then save setup again."
+            } else {
+                let document = try await cloud.cloudNativeReel(listingID: sid, orgID: org)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch, auth.isIdentified else { throw CloudSyncError.identityChanged }
+                guard let document else { nativeSetupRevision = 0; nativeSetupNotice = "No saved setup yet. Save this one to continue at the office."; return }
+                let draft = document.payload
+                portrait = draft.portrait; captionsOn = draft.titleCard; bigCaptionsOn = draft.shotCaptions
+                bigCaptionStyle = ReelComposer.ShotCaptionStyle(rawValue: draft.captionStyle) ?? .lowerThird
+                reelTransition = ReelComposer.Transition(rawValue: draft.transition) ?? .cut
+                motionPrompt = draft.motionPrompt; aiScript = draft.script; tone = ScriptTone(rawValue: draft.tone) ?? .warm
+                wordCaptionsOn = draft.wordCaptions
+                let available = Set(photos.map(\.id))
+                selected = draft.photos.compactMap { photo in
+                    if available.contains(photo.localId) { return photo.localId }
+                    if let sid = photo.sourcePhotoId { return available.first(where: { $0.lowercased() == "cloud-\(sid.uuidString.lowercased())" }) }
+                    return nil
+                }
+                var missing: [String] = []
+                if selected.count < draft.photos.count { missing.append("Save missing photos from Cloud files, then load this setup again.") }
+                selectedExtras = []
+                if draft.localExtraClipCount > 0 { missing.append("Choose the extra clips saved on this iPhone.") }
+                if draft.voiceMode != "off", let voiceID = draft.voiceResultId,
+                   let saved = CloudVoiceStore.voice(listing.id), saved.id == voiceID {
+                    voiceover = saved; voiceMode = .aiVoice
+                } else {
+                    voiceMode = .off
+                    if draft.voiceMode != "off" { missing.append(draft.localNarration ? "The recorded narration is on its original iPhone." : "Save its narration from Cloud files.") }
+                }
+                nativeSetupRevision = document.revision
+                nativeSetupNotice = (["Saved setup loaded."] + missing).joined(separator: " ")
+            }
+        } catch is CancellationError { return }
+        catch {
+            guard auth.userID == actor, auth.syncSessionRevision == epoch else { return }
+            nativeSetupError = save ? "Setup couldn't be saved. If another device changed it, load the saved setup before saving again." : "Saved setup couldn't be loaded. Refresh when connected."
         }
     }
 
@@ -4554,12 +7618,61 @@ struct ReelStudioView: View {
             stepTitle(3, "MAKE THE REEL", "Pick the shape, then tap the button.")
             formatRow
             titleCardToggle
+            bigCaptionsRow
+            transitionRow
             motionRow
             makeButton
             aiDisclosureLine
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
+    }
+
+    /// The big words on the video, and which of the three looks they wear.
+    ///
+    /// The words themselves are written by the shot planner (one text call, no
+    /// charge, no questions) — the agent picks a LOOK, not a sentence. If the
+    /// planner has nothing to say the reel simply carries no shot captions; there
+    /// is no state where this toggle produces an empty box on the video.
+    @ViewBuilder private var bigCaptionsRow: some View {
+        Toggle(isOn: $bigCaptionsOn) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Big words on each shot")
+                    .font(.rpBody.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Text("Three or four words a picture, written for you.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+            }
+        }
+        .tint(Theme.accent)
+        if bigCaptionsOn {
+            Picker("How the words look", selection: $bigCaptionStyle) {
+                Text("Clean").tag(ReelComposer.ShotCaptionStyle.lowerThird)
+                Text("Centred").tag(ReelComposer.ShotCaptionStyle.punchCard)
+                Text("Highlight").tag(ReelComposer.ShotCaptionStyle.highlightBox)
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
+    /// What happens between two pictures. Cut is the default and stays the
+    /// default; the line underneath says out loud that it is the right answer,
+    /// because a picker with three options reads as an invitation to use all
+    /// three and an over-transitioned reel looks WORSE, not richer.
+    private var transitionRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("BETWEEN SHOTS").font(.rpKicker).foregroundStyle(Theme.inkDim)
+            Picker("Between shots", selection: $reelTransition) {
+                Text("Cut").tag(ReelComposer.Transition.cut)
+                Text("Blend").tag(ReelComposer.Transition.dissolve)
+                Text("Whip").tag(ReelComposer.Transition.whip)
+            }
+            .pickerStyle(.segmented)
+            Text("Cut is what the pros use — it's the default for a reason.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     private var formatRow: some View {
@@ -4610,6 +7723,7 @@ struct ReelStudioView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .disabled(!canGenerate)
+        .accessibilityIdentifier("phase1.reelGenerate")
     }
 
     private var aiDisclosureLine: some View {
@@ -4619,22 +7733,47 @@ struct ReelStudioView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private var signInPane: some View {
-        VStack(spacing: 10) {
-            Label("Sign in to make reels — the AI runs on your account.",
-                  systemImage: "person.crop.circle.badge.exclamationmark")
-                .font(.rpBody)
-                .foregroundStyle(Theme.inkDim)
-                .multilineTextAlignment(.center)
-            Button { showSignIn = true } label: {
-                Text("Sign in")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 13)
-                    .background(Theme.accentSoft).foregroundStyle(Theme.accent)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+    /// Clips from a run that stopped before the stitch — already generated,
+    /// already charged, and now sitting in `reels/<id>-parked/`. This card offers
+    /// the free half of the job (the on-device stitch) instead of making the
+    /// agent buy the same clips a second time.
+    ///
+    /// The wording says the money part out loud. In the 4,000 sq ft field test
+    /// the clips were deleted with no message at all, and the only signal the
+    /// agent had was his credit balance.
+    /// Parked clips that are really still on disk. A record whose files went away
+    /// (Clear local data) must not put a card on screen offering to stitch them.
+    private var parkedClipCount: Int { parkedClips?.clipURLs.count ?? 0 }
+
+    @ViewBuilder private var parkedClipsCard: some View {
+        if parkedClipCount > 0 {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("UNFINISHED REEL").font(.rpKicker).foregroundStyle(Theme.accent)
+                    Spacer(minLength: 8)
+                    Text("\(parkedClipCount) clip\(parkedClipCount == 1 ? "" : "s")")
+                        .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                Text("You already made \(parkedClipCount) AI clip\(parkedClipCount == 1 ? "" : "s") for this \(space.spaceNoun) and they're saved on this phone. Putting them together into a reel happens right here and costs nothing.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button { finishParkedReel() } label: {
+                    Label("Finish that reel", systemImage: "film.stack")
+                        .font(.rpBody.weight(.semibold))
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(Theme.accent).foregroundStyle(Color.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                }
+                .buttonStyle(ScalePressStyle())
+                .accessibilityLabel(Text("Finish that reel from the clips you already paid for"))
+                Button("Discard those clips", role: .destructive) {
+                    showDiscardParkedConfirm = true
+                }
+                .font(.rpCaption)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
         }
-        .padding(.vertical, 6)
     }
 
     /// The reel this listing already has (F-A-23) — playable, shareable and
@@ -4748,6 +7887,14 @@ struct ReelStudioView: View {
             Button("Cancel", role: .destructive) { cancelWork() }
                 .font(.rpBody)
                 .padding(.top, 6)
+            // Say the money part out loud. Cancelling used to delete every clip
+            // already generated and charged for, silently (the 4,000 sq ft field
+            // test); now it keeps them and this line promises so before the tap.
+            Text("Cancelling keeps the clips you've already paid for — you can finish the reel from them later.")
+                .font(.rpCaption)
+                .foregroundStyle(Theme.inkDim)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 24)
@@ -4829,7 +7976,7 @@ struct ReelStudioView: View {
                 AIFailureCard(failure: failure,
                               retryHint: "Check your photos and try again.",
                               quotaFeature: "reels",
-                              onSignIn: { showSignIn = true })
+                              onReconnect: { connection.run { resetToSetup() } })
             } else {
                 Label("Couldn't make the reel", systemImage: "exclamationmark.triangle")
                     .font(.rpHeadline)
@@ -4965,26 +8112,128 @@ struct ReelStudioView: View {
         .animation(.linear(duration: 0.05), value: level)
     }
 
-    // --- AI voice: script + voice → ElevenLabs (spends money; sign-in gated) ---
+    // --- AI voice: script + voice → ElevenLabs (spends money; session awaited) ---
 
+    // Every body here stays tiny on purpose — see the note above
+    // `stepVoiceCard`. `aiVoicePane` is a list of identifiers and nothing else.
     @ViewBuilder private var aiVoicePane: some View {
         VStack(alignment: .leading, spacing: 10) {
-            TextField("Type what the voice should say — e.g. 'Welcome to 12 Oak Lane. Three beds, two baths.'",
-                      text: $aiScript, axis: .vertical)
-                .lineLimit(2...5)
-                .textFieldStyle(.roundedBorder)
-                .disabled(ttsInFlight)
+            scriptAssistRow
+            scriptField
+            scriptLengthRow
+            scriptLengthNote
             aiVoicePicker
-            Button { generateAIVoice() } label: {
-                Label(ttsInFlight ? "Making the voice…" : "Make the voice", systemImage: "waveform")
-                    .font(.rpBody.weight(.semibold))
-                    .frame(maxWidth: .infinity).padding(.vertical, 16)
-                    .background(aiCanGenerate ? Theme.accent : Theme.fillSubtle)
-                    .foregroundStyle(aiCanGenerate ? Color.white : Theme.inkDim)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            }
-            .disabled(!aiCanGenerate)
+            makeVoiceButton
         }
+    }
+
+    /// "Write my script" — wearing the same clothes as "✨ Improve my prompt" in
+    /// the photo studio on purpose. They are one feature in two places: the AI
+    /// writes the words, the person edits them. Anyone who has used one should
+    /// recognise the other on sight.
+    @ViewBuilder private var scriptAssistRow: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { writeScript() } label: {
+                HStack(spacing: 8) {
+                    if scriptInFlight {
+                        ProgressView().tint(Theme.accent)
+                        Text("Writing your script…")
+                    } else {
+                        Text("✨ Write my script")
+                    }
+                }
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 13)
+                .background(Theme.accentSoft).foregroundStyle(Theme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+            }
+            .disabled(scriptInFlight || ttsInFlight)
+            .accessibilityIdentifier("reel.script.write")
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Uses this \(space.spaceNoun)'s own details. Every word stays editable.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 6)
+                toneMenu
+            }
+        }
+    }
+
+    /// Tone lives HERE — one small menu beside the explanation line, not a step
+    /// of its own and not a question anybody has to answer. The default already
+    /// suits the space type.
+    private var toneMenu: some View {
+        Picker("Tone", selection: $tone) {
+            ForEach(ScriptTone.allCases, id: \.self) { t in
+                Text(t.label).tag(t)
+            }
+        }
+        .pickerStyle(.menu)
+        .tint(Theme.accent)
+        .font(.rpCaption)
+        .disabled(scriptInFlight)
+        .accessibilityLabel(Text("How the script should sound"))
+    }
+
+    private var scriptField: some View {
+        TextField("Type what the voice should say — e.g. 'Welcome to 12 Oak Lane. Three beds, two baths.'",
+                  text: $aiScript, axis: .vertical)
+            .lineLimit(2...5)
+            .textFieldStyle(.roundedBorder)
+            .disabled(ttsInFlight || scriptInFlight)
+            .accessibilityIdentifier("reel.script.field")
+    }
+
+    /// Live length, in BOTH units that matter: characters against the server's
+    /// hard 1,000-char cap, and seconds against the reel this script has to fit.
+    ///
+    /// Neither was visible before. The cap announced itself as a 400 only after
+    /// somebody had written a paragraph, and the overrun announced itself as a
+    /// finished video that freezes on its last picture — because `stitch()`
+    /// HOLDS the final frame rather than cutting the speaker off. Both are now
+    /// on screen before a cent is spent. Same shape as the 600-char counter in
+    /// `CustomEditSheet`.
+    private var scriptLengthRow: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(Self.scriptLengthLabel(count: aiScript.count,
+                                        readSeconds: scriptReadSeconds,
+                                        reelSeconds: reelSeconds,
+                                        budget: scriptBudget))
+                .font(.rpCaption)
+                .foregroundStyle(scriptOverrunsReel ? Theme.warn : Theme.inkDim)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 8)
+            Text("\(aiScript.count)/\(Self.scriptCharacterCap)")
+                .font(.rpCaption)
+                .foregroundStyle(aiScript.count > Self.scriptCharacterCap ? Theme.warn : Theme.inkDim)
+        }
+    }
+
+    /// The plain-words consequence, and only when there IS one. A warning, never
+    /// a block: the script is the agent's, and "this will look like X" is the
+    /// app's job — deciding for them is not.
+    @ViewBuilder private var scriptLengthNote: some View {
+        if aiScript.count > Self.scriptCharacterCap {
+            Text("That's longer than \(Self.scriptCharacterCap) characters, which is the most the AI voice reads in one go. Trim it or making the voice will fail.")
+                .font(.rpCaption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if scriptOverrunsReel {
+            Text("This takes about \(Self.wholeSeconds(scriptReadSeconds)) seconds to read and your reel is \(reelSeconds) seconds long. The video will freeze on its last picture while the voice finishes — add photos, or cut a sentence.")
+                .font(.rpCaption).foregroundStyle(Theme.warn)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var makeVoiceButton: some View {
+        Button { generateAIVoice() } label: {
+            Label(ttsInFlight ? "Making the voice…" : "Make the voice", systemImage: "waveform")
+                .font(.rpBody.weight(.semibold))
+                .frame(maxWidth: .infinity).padding(.vertical, 16)
+                .background(aiCanGenerate ? Theme.accent : Theme.fillSubtle)
+                .foregroundStyle(aiCanGenerate ? Color.white : Theme.inkDim)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        }
+        .disabled(!aiCanGenerate)
     }
 
     @ViewBuilder private var aiVoicePicker: some View {
@@ -5013,8 +8262,89 @@ struct ReelStudioView: View {
     }
 
     private var aiCanGenerate: Bool {
-        !ttsInFlight && !selectedVoiceID.isEmpty
+        // `!scriptInFlight` is an in-flight guard, not a new gate: spending money
+        // on the voice while the script field is about to be replaced under the
+        // agent would speak the OLD words. Sign-in, consent and quota are all
+        // exactly where they were.
+        !ttsInFlight && !scriptInFlight && !selectedVoiceID.isEmpty
             && aiScript.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
+    }
+
+    // MARK: Script length — the constraint, made visible
+
+    /// The server's hard cap on one TTS call (`aiVoiceTTS`, contract §). Shown,
+    /// never silently enforced: `aiScript` can be seeded with the transcript of
+    /// a recording the agent actually made, and truncating THAT on sight would
+    /// destroy the one thing the app cannot regenerate.
+    private static let scriptCharacterCap = 1_000
+
+    /// How long the finished reel runs, in seconds.
+    ///
+    /// Every AI clip is generated at a FIXED 5 s (`makeClip` submits
+    /// `seconds: 5`), so the reel is 5 s per selected item. The ready-made
+    /// extras — today only the aerial intro — are counted at 5 s too; a real
+    /// aerial is 4–8 s, so this can be a couple of seconds out on a reel that
+    /// has one. That is fine for its only job, which is telling a person
+    /// roughly how many words fit; nothing in the export is laid out on it.
+    private var reelSeconds: Int { 5 * totalSelected }
+
+    /// What the script is written to fit — the reel's length, inside the
+    /// contract's supported 10…45 s window.
+    private var targetSeconds: Int { min(45, max(10, reelSeconds)) }
+
+    /// Roughly how long `aiScript` takes to read aloud.
+    private var scriptReadSeconds: Double {
+        Double(aiScript.count) / AIScriptResult.charactersPerSecond
+    }
+
+    /// The character budget that fits the reel exactly — what to aim for when
+    /// the box is still empty.
+    private var scriptBudget: Int {
+        min(Self.scriptCharacterCap, Int(Double(reelSeconds) * AIScriptResult.charactersPerSecond))
+    }
+
+    /// True when the voice will still be talking after the last picture. The
+    /// half-second of slack keeps a script that lands on the line from flashing
+    /// a warning at every keystroke.
+    private var scriptOverrunsReel: Bool {
+        reelSeconds > 0 && scriptReadSeconds > Double(reelSeconds) + 0.5
+    }
+
+    /// The line above the counter. `nonisolated` and pure — it is called from a
+    /// view property rather than from `body`, so it must not be isolated to the
+    /// main actor by inference (that mismatch has broken this build before).
+    nonisolated private static func scriptLengthLabel(count: Int, readSeconds: Double,
+                                                      reelSeconds: Int, budget: Int) -> String {
+        guard reelSeconds > 0 else {
+            return "Pick your photos first — then this shows how long the script can be."
+        }
+        if count == 0 {
+            return "About \(budget) characters fits your \(reelSeconds)-second reel."
+        }
+        return "About \(wholeSeconds(readSeconds))s to read · your reel is \(reelSeconds)s"
+    }
+
+    nonisolated private static func wholeSeconds(_ seconds: Double) -> Int {
+        // Clamped before the conversion: `Int(someHugeDouble)` traps, and this
+        // number only ever gets printed in a sentence.
+        guard seconds.isFinite, seconds > 0 else { return 0 }
+        return Int(min(seconds, 86_400).rounded())
+    }
+
+    // MARK: Tone
+
+    /// Which tone suits which trade. A home is a place somebody will live in; a
+    /// store has ten seconds to get a person off a couch; a venue is selling an
+    /// occasion. `nonisolated` and pure — it reads nothing but its argument.
+    nonisolated private static func defaultTone(for space: SpaceType) -> ScriptTone {
+        switch space {
+        case .realEstate: return .warm
+        case .venue:      return .luxury
+        case .restaurant: return .warm
+        case .retail:     return .punchy
+        case .fitness:    return .punchy
+        case .other:      return .warm
+        }
     }
 
     // --- Finished take: playback + caption toggle (maps to CaptionStyle) ---
@@ -5189,9 +8519,13 @@ struct ReelStudioView: View {
 
     /// Load the ElevenLabs voice catalogue. A 503 (no key configured) surfaces
     /// the server's "needs setting up" message rather than an empty picker.
-    /// Sign-in gated — the AI runs on the account.
+    /// Waits for an anonymous session; network recovery never asks to register.
     private func loadVoices() {
-        guard signedIn else { showSignIn = true; return }
+        guard !loadingVoices, aiVoices.isEmpty else { return }
+        connection.run { loadVoicesWithSession() }
+    }
+
+    private func loadVoicesWithSession() {
         guard !loadingVoices, aiVoices.isEmpty else { return }
         loadingVoices = true
         voiceError = nil
@@ -5214,12 +8548,229 @@ struct ReelStudioView: View {
         }
     }
 
+    // MARK: "Write my script"
+
+    /// Write the reel's script from this listing's own data — no questions
+    /// asked. Everything it needs is already on the listing (beds, baths, sqft,
+    /// price, tagline, the industry detail fields, the city/state) and on the
+    /// reel itself (how many photos, which areas, how long it runs).
+    ///
+    /// NEVER CLOBBERS WORDS THAT ARE ALREADY THERE. The field can be holding
+    /// the transcript of a recording the agent actually made — `onChange(of:
+    /// voiceMode)` seeds `aiScript` from `voiceover?.transcript` when they
+    /// switch to AI voice — and quietly replacing THAT with a machine's version
+    /// throws away the one thing no button can redo. A non-empty field asks.
+    private func writeScript() {
+        guard !scriptInFlight else { return }
+        guard aiScript.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            showScriptReplaceConfirm = true
+            return
+        }
+        runScriptWriter()
+    }
+
+    /// The call itself waits for an anonymous session; one call per
+    /// tap; the result lands in the EDITABLE field, never in a modal — the whole
+    /// point is that the agent fixes the two words the model got wrong.
+    private func runScriptWriter() {
+        guard !scriptInFlight else { return }
+        connection.run { runScriptWriterWithSession() }
+    }
+
+    private func runScriptWriterWithSession() {
+        guard !scriptInFlight else { return }
+        scriptInFlight = true
+        voiceError = nil
+        voiceNote = nil
+        Haptics.selection()
+
+        // Everything the request needs is read HERE, on the main actor, into
+        // plain Sendable values. The Task below never reaches back into the
+        // model or the view for anything.
+        let api = model.api
+        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        let request = Self.scriptRequest(for: live, space: space,
+                                         roomTags: model.assets[listing.id]?.roomTags ?? [],
+                                         photoCount: totalSelected,
+                                         targetSeconds: targetSeconds,
+                                         tone: tone.rawValue)
+        let address = live.address
+        let noun = space.spaceNoun
+        let listingID = listing.id
+        let isSample = listing.isSample
+        let spaceRaw = space.rawValue
+        let toneRaw = tone.rawValue
+        let target = targetSeconds
+
+        Task {
+            do {
+                // Scopes the server's fair-housing gate to THIS listing's real
+                // space type (COPY-ASSIST-CONTRACT §5). Resolved exactly the way
+                // `generateAIVoice` resolves it one tap later in this same
+                // flow, so this adds no side effect the voiceover path doesn't
+                // already have.
+                var req = request
+                // Only ever an UPGRADE on what `scriptRequest` already read off
+                // the listing: a nil answer here (offline, signed out, listing
+                // gone) must not throw away an id we already knew.
+                if !isSample, let resolved = await model.serverListingIDForCompliance(listingID) {
+                    req.listingServerID = resolved
+                }
+                let result = try await api.aiCopyScript(req)
+                let filled = Self.filledAddress(result.script, address: address,
+                                                fallbackNoun: noun)
+                await MainActor.run {
+                    aiScript = filled
+                    scriptInFlight = false
+                    Haptics.success()
+                    // A length, two enums and a count. No script text, no
+                    // address, no listing id — see the header on Analytics.swift.
+                    Analytics.track("ai_script_written",
+                                    ["space_type": spaceRaw, "tone": toneRaw,
+                                     "chars": String(filled.count),
+                                     "target_s": String(target), "ok": "true"])
+                }
+            } catch {
+                // A fair-housing refusal (400 unsupported_edit) fails
+                // identically every time, so this is shown and never retried —
+                // the same rule the TTS call already follows.
+                let message = AIFailure(error).message
+                await MainActor.run {
+                    scriptInFlight = false
+                    voiceError = message
+                    // No reason prop: the server's message is written for a
+                    // person and can quote the listing's own words back.
+                    Analytics.track("ai_script_written",
+                                    ["space_type": spaceRaw, "tone": toneRaw,
+                                     "target_s": String(target), "ok": "false"])
+                }
+            }
+        }
+    }
+
+    /// Build the wire request from the listing.
+    ///
+    /// THE STREET ADDRESS IS NOT IN HERE AND MUST NEVER BE. `AICopyFacts` has
+    /// no field that could carry one — only `region` (city/state), which is
+    /// exactly the line the aerial path already sends for scenery context. The
+    /// model is told it is writing about a three-bed home in Charlotte, NC; it
+    /// is never told which one. The name goes back in on this device, in
+    /// `filledAddress`.
+    ///
+    /// `nonisolated` and pure: it takes value types and returns a value type.
+    nonisolated private static func scriptRequest(for listing: Listing, space: SpaceType,
+                                                  roomTags: [RoomTag], photoCount: Int,
+                                                  targetSeconds: Int, tone: String) -> AIScriptRequest {
+        var facts = AICopyFacts()
+        // Real estate is the only type with beds/baths/sqft/price; the rest are
+        // data-driven from `detailFields` (SpaceType.showsPropertyDetails).
+        if space.showsPropertyDetails {
+            if listing.beds > 0 { facts.beds = listing.beds }
+            if listing.baths > 0 { facts.baths = listing.baths }
+            if listing.sqft > 0 { facts.sqft = listing.sqft }
+            if listing.price.cents > 0 { facts.priceLabel = listing.price.formatted }
+        }
+        if let tagline = listing.tagline?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !tagline.isEmpty {
+            facts.tagline = tagline
+        }
+        if let region = listing.regionLabel?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !region.isEmpty {
+            facts.region = region
+        }
+        // The industry fields the owner actually filled in — a venue's capacity,
+        // a restaurant's cuisine, a gym's trial offer. URL fields are skipped:
+        // a booking link is for tapping, not for reading aloud.
+        var details: [String: String] = [:]
+        for field in space.detailFields where !field.isURL {
+            let value = listing.detail(field.key).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty else { continue }
+            details[field.key] = value
+        }
+        facts.details = details
+
+        // WALK ORDER — the order the areas were tagged during the walkthrough,
+        // which is the order a viewer meets them in. Sorted by timestamp because
+        // a tag added later can be for an earlier moment.
+        let tags = roomTags
+            .sorted { $0.tMs < $1.tMs }
+            .map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        return AIScriptRequest(
+            // Attribution only, and only when the listing ALREADY has a server
+            // row: this route writes no provenance (there is no media to
+            // disclose), so it is not worth a round-trip to create one.
+            listingServerID: listing.isSample ? nil : listing.serverID,
+            spaceType: space.rawValue,
+            facts: facts,
+            roomTags: tags,
+            photoCount: photoCount,
+            targetSeconds: targetSeconds,
+            tone: tone)
+    }
+
+    /// THE ONE PLACE the address goes back into a script.
+    ///
+    /// The server writes the literal `{address}` where the property should be
+    /// named and never learns what that is — the request carries `region`
+    /// ("Charlotte, NC") and nothing finer. Substituting here, on the device, is
+    /// what lets the voice say a real address out loud while the address itself
+    /// never reaches a third-party model or its request logs. It lives in one
+    /// function so there is exactly one line to audit.
+    ///
+    /// With no address to substitute the contract's rule is to DROP the sentence
+    /// the token is in rather than speak a placeholder — "Welcome to this one"
+    /// is worse than starting on the second sentence, and leaving "{address}"
+    /// in place makes the voice read three literal words out loud. Only if
+    /// dropping would leave nothing at all does the token collapse into the
+    /// neutral phrase this screen already uses elsewhere ("this home").
+    nonisolated private static func filledAddress(_ script: String, address: String,
+                                                  fallbackNoun: String) -> String {
+        // The exact token the server writes where the property should be named
+        // (COPY-ASSIST-CONTRACT §5). ONE file-scope constant, so the places that
+        // look for it can never disagree about what they are looking for.
+        let token = addressToken
+        guard script.contains(token) else { return script }
+        let name = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !name.isEmpty {
+            return script.replacingOccurrences(of: token, with: name)
+        }
+        let kept = sentences(of: script)
+            .filter { !$0.contains(token) }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if !kept.isEmpty { return kept }
+        return script.replacingOccurrences(of: token, with: "this \(fallbackNoun)")
+    }
+
+    /// Split a script into sentences.
+    ///
+    /// Deliberately simple. This text was written moments ago by the copy model
+    /// as short marketing sentences — not prose full of abbreviations — and the
+    /// split is only ever used to drop a sentence from a script the agent is
+    /// about to edit by hand anyway. A wrong split costs one sentence too many
+    /// or too few in an editable box, never a wrong address.
+    nonisolated private static func sentences(of text: String) -> [String] {
+        let marked = text
+            .replacingOccurrences(of: ". ", with: ".\u{1}")
+            .replacingOccurrences(of: "! ", with: "!\u{1}")
+            .replacingOccurrences(of: "? ", with: "?\u{1}")
+        return marked.components(separatedBy: "\u{1}")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+
     /// Speak the script with ElevenLabs, download the audio, build the Voiceover.
-    /// Spends money, so: sign-in gated, one call per tap (`ttsInFlight`), one
+    /// Spends money, so: session awaited, one call per tap (`ttsInFlight`), one
     /// idempotency key per tap, NEVER auto-retried — a fair-housing refusal (400)
     /// would fail identically, so the server's message is shown to re-word.
     private func generateAIVoice() {
-        guard signedIn else { showSignIn = true; return }
+        guard !ttsInFlight else { return }
+        connection.run { generateAIVoiceWithSession() }
+    }
+
+    private func generateAIVoiceWithSession() {
         guard !ttsInFlight else { return }
         let script = aiScript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard script.count >= 2 else { voiceError = "Type a short script first."; return }
@@ -5229,6 +8780,7 @@ struct ReelStudioView: View {
         let listingID = listing.id
         let isSample = listing.isSample
         let key = UUID().uuidString               // one idempotency key per tap
+        let actor = auth.userID, epoch = auth.syncSessionRevision
         ttsInFlight = true
         voiceError = nil
         voiceNote = nil
@@ -5236,16 +8788,25 @@ struct ReelStudioView: View {
             do {
                 let serverID: UUID? = isSample ? nil
                     : await model.serverListingIDForCompliance(listingID)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
                 let result = try await api.aiVoiceTTS(text: script, voiceID: voiceID,
                                                       listingServerID: serverID,
                                                       label: "Reel voiceover",
                                                       idempotencyKey: key)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
                 let persisted = try await Self.downloadVoiceover(from: result.audioURL,
                                                                  listingID: listingID.uuidString)
+                guard auth.userID == actor, auth.syncSessionRevision == epoch else { throw CloudSyncError.identityChanged }
+                let reference: SharedVoiceReference? = result.sharedResultID.flatMap { resultID in
+                    guard let serverID, let ownerID = actor.flatMap(UUID.init(uuidString:)), auth.isIdentified else { return nil }
+                    return SharedVoiceReference(resultID: resultID, ownerID: ownerID, listingID: serverID)
+                }
                 let vo = Voiceover(audioURL: persisted, duration: result.durationS,
                                    transcript: script, words: result.words,
-                                   source: .aiVoice, voiceName: result.voiceName)
+                                   source: .aiVoice, voiceName: result.voiceName, sharedReference: reference)
                 await MainActor.run {
+                    guard auth.userID == actor, auth.syncSessionRevision == epoch else { return }
+                    if reference != nil { try? CloudVoiceStore.saveGeneratedVoice(vo, listingID: listingID) }
                     voiceover = vo
                     voPlayer = nil
                     ttsInFlight = false
@@ -5256,7 +8817,7 @@ struct ReelStudioView: View {
                 let message = AIFailure(error).message
                 await MainActor.run {
                     ttsInFlight = false
-                    voiceError = message
+                    if auth.userID == actor, auth.syncSessionRevision == epoch { voiceError = message }
                 }
             }
         }
@@ -5360,6 +8921,7 @@ struct ReelStudioView: View {
         .buttonStyle(ScalePressStyle())
         .accessibilityLabel(Text(order.map { "Photo in reel — position \($0 + 1). Tap to remove." }
                                  ?? "Photo not in reel. Tap to add."))
+        .accessibilityIdentifier("reel.photo.\(p.id)")
     }
 
     private func toggle(_ p: EnhancedPhoto) {
@@ -5372,9 +8934,22 @@ struct ReelStudioView: View {
     }
 
     private func cancelWork() {
-        workTask?.cancel()
+        let task = workTask
         workTask = nil
+        task?.cancel()
         resetToSetup()
+        // The cancelled task parks its already-billed clips in its own `catch`,
+        // which has not run yet at this instant — so wait for it before reading
+        // them back. Without this the "Unfinished reel" card would be built one
+        // frame too early and show nothing, and the whole point of cancelling
+        // safely is that the agent SEES the clips he paid for (the 4,000 sq ft
+        // field test).
+        guard !listing.isSample else { return }
+        let listingID = listing.id
+        Task {
+            if let task = task { await task.value }
+            parkedClips = PendingReelClips.load(for: listingID)
+        }
     }
 
     private func resetToSetup() {
@@ -5389,6 +8964,9 @@ struct ReelStudioView: View {
         failedClips = 0
         phase = .setup
         lastReel = Self.newestReel(for: listing.id)   // the one just made is now "your last reel"
+        // A run that failed part-way parked its billed clips — surface them again
+        // rather than letting "Try again" charge for the same clips twice.
+        parkedClips = listing.isSample ? nil : PendingReelClips.load(for: listing.id)
     }
 
     /// Open a reel that already exists on disk — same result screen as a fresh
@@ -5429,21 +9007,27 @@ struct ReelStudioView: View {
     }
 
     /// `Documents/reels/<listingID>-<unix>.mp4`, newest first.
-    nonisolated private static func reelFiles(for listingID: UUID) -> [URL] {
+    ///
+    /// `fileprivate`, not `private`: the listing screen's FILES section lists
+    /// EVERY reel through this same glob rather than growing a second, subtly
+    /// different one (`private` on a member is scoped to the type, so
+    /// `FlythroughDetailView` could not see it).
+    nonisolated fileprivate static func reelFiles(for listingID: UUID) -> [URL] {
+        datedReelFiles(for: listingID).map(\.url)
+    }
+
+    /// The same glob with each reel's creation date kept.
+    ///
+    /// Build 8 read that date INSIDE the sort comparator, so sorting n reels cost
+    /// O(n log n) stat syscalls, and then the listing screen's FILES scan stat'd
+    /// every one of them a second time to build its rows (the build-9 lag
+    /// report). One read per file, sorted on the value, used by both.
+    nonisolated fileprivate static func datedReelFiles(for listingID: UUID) -> [DatedFile] {
         let dir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
-        let files = (try? FileManager.default.contentsOfDirectory(
-            at: dir, includingPropertiesForKeys: [.creationDateKey])) ?? []
         let prefix = "\(listingID.uuidString)-".lowercased()
-        func created(_ url: URL) -> Date {
-            (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
-        }
-        return files
-            .filter { $0.lastPathComponent.lowercased().hasPrefix(prefix)
-                && $0.pathExtension.lowercased() == "mp4" }
-            .sorted { a, b in
-                let da = created(a), db = created(b)
-                return da != db ? da > db : a.lastPathComponent > b.lastPathComponent
-            }
+        return DiskScan.newestFirst(DiskScan.entries(of: dir).filter {
+            $0.name.lowercased().hasPrefix(prefix) && $0.url.pathExtension.lowercased() == "mp4"
+        })
     }
 
     nonisolated private static func newestReel(for listingID: UUID) -> URL? {
@@ -5494,7 +9078,12 @@ struct ReelStudioView: View {
     // MARK: Generate (sequential clips → on-device stitch)
 
     private func generate() {
-        guard signedIn, phase == .setup, canGenerate else { return }
+        guard phase == .setup, canGenerate else { return }
+        connection.run { generateWithSession() }
+    }
+
+    private func generateWithSession() {
+        guard phase == .setup, canGenerate else { return }
         if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
         let chosen = selected.compactMap { id in photos.first(where: { $0.id == id }) }
         let extras = selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) }
@@ -5511,17 +9100,36 @@ struct ReelStudioView: View {
         // isn't .off. captionStyle governs the burned-in spoken-word captions.
         let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
         let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        // The big burned-in shot captions and the transition, snapshot as plain
+        // Sendable values like everything else this Task reads.
+        let shotStyle: ReelComposer.ShotCaptionStyle = bigCaptionsOn ? bigCaptionStyle : .off
+        let transition = reelTransition
+        // What the shot planner needs, read here on the main actor. The call
+        // itself happens inside the Task and is allowed to fail.
+        let live = model.listings.first(where: { $0.id == listing.id }) ?? listing
+        let planRequest = Self.shotlistRequest(for: live, space: space,
+                                               photos: chosen,
+                                               targetSeconds: targetSeconds,
+                                               tone: tone.rawValue)
+        let address = live.address
+        let noun = space.spaceNoun
+        let spaceRaw = space.rawValue
         phase = .generating
         completedClips = 0
         totalClips = chosen.count
         failedClips = 0
         failure = nil
-        statusText = chosen.isEmpty ? "Getting ready…" : "Photo 1 of \(chosen.count) — making video…"
+        statusText = chosen.isEmpty ? "Getting ready…" : "Planning your shots…"
         Haptics.selection()
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("reel-\(UUID().uuidString)", isDirectory: true)
         let isSample = listing.isSample
         workTask = Task {
+            // Hoisted OUT of the `do` so the `catch` can still see them. These are
+            // the clips the account has ALREADY BEEN CHARGED FOR; the catch below
+            // used to delete the directory holding them before it had even looked
+            // at why it was running (the 4,000 sq ft field test).
+            var billedClips: [URL] = []
             do {
                 try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
                 // Anchor every generated clip to the listing so the motion is
@@ -5530,15 +9138,52 @@ struct ReelStudioView: View {
                 if !isSample {
                     reelListingServerID = await model.serverListingIDForCompliance(listingID)
                 }
+                // THE SHOT PLAN. One text-only `/ai-copy/shotlist` call, before a
+                // cent is spent on video: a camera move, a three-to-five-word
+                // caption and a length for each photo. It is a BEST EFFORT and
+                // nothing below depends on it — `planShots` never throws, and an
+                // empty plan puts every downstream decision back exactly where it
+                // was before this route existed (nil motion, whole clips, no shot
+                // captions). It runs first because the motion has to be known
+                // before the clip is submitted, not after.
+                var plan: [AIShot] = []
+                if !chosen.isEmpty {
+                    var req = planRequest
+                    if let resolved = reelListingServerID { req.listingServerID = resolved }
+                    plan = await Self.planShots(req, api: api, address: address, fallbackNoun: noun)
+                    let planned = plan.isEmpty ? "false" : "true"
+                    let shotCount = String(plan.count)
+                    await MainActor.run {
+                        Analytics.track("reel_planned", ["ok": planned,
+                                                         "space_type": spaceRaw,
+                                                         "shots": shotCount])
+                    }
+                }
+                // The plan may REORDER the reel — it opens on the best
+                // establishing shot and closes on the best closing frame, with
+                // the agent's tap order as its tiebreak. `reordered` is all or
+                // nothing: anything it cannot account for photo-for-photo leaves
+                // the tap order exactly as it was.
+                let ordered = Self.reordered(chosen, by: plan)
+                try Task.checkCancellation()
+
                 var clipURLs: [URL] = extras          // ready-made clips lead the reel
-                for (i, photo) in chosen.enumerated() {
+                // The plan entries that actually produced a clip, in clip order.
+                // Kept in step with `clipURLs` so a failed clip cannot slide every
+                // later caption onto the wrong picture.
+                var usedShots: [AIShot?] = []
+                for (i, photo) in ordered.enumerated() {
                     try Task.checkCancellation()
-                    await MainActor.run { statusText = "Photo \(i + 1) of \(chosen.count) — making video…" }
+                    await MainActor.run { statusText = "Photo \(i + 1) of \(ordered.count) — making video…" }
+                    let shot = Self.shot(for: photo, in: plan)
                     do {
                         let clip = try await Self.makeClip(photo: photo, prompt: prompt,
+                                                           shot: shot, shotCount: ordered.count,
                                                            api: api, listingServerID: reelListingServerID,
                                                            into: tmpDir, index: i)
                         clipURLs.append(clip)
+                        usedShots.append(shot)
+                        billedClips.append(clip)   // paid for the moment it lands
                     } catch is CancellationError {
                         throw CancellationError()
                     } catch let apiError as APIError where apiError.isQuota || apiError.isUnauthorized {
@@ -5563,19 +9208,30 @@ struct ReelStudioView: View {
                 try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
                 let stamp = Int(Date().timeIntervalSince1970)
                 let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
-                try await Self.stitch(clips: clipURLs, renderSize: renderSize,
-                                      captions: captions, voiceover: voiceover,
-                                      captionStyle: captionStyle, output: outURL)
+                let photoClips = Array(clipURLs.dropFirst(extras.count))
+                try await ReelComposer.compose(
+                    shots: Self.shots(extras: extras, photoClips: photoClips,
+                                      plan: usedShots, captionsOn: shotStyle.isOn),
+                    renderSize: renderSize,
+                    options: ReelComposer.Options(titleCard: captions, voiceover: voiceover,
+                                                  captionStyle: captionStyle,
+                                                  shotCaptionStyle: shotStyle,
+                                                  transition: transition),
+                    output: outURL)
                 try? FileManager.default.removeItem(at: tmpDir)
 
                 try Task.checkCancellation()
+                let wasPlanned = usedShots.contains(where: { $0 != nil }) ? "true" : "false"
                 await MainActor.run {
                     reelURL = outURL
                     player = AVPlayer(url: outURL)
                     lastReel = outURL
                     phase = .done
                     Haptics.success()
-                    Analytics.track("reel_made", ["ok": "true", "clips": String(clipURLs.count)])
+                    Analytics.track("reel_made", ["ok": "true", "clips": String(clipURLs.count),
+                                                  "captions": shotStyle.rawValue,
+                                                  "transition": transition.rawValue,
+                                                  "planned": wasPlanned])
                 }
                 // The new reel is safely on disk AND on screen — now, and only
                 // now, trim the older ones so Documents/reels can't grow without
@@ -5583,12 +9239,27 @@ struct ReelStudioView: View {
                 // half-finished prune would still be consistent, but the user's
                 // result must never wait on it.
                 await Task.detached(priority: .utility) {
-                    ReelStudioView.pruneReels(for: listingID, keeping: 3)
+                    ReelStudioView.pruneReels(for: listingID, keeping: reelsKeptPerListing)
                 }.value
             } catch {
-                try? FileManager.default.removeItem(at: tmpDir)
-                if error is CancellationError || Task.isCancelled { return }
+                // KEEP THE PAID WORK — this is the whole fix. Whichever way this
+                // run ended, the clips already generated cost real money and are
+                // the one thing a retry cannot get back for free, so they are
+                // moved somewhere durable BEFORE the temp directory goes.
+                //
+                // Both exits park, not just cancellation: a quota wall or an
+                // expired session on clip 4 of 6 does not make clips 1–3
+                // worthless, and the old code binned those too.
+                Self.parkClips(billedClips, for: listingID, tmpDir: tmpDir)
+                if error is CancellationError || Task.isCancelled {
+                    // Cancelled means the sheet is already gone (Close, a swipe,
+                    // or the Cancel button) — there is no UI left to talk to. The
+                    // next open reads the parked clips back in `onAppear`, the way
+                    // AerialIntroSheet resumes a PendingAerialJob.
+                    return
+                }
                 await MainActor.run {
+                    parkedClips = PendingReelClips.load(for: listingID)
                     phase = .failed
                     failure = AIFailure(error, title: "Couldn't make the reel")
                 }
@@ -5596,10 +9267,152 @@ struct ReelStudioView: View {
         }
     }
 
+    /// Move clips that were already generated — and already CHARGED — out of the
+    /// run's temp directory into `Documents/reels/<id>-parked/`, record them, and
+    /// then (and only then) delete the temp directory.
+    ///
+    /// ADDS to whatever is already parked rather than replacing it: a second
+    /// abandoned run does not make the first run's clips worthless, and both were
+    /// billed. Names carry the run's timestamp so two runs cannot collide.
+    ///
+    /// `nonisolated` and fully synchronous on purpose. It runs inside the `catch`
+    /// of a CANCELLED task, after the view has already been dismissed, so it must
+    /// not need the main actor and must not `await` anything — an `await` in a
+    /// cancelled task is exactly how this work would get lost a second time.
+    nonisolated private static func parkClips(_ clips: [URL], for listingID: UUID, tmpDir: URL) {
+        let fm = FileManager.default
+        defer { try? fm.removeItem(at: tmpDir) }
+        guard !clips.isEmpty else { return }
+        let dir = PendingReelClips.directory(for: listingID)
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        } catch {
+            return   // nowhere to put them; the defer still clears tmp
+        }
+        // Start from what is already parked, dropping any entry whose file has
+        // since gone so the record can't accumulate dead paths.
+        var relPaths = (PendingReelClips.load(for: listingID)?.clipURLs ?? [])
+            .map { FileStore.relativePath(for: $0) }
+        let stamp = Int(Date().timeIntervalSince1970)
+        for (i, clip) in clips.enumerated() {
+            guard fm.fileExists(atPath: clip.path) else { continue }
+            let dest = dir.appendingPathComponent("clip-\(stamp)-\(i).mp4")
+            try? fm.removeItem(at: dest)
+            do {
+                try fm.moveItem(at: clip, to: dest)
+            } catch {
+                // tmp and Documents are the same volume so a move should not
+                // fail — but a copy is the difference between keeping the agent's
+                // money and losing it, so try that before giving up on this clip.
+                do { try fm.copyItem(at: clip, to: dest) } catch { continue }
+            }
+            relPaths.append(FileStore.relativePath(for: dest))
+        }
+        guard !relPaths.isEmpty else { return }
+        PendingReelClips(listingID: listingID, savedAt: Date(), relPaths: relPaths).save()
+    }
+
+    /// Stitch the parked clips into a reel. NO AI call, no network, no spend —
+    /// the clips were bought on an earlier run; this is the free half of the job
+    /// the old cancel path threw away.
+    ///
+    /// Any aerial/extra clip still switched on leads the reel, exactly as it does
+    /// in `generate()`. Shape, title card and voiceover come from whatever the
+    /// setup screen currently says, because those are free to change and the
+    /// clips are not.
+    private func finishParkedReel() {
+        guard !isWorking else { return }
+        let clips = (selectedExtras.filter { FileManager.default.fileExists(atPath: $0.path) })
+            + (parkedClips?.clipURLs ?? [])
+        guard !clips.isEmpty else {
+            PendingReelClips.clear(for: listing.id)
+            parkedClips = nil
+            return
+        }
+        if recorder.isRecording { recorder.cancel() }   // never leave the mic hot
+        let listingID = listing.id
+        let isPortrait = portrait
+        let captions: ReelCaptions? = captionsOn ? Self.reelCaptions(for: listing) : nil
+        let voiceover: Voiceover? = (voiceMode == .off) ? nil : self.voiceover
+        let captionStyle: CaptionStyle = wordCaptionsOn ? .standard : .off
+        failure = nil
+        failedClips = 0
+        phase = .stitching
+        Haptics.selection()
+        workTask = Task {
+            do {
+                let renderSize = isPortrait ? CGSize(width: 1080, height: 1920)
+                                            : CGSize(width: 1920, height: 1080)
+                let reelsDir = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+                try FileManager.default.createDirectory(at: reelsDir, withIntermediateDirectories: true)
+                let stamp = Int(Date().timeIntervalSince1970)
+                let outURL = reelsDir.appendingPathComponent("\(listingID.uuidString)-\(stamp).mp4")
+                // Parked clips have no shot plan — the run that bought them ended
+                // before one could be attached to a file on disk — so they are
+                // composed the way every reel was composed before the planner
+                // existed: whole clips, hard cuts, no shot captions. The point of
+                // this path is to give back work already paid for, not to make it
+                // better than it was.
+                try await ReelComposer.compose(
+                    shots: clips.map { ReelComposer.Shot(url: $0) },
+                    renderSize: renderSize,
+                    options: ReelComposer.Options(titleCard: captions, voiceover: voiceover,
+                                                  captionStyle: captionStyle),
+                    output: outURL)
+                try Task.checkCancellation()
+                await MainActor.run {
+                    // The clips now live inside a finished reel on disk, so the
+                    // parked copy has done its job and can go. This is the ONLY
+                    // automatic delete of paid clips in the whole flow.
+                    PendingReelClips.clear(for: listingID)
+                    parkedClips = nil
+                    reelURL = outURL
+                    player = AVPlayer(url: outURL)
+                    lastReel = outURL
+                    phase = .done
+                    Haptics.success()
+                    Analytics.track("reel_made", ["ok": "true", "clips": String(clips.count),
+                                                  "resumed": "true"])
+                }
+                await Task.detached(priority: .utility) {
+                    ReelStudioView.pruneReels(for: listingID, keeping: reelsKeptPerListing)
+                }.value
+            } catch {
+                // Cancelled or failed, the clips STAY parked — nothing here ever
+                // deletes them, which is the point of the whole card.
+                if error is CancellationError || Task.isCancelled { return }
+                await MainActor.run {
+                    phase = .failed
+                    failure = AIFailure(error, title: "Couldn't finish that reel")
+                }
+            }
+        }
+    }
+
+    /// Delete the parked clips at the agent's explicit request (confirmed first).
+    private func discardParkedClips() {
+        PendingReelClips.clear(for: listing.id)
+        parkedClips = nil
+        Haptics.selection()
+    }
+
     /// One photo → 5 s AI motion clip: downscale ≤1280 → jpeg b64 → submit
     /// `ai-video/reel-clip` → poll every 5 s (cap 5 min) → download the mp4 into
     /// `dir`. fal result URLs expire, so the download happens immediately.
+    ///
+    /// `shot` is this photo's entry in the plan, when there is one. It carries the
+    /// CAMERA MOVE, which is the single biggest reason reels looked amateur: with
+    /// no plan every clip was submitted with nothing, every clip came back with
+    /// the server's one default push-in, and six identical push-ins in a row is
+    /// what "AI slop" looks like. Nil stays nil all the way to the wire — see
+    /// `APIClient.aiVideoReelClip`.
+    ///
+    /// STILL FIVE SECONDS, always. The plan's `seconds` paces the EDIT, not the
+    /// generation: a shorter clip would change what a reel costs and what the
+    /// setup screen promised ("Every photo you pick becomes 5 seconds of video"),
+    /// and trimming 5 s down on-device is free.
     nonisolated private static func makeClip(photo: EnhancedPhoto, prompt: String,
+                                             shot: AIShot?, shotCount: Int,
                                              api: APIClient, listingServerID: UUID?,
                                              into dir: URL, index: Int) async throws -> URL {
         guard let ui = UIImage(contentsOfFile: photo.enhancedURL.path) else {
@@ -5614,11 +9427,13 @@ struct ReelStudioView: View {
         // sentence took the caller-supplied branch instead, which both skipped
         // the server's stronger default and wrote our own words into the
         // listing's provenance log as if the agent had typed them.
-        let motion: String? = prompt.isEmpty ? nil : prompt
+        let typed: String? = prompt.isEmpty ? nil : prompt
         let job = try await api.aiVideoReelClip(imageBase64: jpeg.base64EncodedString(),
-                                                mime: "image/jpeg", prompt: motion, seconds: 5,
+                                                mime: "image/jpeg", prompt: typed, seconds: 5,
+                                                motion: shot?.motion, room: shot?.room,
+                                                shotIndex: index, shotCount: shotCount,
                                                 listingServerID: listingServerID,
-                                                label: "Reel clip \(index + 1)",
+                                                label: Self.clipLabel(shot: shot, index: index),
                                                 idempotencyKey: UUID().uuidString)
 
         let deadline = Date().addingTimeInterval(5 * 60)
@@ -5651,221 +9466,7 @@ struct ReelStudioView: View {
         return dest
     }
 
-    // MARK: Stitch (AVFoundation — back-to-back, aspect-fill, one export)
-
-    /// Stitch the clips back-to-back into one mp4 at `renderSize`. Every clip is
-    /// aspect-FILLED (scale to cover + center-crop) with a layer-instruction
-    /// transform computed from its track's naturalSize + preferredTransform, so
-    /// portrait/rotated sources render upright. Export waits on a continuation.
-    /// `captions` (optional) adds an intro title card + a small Rendprop mark
-    /// via AVVideoCompositionCoreAnimationTool — additive, the transform
-    /// pipeline is untouched.
-    ///
-    /// `voiceover` (optional) is mixed onto a new AUDIO track at time zero.
-    /// VIDEO LENGTH WINS: if the voiceover runs longer than the stitched clips
-    /// the last video frame is HELD for the remainder (never truncating the
-    /// speaker); if it runs shorter the reel ends with silence. Neither is ever
-    /// speed-changed. `captionStyle` drives the burned-in spoken-word captions,
-    /// rendered by `CaptionRenderer` into the SAME animation-tool overlay as the
-    /// title card (composed, not replacing it). All three states export cleanly:
-    /// no voiceover; voiceover with words; voiceover with empty words (no
-    /// captions).
-    nonisolated private static func stitch(clips: [URL], renderSize: CGSize,
-                                           captions: ReelCaptions?,
-                                           voiceover: Voiceover?,
-                                           captionStyle: CaptionStyle,
-                                           output: URL) async throws {
-        let composition = AVMutableComposition()
-        guard let videoTrack = composition.addMutableTrack(
-            withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else {
-            throw AIImagePrep.error("Couldn't start the video composition.")
-        }
-        // One composition track + one layer instruction whose transform is
-        // re-keyed at each clip boundary (no transitions, so no second track).
-        let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
-
-        var cursor = CMTime.zero
-        var inserted = 0
-        // The last successfully-inserted clip, remembered for the freeze-frame
-        // hold when a voiceover runs longer than the video.
-        var lastSrcTrack: AVAssetTrack?
-        var lastSrcRange = CMTimeRange.zero
-        for clipURL in clips {
-            do {
-                let asset = AVURLAsset(url: clipURL)
-                guard let srcTrack = try await asset.loadTracks(withMediaType: .video).first else { continue }
-                let (naturalSize, preferredTransform) = try await srcTrack.load(.naturalSize, .preferredTransform)
-                let timeRange = try await srcTrack.load(.timeRange)
-                try videoTrack.insertTimeRange(
-                    CMTimeRange(start: timeRange.start, duration: timeRange.duration),
-                    of: srcTrack, at: cursor)
-                layerInstruction.setTransform(
-                    fillTransform(naturalSize: naturalSize,
-                                  preferredTransform: preferredTransform,
-                                  renderSize: renderSize),
-                    at: cursor)
-                cursor = CMTimeAdd(cursor, timeRange.duration)
-                lastSrcTrack = srcTrack
-                lastSrcRange = timeRange
-                inserted += 1
-            } catch {
-                continue   // unreadable clip — skip it; the reel uses the rest
-            }
-        }
-        guard inserted > 0, cursor > .zero else {
-            throw AIImagePrep.error("No usable clips to stitch.")
-        }
-        let videoDuration = cursor          // total stitched video before any hold
-
-        // ---- Voiceover audio track (optional) ----
-        // Mix the voiceover onto its OWN audio track at time zero; the existing
-        // clips carry no audio of their own here, so nothing to preserve. A
-        // voiceover whose file can't be read must NOT sink the reel — it just
-        // exports silent, exactly as if none was chosen.
-        var voiceoverAudioDuration = CMTime.zero
-        var audioInserted = false
-        // Held so the fallback below can trim the overhang off it.
-        var voiceoverTrack: AVMutableCompositionTrack?
-        if let voiceover {
-            do {
-                let audioAsset = AVURLAsset(url: voiceover.audioURL)
-                if let audioSrc = try await audioAsset.loadTracks(withMediaType: .audio).first,
-                   let audioTrack = composition.addMutableTrack(
-                        withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) {
-                    let audioRange = try await audioSrc.load(.timeRange)
-                    if audioRange.duration > .zero {
-                        try audioTrack.insertTimeRange(
-                            CMTimeRange(start: audioRange.start, duration: audioRange.duration),
-                            of: audioSrc, at: .zero)
-                        voiceoverAudioDuration = audioRange.duration
-                        audioInserted = true
-                        voiceoverTrack = audioTrack
-                    }
-                }
-            } catch {
-                audioInserted = false     // silent reel rather than a failed one
-            }
-        }
-
-        // ---- Video length wins: hold the last frame if the voiceover is longer.
-        // Take the last clip's final frame (a ~1-frame source slice), insert it
-        // once at the end, then scale THAT single still to fill the remainder.
-        // Scaling one static frame is a freeze-frame hold — no motion is sped up
-        // or slowed, and the spoken audio still plays at its true rate. The last
-        // clip's fill transform (set at its own start) carries through the hold
-        // because no new transform is keyed after it. If the voiceover is shorter
-        // than the video, nothing is held and the tail is simply silent.
-        //
-        // If the hold can't be made — the still slice came out empty, the insert
-        // threw, or there is no source track to freeze — the video CANNOT be
-        // stretched to meet the audio, so the audio is TRIMMED back to meet the
-        // video instead. Leaving both alone would end the reel on a stretch of
-        // uncovered video: black frames with a voice still talking over them.
-        // Losing the last words of a take is bad; shipping black video is worse,
-        // and this path only runs when the freeze-frame already failed.
-        if audioInserted, voiceoverAudioDuration > videoDuration {
-            var held = false
-            if let lastSrcTrack {
-                let freezeDuration = CMTimeSubtract(voiceoverAudioDuration, videoDuration)
-                let frameDur = CMTime(value: 1, timescale: 30)      // == frameDuration below
-                let srcEnd = CMTimeAdd(lastSrcRange.start, lastSrcRange.duration)
-                let lastFrameStart = CMTimeMaximum(lastSrcRange.start, CMTimeSubtract(srcEnd, frameDur))
-                let stillRange = CMTimeRange(start: lastFrameStart,
-                                             duration: CMTimeSubtract(srcEnd, lastFrameStart))
-                if stillRange.duration > .zero {
-                    do {
-                        try videoTrack.insertTimeRange(stillRange, of: lastSrcTrack, at: videoDuration)
-                        videoTrack.scaleTimeRange(
-                            CMTimeRange(start: videoDuration, duration: stillRange.duration),
-                            toDuration: freezeDuration)
-                        cursor = CMTimeAdd(videoDuration, freezeDuration)
-                        held = true
-                    } catch {
-                        held = false
-                    }
-                }
-            }
-            if !held {
-                // Remove [videoDuration, voiceoverAudioDuration) from the audio
-                // track. That range runs to the end of the track, so nothing
-                // shifts left behind it: the track simply ends at videoDuration,
-                // and video and audio finish together.
-                voiceoverTrack?.removeTimeRange(
-                    CMTimeRange(start: videoDuration,
-                                duration: CMTimeSubtract(voiceoverAudioDuration, videoDuration)))
-                cursor = videoDuration
-            }
-        }
-
-        let instruction = AVMutableVideoCompositionInstruction()
-        instruction.timeRange = CMTimeRange(start: .zero, duration: cursor)
-        instruction.layerInstructions = [layerInstruction]
-
-        let videoComposition = AVMutableVideoComposition()
-        videoComposition.renderSize = renderSize
-        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
-        videoComposition.instructions = [instruction]
-
-        // Overlay (optional), composited at EXPORT time via
-        // AVVideoCompositionCoreAnimationTool. Two independent contributors share
-        // ONE overlay so the title card is never replaced by the captions:
-        //   1. the intro title card + persistent Rendprop mark (`captions`), and
-        //   2. the word-by-word spoken captions from the voiceover, drawn by
-        //      CaptionRenderer (only when there's audio, words, and the style is
-        //      enabled — an empty-words voiceover therefore renders no captions).
-        // The tool wants a video layer + a parent layer (video below, overlay
-        // above), every frame equal to the render rect. It only applies on EXPORT
-        // (never AVPlayer playback) — and this path only exports. The CALayers are
-        // built here in the nonisolated stitch, right before the export, never
-        // attached to any live view/layer tree — the standard titled-export path.
-        let wantsWordCaptions = audioInserted && captionStyle.enabled
-            && !(voiceover?.words.isEmpty ?? true)
-        if captions != nil || wantsWordCaptions {
-            let renderRect = CGRect(origin: .zero, size: renderSize)
-            let videoLayer = CALayer()
-            videoLayer.frame = renderRect
-            let overlayLayer = CALayer()
-            overlayLayer.frame = renderRect
-            overlayLayer.masksToBounds = true
-            if let captions {
-                addCaptionLayers(captions, renderSize: renderSize, to: overlayLayer)
-            }
-            if wantsWordCaptions, let voiceover {
-                // Voiceover starts at reel time zero, so offset 0. CaptionRenderer
-                // leaves its own root un-flipped to inherit the parent flip below,
-                // matching the title card's top-left coordinate space.
-                let capLayer = CaptionRenderer.layer(words: voiceover.words, offset: 0,
-                                                     renderSize: renderSize, style: captionStyle)
-                overlayLayer.addSublayer(capLayer)
-            }
-            let parentLayer = CALayer()
-            parentLayer.frame = renderRect
-            // Core Animation's export space is bottom-left; flipping the parent
-            // makes the whole tree read top-left (UIKit-style) so the text
-            // renders upright and our y-from-top layout math is literal.
-            parentLayer.isGeometryFlipped = true
-            parentLayer.addSublayer(videoLayer)
-            parentLayer.addSublayer(overlayLayer)
-            videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(
-                postProcessingAsVideoLayer: videoLayer, in: parentLayer)
-        }
-
-        guard let export = AVAssetExportSession(asset: composition,
-                                                presetName: AVAssetExportPresetHighestQuality) else {
-            throw AIImagePrep.error("Couldn't create the video exporter.")
-        }
-        try? FileManager.default.removeItem(at: output)
-        export.outputURL = output
-        export.outputFileType = .mp4
-        export.videoComposition = videoComposition
-        export.shouldOptimizeForNetworkUse = true
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            export.exportAsynchronously { cont.resume() }
-        }
-        guard export.status == .completed else {
-            throw export.error ?? AIImagePrep.error("Couldn't export the stitched reel.")
-        }
-    }
+    // MARK: Stitch (now Render/ReelComposer.swift)
 
     /// Caption text with fallbacks so an empty/unfilled listing can never render
     /// a blank title card: no address → a generic hook; degenerate "0 bd · 0 ba"
@@ -5881,116 +9482,173 @@ struct ReelStudioView: View {
                             watermark: "Made with Rendprop")
     }
 
-    /// Build the caption CATextLayers on `overlay`: (a) an intro title card —
-    /// address (bold) over the facts/tagline line, centered, shown ~2 s then
-    /// faded out (opacity CABasicAnimation, beginTime AVCoreAnimationBeginTimeAtZero
-    /// + 1.6, duration 0.4, fillMode .forwards, not removed on completion) —
-    /// and (b) a small bottom-right "Made with Rendprop" mark at 55% opacity for
-    /// the full duration. Coordinates are TOP-LEFT (the parent layer is
-    /// geometry-flipped); sizes scale with min(renderSize) so 9:16 and 16:9
-    /// exports match. White text with a soft black shadow, safe-area margins.
-    nonisolated private static func addCaptionLayers(_ captions: ReelCaptions,
-                                                     renderSize: CGSize,
-                                                     to overlay: CALayer) {
-        let w = renderSize.width, h = renderSize.height
-        let unit = min(w, h)                 // 1080 in both 9:16 and 16:9
-        let margin = unit * 0.07             // safe-area-ish inset
-        let textWidth = w - margin * 2
-
-        // One sized, measured text layer. UIFont is toll-free bridged to CTFont
-        // (valid for CATextLayer.font); fontSize still governs the drawn size.
-        func makeText(_ text: String, size: CGFloat, weight: UIFont.Weight,
-                      alignment: CATextLayerAlignmentMode) -> (CATextLayer, CGFloat) {
-            let font = UIFont.systemFont(ofSize: size, weight: weight)
-            let measured = (text as NSString).boundingRect(
-                with: CGSize(width: textWidth, height: .greatestFiniteMagnitude),
-                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                attributes: [.font: font], context: nil)
-            let layer = CATextLayer()
-            layer.string = text
-            layer.font = font
-            layer.fontSize = size
-            layer.foregroundColor = UIColor.white.cgColor
-            layer.alignmentMode = alignment
-            layer.isWrapped = true
-            layer.truncationMode = .end
-            layer.contentsScale = 2
-            layer.shadowColor = UIColor.black.cgColor
-            layer.shadowOpacity = 0.6
-            layer.shadowRadius = max(2, size * 0.08)
-            layer.shadowOffset = CGSize(width: 0, height: max(1, size * 0.03))
-            return (layer, ceil(measured.height) + size * 0.25)
+    /// Turn the reel's clips into `ReelComposer.Shot`s.
+    ///
+    /// THE NO-REGRESSION RULE LIVES HERE. With no shot plan every shot is
+    /// `Shot(url:)` and nothing else — the clip's own length, 1×, no caption —
+    /// which is exactly the reel this screen made before the composer existed.
+    /// A plan only ever ADDS: it can shorten a detail, hold a hero, and put three
+    /// words on screen. It can never lengthen the reel beyond the clips, because
+    /// `seconds` is capped at the clip's own length times the slowest rate the
+    /// composer will allow.
+    ///
+    /// The extra clips (the aerial intro) lead the reel and are deliberately NOT
+    /// paced or captioned: an establishing shot is the one shot that should just
+    /// play, and the plan's shots are indexed against the PHOTOS.
+    ///
+    /// `nonisolated` and pure — value types in, value types out.
+    nonisolated private static func shots(extras: [URL], photoClips: [URL],
+                                          plan: [AIShot?], captionsOn: Bool) -> [ReelComposer.Shot] {
+        var out: [ReelComposer.Shot] = extras.map { ReelComposer.Shot(url: $0) }
+        for (i, url) in photoClips.enumerated() {
+            // The plan is matched BY POSITION, not by photo id: a clip that
+            // failed to generate is simply absent from `photoClips`, and after
+            // that the ids and the positions disagree. The caller therefore
+            // hands us one entry per CLIP, in clip order, holding nil where a
+            // photo had no plan (see `generate()`).
+            let shot: AIShot? = i < plan.count ? plan[i] : nil
+            // Bounded against the clip we actually bought. Every photo clip is
+            // generated at a fixed 5 s, so a plan is allowed to tighten a detail
+            // to 3 s or hold a hero to 8 s and no further: below 3 s a shot is a
+            // flash frame, and past 8 s a 5 s clip is being slowed enough to
+            // judder. The bound also keeps the reel's total length close to the
+            // `target_seconds` the script was written to fit — a plan that
+            // silently halved the reel would leave the voiceover overrunning it.
+            var seconds: Double? = nil
+            if let raw = shot?.seconds, raw.isFinite {
+                seconds = min(clipHoldSeconds, max(clipTrimSeconds, raw))
+            }
+            out.append(ReelComposer.Shot(url: url,
+                                         seconds: seconds,
+                                         speed: nil,
+                                         caption: captionsOn ? shot?.onScreenText : nil))
         }
-
-        // --- Intro title card (over the first clip only; every clip is 5 s) ---
-        let intro = CALayer()
-        intro.frame = CGRect(origin: .zero, size: renderSize)
-
-        let gap = unit * 0.010
-        let (titleLayer, titleH) = makeText(captions.title, size: unit * 0.058,
-                                            weight: .bold, alignment: .center)
-        var blockH = titleH
-        var subLayer: CATextLayer?
-        var subH: CGFloat = 0
-        if !captions.subtitle.isEmpty {
-            let (sl, sh) = makeText(captions.subtitle, size: unit * 0.036,
-                                    weight: .semibold, alignment: .center)
-            subLayer = sl
-            subH = sh
-            blockH += gap + sh
-        }
-        let blockTop = h * 0.42 - blockH / 2       // a touch above center
-        titleLayer.frame = CGRect(x: margin, y: blockTop, width: textWidth, height: titleH)
-        intro.addSublayer(titleLayer)
-        if let subLayer {
-            subLayer.frame = CGRect(x: margin, y: blockTop + titleH + gap,
-                                    width: textWidth, height: subH)
-            intro.addSublayer(subLayer)
-        }
-
-        let fade = CABasicAnimation(keyPath: "opacity")
-        fade.fromValue = 1.0
-        fade.toValue = 0.0
-        fade.beginTime = AVCoreAnimationBeginTimeAtZero + 1.6   // NEVER 0 (0 = "now")
-        fade.duration = 0.4
-        fade.fillMode = .forwards
-        fade.isRemovedOnCompletion = false
-        intro.add(fade, forKey: "introFade")
-        overlay.addSublayer(intro)
-
-        // --- Watermark: bottom-right, whole reel, 55% opacity ---
-        // ~10 pt equivalent: 10 / 390 (pt screen width) × 1080 ≈ 28 px.
-        let (wm, wmH) = makeText(captions.watermark, size: unit * 0.026,
-                                 weight: .semibold, alignment: .right)
-        wm.opacity = 0.55
-        wm.shadowOpacity = 0.5
-        wm.frame = CGRect(x: margin, y: h - margin - wmH, width: textWidth, height: wmH)
-        overlay.addSublayer(wm)
+        return out
     }
 
-    /// Raw buffer space → `renderSize`, aspect-FILL. Applies the source's
-    /// preferredTransform first (normalized back to a (0,0) origin — 90°/270°
-    /// portrait transforms land the displayed rect at a negative origin), then
-    /// scales to cover the render size and centers the overflow (center-crop).
-    nonisolated private static func fillTransform(naturalSize: CGSize, preferredTransform: CGAffineTransform,
-                                                  renderSize: CGSize) -> CGAffineTransform {
-        let displayRect = CGRect(origin: .zero, size: naturalSize).applying(preferredTransform)
-        let displayW = abs(displayRect.width)
-        let displayH = abs(displayRect.height)
-        guard displayW > 0, displayH > 0, displayW.isFinite, displayH.isFinite else { return .identity }
+    /// The plan entry written for THIS photo. BY ID ONLY, never by position —
+    /// the same rule the server applies to the model's own answer
+    /// (COPY-ASSIST-CONTRACT §4.5). If a plan named five of six photos, position
+    /// matching would hand the sixth a caption and a camera move written for a
+    /// different room and the reel would confidently narrate the wrong picture.
+    /// A photo with no entry simply plays as it always did.
+    nonisolated private static func shot(for photo: EnhancedPhoto,
+                                         in plan: [AIShot]) -> AIShot? {
+        plan.first(where: { $0.photoID == photo.id })
+    }
 
-        var t = preferredTransform
-        t.tx -= displayRect.minX
-        t.ty -= displayRect.minY
+    /// The provenance label a broker reads in the audit log. "Reel clip 3" is a
+    /// row number; "Kitchen — reel shot 3 of 6" is a sentence about a property.
+    /// Falls back to the old wording when the plan named no room, so nothing that
+    /// already shipped changes shape.
+    nonisolated private static func clipLabel(shot: AIShot?, index: Int) -> String {
+        if let room = shot?.room?.trimmingCharacters(in: .whitespacesAndNewlines), !room.isEmpty {
+            return String("\(room) — reel shot \(index + 1)".prefix(80))
+        }
+        return "Reel clip \(index + 1)"
+    }
 
-        let scale = max(renderSize.width / displayW, renderSize.height / displayH)
-        t = t.concatenating(CGAffineTransform(scaleX: scale, y: scale))
-        t = t.concatenating(CGAffineTransform(
-            translationX: (renderSize.width - displayW * scale) / 2,
-            y: (renderSize.height - displayH * scale) / 2))
-        return t
+    /// Ask for the reel's edit. NEVER THROWS: a shot plan is an upgrade, not a
+    /// dependency, and a copy route that is down, refused (fair housing), slow or
+    /// unreachable must not stand between the agent and a reel he is paying for.
+    /// An empty result puts every downstream decision back exactly where it was
+    /// before this route existed.
+    ///
+    /// `{address}` is resolved HERE, on the device, in every piece of text the
+    /// server wrote — the server never learns the street address (see
+    /// `AICopyFacts`), so this is the only place the property gets its name back.
+    ///
+    /// The SPOKEN line is substituted, exactly as the script route's already is.
+    /// A CAPTION carrying the token is DROPPED instead (COPY-ASSIST-CONTRACT
+    /// §4.4): burned-in text is legible and held for the whole shot, so an
+    /// address across the frame is worse than one merely spoken, and leaving the
+    /// token would put the literal word "{address}" on the video. The server
+    /// already refuses to write one — this is the client half of the same rule,
+    /// so a server bug cannot put a street address on somebody's reel.
+    nonisolated private static func planShots(_ request: AIShotListRequest, api: APIClient,
+                                              address: String, fallbackNoun: String) async -> [AIShot] {
+        do {
+            let result = try await api.aiCopyShotlist(request)
+            return result.shots.map { shot in
+                let caption = shot.onScreenText.flatMap { text -> String? in
+                    text.contains(addressToken) ? nil : text
+                }
+                return AIShot(photoID: shot.photoID,
+                              order: shot.order,
+                              motion: shot.motion,
+                              room: shot.room,
+                              onScreenText: caption,
+                              seconds: shot.seconds,
+                              voiceLine: shot.voiceLine.map {
+                                  Self.filledAddress($0, address: address, fallbackNoun: fallbackNoun)
+                              })
+            }
+        } catch {
+            return []
+        }
+    }
+
+    /// Put the reel's photos in the order the PLANNER asked for.
+    ///
+    /// The plan opens on the best establishing shot and closes on the best CTA
+    /// frame; tap order is only its tiebreak. Keeping tap order would leave the
+    /// closing caption ("BOOK YOUR SHOWING") on whichever picture happened to be
+    /// tapped last — the words would still be on the right photo, just in the
+    /// wrong place in the reel.
+    ///
+    /// STRICTLY ALL OR NOTHING. If the plan does not name each photo exactly once
+    /// the tap order is kept untouched: a partial reorder is worse than none, and
+    /// no photo the agent picked may be lost or repeated by an edit decision.
+    nonisolated private static func reordered(_ photos: [EnhancedPhoto],
+                                              by plan: [AIShot]) -> [EnhancedPhoto] {
+        guard plan.count == photos.count, !plan.isEmpty else { return photos }
+        var byID: [String: EnhancedPhoto] = [:]
+        for photo in photos { byID[photo.id] = photo }
+        guard byID.count == photos.count else { return photos }   // duplicate ids — leave it alone
+        var out: [EnhancedPhoto] = []
+        for shot in plan {
+            guard let photo = byID.removeValue(forKey: shot.photoID) else { return photos }
+            out.append(photo)
+        }
+        return out.count == photos.count ? out : photos
+    }
+
+    /// Build the shot-list request from the listing: the same facts
+    /// `/ai-copy/script` gets, plus the photos in the order they were tapped.
+    ///
+    /// THE STREET ADDRESS IS NOT IN HERE AND MUST NEVER BE — `AICopyFacts` has no
+    /// field that could carry one, and the name goes back in on this device in
+    /// `filledAddress`.
+    ///
+    /// NO WALK ORDER, deliberately. `/ai-copy/script` takes `room_tags` because a
+    /// script follows the tour; `/ai-copy/shotlist` takes an area PER PHOTO
+    /// (`Photo.room`) because a shot list has to know what THIS picture shows. A
+    /// `RoomTag` is a timestamp on the walkthrough VIDEO and an `EnhancedPhoto`
+    /// is an id and two file URLs — there is no honest mapping between them, so
+    /// this sends no rooms at all rather than a plausible-looking wrong one. The
+    /// planner keeps tap order for unlabelled photos, which is the right answer
+    /// when nobody knows better. `Photo.room` is there for the day a photo
+    /// carries its own area tag.
+    ///
+    /// `nonisolated` and pure: value types in, value type out.
+    nonisolated private static func shotlistRequest(for listing: Listing, space: SpaceType,
+                                                    photos: [EnhancedPhoto],
+                                                    targetSeconds: Int,
+                                                    tone: String) -> AIShotListRequest {
+        // One source of truth for the facts: whatever the script route sends, the
+        // shot planner sends, so the two can never describe different properties.
+        let script = Self.scriptRequest(for: listing, space: space, roomTags: [],
+                                        photoCount: photos.count, targetSeconds: targetSeconds,
+                                        tone: tone)
+        return AIShotListRequest(listingServerID: script.listingServerID,
+                                 spaceType: script.spaceType,
+                                 facts: script.facts,
+                                 photos: photos.map { AIShotListRequest.Photo(id: $0.id, room: nil) },
+                                 targetSeconds: script.targetSeconds,
+                                 tone: script.tone)
     }
 }
+
 
 // MARK: - Pickers
 
@@ -6068,8 +9726,10 @@ struct CameraPicker: UIViewControllerRepresentable {
 }
 
 // MARK: - Floor plan (Apple RoomPlan → USDZ "dollhouse")
-// LiDAR-only (iPhone/iPad Pro). Scans a room into a 3D model, exports USDZ,
-// and previews it with QuickLook. Per-listing file in Documents/FloorPlans/.
+// LiDAR-only (iPhone/iPad Pro). Scans room after room in ONE AR session, merges
+// them with RoomPlan's StructureBuilder (iOS 17+, and it handles rooms on
+// different storeys), exports USDZ, and previews it with QuickLook.
+// Per-listing file in Documents/FloorPlans/.
 
 struct FloorPlanView: View {
     let listing: Listing
@@ -6173,15 +9833,17 @@ struct FloorPlanView: View {
                         Image(systemName: planExists ? "cube.fill" : "cube.transparent")
                             .font(.system(size: 44, weight: .light))
                             .foregroundStyle(Theme.accent)
-                        Text(planExists ? "Room plan ready" : "Scan one room")
+                        Text(planExists ? "Floor plan ready" : "Scan the floor plan")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        // TRUE copy (F-A-17): one RoomPlan session captures a
-                        // single room, and this build keeps one scan per
-                        // listing. Never promise a whole-home floor plan.
+                        // TRUE copy (F-A-17): say what the scanner actually does.
+                        // It now walks room by room in one session and RoomPlan
+                        // merges them — including across storeys — but it is still
+                        // a phone scan, not a survey, and a new scan replaces the
+                        // old one. Never promise more than that.
                         Text(planExists
-                             ? "The room you scanned, as a flat top-down plan or in 3D. Scanning again replaces it."
-                             : "Walk one room slowly with your phone and Rendprop draws it as a plan. One room per scan — scanning another replaces this one.")
+                             ? "What you scanned, as a flat top-down plan or in 3D. Scanning again replaces it."
+                             : "Walk each room slowly with your phone, tap Finish room, then walk to the next one — upstairs too. Rendprop draws them as one plan.")
                             .font(.rpBody).foregroundStyle(Theme.inkDim)
                             .multilineTextAlignment(.center)
                     }
@@ -6190,18 +9852,18 @@ struct FloorPlanView: View {
 
                     if planExists {
                         if plan2DExists {
-                            primaryButton("View room plan", "map") { showPlan2D = true }
+                            primaryButton("View floor plan", "map") { showPlan2D = true }
                             secondaryButton("View in 3D", "rotate.3d") { showViewer = true }
                         } else {
                             // Older scan: only the 3D model was saved. Re-scan for the flat plan.
                             primaryButton("View in 3D", "rotate.3d") { showViewer = true }
-                            Text("Re-scan to generate the flat 2D plan.")
+                            Text("Scan again to generate the flat 2D plan.")
                                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                                 .multilineTextAlignment(.center)
                         }
                         // Destructive: a successful re-scan overwrites the saved
                         // USDZ + geometry, so confirm first (F-A-17).
-                        secondaryButton("Re-scan room", "arrow.clockwise") { showRescanConfirm = true }
+                        secondaryButton("Scan again", "arrow.clockwise") { showRescanConfirm = true }
                         ShareLink(item: usdzURL) {
                             Label("Share the 3D model", systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
@@ -6211,8 +9873,8 @@ struct FloorPlanView: View {
                         }
                         if plan2DExists {
                             Text(listing.spaceType == .realEstate
-                                 ? "Open the room plan to export it as an image for a listing or a flyer."
-                                 : "Open the room plan to export it as an image for your website or a flyer.")
+                                 ? "Open the floor plan to export each floor as an image for a listing or a flyer."
+                                 : "Open the floor plan to export each floor as an image for your website or a flyer.")
                                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
                                 .multilineTextAlignment(.center)
                         }
@@ -6247,6 +9909,7 @@ struct FloorPlanView: View {
         .background(Theme.bg)
         .navigationTitle("Floor plan")
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.floorPlan)
         .onAppear { refreshState() }
         .fullScreenCover(isPresented: $showScanner) {
             RoomScanView(exportURL: usdzURL) { url in
@@ -6277,7 +9940,7 @@ struct FloorPlanView: View {
         }) {
             NavigationStack {
                 FloorPlan2DView(jsonURL: planJSONURL, address: listing.address)
-                    .navigationTitle("Room plan")
+                    .navigationTitle("Floor plan")
                     .navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .cancellationAction) {
@@ -6294,9 +9957,9 @@ struct FloorPlanView: View {
                     }
             }
         }
-        .confirmationDialog("Re-scan this room?", isPresented: $showRescanConfirm,
+        .confirmationDialog("Scan this place again?", isPresented: $showRescanConfirm,
                             titleVisibility: .visible) {
-            Button("Re-scan", role: .destructive) {
+            Button("Scan again", role: .destructive) {
                 // Present the scanner AFTER this dialog has finished dismissing —
                 // a cover raised inside the dismissing event gets swallowed (the
                 // same reason the wand→staging dialog hops a runloop).
@@ -6304,7 +9967,7 @@ struct FloorPlanView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("A finished re-scan replaces the plan you have now. Export or share the current one first if you want to keep it.")
+            Text("A finished scan replaces the plan you have now, every floor of it. Export or share the current one first if you want to keep it.")
         }
         .fileImporter(isPresented: $showImporter,
                       allowedContentTypes: [.pdf, .image],
@@ -6355,7 +10018,65 @@ struct FloorPlanView: View {
     }
 }
 
-/// Hosts RoomPlan's scanning UI + Done/Cancel, exports USDZ on finish.
+// MARK: - What a finished floor-plan scan saves
+
+/// The geometry saved next to the exported USDZ.
+///
+/// A scan used to be one room, stored as a bare `CapturedRoom`. It can now be a
+/// whole building — several rooms across several storeys, captured in one
+/// continuous AR session and merged by RoomPlan's own `StructureBuilder` — so the
+/// on-disk shape is an array. `load` still reads the old single-room files, so a
+/// plan scanned before this build keeps working and never needs re-scanning.
+struct SavedFloorPlan: Codable {
+    var rooms: [CapturedRoom]
+
+    static func load(from url: URL) -> SavedFloorPlan? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let dec = JSONDecoder()
+        if let many = try? dec.decode(SavedFloorPlan.self, from: data) { return many }
+        // Pre-multi-room file: a bare CapturedRoom at the top level.
+        if let one = try? dec.decode(CapturedRoom.self, from: data) { return SavedFloorPlan(rooms: [one]) }
+        return nil
+    }
+
+    /// One entry per storey, lowest first. RoomPlan works out which floor each room
+    /// is on by itself (`CapturedRoom.story`) — we only have to group by it, because
+    /// two floors drawn on one page would print the upstairs on top of the
+    /// downstairs. On iOS 16 there is no `story`, so everything is one floor.
+    var storeys: [Storey] {
+        if #available(iOS 17.0, *) {
+            var byStory: [Int: [CapturedRoom]] = [:]
+            for r in rooms { byStory[r.story, default: []].append(r) }
+            let keys = byStory.keys.sorted()
+            return keys.map { Storey(id: $0, rooms: byStory[$0] ?? [], isOnlyStorey: keys.count == 1) }
+        } else {
+            return rooms.isEmpty ? [] : [Storey(id: 0, rooms: rooms, isOnlyStorey: true)]
+        }
+    }
+
+    struct Storey: Identifiable {
+        let id: Int             // RoomPlan's story number: 0 = the floor you started on
+        let rooms: [CapturedRoom]
+        let isOnlyStorey: Bool
+
+        /// US convention — RoomPlan's story 0 is the floor the scan started on, which
+        /// for a walk-in front door is the 1st floor.
+        var name: String {
+            switch id {
+            case 0:  return "1st floor"
+            case 1:  return "2nd floor"
+            case 2:  return "3rd floor"
+            case -1: return "Basement"
+            case let n where n > 2:  return "\(n + 1)th floor"
+            default: return "Level \(id)"
+            }
+        }
+    }
+}
+
+/// Hosts RoomPlan's scanning UI + Cancel/Finish, and — on iOS 17 and later — lets a
+/// person scan room after room in ONE AR session and merges them into a single
+/// structure before exporting the USDZ.
 struct RoomScanView: UIViewControllerRepresentable {
     let exportURL: URL
     let onFinish: (URL?) -> Void
@@ -6372,8 +10093,29 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
     private let roomCaptureView = RoomCaptureView(frame: .zero)
     private let config = RoomCaptureSession.Configuration()
     private var isScanning = false
+    /// Every room captured so far in THIS session. One entry means the old
+    /// single-room behaviour, exactly as before.
+    private var rooms: [CapturedRoom] = []
+    /// Set while RoomPlan is turning the raw scan into a `CapturedRoom`, so the
+    /// buttons can't be tapped into a bad state mid-processing.
+    private var isProcessing = false
+    private var isFinishing = false
     let exportURL: URL
     var onFinish: ((URL?) -> Void)?
+
+    /// Multi-room merging is `StructureBuilder`, which is iOS 17+. The app still
+    /// deploys to iOS 16, where a scan stays exactly one room.
+    private var supportsMultiRoom: Bool {
+        if #available(iOS 17.0, *) { return true }
+        return false
+    }
+
+    // UI
+    private let cancelButton = UIButton(type: .system)
+    private let secondaryButton = UIButton(type: .system)   // "Scan the next room"
+    private let primaryButton = UIButton(type: .system)     // "Finish room" / "Done"
+    private let statusLabel = UILabel()
+    private let spinner = UIActivityIndicatorView(style: .medium)
 
     init(exportURL: URL) {
         self.exportURL = exportURL
@@ -6388,31 +10130,57 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
         roomCaptureView.delegate = self
         view.addSubview(roomCaptureView)
 
-        let cancel = makeButton("Cancel", filled: false, action: #selector(cancelTapped))
-        let done = makeButton("Done", filled: true, action: #selector(doneTapped))
-        let stack = UIStackView(arrangedSubviews: [cancel, done])
-        stack.axis = .horizontal
-        stack.spacing = 12
-        stack.distribution = .fillEqually
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(stack)
+        style(cancelButton, "Cancel", filled: false, action: #selector(cancelTapped))
+        style(secondaryButton, "Scan the next room", filled: false, action: #selector(nextRoomTapped))
+        style(primaryButton, "Finish room", filled: true, action: #selector(primaryTapped))
+
+        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        statusLabel.textColor = .white
+        statusLabel.textAlignment = .center
+        statusLabel.numberOfLines = 2
+        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        statusLabel.layer.shadowColor = UIColor.black.cgColor
+        statusLabel.layer.shadowOpacity = 0.7
+        statusLabel.layer.shadowRadius = 3
+        statusLabel.layer.shadowOffset = .zero
+        view.addSubview(statusLabel)
+
+        spinner.color = .white
+        spinner.hidesWhenStopped = true
+        spinner.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(spinner)
+
+        let row = UIStackView(arrangedSubviews: [cancelButton, secondaryButton, primaryButton])
+        row.axis = .horizontal
+        row.spacing = 10
+        row.distribution = .fillEqually
+        row.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(row)
 
         NSLayoutConstraint.activate([
             roomCaptureView.topAnchor.constraint(equalTo: view.topAnchor),
             roomCaptureView.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             roomCaptureView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
             roomCaptureView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            stack.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 20),
-            stack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -20),
-            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
-            stack.heightAnchor.constraint(equalToConstant: 50),
+            row.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+            row.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+            row.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            row.heightAnchor.constraint(equalToConstant: 50),
+            statusLabel.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 24),
+            statusLabel.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -24),
+            statusLabel.bottomAnchor.constraint(equalTo: row.topAnchor, constant: -12),
+            spinner.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            spinner.bottomAnchor.constraint(equalTo: statusLabel.topAnchor, constant: -10),
         ])
+        refreshControls()
     }
 
     override func viewWillAppear(_ animated: Bool) {
         super.viewWillAppear(animated)
+        guard !isScanning, rooms.isEmpty else { return }
         roomCaptureView.captureSession.run(configuration: config)
         isScanning = true
+        refreshControls()
     }
 
     override func viewWillDisappear(_ animated: Bool) {
@@ -6420,51 +10188,180 @@ final class RoomScanController: UIViewController, RoomCaptureViewDelegate {
         if isScanning { roomCaptureView.captureSession.stop(); isScanning = false }
     }
 
-    @objc private func doneTapped() {
-        // Stops scanning and triggers processing; the delegate fires with the result.
-        roomCaptureView.captureSession.stop()
-        isScanning = false
+    // MARK: Buttons
+
+    private func refreshControls() {
+        let n = rooms.count
+        cancelButton.isHidden = isProcessing || isFinishing
+        if isProcessing || isFinishing {
+            secondaryButton.isHidden = true
+            primaryButton.isHidden = true
+            spinner.startAnimating()
+            statusLabel.text = isFinishing
+                ? "Putting the rooms together…"
+                : "Finishing this room…"
+            return
+        }
+        spinner.stopAnimating()
+        if rooms.isEmpty, !isScanning {
+            // viewDidLoad has run but viewWillAppear hasn't started the session yet.
+            secondaryButton.isHidden = true
+            primaryButton.isHidden = true
+            statusLabel.text = "Starting the scanner…"
+            return
+        }
+        if isScanning {
+            secondaryButton.isHidden = true
+            primaryButton.isHidden = false
+            primaryButton.setTitle(n == 0 ? "Finish room" : "Finish room \(n + 1)", for: .normal)
+            statusLabel.text = n == 0
+                ? "Walk the room slowly and point the phone at every wall."
+                : "Room \(n) saved. Walk this one the same way."
+        } else {
+            // A room has just been captured. Offer another, or stop here.
+            secondaryButton.isHidden = !supportsMultiRoom
+            primaryButton.isHidden = false
+            primaryButton.setTitle(n <= 1 ? "Done" : "Done — \(n) rooms", for: .normal)
+            statusLabel.text = supportsMultiRoom
+                ? "\(n) room\(n == 1 ? "" : "s") scanned. To add another, keep the phone up and walk there — including up or down stairs. Don't lock the screen."
+                : "Room scanned."
+        }
+    }
+
+    @objc private func primaryTapped() {
+        if isScanning {
+            // Stop THIS room but keep the AR session alive: RoomPlan can only merge
+            // rooms that share one world coordinate space, and pausing the AR session
+            // is what throws that space away. `stop(pauseARSession:)` is iOS 17+.
+            isScanning = false
+            isProcessing = true
+            refreshControls()
+            if #available(iOS 17.0, *) {
+                roomCaptureView.captureSession.stop(pauseARSession: false)
+            } else {
+                roomCaptureView.captureSession.stop()
+            }
+        } else {
+            finish()
+        }
+    }
+
+    @objc private func nextRoomTapped() {
+        guard supportsMultiRoom, !isScanning, !isProcessing, !isFinishing else { return }
+        roomCaptureView.captureSession.run(configuration: config)
+        isScanning = true
+        refreshControls()
     }
 
     @objc private func cancelTapped() {
-        roomCaptureView.captureSession.stop()
-        isScanning = false
+        if isScanning {
+            roomCaptureView.captureSession.stop()
+            isScanning = false
+        }
         onFinish?(nil)
     }
+
+    // MARK: RoomCaptureViewDelegate
 
     // Let RoomPlan process the scan into a final result.
     func captureView(shouldPresent roomDataForProcessing: CapturedRoomData, error: Error?) -> Bool { true }
 
     func captureView(didPresent processedResult: CapturedRoom, error: Error?) {
-        do {
-            try processedResult.export(to: exportURL, exportOptions: .parametric)
-            // Also persist the CapturedRoom as JSON so we can draw a flat 2D
-            // top-down floor plan (apartment-listing style), not just the 3D model.
-            //
-            // On a RE-SCAN the USDZ is replaced but the JSON write can still
-            // fail (encode error, disk full). Drop the previous geometry FIRST,
-            // so the flat plan can never show the OLD room beside the NEW 3D
-            // model; the screen then honestly offers "re-scan for the 2D plan".
-            let jsonURL = exportURL.deletingPathExtension().appendingPathExtension("json")
-            try? FileManager.default.removeItem(at: jsonURL)
-            if let data = try? JSONEncoder().encode(processedResult) {
-                try? data.write(to: jsonURL, options: .atomic)
-            }
-            onFinish?(exportURL)
-        } catch {
-            onFinish?(nil)
+        isProcessing = false
+        rooms.append(processedResult)
+        // One room and no way to add another (iOS 16): behave exactly as before and
+        // finish immediately, so nothing about the old flow changes on old systems.
+        if !supportsMultiRoom {
+            finish()
+            return
+        }
+        refreshControls()
+    }
+
+    // MARK: Finishing
+
+    private func finish() {
+        guard !isFinishing else { return }
+        guard !rooms.isEmpty else { onFinish?(nil); return }
+        isFinishing = true
+        refreshControls()
+
+        let captured = rooms
+        let dest = exportURL
+        Task { @MainActor in
+            let ok = await Self.exportPlan(rooms: captured, to: dest)
+            self.isFinishing = false
+            self.onFinish?(ok ? dest : nil)
         }
     }
 
-    private func makeButton(_ title: String, filled: Bool, action: Selector) -> UIButton {
-        let b = UIButton(type: .system)
+    /// Export the USDZ and save the geometry beside it. Returns false only if the
+    /// USDZ itself could not be written — that is the file the rest of the screen
+    /// keys off.
+    private nonisolated static func exportPlan(rooms: [CapturedRoom], to dest: URL) async -> Bool {
+        // RoomPlan refuses a USD filename whose first character is a digit before
+        // iOS 17.4, and ours is a UUID — which starts with a digit about 40% of the
+        // time. Export to a safe temporary name in the same folder and move it into
+        // place, so the file we keep can still be named after the listing.
+        let tmp = dest.deletingLastPathComponent()
+            .appendingPathComponent("plan-\(UUID().uuidString).usdz")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+
+        var exported = false
+        if #available(iOS 17.0, *), rooms.count > 1 {
+            do {
+                let builder = StructureBuilder(options: [.beautifyObjects])
+                let structure = try await builder.capturedStructure(from: rooms)
+                try structure.export(to: tmp, exportOptions: .parametric)
+                exported = true
+            } catch {
+                // The rooms didn't share a world space (tracking was lost between
+                // them, or the app was backgrounded). Rather than lose the whole
+                // scan, fall through and export the first room on its own.
+                exported = false
+            }
+        }
+        if !exported, let first = rooms.first {
+            do {
+                try first.export(to: tmp, exportOptions: .parametric)
+                exported = true
+            } catch {
+                exported = false
+            }
+        }
+        guard exported else { return false }
+
+        do {
+            try? FileManager.default.removeItem(at: dest)
+            try FileManager.default.moveItem(at: tmp, to: dest)
+        } catch {
+            return false
+        }
+
+        // Persist the rooms so the flat 2D plan can be drawn (and re-drawn per
+        // storey) without re-scanning.
+        //
+        // On a RE-SCAN the USDZ is replaced but the JSON write can still fail
+        // (encode error, disk full). Drop the previous geometry FIRST, so the flat
+        // plan can never show the OLD rooms beside the NEW 3D model; the screen then
+        // honestly offers "re-scan for the 2D plan".
+        let jsonURL = dest.deletingPathExtension().appendingPathExtension("json")
+        try? FileManager.default.removeItem(at: jsonURL)
+        if let data = try? JSONEncoder().encode(SavedFloorPlan(rooms: rooms)) {
+            try? data.write(to: jsonURL, options: .atomic)
+        }
+        return true
+    }
+
+    private func style(_ b: UIButton, _ title: String, filled: Bool, action: Selector) {
         b.setTitle(title, for: .normal)
-        b.titleLabel?.font = .systemFont(ofSize: 17, weight: .semibold)
+        b.titleLabel?.font = .systemFont(ofSize: 16, weight: .semibold)
+        b.titleLabel?.adjustsFontSizeToFitWidth = true
+        b.titleLabel?.minimumScaleFactor = 0.75
         b.backgroundColor = filled ? UIColor.systemPurple : UIColor.secondarySystemBackground
         b.setTitleColor(filled ? .white : .systemPurple, for: .normal)
         b.layer.cornerRadius = 12
         b.addTarget(self, action: action, for: .touchUpInside)
-        return b
     }
 }
 
@@ -6491,34 +10388,67 @@ struct USDZQuickLook: UIViewControllerRepresentable {
     }
 }
 
-// MARK: - 2D top-down floor plan (drawn from the RoomPlan CapturedRoom)
+// MARK: - 2D top-down floor plan (drawn from the RoomPlan scan)
 // Renders the scan as a flat blueprint — walls, doors (with swing arcs), windows,
-// and labeled furniture — viewed straight down, like an apartment listing.
-// Reads the CapturedRoom JSON saved next to the USDZ at scan time.
+// room names and furniture — viewed straight down, like an apartment listing.
+// Reads the geometry saved next to the USDZ at scan time; a scan that covers more
+// than one storey gets a floor picker, because two floors drawn on one page would
+// print the upstairs on top of the downstairs.
 
 struct FloorPlan2DView: View {
     let jsonURL: URL
     let address: String
 
-    @State private var room: CapturedRoom?
+    @State private var plan: SavedFloorPlan?
+    @State private var storeys: [SavedFloorPlan.Storey] = []
+    @State private var storeyIndex = 0
     @State private var loadFailed = false
     /// A rendered plan waiting for the export sheet (F-A-17).
     @State private var export: PlanExport?
     @State private var exportError: String?
 
+    /// The storey on screen. A one-floor scan has exactly one, and the picker
+    /// never appears.
+    private var current: SavedFloorPlan.Storey? {
+        guard storeys.indices.contains(storeyIndex) else { return storeys.first }
+        return storeys[storeyIndex]
+    }
+
+    /// The caption the renderer prints beside the area — `nil` for a single-storey
+    /// scan, where "this room" / "scanned area" is the honest scope.
+    private var storyCaption: String? {
+        guard let current, !current.isOnlyStorey else { return nil }
+        return current.name
+    }
+
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            if let room {
-                if room.walls.isEmpty {
+            if let current {
+                if current.rooms.allSatisfy({ $0.walls.isEmpty }) {
                     emptyState("No walls were detected in this scan. Try re-scanning the room slowly.")
                 } else {
                     VStack(spacing: 0) {
+                        if storeys.count > 1 {
+                            Picker("Floor", selection: $storeyIndex) {
+                                ForEach(Array(storeys.enumerated()), id: \.offset) { idx, s in
+                                    Text(s.name).tag(idx)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .padding(.horizontal, 14)
+                            .padding(.top, 10)
+                        }
+
                         Canvas { ctx, size in
-                            FloorPlanRenderer.draw(room: room, in: &ctx, size: size)
+                            FloorPlanRenderer.draw(rooms: current.rooms,
+                                                   storyLabel: storyCaption,
+                                                   in: &ctx, size: size)
                         }
                         .padding(14)
-                        .accessibilityLabel(Text("Room plan of \(address)"))
+                        .accessibilityLabel(Text(storeys.count > 1
+                                                 ? "\(current.name) plan of \(address)"
+                                                 : "Room plan of \(address)"))
 
                         if let exportError {
                             Text(exportError)
@@ -6526,8 +10456,9 @@ struct FloorPlan2DView: View {
                                 .multilineTextAlignment(.center)
                                 .padding(.horizontal)
                         }
-                        Button { makeExport(room) } label: {
-                            Label("Export as image", systemImage: "square.and.arrow.up")
+                        Button { makeExport(current) } label: {
+                            Label(storeys.count > 1 ? "Export this floor as an image" : "Export as image",
+                                  systemImage: "square.and.arrow.up")
                                 .font(.rpBody.weight(.semibold))
                                 .frame(maxWidth: .infinity).padding(.vertical, 13)
                                 .background(Theme.accentSoft).foregroundStyle(Theme.accent)
@@ -6554,16 +10485,22 @@ struct FloorPlan2DView: View {
     /// over-stroking them in `Theme.bg`, so the exported background has to be
     /// the same token — and a plan that goes on a flyer should be ink-on-paper
     /// whatever the phone's appearance setting is.
-    private func makeExport(_ room: CapturedRoom) {
+    private func makeExport(_ storey: SavedFloorPlan.Storey) {
         exportError = nil
         let side: CGFloat = 1400
+        let rooms = storey.rooms
+        let caption = storyCaption
+        let title: String = {
+            let base = address.isEmpty ? "Floor plan" : address
+            return storeys.count > 1 ? "\(base) — \(storey.name)" : base
+        }()
         let content = ZStack {
             Theme.bg
             VStack(spacing: 12) {
                 Canvas { ctx, size in
-                    FloorPlanRenderer.draw(room: room, in: &ctx, size: size)
+                    FloorPlanRenderer.draw(rooms: rooms, storyLabel: caption, in: &ctx, size: size)
                 }
-                Text(address.isEmpty ? "Room plan" : address)
+                Text(title)
                     .font(.system(size: 34, weight: .semibold))
                     .foregroundStyle(Theme.ink)
                     .lineLimit(2)
@@ -6596,15 +10533,18 @@ struct FloorPlan2DView: View {
     }
 
     private func load() {
-        guard room == nil, !loadFailed else { return }
+        guard plan == nil, !loadFailed else { return }
         let url = jsonURL
         DispatchQueue.global(qos: .userInitiated).async {
-            let decoded: CapturedRoom? = {
-                guard let data = try? Data(contentsOf: url) else { return nil }
-                return try? JSONDecoder().decode(CapturedRoom.self, from: data)
-            }()
+            let decoded = SavedFloorPlan.load(from: url)
             DispatchQueue.main.async {
-                if let decoded { self.room = decoded } else { self.loadFailed = true }
+                if let decoded, !decoded.rooms.isEmpty {
+                    self.plan = decoded
+                    self.storeys = decoded.storeys
+                    self.storeyIndex = 0
+                } else {
+                    self.loadFailed = true
+                }
             }
         }
     }
@@ -6708,8 +10648,14 @@ private struct PlanExportSheet: View {
     }
 }
 
-/// Pure drawing of a CapturedRoom as a flat top-down plan. Projects every surface
-/// and object onto the floor (X–Z) plane and draws it with SwiftUI Canvas.
+/// Pure drawing of a scan as a flat top-down plan. Projects every surface and
+/// object onto the floor (X–Z) plane and draws it with SwiftUI Canvas.
+///
+/// Takes an ARRAY of rooms, not one. A structure scan captures each room into its
+/// own `CapturedRoom`, but every room in one scan shares a single ARKit world
+/// coordinate space — that is precisely why the capture flow keeps the AR session
+/// alive between rooms — so all the rooms on one storey can be unioned and drawn
+/// as one plan. A one-room scan is just the array-of-one case.
 enum FloorPlanRenderer {
     private struct Seg { var a: SIMD2<Float>; var b: SIMD2<Float> }
 
@@ -6737,16 +10683,22 @@ enum FloorPlanRenderer {
                 center - xa*hw - za*hd, center - xa*hw + za*hd]
     }
 
+    /// Convenience for the single-room callers that predate structure scans.
     static func draw(room: CapturedRoom, in ctx: inout GraphicsContext, size: CGSize) {
-        let rawWalls = room.walls.map(seg)
+        draw(rooms: [room], storyLabel: nil, in: &ctx, size: size)
+    }
+
+    static func draw(rooms: [CapturedRoom], storyLabel: String?,
+                     in ctx: inout GraphicsContext, size: CGSize) {
+        let rawWalls = rooms.flatMap { $0.walls }.map(seg)
         guard !rawWalls.isEmpty else { return }
 
         // STRAIGHTEN FIRST. RoomPlan hands back ARKit world space, so a plan drawn
         // as-captured sits at whatever compass heading the phone happened to have —
         // it renders as a skewed diamond. Rotating by the dominant wall angle both
         // makes the plan read orthogonal like a real floor plan AND makes the
-        // bounding box we measure the room's true width × depth instead of an
-        // inflated diagonal. Do this before anything else touches coordinates.
+        // bounding box we measure the true width × depth instead of an inflated
+        // diagonal. Do this before anything else touches coordinates.
         let theta = dominantWallAngle(rawWalls)
         let cs = cos(-theta), sn = sin(-theta)
         func rot(_ p: SIMD2<Float>) -> SIMD2<Float> {
@@ -6755,10 +10707,34 @@ enum FloorPlanRenderer {
         func rotSeg(_ s: Seg) -> Seg { Seg(a: rot(s.a), b: rot(s.b)) }
 
         let walls = rawWalls.map(rotSeg)
-        let doors = room.doors.map(seg).map(rotSeg)
-        let windows = room.windows.map(seg).map(rotSeg)
-        let openings = room.openings.map(seg).map(rotSeg)
-        let objs = room.objects.map { (o: $0, pts: corners($0).map(rot)) }
+        let doors = rooms.flatMap { $0.doors }.map(seg).map(rotSeg)
+        let windows = rooms.flatMap { $0.windows }.map(seg).map(rotSeg)
+        let openings = rooms.flatMap { $0.openings }.map(seg).map(rotSeg)
+        let objs = rooms.flatMap { $0.objects }.map { (o: $0, pts: corners($0).map(rot)) }
+
+        // ROOM NAMES — the single biggest thing missing from the plan the 4,000 sq ft
+        // field test produced. RoomPlan already classifies each area it recognises
+        // (kitchen, bedroom, bathroom, dining, living) and hands it back in
+        // `sections`, each with a centre point. We were throwing all of that away
+        // and captioning furniture instead, which is backwards: a listing floor plan
+        // names ROOMS, and draws furniture as unlabelled outlines. iOS 17+ only —
+        // the app still deploys to iOS 16, where the plan simply has no room names.
+        var roomNames: [(name: String, at: SIMD2<Float>)] = []
+        if #available(iOS 17.0, *) {
+            for r in rooms {
+                for s in r.sections {
+                    guard let n = sectionName(s.label) else { continue }
+                    let p = rot(SIMD2<Float>(s.center.x, s.center.z))
+                    // RoomPlan can emit two sections of the same kind almost on top
+                    // of each other in one large open area; two "Kitchen" captions a
+                    // foot apart reads as a bug. Genuinely separate rooms of the same
+                    // kind (three bedrooms down a hall) are metres apart and both keep
+                    // their name.
+                    let dup = roomNames.contains { $0.name == n && simd_length($0.at - p) < 1.2 }
+                    if !dup { roomNames.append((n, p)) }
+                }
+            }
+        }
 
         // Bounds over wall endpoints + object footprints.
         var minX = Float.greatestFiniteMagnitude, minY = Float.greatestFiniteMagnitude
@@ -6770,30 +10746,35 @@ enum FloorPlanRenderer {
         for w in walls { expand(w.a); expand(w.b) }
         for o in objs { for c in o.pts { expand(c) } }
 
-        // Room extent measured from the WALLS only — furniture can overhang a wall
+        // Overall extent measured from the WALLS only — furniture can overhang a wall
         // in a noisy scan, and a sofa sticking through drywall must not inflate the
         // dimension we print on a listing.
         var wMinX = Float.greatestFiniteMagnitude, wMinY = Float.greatestFiniteMagnitude
         var wMaxX = -Float.greatestFiniteMagnitude, wMaxY = -Float.greatestFiniteMagnitude
-        var wallPts: [SIMD2<Float>] = []
         for w in walls {
             for p in [w.a, w.b] {
-                wallPts.append(p)
                 wMinX = min(wMinX, p.x); wMaxX = max(wMaxX, p.x)
                 wMinY = min(wMinY, p.y); wMaxY = max(wMaxY, p.y)
             }
         }
 
-        // Asymmetric padding: the left and bottom gutters hold dimension lines.
+        // Asymmetric padding: the left and bottom gutters hold dimension lines, and
+        // the bottom gutter grows again when there is a legend to sit under them.
+        // The legend row only exists if there is anything recognisable to put in it,
+        // and the bottom gutter has to be sized before the plan is laid out — so this
+        // is a cheap pre-check. What actually goes IN the legend is only known after
+        // the drawing pass below (it lists what could not be captioned in place).
+        let hasIdentifiable = objs.contains { $0.o.confidence != .low && !label($0.o.category).isEmpty }
         let padTop: CGFloat = 30, padRight: CGFloat = 22
-        let padLeft: CGFloat = 44, padBottom: CGFloat = 42
+        let padLeft: CGFloat = 44
+        let padBottom: CGFloat = hasIdentifiable ? 60 : 42
         let spanX = max(CGFloat(maxX - minX), 0.001)
         let spanY = max(CGFloat(maxY - minY), 0.001)
         let availW = max(size.width - padLeft - padRight, 1)
         let availH = max(size.height - padTop - padBottom, 1)
         let scale = min(availW / spanX, availH / spanY)
-        // A degenerate scan (NaN/inf coordinates) would poison every CGPoint
-        // below and trap the Int conversions — draw nothing instead.
+        // A degenerate scan (NaN/inf coordinates) would poison every CGPoint below
+        // and trap the Int conversions — draw nothing instead.
         guard scale.isFinite, scale > 0, spanX.isFinite, spanY.isFinite else { return }
         let drawW = spanX * scale, drawH = spanY * scale
         let ox = padLeft + (availW - drawW) / 2
@@ -6805,11 +10786,21 @@ enum FloorPlanRenderer {
 
         let wallWidth = max(4, 0.10 * scale)   // draw ~10 cm-thick walls
 
-        // Furniture footprints (under the walls). RoomPlan over-guesses uncertain
-        // items as "Storage", which clutters the plan — so skip low-confidence
-        // detections, draw the box for everything confident, and only LABEL
-        // recognizable items (not the generic Storage catch-all) that are big
-        // enough on screen to fit readable text.
+        // Furniture footprints (under the walls). Draw the box for everything the
+        // scanner is confident about, and caption an item only when the caption
+        // genuinely FITS INSIDE its own box.
+        //
+        // This replaces a fixed `min(boxW, boxH) > 26` point threshold, which was
+        // the bug behind "the floor plan can't tell what things are". That number is
+        // in SCREEN POINTS, so whether a label appeared depended on how big the plan
+        // was — not on what was scanned. On a 2,504 sq ft scan squeezed into a phone
+        // canvas the whole plan renders at roughly 23 points per metre, so a two-foot-
+        // deep sofa is 21 points deep and lost its name, while a bed at 37 points kept
+        // one. That is exactly the plan the field test produced: two beds and a bath
+        // labelled, and thirty anonymous grey rectangles. Measuring the text against
+        // the box makes the rule scale-independent, and anything still too small to
+        // caption is counted in the legend instead of silently disappearing.
+        var uncaptioned: [String: Int] = [:]
         for entry in objs {
             let o = entry.o
             if o.confidence == .low { continue }
@@ -6824,17 +10815,32 @@ enum FloorPlanRenderer {
             ctx.stroke(path, with: .color(Theme.inkDim.opacity(0.7)), lineWidth: 1)
 
             let name = label(o.category)
+            guard !name.isEmpty else { continue }
+            // RoomPlan reaches for "Storage" whenever it is unsure, so that one
+            // category has to clear a higher bar before it gets to claim space on
+            // the plan. It still appears in the legend at medium confidence.
+            let captionable = (o.category != .storage) || (o.confidence == .high)
+
             let boxW = hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y)
             let boxH = hypot(pts[3].x - pts[0].x, pts[3].y - pts[0].y)
-            if !name.isEmpty, o.category != .storage, min(boxW, boxH) > 26 {
-                let cx = (pts[0].x + pts[2].x) / 2
-                let cy = (pts[0].y + pts[2].y) / 2
-                // Explicit ink so labels resolve per light/dark trait (Canvas
-                // text gets no default foreground from the surrounding view).
-                ctx.draw(Text(name).font(.system(size: 9, weight: .medium))
-                            .foregroundColor(Theme.ink),
-                         at: CGPoint(x: cx, y: cy))
+            var placed = false
+            if captionable {
+                // Try progressively smaller type, the way a draughtsman would, and
+                // stop at 6.5 pt — below that it is decoration, not information.
+                for pt in [9.0, 8.0, 7.0, 6.5] as [CGFloat] {
+                    let resolved = ctx.resolve(Text(name)
+                        .font(.system(size: pt, weight: .medium))
+                        .foregroundColor(Theme.ink))
+                    let ts = resolved.measure(in: CGSize(width: 500, height: 100))
+                    guard ts.width + 3 <= boxW, ts.height + 2 <= boxH else { continue }
+                    let cx = (pts[0].x + pts[2].x) / 2
+                    let cy = (pts[0].y + pts[2].y) / 2
+                    ctx.draw(resolved, at: CGPoint(x: cx, y: cy))
+                    placed = true
+                    break
+                }
             }
+            if !placed { uncaptioned[name, default: 0] += 1 }
         }
 
         // Walls (thick dark lines).
@@ -6862,10 +10868,27 @@ enum FloorPlanRenderer {
             drawDoor(a: P(s.a), b: P(s.b), in: &ctx)
         }
 
+        // Room names go on LAST, over the walls and furniture, each on its own small
+        // plate of background colour so it stays readable wherever it lands. This is
+        // the layer an agent actually reads.
+        for rn in roomNames {
+            let resolved = ctx.resolve(Text(rn.name.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundColor(Theme.ink))
+            let ts = resolved.measure(in: CGSize(width: 500, height: 100))
+            let at = P(rn.at)
+            let plate = CGRect(x: at.x - ts.width / 2 - 4, y: at.y - ts.height / 2 - 2,
+                               width: ts.width + 8, height: ts.height + 4)
+            guard plate.minX > 2, plate.maxX < size.width - 2,
+                  plate.minY > 2, plate.maxY < size.height - 2 else { continue }
+            ctx.fill(Path(roundedRect: plate, cornerRadius: 4), with: .color(Theme.bg.opacity(0.82)))
+            ctx.draw(resolved, at: at)
+        }
+
         // ---- Dimensions -------------------------------------------------
-        // Width along the bottom, depth up the left side, both in feet and
-        // inches, plus an approximate floor area. This is what makes a scan
-        // read as a floor plan an agent can actually put on a listing.
+        // Width along the bottom, depth up the left side, both in feet and inches,
+        // plus an approximate floor area. This is what makes a scan read as a floor
+        // plan an agent can actually put on a listing.
         guard wMaxX > wMinX, wMaxY > wMinY else { return }
         let topLeft = P(SIMD2<Float>(wMinX, wMaxY))
         let botRight = P(SIMD2<Float>(wMaxX, wMinY))
@@ -6885,26 +10908,76 @@ enum FloorPlanRenderer {
                           vertical: true, in: &ctx)
         }
 
-        // Area is an estimate, and it says so. A phone scan is not a measured
-        // survey, and square footage is a number agents get sued over — the
-        // convex hull of the wall endpoints is far closer than the bounding box
-        // on an angled or L-shaped room, but it is still an approximation.
-        let areaSqFt = footprintArea(wallPts) * 10.763_91
+        // Area is an estimate, and it says so. A phone scan is not a measured survey,
+        // and square footage is a number agents get sued over.
+        //
+        // Summed PER ROOM, never as one hull over the whole storey: the convex hull
+        // of a single room's wall endpoints is close to its true footprint, but one
+        // hull thrown around an entire L-shaped floor bridges straight across the
+        // notch and invents square footage that does not exist.
+        var areaSqM: Float = 0
+        for r in rooms {
+            var pts: [SIMD2<Float>] = []
+            for w in r.walls.map(seg).map(rotSeg) { pts.append(w.a); pts.append(w.b) }
+            areaSqM += footprintArea(pts)
+        }
+        let areaSqFt = areaSqM * 10.763_91
         if areaSqFt.isFinite, areaSqFt >= 1, areaSqFt < 1_000_000 {
-            // "this room" — a bare "≈ N sq ft" beside a plan reads as the whole
-            // property's square footage, which is a number agents get sued over
-            // (F-A-17). One scan is one room, and the label has to say so.
-            ctx.draw(Text("this room ≈ \(Int(areaSqFt.rounded())) sq ft")
+            // A bare "≈ N sq ft" beside a plan reads as the whole property's square
+            // footage, which is a number agents get sued over (F-A-17). The caption
+            // has to say exactly how much of the building this number covers — and
+            // now that a scan can hold several rooms across several storeys, "this
+            // room" is no longer true either.
+            let scope: String
+            if let storyLabel { scope = storyLabel }
+            else if rooms.count > 1 || roomNames.count > 1 { scope = "scanned area" }
+            else { scope = "this room" }
+            ctx.draw(Text("\(scope) ≈ \(Int(areaSqFt.rounded())) sq ft")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(Theme.inkDim),
                      at: CGPoint(x: padLeft - 8, y: 16), anchor: .leading)
         }
+
+        // The legend: everything the scanner recognised but could not caption in
+        // place. Without it, a small item on a large plan is an anonymous grey
+        // rectangle and the app looks like it failed to identify anything.
+        if let legend = legendLine(uncaptioned) {
+            ctx.draw(Text(legend)
+                        .font(.system(size: 9.5, weight: .regular))
+                        .foregroundColor(Theme.inkDim),
+                     at: CGPoint(x: padLeft - 8, y: size.height - 14), anchor: .leading)
+        }
+    }
+
+    /// "Also identified: 6 chairs · 3 tables · 2 lamps" — a compact inventory of the
+    /// confidently-recognised items, so nothing the scan understood is thrown away
+    /// just because it was too small to caption on the page.
+    private static func legendLine(_ counts: [String: Int]) -> String? {
+        guard !counts.isEmpty else { return nil }
+        let parts = counts
+            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+            .prefix(7)
+            .map { "\($0.value) \(plural($0.key, $0.value))" }
+        return "Also identified: " + parts.joined(separator: " · ")
+    }
+
+    /// Lower-cased and pluralised for the legend. A handful of the RoomPlan category
+    /// names are already plural or don't take an "s".
+    private static func plural(_ name: String, _ n: Int) -> String {
+        let lower = name.lowercased()
+        guard n != 1 else { return lower }
+        switch lower {
+        case "stairs", "laundry": return lower
+        case "storage":           return "storage units"
+        case "tv":                return "TVs"
+        default:                  return lower + "s"
+        }
     }
 
     /// Length-weighted dominant wall direction, folded into 0–90° because a room's
-    /// walls form a right-angled grid: mapping each angle to 4× puts that 90°
-    /// period onto a full circle so the directions can be averaged as vectors
-    /// (a plain mean would be wrong across the 0°/90° wrap).
+    /// walls form a right-angled grid: mapping each angle to 4× puts that 90° period
+    /// onto a full circle so the directions can be averaged as vectors (a plain mean
+    /// would be wrong across the 0°/90° wrap).
     private static func dominantWallAngle(_ walls: [Seg]) -> Float {
         var sx: Float = 0, sy: Float = 0
         for w in walls {
@@ -7007,6 +11080,21 @@ enum FloorPlanRenderer {
                    startAngle: .radians(start), endAngle: .radians(end), clockwise: false)
         ctx.stroke(arc, with: .color(Theme.inkDim.opacity(0.55)),
                    style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+    }
+
+    /// RoomPlan's own room-type classification → the caption a floor plan puts on a
+    /// room. `nil` for anything Apple hasn't taught it to recognise, so the plan says
+    /// nothing rather than guessing.
+    @available(iOS 17.0, *)
+    private static func sectionName(_ l: CapturedRoom.Section.Label) -> String? {
+        switch l {
+        case .bathroom:   return "Bathroom"
+        case .bedroom:    return "Bedroom"
+        case .diningRoom: return "Dining"
+        case .kitchen:    return "Kitchen"
+        case .livingRoom: return "Living room"
+        default:          return nil          // .unidentified, and anything added later
+        }
     }
 
     private static func label(_ c: CapturedRoom.Object.Category) -> String {

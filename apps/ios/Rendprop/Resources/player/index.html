@@ -15,6 +15,10 @@
     --accent: #d9a441;
     --card: rgba(16,19,24,.78);
     --radius: 16px;
+    /* The floor plan's chip palette on the hosted page (EDITORIAL_CSS), in this
+       file's own accent so #roomstrip is the same component here. */
+    --accent-soft: rgba(217,164,65,.12);
+    --accent-3: #e8c98a;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
   html { scroll-behavior: auto; }
@@ -26,14 +30,24 @@
 
   /* ===== Track & sticky stage ===== */
   #track { position: relative; }
+  /* THE BAND. --strip is the height of the room strip's reserved band at the
+     bottom of the stage (0px until the strip is built) and --floor is how far
+     a bottom-anchored overlay has to sit above the stage's bottom edge to
+     clear it. The video is SHORTER by --strip: the room names never cover the
+     frame. MIRRORS services/edge/tour-host/src/player.ts. */
   #stage {
     position: sticky; top: 0;
     height: 100vh; height: 100svh;
     overflow: hidden; background: #000;
+    --strip: 0px; --floor: env(safe-area-inset-bottom);
   }
+  #stage.hasstrip { --strip: calc(44px + env(safe-area-inset-bottom)); --floor: var(--strip); }
+  /* <video> is a REPLACED element: with top and bottom both set it keeps its
+     intrinsic 300x150 and drops the bottom inset, so the band has to come out
+     of an explicit height instead. */
   #scrub {
-    position: absolute; inset: 0;
-    width: 100%; height: 100%;
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: calc(100% - var(--strip, 0px));
     object-fit: cover;
     pointer-events: none;
   }
@@ -74,7 +88,7 @@
     text-shadow: 0 1px 8px rgba(0,0,0,.6);
   }
   #hint {
-    left: 50%; bottom: calc(34px + env(safe-area-inset-bottom));
+    left: 50%; bottom: calc(34px + var(--floor, 0px));
     transform: translateX(-50%);
     display: flex; flex-direction: column; align-items: center; gap: 6px;
     font-size: 13px; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.7);
@@ -86,29 +100,115 @@
 
   /* Room label */
   #room {
-    left: 16px; bottom: calc(96px + env(safe-area-inset-bottom));
+    left: 16px; bottom: calc(96px + var(--floor, 0px));
     opacity: 0; will-change: transform, opacity;
+    max-width: min(58vw, 420px);
   }
   #room .kicker { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
   #room .name { font-size: 30px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.65); }
 
-  /* Chapter rail */
+  /* Chapter rail — a POSITION INDICATOR, not a room index.
+     MIRRORS services/edge/tour-host/src/player.ts (PLAYER_CSS + renderTourPage).
+     The canonical engine lives there; this file is the in-app copy.
+
+     A previous pass named every chapter on the rail in a smoked-glass pill.
+     On a real tour — 17 rooms, which is the normal case for a house — that was
+     a full-height column of pills down the right edge of the video covering
+     the price, the beds/baths line and the address, with the longer names cut
+     mid-word. So the rail is dots again with only the chapter you are IN
+     named, and the room list moved off the frame into #roomstrip below it.
+
+     The active label is absolutely positioned inside its button, so it costs
+     the column no layout: the rail cannot twitch sideways or re-flow as the
+     active chapter changes under a fast scroll.
+
+     HEIGHT. The rail is anchored top AND bottom to the band between the
+     listing chip and the disclosure chip, so it is always inside the stage,
+     and the rows shrink to fit it (flex-basis 20px, flex-shrink 1) instead of
+     running off both ends. No chapter-count density tier is needed. */
   #rail {
-    right: 10px; top: 50%; transform: translateY(-50%);
-    display: flex; flex-direction: column; gap: 14px; align-items: flex-end;
+    right: calc(10px + env(safe-area-inset-right));
+    top: calc(96px + env(safe-area-inset-top));
+    bottom: calc(48px + var(--floor, 0px));
+    display: flex; flex-direction: column; align-items: flex-end; justify-content: center;
   }
   #rail button {
-    appearance: none; border: 0; background: none; cursor: pointer;
-    display: flex; align-items: center; gap: 8px; padding: 4px;
+    appearance: none; border: 0; background: none; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: flex-end;
+    flex: 0 1 20px; height: 20px; min-height: 3px; width: 34px; padding: 0;
     color: var(--ink-dim); font-size: 11px; font-family: inherit;
   }
   #rail button .dot {
-    width: 7px; height: 7px; border-radius: 50%;
-    background: rgba(255,255,255,.35); transition: all .25s ease;
+    width: 7px; height: 7px; max-height: 100%; border-radius: 50%; flex: 0 0 auto;
+    background: rgba(255,255,255,.35);
+    transition: background-color .25s ease, box-shadow .25s ease;
   }
-  #rail button .lbl { opacity: 0; transition: opacity .25s ease; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
   #rail button.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  #rail button.active .lbl { opacity: 1; color: var(--ink); }
+  /* Only the current chapter is named, and the pill floats free of the column. */
+  #rail button .lbl { display: none; }
+  #rail button.active .lbl {
+    display: block; position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    max-width: min(52vw, 260px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 3px 9px; border-radius: 999px; line-height: 1.35; color: var(--ink);
+    background: rgba(11,13,16,.68); border: 1px solid rgba(255,255,255,.3);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    text-shadow: 0 1px 6px rgba(0,0,0,.7);
+  }
+  /* Landscape: the band is ~250px tall, so the dots are already tight — shrink
+     them and drop the floating label. #room still spells out the room, and
+     #roomstrip still lists every one of them. */
+  @media (max-height: 430px) {
+    #rail button .dot { width: 5px; height: 5px; }
+    #rail button.active .lbl { display: none; }
+  }
+
+  /* ===== Room strip — the room index, UNDER the video =====
+     The replacement for labelling the rail: a horizontal, scrollable row of
+     the same .plan-room seek chips the hosted page's floor-plan section uses,
+     in the --strip band carved out of the bottom of the stage. It never
+     overlaps the frame, and because it scrolls sideways a 17-room house shows
+     every room name in full instead of ellipsing it. */
+  #roomstrip {
+    left: 0; right: 0; bottom: 0; height: var(--strip, 0px); z-index: 12;
+    display: none; align-items: center; padding-bottom: env(safe-area-inset-bottom);
+    background: rgba(9,11,14,.94); border-top: 1px solid rgba(255,255,255,.09);
+  }
+  #stage.hasstrip #roomstrip { display: flex; }
+  #roomstrip .rs-scroll {
+    position: relative; display: flex; align-items: center; gap: 8px;
+    width: 100%; overflow-x: auto; overflow-y: hidden;
+    padding: 0 calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
+    overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  }
+  #roomstrip .rs-scroll::-webkit-scrollbar { display: none; }
+  .plan-room {
+    appearance: none; cursor: pointer; font-family: inherit; border-radius: 999px;
+    background: var(--accent-soft); border: 1px solid rgba(217,164,65,.24);
+    color: var(--accent-3); font-weight: 600;
+  }
+  /* Names never truncate mid-word here: the row scrolls instead. */
+  #roomstrip .plan-room { flex: 0 0 auto; white-space: nowrap; font-size: 12.5px; padding: 6px 12px; }
+  #roomstrip .plan-room.active { background: var(--accent); border-color: var(--accent); color: #14100a; }
+
+  /* "Still loading" pill — shown when the viewer out-scrolls the download.
+     Same smoked-glass vocabulary as #staged; opacity only, no motion. It takes
+     #hint's slot: the hint is dismissed for good on the first scroll and the
+     pill can only appear after one, so they never coexist — and it clears the
+     14px band where #wm and #staged sit. */
+  #bufwait {
+    left: 50%; transform: translateX(-50%);
+    bottom: calc(34px + var(--floor, 0px));
+    display: none; align-items: center; gap: 7px;
+    font-size: 11px; letter-spacing: .04em; color: rgba(255,255,255,.72);
+    padding: 6px 12px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(11,13,16,.55);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap;
+  }
+  #bufwait.on { display: flex; opacity: 1; }
+  #bufwait .n { font-variant-numeric: tabular-nums; color: rgba(255,255,255,.92); }
 
   /* Listing chip */
   #listing {
@@ -121,7 +221,7 @@
 
   /* Watermark */
   #wm {
-    left: 16px; bottom: calc(14px + env(safe-area-inset-bottom));
+    left: 16px; bottom: calc(14px + var(--floor, 0px));
     font-size: 10.5px; color: rgba(255,255,255,.45); letter-spacing: .06em;
     text-decoration: none;
   }
@@ -129,7 +229,7 @@
 
   /* Virtual-staging disclosure (MLS compliance — shown when AI enhancements applied) */
   #staged {
-    right: 16px; bottom: calc(14px + env(safe-area-inset-bottom));
+    right: 16px; bottom: calc(14px + var(--floor, 0px));
     display: none; align-items: center; gap: 5px;
     font-size: 10.5px; color: rgba(255,255,255,.55); letter-spacing: .04em;
     padding: 5px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px;
@@ -240,10 +340,14 @@
 
     <div class="chrome" id="rail"></div>
 
+    <div class="chrome" id="roomstrip" role="group" aria-label="Rooms in this tour"><div class="rs-scroll"></div></div>
+
     <div class="chrome" id="hint">
       <span>Scroll to fly through</span>
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
+
+    <div class="chrome" id="bufwait" role="status">Still loading<span aria-hidden="true"> · <span class="n">0%</span></span></div>
 
     <a class="chrome" id="wm" href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>
 
@@ -294,8 +398,20 @@
     { t: 36.5,label: 'Bath' },
     { t: 45.5,label: 'Backyard' },
   ];
-  const PX_PER_SEC = 240;            // track height scale — more scroll per second = a slower, more controlled drone glide
-  const BUFFER_GATE = 0.96;          // begin scrubbing at ~96% buffered
+  const PX_PER_SEC = 420;            // track height scale — more scroll per second = a slower, more controlled drone glide.
+                                     // 240 let one iOS flick (2-3k px of momentum) throw the viewer 8-12 s down the house;
+                                     // at 420 a plain drag moves under a second and a hard flick lands about one room on.
+                                     // MUST match services/edge/tour-host/src/player.ts — same feel on the shared link.
+  // START GATE — mirrors src/player.ts (the 4,000 sq ft field test).
+  // This was 0.96: nothing moved until 96% of the clip had buffered. On a
+  // bundled file:// preview that is instant, but the hosted page shares this
+  // engine and its master is all-intra 1280/60 at ~14 Mbps — ~1.75 MB per
+  // second of tour, so 96% of a 137 s walkthrough is ~230 MB and minutes of
+  // staring at a percentage. The gate is now a LEAD TIME with the fraction
+  // kept only as a ceiling, so a short clip is not asked for proportionally
+  // more than a long one: needed = min(duration * BUFFER_GATE, LEAD_S).
+  const BUFFER_GATE = 0.15;          // ceiling: never more than 15% of the clip
+  let   LEAD_S = 6;                  // …and never more than 6 s of head buffer
   // MLS compliance: set true when the render used declutter/restage enhancements
   // (server-injected per share page). Shows the "Virtually staged" disclosure chip.
   const VIRTUALLY_STAGED = false;
@@ -305,7 +421,8 @@
   // The video file isn't available (bundled demo missing, tour file gone):
   // show an explicit message, never a black stage with a spinning loader.
   const VIDEO_MISSING = false;
-  const LERP = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0.08 : 0.14;  // a touch more responsive; all-intra video keeps it smooth
+  const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const LERP = REDUCE_MOTION ? 0.08 : 0.14;  // a touch more responsive; all-intra video keeps it smooth
   const SLUG = 'demo';               // share_pages.slug — beacon key
 
   /* ================= Elements ================= */
@@ -319,7 +436,12 @@
   const roomEl  = document.getElementById('room');
   const roomNm  = roomEl.querySelector('.name');
   const railEl  = document.getElementById('rail');
+  const stageEl = document.getElementById('stage');
+  const stripEl = document.getElementById('roomstrip');
+  const stripScroll = stripEl ? stripEl.querySelector('.rs-scroll') : null;
   const hintEl  = document.getElementById('hint');
+  const waitEl  = document.getElementById('bufwait');
+  const waitPct = waitEl ? waitEl.querySelector('.n') : null;
 
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -334,23 +456,88 @@
   addEventListener('resize', sizeTrack, { passive: true });
   if (window.visualViewport) visualViewport.addEventListener('resize', sizeTrack, { passive: true });
 
-  /* ================= Chapter rail ================= */
-  const railBtns = CHAPTERS.map((c, i) => {
+  /* ================= Chapter seek (rail + room strip) ================= */
+  // Clamp: an injected chapter can sit past the video's end (tagged near the
+  // end of a walk that was trimmed on export). One seek, shared by both the
+  // rail dots and the room chips, exactly as the hosted engine does it.
+  function seekToChapter(t) {
+    const p = duration ? clamp(t / duration, 0, 1) : 0;
+    scrollTo({ top: p * Math.max(0, track.offsetHeight - innerHeight), behavior: 'smooth' });
+  }
+
+  /* ================= Chapter rail — dots ================= */
+  // No density tier any more: the rail is anchored top and bottom and the rows
+  // shrink to fit (see the #rail rules above), so any chapter count stays
+  // inside the stage. Only the active dot is named.
+  const railBtns = CHAPTERS.map((c) => {
     const b = document.createElement('button');
+    b.title = c.label;   // a pointer gets the room name for any dot
     b.innerHTML = `<span class="lbl">${c.label}</span><span class="dot"></span>`;
-    b.addEventListener('click', () => {
-      // Clamp: an injected chapter can sit past the video's end (tag near the
-      // end of a walk that was trimmed on export).
-      const p = duration ? clamp(c.t / duration, 0, 1) : 0;
-      scrollTo({ top: p * Math.max(0, track.offsetHeight - innerHeight), behavior: 'smooth' });
-    });
+    b.addEventListener('click', () => seekToChapter(c.t));
     railEl.appendChild(b);
     return b;
   });
 
+  /* ================= Room strip — the room index, under the video =========
+     What replaced naming every dot on the rail. One chip per chapter, the
+     current one highlighted and scrolled into view, tapping seeks — the same
+     component and the same seek as the rail, in a band that costs the video
+     nothing. Two chapters is the minimum: one chip is not a list. */
+  // Word-boundary truncation. "Upstairs bathro…" is the failure this avoids;
+  // an ordinary room name is well inside the budget and comes through whole.
+  function truncWords(raw, max) {
+    const t = String(raw || '').trim();
+    if (t.length <= max) return t;
+    const cut = t.slice(0, max);
+    const sp = cut.lastIndexOf(' ');
+    const head = (sp > 8 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\u2013\u2014-]+$/, '');
+    return (head || cut.trim()) + '\u2026';
+  }
+  const stripBtns = [];
+  if (stripScroll && CHAPTERS.length > 1) {
+    stageEl.classList.add('hasstrip');
+    CHAPTERS.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'plan-room' + (i === 0 ? ' active' : '');
+      if (i === 0) b.setAttribute('aria-current', 'true');
+      b.title = c.label;
+      b.textContent = truncWords(c.label, 34);
+      b.addEventListener('click', () => seekToChapter(c.t));
+      stripScroll.appendChild(b);
+      stripBtns.push(b);
+    });
+  }
+  // Keep the current room's chip in view. NEVER scrollIntoView(): that scrolls
+  // the PAGE vertically, and vertical scroll IS the scrub — one auto-centre
+  // would fly the viewer through the house. Only the strip's own scrollLeft is
+  // touched, and only when the viewer is not dragging the strip themselves.
+  let stripHold = 0;
+  const touchStrip = () => { stripHold = performance.now(); };
+  if (stripScroll) {
+    stripScroll.addEventListener('pointerdown', touchStrip, { passive: true });
+    stripScroll.addEventListener('touchstart', touchStrip, { passive: true });
+    stripScroll.addEventListener('wheel', touchStrip, { passive: true });
+  }
+  function centerChip(i) {
+    const b = stripBtns[i];
+    if (!stripScroll || !b) return;
+    if (performance.now() - stripHold < 1500) return;
+    const max = Math.max(0, stripScroll.scrollWidth - stripScroll.clientWidth);
+    const to = clamp(b.offsetLeft - (stripScroll.clientWidth - b.offsetWidth) / 2, 0, max);
+    if (Math.abs(stripScroll.scrollLeft - to) < 2) return;
+    try { stripScroll.scrollTo({ left: to, behavior: REDUCE_MOTION ? 'auto' : 'smooth' }); }
+    catch (_) { stripScroll.scrollLeft = to; }
+  }
+
   /* ================= Core scrub loop (Part 27) ================= */
   let curT = 0, lastSet = -1, started = false, interacted = false;
   let longFrames = 0, lastTick = performance.now();
+  // Buffer-aware scrub state: where the scroll last was, when it went still,
+  // how long we have been held at the buffered edge, and the last % painted
+  // into the waiting pill (so the DOM is touched only when the digits change).
+  let lastWant = -1, stillSince = 0, starveSince = 0, bufPct = -1, waitOn = false;
+  let lastActive = -1;
 
   function updateOverlays(p) {
     progEl.style.transform = `scaleX(${p})`;
@@ -368,7 +555,19 @@
     if (roomNm.textContent !== c.label) roomNm.textContent = c.label;
     roomEl.style.opacity = dNorm;
     roomEl.style.transform = `translateY(${(1 - dNorm) * 14}px)`;
-    railBtns.forEach((b, i) => b.classList.toggle('active', i === active));
+    // Only on a CHANGE: 17 dots plus 17 chips is 34 pointless class writes a
+    // frame otherwise, and the strip must not be re-centred 60x a second while
+    // it is smooth-scrolling to the chip it already centred.
+    if (active !== lastActive) {
+      lastActive = active;
+      railBtns.forEach((b, i) => b.classList.toggle('active', i === active));
+      stripBtns.forEach((b, i) => {
+        const on = i === active;
+        b.classList.toggle('active', on);
+        if (on) b.setAttribute('aria-current', 'true'); else b.removeAttribute('aria-current');
+      });
+      centerChip(active);
+    }
   }
 
   function tick(now) {
@@ -383,16 +582,41 @@
 
     const total = Math.max(1, track.offsetHeight - innerHeight); // duration=0 → no NaN/-∞ scroll math
     const p = clamp(-track.getBoundingClientRect().top / total, 0, 1);
-    const target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
-    curT += (target - curT) * LERP;
+    const span = Math.max(0, (duration || video.duration || 0) - 0.05);
+    const want = p * span;
+
+    // Out-scrolling the download. On a bundled file:// preview the whole clip
+    // is buffered and none of this ever fires — it matters when this engine is
+    // pointed at a remote master, which now starts on ~6 s of head buffer.
+    // MOVING: hold the scrub at the buffered edge and say so, rather than
+    // freezing on a frame or firing a byte-range request every frame.
+    // SETTLED (~0.4 s): let the seek through — the master is all-intra, so one
+    // range request paints the exact frame the viewer stopped on.
+    if (lastWant < 0 || Math.abs(want - lastWant) > 0.05) { lastWant = want; stillSince = now; }
+    const settled = (now - stillSince) > 380;
+    let held = false, goal = want;
+    if (!settled) {
+      const ceil = scrubCeiling(want);
+      if (want > ceil) { held = true; goal = ceil; }
+    }
+    curT += (goal - curT) * LERP;
 
     // ~1 frame @60fps — finer updates now that every frame is a keyframe (all-intra).
     // readyState 0 = no metadata yet → seeking is meaningless (and throws on old WebKit).
-    if (video.readyState > 0 &&
+    // (canShow || settled) is the seek throttle: free inside the buffer (the
+    // old path), one request per stop outside it.
+    const canShow = rangeEndAt(curT) >= 0;
+    if (video.readyState > 0 && (canShow || settled) &&
         Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016) {
       try { video.currentTime = curT; lastSet = curT; } catch (_) {}
     }
-    updateOverlays(p);
+
+    if (held || (video.readyState > 0 && !canShow)) { if (!starveSince) starveSince = now; }
+    else starveSince = 0;
+    setWait(starveSince > 0 && (now - starveSince) > 300);
+
+    // Overlays describe what is ON SCREEN: while held, the clamped position.
+    updateOverlays(held && span ? clamp(goal / span, 0, 1) : p);
     meter(p, now);
     requestAnimationFrame(tick);
   }
@@ -416,23 +640,70 @@
     msgEl.appendChild(b);
     msgEl.appendChild(document.createTextNode(detail || ''));
     hintEl.classList.add('gone');
+    setWait(false);
     railEl.style.display = 'none';
+    // No video, no rooms to jump to: drop the strip and its reserved band.
+    stageEl.classList.remove('hasstrip');
     roomEl.style.opacity = 0;
     sizeTrack();                   // one viewport: the end card sits right below
   }
 
   /* ================= Buffer gate + % loader ================= */
+  // Progressive enhancement: Network Information API where it exists
+  // (undefined in WKWebView, which simply keeps the 6 s default).
+  (() => {
+    const c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return;
+    const et = String(c.effectiveType || '');
+    if (c.saveData === true || et === 'slow-2g' || et === '2g') LEAD_S = Math.min(LEAD_S, 2);
+    else if (et === '3g') LEAD_S = Math.min(LEAD_S, 3.5);
+  })();
   function buffered() {
     try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; }
     catch (_) { return 0; }
   }
+  // End of the buffered range containing t, or -1 when t sits in a hole. The
+  // 0.25 s of slack absorbs the gap between a range's declared start and the
+  // first frame the decoder will actually paint there.
+  function rangeEndAt(t) {
+    try {
+      for (let i = 0; i < video.buffered.length; i++) {
+        if (t >= video.buffered.start(i) - 0.25 && t <= video.buffered.end(i)) return video.buffered.end(i);
+      }
+    } catch (_) {}
+    return -1;
+  }
+  // How far the scrub may travel this frame. Infinity = no reason to hold.
+  function scrubCeiling(want) {
+    if (video.readyState === 0) return Infinity;   // nothing known yet
+    if (rangeEndAt(want) >= 0) return Infinity;    // already downloaded: go
+    const edge = rangeEndAt(curT);
+    if (edge < 0) return Infinity;                 // a committed seek is in flight
+    return Math.max(0, edge - 0.15);               // hold just inside the frontier
+  }
+  function setWait(on) {
+    if (!waitEl) return;
+    if (on !== waitOn) { waitOn = on; waitEl.classList.toggle('on', on); }
+    if (on && waitPct && bufPct >= 0 && waitPct.textContent !== bufPct + '%') waitPct.textContent = bufPct + '%';
+  }
+  // Seconds of head the loader waits for. See the START GATE note above.
+  function startNeedS() {
+    const dur = duration || video.duration || 0;
+    if (!dur || !isFinite(dur)) return LEAD_S;
+    return Math.max(0.5, Math.min(dur * BUFFER_GATE, LEAD_S));
+  }
   function reportBuffer() {
     if (!video.duration || unavailable) return;
-    const f = clamp(buffered() / video.duration, 0, 1);
-    const pc = Math.round(f * 100);
+    const b = buffered();
+    bufPct = Math.round(clamp(b / video.duration, 0, 1) * 100);
+    // The loader's number is progress TOWARDS STARTING, not percent of file:
+    // at a 6 s gate on a 137 s tour, "4%" is true and useless — it would
+    // vanish at 4% and read as a download that gave up.
+    const pc = Math.round(clamp(b / startNeedS(), 0, 1) * 100);
     pctEl.textContent = pc + '%';
     barEl.style.width = pc + '%';
-    if (f >= BUFFER_GATE) begin();
+    if (waitOn && waitPct) waitPct.textContent = bufPct + '%';
+    if (b >= startNeedS()) begin();
   }
   video.addEventListener('progress', reportBuffer);
   video.addEventListener('loadedmetadata', () => { duration = video.duration; sizeTrack(); reportBuffer(); });
@@ -442,7 +713,7 @@
                     VIDEO_MISSING ? 'The sample clip isn’t in this build. Record a walkthrough to see your own tour here.'
                                   : 'This tour’s video couldn’t be loaded. Re-render or re-import the video and try again.');
   });
-  setTimeout(() => { if (!started && !unavailable && buffered() > 5) begin(); }, 6000);    // never strand the viewer
+  setTimeout(() => { if (!started && !unavailable && buffered() > 3) begin(); }, 6000);    // never strand the viewer
   setTimeout(() => {
     // Absolute last resort (parity with the hosted player): if nothing has
     // loaded by now, say so instead of dropping the viewer onto a black stage.
@@ -456,6 +727,7 @@
   function fallbackLoop() {
     if (fellBack) return; fellBack = true;
     loader.classList.add('done'); // defensive: guaranteed even if a future path reaches here pre-begin()
+    setWait(false); // the autoplay loop plays what it has; nothing is being held
     video.loop = true;
     video.play().catch(() => {});
     const loopTick = () => {

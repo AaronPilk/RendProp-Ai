@@ -1,0 +1,37 @@
+{
+  "proof": "Actual batch controller and media-picker source/download helpers with deterministic isolated dependencies; no paid requests or account data",
+  "status": "passed",
+  "tests": 23,
+  "passed": 23,
+  "failed": 0,
+  "skipped": 0,
+  "groups": {
+    "batch_photo": 12,
+    "reel_media_picker": 11
+  },
+  "checks": [
+    "batch keeps originals and disclosure through explicit review/save; duplicate start never re-dispatches",
+    "ordinary generation failure preserves completed photos and continues without retrying the failed request",
+    "quota or authorization failure stops all remaining paid dispatches",
+    "stop during active generation keeps its preview and never sends the next photo",
+    "stop while preparing source prevents every AI call",
+    "identity switch after source preparation prevents upload and paid dispatch",
+    "identity switch during generation cannot attach its response to another account",
+    "component disposal stops pending work without dispatching or committing another item",
+    "failed gallery attachment retries with the same uploaded output and no new generation",
+    "interrupted gallery upload retains its journal so save recovery renews the original ticket",
+    "missing provenance retains a downloadable preview but never offers a gallery save",
+    "selection bounds, listing scope, originals, edit and staging settings are validated before work",
+    "media paging follows the real 50-row contract without skipping a page",
+    "media picker preserves property scope, photo identity and existing alteration labels",
+    "download retains actual source bytes and mime; no account credentials go to storage",
+    "declared media over per-file or remaining limits cancels the response before reading it",
+    "streamed bytes remain bounded when no content length is supplied",
+    "empty, truncated and unsupported source media never reach the editor",
+    "selection order is retained with exact source IDs, and limits decrease across downloads",
+    "selection failure returns no partial import request",
+    "account switch after a downloaded source prevents handoff and later downloads",
+    "cancelling download prevents handoff and later files",
+    "invalid, duplicate or out-of-scope selections fail before downloads"
+  ]
+}

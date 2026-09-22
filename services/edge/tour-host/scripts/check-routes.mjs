@@ -15,12 +15,14 @@
 //   • no response ever leaks a stack trace,
 //   • the ordinary routes still answer as documented.
 //
-// The Worker is imported for real; only the two runtime globals it touches
-// (caches.default and ExecutionContext) are stubbed.
+// The Worker is imported for real; Cache API, ExecutionContext and all upstream
+// fetches are stubbed. No request in this gate leaves the process.
 //
 // Run: npm test
 
-import { buildSrc } from "./build-src.mjs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildSrc, ROOT } from "./build-src.mjs";
 
 const load = buildSrc("routes-check");
 
@@ -50,10 +52,116 @@ function stubCaches({ throwOnMatch = false } = {}) {
 
 const ctx = { waitUntil() {}, passThroughOnException() {} };
 
+// This is an offline gate. A forgotten upstream stub must fail, never contact
+// even the example host (or a production hostname introduced by a regression).
+globalThis.fetch = async () => { throw new Error("unexpected unstubbed network request"); };
+
 async function get(worker, path, { method = "GET" } = {}) {
   const res = await worker.fetch(new Request(`https://rendprop.com${path}`, { method }), ENV, ctx);
-  const body = method === "HEAD" ? "" : await res.text();
+  const body = await res.text();
   return { res, body, status: res.status, h: (n) => res.headers.get(n) };
+}
+
+/** WH-05: exercise the actual handler with old cached HTML still present. A
+ * TTL/header-only repair fails these checks because cache.match returns it
+ * before the current upstream publication state can be consulted. */
+async function checkRevocation(worker, realTour) {
+  function memoryCache() {
+    const entries = new Map();
+    const calls = { match: 0, put: 0 };
+    const prime = (path, body) => entries.set(`https://rendprop.com${path}`, new Response(body, {
+      headers: { "Content-Type": "text/html", "Cache-Control": "public, max-age=60, s-maxage=60" },
+    }));
+    globalThis.caches = { default: {
+      async match(key) { calls.match++; return entries.get(key.url)?.clone(); },
+      async put(key, response) { calls.put++; entries.set(key.url, response.clone()); },
+    } };
+    return { calls, prime };
+  }
+
+  const fixtures = [
+    { path: "/f/private123", upstreamPath: "/tours/private123", data: { ...realTour, slug: "private123" } },
+    { path: "/u/private123", upstreamPath: "/tours/private123", data: { ...realTour, slug: "private123" } },
+    { path: "/a/private-agent", upstreamPath: "/portfolio/private-agent", data: {
+      agent_card: { name: "Synthetic Review Agent", handle: "private-agent" },
+      tours: [{ slug: "private123", address: "14 Sycamore Row", share_url: "https://rendprop.com/f/private123" }],
+    } },
+  ];
+  for (const fixture of fixtures) {
+    const cache = memoryCache();
+    let upstreamStatus = 200;
+    let upstreamData = fixture.data;
+    let calls = 0;
+    globalThis.fetch = async (url, init) => {
+      calls++;
+      expect(url === ENV.SUPABASE_FUNCTIONS_URL + fixture.upstreamPath,
+        `[revocation ${fixture.path}] current upstream path`);
+      expect(init.cf.cacheTtl === 0 && init.cf.cacheEverything === false,
+        `[revocation ${fixture.path}] upstream caching remains disabled`);
+      return new Response(upstreamStatus === 200 ? JSON.stringify(upstreamData) : "not published", {
+        status: upstreamStatus, headers: { "Content-Type": "application/json" },
+      });
+    };
+    const first = await get(worker, fixture.path);
+    expect(first.status === 200 && first.body.includes("14 Sycamore Row"), `[${fixture.path}] current customer content renders`);
+    expect(first.h("cache-control") === "no-store", `[${fixture.path}] successful customer HTML is no-store`);
+    const second = await get(worker, fixture.path);
+    expect(second.status === 200 && calls === 2, `[${fixture.path}] every new request checks publication`);
+    expect(cache.calls.match === 0 && cache.calls.put === 0, `[${fixture.path}] no customer edge reads or writes`);
+    if (fixture.path.startsWith("/a/")) {
+      // Unpublishing one tour normally leaves the agent's portfolio available.
+      // Its still-200 page must drop the revoked card, not keep a cached grid.
+      upstreamData = { ...fixture.data, tours: [] };
+      const updated = await get(worker, fixture.path);
+      expect(updated.status === 200 && calls === 3, "[portfolio] live portfolio remains available after a tour is removed");
+      expect(!updated.body.includes("14 Sycamore Row"), "[portfolio] removed tour card is absent from the current grid");
+      expect(updated.h("cache-control") === "no-store", "[portfolio] updated grid remains no-store");
+    }
+
+    // Model HTML put by an older deployment; never clear/purge it to make the
+    // test pass. Include each real canonical cache key and HEAD request path.
+    cache.prime(fixture.path, first.body);
+    cache.prime(`${fixture.path}?embed=1`, first.body);
+    upstreamStatus = 404;
+    for (const method of ["GET", "HEAD"]) {
+      const paths = [fixture.path, `${fixture.path}/?utm_source=old-link`];
+      if (!fixture.path.startsWith("/a/")) paths.push(`${fixture.path}?embed=1&space=venue`);
+      for (const path of paths) {
+        const before = calls;
+        const revoked = await get(worker, path, { method });
+        expect(revoked.status === 404, `[${method} ${path}] primed old HTML must not survive upstream revocation`);
+        expect(calls === before + 1, `[${method} ${path}] authoritative route was consulted`);
+        expect(revoked.h("cache-control") === "no-store", `[${method} ${path}] revoked response is no-store`);
+        expect(!revoked.body.includes("14 Sycamore Row"), `[${method} ${path}] no cached customer address`);
+        if (method === "GET") {
+          if (fixture.path.startsWith("/u/")) assertUnbrandedBody(path, revoked.body);
+          else expect(revoked.body.includes("RENDPROP"), `[${path}] existing branded unavailable page is retained`);
+          assertNoStack(path, revoked.body);
+        }
+      }
+    }
+    expect(cache.calls.match === 0 && cache.calls.put === 0, `[${fixture.path}] old customer cache remains bypassed after revocation`);
+  }
+
+  // The explicit synthetic demos are not customer publication state. Preserve
+  // their existing cache keys, embed variants, TTL, HEAD behavior and branding.
+  globalThis.fetch = async () => { throw new Error("synthetic demos must not fetch upstream"); };
+  for (const path of ["/f/estate-demo", "/u/demo", "/f/demo?embed=1", "/f/estate-demo?embed=1&space=venue"]) {
+    const cache = memoryCache();
+    const first = await get(worker, path);
+    const second = await get(worker, path);
+    const head = await get(worker, path, { method: "HEAD" });
+    expect(first.status === 200 && second.status === 200 && head.status === 200, `[${path}] synthetic demo remains available`);
+    expect(first.h("cache-control") === "public, max-age=60, s-maxage=60", `[${path}] synthetic demo retains TTL`);
+    expect(first.body === second.body, `[${path}] cached synthetic response is byte-identical`);
+    expect(cache.calls.match === 3 && cache.calls.put === 1, `[${path}] synthetic GET cached once; HEAD reuses it`);
+  }
+  for (const path of ["/a/meridian", "/a/demo"]) {
+    const demo = await get(worker, path);
+    expect(demo.status === 200 && demo.h("cache-control") === "public, max-age=300", `[${path}] fictional portfolio keeps its existing browser cache`);
+  }
+  stubCaches();
+  ok("WH-05 customer HTML bypasses primed caches and follows revocation; synthetic demo caching is preserved");
 }
 
 /** A page that must be safe to hand to an MLS unbranded field. */
@@ -62,6 +170,53 @@ function assertUnbrandedBody(label, body) {
     checks++;
     if (body.toLowerCase().includes(token)) fail(`[${label}] leaked ${JSON.stringify(token)} into an unbranded response`);
   }
+}
+
+/**
+ * Structured data is only worth shipping if a machine can read it. This parses
+ * the emitted block as JSON — the way a crawler does — and then walks the whole
+ * graph for the one failure mode that matters: a field emitted with nothing in
+ * it. An empty string, a null, an empty array/object or a "TBD" in structured
+ * data is a claim made to a machine that will repeat it.
+ */
+function assertValidJsonLd(label, body, requiredTypes = []) {
+  const blocks = [...body.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/g)];
+  expect(blocks.length === 1, `[${label}] want exactly one JSON-LD block, got ${blocks.length}`);
+  if (blocks.length !== 1) return null;
+  const raw = blocks[0][1];
+  // The `</script>` escape: no owner-entered string may close the block.
+  expect(!raw.includes("<"), `[${label}] JSON-LD must escape '<' so no owner-entered string can close the script`);
+  let graph;
+  checks++;
+  try { graph = JSON.parse(raw); }
+  catch (err) { fail(`[${label}] JSON-LD does not parse: ${err.message}`); return null; }
+  expect(graph["@context"] === "https://schema.org", `[${label}] JSON-LD @context must be https://schema.org`);
+  const nodes = Array.isArray(graph["@graph"]) ? graph["@graph"] : [];
+  expect(nodes.length > 0, `[${label}] JSON-LD @graph must not be empty`);
+  for (const t of requiredTypes) {
+    expect(nodes.some((n) => [].concat(n["@type"]).includes(t)), `[${label}] JSON-LD graph is missing a ${t} node`);
+  }
+  const bad = [];
+  (function walk(node, path) {
+    if (Array.isArray(node)) {
+      if (!node.length) bad.push(`${path} (empty array)`);
+      node.forEach((v, i) => walk(v, `${path}[${i}]`));
+      return;
+    }
+    if (node && typeof node === "object") {
+      const keys = Object.keys(node);
+      if (!keys.length) bad.push(`${path} (empty object)`);
+      for (const k of keys) walk(node[k], path ? `${path}.${k}` : k);
+      return;
+    }
+    if (node === null || node === undefined) bad.push(`${path} (null)`);
+    else if (typeof node === "string" && !node.trim()) bad.push(`${path} (empty string)`);
+    else if (typeof node === "string" && /^(tbd|tba|n\/a|none|unknown|null|undefined|placeholder|example\.com)$/i.test(node.trim())) {
+      bad.push(`${path} (placeholder ${JSON.stringify(node)})`);
+    } else if (typeof node === "number" && !Number.isFinite(node)) bad.push(`${path} (non-finite)`);
+  })(graph, "");
+  expect(bad.length === 0, `[${label}] JSON-LD carries empty/placeholder values: ${bad.join(", ")}`);
+  return graph;
 }
 
 /** No response may ever show a viewer our internals. */
@@ -132,6 +287,20 @@ async function main() {
   expect(demo.h("strict-transport-security") === "max-age=31536000; includeSubDomains",
     `[/f/estate-demo] want HSTS on the first page a viewer ever opens, got ${demo.h("strict-transport-security")}`);
   expect(!demo.body.includes('name="robots"'), "[/f/estate-demo] the demo opts into indexing");
+  // …and because it is indexable, it is the one tour route that ships
+  // structured data. Parsed here the way a crawler parses it.
+  assertValidJsonLd("/f/estate-demo", demo.body, [
+    "RealEstateListing", "VideoObject", "Offer", "Person", "BreadcrumbList",
+  ]);
+  expect(demo.body.includes('<button type="button" class="chrome" id="share"'),
+    "[/f/estate-demo] want the share control on the branded page");
+  expect(demo.body.includes("apps.apple.com/us/app/id6808982413?ct=tour-estate-demo&amp;mt=8"),
+    "[/f/estate-demo] want the App Store link tagged with the tour surface and slug");
+  expect(demo.body.includes('href="https://rendprop.com/?ref=tour"'),
+    "[/f/estate-demo] want the outbound attribution on the Made-with links");
+  const demoEmbed = await get(worker, "/f/estate-demo?embed=1");
+  expect(!demoEmbed.body.includes("application/ld+json") && !demoEmbed.body.includes('id="share"'),
+    "[/f/estate-demo?embed=1] the in-app hero carries neither structured data nor the share control");
 
   const demoUn = await get(worker, "/u/estate-demo");
   expect(demoUn.status === 200, `[/u/estate-demo] want 200, got ${demoUn.status}`);
@@ -180,6 +349,7 @@ async function main() {
     cta: { label: "Book a showing", mode: "lead_form", url: null, secondary: [], lead_fields: [] },
     staged: false, staged_disclosure: null, disclosure_chip: null,
   };
+  await checkRevocation(worker, realTour);
   let upstream = { status: 200, body: () => JSON.stringify(realTour) };
   globalThis.fetch = async () => new Response(upstream.status === 200 ? upstream.body() : "nope", {
     status: upstream.status,
@@ -211,7 +381,7 @@ async function main() {
 
   upstream = { status: 500, body: () => "" };
   const broke = await get(worker, "/f/abc127");
-  expect(broke.status === 502, `[upstream 500] want 502, got ${broke.status}`);
+  expect(broke.status === 503, `[upstream 500] want 503, got ${broke.status}`);
   expect((broke.h("cache-control") || "").includes("no-store"), "[upstream 500] must not be cached");
   assertNoStack("upstream 500", broke.body);
 
@@ -224,7 +394,7 @@ async function main() {
     globalThis.fetch = async () => { throw new Error("network is down"); };
     return get(worker, "/f/abc129");
   })();
-  expect(netDown.status === 502, `[upstream unreachable] want 502, got ${netDown.status}`);
+  expect(netDown.status === 503, `[upstream unreachable] want 503, got ${netDown.status}`);
   assertNoStack("upstream unreachable", netDown.body);
   ok("the upstream path: happy render, indexing opt-in, 404, 5xx, junk body, unreachable");
 
@@ -253,6 +423,46 @@ async function main() {
     if (r.status !== 302) fail(`[${bare}] want a 302 to the marketing site, got ${r.status}`);
   }
   ok("ordinary routes answer as documented");
+
+  // ---- Studio entry points -------------------------------------------------
+  // The apex route stays usable for shared links; each public marketing page
+  // also links directly to the deployed app so finding it needs only one click.
+  for (const path of ["/studio", "/studio/", "/studio?ref=site&next=%2Fworkspace"]) {
+    for (const method of ["GET", "HEAD"]) {
+      const r = await get(worker, path, { method });
+      expect(r.status === 302, `[${method} ${path}] redirects to the deployed Studio`);
+      expect(r.h("location") === "https://studio.rendprop.com/",
+        `[${method} ${path}] uses the fixed Studio destination without forwarding query parameters`);
+      expect(r.h("cache-control") === "no-store", `[${method} ${path}] redirect can be updated immediately`);
+      expect(r.h("referrer-policy") === "no-referrer", `[${method} ${path}] does not send the source URL to Studio`);
+      expect(r.body === "", `[${method} ${path}] redirect has no body`);
+    }
+  }
+  const studioPost = await get(worker, "/studio", { method: "POST" });
+  expect(studioPost.status === 405 && studioPost.h("allow") === "GET, HEAD",
+    "[POST /studio] preserves the public host's read-only method policy");
+  expect((await get(worker, "/studio/unknown")).status === 404,
+    "[/studio/unknown] does not redirect unrelated paths");
+  const studioLink = '<a href="https://studio.rendprop.com/">Studio</a>';
+  for (const page of ["index", "features", "pricing", "compare", "support"]) {
+    const html = readFileSync(join(ROOT, "public", `${page}.html`), "utf8");
+    const nav = html.match(/<div class="nav-menu" id="navMenu">([\s\S]*?)<\/div>/)?.[1] || "";
+    const footer = html.match(/<nav class="foot-links" aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] || "";
+    expect(nav.includes(studioLink), `[${page}] Studio is present in the shared desktop/mobile navigation`);
+    expect(footer.includes(studioLink), `[${page}] Studio is present in the footer`);
+    if (page === "index") {
+      const hero = html.match(/<div class="hero-ctas">([\s\S]*?)<\/div>/)?.[1] || "";
+      expect(hero.includes('href="https://studio.rendprop.com/">Open Studio</a>'),
+        "[index] Studio has a visible homepage hero action");
+      expect(hero.includes("ct=site&amp;mt=8") && hero.includes('href="/f/estate-demo"'),
+        "[index] Studio preserves the App Store campaign link and live demo action");
+    }
+  }
+  expect(!existsSync(join(ROOT, "public", "studio.html")),
+    "[public/studio.html] no stale static preview page shadows the live Studio redirect");
+  expect((await get(worker, "/")).body.includes('href="https://studio.rendprop.com/">Open Studio</a>'),
+    "[/ fallback] Studio stays discoverable if the static homepage is unavailable");
+  ok("Studio is discoverable from the homepage, public navigation and apex redirect");
 
   // ---- canonical origin: https + apex ---------------------------------------
   // Live on 2026-09-05, http://rendprop.com/terms answered 200 over plain HTTP
@@ -289,6 +499,119 @@ async function main() {
   const unbrandedDemo = await get(worker, "/u/estate-demo");
   expect(!unbrandedDemo.body.includes("favicon"), "[/u/estate-demo] the MLS page must not carry the Rendprop favicon");
   ok("favicon + canonical on branded pages only");
+
+  // ---- /a/<handle>: canonical, structured data, app CTA ---------------------
+  // The portfolio page is indexable by DEFAULT — it is a profile at a handle
+  // its owner chose, not a listing carrying someone's address — so unlike /f/
+  // it carries its canonical and its structured data unconditionally. It had
+  // neither, plus no way at all to get the app, which is the page an AGENT is
+  // likeliest to be looking at.
+  {
+    const p = await get(worker, "/a/meridian");
+    expect(p.status === 200, `[/a/meridian] want 200, got ${p.status}`);
+    expect(p.body.includes('<link rel="canonical" href="https://rendprop.com/a/meridian">'),
+      "[/a/meridian] want a canonical built from the requested handle and origin");
+    expect(!p.h("x-robots-tag"), `[/a/meridian] a portfolio is indexable by default, got ${p.h("x-robots-tag")}`);
+    expect(!p.body.includes('name="robots"'), "[/a/meridian] no robots meta on a portfolio");
+    expect(p.body.includes('id="getapp"') && p.body.includes("apps.apple.com/us/app/id6808982413?ct=portfolio&amp;mt=8"),
+      "[/a/meridian] want the shared app CTA, tagged as the portfolio surface");
+    expect(p.body.includes('href="https://rendprop.com/?ref=portfolio"'),
+      "[/a/meridian] want the outbound attribution on the Made-with link");
+    assertValidJsonLd("/a/meridian", p.body, ["ProfilePage", "ItemList"]);
+    // A payload the renderer cannot place (no handle, no origin) must emit no
+    // canonical and no graph rather than guessing an origin.
+    const { renderPortfolioPage } = await load("portfolio");
+    const { buildDemoPortfolio } = await load("demo");
+    const bare = renderPortfolioPage(buildDemoPortfolio());
+    expect(!bare.includes('rel="canonical"') && !bare.includes("application/ld+json"),
+      "[portfolio, no origin] must emit no canonical and no JSON-LD rather than a guessed origin");
+  }
+  ok("/a/<handle> carries a canonical, ProfilePage + ItemList structured data and the app CTA");
+
+  // ---- /sitemap.xml ---------------------------------------------------------
+  // Served by the WORKER now (public/sitemap.xml is deleted — an exact file
+  // match under ./public is answered by Static Assets before this script runs,
+  // so the file would have shadowed the route). Two rules are non-negotiable:
+  // never an unbranded URL, and never a tour that is not opted into indexing.
+  {
+    const sm = await get(worker, "/sitemap.xml");
+    expect(sm.status === 200, `[/sitemap.xml] want 200, got ${sm.status}`);
+    expect((sm.h("content-type") || "").includes("application/xml"),
+      `[/sitemap.xml] want application/xml, got ${sm.h("content-type")}`);
+    expect((sm.h("cache-control") || "").includes("max-age=3600"),
+      `[/sitemap.xml] want an hour at the edge, got ${sm.h("cache-control")}`);
+    expect(sm.body.startsWith('<?xml version="1.0" encoding="UTF-8"?>'), "[/sitemap.xml] want an XML declaration");
+    expect(sm.body.includes('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'), "[/sitemap.xml] want a urlset");
+
+    const locs = [...sm.body.matchAll(/<loc>([^<]*)<\/loc>/g)].map((m) => m[1]);
+    expect(locs.length >= 9, `[/sitemap.xml] want at least the pages the old static file had, got ${locs.length}`);
+    for (const must of [
+      "https://rendprop.com/",
+      "https://rendprop.com/features",
+      "https://rendprop.com/pricing",
+      "https://rendprop.com/compare",
+      "https://rendprop.com/support",
+      "https://rendprop.com/terms",
+      "https://rendprop.com/privacy",
+      "https://rendprop.com/f/estate-demo",
+      // New: the demo agent's portfolio. Rendprop's own content, and the one
+      // /a/ page that existed and was never offered to a crawler.
+      "https://rendprop.com/a/meridian",
+    ]) expect(locs.includes(must), `[/sitemap.xml] missing ${must}`);
+
+    // RULE 1 — never an unbranded URL. /u/ is noindex by construction and /f/
+    // is its canonical; asking a crawler to index it would be the one thing
+    // that page exists not to be.
+    for (const loc of locs) {
+      expect(!/\/u\//.test(loc), `[/sitemap.xml] MUST NOT list an unbranded URL: ${loc}`);
+      expect(loc.startsWith("https://rendprop.com/"), `[/sitemap.xml] every loc must be on the canonical origin: ${loc}`);
+      expect(!/[?#]/.test(loc), `[/sitemap.xml] no query or fragment in a sitemap URL: ${loc}`);
+    }
+    expect(new Set(locs).size === locs.length, "[/sitemap.xml] no duplicate URLs");
+
+    // RULE 2 — never a tour that is not opted into indexing. Every /f/ URL in
+    // the sitemap must actually render WITHOUT a noindex tag; a sitemap entry
+    // is a request to index, and a page we tell the crawler to drop must not
+    // be in one. This fetches each listed tour through the real handler.
+    for (const loc of locs.filter((l) => /\/f\//.test(l))) {
+      const page = await get(worker, loc.replace("https://rendprop.com", ""));
+      expect(page.status === 200, `[/sitemap.xml] listed tour ${loc} must render, got ${page.status}`);
+      expect(!page.h("x-robots-tag"), `[/sitemap.xml] listed tour ${loc} must not be noindex (header)`);
+      expect(!page.body.includes('name="robots"'), `[/sitemap.xml] listed tour ${loc} must not be noindex (meta)`);
+    }
+
+    // Every lastmod is a real W3C date, not a placeholder.
+    for (const d of [...sm.body.matchAll(/<lastmod>([^<]*)<\/lastmod>/g)].map((m) => m[1])) {
+      expect(/^\d{4}-\d{2}-\d{2}$/.test(d) && Number.isFinite(Date.parse(d)),
+        `[/sitemap.xml] lastmod must be a real date, got ${JSON.stringify(d)}`);
+    }
+
+    // The builder's own two rules, exercised directly: a malformed slug/handle
+    // never reaches a <loc>, and the two generators cannot be asked for a /u/.
+    const { sitemapXml } = await load("sitemap");
+    const built = sitemapXml(
+      "https://rendprop.com",
+      [{ slug: "goodslug", publishedAt: "2026-05-04T11:00:00Z" }, { slug: "../u/leak" }, { slug: "" }],
+      [{ handle: "goodhandle", updatedAt: "2026-05-04T11:00:00Z" }, { handle: "bad handle" }],
+    );
+    expect(built.includes("<loc>https://rendprop.com/f/goodslug</loc>"), "[sitemapXml] a valid tour is listed");
+    expect(built.includes("<lastmod>2026-05-04</lastmod>"), "[sitemapXml] lastmod comes from the publish timestamp");
+    expect(built.includes("<loc>https://rendprop.com/a/goodhandle</loc>"), "[sitemapXml] a valid handle is listed");
+    expect(!built.includes("leak") && !/\/u\//.test(built), "[sitemapXml] a malformed slug never reaches a <loc>");
+    expect(!built.includes("bad handle") && !built.includes("bad%20handle"), "[sitemapXml] a malformed handle never reaches a <loc>");
+    // A tour with no real publish timestamp gets no lastmod rather than today.
+    const noDate = sitemapXml("https://rendprop.com", [{ slug: "undated" }]);
+    const undated = noDate.slice(noDate.indexOf("/f/undated"));
+    expect(undated.slice(0, undated.indexOf("</url>")).indexOf("<lastmod>") < 0,
+      "[sitemapXml] a tour with no publish timestamp must get NO lastmod, not an invented one");
+
+    // robots.txt still points at this exact URL.
+    const robots = readFileSync(join(ROOT, "public", "robots.txt"), "utf8");
+    expect(robots.includes("Sitemap: https://rendprop.com/sitemap.xml"), "[robots.txt] must still point at /sitemap.xml");
+    expect(!existsSync(join(ROOT, "public", "sitemap.xml")),
+      "[public/sitemap.xml] the static file must stay deleted — Static Assets answer before the Worker, so it would shadow the route");
+  }
+  ok("/sitemap.xml is Worker-served, lists no /u/ URL and no non-indexable tour");
 
   // ---- the legal pages match the launch line-up ------------------------------
   const terms = await get(worker, "/terms");
@@ -332,6 +655,37 @@ async function main() {
     ok("safeUrl rejects control-character-obfuscated javascript: URLs");
   }
 
+  // ── App Store campaign tokens (src/attribution.ts) ───────────────────────
+  // An attribution number is only worth having if it is right. Two different
+  // tours must never file under one campaign, and a token must never exceed
+  // App Store Connect's 40 characters (which would be silently truncated into
+  // exactly that collision).
+  {
+    const { appStoreUrl, campaignToken, APPLE_PROVIDER_TOKEN } = await load("attribution");
+    expect(appStoreUrl("tour", "estate-demo") === "https://apps.apple.com/us/app/id6808982413?ct=tour-estate-demo&mt=8",
+      `[attribution] tour link, got ${appStoreUrl("tour", "estate-demo")}`);
+    expect(appStoreUrl("portfolio").endsWith("?ct=portfolio&mt=8"), "[attribution] portfolio campaign");
+    expect(appStoreUrl("site").endsWith("?ct=site&mt=8"), "[attribution] marketing-site campaign");
+    // Slugs are nanoid/base64url: case and `_` carry meaning and must survive.
+    expect(campaignToken("tour", "Ab_9-Zz") === "tour-Ab_9-Zz",
+      `[attribution] a slug must round-trip, got ${campaignToken("tour", "Ab_9-Zz")}`);
+    expect(campaignToken("tour", "Ab_9-Zz") !== campaignToken("tour", "ab-9-zz"),
+      "[attribution] two different slugs must never collapse into one campaign");
+    // Over Apple's cap, fall back to the surface rather than truncate.
+    const long = campaignToken("tour", "x".repeat(64));
+    expect(long === "tour", `[attribution] an over-long token falls back to the surface, got ${long}`);
+    expect(campaignToken("tour", "y".repeat(64)) === long, "[attribution] …and does so identically, so the fallback is one campaign");
+    for (const t of [["tour", "a".repeat(60)], ["portfolio"], ["site"], ["tour", "estate-demo"]]) {
+      expect(campaignToken(...t).length <= 40, `[attribution] ct must fit App Store Connect's 40 chars: ${campaignToken(...t)}`);
+    }
+    // The one value the owner still has to supply. If this stops being empty,
+    // the link builder starts emitting `pt` — which is the intended change, so
+    // this assertion documents the state rather than pinning it forever.
+    expect(typeof APPLE_PROVIDER_TOKEN === "string",
+      "[attribution] APPLE_PROVIDER_TOKEN must exist (empty until the owner pastes it from App Store Connect)");
+    ok("App Store campaign tokens are collision-free and inside Apple's 40-character cap");
+  }
+
   if (failures.length) {
     console.error(`\n✖ route check FAILED — ${failures.length} problem(s) across ${checks} assertions:\n`);
     for (const f of failures) console.error("  - " + f);
@@ -339,7 +693,7 @@ async function main() {
     process.exitCode = 1;
     return;
   }
-  console.log(`✔ route check passed — ${checks} assertions (malformed paths, error boundary, upstream failures, indexing headers, ordinary routes, canonical origin, favicon/legal pages, safeUrl scheme allowlist).`);
+  console.log(`✔ route check passed — ${checks} assertions (malformed paths, error boundary, upstream failures, customer revocation/cache bypass, synthetic demo caching, indexing headers, ordinary routes, canonical origin, favicon/legal pages, safeUrl scheme allowlist, portfolio canonical + structured data + app CTA, Worker-served sitemap with no /u/ and no non-indexable URL, JSON-LD parsed as JSON with no empty or placeholder field).`);
 }
 
 main().catch((err) => {

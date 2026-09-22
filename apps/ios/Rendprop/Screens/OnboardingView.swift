@@ -150,8 +150,43 @@ struct OnboardingView: View {
                 .padding()
             }
 
+            // Nothing in the app had ever mentioned the free week, so nobody
+            // knew they were on one — and until migration 0032 there was
+            // nothing to mention, because `trial` and `free` carried identical
+            // entitlements. Deliberately NOT called a "7-day free trial": the
+            // paywall's StoreKit introductory offer is called that, and two
+            // different things under one name is how a 3.1.2 problem starts.
+            //
+            // The week is sized per industry (migration 0044): an agent gets
+            // 3 tours, a single-location business 1. The line reads the LIVE
+            // selection above — tap "Event venue" and it says "1 tour" — so
+            // the promise a person reads is the one the server will keep for
+            // the type they picked. The title stays word for word: the
+            // screenshot walk finds this screen by it.
+            VStack(spacing: 3) {
+                Text("Your first week is on us")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
+                Text("\((SpaceType(rawValue: spaceTypeRaw) ?? .realEstate).freeWeekLine), free. No card, no account.")
+                    .font(.rpCaption)
+                    .foregroundStyle(Theme.inkDim)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.horizontal, 30)
+            .padding(.top, 14)
+            .padding(.bottom, 12)
+
             PrimaryButton(title: "Get started", systemImage: "arrow.right") {
                 hasOnboarded = true
+                // Ask about notifications HERE, not only after the first
+                // publish. A person who is never asked can currently only find
+                // this in Settings, and nobody goes looking for a switch they
+                // do not know exists. This raises the plain-words pre-prompt,
+                // never the iOS dialog — that one is spent only on a yes, so a
+                // "Not now" costs nothing and the publish moment may ask once
+                // more. See PushManager.noteOnboardingFinished.
+                PushManager.shared.noteOnboardingFinished()
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 28)

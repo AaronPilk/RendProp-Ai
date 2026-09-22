@@ -1,0 +1,110 @@
+Check services/supabase/functions/listings/create.test.ts
+Check services/supabase/functions/ai-voice/shared-result.test.ts
+Check services/supabase/functions/ai-voice/storage-reservation.test.ts
+Check services/supabase/functions/studio/creative-quality.test.ts
+Check services/supabase/functions/studio/creative.test.ts
+Check services/supabase/functions/studio/documents.test.ts
+Check services/supabase/functions/studio/edit-output.test.ts
+Check services/supabase/functions/studio/generated-proof.test.ts
+Check services/supabase/functions/studio/handler.test.ts
+Check services/supabase/functions/studio/listing-actions.test.ts
+Check services/supabase/functions/studio/repository.test.ts
+running 4 tests from ./services/supabase/functions/listings/create.test.ts
+draft IDs are stable, caller/workspace bound, and distinct for identical-looking drafts ... ok (8ms)
+lost create reply and simultaneous retry yield one row without overwriting office edits ... ok (0ms)
+replay never revives a deleted row or crosses ownership ... ok (0ms)
+legacy no-key creates remain separate ... ok (0ms)
+running 6 tests from ./services/supabase/functions/ai-voice/shared-result.test.ts
+phone voice history contains durable identity and actual alignment without signed links ... ok (0ms)
+voice history rejects malformed storage and unsupported timing ... ok (0ms)
+named phone result is saved only after current listing and workspace reads ... ok (0ms)
+Studio reservation prevents duplicate phone history entry ... ok (0ms)
+missing workspace and unavailable history preserve paid response without inserting ... ok (0ms)
+one shared deadline releases already generated audio when history stalls ... ok (23ms)
+running 3 tests from ./services/supabase/functions/ai-voice/storage-reservation.test.ts
+reserved voice key stays bound to its generated identity and workspace ... ok (0ms)
+expired and extended storage windows refuse new voice writes ... ok (0ms)
+reservation outage rejects before generation and uses a bounded database request ... ok (0ms)
+running 4 tests from ./services/supabase/functions/studio/creative-quality.test.ts
+ordinary recorded videos do not require synthetic quality checks ... ok (0ms)
+matching source output generation and server verdict is publishable ... ok (0ms)
+quality holds absent mismatched or failed verdicts ... ok (0ms)
+quality holds incomplete imports and unconfirmed sources ... ok (5ms)
+running 11 tests from ./services/supabase/functions/studio/creative.test.ts
+video import adopts the confirmed immutable operation key and verifies its asset identity ... ok (0ms)
+voice key refresh is bounded to the exact trusted R2 audio namespace ... ok (0ms)
+generated downloads accept configured own storage or known provider results only ... ok (0ms)
+streaming import enforces its byte ceiling without trusting content length ... ok (1ms)
+creative ids reject invalid or missing selections ... ok (0ms)
+duplicate reservation is returned without dispatching another paid generation ... ok (1ms)
+duplicate request key cannot be reused for different creative input ... ok (0ms)
+trusted video submit hides upstream job URLs while retaining recovery reference ... ok (0ms)
+an active import lease lets another device read progress without a duplicate transfer ... ok (0ms)
+uncertain provider submission keeps its reservation so retry cannot spend again ... ok (0ms)
+private saved job references renew after expiry only for their signed owner ... ok (3ms)
+running 3 tests from ./services/supabase/functions/studio/documents.test.ts
+document keys and revisions bind to typed listing intent ... ok (0ms)
+document update atomically compares revision and pins actor workspace and key ... ok (6ms)
+listing-bound documents authorize the listing before writing ... ok (0ms)
+running 9 tests from ./services/supabase/functions/studio/edit-output.test.ts
+edit input bounds source declarations and rejects self-reference ... ok (0ms)
+native photo identifiers resolve the enhanced saved capture in the same property ... ok (0ms)
+ordinary edits keep a generic disclosure without inventing AI or a single unaltered original ... ok (2ms)
+known AI photos and owned narration propagate disclosure while source IDs remain declarations ... ok (0ms)
+output finalization rejects read-only roles, unfinished uploads and unavailable narration before writes ... ok (0ms)
+native generated sources with absent or failed QC cannot be finalized into a new edit ... ok (0ms)
+lost finalization responses and partial disclosure writes reuse the same output record ... ok (0ms)
+a saved output cannot be silently relabeled with a different source declaration ... ok (0ms)
+the existing per-property disclosure ceiling is preserved before reserving an edit ... ok (0ms)
+running 3 tests from ./services/supabase/functions/studio/generated-proof.test.ts
+a confirmed video receipt attaches only its saved source and existing scoped provenance ... ok (7ms)
+generated video attachment refuses unconfirmed bytes, changed originals and unrelated proof rows ... ok (0ms)
+video-status imports completed MP4 and attaches video provenance without the photo-only RPC ... ok (7ms)
+running 25 tests from ./services/supabase/functions/studio/handler.test.ts
+canonical linked keys only, not arbitrary object reads ... ok (0ms)
+OPTIONS requires no authorization or media read ... ok (0ms)
+POST cannot mutate anything ... ok (0ms)
+unknown route is 404 ... ok (0ms)
+unauthenticated request cannot read or sign ... ok (0ms)
+unjoined workspace cannot read or sign ... ok (0ms)
+authorization result must match both selectors ... ok (0ms)
+conflicting selector fails before auth or read ... ok (0ms)
+malformed offsets are rejected, not coerced ... ok (0ms)
+rate cap prevents DB/media expansion ... ok (0ms)
+returns literal contract, short lifetime, no cache ... ok (0ms)
+unsigned references and pending captures never become URLs ... ok (0ms)
+row from another listing fails whole response ... ok (0ms)
+uploaded video requires bucket agreement ... ok (0ms)
+stored render and photo deduplicate identical object keys ... ok (0ms)
+pagination signs at most50 of each kind, reports next offset ... ok (0ms)
+partial database errors cannot look like empty success ... ok (0ms)
+signing failure returns generic error, never capabilities or credentials ... ok (0ms)
+rechecks live membership and deletion after reading and signing ... ok (0ms)
+deletion already in progress stops before rate limit, read or signing ... ok (0ms)
+valid row followed by foreign lookahead fails before any signing ... ok (0ms)
+oversized query result and paging-limit lookahead are explicit failures ... ok (0ms)
+two pages consume each source's lookahead exactly once ... ok (0ms)
+does not return capabilities whose declared lifetime elapsed during signing ... ok (0ms)
+oversized writable captions fail before signing any media capability ... ok (0ms)
+running 11 tests from ./services/supabase/functions/studio/listing-actions.test.ts
+gallery accepts only completed same-property canonical photos ... ok (0ms)
+caption edits retain authoritative disclosure without duplicating its suffix ... ok (0ms)
+caption action fences simultaneous edits and cannot modify disclosure storage or flags ... ok (1ms)
+caption conflict leaves server metadata unchanged, replay of desired caption succeeds ... ok (0ms)
+gallery cover and order use request RLS RPC with server workspace and bounded exact ids ... ok (0ms)
+gallery permission and database conflicts remain actionable without succeeding ... ok (0ms)
+altered gallery photo derives immutable original and disclosure from provenance ... ok (0ms)
+marketing role cannot create public gallery or floor-plan metadata ... ok (0ms)
+replayed photo attachment uses stable asset id and does not insert duplicate ... ok (0ms)
+floor-plan attachment preserves listing details and uses optimistic concurrency ... ok (0ms)
+floor-plan concurrent phone edit produces conflict instead of success ... ok (0ms)
+running 7 tests from ./services/supabase/functions/studio/repository.test.ts
+real adapter checks Auth, deletion, membership, live org then scoped live listing ... ok (0ms)
+deletion and removed membership failures prevent tenant reads ... ok (0ms)
+deleted org or listing and inconsistent rows never authorize ... ok (0ms)
+all three real RLS media queries use same listing, inclusive lookahead and deterministic order ... ok (0ms)
+real repository and media merge preserve saved gallery order over capture aliases and retain distinct originals ... ok (1ms)
+saved gallery sort determines page boundaries without cross-page capture aliases ... ok (0ms)
+a null or failed source is not converted to an empty successful library ... ok (0ms)
+
+ok | 86 passed | 0 failed (387ms)

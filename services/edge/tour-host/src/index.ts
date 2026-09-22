@@ -9,9 +9,12 @@
 //   GET /a/:handle   an org's portfolio grid  (renders GET /portfolio/:handle)
 //   GET /terms       Terms of Service   (static; linked from the iOS app)
 //   GET /privacy     Privacy Policy     (static; linked from the iOS app)
+//   GET /sitemap.xml the crawl index (src/sitemap.ts). Served here, not from
+//                    ./public, so it can grow with what is actually published.
 //
-// The dynamic pages are server-rendered to a self-contained HTML page and cached at the edge
-// (Cache API) with a short TTL. Video is served zero-egress: the all-intra R2
+// Customer pages are server-rendered with no-store and a fresh upstream lookup
+// on every request so old edge HTML cannot outlive publication revocation.
+// Only self-contained synthetic demos retain caching. Video is served zero-egress: the all-intra R2
 // mp4 (`scrub_url`, byte-range) is the primary scroll-scrub source, with
 // Cloudflare Stream HLS (`hls_url`) as fallback only. The browser talks to
 // Supabase directly for the lead form (POST /leads) and the view beacon
@@ -19,21 +22,28 @@
 //
 // Routing (wrangler.toml): the Worker owns the whole apex, `rendprop.com/*`.
 // Requests that exactly match a file under ./public (the marketing site,
-// /assets/*, robots.txt, sitemap.xml, llms.txt) are answered by Static Assets
-// before this script runs; everything else lands in fetch() below.
+// /assets/*, robots.txt, llms.txt) are answered by Static Assets before this
+// script runs; everything else lands in fetch() below. That precedence is why
+// public/sitemap.xml had to be deleted when /sitemap.xml became a route: a
+// file under ./public wins, and the handler would never have been reached.
 //
 // Every response is branded: malformed paths (`/f/%`) 404, and any exception
 // the handler throws is caught and answered with errorPage() + no-store — a
 // viewer must never see Cloudflare's raw "Worker threw exception" page.
 
 import type { Env, Portfolio, Tour } from "./types";
-import { buildDemoTour, demoSpaceFrom, isDemoSlug } from "./demo";
+import { appStoreUrl } from "./attribution";
+import { buildDemoPortfolio, buildDemoTour, demoSpaceFrom, isDemoHandle, isDemoSlug } from "./demo";
 import { errorPage, notFoundPage, portfolioUnavailablePage } from "./html";
+import { joinPage, normalizeJoinCode } from "./join";
 import { privacyPage, termsPage } from "./legal";
 import { allowsIndexing, renderTourPage, unbrandedNoticePage, unbrandedSelfCheck } from "./player";
 import { renderPortfolioPage } from "./portfolio";
+import { sitemapXml } from "./sitemap";
+import { fetchUpstreamJSON } from "./upstream";
+import { spatialData, spatialModule, spatialPage } from "./spatial";
 
-const DEFAULT_TTL = 60; // seconds — published HTML can change on republish
+const DEFAULT_TTL = 60; // seconds — synthetic demo HTML only
 
 function ttl(env: Env): number {
   const n = Number(env.TOUR_CACHE_TTL);
@@ -62,7 +72,7 @@ function htmlResponse(
         "img-src 'self' https: data: blob:",
         "media-src 'self' https: data: blob:",
         "style-src 'self' 'unsafe-inline'",
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net",
         "worker-src 'self' blob:",
         "child-src 'self' blob:",
         "frame-src 'none'",
@@ -80,7 +90,7 @@ function htmlResponse(
         "media-src 'self' https: data: blob:",
         "style-src 'self' 'unsafe-inline'",
         // cdnjs = hls.js fallback; challenges.cloudflare.com = Turnstile widget.
-        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://challenges.cloudflare.com",
+        "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://challenges.cloudflare.com",
         "worker-src 'self' blob:",
         // Turnstile renders its challenge in an iframe from challenges.cloudflare.com.
         "child-src 'self' blob: https://challenges.cloudflare.com",
@@ -150,6 +160,64 @@ const APEX_HOST = "rendprop.com";
  * ("Always Use HTTPS" + a www→apex Redirect Rule) are still required; this is
  * the Worker's half of the fix and a safety net if a setting is ever toggled off.
  */
+/**
+ * apple-app-site-association — what makes a rendprop.com link open the iOS app
+ * instead of Safari.
+ *
+ * Apple fetches this over HTTPS PER HOST in the app's entitlement, does NOT
+ * follow redirects, and requires `application/json`. Both of those shape the
+ * routing below: it is answered before `canonicalRedirect`, so the www host
+ * serves its own copy rather than 301-ing to the apex, and it is served at the
+ * legacy root path as well as `/.well-known/` because older iOS versions only
+ * look at the root.
+ *
+ * `components` rather than the deprecated `paths` array (TN3155). `/u/*` is in
+ * here on purpose: the MLS-unbranded twin is the same tour, and a buyer who
+ * taps one inside the app is not in an MLS context - the page it loads is
+ * still the unbranded one, so the gate does not move.
+ *
+ * The appID is <TeamID>.<bundle id>. If either ever changes, this and
+ * apps/ios/Rendprop/Rendprop.entitlements change together or links silently
+ * stop opening the app - silently, because a failed AASA fetch looks exactly
+ * like a link that was never meant for an app.
+ */
+const AASA = JSON.stringify({
+  applinks: {
+    details: [
+      {
+        appIDs: ["5F5C5G25Y6.com.rendprop.app"],
+        components: [
+          { "/": "/f/*", comment: "a published tour" },
+          { "/": "/a/*", comment: "an agent's portfolio" },
+          // /join/* opens the app straight onto the Join sheet with the code
+          // already filled in. Without this entry the invite link only ever
+          // reaches Safari, and the agent is back to copying a code by hand —
+          // which is the exact complaint this whole path exists to answer.
+          { "/": "/join/*", comment: "a team invite" },
+          // /u/* is EXCLUDED, deliberately. It is the URL an agent puts in an
+          // MLS field because the MLS forbids agent branding and contact
+          // capture on it; opening it in the app wrapped a compliant page in
+          // branded chrome. An unbranded link stays a plain web page.
+          { "/": "/u/*", exclude: true,
+            comment: "MLS-unbranded — never open in the app" },
+        ],
+      },
+    ],
+  },
+});
+
+function aasaResponse(): Response {
+  return new Response(AASA, {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json",
+      // Short enough that a bundle-id or team-id change propagates the same
+      // day, long enough that it is not fetched on every cold start.
+      "Cache-Control": "public, max-age=3600",
+    },
+  });
+}
+
 function canonicalRedirect(url: URL): Response | null {
   const host = url.hostname.toLowerCase();
   const isApex = host === APEX_HOST;
@@ -180,20 +248,22 @@ function safeDecode(segment: string): string | null {
   }
 }
 
-/** Fetch JSON from a Supabase Edge Function with the anon key attached. */
-async function fetchSupabase(path: string, env: Env): Promise<Response> {
-  const key = env.SUPABASE_ANON_KEY || "";
-  return fetch(`${functionsBase(env)}${path}`, {
-    method: "GET",
-    headers: {
-      apikey: key,
-      Authorization: `Bearer ${key}`,
-      Accept: "application/json",
-    },
-    // Don't let the runtime cache the upstream API response; we manage our own
-    // edge cache on the rendered HTML.
-    cf: { cacheTtl: 0, cacheEverything: false },
-  });
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/** Minimum renderer contract, not a replacement for upstream field validation. */
+function isTour(value: unknown): value is Tour {
+  return isRecord(value) && typeof value.slug === "string" && value.slug.length > 0 &&
+    isRecord(value.listing) && isRecord(value.agent_card) && isRecord(value.cta) &&
+    Array.isArray(value.chapters) && value.chapters.every(isRecord);
+}
+
+function isPortfolio(value: unknown): value is Portfolio {
+  return isRecord(value) && isRecord(value.agent_card) &&
+    (value.org === undefined || isRecord(value.org)) &&
+    (value.tours === undefined || (Array.isArray(value.tours) && value.tours.every(isRecord))) &&
+    (value.listings === undefined || (Array.isArray(value.listings) && value.listings.every(isRecord)));
 }
 
 async function handleTour(
@@ -207,39 +277,45 @@ async function handleTour(
   const base = unbranded ? UNBRANDED_HEADERS : {};
   const notFound = () =>
     unbranded
-      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "public, max-age=30" }, { unbranded })
-      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
-  const upstreamError = () =>
+      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
+  const upstreamError = (status: 502 | 503 = 502) =>
     unbranded
-      ? htmlResponse(unbrandedFallback("error"), 502, { ...base, "Cache-Control": "no-store" }, { unbranded })
-      : htmlResponse(errorPage(), 502, { "Cache-Control": "no-store" });
+      ? htmlResponse(unbrandedFallback("error"), status, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(errorPage(), status, { "Cache-Control": "no-store" });
 
   // Slugs are nanoid (base64url) — reject anything else fast.
   if (!/^[A-Za-z0-9_-]{1,64}$/.test(slug)) {
     return unbranded
-      ? htmlResponse(unbrandedFallback("notfound"), 404, base, { unbranded })
-      : htmlResponse(notFoundPage(), 404);
+      ? htmlResponse(unbrandedFallback("notfound"), 404, { ...base, "Cache-Control": "no-store" }, { unbranded })
+      : htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
   }
 
   // ?embed=1 renders ONLY the flythrough hero (for the in-app "See it in
   // action" card); the full page is served otherwise. Keep separate cache keys.
   const embed = url.searchParams.has("embed");
+  const demo = isDemoSlug(slug);
   // The in-app card for a venue / bar / store / gym asks the demo to present
   // itself as a sample tour rather than a home listing (`?embed=1&space=venue`).
   // Only the demo slug honours it, only in embed mode, and only for a known
   // business type; it is part of the cache key so the two renders never mix.
-  const demoAs = embed && isDemoSlug(slug) ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
+  const demoAs = embed && demo ? demoSpaceFrom(url.searchParams.get("space")) : undefined;
 
-  const cache = caches.default;
+  // WH-05: changing only the response TTL leaves old cache hits reachable.
+  // Customer HTML must bypass both reads AND writes, including entries from a
+  // previous deployment. The explicit demo slugs have no revocable user data.
+  const cache = demo ? caches.default : null;
   const key = cacheKeyFor(url, `/${unbranded ? "u" : "f"}/${slug}${embed ? "?embed=1" : ""}${demoAs ? `&space=${demoAs}` : ""}`);
-  const hit = await cache.match(key);
-  if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+  if (cache) {
+    const hit = await cache.match(key);
+    if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+  }
 
   const renderOpts = { embed, unbranded, origin: url.origin };
 
   /** Render + (on `/u/`) refuse to serve anything that trips the self-check. */
   const finish = (tour: Tour): Response => {
-    const t = ttl(env);
+    const t = demo ? ttl(env) : 0;
     const html = renderTourPage(
       tour,
       functionsBase(env),
@@ -265,70 +341,93 @@ async function handleTour(
     const resp = htmlResponse(
       html,
       200,
-      { ...base, ...robots, "Cache-Control": `public, max-age=${t}, s-maxage=${t}` },
+      { ...base, ...robots, "Cache-Control": demo ? `public, max-age=${t}, s-maxage=${t}` : "no-store" },
       { unbranded },
     );
-    if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
+    if (cache && req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
     return req.method === "HEAD" ? new Response(null, resp) : resp;
   };
 
   // Demo tour — self-contained, no DB. Renders through the SAME renderer a real
   // listing uses, so rendprop.com/f/estate-demo IS the product (and powers the
   // in-app Home demo). /u/estate-demo is the MLS-safe cut of the same tour.
-  if (isDemoSlug(slug)) return finish(buildDemoTour(demoAs));
+  if (demo) return finish(buildDemoTour(demoAs));
 
-  let upstream: Response;
+  const upstream = await fetchUpstreamJSON(`/tours/${encodeURIComponent(slug)}`, env);
+  if (upstream.kind === "not-found") return notFound();
+  if (upstream.kind === "error") return upstreamError(upstream.status);
+  if (!isTour(upstream.value)) return upstreamError();
   try {
-    upstream = await fetchSupabase(`/tours/${encodeURIComponent(slug)}`, env);
+    return finish(upstream.value);
   } catch {
+    // A malformed nested field is an invalid upstream response, not a missing
+    // published tour. Never render its raw JSON/error text into the public page.
     return upstreamError();
   }
-
-  if (upstream.status === 404) return notFound();
-  if (!upstream.ok) return upstreamError();
-
-  let tour: Tour;
-  try {
-    tour = (await upstream.json()) as Tour;
-  } catch {
-    return upstreamError();
-  }
-  if (!tour || !tour.slug) return notFound();
-
-  return finish(tour);
 }
 
-async function handlePortfolio(handle: string, req: Request, url: URL, env: Env, ctx: ExecutionContext): Promise<Response> {
-  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404);
+async function handlePortfolio(handle: string, req: Request, url: URL, env: Env): Promise<Response> {
+  if (!/^[A-Za-z0-9_.-]{1,64}$/.test(handle)) return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
 
-  const cache = caches.default;
-  const key = cacheKeyFor(url, `/a/${handle}`);
-  const hit = await cache.match(key);
-  if (hit) return req.method === "HEAD" ? new Response(null, hit) : hit;
+  // The canonical and the structured data are absolute-URL affordances, so the
+  // renderer needs the handle this page was served at and the request origin.
+  const renderOpts = { handle, origin: url.origin };
 
-  // GET /portfolio/:handle is live (services/supabase/functions/portfolio) but
-  // stay graceful: any non-2xx / network error / malformed body → branded 404.
-  let data: Portfolio | null = null;
+  // The demo agent is fictional, so no org answers for the handle. Served
+  // from here for the same reason the demo TOUR is, and before the upstream
+  // lookup so it never depends on an upstream that cannot know about it.
+  if (isDemoHandle(handle)) {
+    const resp = htmlResponse(renderPortfolioPage(buildDemoPortfolio(), renderOpts), 200, {
+      "Cache-Control": "public, max-age=300",
+    });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
+
+  // A portfolio contains revocable customer addresses/photos/links too. Do not
+  // consult or refresh any customer HTML cached by an earlier deployment.
+
+  const upstream = await fetchUpstreamJSON(`/portfolio/${encodeURIComponent(handle)}`, env);
+  if (upstream.kind === "not-found") {
+    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "no-store" });
+  }
+  const upstreamError = (status: 502 | 503) => htmlResponse(errorPage("page"), status, { "Cache-Control": "no-store" });
+  if (upstream.kind === "error") return upstreamError(upstream.status);
+  if (!isPortfolio(upstream.value)) return upstreamError(502);
   try {
-    const upstream = await fetchSupabase(`/portfolio/${encodeURIComponent(handle)}`, env);
-    if (upstream.ok) {
-      data = (await upstream.json()) as Portfolio;
-    }
+    const resp = htmlResponse(renderPortfolioPage(upstream.value, renderOpts), 200, { "Cache-Control": "no-store" });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
   } catch {
-    data = null;
+    return upstreamError(502);
   }
+}
 
-  if (!data || !data.agent_card) {
-    return htmlResponse(portfolioUnavailablePage(handle), 404, { "Cache-Control": "public, max-age=30" });
-  }
-
-  const t = ttl(env);
-  const html = renderPortfolioPage(data);
-  const resp = htmlResponse(html, 200, {
-    "Cache-Control": `public, max-age=${t}, s-maxage=${t}`,
+/**
+ * GET /sitemap.xml — served by the Worker, not by Static Assets.
+ *
+ * `public/sitemap.xml` (a hand-maintained eight-URL file that never once named
+ * a real tour) was DELETED as part of this route: an exact file match under
+ * ./public is answered by Static Assets before this script runs, so leaving it
+ * in place would have made this handler unreachable.
+ *
+ * What it can and cannot enumerate today, and the upstream endpoint that would
+ * let it list real tours, are documented in src/sitemap.ts. Both of that file's
+ * hard rules — no `/u/` URL, and no tour that is not opted into indexing — are
+ * enforced by construction: this handler passes no tours at all, because there
+ * is no endpoint that can tell it which ones qualify.
+ *
+ * Cached for an hour at the edge and in the browser. A sitemap is polled by
+ * crawlers, not by people, and an hour is short enough that a newly published
+ * tour appears the same day once the upstream index exists.
+ */
+function sitemapResponse(url: URL): Response {
+  return new Response(sitemapXml(url.origin), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/xml; charset=utf-8",
+      "Cache-Control": "public, max-age=3600, s-maxage=3600",
+      "X-Content-Type-Options": "nosniff",
+    },
   });
-  if (req.method === "GET" && t > 0) ctx.waitUntil(cache.put(key, resp.clone()));
-  return req.method === "HEAD" ? new Response(null, resp) : resp;
 }
 
 async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -337,15 +436,51 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   }
 
   const url = new URL(req.url);
+  // BEFORE the canonical redirect: Apple does not follow redirects when it
+  // fetches the association file, and it fetches one per host, so www must
+  // answer for itself.
+  const rawPath = url.pathname.replace(/\/+$/, "") || "/";
+  if (rawPath === "/.well-known/apple-app-site-association" ||
+      rawPath === "/apple-app-site-association") {
+    const resp = aasaResponse();
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
+
   const canonical = canonicalRedirect(url);
   if (canonical) return canonical;
 
-  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const path = rawPath;
+
+  // Keep the discoverable apex entry pointed at the deployed browser app.
+  // The destination is fixed; query strings do not cross into the app.
+  if (path === "/studio") {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://studio.rendprop.com/",
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      },
+    });
+  }
+
+  if (path === "/spatial-viewer.js") {
+    const response = spatialModule();
+    return req.method === "HEAD" ? new Response(null, response) : response;
+  }
+  const spatial = path.match(/^\/s\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?:\/(manifest|model))?$/i);
+  if (spatial) {
+    const response = spatial[2]
+      ? await spatialData(req, env, spatial[1].toLowerCase(), spatial[2] as "manifest" | "model")
+      : spatialPage(spatial[1].toLowerCase());
+    return req.method === "HEAD" ? new Response(null, response) : response;
+  }
 
   const fMatch = path.match(/^\/f\/([^/]+)$/);
   if (fMatch) {
     const slug = safeDecode(fMatch[1]);
-    if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "public, max-age=30" });
+    if (slug === null) return htmlResponse(notFoundPage(), 404, { "Cache-Control": "no-store" });
     return handleTour(slug, req, url, env, ctx);
   }
 
@@ -357,7 +492,7 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
       return htmlResponse(
         unbrandedFallback("notfound"),
         404,
-        { ...UNBRANDED_HEADERS, "Cache-Control": "public, max-age=30" },
+        { ...UNBRANDED_HEADERS, "Cache-Control": "no-store" },
         { unbranded: true },
       );
     }
@@ -367,8 +502,28 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
   const aMatch = path.match(/^\/a\/([^/]+)$/);
   if (aMatch) {
     const handle = safeDecode(aMatch[1]);
-    if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "public, max-age=30" });
-    return handlePortfolio(handle, req, url, env, ctx);
+    if (handle === null) return htmlResponse(portfolioUnavailablePage("?"), 404, { "Cache-Control": "no-store" });
+    return handlePortfolio(handle, req, url, env);
+  }
+
+  // ── /join/<code> ─────────────────────────────────────────────────────────
+  // The landing page for a team invite. no-store and noindex because the URL
+  // carries a single-use code; the Worker never validates it (it has no
+  // database, and a page that told a stranger whether a code was real would be
+  // an oracle for guessing them) — acceptance stays in POST /team/accept.
+  if (path === "/join" || path.startsWith("/join/")) {
+    const fromPath = path === "/join" ? null : path.slice("/join/".length);
+    const code = normalizeJoinCode(fromPath ?? url.searchParams.get("code"));
+    const resp = htmlResponse(joinPage(code), code ? 200 : 404, {
+      "Cache-Control": "no-store",
+      "X-Robots-Tag": "noindex, nofollow",
+    });
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
+  }
+
+  if (path === "/sitemap.xml") {
+    const resp = sitemapResponse(url);
+    return req.method === "HEAD" ? new Response(null, resp) : resp;
   }
 
   // Legal pages — static HTML, cacheable for an hour.
@@ -463,7 +618,8 @@ function landingPage(): string {
   <p class="sub">A walkthrough video goes in. A smooth, drone-style tour comes out — with AI-enhanced
   photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
   <div>
-    <a class="pill" href="https://apps.apple.com/us/app/id6808982413">Download on the App Store</a>
+    <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
+    <a class="soon" href="https://studio.rendprop.com/">Open Studio</a>
     <span class="soon">Free on iPhone · iOS 16 or later</span>
   </div>
   <footer>

@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient {
+final class LiveAPIClient: APIClient, WorkspaceSyncAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -242,6 +242,29 @@ final class LiveAPIClient: APIClient {
     // Decoder built per call (JSONDecoder isn't Sendable — no shared static).
     // Decode failures surface as `APIError.decoding` (a readable message) rather
     // than the raw DecodingError text.
+    /// Decode a type that declares its OWN `CodingKeys`, with no key
+    /// conversion.
+    ///
+    /// `decode(_:)` below applies `.convertFromSnakeCase`, which converts each
+    /// JSON key to camelCase and THEN matches it against the CodingKey's
+    /// `stringValue`. A type that spells its keys out in snake_case therefore
+    /// never matches: `suggested_replies` becomes `suggestedReplies`, gets
+    /// compared to the literal `"suggested_replies"`, and the decode fails with
+    /// `keyNotFound`. The two mechanisms are mutually exclusive and the failure
+    /// is silent — `CoachResponse` had it, and every coach reply was thrown
+    /// away and replaced by the offline answer AFTER the server had already
+    /// called the model and billed for it.
+    ///
+    /// So: types with explicit keys come through here, types that rely on the
+    /// conversion come through `decode`. Never both.
+    private func decodeExact<T: Decodable>(_ data: Data) throws -> T {
+        do {
+            return try JSONDecoder().decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding
+        }
+    }
+
     private func decode<T: Decodable>(_ data: Data) throws -> T {
         let d = JSONDecoder()
         d.keyDecodingStrategy = .convertFromSnakeCase
@@ -272,15 +295,205 @@ final class LiveAPIClient: APIClient {
 
     // MARK: - Listings
 
+    // Spatial uses explicit CodingKeys throughout. The ordinary `decode` path
+    // rewrites those keys and previously hid real server responses in this app.
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob] {
+        struct Envelope: Decodable { let jobs: [SpatialJob] }
+        let data = try await execute(makeRequest(url: url(["spatial"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])))
+        let response: Envelope = try decodeExact(data)
+        return try response.jobs.map { try $0.validated() }
+    }
+    func spatialJob(id: UUID) async throws -> SpatialJob {
+        let data = try await execute(makeRequest(url: url(["spatial", id.uuidString])))
+        let response: SpatialJob = try decodeExact(data)
+        return try response.validated()
+    }
+    private func spatialBody<T: Encodable>(_ value: T) throws -> [String: Any] {
+        let data = try JSONEncoder().encode(value)
+        guard let body = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            throw SpatialClientError.invalidResponse
+        }
+        return body
+    }
+    private func spatialWrite(_ path: [String], body: [String: Any], key: String? = nil) async throws -> SpatialJob {
+        let data = try await execute(makeRequest(url: url(["spatial"] + path), method: "POST", json: body,
+                                                idempotency: Self.idempotency(key)))
+        let response: SpatialJob = try decodeExact(data)
+        return try response.validated()
+    }
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob {
+        try await spatialWrite([], body: spatialBody(request), key: operationID.uuidString)
+    }
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob {
+        struct Body: Encodable { let files: [SpatialInput] }
+        return try await spatialWrite([jobID.uuidString, "inputs"], body: spatialBody(Body(files: files)))
+    }
+    func startSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "start"], body: [:])
+    }
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "review"], body: spatialBody(review))
+    }
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "publish"], body: ["artifact_revision": artifactRevision.uuidString])
+    }
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "retry"], body: [:], key: operationID.uuidString)
+    }
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "cancel"], body: [:])
+    }
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob {
+        try await spatialWrite([id.uuidString, "resume"], body: [:])
+    }
+    func spatialCapability() async throws -> SpatialCapability {
+        // Same auth/headers as every other spatial GET; the body is the two
+        // pinned fields, decoded exactly (no key rewriting).
+        let data = try await execute(makeRequest(url: url(["spatial", "capability"])))
+        return try decodeExact(data)
+    }
+
     func listings() async throws -> [Listing] {
         let data = try await execute(makeRequest(url: url(["listings"])))
         let dtos: [ListingDTO] = try decode(data)
         return dtos.map(mapListing)
     }
 
+    /// Unlike the legacy native /listings route, a complete RLS read paginates
+    /// across all memberships. Count drift, duplicate IDs and partial pages
+    /// fail before AppModel applies anything to its saved library.
+    func cloudListings() async throws -> [Listing] {
+        let rows: [ListingDTO] = try await cloudRows(table: "listings", columns:
+            "id,org_id,space_type,address,tagline,details,price_cents,beds,baths,sqft,lat,lng,status,sold_at,zillow_url,main_photo_key,created_at", filters: [URLQueryItem(name: "deleted_at", value: "is.null")])
+        guard rows.allSatisfy({ $0.id.flatMap(UUID.init(uuidString:)) != nil && $0.orgId.flatMap(UUID.init(uuidString:)) != nil }),
+              Set(rows.compactMap(\.id)).count == rows.count else { throw CloudSyncError.invalidResponse }
+        var result = rows.map(mapListing)
+        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
+        let published: [PublishedDTO] = try await cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
+        guard Set(published.map(\.id)).count == published.count else { throw CloudSyncError.incomplete }
+        var newest: [UUID: PublishedDTO] = [:]
+        for render in published {
+            guard CloudListingMerge.date(render.publishedAt) != nil,
+                  render.slug.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw CloudSyncError.invalidResponse }
+            if let old = newest[render.listingId], (CloudListingMerge.date(old.publishedAt) ?? .distantPast) > (CloudListingMerge.date(render.publishedAt) ?? .distantPast) { continue }
+            newest[render.listingId] = render
+        }
+        for i in result.indices {
+            guard let sid = result[i].serverID, let published = newest[sid] else { continue }
+            result[i].shareSlug = published.slug
+            result[i].shareURL = "https://rendprop.com/f/\(published.slug)"
+            result[i].unbrandedShareURL = "https://rendprop.com/u/\(published.slug)"
+            result[i].publishedRenderID = published.id
+        }
+        return result
+    }
+
+    private func cloudRows<T: Decodable>(table: String, columns: String, filters: [URLQueryItem]) async throws -> [T] {
+        guard ["listings", "renders"].contains(table), let token = await AuthStore.validAccessToken() else { throw CloudSyncError.identityChanged }
+        let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision) }
+        guard fence.0 != nil else { throw CloudSyncError.identityChanged }
+        var root = base.deletingLastPathComponent().deletingLastPathComponent()
+        root.appendPathComponent("rest/v1/\(table)")
+        let size = 500
+        var total: Int?, offset = 0, bytes = 0, result: [T] = []
+        while true {
+            try Task.checkCancellation()
+            var components = URLComponents(url: root, resolvingAgainstBaseURL: false)!
+            components.queryItems = filters + [URLQueryItem(name: "select", value: columns), URLQueryItem(name: "order", value: "id.asc"), URLQueryItem(name: "limit", value: String(size)), URLQueryItem(name: "offset", value: String(offset))]
+            guard let target = components.url else { throw CloudSyncError.invalidResponse }
+            var request = makeRequest(url: target)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("count=exact", forHTTPHeaderField: "Prefer")
+            request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 30
+            let (data, response) = try await session.data(for: request)
+            let current = await MainActor.run { AuthStore.shared.isSignedIn && AuthStore.shared.userID == fence.0 && AuthStore.shared.syncSessionRevision == fence.1 }
+            guard current else { throw CloudSyncError.identityChanged }
+            guard let http = response as? HTTPURLResponse else { throw CloudSyncError.invalidResponse }
+            guard (200..<300).contains(http.statusCode) else { throw Self.serverError(status: http.statusCode, data: data) }
+            bytes += data.count
+            guard data.count <= 8 * 1024 * 1024, bytes <= 32 * 1024 * 1024,
+                  let range = http.value(forHTTPHeaderField: "Content-Range"), let countPart = range.split(separator: "/").last, let count = Int(countPart), count >= 0, count <= 10_000,
+                  total == nil || total == count else { throw CloudSyncError.incomplete }
+            total = count
+            let page: [T] = try decode(data)
+            let expected = min(size, count - offset)
+            guard expected >= 0, page.count == expected else { throw CloudSyncError.incomplete }
+            if expected > 0 {
+                guard range.hasPrefix("\(offset)-\(offset + expected - 1)/") else { throw CloudSyncError.incomplete }
+            } else if count != 0 || range != "*/0" { throw CloudSyncError.incomplete }
+            result += page; offset += page.count
+            if offset == count { return result }
+        }
+    }
+
+    func cloudListingState(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudListingState {
+        guard offset >= 0, offset <= 10000, offset % 100 == 0 else { throw CloudSyncError.invalidResponse }
+        var request = makeRequest(url: url(["studio", "listing-state"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        let decoded: CloudListingState = try decodeExact(data)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+    }
+    func cloudMedia(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudMediaPage {
+        guard offset >= 0, offset <= 10000, offset % 50 == 0 else { throw CloudSyncError.invalidResponse }
+        var request = makeRequest(url: url(["studio", "media"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "org_id", value: orgID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        let decoded: CloudMediaPage = try decodeExact(data)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+    }
+    func cloudBrand() async throws -> CloudBrand {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        guard let r = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let user = r["user"] as? [String: Any], let userRaw = user["id"] as? String, let userID = UUID(uuidString: userRaw),
+              let org = r["org"] as? [String: Any], let orgRaw = org["id"] as? String, let orgID = UUID(uuidString: orgRaw),
+              let type = org["space_type"] as? String else { throw CloudSyncError.invalidResponse }
+        let fields = (org["brand_kit"] as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
+        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields)
+    }
+    func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative {
+        var resultRequest = makeRequest(url: url(["studio", "creative-results"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]))
+        resultRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Results: Decodable { let results: [CloudCreative.Result] }
+        let results: Results = try decodeExact(try await execute(resultRequest))
+        guard results.results.count <= 100, Set(results.results.map(\.id)).count == results.results.count,
+              results.results.allSatisfy({ $0.listing_id == listingID && ["voice", "video"].contains($0.kind) && $0.words.count <= 20_000 && $0.words.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end >= $0.start && $0.text.count <= 1000 }) }) else { throw CloudSyncError.invalidResponse }
+        for result in results.results {
+            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice") }
+            else if result.url != nil { throw CloudSyncError.invalidResponse }
+        }
+        var documentRequest = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "creative:\(listingID.uuidString.lowercased())")]))
+        documentRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct DocumentEnvelope: Decodable {
+            struct Document: Decodable { struct Payload: Decodable { let script: String }; let listing_id: UUID; let payload: Payload }
+            let document: Document?
+        }
+        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest))
+        if let document = document.document { guard document.listing_id == listingID, document.payload.script.count <= 100_000 else { throw CloudSyncError.invalidResponse } }
+        return CloudCreative(script: document.document?.payload.script ?? "", results: results.results)
+    }
+
+    func cloudNativeReel(listingID: UUID, orgID: UUID) async throws -> CloudNativeReelDocument? {
+        var request = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "native:\(listingID.uuidString.lowercased())")]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudNativeReelDocument? }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document?.checked(listingID: listingID)
+    }
+    func saveCloudNativeReel(_ draft: NativeReelDraft, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudNativeReelDocument {
+        _ = try draft.checked()
+        guard revision >= 0, revision < 2_147_483_646 else { throw CloudSyncError.invalidResponse }
+        let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft))
+        var request = makeRequest(url: url(["studio", "documents"]), method: "POST", json: ["key": "native:\(listingID.uuidString.lowercased())", "kind": "native", "listing_id": listingID.uuidString.lowercased(), "expected_revision": revision, "payload": payload])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudNativeReelDocument }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document.checked(listingID: listingID)
+    }
+
     func createListing(_ listing: Listing) async throws -> Listing {
         let data = try await execute(makeRequest(url: url(["listings"]), method: "POST",
-                                                 json: listingBody(listing, forPatch: false)))
+                                                 json: listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())")))
         return mapListing(try decode(data))
     }
 
@@ -313,12 +526,23 @@ final class LiveAPIClient: APIClient {
         if let contentType, !contentType.isEmpty { body["content_type"] = contentType }
         let data = try await execute(makeRequest(url: url(["uploads"]), method: "POST", json: body,
                                                  idempotency: Self.idempotency(idempotencyKey)))
+        return try uploadTicket(data)
+    }
+
+    private func uploadTicket(_ data: Data) throws -> UploadTicket {
         let dto: UploadTicketDTO = try decode(data)
         let mode = UploadTicket.Mode(rawValue: dto.mode ?? "single") ?? .single
         return UploadTicket(assetID: dto.assetId, mode: mode,
                             putURL: dto.putUrl, uploadID: dto.uploadId,
                             partSize: dto.partSize, partCount: dto.partCount,
-                            storageKey: dto.storageKey)
+                            storageKey: dto.storageKey, transportVersion: dto.transportVersion,
+                            uploaded: dto.uploaded, replayed: dto.replayed, confirmedParts: dto.confirmedParts)
+    }
+
+    func renewUpload(assetID: String) async throws -> UploadTicket {
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "renew"]),
+                                                 method: "POST", json: [:]))
+        return try uploadTicket(data)
     }
 
     func fetchPartURLs(assetID: String, numbers: [Int]) async throws -> [Int: URL] {
@@ -356,8 +580,12 @@ final class LiveAPIClient: APIClient {
     }
 
     func abortUpload(assetID: String) async throws {
-        _ = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
-                                          method: "POST", json: [:]))
+        let data = try await execute(makeRequest(url: url(["uploads", assetID, "abort"]),
+                                                 method: "POST", json: [:]))
+        // A 2xx alone does not authorize replacing the reservation. The explicit
+        // acknowledgement also survives a lost reply and repeated cancellation.
+        let receipt: UploadAbortReceipt = try decodeExact(data)
+        guard receipt.isConfirmed else { throw APIError.decoding }
     }
 
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket] {
@@ -609,17 +837,28 @@ final class LiveAPIClient: APIClient {
         return Array(mapped.prefix(3))
     }
 
-    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String {
-        let rough = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
-        // `improve_prompt` is TEXT-ONLY server-side (ai-photo/index.ts asserts
-        // only `prompt`; `improvePrompt(rough, profile)` never reads an image),
-        // so the photo is deliberately NOT sent — uploading several MB over
-        // cellular for a call that ignores them was audit F-E-16. The parameter
-        // stays in the signature so callers don't have to change.
-        let body: [String: Any] = ["edit": "improve_prompt",
-                                   "prompt": String(rough.prefix(300)),   // contract: rough idea ≤ 300
+    // MARK: - AI copy (ai-copy edge function — the two prompt assists)
+
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String {
+        let idea = rough.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Text in, text out — and now nothing else. The photo was already off
+        // the wire (audit F-E-16), but the CALLER went on encoding a 1024 px
+        // JPEG for it on the main path, so both ends of that dead work are gone
+        // and the parameter with them.
+        var body: [String: Any] = ["rough": String(idea.prefix(300)),   // contract: ≤ 300
                                    "space_type": SpaceType.current.rawValue]
-        let data = try await execute(makeRequest(url: url(["ai-photo"]), method: "POST", json: body,
+        // The area the photo shows, when the app knows it. Bounded to the
+        // contract's 60 because it is a label ("Primary bath"), not prose.
+        if let hint = roomHint?.trimmingCharacters(in: .whitespacesAndNewlines), !hint.isEmpty {
+            body["room_hint"] = String(hint.prefix(60))
+        }
+        // Scopes the fair-housing gate to this listing's REAL space type
+        // (contract §5). Absent = the strictest rules, which is fail-closed and
+        // right for a home but would refuse a restaurant's "family-style patio".
+        if let listingServerID { body["listing_id"] = listingServerID.uuidString }
+        let data = try await execute(makeRequest(url: url(["ai-copy", "edit-prompt"]),
+                                                 method: "POST", json: body,
                                                  idempotency: .perAttempt),
                                      session: aiSession)
         struct Resp: Decodable { let prompt: String? }
@@ -631,7 +870,258 @@ final class LiveAPIClient: APIClient {
         return improved
     }
 
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+
+        // Only facts that are actually SET go on the wire. A venue has no beds,
+        // and "beds: 0" reads to a language model as a studio apartment — an
+        // absent key is unambiguous in a way that a zero never is.
+        var facts: [String: Any] = [:]
+        if let beds = request.facts.beds, beds > 0 { facts["beds"] = beds }
+        if let baths = request.facts.baths, baths.isFinite, baths > 0 { facts["baths"] = baths }
+        if let sqft = request.facts.sqft, sqft > 0 { facts["sqft"] = sqft }
+        if let price = clean(request.facts.priceLabel) { facts["price_label"] = String(price.prefix(40)) }
+        if let tagline = clean(request.facts.tagline) { facts["tagline"] = String(tagline.prefix(200)) }
+        // City/state only. There is no address key here and there must never be
+        // one — see the header on `AICopyFacts`.
+        if let region = clean(request.facts.region) { facts["region"] = String(region.prefix(120)) }
+
+        // Owner-typed free text, so it is bounded on the way out: this is a
+        // prompt, not a database dump, and a pasted essay in one detail field
+        // must not crowd out the rest of the listing.
+        var details: [String: String] = [:]
+        for (rawKey, rawValue) in request.facts.details.sorted(by: { $0.key < $1.key }) {
+            guard details.count < 12 else { break }
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            details[String(key.prefix(40))] = String(value.prefix(80))
+        }
+        if !details.isEmpty { facts["details"] = details }
+
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "facts": facts,
+            "photo_count": max(0, request.photoCount),
+            // The contract's window. Clamped here rather than trusted: a reel
+            // with one clip and a reel with twenty both have to produce a
+            // request the server will answer.
+            "target_seconds": min(45, max(10, request.targetSeconds)),
+        ]
+        let tags: [String] = request.roomTags
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(12)
+            .map { String($0.prefix(40)) }
+        if !tags.isEmpty { body["room_tags"] = tags }
+        if let tone = clean(request.tone) { body["tone"] = tone }
+        if let listingID = request.listingServerID { body["listing_id"] = listingID.uuidString }
+
+        let data = try await execute(makeRequest(url: url(["ai-copy", "script"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        // Every field optional and every NUMBER read as a Double: an integer
+        // JSON number decodes into a Double, a float does too, and a server
+        // that starts sending `12.0` for a count must not fail the whole
+        // response over the shape of a convenience field.
+        struct Resp: Decodable {
+            let script: String?
+            let characters: Double?
+            let estimatedSeconds: Double?
+            let model: String?
+        }
+        let r: Resp = try decode(data)
+        guard let script = clean(r.script) else {
+            throw APIError.decoding   // no words — nothing to put in the field
+        }
+        // The counts are conveniences, not truth. A missing or NaN count must
+        // not leave the UI showing "0 characters" over a script that plainly
+        // has some, so both fall back to something computed from the script
+        // itself.
+        var characters = script.count
+        // Bounded before the Int conversion: `Int(someHugeDouble)` traps, and a
+        // number this UI only prints is not worth a crash.
+        if let c = r.characters, c.isFinite, c > 0 { characters = Int(min(c, 1_000_000).rounded()) }
+        var seconds = Double(characters) / AIScriptResult.charactersPerSecond
+        if let s = r.estimatedSeconds, s.isFinite, s > 0 { seconds = s }
+        return AIScriptResult(script: script,
+                              characters: characters,
+                              estimatedSeconds: seconds,
+                              model: clean(r.model) ?? "AI")
+    }
+
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList {
+        func clean(_ s: String?) -> String? {
+            guard let t = s?.trimmingCharacters(in: .whitespacesAndNewlines), !t.isEmpty else { return nil }
+            return t
+        }
+
+        // The photos, in reel order. `photo_id` is opaque to the server and comes
+        // straight back on each shot; that is the whole matching mechanism, so it
+        // is bounded but never rewritten.
+        // The wire key is `id`, and the response's `photo_id` echoes it — that is
+        // the ONLY thing the plan is matched on, so it is bounded but never
+        // rewritten (COPY-ASSIST-CONTRACT §1.2, §4.5). Order is positional: the
+        // array order IS the tap order, which the planner uses as its tiebreak.
+        var photos: [[String: Any]] = []
+        for photo in request.photos.prefix(20) {
+            let id = photo.id.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !id.isEmpty else { continue }
+            var entry: [String: Any] = ["id": String(id.prefix(80))]
+            if let room = clean(photo.room) { entry["room"] = String(room.prefix(40)) }
+            photos.append(entry)
+        }
+        guard !photos.isEmpty else {
+            throw APIError.server(status: 400, code: "validation",
+                                  message: "Pick the photos for your reel first — the shot plan is written for them.")
+        }
+
+        // Identical fact packing to `aiCopyScript`, and identically bounded: only
+        // facts that are actually SET go on the wire, because "beds: 0" reads to a
+        // language model as a studio apartment while an absent key reads as
+        // "not applicable".
+        var facts: [String: Any] = [:]
+        if let beds = request.facts.beds, beds > 0 { facts["beds"] = beds }
+        if let baths = request.facts.baths, baths.isFinite, baths > 0 { facts["baths"] = baths }
+        if let sqft = request.facts.sqft, sqft > 0 { facts["sqft"] = sqft }
+        if let price = clean(request.facts.priceLabel) { facts["price_label"] = String(price.prefix(40)) }
+        if let tagline = clean(request.facts.tagline) { facts["tagline"] = String(tagline.prefix(200)) }
+        // City/state only. There is no address key here and there must never be
+        // one — see the header on `AICopyFacts`.
+        if let region = clean(request.facts.region) { facts["region"] = String(region.prefix(120)) }
+
+        var details: [String: String] = [:]
+        for (rawKey, rawValue) in request.facts.details.sorted(by: { $0.key < $1.key }) {
+            guard details.count < 12 else { break }
+            let key = rawKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !key.isEmpty, !value.isEmpty else { continue }
+            details[String(key.prefix(40))] = String(value.prefix(80))
+        }
+        if !details.isEmpty { facts["details"] = details }
+
+        // Exactly the four documented keys plus the two optional ones. The route
+        // takes no `room_tags` and no `photo_count`, and sending fields a
+        // contract does not list is how a client ends up depending on one.
+        var body: [String: Any] = [
+            "space_type": request.spaceType,
+            "facts": facts,
+            "photos": photos,
+            "target_seconds": min(45, max(10, request.targetSeconds)),
+        ]
+        if let tone = clean(request.tone) { body["tone"] = tone }
+        if let listingID = request.listingServerID { body["listing_id"] = listingID.uuidString }
+
+        let data = try await execute(makeRequest(url: url(["ai-copy", "shotlist"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .perAttempt),
+                                     session: aiSession)
+        // Every field optional and every NUMBER a Double, for the same reason the
+        // script route reads them that way: an integer JSON number decodes into a
+        // Double, a float does too, and a server that starts sending `5.0` for a
+        // count must not fail the whole response over the shape of a convenience
+        // field.
+        struct ShotDTO: Decodable {
+            let photoId: String?
+            let order: Double?
+            let motion: String?
+            let room: String?
+            let onScreenText: String?
+            let seconds: Double?
+            let voiceLine: String?
+        }
+        struct Resp: Decodable {
+            let shots: [ShotDTO]?
+            let script: String?
+            let characters: Double?
+            let estimatedSeconds: Double?
+            let model: String?
+        }
+        let r: Resp = try decode(data)
+        guard let script = clean(r.script) else {
+            throw APIError.decoding   // no words — nothing to put in the field
+        }
+
+        // A shot with no photo_id cannot be matched to a picture, so it is
+        // dropped rather than guessed at: a caption on the wrong room is worse
+        // than no caption. Order falls back to the array position.
+        var shots: [AIShot] = []
+        for (index, dto) in (r.shots ?? []).enumerated() {
+            guard let photoID = clean(dto.photoId) else { continue }
+            // `order` is 1-based on the wire; the array position is the fallback
+            // and is 0-based, so it is shifted to match rather than mixing two
+            // numbering schemes in one sort.
+            var order = index + 1
+            if let o = dto.order, o.isFinite, o >= 0, o < 1_000 { order = Int(o.rounded()) }
+            var seconds: Double? = nil
+            // The composer trims or holds to reach this, so a nonsense value is
+            // worse than none. 2…12 is the Seedance duration enum and therefore
+            // the whole believable range for one shot.
+            if let raw = dto.seconds, raw.isFinite, raw >= 2, raw <= 12 { seconds = raw }
+            // A move this app's video route cannot render is dropped, not passed
+            // on — see `AIShot.renderableMotions` for which way that drift cuts.
+            var motion: String? = nil
+            if let named = clean(dto.motion), AIShot.renderableMotions.contains(named) {
+                motion = named
+            }
+            shots.append(AIShot(photoID: photoID,
+                                order: order,
+                                motion: motion,
+                                room: clean(dto.room).map { String($0.prefix(40)) },
+                                onScreenText: clean(dto.onScreenText).map { String($0.prefix(60)) },
+                                seconds: seconds,
+                                voiceLine: clean(dto.voiceLine).map { String($0.prefix(300)) }))
+        }
+        // Sorted by the PLANNER's order, not the order the photos were tapped in:
+        // it opens on the best establishing shot and closes on the best CTA
+        // frame, and the caller reorders its own clips to match.
+        shots.sort { $0.order < $1.order }
+
+        var characters = script.count
+        // Bounded before the Int conversion: `Int(someHugeDouble)` traps, and a
+        // number this UI only prints is not worth a crash.
+        if let c = r.characters, c.isFinite, c > 0 { characters = Int(min(c, 1_000_000).rounded()) }
+        var estimated = Double(characters) / AIScriptResult.charactersPerSecond
+        if let e = r.estimatedSeconds, e.isFinite, e > 0 { estimated = e }
+        return AIShotList(shots: shots, script: script, characters: characters,
+                          estimatedSeconds: estimated, model: clean(r.model) ?? "AI")
+    }
+
     // MARK: - AI video (ai-video edge function — async fal submit + poll)
+
+    func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote {
+        let target = url(["ai-video", "declutter", "quote"],
+                         query: [URLQueryItem(name: "listing_id", value: listingID.uuidString)])
+        return try decode(await execute(makeRequest(url: target), session: aiSession))
+    }
+
+    func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
+                           idempotencyKey: UUID) async throws -> AIVideoJob {
+        try await submitAIVideo(path: "declutter", body: [
+            "asset_id": assetID, "listing_id": listingID.uuidString,
+            "batch_id": batchID.uuidString, "purpose": "reflection_removal",
+            "prompt": "the photographer and people reflected in mirrors or windows"
+        ], fallbackKind: "declutter", idempotencyKey: idempotencyKey.uuidString)
+    }
+
+    func cancelReflectionBatch(_ batchID: UUID) async throws {
+        _ = try await execute(makeRequest(url: url(["ai-video", "declutter", "cancel"]),
+                                           method: "POST", json: ["batch_id": batchID.uuidString]), session: aiSession)
+    }
+
+    func applyReflectionBatch(_ batchID: UUID, originalAssetID: String,
+                              alteredAssetID: String) async throws -> ReflectionApplication {
+        let data = try await execute(makeRequest(url: url(["ai-video", "declutter", "apply"]),
+                                                  method: "POST", json: [
+            "batch_id": batchID.uuidString, "original_asset_id": originalAssetID,
+            "altered_asset_id": alteredAssetID
+        ]), session: aiSession)
+        return try decode(data)
+    }
 
     func aiVideoDrone(assetID: String, tier: String, targetFps: Int?,
                       idempotencyKey: String?) async throws -> AIVideoJob {
@@ -678,12 +1168,27 @@ final class LiveAPIClient: APIClient {
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         var body: [String: Any] = ["image_b64": imageBase64, "mime": mime, "seconds": seconds]
         if let prompt, !prompt.trimmingCharacters(in: .whitespaces).isEmpty {
             body["prompt"] = prompt
         }
+        // The shot plan's fields. Each one is written ONLY when it has a value:
+        // an absent `motion` is the signal that the server should use its own
+        // space-aware default, and a key present with an empty string is not the
+        // same signal.
+        if let motion = motion?.trimmingCharacters(in: .whitespacesAndNewlines), !motion.isEmpty {
+            body["motion"] = String(motion.prefix(200))
+        }
+        if let room = room?.trimmingCharacters(in: .whitespacesAndNewlines), !room.isEmpty {
+            body["room"] = String(room.prefix(40))
+        }
+        // Bounded on the way out: these are a position in a reel of at most nine
+        // clips, not an arbitrary integer.
+        if let shotIndex, shotIndex >= 0, shotIndex < 100 { body["shot_index"] = shotIndex }
+        if let shotCount, shotCount > 0, shotCount <= 100 { body["shot_count"] = shotCount }
         if let listingServerID { body["listing_id"] = listingServerID.uuidString }
         if let label = label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
             body["label"] = String(label.prefix(80))
@@ -737,12 +1242,57 @@ final class LiveAPIClient: APIClient {
                 throw APIError.decoding   // completed but no video url
             }
             return .completed(videoURL: videoURL)
-        case "failed":
+        case "failed", "cancelled":
             return .failed(dto.error ?? "The AI video job failed.")
         default:
             // "processing" and anything unknown → keep polling (tolerant decode).
             return .processing(queuePosition: dto.queuePosition)
         }
+    }
+
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict {
+        var body: [String: Any] = [
+            "request_id": String(request.requestID.prefix(200)),
+            "kind": request.kind,
+            "source_b64": request.sourceBase64,
+            "source_mime": request.sourceMime,
+            "frames": request.frames.map { f in
+                ["at": f.at,
+                 "b64": f.jpeg.base64EncodedString(),
+                 "mime": "image/jpeg"] as [String: Any]
+            },
+            "attempt": max(1, min(3, request.attempt)),
+        ]
+        if let s = request.seconds { body["seconds"] = s }
+        if let m = request.motion, !m.isEmpty { body["motion"] = m }
+        if let r = request.room, !r.isEmpty { body["room"] = String(r.prefix(40)) }
+        if let s = request.spaceType, !s.isEmpty { body["space_type"] = s }
+        if let id = request.listingServerID { body["listing_id"] = id.uuidString }
+        if let p = request.provenanceID, !p.isEmpty { body["provenance_id"] = p }
+
+        let data = try await execute(makeRequest(url: url(["ai-video", "drift"]),
+                                                 method: "POST", json: body,
+                                                 idempotency: .key("drift:\(request.requestID):\(request.attempt)")),
+                                     session: aiSession)
+        // Tolerant on purpose, and tolerant TOWARDS HOLDING: an unknown or
+        // missing status decodes to `.unavailable`, never to a pass. The
+        // server owns `publishable`; nothing here derives it from the scores.
+        struct DriftBlockDTO: Decodable {
+            let status: String?
+            let publishable: Bool?
+            let action: String?
+            let message: String?
+            let reason: String?
+        }
+        struct DriftDTO: Decodable { let drift: DriftBlockDTO? }
+        let dto: DriftDTO = try decode(data)
+        let b = dto.drift
+        let status = DriftVerdict.Status(rawValue: (b?.status ?? "").lowercased()) ?? .unavailable
+        return DriftVerdict(status: status,
+                            publishable: (b?.publishable ?? false) && status == .pass,
+                            action: b?.action ?? "hold",
+                            message: b?.message ?? "",
+                            reason: b?.reason)
     }
 
     // MARK: - AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
@@ -817,7 +1367,8 @@ final class LiveAPIClient: APIClient {
             durationSource: clean(dto.durationSource) ?? "unknown",
             disclosure: clean(dto.disclosure),
             provenanceID: dto.provenance?.id,
-            provenanceRecorded: dto.provenance?.recorded ?? false)
+            provenanceRecorded: dto.provenance?.recorded ?? false,
+            sharedResultID: dto.sharedResultId.flatMap(UUID.init(uuidString:)))
     }
 
     // MARK: - AI room chapters (docs/AI-CHAPTERS-CONTRACT.md)
@@ -903,8 +1454,17 @@ final class LiveAPIClient: APIClient {
             "space_type": request.spaceType,
             "context": context,
         ]
-        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body))
-        return try decode(data)
+        // `aiSession`, not the default one: this asks Claude a question with a
+        // system prompt and up to 25 listings of context behind it, and every
+        // other model-backed route on this client already uses the longer
+        // timeout. The default 60 s was one slow answer away from throwing away
+        // a reply the server had already paid for.
+        let data = try await execute(makeRequest(url: url(["coach"]), method: "POST", json: body),
+                                     session: aiSession)
+        // decodeExact, NOT decode: `CoachResponse` spells its own CodingKeys in
+        // snake_case, which `.convertFromSnakeCase` cannot match. See the note
+        // on `decodeExact`.
+        return try decodeExact(data)
     }
 
     // MARK: - Account / usage / leads
@@ -971,6 +1531,50 @@ final class LiveAPIClient: APIClient {
         // Let the Account row show the server-side name (never an email).
         await AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
         return summary
+    }
+
+    func propertyLookup(address: String) async throws -> PropertyLookup {
+        let target = url(["property"], query: [URLQueryItem(name: "address", value: address)])
+        // `aiSession`: a third-party record lookup is a network hop behind our
+        // own, and the default 60 s is the timeout that already threw away a
+        // paid coach reply once.
+        let data = try await execute(makeRequest(url: target), session: aiSession)
+        struct FactsDTO: Decodable {
+            let matchedAddress: String?
+            let beds: Double?
+            let baths: Double?
+            let sqft: Double?
+            let lotSqft: Double?
+            let yearBuilt: Double?
+            let propertyType: String?
+            let lastSalePriceCents: Double?
+            let lastSaleDate: String?
+        }
+        struct DTO: Decodable {
+            let configured: Bool?
+            let cached: Bool?
+            let source: String?
+            let facts: FactsDTO?
+        }
+        // Every number decodes as Double for the reason the shotlist route does:
+        // an integer JSON number decodes into a Double and a float does too, so
+        // a provider that starts sending `3.0` for a bedroom count must not fail
+        // the whole lookup over the shape of a convenience field.
+        let dto: DTO = try decode(data)
+        guard dto.configured == true else { return PropertyLookup(configured: false) }
+        let f = dto.facts.map { d in
+            PropertyFacts(matchedAddress: d.matchedAddress,
+                          beds: d.beds.map { Int($0.rounded()) },
+                          baths: d.baths,
+                          sqft: d.sqft.map { Int($0.rounded()) },
+                          lotSqft: d.lotSqft.map { Int($0.rounded()) },
+                          yearBuilt: d.yearBuilt.map { Int($0.rounded()) },
+                          propertyType: d.propertyType,
+                          lastSalePriceCents: d.lastSalePriceCents.map { Int($0.rounded()) },
+                          lastSaleDate: d.lastSaleDate)
+        }
+        return PropertyLookup(configured: true, cached: dto.cached ?? false,
+                              source: dto.source, facts: f)
     }
 
     func leads(listingServerID: UUID?) async throws -> [Lead] {
@@ -1089,8 +1693,25 @@ final class LiveAPIClient: APIClient {
         put("sqft", l.sqft, when: l.sqft > 0)
         let tagline = l.tagline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         put("tagline", tagline, when: !tagline.isEmpty)
-        if let d = l.details, !d.isEmpty {
-            b["details"] = d
+        // `details` is the freeform jsonb bag `listings` accepts whole (it only
+        // checks that it is an object under the size cap) and the tour host
+        // reads its per-listing prefs out of. The search-engine answer rides in
+        // it under `allow_indexing` — the first key `allowsIndexing()` looks
+        // for, read from the LISTING's bag before the org brand kit, so the
+        // answer given for this tour wins (services/edge/tour-host/src/player.ts).
+        //
+        // Written as the string "true"/"false" because this bag is typed
+        // [String: String] end to end; `prefFlag` parses both spellings. "false"
+        // is sent EXPLICITLY rather than omitted, so a workspace-level opt-in
+        // can never quietly index a page whose owner said no. A server that
+        // does nothing with the key stores it harmlessly — publishing is
+        // unaffected either way.
+        var details = l.details ?? [:]
+        if let allow = l.allowSearchIndexing {
+            details[Listing.searchIndexingKey] = allow ? "true" : "false"
+        }
+        if !details.isEmpty {
+            b["details"] = details
         } else if forPatch {
             b["details"] = [String: String]()   // column is NOT NULL default '{}'
         }
@@ -1159,6 +1780,11 @@ final class LiveAPIClient: APIClient {
             details: dto.details?.value
         )
         l.serverID = serverID
+        l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
+        l.cloudCreateReplayed = dto.createReplayed
+        if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
+            l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
+        }
         return l
     }
 
@@ -1178,7 +1804,7 @@ final class LiveAPIClient: APIClient {
             extra: dto.extra?.value,
             createdAt: Self.parseDate(dto.createdAt) ?? Date(),
             source: clean(dto.source),
-            listingAddress: clean(dto.listingAddress))
+            listingAddress: clean(dto.listingAddress), status: clean(dto.status))
     }
 
     /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
@@ -1259,6 +1885,8 @@ final class LiveAPIClient: APIClient {
 
     private struct ListingDTO: Decodable {
         let id: String?
+        let orgId: String?
+        let createReplayed: Bool?
         let spaceType: String?
         let address: String?
         let tagline: String?
@@ -1284,6 +1912,10 @@ final class LiveAPIClient: APIClient {
         let partSize: Int64?
         let partCount: Int?
         let storageKey: String?
+        let transportVersion: Int?
+        let uploaded: Bool?
+        let replayed: Bool?
+        let confirmedParts: [UploadTicket.ConfirmedPart]?
     }
 
     private struct PartURLsDTO: Decodable {
@@ -1419,6 +2051,7 @@ final class LiveAPIClient: APIClient {
         let characters: LenientInt?
         let disclosure: String?
         let provenance: ProvenanceEnvelopeDTO?
+        let sharedResultId: String? // shared_result_id; only present after a private history receipt
     }
 
     /// Body of POST /ai-chapters. Every field optional → tolerant decode; the
@@ -1468,6 +2101,11 @@ final class LiveAPIClient: APIClient {
             let name: String?
             let handle: String?
             let plan: String?
+            /// `space_type` — the industry the server sizes the free week by
+            /// (migration 0044). The app sends it (PATCH /me/brand, see
+            /// `AppModel.syncSpaceTypeIfNeeded`); decoded tolerantly here so a
+            /// server without the column changes nothing.
+            let spaceType: String?
             let brandKit: BrandKit?
         }
         struct Entitlement: Decodable {
@@ -1520,5 +2158,6 @@ final class LiveAPIClient: APIClient {
         let createdAt: String?
         let source: String?
         let listingAddress: String?
+        let status: String?
     }
 }

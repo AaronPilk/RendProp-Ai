@@ -1,0 +1,538 @@
+{
+  "schema": 1,
+  "assembledAt": "2026-09-14T18:23:21.736372+00:00",
+  "release": {
+    "bundleId": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "27",
+    "appStoreConnectAppId": "6808982413",
+    "status": "available for internal TestFlight testing"
+  },
+  "appStoreConnect": {
+    "verifiedAt": "2026-09-14T18:21:05.943164+00:00",
+    "mode": "read-only ASC GET",
+    "buildId": "8fe9ea6c-e301-4b17-976e-af3000bc9dd1",
+    "attributes": {
+      "version": "27",
+      "processingState": "VALID",
+      "uploadedDate": "2026-09-14T11:15:58-07:00",
+      "expired": false,
+      "expirationDate": "2026-12-13T10:15:58-08:00",
+      "usesNonExemptEncryption": false
+    },
+    "relationships": {
+      "preReleaseVersion": {
+        "id": "948eb9eb-da15-4aba-9f71-681615a4e934",
+        "type": "preReleaseVersions",
+        "attributes": {
+          "version": "1.0.3",
+          "platform": "IOS"
+        }
+      },
+      "buildBetaDetail": {
+        "id": "8fe9ea6c-e301-4b17-976e-af3000bc9dd1",
+        "type": "buildBetaDetails",
+        "attributes": {
+          "autoNotifyEnabled": true,
+          "internalBuildState": "IN_BETA_TESTING",
+          "externalBuildState": "READY_FOR_BETA_SUBMISSION"
+        }
+      }
+    },
+    "mutations": false
+  },
+  "archiveAndUpload": {
+    "status": "uploaded",
+    "sourceReceiptLocation": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-studio-build27-xgiys7e6/receipt.json",
+    "sourceReceiptSha256": "402421facb65a67e92fed5c6d5165318aceb942ac7e97bb62b24f2fa6eb2de1d",
+    "sourceReceipt": {
+      "version": "1.0.3",
+      "build": "27",
+      "status": "uploaded",
+      "workDirectory": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-studio-build27-xgiys7e6",
+      "updatedAt": "2026-09-14T18:15:08.184785+00:00",
+      "archivePath": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-studio-build27-xgiys7e6/Rendprop.xcarchive"
+    },
+    "archivedAppInfo": {
+      "CFBundleIdentifier": "com.rendprop.app",
+      "CFBundleShortVersionString": "1.0.3",
+      "CFBundleVersion": "27"
+    },
+    "archive": {
+      "sourceLocation": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-studio-build27-xgiys7e6/archive.log",
+      "sha256": "2bb29b59a1bbd53886c07e30d6b21db9125d660398848985f60b2e50a57eeb43",
+      "statusLines": [
+        "** ARCHIVE SUCCEEDED **"
+      ]
+    },
+    "upload": {
+      "sourceLocation": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-studio-build27-xgiys7e6/upload.log",
+      "sha256": "457ee7e4f4dae146943df167367b0b28f2e99e98056baa3eac1d36a80590b172",
+      "statusLines": [
+        "2026-09-14 14:15:08.173 xcodebuild[55561:155890191] Progress 100%: Upload succeeded.",
+        "Uploaded Rendprop",
+        "** EXPORT SUCCEEDED **"
+      ]
+    }
+  },
+  "simulatorBuild": {
+    "status": "passed",
+    "configuration": "Debug",
+    "sdk": "iphonesimulator",
+    "workingDirectory": "apps/ios",
+    "command": [
+      "xcodebuild",
+      "-project",
+      "Rendprop.xcodeproj",
+      "-scheme",
+      "Rendprop",
+      "-sdk",
+      "iphonesimulator",
+      "-configuration",
+      "Debug",
+      "-derivedDataPath",
+      "${DERIVED_DATA}",
+      "CODE_SIGNING_ALLOWED=NO",
+      "build"
+    ],
+    "log": {
+      "sourceLocation": "/tmp/rendprop-studio-native-build27.log",
+      "sha256": "545598a15fce8f959cf44467a0e5931b9a2b802cb2f5bbc4a90dc978633a9e32",
+      "statusLines": [
+        "** BUILD SUCCEEDED **"
+      ]
+    },
+    "scope": "Build 27 native sources compiled before the marketing-version-only change to 1.0.3; the successful signed archive above validates final 1.0.3/27."
+  },
+  "nativeSync": {
+    "status": "passed",
+    "assertions": 55,
+    "compileExitCode": 0,
+    "runExitCode": 0,
+    "output": "PASS: 55 deterministic native Studio sync checks",
+    "workingDirectory": "repository root",
+    "compileCommand": [
+      "xcrun",
+      "swiftc",
+      "-swift-version",
+      "5",
+      "apps/ios/Rendprop/Models/Listing.swift",
+      "apps/ios/Rendprop/Models/Money.swift",
+      "apps/ios/Rendprop/Networking/WorkspaceSync.swift",
+      "apps/ios/Rendprop/Networking/NativeReelDraft.swift",
+      "apps/ios/Rendprop/Push/NotificationPrefs.swift",
+      "apps/ios/Rendprop/Voice/VoiceTypes.swift",
+      "tools/audit/studio_sync_checks.swift",
+      "-o",
+      "${SYNC_TEST_BINARY}"
+    ],
+    "runCommand": [
+      "${SYNC_TEST_BINARY}"
+    ],
+    "network": "none; deterministic in-memory fixtures",
+    "sourceHashes": [
+      {
+        "path": "apps/ios/Rendprop/Models/Listing.swift",
+        "sha256": "ed0c0df3343e37b3368a21710bf5a0e851c178ffdce68f418709aedf85901390"
+      },
+      {
+        "path": "apps/ios/Rendprop/Models/Money.swift",
+        "sha256": "f229d292fb9875bd06e7be8cae6084cd6ee18922defb4621238864d64ebd6822"
+      },
+      {
+        "path": "apps/ios/Rendprop/Networking/WorkspaceSync.swift",
+        "sha256": "9919280c92ed0612d1a5b05be6b11fbebb237a45ebfc751a28f4bef18fcbd7b4"
+      },
+      {
+        "path": "apps/ios/Rendprop/Networking/NativeReelDraft.swift",
+        "sha256": "f6689297dc0ac08f8824d1f09f1c104172bdda83b93c4234dbd40846f6c742b8"
+      },
+      {
+        "path": "apps/ios/Rendprop/Push/NotificationPrefs.swift",
+        "sha256": "436b99f6575eeaf806552606dae9a6e095b707209fc2f1949ca7c4bb590b1fac"
+      },
+      {
+        "path": "apps/ios/Rendprop/Voice/VoiceTypes.swift",
+        "sha256": "e8b99e0608a33d46a492f68f97667ca300fd3098c144be9b69f614667ee1798f"
+      },
+      {
+        "path": "tools/audit/studio_sync_checks.swift",
+        "sha256": "6b3160a176f8b00e0487cd9bcd1a18236646590e643c8dc9edcfb2dd2a5a1f78"
+      }
+    ],
+    "coverage": [
+      "Stable server IDs while preserving local files and unfinished writes",
+      "Complete snapshot validation, cloud removal and account return",
+      "Async create/edit/delete/account-switch continuity and lost-reply replay",
+      "Native Reel setup validation and account/listing-bound voice references",
+      "Scoped expiring cloud media URLs and native notification preference keys"
+    ]
+  },
+  "uploadRecovery": {
+    "status": "passed",
+    "assertions": 139,
+    "compiledMutationControlsRejected": 7,
+    "runCommand": [
+      "python3",
+      "tools/audit/run_upload_recovery.py"
+    ],
+    "sourceReceiptLocation": "/tmp/rendprop-upload-recovery-dblbobw3/receipt.json",
+    "sourceReceiptSha256": "504dc23c344a12ba66c22b4f406dac4224fff2833782886f78adb1f2d3a1d76b",
+    "portableSourceReceipt": {
+      "accepted": true,
+      "commands": [
+        {
+          "name": "compile-actual-implementations",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadRecovery.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadManager.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/tests"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-actual-implementations.log"
+        },
+        {
+          "name": "actual-implementations",
+          "exit": 0,
+          "command": [
+            "${UPLOAD_FIXTURE}/tests",
+            "${UPLOAD_FIXTURE}/fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/actual-implementations.log"
+        },
+        {
+          "name": "compile-no-complete-probe",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadRecovery.swift",
+            "${UPLOAD_FIXTURE}/no-complete-probe.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadManager.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/no-complete-probe"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-no-complete-probe.log"
+        },
+        {
+          "name": "reject-no-complete-probe",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/no-complete-probe",
+            "${UPLOAD_FIXTURE}/no-complete-probe-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-no-complete-probe.log"
+        },
+        {
+          "name": "compile-no-legacy-consent",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${UPLOAD_FIXTURE}/no-legacy-consent.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadManager.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/no-legacy-consent"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-no-legacy-consent.log"
+        },
+        {
+          "name": "reject-no-legacy-consent",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/no-legacy-consent",
+            "${UPLOAD_FIXTURE}/no-legacy-consent-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-no-legacy-consent.log"
+        },
+        {
+          "name": "compile-rollback-relabels-ticket",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${UPLOAD_FIXTURE}/rollback-relabels-ticket.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadManager.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/rollback-relabels-ticket"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-rollback-relabels-ticket.log"
+        },
+        {
+          "name": "reject-rollback-relabels-ticket",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/rollback-relabels-ticket",
+            "${UPLOAD_FIXTURE}/rollback-relabels-ticket-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-rollback-relabels-ticket.log"
+        },
+        {
+          "name": "compile-no-same-asset-fence",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${UPLOAD_FIXTURE}/no-same-asset-fence.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadManager.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/no-same-asset-fence"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-no-same-asset-fence.log"
+        },
+        {
+          "name": "reject-no-same-asset-fence",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/no-same-asset-fence",
+            "${UPLOAD_FIXTURE}/no-same-asset-fence-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-no-same-asset-fence.log"
+        },
+        {
+          "name": "compile-resume-discards-identity",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadRecovery.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${UPLOAD_FIXTURE}/resume-discards-identity.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/resume-discards-identity"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-resume-discards-identity.log"
+        },
+        {
+          "name": "reject-resume-discards-identity",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/resume-discards-identity",
+            "${UPLOAD_FIXTURE}/resume-discards-identity-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-resume-discards-identity.log"
+        },
+        {
+          "name": "compile-pause-cancels-dispatched",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadRecovery.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${UPLOAD_FIXTURE}/pause-cancels-dispatched.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/pause-cancels-dispatched"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-pause-cancels-dispatched.log"
+        },
+        {
+          "name": "reject-pause-cancels-dispatched",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/pause-cancels-dispatched",
+            "${UPLOAD_FIXTURE}/pause-cancels-dispatched-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-pause-cancels-dispatched.log"
+        },
+        {
+          "name": "compile-ignore-confirmed-parts",
+          "exit": 0,
+          "command": [
+            "/usr/bin/xcrun",
+            "swiftc",
+            "-swift-version",
+            "5",
+            "${UPLOAD_FIXTURE}/ActualUploadModels.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadRecovery.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploader.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+            "${UPLOAD_FIXTURE}/ignore-confirmed-parts.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/UploadStore.swift",
+            "${REPOSITORY}/apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryDependencies.swift",
+            "${REPOSITORY}/tests/phase1/UploadRecoveryTests.swift",
+            "-o",
+            "${UPLOAD_FIXTURE}/ignore-confirmed-parts"
+          ],
+          "log": "${UPLOAD_FIXTURE}/compile-ignore-confirmed-parts.log"
+        },
+        {
+          "name": "reject-ignore-confirmed-parts",
+          "exit": 1,
+          "command": [
+            "${UPLOAD_FIXTURE}/ignore-confirmed-parts",
+            "${UPLOAD_FIXTURE}/ignore-confirmed-parts-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/reject-ignore-confirmed-parts.log"
+        },
+        {
+          "name": "restore-production",
+          "exit": 0,
+          "command": [
+            "${UPLOAD_FIXTURE}/tests",
+            "${UPLOAD_FIXTURE}/restored-fixture"
+          ],
+          "log": "${UPLOAD_FIXTURE}/restore-production.log"
+        }
+      ],
+      "sourceHashes": {
+        "apps/ios/Rendprop/Networking/APIClient.swift": "65751be0c7171849ae58d1e01f20a1ffccf6bec587e05e0844ece5f6fbf02f45",
+        "ActualUploadModels.swift": "fb335f887ec63d1c5dfa63e097185a857144f4921a7115c4781b9e13c34f2859",
+        "apps/ios/Rendprop/Upload/UploadRecovery.swift": "759d13fbe6ce52bd18c320854e8a7b21a7d6c7ba15d09b992950204df3824b69",
+        "apps/ios/Rendprop/Upload/DirectUploader.swift": "8e63d3ddca11c3e0d5252151035a269d1917b33ba48b11bf549b9d8e79cd462b",
+        "apps/ios/Rendprop/Upload/DirectUploadJournal.swift": "c05bb15fe4aa13e6594d954467c673f85683378121e04c8431eeaac0ae432dac",
+        "apps/ios/Rendprop/Upload/UploadManager.swift": "1aba3c928cfbd3fe08978fd5e5b548061eec97ee385a91d1d249c6b66958e5b3",
+        "apps/ios/Rendprop/Upload/UploadStore.swift": "f480ef081fb0eb0660cdb4994bcbb9ccc186d1d341d986a703aae93120020ae0",
+        "apps/ios/Rendprop/Upload/CloudPhotoReferences.swift": "74a6e0836d254b0f98dbef8f73606b1588d7b16fa385620a0e44777614bab30e",
+        "tests/phase1/UploadRecoveryDependencies.swift": "b3aac9d3a5b625f3c0024976be033e5d2a91ce306bf308d65c4e9bee8ce38b03",
+        "tests/phase1/UploadRecoveryTests.swift": "7439dd827ac1a06f0a63ba3b05e06131ebb6dd6528a0102f0597396b393a0246"
+      },
+      "network": "injected fixture operations only",
+      "sourceRoot": "${REPOSITORY}",
+      "assertions": 139
+    },
+    "sourceComparisonAtAssembly": [
+      {
+        "path": "apps/ios/Rendprop/Networking/APIClient.swift",
+        "receiptSha256": "65751be0c7171849ae58d1e01f20a1ffccf6bec587e05e0844ece5f6fbf02f45",
+        "currentSha256": "0b9c0cf860b1ec0fb4222b3c89f64ee3984146a59b4134db6492e51d7ea96117",
+        "unchanged": false
+      },
+      {
+        "path": "apps/ios/Rendprop/Upload/UploadRecovery.swift",
+        "receiptSha256": "759d13fbe6ce52bd18c320854e8a7b21a7d6c7ba15d09b992950204df3824b69",
+        "currentSha256": "759d13fbe6ce52bd18c320854e8a7b21a7d6c7ba15d09b992950204df3824b69",
+        "unchanged": true
+      },
+      {
+        "path": "apps/ios/Rendprop/Upload/DirectUploader.swift",
+        "receiptSha256": "8e63d3ddca11c3e0d5252151035a269d1917b33ba48b11bf549b9d8e79cd462b",
+        "currentSha256": "8e63d3ddca11c3e0d5252151035a269d1917b33ba48b11bf549b9d8e79cd462b",
+        "unchanged": true
+      },
+      {
+        "path": "apps/ios/Rendprop/Upload/DirectUploadJournal.swift",
+        "receiptSha256": "c05bb15fe4aa13e6594d954467c673f85683378121e04c8431eeaac0ae432dac",
+        "currentSha256": "c05bb15fe4aa13e6594d954467c673f85683378121e04c8431eeaac0ae432dac",
+        "unchanged": true
+      },
+      {
+        "path": "apps/ios/Rendprop/Upload/UploadManager.swift",
+        "receiptSha256": "1aba3c928cfbd3fe08978fd5e5b548061eec97ee385a91d1d249c6b66958e5b3",
+        "currentSha256": "1aba3c928cfbd3fe08978fd5e5b548061eec97ee385a91d1d249c6b66958e5b3",
+        "unchanged": true
+      },
+      {
+        "path": "apps/ios/Rendprop/Upload/UploadStore.swift",
+        "receiptSha256": "f480ef081fb0eb0660cdb4994bcbb9ccc186d1d341d986a703aae93120020ae0",
+        "currentSha256": "f480ef081fb0eb0660cdb4994bcbb9ccc186d1d341d986a703aae93120020ae0",
+        "unchanged": true
+      },
+      {
+        "path": "apps/ios/Rendprop/Upload/CloudPhotoReferences.swift",
+        "receiptSha256": "74a6e0836d254b0f98dbef8f73606b1588d7b16fa385620a0e44777614bab30e",
+        "currentSha256": "74a6e0836d254b0f98dbef8f73606b1588d7b16fa385620a0e44777614bab30e",
+        "unchanged": true
+      },
+      {
+        "path": "tests/phase1/UploadRecoveryDependencies.swift",
+        "receiptSha256": "b3aac9d3a5b625f3c0024976be033e5d2a91ce306bf308d65c4e9bee8ce38b03",
+        "currentSha256": "b3aac9d3a5b625f3c0024976be033e5d2a91ce306bf308d65c4e9bee8ce38b03",
+        "unchanged": true
+      },
+      {
+        "path": "tests/phase1/UploadRecoveryTests.swift",
+        "receiptSha256": "7439dd827ac1a06f0a63ba3b05e06131ebb6dd6528a0102f0597396b393a0246",
+        "currentSha256": "7439dd827ac1a06f0a63ba3b05e06131ebb6dd6528a0102f0597396b393a0246",
+        "unchanged": true
+      }
+    ],
+    "apiDeclarationComparison": {
+      "status": "byte-identical",
+      "sha256": "fb335f887ec63d1c5dfa63e097185a857144f4921a7115c4781b9e13c34f2859",
+      "note": "The containing APIClient.swift changed to add the optional narration history field after this receipt; its extracted UploadTicket/APIError declarations and every compiled upload implementation remain byte-identical to the tested sources."
+    },
+    "baselineOutput": "PASS UploadRecoveryTests 139 assertions",
+    "restoredOutput": "PASS UploadRecoveryTests 139 assertions",
+    "network": "injected fixture operations only; no actual uploads"
+  },
+  "voiceCleanup": {
+    "receipt": "voice-cleanup-schema.json",
+    "sha256": "d1ca12223b2a3e854a24d4624574aa5a61b28f2912319eea0ba43c6fae3fceed",
+    "checks": 20,
+    "status": "passed",
+    "sourceReceiptLocation": "/tmp/rendprop-voice-cleanup-d7tGKr/receipt.json",
+    "network": "isolated local PostgreSQL; externalDeletion false"
+  },
+  "limits": [
+    "A physical TestFlight installation and Apple-authenticated iPhone-to-production-Studio account roundtrip were not performed by these native fixture/build checks.",
+    "Physical camera, LiDAR, microphone capture, cellular behavior and real-device rendering were not exercised.",
+    "No paid AI generations, real invitation emails or real account deletions were used for the isolated validation suites.",
+    "App Store Connect confirms internal TestFlight testing; external beta submission and App Store review/submission are not asserted.",
+    "Native and browser editor documents remain separate typed formats; semantic setup/media continuity does not reconstruct every AVFoundation timeline. See docs/STUDIO-NATIVE-CONTINUITY-20260914.md."
+  ]
+}

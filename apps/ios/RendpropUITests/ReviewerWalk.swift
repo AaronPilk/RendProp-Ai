@@ -3,30 +3,27 @@
 //  The FIRST-RUN capture — what an App Store reviewer sees, in the order they
 //  see it (docs/appstore/…, and the review notes the integrator writes).
 //
-//  ONE test — `testReviewerWalk()` — launches the app the way a reviewer's
+//  The full `testReviewerWalk()` launches the app the way a reviewer's
 //  fresh install launches it and attaches a `keepAlways` screenshot of each
-//  screen, named `r01-…` … `r11-…`. `bridge-cmd-reviewerwalk.sh` runs it,
-//  uninstalls the app first so UserDefaults really are empty, and exports the
-//  PNGs to ~/Rendprop AI/_bridge/out/reviewerwalk/.
+//  screen, named `r01-…` … `r11-…`. Run on the dedicated synthetic simulator.
+//  Launch arguments force consent unanswered; Settings' existing intro action
+//  reopens onboarding on a rerun. No uninstall/erase/clear occurs.
 //
 //  This is NOT the UI walk and NOT the store-shot set. The other two both pass
-//  `-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v1 YES` so they
+//  `-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v2 YES` so they
 //  land straight on Home with every gate already answered. That is exactly the
-//  part a reviewer never gets. So this test passes ONLY:
+//  part a reviewer never gets. This test leaves onboarding unset and pins consent NO:
 //
 //      -uiTesting        → Config.makeAPIClient() returns MockAPIClient
 //      -appearance light → deterministic screenshots
 //
-//  and NOTHING else. No `-hasOnboarded`, so `RendpropApp`'s
-//  `@AppStorage("hasOnboarded")` is false and `OnboardingView` is the root. No
-//  consent override, so the Guideline 5.1.2(i) disclosure really appears the
+//  `@AppStorage("hasOnboarded")` starts false and `OnboardingView` is the root.
+//  Consent starts false, so the Guideline 5.1.2(i) disclosure really appears the
 //  first time an AI surface is opened — which is the single most-asked-about
 //  screen in an AI app's review, and r11 is the proof it exists.
 //
-//  `-space.type` is deliberately absent too: the default is
-//  `SpaceType.realEstate`, which is what the onboarding type picker
-//  pre-selects, so the walk simply accepts the default the way a reviewer
-//  would.
+//  Real estate is pinned so a previous synthetic industry walk cannot change
+//  the sample listing/player route that this offline gate checks.
 //
 //  THREE THINGS THIS TEST MUST NEVER DO
 //
@@ -39,12 +36,12 @@
 //     only button list this step is allowed to use.
 //  2. Never run an AI edit. `-uiTesting` means `MockAPIClient`, whose
 //     `aiPhotoEdit` echoes the submitted image back; a "result" built from that
-//     would be a misleading screenshot. r11 stops at the consent sheet and
-//     declines it.
-//  3. Never assert. `continueAfterFailure = true`, one `XCTContext.runActivity`
-//     per step, and a step that cannot be reached writes the reason into the
-//     result bundle instead of failing the run. Ten good screenshots beat a red
-//     test.
+//     would be a misleading screenshot. r11 exercises consent decisions only;
+//     agreement exposes the idle studio and never taps an edit action.
+//  3. Never hide missing required coverage. `continueAfterFailure = true`
+//     collects the remaining screenshots, but missing screens fail XCTest.
+//     Only r10 is explicitly excluded in the identified mock, verified by the
+//     visible Sign out row. That exclusion is not sign-in coverage.
 //
 //  Element lookup is identifier first (grep `.accessibilityIdentifier(` in
 //  apps/ios/Rendprop), visible label second, never coordinates.
@@ -57,15 +54,15 @@ final class ReviewerWalk: XCTestCase {
     // MARK: - Fixtures
 
     private var app: XCUIApplication!
+    private var capturedScreens = Set<String>()
 
     /// Longest wait for a screen. A cold simulator compiles shaders and seeds
     /// the sample listings on the first launch.
     private let screenTimeout: TimeInterval = 15
     /// Wait for something that should already be there.
     private let shortTimeout: TimeInterval = 3
-    /// How long a hosted page gets in its web view before the shot is taken.
-    /// The demo listing page is a real network round trip to rendprop.com.
-    private let webTimeout: TimeInterval = 12
+    /// The bundled player's own startup/error deadline is 12 seconds.
+    private let playerTimeout: TimeInterval = 15
 
     /// The address typed into the "name this home" gate that r11 needs (every
     /// AI tool is deliberately a no-op on the seeded samples).
@@ -91,16 +88,23 @@ final class ReviewerWalk: XCTestCase {
         continueAfterFailure = true
 
         app = XCUIApplication()
-        // A BRAND-NEW INSTALL. Two arguments, no more. Anything else here
-        // would answer a gate the reviewer has to answer themselves, which is
-        // the whole point of this capture.
+        // Consent starts false without reading or clearing persisted data.
+        // Do not pin hasOnboarded=false: argument-domain precedence would
+        // prevent its persisted completion from being read after Get started.
         //   RendpropApp.swift  @AppStorage("hasOnboarded")  → NOT set: the intro shows
-        //   AIConsent          "ai.thirdPartyProcessing.consent.v1" → NOT set: r11 shows
+        //   AIConsent          "ai.thirdPartyProcessing.consent.v2" → NOT set: r11 shows
         //   RendpropApp.swift  @AppStorage("appearance") / Appearance.light == "light"
         app.launchArguments += [
             "-uiTesting",
             "-appearance", "light",
+            "-ai.thirdPartyProcessing.consent.v2", "NO",
+            "-space.type", "real_estate",
         ]
+        if name.contains("testAIConsentDecisions") || name.contains("testAskAILabelOnLongTitle") {
+            // Focused iteration reuses r11 without spending minutes on the
+            // unrelated onboarding/player/legal/deletion-dialog screenshot walk.
+            app.launchArguments += ["-hasOnboarded", "YES"]
+        }
         app.launch()
     }
 
@@ -124,6 +128,46 @@ final class ReviewerWalk: XCTestCase {
         // what Home and the Homes tab look like. Every "fresh install" shot
         // above is already taken by the time it runs.
         step11AIConsent()
+        let required = Set(["r01-onboarding-1", "r02-first-home", "r03-homes",
+                            "r04-sample-detail", "r05-sample-player", "r06-profile",
+                            "r07-settings-legal", "r08-delete-account", "r09-delete-confirm",
+                            "r11-ai-consent"])
+        XCTAssertTrue(required.isSubset(of: capturedScreens),
+                      "Missing required reviewer steps: \(required.subtracting(capturedScreens).sorted()); r10 is excluded only in identified mock")
+    }
+
+    /// Same actual r11 path and assertions as the release walk. No fixture
+    /// consent view, coordinate taps, AI edit or destructive dialog is used.
+    func testAIConsentDecisions() {
+        step11AIConsent()
+        let required = Set(["r11-ai-consent", "r11b-consent-actions", "r11c-consent-granted"])
+        XCTAssertTrue(required.isSubset(of: capturedScreens),
+                      "Missing required consent states: \(required.subtracting(capturedScreens).sorted())")
+    }
+
+    /// An accessibility label can be complete while the drawn title is "A…".
+    /// Check geometry and opening the real destination, then require review of
+    /// the screenshot. This never sends a Coach message or invokes a provider.
+    func testAskAILabelOnLongTitle() {
+        step03Homes()
+        guard step04SampleDetail() else {
+            XCTFail("Long-title sample detail must be reached")
+            return
+        }
+        let buttons = app.buttons.matching(identifier: "askAI")
+        XCTAssertEqual(buttons.count, 1, "Ask AI must be unambiguous")
+        guard buttons.count == 1 else { return }
+        let button = buttons.element(boundBy: 0)
+        XCTAssertTrue(button.isHittable && button.isEnabled)
+        XCTAssertGreaterThanOrEqual(button.frame.width, 76)
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        XCTAssertTrue(app.frame.contains(button.frame))
+        shot("ask-ai-long-title")
+        tap(button)
+        XCTAssertTrue(app.navigationBars["Coach"].waitForExistence(timeout: screenTimeout),
+                      "Ask AI must open the actual Coach screen")
+        shot("ask-ai-coach-open")
+        XCTAssertTrue(Set(["ask-ai-long-title", "ask-ai-coach-open"]).isSubset(of: capturedScreens))
     }
 
     // MARK: r01 — the onboarding pages
@@ -143,6 +187,15 @@ final class ReviewerWalk: XCTestCase {
     /// count for whoever reads the result bundle.
     private func step01Onboarding() {
         activity("r01 — Onboarding") {
+            if app.tabBars.buttons["Settings"].waitForExistence(timeout: 2) {
+                guard openSettingsTab(),
+                      let intro = scrollTo(ids: [], labels: ["Watch the intro again"], swipes: 10) else {
+                    note("Existing synthetic state could not reopen onboarding through Settings")
+                    return
+                }
+                tap(intro)
+                info("Rerun: opened onboarding through Settings; existing synthetic projects were preserved")
+            }
             guard waitForAny(ids: [], labels: ["Continue", "Get started", "RENDPROP"],
                              timeout: screenTimeout) else {
                 note("SKIPPED: no onboarding on launch. Either `hasOnboarded` survived from a "
@@ -186,11 +239,8 @@ final class ReviewerWalk: XCTestCase {
                 }
             }
 
-            note(photographedPicker
-                 ? "r01 captured \(screens) onboarding screens: \(screens - 1) feature card(s) "
-                   + "plus the \"What do you showcase?\" business-type picker."
-                 : "r01 captured \(screens) onboarding screens but never reached the business-type "
-                   + "picker within \(maxOnboardingScreens) pages.")
+            XCTAssertTrue(photographedPicker, "Onboarding never reached its business-type picker within \(maxOnboardingScreens) pages")
+            info("r01 captured \(screens) onboarding screens; business-type picker reached: \(photographedPicker)")
         }
     }
 
@@ -256,45 +306,33 @@ final class ReviewerWalk: XCTestCase {
 
     /// The product in one screen: the scroll-to-fly-through player.
     ///
-    /// Two sources, tried in order:
-    ///   a) Home → "Watch the sample tour". On real estate that is a
-    ///      `WKWebView` on the HOSTED demo listing page
-    ///      (`rendprop.com/f/estate-demo`, nav title "Demo listing page") —
-    ///      the whole auto-built microsite a shared link opens. It needs the
-    ///      simulator to have network and the tour-host worker deployed.
-    ///   b) The sample detail's own bundled player, scrubbed. It falls back to
-    ///      "sample video unavailable" unless `demo.mp4` was dropped into
-    ///      Rendprop/Resources/player/ (untracked — see apps/web/player/README.md),
-    ///      so the activity says so when this path is used.
+    /// Use only the sample detail's natural bundled player. Hosted demo pages
+    /// are outside this offline UI gate. Require its loaded controls and reject
+    /// all explicit unavailable states; a blank WKWebView is not player proof.
+    /// This remains bundled-demo UI coverage, not physical-room validation.
     private func step05SamplePlayer(reachedSampleDetail: Bool) {
         activity("r05 — Sample tour player") {
-            popToRoot()
-            if openHomeTab() {
-                scrollToTop()
-                if let link = scrollTo(ids: [], labels: ["Watch the sample tour"], swipes: 8) {
-                    tap(link)
-                    if waitForAny(ids: [], labels: ["Demo listing page"], timeout: screenTimeout) {
-                        settle(webTimeout)          // a real download
-                        shot("r05-sample-player")
-                        popToRoot()
-                        return
-                    }
-                    note("Tapped \"Watch the sample tour\" but the hosted demo page never titled "
-                         + "itself \"Demo listing page\".")
-                    popToRoot()
-                }
-            }
-
             guard reachedSampleDetail || openFirstSampleHome() else {
-                note("SKIPPED: neither Home's \"Watch the sample tour\" link nor a sample home's "
-                     + "detail was reachable, so there is no player to capture.")
+                note("Required sample detail is not reachable for the bundled-player check.")
                 return
             }
-            settle(2)
+            scrollToTop()
+            let web = app.webViews.firstMatch
+            guard web.waitForExistence(timeout: screenTimeout) else {
+                note("Sample detail has no player web view")
+                return
+            }
+            settle(playerTimeout)
+            let unavailable = web.staticTexts.matching(NSPredicate(format: "label CONTAINS[c] %@", "unavailable"))
+            guard unavailable.count == 0,
+                  web.staticTexts["Scroll to fly through"].exists else {
+                note("Bundled player did not reach its ready UI: demo.mp4 may be absent or the player failed; blank/unavailable is not coverage")
+                shot("r05-player-failure")
+                return
+            }
             scrubPlayer()
             shot("r05-sample-player")
-            note("r05 came from the in-app sample player, not the hosted demo. If it shows "
-                 + "\"sample video unavailable\", the bundled demo.mp4 is absent (it is untracked).")
+            info("r05: bundled-demo player UI only; no hosted page, real room, or reconstruction was validated")
             popToRoot()
         }
     }
@@ -389,36 +427,21 @@ final class ReviewerWalk: XCTestCase {
 
     /// Leave the delete flow without deleting anything.
     ///
-    /// Cancel first. If the dialog somehow has no Cancel, press the first
-    /// button that is NOT one of the data-destroying ones — the "Sign in to
-    /// delete your account" variant, for instance, offers "Clear this phone
-    /// only", which is every bit as destructive as "Delete". If nothing safe is
-    /// on offer, the dialog is left standing on purpose; a stuck walk is a far
-    /// better outcome than a confirmed deletion.
+    /// Only the alert's exact Cancel button is permitted. No allow-by-exclusion
+    /// fallback: an unknown button could also destroy data. Failure leaves the
+    /// dialog open and fails the gate; it never confirms or clears anything.
     private func dismissDeleteDialogSafely() {
         for title in confirmDeletionIsNeverTapped {
-            let button = app.buttons[title]
+            let button = app.alerts.firstMatch.buttons[title]
             if button.exists && button.isHittable {
                 button.tap()
                 settle(1)
+                XCTAssertFalse(app.alerts.firstMatch.exists, "Delete confirmation did not dismiss after Cancel")
                 return
             }
         }
-        let destroysData = ["Delete", "Clear", "Erase", "Remove", "Confirm", "Sign out"]
-        let alertButtons = app.alerts.firstMatch.buttons
-        for index in 0..<alertButtons.count {
-            let button = alertButtons.element(boundBy: index)
-            guard button.exists, button.isHittable else { continue }
-            let label = button.label
-            if destroysData.contains(where: { label.localizedCaseInsensitiveContains($0) }) { continue }
-            note("The delete dialog had no \"Cancel\" — leaving it through \"\(label)\", which is "
-                 + "none of its destructive buttons. NOTHING was confirmed.")
-            button.tap()
-            settle(1)
-            return
-        }
         note("The delete dialog offered nothing safe to press, so it is LEFT OPEN on purpose. "
-             + "NOTHING was confirmed. Later steps will find it in the way and skip themselves.")
+             + "NOTHING was confirmed. Missing Cancel is a release-gate failure.")
     }
 
     // MARK: r10 — the sign-in gate
@@ -445,10 +468,13 @@ final class ReviewerWalk: XCTestCase {
             }
             scrollToTop()
             guard let signIn = scrollTo(ids: [], labels: ["Sign in with Apple"], swipes: 8) else {
-                note("SKIPPED (expected): the app reports itself signed in for the whole run — "
-                     + "AuthStore sets `isSignedIn = Config.isUITesting ? true : …`, so no publish "
-                     + "or AI path raises SignInView and Settings shows \"Sign out\" instead. "
-                     + "Capture the sign-in sheet by hand on a real device for the review notes.")
+                scrollToTop()
+                guard app.launchArguments.contains("-uiTesting"),
+                      scrollTo(ids: [], labels: ["Sign out"], swipes: 8) != nil else {
+                    note("r10 may be excluded only when the identified mock visibly shows Sign out")
+                    return
+                }
+                info("EXPECTED EXCLUSION r10: -uiTesting uses an identified mock and Settings shows Sign out. Sign-in UI is NOT counted as covered; capture it separately on a device.")
                 return
             }
             tap(signIn)
@@ -479,9 +505,9 @@ final class ReviewerWalk: XCTestCase {
     /// `AIConsent.shared.ensureGranted()` and whose `.aiConsentGate()` overlay
     /// draws `AIConsentView` while it waits.
     ///
-    /// Then "Not now" — declining is what `PhotoStudioView` handles by
-    /// dismissing itself, and it leaves the consent flag false so a re-run
-    /// captures the same sheet again. NO AI EDIT IS EVER RUN.
+    /// Exercise both decisions in the mock-only app: decline must return Home;
+    /// reopening must ask again; agreement must reveal the studio. No edit,
+    /// provider request, camera, microphone or purchase action is started.
     private func step11AIConsent() {
         activity("r11 — AI processing consent") {
             popToRoot()
@@ -490,9 +516,9 @@ final class ReviewerWalk: XCTestCase {
                 return
             }
             scrollToTop()
-            guard let tile = scrollTo(ids: ["home.feature.photos"],
-                                      labels: ["Take photos"], swipes: 6) else {
-                note("SKIPPED: no \"Take photos\" tile on Home, so the AI Photo Studio — and the "
+            guard let tile = scrollTo(ids: ["home.feature.photoStudio"],
+                                      labels: ["AI Photo Studio"], swipes: 6) else {
+                note("SKIPPED: no AI Photo Studio tile on Home, so the studio — and the "
                      + "consent sheet at its door — cannot be reached.")
                 return
             }
@@ -503,10 +529,8 @@ final class ReviewerWalk: XCTestCase {
                              labels: ["Rendprop's AI runs in the cloud", "Agree and continue"],
                              timeout: screenTimeout) else {
                 if waitForAny(ids: [], labels: ["AI Photo Studio"], timeout: shortTimeout) {
-                    note("SKIPPED: the studio opened with NO consent sheet. That means the consent "
-                         + "was already granted on this simulator — uninstall the app before the "
-                         + "run (bridge-cmd-reviewerwalk.sh does) so "
-                         + "\"ai.thirdPartyProcessing.consent.v1\" is genuinely unset.")
+                    note("The studio opened without consent despite the explicit NO launch argument. "
+                         + "The required disclosure gate failed; do not erase or reinstall the app.")
                     popToRoot()
                 } else {
                     note("SKIPPED: neither the consent sheet nor the AI Photo Studio appeared after "
@@ -517,17 +541,78 @@ final class ReviewerWalk: XCTestCase {
             settle(1.5)
             shot("r11-ai-consent")
 
-            // Decline. `PhotoStudioView` dismisses itself on false, and the
-            // flag stays unset so the next run sees the same sheet.
-            if let notNow = find(ids: [], labels: ["Not now"], timeout: shortTimeout) {
-                tap(notNow)
-            } else {
-                note("The consent sheet had no \"Not now\" — backing out instead. NOTHING was agreed.")
-                dismissTopScreen()
+            // Existence or partial window intersection is not reachability.
+            // The historical r11 image had the floating tab bar across Agree.
+            // Scroll the disclosure itself and require fully visible controls.
+            XCTAssertFalse(app.tabBars.firstMatch.exists,
+                           "The tab bar must not cover the consent disclosure")
+            guard consentAction("aiConsent.agree") != nil,
+                  let notNow = consentAction("aiConsent.decline") else { return }
+            XCTAssertGreaterThanOrEqual(notNow.frame.height, 44,
+                                        "Decline needs a full-size tap target")
+            shot("r11b-consent-actions")
+            notNow.tap()
+            XCTAssertTrue(waitForHome(timeout: screenTimeout),
+                          "Declining consent must leave the studio and return Home")
+            XCTAssertFalse(app.navigationBars["AI Photo Studio"].exists,
+                           "Declining must dismiss the studio, not merely hide its overlay")
+            XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "aiConsent.root").firstMatch.exists,
+                           "Declining must remove the disclosure")
+            XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: shortTimeout),
+                          "Declining must restore the tab bar")
+
+            guard let reopen = scrollTo(ids: ["home.feature.photoStudio"],
+                                        labels: [], swipes: 8) else {
+                note("Cannot reopen AI Photo Studio after declining consent")
+                return
             }
-            settle(1)
+            tap(reopen)
+            nameFirstProjectIfAsked()
+            let disclosure = app.descendants(matching: .any).matching(identifier: "aiConsent.root").firstMatch
+            XCTAssertTrue(disclosure.waitForExistence(timeout: screenTimeout),
+                          "Declining must not silently grant consent on reopening")
+            guard let agree = consentAction("aiConsent.agree") else { return }
+            agree.tap()
+            let gone = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"),
+                                                 object: disclosure)
+            XCTAssertEqual(XCTWaiter.wait(for: [gone], timeout: screenTimeout), .completed,
+                           "Agreement must remove the disclosure")
+            XCTAssertTrue(app.navigationBars["AI Photo Studio"].exists,
+                          "Agreement must keep the user in AI Photo Studio")
+            XCTAssertTrue(app.tabBars.buttons["Home"].waitForExistence(timeout: shortTimeout),
+                          "Agreement must restore the tab bar")
+            shot("r11c-consent-granted")
             popToRoot()
         }
+    }
+
+    /// Checks the real scroll viewport, not just any intersection with a window.
+    /// A bounded failure remains a test failure; no coordinate fallback can hit
+    /// a different action beneath an obstructing native toolbar.
+    private func consentAction(_ identifier: String) -> XCUIElement? {
+        let scrolls = app.scrollViews.matching(identifier: "aiConsent.root")
+        let scroll = scrolls.firstMatch
+        guard scroll.waitForExistence(timeout: screenTimeout) else {
+            note("Consent scroll view is missing")
+            return nil
+        }
+        guard scrolls.count == 1 else {
+            note("Consent must expose exactly one identified scroll viewport")
+            return nil
+        }
+        let action = scroll.buttons[identifier]
+        for attempt in 0...8 {
+            if action.exists, action.isEnabled, action.isHittable,
+               action.frame.width > 0, action.frame.height > 0,
+               scroll.frame.contains(action.frame) {
+                return action
+            }
+            guard attempt < 8 else { break }
+            scroll.swipeUp()
+            settle(0.35)
+        }
+        note("Consent action is not fully visible and hittable: \(identifier)")
+        return nil
     }
 
     // MARK: - Navigation helpers
@@ -570,12 +655,10 @@ final class ReviewerWalk: XCTestCase {
             if tab.waitForExistence(timeout: 1.0) {
                 tab.tap()
                 settle(1.5)
-                // Soft confirmation only: the collection is the one tab with a
-                // search field. The tap happened either way, so the caller
-                // still gets true and the screenshot is still taken.
+                // A tapped tab is not proof that its collection opened.
                 if !app.searchFields.firstMatch.waitForExistence(timeout: shortTimeout) {
-                    note("Tapped the \"\(title)\" tab but its search field never appeared — the "
-                         + "shot may be whatever tab was already showing.")
+                    app.swipeDown()
+                    return app.searchFields.firstMatch.waitForExistence(timeout: shortTimeout)
                 }
                 return true
             }
@@ -601,16 +684,23 @@ final class ReviewerWalk: XCTestCase {
     /// "(Sample)".
     private func openFirstSampleHome() -> Bool {
         guard openSpacesTab() else { return false }
-        settle(1.5)
-        let predicate = NSPredicate(format: "label CONTAINS[c] %@", "Sample")
-        for query in [app.buttons, app.cells, app.otherElements] {
-            let element = query.matching(predicate).firstMatch
-            if element.exists {
-                tap(element)
-                return waitForAny(ids: [],
-                                  labels: ["TOOLBOX", "SAMPLE TOUR", "This is a sample"],
-                                  timeout: screenTimeout)
+        scrollToTop(4)
+        // Exact sample-address suffix, never a broad "Sample" container.
+        // Lazy List rows may not exist until they have scrolled into view.
+        let predicate = NSPredicate(format: "label CONTAINS[c] %@", "(Sample)")
+        for attempt in 0...10 {
+            for query in [app.cells, app.buttons, app.staticTexts] {
+                for element in query.matching(predicate).allElementsBoundByIndex where element.isHittable {
+                    tap(element)
+                    if waitForAny(ids: [], labels: ["This is a sample", "SAMPLE TOUR"], timeout: shortTimeout) {
+                        return true
+                    }
+                }
             }
+            guard attempt < 10 else { break }
+            let list = app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.tables.firstMatch
+            if list.exists { list.swipeUp() } else { app.swipeUp() }
+            settle(0.4)
         }
         return false
     }
@@ -619,19 +709,29 @@ final class ReviewerWalk: XCTestCase {
     /// typing one and confirming lands straight in the tapped feature. A no-op
     /// when the gate did not appear.
     private func nameFirstProjectIfAsked() {
+        if app.navigationBars["Pick a home"].waitForExistence(timeout: 1) {
+            guard let fixture = scrollTo(ids: [], labels: [walkAddress, "1 Walk Test Street"], swipes: 6) else {
+                note("Project picker has no known synthetic walk project; refusing to choose another listing")
+                return
+            }
+            tap(fixture)
+            return
+        }
         guard waitForAny(ids: [], labels: ["Name this home first", "Save and continue"],
                          timeout: shortTimeout + 2) else { return }
         typeAddressIntoFirstField()
         dismissKeyboard()
         if let save = find(ids: [], labels: ["Save and continue"], timeout: shortTimeout) {
             tap(save)
+        } else {
+            note("New-project Save and continue control is missing")
         }
     }
 
     private func typeAddressIntoFirstField() {
         let named = app.textFields["Type the home's address"]
         let field = named.exists ? named : app.textFields.firstMatch
-        guard field.waitForExistence(timeout: shortTimeout) else { return }
+        guard field.waitForExistence(timeout: shortTimeout) else { note("New-project address field is missing"); return }
         field.tap()
         settle(0.4)
         field.typeText(walkAddress)
@@ -741,7 +841,6 @@ final class ReviewerWalk: XCTestCase {
             app.swipeUp()
             settle(0.35)
         }
-        if let element = find(ids: ids, labels: labels, timeout: perSwipeTimeout) { return element }
         return nil
     }
 
@@ -764,11 +863,11 @@ final class ReviewerWalk: XCTestCase {
         guard frame.width > 0, frame.height > 0 else { return false }
         let window = app.windows.element(boundBy: 0)
         guard window.exists else { return true }
-        return window.frame.intersects(frame)
+        return window.frame.intersects(frame) && element.isHittable
     }
 
     private func tap(_ element: XCUIElement) {
-        guard element.exists else { return }
+        guard element.exists else { note("Required tap target disappeared"); return }
         if element.isHittable {
             element.tap()
         } else {
@@ -777,6 +876,7 @@ final class ReviewerWalk: XCTestCase {
             app.swipeUp()
             settle(0.35)
             if element.isHittable { element.tap() }
+            else { note("Required tap target is not hittable: \(element.identifier) / \(element.label)") }
         }
         settle(0.8)
     }
@@ -787,6 +887,7 @@ final class ReviewerWalk: XCTestCase {
     /// uses, so a reviewer-walk PNG and a store PNG are directly comparable and
     /// the bridge script's 9:41 status-bar override actually shows up.
     private func shot(_ name: String) {
+        capturedScreens.insert(name)
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
@@ -797,11 +898,15 @@ final class ReviewerWalk: XCTestCase {
         XCTContext.runActivity(named: name) { _ in body() }
     }
 
-    /// A line in the result bundle explaining a skip or a caveat. Named
-    /// activities are the only place a non-failing note survives into the
-    /// `.xcresult`.
-    private func note(_ text: String) {
+    private func info(_ text: String) {
         XCTContext.runActivity(named: text) { _ in }
+    }
+
+    /// Every required step failure remains red even as later screenshots run.
+    private func note(_ text: String, file: StaticString = #filePath, line: UInt = #line) {
+        XCTContext.runActivity(named: "REQUIRED COVERAGE FAILURE: \(text)") { _ in
+            XCTFail(text, file: file, line: line)
+        }
     }
 
     /// Let animations and async loads settle. An inverted expectation waits the

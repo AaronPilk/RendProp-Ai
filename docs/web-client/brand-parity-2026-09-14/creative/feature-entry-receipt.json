@@ -1,0 +1,13 @@
+{
+  "proof": "Real creative and business components opened by feature-card requests; isolated responses, no paid AI or outgoing mail",
+  "checks": [
+    "Feature cards open the selected tool; the same request is consumed once and preserves unsaved script and staging style",
+    "Wrong-property requests cannot change the tool; agent cutaways open visibly and Reel Studio receives the exact property with no AI dispatch",
+    "Property changes do not replay stale card actions and scoped recovery retains the original property's unsaved script",
+    "Agent card, unsent invite and notification edits remain intact across feature-card navigation and background account refresh",
+    "Business card requests are consumed once, restricted team activity stays unavailable and navigation creates no writes or invitations"
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "status": "passed"
+}

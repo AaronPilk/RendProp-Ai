@@ -45,7 +45,14 @@ final class CoachModel: ObservableObject {
     @Published private(set) var messages: [CoachMessage]
     @Published private(set) var isSending = false
 
-    let starterChips = [
+    /// The four questions offered before the first reply. SCREEN-SPECIFIC
+    /// now: `AskAIScreen.starters` supplies them, so "Ask AI" on the floor-plan
+    /// screen opens on floor-plan questions instead of "Start my first tour".
+    /// The array below is the fallback for a caller that names no screen —
+    /// which is Home, where these four were written for.
+    let starterChips: [String]
+
+    static let defaultStarters = [
         "Start my first tour",
         "How do I share to the MLS?",
         "What does the AI do to my photos?",
@@ -58,7 +65,8 @@ final class CoachModel: ObservableObject {
     /// `CoachRequest.Context.screen`.
     private let originScreen: String?
 
-    init(model: AppModel, originScreen: String? = nil) {
+    init(model: AppModel, originScreen: String? = nil, starters: [String]? = nil) {
+        self.starterChips = (starters?.isEmpty == false ? starters! : Self.defaultStarters)
         self.model = model
         self.space = SpaceType.current
         self.originScreen = originScreen
@@ -189,10 +197,12 @@ final class CoachModel: ObservableObject {
     // MARK: - Context (counts and booleans ONLY — see file header)
 
     static func contextListings(from model: AppModel) -> [CoachRequest.ListingContext] {
-        model.realProjects.prefix(25).map { listing in
+        let listings = Array(model.realProjects.prefix(25))
+        let labels = Self.redactedLabels(for: listings)
+        return listings.enumerated().map { idx, listing in
             CoachRequest.ListingContext(
                 id: listing.id.uuidString,
-                title: listing.address,
+                title: labels[idx],
                 hasVideo: model.assets[listing.id] != nil,
                 roomTags: model.assets[listing.id]?.roomTags.count ?? 0,
                 hasTour: model.tours[listing.id] != nil,
@@ -202,6 +212,64 @@ final class CoachModel: ObservableObject {
                 reels: reelCount(for: listing.id)
             )
         }
+    }
+
+    /// The label a listing travels to the LLM under — the STREET, never the
+    /// address.
+    ///
+    /// THE DEFECT: `title` was `listing.address`, so up to 25 exact street
+    /// addresses left the phone on every coach message, while the type's own
+    /// contract comment said "counts and booleans ONLY". The comment was a
+    /// hope, not a guard. It got worse the day Ask AI moved from two screens
+    /// to eleven.
+    ///
+    /// WHY NOT AN ORDINAL. The coach's answers name the home back to the agent
+    /// — "your tour for Crestline Ridge is ready to share" — and "home 3" makes
+    /// that useless. The street name is what an agent actually recognises, and
+    /// a street without a number is not a mailing address. Homes that share a
+    /// street get a numeric suffix so the coach can still tell them apart.
+    ///
+    /// REDACTED HERE, ON THE PHONE, before the bytes exist. Not server-side:
+    /// the server is what this protects against, and a scrub that runs after
+    /// the network hop protects nobody.
+    static func redactedLabels(for listings: [Listing]) -> [String] {
+        var seen: [String: Int] = [:]
+        return listings.enumerated().map { idx, listing in
+            let base = redactedStreet(listing.address) ?? "Home \(idx + 1)"
+            let n = (seen[base] ?? 0) + 1
+            seen[base] = n
+            return n == 1 ? base : "\(base) (\(n))"
+        }
+    }
+
+    /// "1180 Crestline Ridge, Apt 4B, Naples FL" -> "Crestline Ridge".
+    ///
+    /// Everything from the first comma is dropped (city, state, ZIP, unit), a
+    /// leading house number or number-range is dropped, and so is a leading
+    /// unit token, which is how a real address string tends to lead. nil when
+    /// nothing recognisable is left, so the caller falls back to an ordinal
+    /// rather than sending a fragment it has not reasoned about.
+    static func redactedStreet(_ address: String) -> String? {
+        let head = address.split(separator: ",", maxSplits: 1,
+                                 omittingEmptySubsequences: false)
+            .first.map(String.init) ?? address
+        var parts = head.split(whereSeparator: { $0 == " " || $0 == "\t" }).map(String.init)
+        // Leading house number ("1180", "1180A", "12-14") — and only leading:
+        // "Route 66" keeps its number because it is not in front.
+        while let f = parts.first, f.rangeOfCharacter(from: .decimalDigits) != nil,
+              f.first?.isNumber == true {
+            parts.removeFirst()
+        }
+        // A unit token that survived the comma split ("Apt 4B", "#3", "Unit 2").
+        if let f = parts.first?.lowercased(),
+           ["apt", "apt.", "unit", "ste", "ste.", "suite", "#"].contains(f) || f.hasPrefix("#") {
+            parts.removeFirst()
+            if let n = parts.first, n.rangeOfCharacter(from: .decimalDigits) != nil { parts.removeFirst() }
+        }
+        let street = parts.joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard street.count >= 2, street.rangeOfCharacter(from: .letters) != nil else { return nil }
+        return String(street.prefix(48))
     }
 
     /// `EnhancedPhoto` (FlythroughDetailView.swift) is the only place this
@@ -264,8 +332,10 @@ enum CoachOffline {
             "Settings → Plan & usage → \"Manage subscription.\" Cancelling stops the next renewal " +
             "— your plan keeps working until the period you already paid for ends."),
         Topic(keywords: ["delete my account", "delete account", "remove my data"], reply:
-            "In Settings → \"Your data\" → \"Delete account.\" That removes your Rendprop account, " +
-            "unpublishes every tour link, and clears this phone."),
+            "In Settings → \"Your data\" → \"Delete account.\" Guests using an anonymous session " +
+            "also have a server account, so this is not a local-only wipe. Server cleanup may " +
+            "remain pending, and shared-team data is not all deleted with your account. " +
+            "Deleting the account does not cancel an App Store subscription."),
         Topic(keywords: ["film", "record", "walkthrough tip", "how do i shoot", "how to record"], reply:
             "Walk at a normal, steady pace — the way you'd show a friend around. Hold the phone " +
             "upright at chest height, keep it level, and turn the lights on first. One continuous " +
@@ -273,15 +343,20 @@ enum CoachOffline {
         Topic(keywords: ["floor plan", "lidar", "roomplan"], reply:
             "Scan a room in 3D by walking it with the phone — this needs an iPhone with LiDAR. Any " +
             "other iPhone can upload a floor plan you already have instead."),
-        Topic(keywords: ["trial", "free week"], reply:
-            "Every plan starts with a 7-day free trial, once per Apple ID."),
+        // Two different things, two names: the server's free week (no card, no
+        // account) and Apple's introductory offer on a paid plan (the only
+        // "free trial" in the app — see OnboardingView).
+        Topic(keywords: ["trial", "free week", "first week"], reply:
+            "Your first week is on us — no card, no account needed. After that, every paid plan " +
+            "starts with a 7-day free trial, once per Apple ID."),
         Topic(keywords: ["reel", "social video"], reply:
             "Reels turn a handful of your photos into a short vertical video — a gliding camera " +
             "move on each photo, a voiceover, and captions that land on the beat."),
         Topic(keywords: ["sign in", "guest", "account needed", "do i need an account"], reply:
-            "Recording, editing and building a tour all work fully signed out. Signing in is " +
-            "needed only to publish a tour to the web, since that's the step that creates the " +
-            "live link."),
+            // Anonymous sessions support publication; an Apple identity is optional.
+            "No account is required to record, edit, build or publish a tour. " +
+            "Publishing needs an internet connection. Sign in with Apple is optional " +
+            "for accessing your workspace on another device."),
     ]
 
     private static let offlineNote = "\n\n(I'm answering offline right now, so this is from what I already know.)"

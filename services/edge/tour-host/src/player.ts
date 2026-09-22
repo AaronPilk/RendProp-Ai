@@ -2,11 +2,12 @@
 // full, self-contained scroll-scrub player page.
 //
 // CANONICAL ENGINE: the scroll-scrub engine in ENGINE_JS below (rAF lerp,
-// buffer gate, chapter rail, room label, decaying jank watchdog + autoplay
-// fallback, explicit "video unavailable" state) is the production engine. The
-// iOS in-app preview (apps/ios/Rendprop/Resources/player/index.html) carries a
-// copy of the same tick()/watchdog logic; apps/web/player is an archived
-// prototype. When the engine changes, change it HERE first and port to iOS.
+// buffer gate, chapter rail, room strip, room label, decaying jank watchdog +
+// autoplay fallback, explicit "video unavailable" state) is the production
+// engine. The iOS in-app preview (apps/ios/Rendprop/Resources/player/index.html)
+// carries a copy of the same tick()/watchdog logic AND of the rail/strip
+// chapter UI; apps/web/player is an archived prototype. When the engine
+// changes, change it HERE first and port to iOS.
 //
 // VIDEO SOURCE CONTRACT (must match services/supabase/functions/tours/index.ts):
 // `scrub_url` — the all-intra R2 mp4 over HTTP byte-range — is the PRIMARY
@@ -42,6 +43,9 @@
 // HTML and the Worker fails CLOSED (neutral 503) if anything got through.
 
 import type { AlteredMedium, Cta, SecondaryLink, Tour, TourListing } from "./types";
+import { spatialAnchor } from "./spatial-manifest";
+import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
+import { tourJsonLd } from "./jsonld";
 import {
   type AgentModel,
   absolutize,
@@ -60,6 +64,23 @@ import {
 // Pinned hls.js (cdnjs) + Subresource Integrity hash for the 1.5.20 min bundle.
 const HLS_SRC = "https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.20/hls.min.js";
 const HLS_SRI = "sha384-V5ruNBgmYcC3SJRUQeNykAAAgde5gOFq/Hu0CZj7bygDP0yRIhkvX8+w0u/7mRvr";
+
+// The iOS app. `/f/<slug>` is the link the owner actually shares with agents,
+// and until the 4,000 sq ft field test it was the ONE page in the estate with
+// no way to get the app — index/features/pricing/compare all carry the smart
+// banner and an App Store button, the tour did not.
+//
+// BOTH of these are branded chrome and BOTH must stay behind `unbranded`:
+// an MLS unbranded virtual-tour field bans "advertising of any kind, including
+// links to additional content or external sites not related to the specific
+// property", and an App Store link is exactly that. `apps.apple.com` and
+// `apple-itunes-app` are in UNBRANDED_FORBIDDEN at the bottom of this file, so
+// a leak fails the CI check before it can ever fail a page closed in prod.
+//
+// The id and the link builder now live in src/attribution.ts — the App Store
+// URL carries a campaign token (`ct=tour-<slug>`) so a download can be traced
+// back to the page that produced it. See that file for the App Store Connect
+// report it lands in and for the one value the owner still has to supply.
 
 // ---------------------------------------------------------------------------
 // Listing state helpers (sold / archived, price, counts)
@@ -122,6 +143,23 @@ function money(raw: string): string {
   if (!m) return s;
   const n = Number(m[1].replace(/,/g, ""));
   return Number.isFinite(n) ? new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: n % 1 ? 2 : 0 }).format(n) : s;
+}
+
+/**
+ * Truncate at a WORD boundary and mark it with an ellipsis. "Upstairs bathro…"
+ * is the failure this exists to avoid: a mid-word cut reads as a broken page,
+ * and a room name is a proper noun the viewer is trying to recognise. Returns
+ * the string untouched when it is already inside the budget, which is the case
+ * for every ordinary room name — the budget is a guard against a pathological
+ * label, not a layout device.
+ */
+function truncWords(raw: string, max: number): string {
+  const t = String(raw || "").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sp = cut.lastIndexOf(" ");
+  const head = (sp > 8 ? cut.slice(0, sp) : cut).replace(/[\s,;:.\u2013\u2014-]+$/, "");
+  return (head || cut.trim()) + "\u2026";
 }
 
 function telHref(phone: string): string {
@@ -221,6 +259,7 @@ export const DRONE_DISCLOSURE = "Drone-style movement is simulated. No drone foo
 
 /** kind → the plain-words phrase appended to the asset label. */
 const KIND_PHRASE: Record<string, string> = {
+  video_reflection_removal: "people and reflections removed with AI",
   virtual_stage: "virtually staged",
   declutter: "digitally decluttered",
   photo_edit: "digitally edited",
@@ -231,6 +270,7 @@ const KIND_PHRASE: Record<string, string> = {
 
 /** kind → the model family in plain words (A2). */
 const KIND_FAMILY: Record<string, string> = {
+  video_reflection_removal: "AI video edit",
   virtual_stage: "AI image edit",
   declutter: "AI image edit",
   photo_edit: "AI image edit",
@@ -241,6 +281,7 @@ const KIND_FAMILY: Record<string, string> = {
 
 /** kind → a label to fall back on when the provenance row has none. */
 const KIND_FALLBACK_LABEL: Record<string, string> = {
+  video_reflection_removal: "Walkthrough reflection removal",
   virtual_stage: "Virtual staging",
   declutter: "Digital declutter",
   photo_edit: "Listing photo",
@@ -249,7 +290,7 @@ const KIND_FALLBACK_LABEL: Record<string, string> = {
   other: "Altered media",
 };
 
-const VIDEO_KINDS = new Set(["aerial", "reel"]);
+const VIDEO_KINDS = new Set(["aerial", "reel", "video_reflection_removal"]);
 
 interface AlteredItem {
   kind: string;
@@ -309,7 +350,13 @@ function alteredItems(tour: Tour): AlteredItem[] {
 function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
   if (items.length) {
     const n = items.length;
-    return `${n} item${n === 1 ? "" : "s"} in this tour ${n === 1 ? "was" : "were"} digitally altered or AI-generated.`;
+    const head = `${n} item${n === 1 ? "" : "s"} in this tour ${n === 1 ? "was" : "were"} digitally altered or AI-generated.`;
+    // Say that the originals are RIGHT HERE and can be compared, not merely
+    // that something was altered. A disclosure nobody opens discloses nothing.
+    if (items.some((it) => it.original && VIDEO_KINDS.has(it.kind))) {
+      return `${head} Compare the edited media with the unedited originals below.`;
+    }
+    return items.some((it) => it.original) ? `${head} Drag to compare with the unedited photo.` : head;
   }
   return "Some imagery in this tour has been virtually staged or digitally decluttered.";
 }
@@ -324,14 +371,36 @@ function disclosureSummary(tour: Tour, items: AlteredItem[]): string {
  */
 function beforeAfter(it: AlteredItem): string {
   if (!it.original) return "";
-  const before = `<figure><img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async"><figcaption>Before — unaltered original</figcaption></figure>`;
+  const originalMedia = it.kind === "video_reflection_removal"
+    ? `<video src="${escapeAttr(it.original)}" aria-label="Unedited original walkthrough" controls playsinline preload="none"></video>`
+    : `<img src="${escapeAttr(it.original)}" alt="Before — the unaltered original of ${escapeAttr(it.label)}" loading="lazy" decoding="async">`;
+  const before = `<figure class="disc-f disc-f-b">${originalMedia}<figcaption>Before — how it really looks</figcaption></figure>`;
   if (!it.altered) return `<div class="disc-ba one">${before}</div>`;
   const after = VIDEO_KINDS.has(it.kind)
     ? `<video src="${escapeAttr(it.altered)}" controls playsinline preload="none"></video>`
     : `<img src="${escapeAttr(it.altered)}" alt="After — ${escapeAttr(it.label)}" loading="lazy" decoding="async">`;
-  return `<div class="disc-ba">
+  const afterFigure = `<figure class="disc-f disc-f-a">${after}<figcaption>After — ${escapeHtml(it.phrase)}</figcaption></figure>`;
+
+  // A still paired with a still can be DRAGGED; a still paired with a video
+  // cannot, so an aerial or a reel stays a plain pair.
+  //
+  // WHY THIS IS A DRAG AND NOT TWO PICTURES. A buyer looking at a decluttered
+  // room, then standing in the real one, sees a different house — that is the
+  // complaint that produced this, from the person whose own listing photos
+  // were the test. Two images side by side are compared by memory; one image
+  // with a line through it is compared by eye, and the difference is exactly
+  // the thing that has to be obvious.
+  //
+  // NOTE FOR ANYONE EDITING THIS: no `<input type="range">`. `<input` is a
+  // forbidden token on the MLS-safe `/u/` twin and this section renders there
+  // too, so the control is an ARIA slider on a div — keyboard included.
+  if (VIDEO_KINDS.has(it.kind)) {
+    return `<div class="disc-ba">${before}${afterFigure}</div>`;
+  }
+  return `<div class="disc-ba" data-ba>
         ${before}
-        <figure>${after}<figcaption>After — ${escapeHtml(it.phrase)}</figcaption></figure>
+        ${afterFigure}
+        <span class="disc-ui" aria-hidden="true"><span class="disc-line"></span><span class="disc-grip"></span></span>
       </div>`;
 }
 
@@ -379,7 +448,7 @@ function renderDisclosureSection(tour: Tour): string {
       <div class="disc-body">
         ${lead}
         ${list}
-        <p class="lp-fine">Where an unaltered original exists it is linked above. Layout, dimensions and permanent features are not changed by any edit listed here.</p>
+        <p class="lp-fine">Where an unaltered original exists it is shown and linked above. Edits may change styling and furnishing or remove visible people and their reflections. Layout, dimensions and permanent features — including anything a buyer would want to know about — must be preserved. Compare the original to judge the result.</p>
       </div>
     </details>
   </div></section>`;
@@ -393,6 +462,11 @@ function renderDisclosureSection(tour: Tour): string {
 // the room chapters beside it wired to the player's own seek.
 // ---------------------------------------------------------------------------
 
+function spatialButton(chapter: Tour["chapters"][number]): string {
+  const anchor = spatialAnchor(chapter.spatial_anchor);
+  return anchor ? `<button type="button" class="plan-room spatial-enter" data-spatial-scene="${anchor.scene_id}" data-spatial-room="${anchor.room_id}" aria-label="Explore ${escapeAttr(chapter.label)} in 3D">Explore in 3D</button>` : "";
+}
+
 function planSection(tour: Tour): string {
   const url = safeUrl(first(tour.floorplan_url));
   if (!url) return "";
@@ -401,7 +475,7 @@ function planSection(tour: Tour): string {
     ? `<div class="plan-rooms">
         <h3>Rooms in this tour</h3>
         <div class="plan-roomlist">${chapters
-          .map((c) => `<button type="button" class="plan-room" data-seek="${(Number(c.t_ms) || 0) / 1000}">${escapeHtml(c.label)}</button>`)
+          .map((c) => `<button type="button" class="plan-room" data-seek="${(Number(c.t_ms) || 0) / 1000}">${escapeHtml(c.label)}</button>${spatialButton(c)}`)
           .join("")}</div>
         <p class="lp-fine">Pick a room to jump the tour to it.</p>
       </div>`
@@ -448,12 +522,28 @@ function renderAgentCard(a: AgentModel, tour: Tour): string {
     ? `<div class="social">${socialLinks}${emailLink}</div>`
     : "";
 
+  // "See all their homes" — the one link to /a/:handle.
+  //
+  // The portfolio page has existed since portfolio.ts was written, with an edge
+  // function behind it and `agent_card.handle` on this very payload, and
+  // NOTHING pointed at it. A buyer who likes this house and wants to see what
+  // else this agent has had no way to ask, and the agent's best cross-sell sat
+  // dark. It is a relative path so it works on workers.dev and on a preview
+  // deploy, exactly like the portfolio's own tour cards.
+  //
+  // Branded pages only by construction: this card is rendered inside the end
+  // card, and the end card is not built at all on /u/.
+  const more = a.handle
+    ? `<a class="more" href="/a/${encodeURIComponent(a.handle)}">See all their homes</a>`
+    : "";
+
   return `<div class="agent">
       ${avatar}
       <div class="who">
         ${name ? `<div class="nm">${escapeHtml(name)}</div>` : ""}
         ${sub}
         ${social}
+        ${more}
       </div>
     </div>`;
 }
@@ -467,6 +557,11 @@ interface HeaderModel {
   ogTitle: string;
   ogDesc: string;
   chipHtml: string;
+  /** The bare name of the THING this page is about — the street address, or the
+   *  business name for every other space type. `ogTitle` decorates it for a
+   *  social card ("… — $4,250,000", "… — Sold"); structured data must not, and
+   *  `pageTitle` carries the vendor suffix, so neither is reusable there. */
+  entityName: string;
 }
 
 function buildHeader(tour: Tour, unbranded = false): HeaderModel {
@@ -501,6 +596,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
       pageTitle: `${titleText}${sold ? " (Sold)" : ""}${suffix}`,
       ogTitle: titleText + (sold ? " — Sold" : price ? " — " + price : ""),
       ogDesc,
+      entityName: titleText,
       chipHtml: `${pill}${primary}${lines.map((x) => `<div class="meta">${escapeHtml(x)}</div>`).join("")}`,
     };
   }
@@ -515,6 +611,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
     pageTitle: `${title}${suffix}`,
     ogTitle: title,
     ogDesc: sold ? `${archiveLabel(tour)}. ${ogDesc}` : ogDesc,
+    entityName: title,
     chipHtml: `${pill}<div class="price">${escapeHtml(title)}</div>${lines.map((x) => `<div class="meta">${escapeHtml(x)}</div>`).join("")}`,
   };
 }
@@ -755,6 +852,8 @@ const FORM_CSS = `
   .agent { display: flex; align-items: center; gap: 14px; margin-bottom: 20px; }
   .agent .avatar { width: 52px; height: 52px; border-radius: 50%; background: linear-gradient(135deg, #33404f, #1c242e); display: flex; align-items: center; justify-content: center; font-weight: 650; font-size: 18px; color: var(--accent); overflow: hidden; flex: 0 0 auto; }
   .agent .avatar.photo { background: none; }
+  .agent .more { display: inline-block; margin-top: 8px; font-weight: 650; font-size: 14px;
+    text-decoration: none; border-bottom: 1px solid currentColor; padding-bottom: 1px; }
   .agent .avatar img { width: 100%; height: 100%; object-fit: cover; }
   .agent .who .nm { font-weight: 650; font-size: 16px; }
   .agent .who .bk { font-size: 12.5px; color: var(--ink-dim); margin-top: 2px; }
@@ -800,10 +899,35 @@ const FORM_CSS = `
 `;
 
 const PLAYER_CSS = `${TOKENS_CSS}
-  /* ===== Track & sticky stage ===== */
+  /* ===== Track & sticky stage =====
+     THE BAND. --strip is the height of the room strip's reserved band at the
+     bottom of the stage (0px when the tour has no chapters) and --floor is
+     how far a bottom-anchored overlay has to sit above the stage's bottom edge
+     to clear it. The video is INSET by --strip, not covered by the strip: the
+     room names cost the frame nothing, which is the whole point of moving them
+     off it. Both are set on #stage and inherited by every overlay inside. */
   #track { position: relative; }
-  #stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; background: #000; }
-  #scrub { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+  #skiptodetails { position: absolute; z-index: 6; right: 12px; bottom: calc(14px + env(safe-area-inset-bottom));
+    display: inline-flex; align-items: center; gap: 6px; padding: 10px 14px; min-height: 44px;
+    font: 600 14px/1 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; letter-spacing: .01em;
+    color: #fff; background: rgba(12,12,16,.62); border: 1px solid rgba(255,255,255,.22);
+    border-radius: 999px; cursor: pointer; -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    transition: opacity .25s ease, transform .25s ease; }
+  #skiptodetails svg { width: 14px; height: 14px; fill: currentColor; }
+  #skiptodetails:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+  /* Fades out once the viewer has reached the end card on their own — at that
+     point it is pointing at what they are already looking at. */
+  #skiptodetails[hidden] { display: none; }
+  #skiptodetails.gone { opacity: 0; transform: translateY(6px); pointer-events: none; }
+  @media (prefers-reduced-motion: reduce) { #skiptodetails { transition: none; } }
+  #stage { position: sticky; top: 0; height: 100vh; height: 100svh; overflow: hidden; background: #000;
+    --strip: 0px; --floor: env(safe-area-inset-bottom); }
+  #stage.hasstrip { --strip: calc(44px + env(safe-area-inset-bottom)); --floor: var(--strip); }
+  /* <video> is a REPLACED element: with top/bottom both set it keeps its
+     intrinsic 300x150 and drops the bottom inset, so the band has to come out
+     of an explicit height instead. */
+  .lp-btn-ghost { background: transparent; border: 1px solid currentColor; margin-left: 8px; }
+  #scrub { position: absolute; top: 0; left: 0; width: 100%; height: calc(100% - var(--strip, 0px)); object-fit: cover; pointer-events: none; }
 
   /* ===== Loader ===== */
   #loader { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; background: var(--bg); transition: opacity .5s ease; }
@@ -825,26 +949,110 @@ const PLAYER_CSS = `${TOKENS_CSS}
   #progress { position: absolute; top: 0; left: 0; right: 0; height: 3px; z-index: 20; background: rgba(255,255,255,.10); }
   #progress i { display: block; height: 100%; background: var(--accent); transform-origin: 0 50%; transform: scaleX(0); will-change: transform; }
 
+  /* ===== "Still loading" pill =====
+     The page now starts on a few seconds of buffer instead of 96% of a 240 MB
+     all-intra master, so it is possible to out-scroll the download. When that
+     happens the scrub is held at the buffered edge (see the engine) and this
+     says so — a frozen frame with no explanation reads as a broken player,
+     which is exactly the complaint we are fixing. Same smoked-glass vocabulary
+     as #staged; opacity only, so it adds no motion under reduced-motion.
+     It takes #hint's slot: the hint is dismissed for good on the first scroll
+     and the pill can only appear after one, so they never coexist — and it
+     clears the 14px band where #wm and #staged sit, which a centred pill would
+     otherwise collide with on a 375pt phone. */
+  #bufwait { left: 50%; transform: translateX(-50%); bottom: calc(34px + var(--floor, 0px));
+    display: none; align-items: center; gap: 7px; font-size: 11px; letter-spacing: .04em;
+    color: rgba(255,255,255,.72); padding: 6px 12px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.18); background: rgba(11,13,16,.55);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    opacity: 0; transition: opacity .3s ease; pointer-events: none; white-space: nowrap; }
+  #bufwait.on { display: flex; opacity: 1; }
+  #bufwait .n { font-variant-numeric: tabular-nums; color: rgba(255,255,255,.92); }
+
   /* ===== Overlay chrome ===== */
   .chrome { position: absolute; z-index: 10; }
   #brand { top: calc(14px + env(safe-area-inset-top)); left: 16px; font-size: 12px; letter-spacing: .3em; text-transform: uppercase; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.6); }
-  #hint { left: 50%; bottom: calc(34px + env(safe-area-inset-bottom)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.7); transition: opacity .6s ease; animation: bob 2.2s ease-in-out infinite; }
+  #hint { left: 50%; bottom: calc(34px + var(--floor, 0px)); transform: translateX(-50%); display: flex; flex-direction: column; align-items: center; gap: 6px; font-size: 13px; color: var(--ink); text-shadow: 0 1px 8px rgba(0,0,0,.7); transition: opacity .6s ease; animation: bob 2.2s ease-in-out infinite; }
   #hint.gone { opacity: 0; }
   @keyframes bob { 0%,100% { transform: translateX(-50%) translateY(0); } 50% { transform: translateX(-50%) translateY(7px); } }
   #hint svg { opacity: .9; }
 
   /* Room label */
-  #room { left: 16px; bottom: calc(96px + env(safe-area-inset-bottom)); opacity: 0; will-change: transform, opacity; }
+  #room { left: 16px; bottom: calc(96px + var(--floor, 0px)); opacity: 0; will-change: transform, opacity; max-width: min(58vw, 420px); }
   #room .kicker { font-size: 11px; letter-spacing: .28em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
   #room .name { font-size: 30px; font-weight: 650; letter-spacing: -.01em; text-shadow: 0 2px 14px rgba(0,0,0,.65); }
 
-  /* Chapter rail */
-  #rail { right: 10px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 14px; align-items: flex-end; }
-  #rail button { appearance: none; border: 0; background: none; cursor: pointer; display: flex; align-items: center; gap: 8px; padding: 4px; color: var(--ink-dim); font-size: 11px; font-family: inherit; }
-  #rail button .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(255,255,255,.35); transition: all .25s ease; }
-  #rail button .lbl { opacity: 0; transition: opacity .25s ease; text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  /* Chapter rail — a POSITION INDICATOR, not a room index.
+     A previous pass put every room name on the rail in a smoked-glass pill.
+     On the owner's real tour — 17 rooms, which is the normal case for a house,
+     not an edge case — that was a full-height column of pills down the right
+     edge covering the price, the beds/baths line and the address, with two
+     names ellipsed mid-word. Labels stacked over live video do not survive
+     15-20 rooms at any type size. So the rail is dots again with only the
+     chapter you are IN named, and the full room list moved off the video
+     entirely, into #roomstrip in the band below it.
+
+     The active label is absolutely positioned inside its own button, so it
+     costs the column no layout at all: the rail cannot twitch sideways or
+     re-flow vertically as the active chapter changes under a fast scroll. It
+     keeps the smoked-glass pill — this page's treatment for text over live
+     video, and what keeps a white room name readable over a white kitchen.
+
+     HEIGHT. The rail is anchored top AND bottom to the band between the
+     listing chip and the disclosure chip, so it is always inside the stage,
+     and the rows shrink to fit it (flex-basis 20px, flex-shrink 1) instead of
+     running off both ends and being clipped. 17 dots are ~340px in a 390pt
+     portrait stage (no shrink) and ~9px apiece in landscape. No server-side
+     density tier is needed any more; the browser does the arithmetic. */
+  #rail { right: calc(10px + env(safe-area-inset-right)); top: calc(96px + env(safe-area-inset-top)); bottom: calc(48px + var(--floor, 0px));
+    display: flex; flex-direction: column; align-items: flex-end; justify-content: center; }
+  #rail button { appearance: none; border: 0; background: none; cursor: pointer; position: relative;
+    display: flex; align-items: center; justify-content: flex-end;
+    flex: 0 1 20px; height: 20px; min-height: 3px; width: 34px; padding: 0;
+    color: var(--ink-dim); font-size: 11px; font-family: inherit; }
+  #rail button .dot { width: 7px; height: 7px; max-height: 100%; border-radius: 50%; flex: 0 0 auto;
+    background: rgba(255,255,255,.35); transition: background-color .25s ease, box-shadow .25s ease; }
   #rail button.active .dot { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
-  #rail button.active .lbl { opacity: 1; color: var(--ink); }
+  /* Only the current chapter is named, and the pill floats: position:absolute
+     keeps it out of the column's layout entirely. */
+  #rail button .lbl { display: none; }
+  #rail button.active .lbl { display: block; position: absolute; right: 16px; top: 50%; transform: translateY(-50%);
+    max-width: min(52vw, 260px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    padding: 3px 9px; border-radius: 999px; line-height: 1.35; color: var(--ink);
+    background: rgba(11,13,16,.68); border: 1px solid rgba(255,255,255,.3);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    text-shadow: 0 1px 6px rgba(0,0,0,.7); }
+  /* Landscape phone: the band is ~250px tall, so the dots are already tight —
+     shrink them and drop the floating label. #room still spells out the room,
+     and #roomstrip still lists every one of them. */
+  @media (max-height: 430px) {
+    #rail button .dot { width: 5px; height: 5px; }
+    #rail button.active .lbl { display: none; }
+  }
+
+  /* ===== Room strip — the room index, UNDER the video =====
+     The replacement for labelling the rail. A horizontal, scrollable row of
+     the SAME seek chips the floor-plan section uses (.plan-room in
+     EDITORIAL_CSS, same data-seek attribute, same handler), sitting in the
+     --strip band carved out of the bottom of the stage. It is server-rendered
+     so it works before the engine runs, it never overlaps the frame, and
+     because it scrolls sideways a 17-room house shows every room name in full
+     — nothing is truncated and nothing covers the listing chip. */
+  #roomstrip { left: 0; right: 0; bottom: 0; height: var(--strip, 0px); z-index: 12;
+    display: none; align-items: center; padding-bottom: env(safe-area-inset-bottom);
+    background: rgba(9,11,14,.94); border-top: 1px solid rgba(255,255,255,.09); }
+  #stage.hasstrip #roomstrip { display: flex; }
+  #roomstrip .rs-scroll { position: relative; display: flex; align-items: center; gap: 8px;
+    width: 100%; overflow-x: auto; overflow-y: hidden;
+    padding: 0 calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
+    overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+    -webkit-mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+    mask-image: linear-gradient(90deg, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%); }
+  #roomstrip .rs-scroll::-webkit-scrollbar { display: none; }
+  /* Same component as the floor plan's room list, sized down for the band.
+     white-space: nowrap + the scroller = no truncation at all here. */
+  #roomstrip .plan-room { flex: 0 0 auto; white-space: nowrap; font-size: 12.5px; padding: 6px 12px; }
+  #roomstrip .plan-room.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 
   /* Listing chip */
   #listing { top: calc(12px + env(safe-area-inset-top)); right: 16px; text-align: right; text-shadow: 0 1px 8px rgba(0,0,0,.6); max-width: 62vw; }
@@ -853,13 +1061,36 @@ const PLAYER_CSS = `${TOKENS_CSS}
   #listing .soldpill { display: inline-block; font-size: 10.5px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; background: var(--accent); color: #fff; text-shadow: none; margin-bottom: 6px; }
 
   /* Watermark */
-  #wm { left: 16px; bottom: calc(14px + env(safe-area-inset-bottom)); font-size: 10.5px; color: rgba(255,255,255,.45); letter-spacing: .06em; text-decoration: none; }
+  #wm { left: 16px; bottom: calc(14px + var(--floor, 0px)); font-size: 10.5px; color: rgba(255,255,255,.45); letter-spacing: .06em; text-decoration: none; }
   #wm b { color: rgba(255,255,255,.72); font-weight: 600; }
 
+  /* ===== Share =====
+     A tour is a link someone sends to a buyer, a seller or a group chat, and
+     until now the only way to send it was to find the address bar. This is a
+     real <button> (so it is tabbable and works on Enter/Space for free), in
+     the one free corner: #brand sits at 14px top-left, #listing is top-right,
+     #rail runs down the right edge from 96px, and the whole bottom band is
+     spoken for by #wm, #staged, #hint and #roomstrip. Same smoked-glass
+     treatment as #staged, because it is the same kind of thing: small chrome
+     over live video that still has to be readable on a white kitchen.
+     BRANDED, NON-EMBED ONLY — see the render guard; on /u/ this element is not
+     built at all, and "share" is a social affordance an MLS field forbids. */
+  #share { top: calc(42px + env(safe-area-inset-top)); left: 16px; display: inline-flex;
+    align-items: center; gap: 6px; appearance: none; cursor: pointer; font-family: inherit;
+    font-size: 11px; font-weight: 600; letter-spacing: .04em; line-height: 1;
+    color: rgba(255,255,255,.78); padding: 6px 11px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,.2); background: rgba(11,13,16,.5);
+    backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+    transition: color .2s ease, border-color .2s ease; }
+  #share svg { flex: 0 0 auto; }
+  #share:hover { color: #fff; border-color: rgba(255,255,255,.42); }
+  #share:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  @media (max-height: 430px) { #share { top: calc(38px + env(safe-area-inset-top)); } }
+
   /* Virtual-staging disclosure (MLS compliance) */
-  #staged { right: 16px; bottom: calc(14px + env(safe-area-inset-bottom)); display: none; align-items: center; gap: 5px; font-size: 10.5px; color: rgba(255,255,255,.65); letter-spacing: .04em; padding: 5px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; background: rgba(11,13,16,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; }
+  #staged { right: 16px; bottom: calc(14px + var(--floor, 0px)); display: none; align-items: center; gap: 5px; font-size: 10.5px; color: rgba(255,255,255,.65); letter-spacing: .04em; padding: 5px 10px; border: 1px solid rgba(255,255,255,.18); border-radius: 999px; background: rgba(11,13,16,.45); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); cursor: pointer; }
   #staged.on { display: flex; }
-  #stageddisc { right: 16px; bottom: calc(50px + env(safe-area-inset-bottom)); max-width: min(78vw, 320px); display: none; font-size: 11.5px; line-height: 1.45; color: var(--ink-dim); padding: 12px 14px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(11,13,16,.86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
+  #stageddisc { right: 16px; bottom: calc(50px + var(--floor, 0px)); max-width: min(78vw, 320px); display: none; font-size: 11.5px; line-height: 1.45; color: var(--ink-dim); padding: 12px 14px; border: 1px solid rgba(255,255,255,.12); border-radius: 12px; background: rgba(11,13,16,.86); backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); }
   #stageddisc.on { display: block; }
 
   /* The #unavail retry button is a .cta — these three rules stay in the core
@@ -892,13 +1123,54 @@ const ENGINE_CORE_JS = `
   var roomEl = document.getElementById('room');
   var roomNm = roomEl ? roomEl.querySelector('.name') : null;
   var railEl = document.getElementById('rail');
+  var stageEl = document.getElementById('stage');
+  var stripEl = document.getElementById('roomstrip');
+  var stripScroll = stripEl ? stripEl.querySelector('.rs-scroll') : null;
   var hintEl = document.getElementById('hint');
   var unavailEl = document.getElementById('unavail');
+  var waitEl = document.getElementById('bufwait');
+  var waitPct = waitEl ? waitEl.querySelector('.n') : null;
 
   var CH  = Array.isArray(CFG.chapters) ? CFG.chapters : [];
   var HAS_CH = CH.length > 0;
-  var PX_PER_SEC  = CFG.pxPerSec || 240;
-  var BUFFER_GATE = CFG.bufferGate || 0.96;
+  var PX_PER_SEC  = CFG.pxPerSec || 420;   /* was 240: one flick crossed three rooms */
+
+  /* ---- START GATE (the 4,000 sq ft field test) ----
+     This used to be 0.96: the page would not release the loader until 96% of
+     the scrub master had downloaded. The master is 1280-long-edge 60fps
+     ALL-INTRA H.264 at ~14 Mbps, i.e. ~1.75 MB per second of tour, so a 137 s
+     walkthrough is ~240 MB and 96% of it is ~230 MB. On a phone that is a
+     percentage counter for minutes before anything moves — the "it lags" the
+     owner reported is almost entirely this wait, not the playback.
+
+     The gate is now a LEAD TIME, not a fraction of the file: start once the
+     head of the video is here and keep downloading behind the viewer. The
+     fraction survives only as a ceiling so a very short tour is not asked for
+     proportionally more than a long one.
+
+         needed = min(duration * BUFFER_GATE, LEAD_S)
+
+     For the 137 s tour that is min(20.6 s, 6 s) = 6 s ~ 10.5 MB: a couple of
+     seconds on wifi or LTE instead of minutes.
+
+     What the old gate was really buying was the guarantee that ANY scrub
+     position was already on the device. That guarantee is gone, so the scrub
+     now clamps to what is actually buffered and says so (see tick() and
+     #bufwait) instead of freezing on a frame with no explanation. */
+  var BUFFER_GATE = typeof CFG.bufferGate === 'number' ? CFG.bufferGate : 0.15;
+  var LEAD_S = Number(CFG.bufferLeadS) || 6;
+  /* Progressive enhancement: Network Information API where it exists (Chrome /
+     Android; undefined on iOS Safari, which just keeps the 6 s default). A
+     viewer on Data Saver or a 2G link would sit on the default gate for a
+     minute, so ask for less and let the clamp do more of the work. */
+  (function(){
+    var c = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+    if (!c) return;
+    var et = String(c.effectiveType || '');
+    if (c.saveData === true || et === 'slow-2g' || et === '2g') LEAD_S = Math.min(LEAD_S, 2);
+    else if (et === '3g') LEAD_S = Math.min(LEAD_S, 3.5);
+  })();
+
   var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
   var LERP = reduce ? 0.08 : 0.14;
 
@@ -906,18 +1178,35 @@ const ENGINE_CORE_JS = `
 
   /* ---- State ---- */
   var curT = 0, lastSet = -1, started = false, interacted = false, unavailable = false, fellBack = false;
+  // Buffer-aware scrub state: where the scroll last was, when it went still,
+  // how long we have been held at the buffered edge, and the last % painted
+  // into the waiting pill (so we only touch the DOM when the digits change).
+  var lastWant = -1, stillSince = 0, starveSince = 0, bufPct = -1, waitOn = false;
+  var lastActive = -1, stripHold = 0;
   var longFrames = 0, lastTick = performance.now();
   var usingHls = false, triedHlsFallback = false, hlsJs = null;
   var pollBuf = null;
+  var spatialOpen = false, spatialGeneration = 0;
 
   /* ---- Track sizing (100svh-safe, toolbar-resize-safe) ---- */
   var duration = Number(CFG.durationS) || 0;
+  /* A 6:50 walkthrough at 420 px/s is 172,200 px of track — about 203 screens
+     on a phone before the end card, the agent card or the LEAD FORM come into
+     reach. Long walkthroughs are the normal case in real estate, not the edge
+     case, so the fix is a ceiling on the track rather than advice to film
+     shorter. MAX_SCREENS viewports is the most anyone should ever have to
+     scroll; past that the scrub rate absorbs the extra duration. */
+  var MAX_SCREENS = 28;
   function sizeTrack(){
     if (!track) return;
     if (unavailable){ track.style.height = ''; return; }
     if (!duration) return;
-    track.style.height = Math.round(duration * PX_PER_SEC + innerHeight) + 'px';
+    var ideal = duration * PX_PER_SEC;
+    var ceiling = Math.max(1, MAX_SCREENS) * innerHeight;
+    track.style.height = Math.round(Math.min(ideal, ceiling) + innerHeight) + 'px';
   }
+  /*__SKIP__*/
+
   addEventListener('resize', sizeTrack, { passive: true });
   if (window.visualViewport) visualViewport.addEventListener('resize', sizeTrack, { passive: true });
   // Size from the server-known duration right away: loadedmetadata never fires
@@ -933,7 +1222,7 @@ const ENGINE_CORE_JS = `
     scrollTo({ top: p * Math.max(0, track.offsetHeight - innerHeight), behavior: 'smooth' });
   }
 
-  /* ---- Chapter rail (buttons are server-rendered) ---- */
+  /* ---- Chapter rail: dots only, server-rendered ---- */
   var railBtns = railEl ? Array.prototype.slice.call(railEl.querySelectorAll('button')) : [];
   for (var r = 0; r < railBtns.length; r++){
     (function(btn){
@@ -943,14 +1232,40 @@ const ENGINE_CORE_JS = `
     })(railBtns[r]);
   }
 
-  /* ---- Floor-plan room list: same seek, from far down the page ---- */
-  var planBtns = Array.prototype.slice.call(document.querySelectorAll('#plan [data-seek]'));
-  for (var q = 0; q < planBtns.length; q++){
+  /* ---- Room seek buttons: ONE component, ONE handler. The strip under the
+     stage and the floor-plan room list far down the page are the same
+     .plan-room button with the same data-seek, so they are wired here
+     together rather than as two implementations that can drift apart. ---- */
+  var seekBtns = Array.prototype.slice.call(document.querySelectorAll('[data-seek]'));
+  for (var q = 0; q < seekBtns.length; q++){
     (function(btn){
       btn.addEventListener('click', function(){
         seekToChapter(parseFloat(btn.getAttribute('data-seek')) || 0);
       });
-    })(planBtns[q]);
+    })(seekBtns[q]);
+  }
+
+  /* ---- Room strip: keep the current room's chip in view ----
+     NEVER scrollIntoView(): that scrolls the PAGE vertically, and vertical
+     scroll IS the scrub — one auto-centre would fly the viewer through the
+     house. Only the strip's own scrollLeft is touched, and only when the
+     viewer is not dragging the strip themselves. */
+  var stripBtns = stripScroll ? Array.prototype.slice.call(stripScroll.querySelectorAll('button[data-seek]')) : [];
+  function touchStrip(){ stripHold = performance.now(); }
+  if (stripScroll){
+    stripScroll.addEventListener('pointerdown', touchStrip, { passive: true });
+    stripScroll.addEventListener('touchstart', touchStrip, { passive: true });
+    stripScroll.addEventListener('wheel', touchStrip, { passive: true });
+  }
+  function centerChip(i){
+    var b = stripBtns[i];
+    if (!stripScroll || !b) return;
+    if (performance.now() - stripHold < 1500) return; // they are scrolling it themselves
+    var max = Math.max(0, stripScroll.scrollWidth - stripScroll.clientWidth);
+    var to = clamp(b.offsetLeft - (stripScroll.clientWidth - b.offsetWidth) / 2, 0, max);
+    if (Math.abs(stripScroll.scrollLeft - to) < 2) return;
+    try { stripScroll.scrollTo({ left: to, behavior: reduce ? 'auto' : 'smooth' }); }
+    catch (e) { stripScroll.scrollLeft = to; }
   }
 
   /* ---- AI disclosure: full text is always IN the page (no-JS included);
@@ -958,6 +1273,66 @@ const ENGINE_CORE_JS = `
   var discEl = document.getElementById('disc');
   if (discEl && window.matchMedia && matchMedia('(max-width: 719px)').matches){
     discEl.removeAttribute('open');
+  }
+
+  /* ---- Before/after drag. Upgrades the side-by-side pair in place; if this
+     never runs, the pair is still there and still compliant. Built on a div
+     with role=slider rather than a range form control ON PURPOSE: the opening
+     tag of one is a forbidden token on the unbranded twin, and this section
+     renders on both pages. ---- */
+  var baEls = document.querySelectorAll('[data-ba]');
+  for (var bi = 0; bi < baEls.length; bi++) initBeforeAfter(baEls[bi]);
+  function initBeforeAfter(el){
+    var pos = 50, dragging = false;
+    el.classList.add('on');
+    el.setAttribute('role', 'slider');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', 'Compare photos: amount of original shown');
+    el.setAttribute('aria-valuemin', '0');
+    el.setAttribute('aria-valuemax', '100');
+    // Both complete photos share the original's frame. Contain an edited
+    // image with a different ratio; never crop away a property's edge details.
+    var beforeImg = el.querySelector('.disc-f-b img');
+    var afterImg = el.querySelector('.disc-f-a img');
+    function fitFrame(){
+      var image = beforeImg && beforeImg.naturalWidth > 0 ? beforeImg : afterImg;
+      if (image && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        el.style.aspectRatio = image.naturalWidth + ' / ' + image.naturalHeight;
+      }
+    }
+    if (beforeImg) beforeImg.addEventListener('load', fitFrame);
+    if (afterImg) afterImg.addEventListener('load', fitFrame);
+    fitFrame();
+    function setPos(v){
+      pos = v < 0 ? 0 : (v > 100 ? 100 : v);
+      el.style.setProperty('--p', pos + '%');
+      var r = Math.round(pos);
+      el.setAttribute('aria-valuenow', String(r));
+      el.setAttribute('aria-valuetext', r + '% original, ' + (100 - r) + '% edited');
+    }
+    function fromX(x){
+      var r = el.getBoundingClientRect();
+      if (r.width <= 0) return;
+      setPos(((x - r.left) / r.width) * 100);
+    }
+    el.addEventListener('pointerdown', function(e){
+      dragging = true;
+      if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch(err){} }
+      fromX(e.clientX);
+    });
+    el.addEventListener('pointermove', function(e){ if (dragging) fromX(e.clientX); });
+    el.addEventListener('pointerup', function(){ dragging = false; });
+    el.addEventListener('pointercancel', function(){ dragging = false; });
+    el.addEventListener('keydown', function(e){
+      var step = e.shiftKey ? 10 : 2, k = e.key;
+      if (k === 'ArrowLeft' || k === 'ArrowDown') setPos(pos - step);
+      else if (k === 'ArrowRight' || k === 'ArrowUp') setPos(pos + step);
+      else if (k === 'Home') setPos(0);
+      else if (k === 'End') setPos(100);
+      else return;
+      e.preventDefault();
+    });
+    setPos(50);
   }
 
   /* ---- Overlays ---- */
@@ -974,11 +1349,25 @@ const ENGINE_CORE_JS = `
     if (roomNm && roomNm.textContent !== c.label) roomNm.textContent = c.label;
     roomEl.style.opacity = dNorm;
     roomEl.style.transform = 'translateY(' + ((1 - dNorm) * 14) + 'px)';
-    for (var j = 0; j < railBtns.length; j++) railBtns[j].classList.toggle('active', j === active);
+    // Only on a CHANGE: 17 rail dots plus 17 chips is 34 pointless class
+    // writes a frame otherwise, and the strip must not be re-centred 60x a
+    // second while smooth-scrolling to the chip it already centred.
+    if (active !== lastActive){
+      lastActive = active;
+      for (var j = 0; j < railBtns.length; j++) railBtns[j].classList.toggle('active', j === active);
+      for (var k = 0; k < stripBtns.length; k++){
+        var on = k === active;
+        stripBtns[k].classList.toggle('active', on);
+        if (on) stripBtns[k].setAttribute('aria-current', 'true');
+        else stripBtns[k].removeAttribute('aria-current');
+      }
+      centerChip(active);
+    }
   }
 
   /* ---- Core scrub loop ---- */
   function tick(now){
+    if (spatialOpen){ lastTick = now; requestAnimationFrame(tick); return; }
     // Jank watchdog → fallback ladder (ported from the iOS engine). Only
     // SUSTAINED jank trips it: gaps over ~1s are suspensions (app switch,
     // webview paused offscreen in the outer scroll, rAF throttled in a
@@ -991,15 +1380,58 @@ const ENGINE_CORE_JS = `
 
     var total = Math.max(1, track.offsetHeight - innerHeight); // duration=0 → no NaN/-Infinity
     var p = clamp(-track.getBoundingClientRect().top / total, 0, 1);
-    var target = p * Math.max(0, (duration || video.duration || 0) - 0.05);
-    curT += (target - curT) * LERP;
+    var span = Math.max(0, (duration || video.duration || 0) - 0.05);
+    var want = p * span;
+
+    /* ---- Out-scrolling the download (the 4,000 sq ft field test) ----
+       The page now starts on ~6 s of buffer, so the viewer can reach a part of
+       the tour that has not arrived. Two different situations, handled
+       differently on purpose:
+
+       MOVING — the scroll is still travelling. Hold the scrub at the edge of
+       what is actually buffered and show the pill. Letting curT run into a
+       hole would either freeze the picture with no explanation (the frame the
+       decoder is stuck on) or fire a byte-range request per frame, which is
+       slower than waiting. The overlays follow the held position so the room
+       name and the progress bar keep describing the frame on screen.
+
+       SETTLED — the viewer has stopped for ~0.4 s past the buffered edge.
+       Release the clamp and let the seek go through. The master is ALL-INTRA:
+       every frame is a keyframe, so one range request at that byte offset
+       paints the exact frame they stopped on. Waiting for a sequential
+       download to crawl there would be strictly worse.
+
+       On a fast connection everything the scroll can reach is already buffered,
+       held is never true and this is byte-for-byte the old behaviour. */
+    if (lastWant < 0 || Math.abs(want - lastWant) > 0.05){ lastWant = want; stillSince = now; }
+    var settled = (now - stillSince) > 380;
+    var held = false, goal = want;
+    if (!settled){
+      var ceil = scrubCeiling(want);
+      if (want > ceil){ held = true; goal = ceil; }
+    }
+    curT += (goal - curT) * LERP;
+
     // readyState 0 = no metadata yet → seeking is meaningless (and throws on old WebKit).
-    if (video.readyState > 0 &&
+    // The (canShow || settled) guard is the seek throttle: a seek inside the
+    // buffer is free and immediate (the old path), a seek into a hole costs a
+    // range request and only fires once the scroll has actually stopped.
+    var canShow = rangeEndAt(curT) >= 0;
+    if (video.readyState > 0 && (canShow || settled) &&
         Math.abs(video.currentTime - curT) > 0.016 && Math.abs(curT - lastSet) > 0.016){
       try { video.currentTime = curT; lastSet = curT; } catch (e) {}
     }
-    updateOverlays(p);
-    meter(p, now);
+
+    // The pill: held at the edge, or waiting on a committed seek to land.
+    // 300 ms of grace so a momentary stall does not flash it.
+    if (held || (video.readyState > 0 && !canShow)){ if (!starveSince) starveSince = now; }
+    else starveSince = 0;
+    setWait(starveSince > 0 && (now - starveSince) > 300);
+
+    // Overlays describe what is ON SCREEN: while held, that is the clamped
+    // position, not where the scroll has run off to.
+    updateOverlays(held && span ? clamp(goal / span, 0, 1) : p);
+    meter(p, now); // scroll_depth stays honest scroll depth
     if (!viewSent && video.readyState >= 2) reportViewAndDelivery();
     requestAnimationFrame(tick);
   }
@@ -1012,15 +1444,22 @@ const ENGINE_CORE_JS = `
     requestAnimationFrame(tick);
   }
 
-  /* ---- Unavailable: the video can't be delivered. Say so; count nothing. ---- */
+    /*__APPLINK__*/
+
+    /*__SHARE__*/
+
+/* ---- Unavailable: the video can't be delivered. Say so; count nothing. ---- */
   function showUnavailable(){
     if (started || unavailable) return;
     unavailable = true;
     if (pollBuf) clearInterval(pollBuf);
     if (loader) loader.classList.add('done');
     if (hintEl) hintEl.classList.add('gone');
+    setWait(false);
     if (roomEl) roomEl.style.opacity = 0;
     if (progEl) progEl.style.transform = 'scaleX(0)';
+    // No video, no rooms to jump to: drop the strip and its reserved band.
+    if (stageEl) stageEl.classList.remove('hasstrip');
     if (unavailEl) unavailEl.classList.add('on');
     sizeTrack(); // collapse the scrub track to one viewport → straight to the card
   }
@@ -1032,15 +1471,50 @@ const ENGINE_CORE_JS = `
     try { return video.buffered.length ? video.buffered.end(video.buffered.length - 1) : 0; }
     catch (e) { return 0; }
   }
+  /* End of the buffered range that contains t, or -1 when t sits in a hole.
+     The 0.25 s of slack in front of a range absorbs the difference between the
+     start the browser declares and the first frame it will actually paint. */
+  function rangeEndAt(t){
+    try {
+      for (var i = 0; i < video.buffered.length; i++){
+        if (t >= video.buffered.start(i) - 0.25 && t <= video.buffered.end(i)) return video.buffered.end(i);
+      }
+    } catch (e) {}
+    return -1;
+  }
+  /* How far the scrub may travel this frame. Infinity = no reason to hold. */
+  function scrubCeiling(want){
+    if (video.readyState === 0) return Infinity;   // nothing known yet — don't fight the browser
+    if (rangeEndAt(want) >= 0) return Infinity;    // already downloaded: go
+    var edge = rangeEndAt(curT);
+    if (edge < 0) return Infinity;                 // a committed seek is in flight; let it land
+    return Math.max(0, edge - 0.15);               // hold just inside the frontier
+  }
+  function setWait(on){
+    if (!waitEl) return;
+    if (on !== waitOn){ waitOn = on; waitEl.classList.toggle('on', on); }
+    if (on && waitPct && bufPct >= 0 && waitPct.textContent !== bufPct + '%') waitPct.textContent = bufPct + '%';
+  }
+  /* Seconds of head the loader waits for. See the START GATE note above. */
+  function startNeedS(){
+    var dur = duration || video.duration || 0;
+    if (!dur || !isFinite(dur)) return LEAD_S;
+    return Math.max(0.5, Math.min(dur * BUFFER_GATE, LEAD_S));
+  }
   function reportBuffer(){
     if (unavailable) return;
     var dur = duration || video.duration;
     if (!dur || !isFinite(dur)) return;
-    var f = clamp(buffered() / dur, 0, 1);
-    var pc = Math.round(f * 100);
+    var b = buffered();
+    bufPct = Math.round(clamp(b / dur, 0, 1) * 100);
+    // The loader's number is progress TOWARDS STARTING, not percent of file.
+    // At a 6 s gate on a 137 s tour "4%" would be true and useless — it would
+    // disappear at 4% and read as a download that gave up.
+    var pc = Math.round(clamp(b / startNeedS(), 0, 1) * 100);
     if (pctEl) pctEl.textContent = pc + '%';
     if (barEl) barEl.style.width = pc + '%';
-    if (f >= BUFFER_GATE) begin();
+    if (waitOn && waitPct) waitPct.textContent = bufPct + '%';
+    if (b >= startNeedS()) begin();
   }
   video.addEventListener('progress', reportBuffer);
   video.addEventListener('loadedmetadata', function(){
@@ -1051,7 +1525,19 @@ const ENGINE_CORE_JS = `
   video.addEventListener('canplaythrough', function(){ setTimeout(begin, 1200); });
   video.addEventListener('loadeddata', function(){ if (usingHls) setTimeout(begin, 700); });
   pollBuf = setInterval(function(){ reportBuffer(); if (started || unavailable) clearInterval(pollBuf); }, 250);
-  setTimeout(function(){ if (!started && !unavailable && buffered() > 3) begin(); }, 6000);
+  /* Start ladder. The gate above waits for min(duration * BUFFER_GATE,
+     LEAD_S) seconds of head, and the ONLY escape used to be at six seconds and
+     also demanded 3 s already buffered — so a viewer on a middling connection
+     watched a loader for six seconds before the house existed. That is the
+     "keeps loading", and it happened before a single frame was shown.
+
+     Starting early is cheap here, because running past the buffer is already
+     handled properly: the scrub holds at the frontier, the overlays keep
+     describing the held frame, and the pill explains the wait. Watching a
+     house within two and a half seconds and occasionally pausing at the
+     frontier beats six seconds of spinner. */
+  setTimeout(function(){ if (!started && !unavailable && buffered() > 1.5) begin(); }, 2500);
+  setTimeout(function(){ if (!started && !unavailable && buffered() > 0.8) begin(); }, 5000);
   // Last resort at 12s. Metadata present → start anyway (partial buffer is
   // fine). No metadata → the source is dead (error/no-source) or crawling: a
   // dead one is declared unavailable now, a crawling one gets 12 more seconds.
@@ -1068,6 +1554,7 @@ const ENGINE_CORE_JS = `
   function fallbackLoop(){
     if (fellBack) return; fellBack = true;
     if (loader) loader.classList.add('done');
+    setWait(false); // the autoplay loop plays what it has; nothing is being held
     video.loop = true;
     var pr = video.play(); if (pr && pr.catch) pr.catch(function(){});
     (function loopTick(now){
@@ -1171,6 +1658,7 @@ const ENGINE_CORE_JS = `
   }
   function loadHls(url){
     function attach(){
+      if (spatialOpen) return;
       if (window.Hls && window.Hls.isSupported()){
         var hls = new window.Hls({
           maxBufferLength: 600, maxMaxBufferLength: 600, backBufferLength: 600,
@@ -1205,6 +1693,7 @@ const ENGINE_CORE_JS = `
     if (canNative){ directSrc(url); } else { loadHls(url); }
   }
   video.addEventListener('error', function(){
+    if (spatialOpen) return;
     if (started || fellBack || unavailable) return;
     // The scrub mp4 failed before we started (missing R2 object, codec, CDN
     // hiccup) — degrade to HLS once rather than showing a dead loader.
@@ -1219,6 +1708,45 @@ const ENGINE_CORE_JS = `
     if (CFG.scrubUrl){ directSrc(CFG.scrubUrl); }
     else { startHls(CFG.hlsUrl); }
   }
+  // One document, one expensive media engine. Pausing video alone retains its
+  // decoded buffers and MSE worker; destroy HLS and detach src before WebGL.
+  var spatialButtons = document.querySelectorAll('[data-spatial-scene]'), spatialRestore = null;
+  spatialButtons.forEach(function(button){
+    button.addEventListener('click', function(){
+      if (spatialOpen) return;
+      // Reopening before metadata arrives must cancel the previous resume: its
+      // stale time otherwise seeks a later video attachment behind the viewer.
+      if (spatialRestore){ video.removeEventListener('loadedmetadata', spatialRestore); spatialRestore = null; }
+      spatialOpen = true; var generation = ++spatialGeneration;
+      var saved = { x:scrollX, y:scrollY, time:video.currentTime || curT, overflow:document.body.style.overflow };
+      video.pause(); if (hlsJs){ hlsJs.destroy(); hlsJs = null; }
+      video.removeAttribute('src'); video.load();
+      document.body.style.overflow = 'hidden';
+      var host = document.createElement('div'); document.body.appendChild(host);
+      var inactive = Array.prototype.filter.call(document.body.children, function(el){ return el !== host && !el.inert; });
+      inactive.forEach(function(el){ el.inert = true; });
+      var instance = null;
+      function close(){
+        if (generation !== spatialGeneration || !spatialOpen) return;
+        if (instance) instance.destroy(); host.remove(); spatialOpen = false; ++spatialGeneration;
+        inactive.forEach(function(el){ el.inert = false; });
+        document.body.style.overflow = saved.overflow; usingHls = false; triedHlsFallback = false;
+        curT = saved.time; lastSet = -1; lastTick = performance.now();
+        spatialRestore = function(){
+          video.removeEventListener('loadedmetadata', spatialRestore); spatialRestore = null;
+          if (!spatialOpen) video.currentTime = Math.min(saved.time, video.duration || saved.time);
+        };
+        video.addEventListener('loadedmetadata', spatialRestore);
+        setupVideo(); window.scrollTo(saved.x, saved.y); button.focus({preventScroll:true});
+      }
+      host.innerHTML = '<div style="position:fixed;inset:0;z-index:10000;background:#0e0d14;color:white;padding:24px"><p role="status">Opening 3D room…</p><button type="button">Back to flythrough</button></div>';
+      host.querySelector('button').addEventListener('click', close);
+      import('/spatial-viewer.js').then(function(module){
+        if (generation !== spatialGeneration || !spatialOpen) return;
+        instance = module.mountSpatial(host, {sceneId:button.dataset.spatialScene,roomId:button.dataset.spatialRoom,onClose:close});
+      }).catch(function(){ if (generation === spatialGeneration) host.querySelector('[role=status]').textContent = '3D could not load. Return to the flythrough and retry.'; });
+    });
+  });
   setupVideo();
 })();
 `;
@@ -1265,9 +1793,51 @@ const ENGINE_LEADFORM_JS = `
   function resetTurnstile(){
     try { if (window.turnstile && window.turnstile.reset) window.turnstile.reset(); } catch (e) {}
   }
+  var leadSubmitting = false;
+  var LEAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  var LEAD_UNCONFIRMED = "We couldn't confirm your request. Your details are still here. Please wait a moment before trying again.";
+  function sendLead(top){
+    var controller = new AbortController(), timer;
+    // CRM work can delay the reply after the lead was saved. Bound headers AND
+    // JSON, but never claim a timeout means "not sent" or retry automatically.
+    // The race releases the form even if a stalled body ignores cancellation;
+    // only its winner can confirm or open the booking link.
+    var deadline = new Promise(function(resolve, reject){
+      timer = setTimeout(function(){
+        reject(new Error(LEAD_UNCONFIRMED));
+        controller.abort();
+      }, 15000);
+    });
+    var request = Promise.resolve().then(function(){
+      return fetch(CFG.functionsBase + '/leads', { method: 'POST', headers: leadHeaders, body: JSON.stringify(top), mode: 'cors', credentials: 'omit', signal: controller.signal });
+    }).then(function(res){
+      if (controller.signal.aborted) throw new Error(LEAD_UNCONFIRMED);
+      return res.json().catch(function(){ return {}; }).then(function(body){
+        if (!res.ok){
+          var err = new Error(body && typeof body.error === 'string' ? body.error : '');
+          err.status = res.status;
+          throw err;
+        }
+        // Ordinary creation and dedup both return {ok:true,id}. Only a filled
+        // honeypot intentionally receives {ok:true} without inserting a lead.
+        // A proxy's empty/HTML 2xx must never masquerade as a buyer enquiry.
+        if (!body || typeof body !== 'object' || Array.isArray(body) || body.ok !== true ||
+            (!top._hp && (typeof body.id !== 'string' || !LEAD_ID_RE.test(body.id)))) throw new Error(LEAD_UNCONFIRMED);
+        return body;
+      });
+    });
+    return Promise.race([request, deadline]).then(function(body){
+      clearTimeout(timer); return body;
+    }, function(err){
+      clearTimeout(timer); throw err;
+    });
+  }
   if (form){
     form.addEventListener('submit', function(e){
       e.preventDefault();
+      // Disabling the button alone does not fence a second Enter/programmatic
+      // submit. Keep the guard set after success too: the hidden form is done.
+      if (leadSubmitting) return;
       showMsg('');
       var fd = new FormData(form);
       if (!validate(fd)) return;
@@ -1282,18 +1852,9 @@ const ENGINE_LEADFORM_JS = `
       });
       var btn = form.querySelector('button[type=submit]');
       var orig = btn ? btn.textContent : '';
+      leadSubmitting = true;
       if (btn){ btn.disabled = true; btn.textContent = 'Sending...'; }
-      fetch(CFG.functionsBase + '/leads', { method: 'POST', headers: leadHeaders, body: JSON.stringify(top), mode: 'cors', credentials: 'omit' })
-        .then(function(res){
-          return res.json().catch(function(){ return {}; }).then(function(body){
-            if (!res.ok){
-              var err = new Error(body && typeof body.error === 'string' ? body.error : '');
-              err.status = res.status;
-              throw err;
-            }
-            return body;
-          });
-        })
+      sendLead(top)
         .then(function(){
           form.style.display = 'none';
           var ok = document.getElementById('leadok');
@@ -1304,6 +1865,7 @@ const ENGINE_LEADFORM_JS = `
           if (CFG.handoffUrl){ try { window.open(CFG.handoffUrl, '_blank', 'noopener'); } catch (e2) {} }
         })
         .catch(function(err){
+          leadSubmitting = false;
           if (btn){ btn.disabled = false; btn.textContent = orig || 'Try again'; }
           resetTurnstile(); // a consumed Turnstile token can't be re-sent
           var st = err && err.status;
@@ -1317,16 +1879,180 @@ const ENGINE_LEADFORM_JS = `
 
 `;
 
+/**
+ * BRANDED PAGES ONLY, and for the same reason as the lead form: it names the
+ * end card, which does not exist on `/u/`. Leaving it in the shared core put
+ * the literal token "endcard" into the unbranded page and `check-unbranded`
+ * caught it — the gate is right, and the fix is to strip it at the DATA level
+ * rather than hide the control with CSS.
+ */
+const ENGINE_SKIP_JS = `
+  /* ---- Skip to the details ----
+     The flythrough is the hook, not a toll gate. Someone who only wants the
+     price and a phone number should reach them in one tap. */
+  (function(){
+    var skip = document.getElementById('skiptodetails');
+    if (!skip) return;
+    var target = document.getElementById('endcard');
+    if (!target){ skip.hidden = true; return; }
+    skip.addEventListener('click', function(){
+      var reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+      target.scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    });
+    /* Once the target is on screen the button has nothing left to offer. */
+    if (typeof IntersectionObserver === 'function') {
+      new IntersectionObserver(function(entries){
+        for (var i = 0; i < entries.length; i++) {
+          skip.classList.toggle('gone', entries[i].isIntersecting);
+        }
+      }, { threshold: 0.12 }).observe(target);
+    }
+  })();
+`;
+
+/** Where ENGINE_SKIP_JS is spliced into ENGINE_CORE_JS. */
+const SKIP_SLOT = "/*__SKIP__*/";
+
 /** Where ENGINE_LEADFORM_JS is spliced into ENGINE_CORE_JS. */
 const LEADFORM_SLOT = "/*__LEADFORM__*/";
 
-/** The client engine. `unbranded` drops the lead-form half. */
-function engineJs(unbranded: boolean): string {
+/**
+ * BRANDED PAGES ONLY. Spliced through `APPLINK_SLOT` for the same reason the
+ * lead form is: it names the vendor (`rendprop://`), and `UNBRANDED_FORBIDDEN`
+ * rejects vendor branding on an MLS-facing page. Putting it in the shared core
+ * failed every /u/ tour closed with a 503 — which is the gate working, and the
+ * reason this splice exists rather than a comment asking someone to remember.
+ *
+ * WHAT IT DOES. Apple has no deferred deep linking: a link tapped BEFORE an
+ * install cannot carry the person to this tour afterwards, and the workaround
+ * the industry uses (matching the device by IP and headers) is fingerprinting,
+ * which Apple's rules exist to stop and which iCloud Private Relay breaks
+ * anyway. So: remember that this browser went to the App Store from THIS tour,
+ * and when it comes back, offer to open the tour in the app. The custom scheme
+ * is deliberate — iOS will not hand an https link to an app when the browser is
+ * already on that same domain, which is exactly this case. Not installed, the
+ * tap is a no-op with the App Store button still beside it.
+ *
+ * localStorage only, no cookie, nothing sent anywhere: one string in one
+ * browser, and it never leaves the device.
+ */
+const APPLINK_SLOT = "/*__APPLINK__*/";
+const ENGINE_APPLINK_JS = `
+  (function(){
+    var storeBtn = document.getElementById('getapp-store');
+    var openBtn  = document.getElementById('getapp-open');
+    if (!storeBtn && !openBtn) return;
+    var slug = (CFG && CFG.slug) ? String(CFG.slug) : '';
+    if (!slug) return;
+    var KEY = 'rp_wanted_tour';
+    function remember(){ try { localStorage.setItem(KEY, 'f/' + slug); } catch (e) {} }
+    if (storeBtn) storeBtn.addEventListener('click', remember, { passive: true });
+    var wanted = null;
+    try { wanted = localStorage.getItem(KEY); } catch (e) {}
+    if (openBtn && wanted === 'f/' + slug){
+      openBtn.hidden = false;
+      openBtn.addEventListener('click', function(ev){
+        ev.preventDefault();
+        location.href = 'rendprop:' + '//f/' + encodeURIComponent(slug);
+      });
+    }
+  })();
+`;
+
+/**
+ * BRANDED PAGES ONLY, for the same reason as the two blocks above: sharing a
+ * link IS the social affordance an MLS unbranded field forbids, and the URL it
+ * shares is a rendprop.com one.
+ *
+ * `navigator.share` opens the OS share sheet — the Messages / WhatsApp / email
+ * row a seller actually uses — and it is the only correct API here: it must be
+ * called synchronously inside the click, and it exists on every iOS Safari the
+ * app targets. Where it does not exist (most desktop Firefox, older Chrome)
+ * the fallback is the clipboard, then a hidden textarea + execCommand for the
+ * browsers whose async clipboard is gated on permissions. Whatever happens,
+ * the button SAYS what happened: a copy that silently did nothing is the worst
+ * outcome of the three.
+ *
+ * NO NETWORK, NO STORAGE, NO ANALYTICS. The shared URL is the page's own
+ * canonical, already in the config; nothing is recorded and nothing is sent.
+ */
+const SHARE_SLOT = "/*__SHARE__*/";
+const ENGINE_SHARE_JS = `
+  (function(){
+    var btn = document.getElementById('share');
+    if (!btn) return;
+    var url = (CFG && CFG.shareUrl) ? String(CFG.shareUrl) : '';
+    // Nothing to share (no canonical) is not a button worth showing.
+    if (!url) { btn.hidden = true; return; }
+    var label = btn.querySelector('.share-lbl');
+    var resetTimer;
+    function say(text){
+      if (label) label.textContent = text;
+      btn.setAttribute('aria-label', text === 'Share' ? 'Share this tour' : text);
+      clearTimeout(resetTimer);
+      if (text !== 'Share') resetTimer = setTimeout(function(){ say('Share'); }, 2600);
+    }
+    function legacyCopy(){
+      try {
+        var ta = document.createElement('textarea');
+        ta.value = url;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        var copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+        say(copied ? 'Link copied' : 'Press Ctrl+C');
+      } catch (e) { say('Press Ctrl+C'); }
+    }
+    function copy(){
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText){
+          navigator.clipboard.writeText(url).then(function(){ say('Link copied'); }, legacyCopy);
+          return;
+        }
+      } catch (e) {}
+      legacyCopy();
+    }
+    btn.addEventListener('click', function(){
+      if (navigator.share){
+        try {
+          // A dismissed share sheet rejects with AbortError. That is the person
+          // changing their mind, not a failure to report.
+          var p = navigator.share({ title: document.title, url: url });
+          if (p && p.catch) p.catch(function(){});
+          return;
+        } catch (e) {}
+      }
+      copy();
+    });
+  })();
+`;
+
+/**
+ * The client engine. `unbranded` drops the lead-form and app-link halves;
+ * `embed` additionally drops the share half.
+ *
+ * Why share is the stricter of the two: the share block is the only one whose
+ * GUARD IS ITS MARKUP. The lead form and the app-link nudge look for elements
+ * the embed does not render and return, which is inert but does ship the code;
+ * the share block would ship `navigator.share` into the in-app webview, where
+ * an install-adjacent affordance next to the system share sheet is exactly the
+ * duplication the embed exists to avoid. Dropping it keeps the emitted script
+ * and the emitted markup in agreement, which is what the CI gate asserts.
+ */
+function engineJs(unbranded: boolean, embed = false): string {
   // ENGINE_CORE_JS opens with `(function(){` and the tail closes it, so the
   // lead-form block is spliced in at the marker inside the same IIFE.
   return unbranded
-    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "")
-    : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS);
+    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
+        .replace(SHARE_SLOT, "").replace(SKIP_SLOT, "")
+    : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
+        .replace(APPLINK_SLOT, ENGINE_APPLINK_JS)
+        .replace(SHARE_SLOT, embed ? "" : ENGINE_SHARE_JS)
+        // The end card is not rendered on an embed either, so neither is the
+        // control that points at it.
+        .replace(SKIP_SLOT, embed ? "" : ENGINE_SKIP_JS);
 }
 
 // ===========================================================================
@@ -1507,7 +2233,20 @@ function overviewTiles(tour: Tour): Array<{ v: string; k: string }> {
 }
 
 function galleryItems(tour: Tour): Array<{ url: string; label: string }> {
-  const g = det(tour, "gallery", "photos");
+  // TWO SHAPES, and for a while only one of them was read.
+  //
+  //  * TOP LEVEL (`tour.gallery`) — what `GET /tours/:slug` now returns, built
+  //    from the listing's `role:"gallery"` uploads. This is every real agent's
+  //    photos.
+  //  * `listing.details.gallery` — the freeform bag the demo tour and any
+  //    editorially authored page use.
+  //
+  // `det()` only ever looked in `details`, so when the API started sending the
+  // top-level field nothing read it and the gallery stayed empty on every real
+  // listing while the demo kept working — which is exactly how a broken wire
+  // survives a spot-check. Top level wins; details is the fallback.
+  const top = (tour as unknown as Record<string, unknown>).gallery;
+  const g = (Array.isArray(top) && top.length) ? top : det(tour, "gallery", "photos");
   const out: Array<{ url: string; label: string }> = [];
   if (Array.isArray(g)) {
     for (const it of g) {
@@ -1772,6 +2511,38 @@ function renderIndustrySection(tour: Tour, unbranded = false): string {
 }
 
 /** The full editorial page below the flythrough. */
+/**
+ * HOW OLD IS THIS MEDIA.
+ *
+ * The complaint, from the agent who reported it about her OWN move: every photo
+ * of the house she rented "looked absolutely perfect", the photos turned out to
+ * have been taken five years earlier, and "the house looked completely
+ * different from how it looked in my image". Her fix, in her words: "there's
+ * like a time stamp on the picture of the date that it was taken."
+ *
+ * Nothing on the page said when any of it was shot, and `published_at` was in
+ * the payload the whole time and rendered nowhere. It is the publication date,
+ * not the shutter date, so the sentence says publication and claims nothing
+ * more — an overstated provenance line is the same failure in a nicer suit.
+ *
+ * Renders on `/f/` and `/u/` alike: when the media was made is property
+ * information, not branding.
+ */
+function mediaDateNote(tour: Tour): string {
+  const raw = first(tour.published_at);
+  if (!raw) return "";
+  const when = new Date(raw);
+  if (!(when instanceof Date) || Number.isNaN(when.getTime())) return "";
+  // Anything in the future, or older than the web, is a bad row — say nothing
+  // rather than print a date that undermines the point of printing a date.
+  const year = when.getUTCFullYear();
+  if (year < 2020 || when.getTime() > Date.now() + 86_400_000) return "";
+  const text = when.toLocaleDateString("en-US", {
+    year: "numeric", month: "long", day: "numeric", timeZone: "UTC",
+  });
+  return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
+}
+
 function renderListingSections(tour: Tour, unbranded = false): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
@@ -1814,10 +2585,10 @@ function renderListingSections(tour: Tour, unbranded = false): string {
   const imgs = galleryItems(tour);
   if (imgs.length) {
     out.push(sec("gallery", "Gallery", "A closer look",
-      `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}</div>`));
+      `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}${mediaDateNote(tour)}</div>`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
     out.push(sec("gallery", "Inside the tour", isRE ? "Every room, one scroll" : "Every area, one scroll",
-      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>`).join("")}</div>`));
+      `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
   }
 
   // Social reel (vertical cut) — appears when a reel_url is set. Never on
@@ -1901,15 +2672,98 @@ function renderFooter(prefs: PromoPrefs): string {
     : "";
   return `<footer class="lp-foot"><div class="lp-wrap">
     ${strip}
-    <div class="lp-madeby"><a href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
+    <div class="lp-madeby"><a href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
     <div class="lp-legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></div>
   </div></footer>`;
+}
+
+/**
+ * "Get the app" — the 4,000 sq ft field test.
+ *
+ * WHERE, AND WHY HERE. The band sits BETWEEN the end card and the footer.
+ * Every other slot on this page is already spoken for or already crowded:
+ *
+ *  - Over the flythrough: that is the product demo. An install prompt on top
+ *    of the tour is the thing the owner said he did NOT want ("without
+ *    hijacking the tour").
+ *  - Inside the end card: it already carries the agent card, the CTA / lead
+ *    form and Turnstile. That card exists to convert a BUYER into a lead for
+ *    the agent whose listing this is. Putting our own download button next to
+ *    the agent's "Book a showing" competes with the one action the agent is
+ *    paying us for, on their listing.
+ *  - Inside the footer: below the paid partner strip, which is where content
+ *    goes to be ignored.
+ *
+ * Between the two, the reader has just finished the tour AND been offered the
+ * agent's own CTA, so nothing is being intercepted — and it is still above the
+ * paid placements, so the vendor's own ask is not buried under them. On iOS
+ * Safari the `apple-itunes-app` smart banner covers the top of the page for
+ * free, so the two halves bracket the page rather than stacking.
+ *
+ * THE COPY has to work for two readers at once. A buyer is being told why the
+ * page they just scrolled exists (and it is a genuine disclosure — the tour is
+ * a phone render, not a film shoot). An agent is being told they could have
+ * made it. The agent is the one who downloads.
+ *
+ * Labelled like every other house promotion on this page (F-H-17): it is ours,
+ * not the listing agent's, and it says so. Always on for a branded page — this
+ * is the vendor's own product, the same category as the "Made with Rendprop"
+ * attribution, not a paid third-party placement — but an owner who wants it
+ * gone can set `show_app_cta: false` in details / brand_kit.
+ *
+ * SHARED WITH `/a/<handle>`. The portfolio page had no way to get the app at
+ * all, which is the surface an AGENT is most likely to be looking at (it is
+ * their own page). It renders this exact markup rather than a second copy —
+ * `opts.campaign` is the only thing that differs, so the two surfaces can be
+ * told apart in App Store Connect but can never drift in copy. The portfolio
+ * page ships the band's CSS by embedding EDITORIAL_CSS (see src/portfolio.ts).
+ */
+export interface GetAppOpts {
+  /** Which page is rendering the band. Picks the campaign token AND the one
+   *  sentence of lede that has to be true of the page you are on — "the
+   *  flythrough you just scrolled" is a lie on a grid of twelve of them. */
+  surface: "tour" | "portfolio";
+  /** Tour slug, so one listing's page can be credited for the download. */
+  slug?: string;
+  /** The owner switched the band off (`show_app_cta: false`). */
+  off?: boolean;
+}
+
+export function renderGetAppSection(opts: GetAppOpts): string {
+  if (opts.off) return "";
+  const tourSurface = opts.surface === "tour";
+  const heading = tourSurface
+    ? "This tour was filmed on a phone."
+    : "Every tour here was filmed on a phone.";
+  const lede = tourSurface
+    ? `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
+    Rendprop renders the flythrough you just scrolled — plus the photos, the floor plan and this link —
+    the same day. If you list property, that is your next shoot done before lunch.`
+    : `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
+    Rendprop renders the flythrough — plus the photos, the floor plan and the link —
+    the same day. If you list property, that is your next shoot done before lunch.`;
+  return `<section class="lp-sec" id="getapp"><div class="lp-wrap">
+    <div class="lp-eyebrow">The app behind this page</div>
+    <h2 class="lp-h">${heading}</h2>
+    <p class="lp-tag">${lede}</p>
+    <a class="lp-btn" id="getapp-store" href="${escapeAttr(appStoreUrl(opts.surface, opts.slug))}" target="_blank" rel="noopener nofollow">Download on the App&nbsp;Store</a>
+    ${tourSurface ? `<a class="lp-btn lp-btn-ghost" id="getapp-open" hidden>Open this tour in the app</a>` : ""}
+    <p class="lp-fine">Free on iPhone · iOS 16 or later. Rendprop is the software behind this page, not a
+    service offered by the ${tourSurface ? "owner of this listing" : "agent whose page this is"}.</p>
+  </div></section>`;
 }
 
 // Editorial CSS — Rendprop purple system layered over the player tokens. The
 // :root override flips the player's default accent (gold) to brand purple; a
 // per-agent accent override (injected after this) still wins when set.
-const EDITORIAL_CSS = `
+//
+// Exported because `/a/<handle>` renders `renderGetAppSection()` — the same
+// markup, which is styled entirely out of this sheet's `.lp-*` vocabulary.
+// Embedding the sheet whole is what keeps the band byte-identical on both
+// pages; a hand-copied subset in portfolio.ts is exactly the drift that a
+// shared renderer exists to prevent. Nothing else in here matches anything the
+// portfolio page renders, so it is inert there.
+export const EDITORIAL_CSS = `
   :root {
     --accent:#9b6dff; --accent-2:#7c3aed; --accent-3:#c4a8ff;
     --accent-soft:rgba(155,109,255,.12);
@@ -2024,9 +2878,50 @@ const EDITORIAL_CSS = `
   .disc-ba figure { border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08); background:#000; }
   .disc-ba img, .disc-ba video { display:block; width:100%; height:auto; aspect-ratio:4/3; object-fit:cover; }
   .disc-ba figcaption { padding:8px 10px; font-size:11.5px; color:var(--ink-dim); background:var(--card); }
+  .disc-ui { display:none; }
+  .lp-mediadate { margin-top:16px; }
+  .lp-mediadate time { color:var(--ink); font-weight:600; }
+
+  /* ---- Before/after, dragged (progressive enhancement) ----
+     Without JS the two figures stay exactly as above: side by side, both
+     complete, both captioned — the compliant presentation, unchanged. With
+     JS the same two figures are re-laid on top of each other with a
+     draggable divider. No second copy of either
+     image, so nothing extra is downloaded to get the interaction.
+     The .on class below is added by the engine. ---- */
+  .disc-ba.on { position:relative; display:block; --p:50%; touch-action:pan-y;
+                border-radius:12px; overflow:hidden; border:1px solid rgba(255,255,255,.08);
+                background:#000; cursor:ew-resize; aspect-ratio:4/3; user-select:none; }
+  .disc-ba.on .disc-f { position:absolute; inset:0; margin:0; border:0; border-radius:0; overflow:hidden; }
+  .disc-ba.on .disc-f img { width:100%; height:100%; aspect-ratio:auto; object-fit:contain; pointer-events:none; }
+  /* The edited version is revealed from the divider rightwards. */
+  .disc-ba.on .disc-f-a { clip-path:inset(0 0 0 var(--p)); }
+  .disc-ba.on figcaption { position:absolute; top:10px; padding:5px 9px; border-radius:999px;
+                           font-size:11px; font-weight:650; letter-spacing:.02em; color:#fff;
+                           background:rgba(0,0,0,.62); backdrop-filter:blur(6px); white-space:nowrap;
+                           max-width:46%; overflow:hidden; text-overflow:ellipsis; }
+  .disc-ba.on .disc-f-b figcaption { left:10px; }
+  .disc-ba.on .disc-f-a figcaption { right:10px; }
+  .disc-ba.on .disc-ui { display:block; position:absolute; inset:0; pointer-events:none; }
+  .disc-line { position:absolute; top:0; bottom:0; left:var(--p); width:2px; margin-left:-1px;
+               background:rgba(255,255,255,.92); box-shadow:0 0 0 1px rgba(0,0,0,.35); }
+  .disc-grip { position:absolute; top:50%; left:var(--p); width:38px; height:38px; margin:-19px 0 0 -19px;
+               border-radius:50%; background:rgba(255,255,255,.95); box-shadow:0 2px 10px rgba(0,0,0,.45); }
+  .disc-grip::before, .disc-grip::after { content:""; position:absolute; top:50%; width:0; height:0;
+               border-top:5px solid transparent; border-bottom:5px solid transparent; margin-top:-5px; }
+  .disc-grip::before { left:9px; border-right:6px solid #111; }
+  .disc-grip::after  { right:9px; border-left:6px solid #111; }
+  .disc-ba.on:focus-visible { outline:2px solid var(--accent-3); outline-offset:3px; }
   .disc-orig { display:inline-block; margin-top:12px; font-size:13px; font-weight:650; color:var(--accent-3); text-decoration:none; }
   .disc-orig:hover { text-decoration:underline; }
   .disc-noorig { display:inline-block; margin-top:12px; font-size:12.5px; color:var(--faint); }
+
+  /* "Get the app" band — between the end card and the footer, so it sits
+     OUTSIDE #listing-page and has to repeat that block's stacking context;
+     without it the sticky #stage would show through. Everything else it needs
+     (.lp-sec / .lp-wrap / .lp-eyebrow / .lp-h / .lp-tag / .lp-btn / .lp-fine)
+     is the same vocabulary the financing block already uses. */
+  #getapp { position:relative; z-index:5; background:var(--bg); }
 
   /* Footer + partner strip */
   footer.lp-foot { padding:clamp(48px,7vw,80px) 0 calc(40px + env(safe-area-inset-bottom));
@@ -2091,10 +2986,36 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     ? `<style>:root{--accent:${agent.accent};}</style>`
     : "";
 
+  // THE RAIL IS AN INDICATOR, THE STRIP IS THE INDEX.
+  //
+  // Naming every chapter on the rail (the 4,000 sq ft field test: people were
+  // tapping unlabelled dots to find out where each one went) was the wrong fix
+  // for a right complaint. A house has 15-20 rooms, so the normal case was a
+  // column of pills down the right edge of the video covering the price, the
+  // beds/baths line and the address, with the longer names cut mid-word.
+  //
+  // So: the rail goes back to dots with only the ACTIVE chapter named (the
+  // engine sets .active; the pill floats, see PLAYER_CSS), and every room name
+  // moves off the frame into #roomstrip — a horizontal, scrollable row of the
+  // floor plan's own .plan-room seek chips in a band below the video. Both are
+  // rendered here, server-side, so they are correct before the engine runs.
+  // `title` gives a desktop pointer the room name for any dot.
   const railHtml = hasChapters
     ? `<div class="chrome" id="rail">${chapters
-        .map((c, i) => `<button type="button" data-i="${i}" data-t="${c.t_ms / 1000}"><span class="lbl">${escapeHtml(c.label)}</span><span class="dot"></span></button>`)
+        .map((c, i) => `<button type="button" data-i="${i}" data-t="${c.t_ms / 1000}" title="${escapeAttr(c.label)}"><span class="lbl">${escapeHtml(c.label)}</span><span class="dot"></span></button>`)
         .join("")}</div>`
+    : "";
+
+  // One chapter is not a list, so the strip starts at two — and its absence is
+  // what leaves the video full-bleed (see #stage.hasstrip / --strip).
+  const hasStrip = chapters.length > 1;
+  const stripHtml = hasStrip
+    ? `<div class="chrome" id="roomstrip" role="group" aria-label="Rooms in this tour"><div class="rs-scroll">${chapters
+        .map((c, i) => {
+          const label = truncWords(c.label, 34);
+          return `<button type="button" class="plan-room${i === 0 ? " active" : ""}"${i === 0 ? ` aria-current="true"` : ""} data-seek="${(Number(c.t_ms) || 0) / 1000}" title="${escapeAttr(c.label)}">${escapeHtml(label)}</button>${spatialButton(c)}`;
+        })
+        .join("")}</div></div>`
     : "";
 
   const roomHtml = hasChapters
@@ -2156,13 +3077,25 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
     scrubUrl,
     hlsUrl,
     durationS: tour.duration_s || 0,
-    pxPerSec: 240,
-    bufferGate: 0.96,
+    pxPerSec: 420,
+    // See the START GATE note in ENGINE_CORE_JS. `bufferGate` is now a CEILING
+    // (a fraction of the tour, so a 9-second clip is not asked for more than a
+    // 3-minute one proportionally) and `bufferLeadS` is the gate that actually
+    // fires: the engine waits for min(durationS * bufferGate, bufferLeadS)
+    // seconds of head buffer, i.e. 6 s on any tour longer than 40 s.
+    bufferGate: 0.15,
+    bufferLeadS: 6,
     hasChapters,
     staged,
     unbranded,
     chapters: chapters.map((c) => ({ t: c.t_ms / 1000, label: c.label })),
     handoffUrl: ctaBlock.handoffUrl,
+    // What the share control puts on the clipboard / into the OS share sheet:
+    // the BRANDED canonical, never the /u/ twin. `shareUrl` is already "" when
+    // unbranded (it is not computed for that page at all); the explicit guard
+    // is what stops a future refactor from putting a rendprop.com URL inside
+    // the MLS page's inline config, where markup guards would not catch it.
+    shareUrl: unbranded ? "" : shareUrl,
     hlsSrc: HLS_SRC,
     hlsSri: HLS_SRI,
   };
@@ -2183,6 +3116,54 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // footer at all.
   const footerHtml = embed || unbranded ? "" : renderFooter(promoPrefs(tour));
 
+  // "Get the app" — see renderGetAppSection() for the placement argument.
+  // `embed` is excluded as well as `unbranded`: the in-app preview is already
+  // inside the app it would be advertising.
+  const getAppHtml = embed || unbranded
+    ? ""
+    : renderGetAppSection({
+        surface: "tour",
+        slug: tour.slug,
+        off: prefFlag(tour, "show_app_cta", "showAppCta") === false,
+      });
+  // iOS Safari's smart banner. Same two guards, same reason. This is the half
+  // of the CTA that lands ABOVE the fold, for free, on the exact device the
+  // download targets — which is why the visible band can afford to sit low.
+  const appBanner = embed || unbranded ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
+
+  // STRUCTURED DATA — see src/jsonld.ts for the three rules that gate it.
+  // `indexable` is already `!embed && !unbranded && allowsIndexing(tour)`, so
+  // this is the SAME predicate as the robots tag by construction: a page that
+  // is asked not to be indexed never hands a crawler a machine-readable copy
+  // of the owner's name, phone, email and the listing address.
+  const jsonLdHtml = indexable
+    ? tourJsonLd({
+        tour,
+        agent,
+        canonical: shareUrl,
+        name: header.entityName,
+        description: header.ogDesc,
+        poster: ogPoster,
+        videoUrl: scrubUrl,
+        // priceText() already returns "" for 0 / absent; price_cents is the
+        // only numeric source, so a listing with a display price but no cents
+        // emits no Offer rather than an Offer with a parsed guess in it.
+        priceValue: priceText(tour) && pos(tour.listing?.price_cents)
+          ? Number(tour.listing.price_cents) / 100
+          : null,
+        sold: isSoldOrArchived(tour),
+      })
+    : "";
+
+  // Share control — branded, non-embed only. `/u/` must not offer a social
+  // affordance at all, and the in-app embed already has the system share sheet.
+  const shareHtml = embed || unbranded
+    ? ""
+    : `<button type="button" class="chrome" id="share" aria-label="Share this tour">
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 15V3m0 0L8 7m4-4 4 4M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span class="share-lbl">Share</span>
+    </button>`;
+
   const isRE = isRealEstate(tour);
   const unavailHtml = `<div id="unavail" role="status">
       ${unbranded ? "" : `<div class="mark">RENDPROP</div>`}
@@ -2200,6 +3181,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 <title>${escapeHtml(header.pageTitle)}</title>
 <meta name="description" content="${escapeAttr(header.ogDesc)}">
 ${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
+${appBanner}
 ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(shareUrl)}">` : ""}
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <meta property="og:title" content="${escapeAttr(header.ogTitle)}">
@@ -2207,7 +3189,8 @@ ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(share
 <meta property="og:type" content="website">
 ${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
 <meta name="twitter:card" content="summary_large_image">
-${ogImage}`}
+${ogImage}
+${jsonLdHtml}`}
 <style>${PLAYER_CSS}${unbranded ? "" : FORM_CSS}
 ${EDITORIAL_CSS}</style>
 ${accentOverride}
@@ -2215,9 +3198,18 @@ ${accentOverride}
 <body>
 
 <div id="track">
-  <div id="stage">
+  <div id="stage"${hasStrip ? ` class="hasstrip"` : ""}>
     <video id="scrub" muted playsinline webkit-playsinline preload="auto"
            disablepictureinpicture disableremoteplayback${poster ? ` poster="${escapeAttr(poster)}"` : ""}></video>
+${endcardHtml ? `
+    <!-- The flythrough is the hook, not a toll gate. Someone who only wants the
+         price and a phone number gets there in one tap instead of scrolling the
+         whole tour. Only rendered when there IS an end card to jump to, so the
+         unbranded MLS twin never grows a control that points at nothing. -->
+    <button type="button" id="skiptodetails" aria-label="Skip the flythrough and see the details">
+      See details
+      <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><path d="M8 11.5 3.5 7l1-1L8 9.5 11.5 6l1 1z"/></svg>
+    </button>` : ""}
 
     <div id="loader">
       ${unbranded ? "" : `<div class="mark">RENDPROP</div>`}
@@ -2231,6 +3223,8 @@ ${accentOverride}
 
     ${unbranded ? "" : `<div class="chrome" id="brand">RENDPROP</div>`}
 
+    ${shareHtml}
+
     <div class="chrome" id="listing">${header.chipHtml}</div>
 
     ${roomHtml}
@@ -2242,18 +3236,26 @@ ${accentOverride}
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 4v14m0 0l-6-6m6 6l6-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
 
-    ${unbranded ? "" : `<a class="chrome" id="wm" href="https://rendprop.com" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
+    <!-- Shown only when the viewer out-scrolls the download. The percentage is
+         decorative for a screen reader (it would otherwise be announced on
+         every progress event); "Still loading" is the part worth hearing. -->
+    <div class="chrome" id="bufwait" role="status">Still loading<span aria-hidden="true"> · <span class="n">0%</span></span></div>
+
+    ${unbranded ? "" : `<a class="chrome" id="wm" href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
 
     ${stagedHtml}
+
+    ${stripHtml}
   </div>
 </div>
 
 ${sectionsHtml}
 ${endcardHtml}
+${getAppHtml}
 ${footerHtml}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
-<script>${engineJs(unbranded)}</script>
+<script>${engineJs(unbranded, embed)}</script>
 </body>
 </html>`;
 }
@@ -2332,6 +3334,13 @@ const UNBRANDED_FORBIDDEN: Array<{ id: string; re: RegExp; hosts?: true }> = [
   { id: "tractrealestate.com", re: /tractrealestate\.com/, hosts: true },
   { id: "google.com/maps", re: /google\.com\/maps/ },
   { id: "get-pre-approved", re: /get pre-approved/ },
+  // The app CTA added in the 4,000 sq ft field test. An App Store link is an
+  // external site unrelated to the property and the smart banner is an install
+  // prompt, so both are branded chrome; listing them here means CI catches a
+  // broken `unbranded ? "" :` guard instead of production failing every
+  // unbranded tour closed with a 503.
+  { id: "apps.apple.com", re: /apps\.apple\.com/, hosts: true },
+  { id: "apple-itunes-app", re: /apple-itunes-app/ },
   // --- links to additional content -----------------------------------------
   { id: "terms-link", re: /"\/terms"/ },
   { id: "privacy-link", re: /"\/privacy"/ },
@@ -2339,6 +3348,24 @@ const UNBRANDED_FORBIDDEN: Array<{ id: string; re: RegExp; hosts?: true }> = [
   { id: "og-meta", re: /(^|[^a-z])og:/ },
   { id: "twitter-meta", re: /twitter:/ },
   { id: "canonical", re: /rel="canonical"/ },
+  // Structured data (src/jsonld.ts). Never emitted on /u/ by construction —
+  // the block names the agent, the brokerage and rendprop.com, and it is an
+  // indexing affordance on a page that is `noindex`. Listed here so a broken
+  // guard fails CI (and, in prod, fails the page closed) rather than shipping
+  // an MLS-facing page with the agent's phone number in machine-readable form.
+  { id: "ld+json", re: /application\/ld\+json/ },
+  // The share control. "social media profiles" and links to additional content
+  // are what the unbranded rules ban; a button whose whole job is to hand the
+  // page to a social app is the same thing with a different spelling.
+  { id: "share-control", re: /id="share"/ },
+  { id: "navigator.share", re: /navigator\.share/ },
+  // App Store campaign parameters (src/attribution.ts). `apps.apple.com` above
+  // already catches the link itself; this catches the token on its own, so a
+  // stray `ct=tour-…` in a data attribute or an inline script is caught too.
+  { id: "app-store-campaign", re: /[?&]ct=(tour|portfolio|site)/ },
+  // The `?ref=` tag on an outbound rendprop.com link. `rendprop.com` above
+  // already catches those links; this is the same defence in depth.
+  { id: "ref-param", re: /[?&]ref=(tour|portfolio|site)/ },
 ];
 
 /** Every forbidden token that appears in `html`. Empty array = clean. */

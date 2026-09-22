@@ -1,0 +1,36 @@
+{
+  "readAt": "2026-09-14T15:10:17.915Z",
+  "sourceCommit": "73665ab",
+  "tourHost": {
+    "version": "9a1955e4-53af-450e-9ace-960d8fdde4fa",
+    "createdAt": "2026-09-14T15:00:05.824661Z",
+    "previousVersion": "21dd047f-a9f4-4b13-ac7f-93555760b112"
+  },
+  "studio": {
+    "version": "60f2f38b-e44a-4b61-bbfc-ee3ff5277af3",
+    "createdAt": "2026-09-14T15:08:19.513046Z",
+    "previousVersion": "1ad1d0ab-b1a1-49ba-a9e1-4ccbeead04a1"
+  },
+  "mediaFunction": {
+    "name": "studio",
+    "project": "ymgqpbnjpztwjsyvceld",
+    "version": 1,
+    "verifyJwt": true,
+    "sha256": "867344c4367db4cf004598e864a5d50c90979d25d078c09100306b1329710f6f"
+  },
+  "apple": {
+    "authorizationStatus": 302,
+    "servicesId": "com.rendprop.studio",
+    "nativeId": "com.rendprop.app",
+    "primaryApp": "5F5C5G25Y6.com.rendprop.app",
+    "keyId": "YRH7FM6336",
+    "newKeyCreated": false
+  },
+  "liveBrowser": {
+    "homepageStudioLink": true,
+    "homepageOpensStudio": true,
+    "continueWithAppleEnabled": true,
+    "appleSignInPageForRendprop": true,
+    "actualOwnerLoginVerified": false
+  }
+}

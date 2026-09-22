@@ -16,10 +16,16 @@
 //                       message, detail, env_names, doc }], last_probe_recorded }
 //   GET /admin/usage
 //        -> { generated_at, month, month_start, org_count, blocked_count, truncated, orgs[] }
+//           (each org row also carries leads_month and uploads_stuck — 0046)
 //   GET /admin/funnel?window=7d|30d|90d      (admin/funnel.ts — first-party app_events)
 //        -> { window, steps[], crashes, errors, active_devices, sessions, by_day[],
 //             purchases_verified, purchases_verified_sandbox,
 //             purchase_completed_attributed }
+//   GET /admin/cohorts?window=30d|90d|180d|365d&bucket=day|week|month   (0046)
+//        -> { generated_at, window, bucket, from, to, buckets[], summary, note }
+//   GET /admin/churn?window=7d|30d|90d                                  (0046)
+//        -> { generated_at, window, from, to, cancellations, by_plan[], by_reason[],
+//             in_grace, sandbox_cancellations, previous{}, delta_total, note }
 //   GET /admin/subscriptions
 //        -> { generated_at, active_total, grace_total, mrr_cents, mrr_note,
 //             by_plan[], by_status[], environments[], sandbox_active, not_renewing,
@@ -145,6 +151,10 @@ Deno.serve(async (req) => {
         return await handleHealth();
       case "funnel":
         return await handleFunnel(req);
+      case "cohorts":
+        return await handleCohorts(req);
+      case "churn":
+        return await handleChurn(req);
       case "routing":
         return isRoutingWrite
           ? await handleRoutingWrite(req, admin, seg)
@@ -153,7 +163,8 @@ Deno.serve(async (req) => {
         throw new HttpError(
           404,
           "Unknown route — GET /admin/spend, /admin/providers, /admin/providers/probe, " +
-            "/admin/usage, /admin/health, /admin/funnel, /admin/subscriptions " +
+            "/admin/usage, /admin/health, /admin/funnel, /admin/cohorts, /admin/churn, " +
+            "/admin/subscriptions " +
             "or /admin/routing (POST /admin/routing/flag, /admin/routing/step/{id})",
         );
     }
@@ -353,18 +364,13 @@ const PROVIDERS: ProviderSpec[] = [
       {
         sku: "bria/video/erase/prompt",
         label: "Bria video eraser — prompt object removal (source must be < 5s)",
-        unit: "clip",
-        // ESTIMATE, not a vendor-confirmed price (audit item 3) — see the long
-        // comment on APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated.
-        unit_cost_cents: APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated,
-        trigger: "POST /ai-video/declutter",
-        source:
-          "No vendor-confirmed price exists for Bria anywhere in the repo (HANDOFF-DB.md " +
-          "'Known gap: bria/video/erase/prompt'). This is ESTIMATED_UNIT_COST_CENTS.declutter " +
-          "reused as an explicitly-marked placeholder (ledger.ts) so the route's spend reaches " +
-          "cost_ledger — feature 'video_declutter', meta.price_estimated:true — instead of being " +
-          "silently unrecorded. It is still metered against the reel allowance " +
-          "(ai-video/index.ts capFor()). Replace with Bria's real per-clip price when known.",
+        unit: "input second",
+        unit_cost_cents: APP_AI_UNIT_CENTS.bria_declutter_per_s,
+        trigger: "POST /ai-video/declutter (opt-in reflection clips)",
+        source: "Authenticated fal GET /v1/models/pricing?endpoint_id=bria%2Fvideo%2Ferase%2Fprompt " +
+          "verified2026-09-19: $0.14/second USD. Durable jobs meter the reel allowance, " +
+          "reserve at most240c per batch, and record confirmed provider receipts at duration×14c. " +
+          "Cancelling returns user allowance, never provider COGS; invoice reconciliation is separate.",
       },
     ],
   },
@@ -666,9 +672,8 @@ const FEATURE_LABELS: Record<string, string> = {
   reel: "AI reel clip",
   aerial: "AI aerial",
   drone_render: "Drone-glide render (Topaz)",
-  // audit item 3: video-declutter (Bria) now writes a ledger row too, at an
-  // ESTIMATED price (see APP_AI_UNIT_CENTS.bria_declutter_per_clip_estimated).
-  video_declutter: "AI video declutter (Bria, estimated price)",
+  // Account-verified input-second rate; invoice reconciliation stays explicit in ledger metadata.
+  video_declutter: "AI video reflection removal (Bria)",
   stream_store: "Stream storage",
   stream_deliver: "Stream delivery",
 };
@@ -1145,6 +1150,37 @@ interface Entitlement {
   price_cents: number;
 }
 
+/** A plan_entitlement_overrides row (migration 0044): the industry-aware
+ *  trial. NULL = inherit the base row, exactly as org_entitlement() reads it. */
+interface EntitlementOverride {
+  plan: string;
+  space_type: string;
+  renders_per_month: number | null;
+  photo_edits_per_month: number | null;
+  reels_per_month: number | null;
+  aerials_per_month: number | null;
+  topaz_per_month: number | null;
+  seats: number | null;
+  cogs_ceiling_cents: number | null;
+}
+
+const OVERRIDABLE: Array<Exclude<keyof EntitlementOverride, "plan" | "space_type">> = [
+  "renders_per_month", "photo_edits_per_month", "reels_per_month", "aerials_per_month",
+  "topaz_per_month", "seats", "cogs_ceiling_cents",
+];
+
+/** Mirrors org_entitlement() in TypeScript for the same reason effectivePlan()
+ *  does: hundreds of orgs per page, nothing is charged off the result. */
+function withOverride(base: Entitlement | undefined, over: EntitlementOverride | undefined): Entitlement | undefined {
+  if (!base || !over) return base;
+  const out: Entitlement = { ...base };
+  for (const f of OVERRIDABLE) {
+    const v = over[f];
+    if (typeof v === "number" && Number.isFinite(v)) out[f] = v;
+  }
+  return out;
+}
+
 /**
  * The org-keyed monthly meters, one prefix at a time.
  *
@@ -1179,8 +1215,140 @@ interface MeterRow {
 
 const IN_FLIGHT_STATUSES = ["created", "queued", "claimed", "processing"];
 
+/**
+ * 0037's upload states that are NOT an end state. `stored` (the object is in
+ * R2), `rejected`, `retained` (kept on purpose for forensics) and `deleted`
+ * (cleaned up) are all finished; these four mean a transfer is still mid-flight
+ * — and `uncertain` in particular means we do not know whether the bytes
+ * landed, which is the one an operator most wants to see.
+ */
+const OPEN_UPLOAD_STATES = ["planned", "dispatching", "uncertain", "cleaning"];
+
 /** render_jobs has no org_id: the org comes from the joined listing. */
 type JoinedOrg = { org_id: string } | Array<{ org_id: string }> | null;
+
+/**
+ * The two org-scoped signals the 2026-09 commercial audit found NOTHING in the
+ * console reading: leads (0001) and the upload transport tables (0037).
+ *
+ * `leads_month`   — rows in `leads` for this org with created_at in the CURRENT
+ *                   CALENDAR month (the same month boundary the spend figures
+ *                   on this screen already use), so a row is comparable with
+ *                   the money next to it.
+ * `uploads_stuck` — DISTINCT capture assets belonging to this org that are
+ *                   past their own deadline: an `upload_reservations` row still
+ *                   `open` after its 48-hour hold expired, or an
+ *                   `upload_operations` row in a non-terminal state more than
+ *                   an hour after it was created (0037 gives an operation a
+ *                   one-hour expiry of its own). Counted as assets, not rows,
+ *                   so one asset with six stuck parts is one stuck upload.
+ *
+ * Both tolerate a missing table the way the entitlement-override read does: a
+ * function deployed ahead of its migration shows zeros and warns, rather than
+ * 500ing the whole console.
+ */
+interface OrgSignals {
+  leadsByOrg: Map<string, number>;
+  stuckByOrg: Map<string, number>;
+}
+
+/**
+ * The same pre-deploy tolerance the plan_entitlement_overrides read uses: a
+ * function running ahead of its migration sees PGRST205 ("not in the schema
+ * cache") or 42P01 (undefined_table). Any other error is real and must not be
+ * swallowed into a zero.
+ */
+function missingRelation(error: { code?: string; message?: string } | null): boolean {
+  if (!error) return false;
+  return error.code === "PGRST205" || error.code === "42P01" ||
+    /schema cache|does not exist/i.test(error.message ?? "");
+}
+
+/**
+ * pageAll(), but a missing relation answers `{ rows: [], missing: true }`
+ * instead of throwing — pageAll turns every read error into a 500, which is
+ * right for the tables this console cannot work without and wrong for these
+ * two additive signals.
+ */
+async function pageTolerant<T>(
+  build: (from: number, to: number) => PromiseLike<
+    { data: T[] | null; error: { code?: string; message: string } | null }
+  >,
+  what: string,
+): Promise<{ rows: T[]; missing: boolean }> {
+  const rows: T[] = [];
+  for (let p = 0; p < MAX_PAGES; p++) {
+    const { data, error } = await build(p * PAGE, p * PAGE + PAGE - 1);
+    if (error) {
+      if (missingRelation(error)) return { rows: [], missing: true };
+      throw new HttpError(500, `${what} read failed: ${error.message}`);
+    }
+    const batch = data ?? [];
+    rows.push(...batch);
+    if (batch.length < PAGE) break;
+  }
+  return { rows, missing: false };
+}
+
+async function readOrgSignals(
+  db: SupabaseClient,
+  monthStartIso: string,
+  stuckBeforeIso: string,
+  nowIso_: string,
+): Promise<OrgSignals> {
+  const leadsByOrg = new Map<string, number>();
+  const stuckAssets = new Map<string, Set<string>>();
+
+  const leads = await pageTolerant<{ id: string; org_id: string | null }>(
+    (from, to) =>
+      db.from("leads").select("id, org_id")
+        .gte("created_at", monthStartIso)
+        .order("id", { ascending: true }).range(from, to),
+    "Leads",
+  );
+  if (leads.missing) console.warn("admin: leads is not readable yet; leads_month is 0 for every org");
+  for (const row of leads.rows) {
+    if (row.org_id) leadsByOrg.set(row.org_id, (leadsByOrg.get(row.org_id) ?? 0) + 1);
+  }
+
+  const stick = (asset: string, org: string) => {
+    const set = stuckAssets.get(org) ?? new Set<string>();
+    set.add(asset);
+    stuckAssets.set(org, set);
+  };
+
+  const held = await pageTolerant<{ asset_id: string; org_id: string | null }>(
+    (from, to) =>
+      db.from("upload_reservations").select("asset_id, org_id")
+        .eq("state", "open").lt("expires_at", nowIso_)
+        .order("asset_id", { ascending: true }).range(from, to),
+    "Upload reservations",
+  );
+  for (const row of held.rows) if (row.org_id) stick(row.asset_id, row.org_id);
+
+  // upload_operations has no org_id of its own (0037): the org comes from the
+  // reservation it hangs off, through the asset_id foreign key.
+  const ops = await pageTolerant<{ id: string; asset_id: string; upload_reservations: JoinedOrg }>(
+    (from, to) =>
+      db.from("upload_operations")
+        .select("id, asset_id, upload_reservations!inner(org_id)")
+        .in("state", OPEN_UPLOAD_STATES).lt("created_at", stuckBeforeIso)
+        .order("id", { ascending: true }).range(from, to),
+    "Upload operations",
+  );
+  if (held.missing || ops.missing) {
+    console.warn("admin: the 0037 upload transport tables are not deployed yet; uploads_stuck is 0");
+  }
+  for (const row of ops.rows) {
+    const joined = row.upload_reservations;
+    const org = (Array.isArray(joined) ? joined[0]?.org_id : joined?.org_id) ?? null;
+    if (org) stick(row.asset_id, org);
+  }
+
+  const stuckByOrg = new Map<string, number>();
+  for (const [org, assets] of stuckAssets) stuckByOrg.set(org, assets.size);
+  return { leadsByOrg, stuckByOrg };
+}
 
 async function handleUsage(): Promise<Response> {
   const db = adminClient();
@@ -1188,14 +1356,21 @@ async function handleUsage(): Promise<Response> {
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   const monthStartIso = monthStart.toISOString();
 
-  const [orgsRes, entRes, meterRes, ledger, monthJobs, liveJobs] = await Promise.all([
-    pageAll<{ id: string; name: string; plan: string | null; trial_ends_at: string | null }>(
+  // 0046: "older than an hour" for a stuck upload operation, and `now` for a
+  // reservation that is past its own 48-hour hold.
+  const stuckBeforeIso = new Date(now.getTime() - 3_600_000).toISOString();
+
+  const [orgsRes, entRes, ovrRes, meterRes, ledger, monthJobs, liveJobs, signals] = await Promise.all([
+    pageAll<{ id: string; name: string; plan: string | null; trial_ends_at: string | null; space_type: string | null }>(
       (from, to) =>
-        db.from("orgs").select("id, name, plan, trial_ends_at").is("deleted_at", null)
+        db.from("orgs").select("id, name, plan, trial_ends_at, space_type").is("deleted_at", null)
           .order("id", { ascending: true }).range(from, to),
       "Orgs",
     ),
     db.from("plan_entitlements").select("*"),
+    // 0044: the industry-aware trial. Read whole (five rows) and merged per org
+    // below, the way org_entitlement() does it in SQL.
+    db.from("plan_entitlement_overrides").select("*"),
     readMeters(db),
     readLedgerSince(db, monthStartIso),
     pageAll<{ id: string; listings: JoinedOrg }>(
@@ -1214,12 +1389,26 @@ async function handleUsage(): Promise<Response> {
           .order("id", { ascending: true }).range(from, to),
       "In-flight render jobs",
     ),
+    readOrgSignals(db, monthStartIso, stuckBeforeIso, now.toISOString()),
   ]);
 
   if (entRes.error) throw new HttpError(500, `Entitlement lookup failed: ${entRes.error.message}`);
   const entitlements = new Map<string, Entitlement>(
     ((entRes.data ?? []) as Entitlement[]).map((e) => [e.plan, e]),
   );
+  // A function deployed ahead of migration 0044 sees no override table
+  // (PGRST205 "not in the schema cache" / 42P01 undefined_table): show the
+  // plan-only caps rather than 500 the whole console. Any other failure is real.
+  const overrides = new Map<string, EntitlementOverride>();
+  if (ovrRes.error) {
+    const e = ovrRes.error as { code?: string; message: string };
+    if (!(e.code === "PGRST205" || e.code === "42P01" || /schema cache|does not exist/i.test(e.message))) {
+      throw new HttpError(500, `Entitlement override lookup failed: ${e.message}`);
+    }
+    console.warn("admin: plan_entitlement_overrides is not deployed yet (0044); caps are plan-only");
+  } else {
+    for (const o of (ovrRes.data ?? []) as EntitlementOverride[]) overrides.set(`${o.plan}:${o.space_type}`, o);
+  }
 
   const spendByOrg = new Map<string, number>();
   for (const r of ledger.rows) {
@@ -1267,7 +1456,10 @@ async function handleUsage(): Promise<Response> {
 
   const orgs = orgsRes.rows.map((o) => {
     const plan = effectivePlan(o.plan, o.trial_ends_at);
-    const ent = entitlements.get(plan) ?? entitlements.get("trial");
+    const ent = withOverride(
+      entitlements.get(plan) ?? entitlements.get("trial"),
+      overrides.get(`${plan}:${o.space_type ?? "real_estate"}`),
+    );
     const caps: Record<string, number> = {
       renders: ent?.renders_per_month ?? 0,
       photo_edits: ent?.photo_edits_per_month ?? 0,
@@ -1303,6 +1495,7 @@ async function handleUsage(): Promise<Response> {
       plan,
       plan_raw: o.plan ?? "trial",
       trial_ends_at: o.trial_ends_at ?? null,
+      space_type: o.space_type ?? "real_estate", // 0044: why a trial's caps may differ
       spend_cents_month: spend,
       cogs_ceiling_cents: ceiling,
       spend_share_of_ceiling: share(spend, ceiling),
@@ -1318,6 +1511,10 @@ async function handleUsage(): Promise<Response> {
       drone_cap: caps.drone ?? 0,
       jobs_in_flight: inFlight,
       jobs_orphaned: orphaned,
+      // 0046: the two org-scoped signals nothing in this console used to read.
+      // ADDED fields — the shipped iOS build decodes leniently and ignores them.
+      leads_month: signals.leadsByOrg.get(o.id) ?? 0,
+      uploads_stuck: signals.stuckByOrg.get(o.id) ?? 0,
       blocked: reasons.length > 0,
       blocked_reasons: reasons,
     };
@@ -1336,6 +1533,199 @@ async function handleUsage(): Promise<Response> {
     blocked_count: orgs.filter((o) => o.blocked).length,
     truncated: orgsRes.truncated || orgs.length > MAX_ORGS,
     orgs: capped,
+  });
+}
+
+// ── GET /admin/cohorts and GET /admin/churn (0046) ───────────────────────────
+//
+// The two questions /admin/funnel cannot answer, because it counts DISTINCT
+// DEVICES per step inside a window and says so on every response: "of the
+// workspaces that signed up N weeks ago, how many ever published, and how many
+// are paying now", and "how many subscribers cancelled, at which plan".
+//
+// Both are one SECURITY DEFINER call — admin_cohorts(interval, text) and
+// admin_churn(interval) — whose comments in migration 0046 define every number
+// they return. index.ts owns the gate (requireAdmin + the per-admin rate limit
+// run before the route switch), so these two do no auth of their own, exactly
+// like handleUsage()/handleFunnel().
+//
+// Every response carries `note`. That is the funnel precedent and it is not
+// decoration: these numbers are read to decide ad spend and retention work, and
+// each one has a real limit — orphan workspaces, a backfill that cannot see
+// deleted tours, a churn date that only exists from this migration onwards. A
+// report that implies more rigour than it has is how people talk themselves
+// into bad decisions.
+
+/** The windows the console offers. Anything else is a 400, not a silent default. */
+const COHORT_WINDOWS: Readonly<Record<string, string>> = Object.freeze({
+  "30d": "30 days",
+  "90d": "90 days",
+  "180d": "180 days",
+  "365d": "365 days",
+});
+const COHORT_BUCKETS: Readonly<Record<string, string>> = Object.freeze({
+  day: "day",
+  week: "week",
+  month: "month",
+});
+const CHURN_WINDOWS: Readonly<Record<string, string>> = Object.freeze({
+  "7d": "7 days",
+  "30d": "30 days",
+  "90d": "90 days",
+});
+const DEFAULT_COHORT_WINDOW = "90d";
+const DEFAULT_COHORT_BUCKET = "week";
+const DEFAULT_CHURN_WINDOW = "30d";
+
+/** A number the console can decode, or null. Postgres numerics arrive as strings. */
+function numOrNull(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** A count is never null on the wire — "we don't know" is not a thing here. */
+function countOf(v: unknown): number {
+  return numOrNull(v) ?? 0;
+}
+
+function pickParam(
+  req: Request,
+  name: string,
+  allowed: Readonly<Record<string, string>>,
+  fallback: string,
+): { key: string; value: string } {
+  const raw = (new URL(req.url).searchParams.get(name) ?? fallback).trim();
+  const value = allowed[raw];
+  if (!value) {
+    throw new HttpError(400, `${name} must be one of ${Object.keys(allowed).join(", ")}`);
+  }
+  return { key: raw, value };
+}
+
+const COHORT_NOTE =
+  "A real cohort: every number describes the workspaces that SIGNED UP inside " +
+  "the bucket, however long they took to act afterwards — unlike /admin/funnel, " +
+  "which counts distinct devices per step inside a window. Orphan workspaces are " +
+  "left out of the denominator: signing in with Apple creates a second, empty " +
+  "workspace that the anonymous-session handover leaves behind, so a workspace " +
+  "counts only once it has held a listing, an upload or a subscription " +
+  "(summary.orphan_orgs_excluded says how many were dropped). `activated` means " +
+  "the workspace published its first tour at any time; the historical part of " +
+  "that column was filled in from tours that are STILL published, so a workspace " +
+  "whose only tour was deleted before 2026-09-12 reads as never activated. The " +
+  "median is taken over the workspaces that did activate — the rest are not " +
+  "counted as zero and not counted as forever. ever_paid and paying_now come " +
+  "from verified App Store subscriptions, never from the plan column, and " +
+  "Sandbox (TestFlight, App Review) is counted apart because a tester is not " +
+  "revenue. `churned` needs a cancellation date, which exists only from " +
+  "2026-09-12 onwards plus whatever the stored Apple notifications could prove, " +
+  "so older churn is missing rather than zero. A bucket marked `partial` is " +
+  "clipped by the window or still open, and its rates are not comparable with a " +
+  "whole one.";
+
+const CHURN_NOTE =
+  "Cancellations that are STILL IN FORCE: a subscriber who cancelled and came " +
+  "back inside the window is not counted, because a win-back clears the " +
+  "cancellation date. A cancellation is either a subscription that ended " +
+  "(expired, revoked or refunded) or one whose auto-renew was switched off — the " +
+  "second is still entitled until its expiry, so read by_reason and in_grace " +
+  "before reading the total as lost revenue. The cancellation date exists only " +
+  "from 2026-09-12 onwards, plus cancellations that left a stored Apple " +
+  "notification, so a window reaching further back under-reports. Sandbox " +
+  "(TestFlight, App Review) subscriptions are excluded from every figure and " +
+  "reported separately as sandbox_cancellations. `previous` is the window " +
+  "immediately before this one and the same length, so delta_total is a " +
+  "like-for-like comparison.";
+
+async function handleCohorts(req: Request): Promise<Response> {
+  const window = pickParam(req, "window", COHORT_WINDOWS, DEFAULT_COHORT_WINDOW);
+  const bucket = pickParam(req, "bucket", COHORT_BUCKETS, DEFAULT_COHORT_BUCKET);
+
+  const { data, error } = await adminClient().rpc("admin_cohorts", {
+    p_window: window.value,
+    p_bucket: bucket.value,
+  });
+  if (error) throw new HttpError(500, `Cohort lookup failed: ${error.message}`);
+
+  const report = (data ?? {}) as Record<string, unknown>;
+  const rows = Array.isArray(report.buckets) ? (report.buckets as Record<string, unknown>[]) : [];
+  const summary = (report.summary ?? {}) as Record<string, unknown>;
+
+  // Reshape rather than pass through, the same contract the rest of this
+  // console keeps: every key is always present, arrays are never omitted, and
+  // the only nulls are the ones that MEAN something (no median because nobody
+  // activated).
+  const shape = (row: Record<string, unknown>) => ({
+    orgs: countOf(row.orgs),
+    activated: countOf(row.activated),
+    activated_within_24h: countOf(row.activated_within_24h),
+    activated_within_7d: countOf(row.activated_within_7d),
+    median_hours_to_activate: numOrNull(row.median_hours_to_activate),
+    ever_paid: countOf(row.ever_paid),
+    ever_paid_sandbox: countOf(row.ever_paid_sandbox),
+    paying_now: countOf(row.paying_now),
+    churned: countOf(row.churned),
+  });
+
+  return json({
+    generated_at: report.generated_at ?? nowIso(),
+    window: window.key,
+    bucket: bucket.key,
+    from: report.from ?? null,
+    to: report.to ?? null,
+    buckets: rows.map((row) => ({
+      bucket_start: typeof row.bucket_start === "string" ? row.bucket_start : "",
+      bucket_end: typeof row.bucket_end === "string" ? row.bucket_end : "",
+      partial: row.partial === true,
+      ...shape(row),
+    })),
+    summary: {
+      ...shape(summary),
+      orphan_orgs_excluded: countOf(summary.orphan_orgs_excluded),
+    },
+    note: COHORT_NOTE,
+  });
+}
+
+async function handleChurn(req: Request): Promise<Response> {
+  const window = pickParam(req, "window", CHURN_WINDOWS, DEFAULT_CHURN_WINDOW);
+
+  const { data, error } = await adminClient().rpc("admin_churn", { p_window: window.value });
+  if (error) throw new HttpError(500, `Churn lookup failed: ${error.message}`);
+
+  const report = (data ?? {}) as Record<string, unknown>;
+  const previous = (report.previous ?? {}) as Record<string, unknown>;
+  const byPlan = (raw: unknown) =>
+    (Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []).map((r) => ({
+      plan: typeof r.plan === "string" ? r.plan : "(unknown)",
+      count: countOf(r.count),
+    }));
+  const byReason = (raw: unknown) =>
+    (Array.isArray(raw) ? (raw as Record<string, unknown>[]) : []).map((r) => ({
+      reason: typeof r.reason === "string" ? r.reason : "(unknown)",
+      count: countOf(r.count),
+    }));
+
+  return json({
+    generated_at: report.generated_at ?? nowIso(),
+    window: window.key,
+    from: report.from ?? null,
+    to: report.to ?? null,
+    cancellations: countOf(report.cancellations),
+    by_plan: byPlan(report.by_plan),
+    by_reason: byReason(report.by_reason),
+    in_grace: countOf(report.in_grace),
+    sandbox_cancellations: countOf(report.sandbox_cancellations),
+    previous: {
+      from: previous.from ?? null,
+      to: previous.to ?? null,
+      cancellations: countOf(previous.cancellations),
+      by_plan: byPlan(previous.by_plan),
+      by_reason: byReason(previous.by_reason),
+    },
+    delta_total: countOf(report.delta_total),
+    note: CHURN_NOTE,
   });
 }
 

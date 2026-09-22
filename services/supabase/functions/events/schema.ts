@@ -53,6 +53,12 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   app_open:           ["cold", "source", "session_n"],
   signup:             ["method"],
   signin:             ["method"],
+  // Anonymous sessions (App Store 5.1.1(v)): every launch opens one, and these
+  // three say whether that is working in the field. Without them the batch that
+  // carries one is refused entirely.
+  anonymous_session_started: ["attempt"],
+  anonymous_session_failed:  ["attempts"],
+  anonymous_adopt:           ["ok", "adopted"],
   // Core creation funnel
   home_created:       ["space_type", "source"],
   capture_started:    ["space_type", "mode"],
@@ -61,7 +67,7 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   tour_published:     ["space_type", "unbranded", "ok"],
   // AI tools
   ai_photo_edit:      ["task", "provider", "ok", "ms"],
-  reel_made:          ["clips", "duration_s", "ok"],
+  reel_made:          ["clips", "duration_s", "ok", "captions", "transition", "planned"],
   voiceover_added:    ["duration_s", "captions", "ok"],
   aerial_made:        ["provider", "ok", "ms"],
   // Money
@@ -89,6 +95,51 @@ export const EVENT_SCHEMA: Readonly<Record<string, readonly string[]>> = Object.
   coach_opened:       ["screen"],
   coach_message_sent: ["length_bucket"],
   coach_action_tapped: ["type"],
+  // Prompt assistance (POST /ai-copy) — "write my script" for a reel voiceover
+  // and "improve my prompt" for a custom photo edit. NEITHER carries the text:
+  // a script is marketing copy about a real address and a rough edit idea is
+  // the user's own words, so only shape travels — `chars` is a count, `ok` is
+  // whether the call succeeded, `target_s` is the reel's own length. A failure
+  // deliberately carries NO reason: the server's message is written for a
+  // person and can quote the listing's own words back. See
+  // docs/COPY-ASSIST-CONTRACT.md.
+  ai_script_written:  ["space_type", "tone", "chars", "target_s", "ok"],
+  ai_prompt_improved: ["space_type", "chars", "ok"],
+  // The shot list (POST /ai-copy/shotlist) — the plan behind a reel: which photo
+  // goes where, which camera move, what the burned-in words say. `shots` is a
+  // count, never the plan itself; the captions describe a real address.
+  reel_planned:       ["ok", "space_type", "shots"],
+  // A file the agent saved out of the FILES section to their own camera roll.
+  // `kind` is the closed set of things a listing can hold — never a filename.
+  file_saved:         ["kind", "ok"],
+  // ── 2026-09-12: four names the shipped app already emits ──────────────────
+  //
+  // These were emitted by apps/ios but were in neither vocabulary, so the
+  // client dropped them before the network and the server would have refused
+  // the whole batch that carried one. The prop keys below are exactly what the
+  // call sites pass — nothing was invented, and nothing was widened:
+  //
+  //   ai_clip_rejected   Screens/FlythroughDetailView.swift — the AI drift
+  //                      check refused a generated clip. `kind` is the closed
+  //                      generator enum ("animate"), `status` the verdict slug.
+  //                      The refusal TEXT is deliberately not carried: it is
+  //                      written for a person and can quote the listing.
+  //   tour_viewer_opened Screens/TourViewerView.swift — `kind` is "tour" or
+  //                      "portfolio". No slug, no URL, no listing id: the link
+  //                      itself is the join key back to an address.
+  //   listing_link_used  Screens/NewListingView.swift — `source` is the parser
+  //                      that recognised the pasted link (its own enum), never
+  //                      the link.
+  //   property_lookup    Screens/NewListingView.swift — `ok` whether the
+  //                      records service answered, `filled` HOW MANY fields it
+  //                      populated (a count, never which or what), `cached`
+  //                      whether the answer came from our cache. The app sends
+  //                      all three as strings; the whitelist is about keys, and
+  //                      the scrubber handles values either way.
+  ai_clip_rejected:   ["kind", "status"],
+  tour_viewer_opened: ["kind"],
+  listing_link_used:  ["source"],
+  property_lookup:    ["ok", "filled", "cached"],
   // Stability (MetricKit summaries — see Analytics/CrashReporter.swift)
   crash:              ["kind", "signal", "exception_type", "termination_reason", "top_frame", "app_version", "os"],
   error:              ["category", "code", "step", "detail", "launch_time_ms", "hang_ms", "app_version", "os"],
@@ -159,9 +210,43 @@ export function scrubString(input: string, max = MAX_PROP_STRING): string {
   return out.length > max ? out.slice(0, max) : out;
 }
 
-/** Scrub + clip a metadata string (app_version, os). Empty → null. */
+// THE SCRUBBER ATE THE VERSION NUMBER. Found live on 2026-09-13: build 23
+// reported `1.0.2 (23)` and the database stored `[redacted])`.
+//
+// The phone rule is /\+?\d(?:[\d\s().-]{6,})\d/ — a digit, then six or more
+// characters drawn from digits, spaces, dots, parentheses and dashes, then a
+// digit. A three-component version with a build number is exactly that shape:
+// "1.0.2 (23" is 1 + ".0.2 (2" (seven) + 3. It matched, and only the trailing
+// ")" survived. Two-component versions escaped by one character — "1.0 (16)"
+// has five middle characters, not six — which is why 1.0 (16) looked fine and
+// the bug stayed invisible until 1.0.1 shipped.
+//
+// This silently destroyed every version-keyed analytic from 1.0.1 onward:
+// admin_cohorts and admin_churn (0046) group by app_version, and a cohort
+// named "[redacted])" is not a cohort. Crash and error events carry
+// app_version as a whitelisted prop too.
+//
+// WHY A PASS-THROUGH IS SAFE HERE, and not a weakening of the scrubber. The
+// exemption is not "skip the rules for this field" — it is a whole-string
+// match against a shape that CANNOT hold any of the four things the scrubber
+// exists to catch. Digits, dots and one parenthesised build number have
+// nowhere to put an @, a scheme, a slash or a street suffix, and the match is
+// anchored, so "1.0.2 (23) call 4155550132" is not a version and is scrubbed
+// normally. The rule stays over-eager everywhere else.
+const VERSION_RE = /^\d{1,4}(?:\.\d{1,4}){0,3}(?:[ -]?\(\d{1,8}\))?$/;
+
+/**
+ * Scrub + clip a metadata string (app_version, os). Empty → null.
+ *
+ * A plain version number is returned untouched — see VERSION_RE above for why
+ * that cannot leak anything. Everything else goes through the full scrubber.
+ */
 export function scrubMeta(input: unknown): string | null {
   if (typeof input !== "string") return null;
+  const trimmed = input.trim();
+  if (trimmed.length > 0 && trimmed.length <= MAX_META_STRING && VERSION_RE.test(trimmed)) {
+    return trimmed;
+  }
   const s = scrubString(input, MAX_META_STRING);
   return s.length === 0 ? null : s;
 }

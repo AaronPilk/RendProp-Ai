@@ -28,7 +28,7 @@ The app is launched with these arguments (`-key value` pairs land in
 -hasOnboarded YES                            → skip the intro
 -space.type real_estate                      → the Homes/real-estate identity
 -appearance light                            → deterministic screenshots
--ai.thirdPartyProcessing.consent.v1 YES      → skip the Guideline 5.1.2(i) overlay
+-ai.thirdPartyProcessing.consent.v2 YES      → skip the Guideline 5.1.2(i) overlay
 ```
 
 `-uiTesting` is the important one: the walk NEVER talks to the live backend, so
@@ -141,7 +141,7 @@ control was not found.
 
 `ReviewerWalk.testReviewerWalk()` is a second, separate capture in the same
 bundle. The UI walk above and the store shots both launch with
-`-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v1 YES`, so they land
+`-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v2 YES`, so they land
 straight on Home with every gate already answered — which is precisely the part
 a reviewer never gets. This test launches like a **brand-new install** and
 photographs the first-run path in the order a reviewer walks it.
@@ -329,7 +329,7 @@ up to three times before giving up.
 
 The same five arguments as the UI walk and the store shots — `-uiTesting`,
 `-hasOnboarded YES`, `-space.type real_estate`, `-appearance light`,
-`-ai.thirdPartyProcessing.consent.v1 YES`. `-uiTesting` does not touch
+`-ai.thirdPartyProcessing.consent.v2 YES`. `-uiTesting` does not touch
 StoreKit: `PurchaseManager.loadProducts()` calls `Product.products(for:)`
 unconditionally, and `Config.makeAPIClient()` only swaps the REST client for the
 mock. It does make `AuthStore.isSignedIn` true, and the mock `/me` reports no
@@ -442,7 +442,7 @@ headline changing is the proof). If the menu cannot be driven, the test
 relaunches pinned with `-space.type <raw>` and says so in the activity log.
 
 It launches with `-uiTesting`, `-hasOnboarded YES`, `-appearance light`,
-`-ai.thirdPartyProcessing.consent.v1 YES`, and brings up the same
+`-ai.thirdPartyProcessing.consent.v2 YES`, and brings up the same
 `SKTestSession` as PaywallShot so the plan cards render for the copy check.
 
 ## Safety rules

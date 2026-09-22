@@ -132,12 +132,31 @@ class Settings:
     supabase_url: str = ""
     supabase_service_role_key: str = ""
 
-    # Model routes (swap without code changes as prices/models move)
-    gemini_image_model: str = "gemini-2.5-flash-image"
+    # Model routes (swap without code changes as prices/models move).
+    #
+    # THESE DEFAULTS ARE A SEPARATE RISK SURFACE FROM ai_routes. This worker
+    # does NOT read the routing table — grep it: there is no reference to
+    # ai_routes, resolveRoute or provider_health anywhere under services/
+    # pipeline or services/worker. So flipping the router flag, or fixing a
+    # model in the admin console, changes nothing here. Both places have to be
+    # updated, and the env vars live in the WORKER's environment, not in the
+    # Supabase function secrets.
+    #
+    # Changed 2026-09-13:
+    #   gemini-2.5-flash-image -> gemini-3.1-flash-image   (2.5 dies 2026-10-02)
+    #   claude-haiku-4-5       -> claude-sonnet-5          (haiku retires >= 2026-10-15)
+    #
+    # Why this mattered more here than on the edge path: router.py declutter()
+    # (no mask) and photo_edit() (twilight/sky/lawn) have NO fallback, and
+    # enhance_bridge swallows the exception, so the tour publishes without the
+    # paid enhancement and nothing is logged anywhere a human reads. restage()
+    # survives via the Flux Kontext fallback. A silent failure is worse than a
+    # loud one; this was going to be silent.
+    gemini_image_model: str = "gemini-3.1-flash-image"   # 2.5 shuts down 2026-10-02
     fal_declutter_model: str = "fal-ai/flux-pro/v1/fill"
     fal_restage_fallback_model: str = "fal-ai/flux-pro/kontext"
     fal_hero_model: str = "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video"
-    anthropic_model_qc: str = "claude-haiku-4-5"
+    anthropic_model_qc: str = "claude-sonnet-5"   # haiku-4-5 retires >= 2026-10-15, no successor
     anthropic_model_escalate: str = "claude-sonnet-5"
 
     # Route selection per feature: "gemini" | "fal" | "kie" for restage.
@@ -163,11 +182,11 @@ class Settings:
             kie_api_key=os.environ.get("KIE_API_KEY", ""),
             supabase_url=os.environ.get("SUPABASE_URL", "").rstrip("/"),
             supabase_service_role_key=os.environ.get("SUPABASE_SERVICE_ROLE_KEY", ""),
-            gemini_image_model=os.environ.get("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"),
+            gemini_image_model=os.environ.get("GEMINI_IMAGE_MODEL", "gemini-3.1-flash-image"),
             fal_declutter_model=os.environ.get("FAL_DECLUTTER_MODEL", "fal-ai/flux-pro/v1/fill"),
             fal_restage_fallback_model=os.environ.get("FAL_RESTAGE_FALLBACK_MODEL", "fal-ai/flux-pro/kontext"),
             fal_hero_model=os.environ.get("FAL_HERO_MODEL", "fal-ai/bytedance/seedance/v1/pro/fast/image-to-video"),
-            anthropic_model_qc=os.environ.get("ANTHROPIC_MODEL_QC", "claude-haiku-4-5"),
+            anthropic_model_qc=os.environ.get("ANTHROPIC_MODEL_QC", "claude-sonnet-5"),
             anthropic_model_escalate=os.environ.get("ANTHROPIC_MODEL_ESCALATE", "claude-sonnet-5"),
             restage_route=os.environ.get("RESTAGE_ROUTE", "gemini"),
             qc_pass_score=_int("QC_PASS_SCORE", 85, lo=0, hi=100),

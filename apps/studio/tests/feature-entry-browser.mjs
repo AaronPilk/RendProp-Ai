@@ -1,0 +1,96 @@
+import assert from "node:assert/strict";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve, extname } from "node:path";
+import { createServer } from "node:http";
+import { build } from "vite";
+import { chromium, expect } from "@playwright/test";
+
+const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-feature-entry-")), dist = join(artifacts, "dist");
+const receipt = { proof: "Real creative and business components opened by feature-card requests; isolated responses, no paid AI or outgoing mail", checks: [], externalRequests: [], errors: [] };
+const first = "33333333-3333-4333-8333-333333333333", second = "33333333-3333-4333-8333-333333333334";
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+ip1sAAAAASUVORK5CYII=", "base64");
+let browser, server;
+try {
+  await build({ configFile: false, root, publicDir: false, logLevel: "error", build: { outDir: dist, rollupOptions: { input: [join(root, "tests/creative-fixture.html"), join(root, "tests/business-fixture.html")] } } });
+  server = createServer(async (request, response) => {
+    const path = resolve(dist, `.${new URL(request.url, "http://localhost").pathname}`);
+    if (!path.startsWith(`${dist}/`)) return response.writeHead(400).end();
+    try { response.setHeader("Content-Type", ({ ".html": "text/html", ".js": "application/javascript", ".css": "text/css" })[extname(path)] ?? "application/octet-stream"); response.end(await readFile(path)); }
+    catch { response.writeHead(404).end(); }
+  });
+  await new Promise(done => server.listen(0, "127.0.0.1", done));
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
+  await context.route("**/*", route => {
+    const url = new URL(route.request().url());
+    if (url.origin === origin && route.request().method() === "GET") return route.continue();
+    if (url.hostname === "012345678901234567890123456789ab.r2.cloudflarestorage.com") return route.fulfill({ status: 200, contentType: "image/png", headers: { "Access-Control-Allow-Origin": "*" }, body: png });
+    receipt.externalRequests.push(url.origin); return route.abort();
+  });
+  const page = await context.newPage(); page.on("pageerror", error => receipt.errors.push(error.message)); page.setDefaultTimeout(10000);
+  const creativeNav = name => page.getByRole("navigation", { name: "Creative tools" }).getByRole("button", { name, exact: true });
+  const entry = (tool, options = {}) => page.evaluate(({ tool, options }) => window.creativeFixture.entry(tool, options), { tool, options });
+  await page.goto(`${origin}/tests/creative-fixture.html`);
+  await expect(page.getByText("Your saved draft is ready", { exact: true })).toBeVisible();
+  await entry("photo-studio", { preset: "stage" });
+  const styles = page.getByRole("group", { name: "Staging style", exact: true });
+  for (const name of ["Modern", "Rustic", "Minimalist", "Scandinavian"]) await expect(styles.getByRole("button", { name, exact: true })).toBeVisible();
+  await styles.getByRole("button", { name: "Rustic", exact: true }).click();
+  await entry("scripts"); await page.getByLabel("Property video script").fill("Keep my unfinished desktop script.");
+  await entry("aerial", { id: "aerial-card-once" });
+  await expect(page.getByRole("heading", { name: "Make an aerial shot", exact: true })).toBeVisible();
+  const kind = page.getByRole("combobox", { name: "What would you like to make?", exact: true });
+  await expect(kind).toHaveValue("aerial"); await kind.selectOption("drone");
+  await entry("aerial", { id: "aerial-card-once" }); await expect(kind).toHaveValue("drone");
+  await entry("voiceover"); await expect(creativeNav("Voiceover")).toHaveAttribute("aria-current", "page");
+  await entry("photo-studio"); await expect(styles.getByRole("button", { name: "Rustic", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await entry("scripts"); await expect(page.getByLabel("Property video script")).toHaveValue("Keep my unfinished desktop script.");
+  receipt.checks.push("Feature cards open the selected tool; the same request is consumed once and preserves unsaved script and staging style");
+  await entry("coach", { listingId: second }); await expect(creativeNav("Scripts & shot plans")).toHaveAttribute("aria-current", "page");
+  await entry("agent-cutaways"); await expect(page.getByRole("combobox", { name: "Agent-on-camera video", exact: true })).toBeVisible();
+  await entry("animate"); await expect(kind).toHaveValue("reel");
+  await entry("chapters"); await expect(creativeNav("Room chapters")).toHaveAttribute("aria-current", "page");
+  await entry("coach"); await expect(creativeNav("Ask Rendprop")).toHaveAttribute("aria-current", "page");
+  await page.getByRole("button", { name: "Open Reel Studio →", exact: true }).click();
+  await page.getByRole("button", { name: "Show fixture receipts", exact: true }).click();
+  let creative = JSON.parse(await page.locator("#fixture-calls").textContent());
+  assert.deepEqual(creative.editorHandoffs, [first]); assert.equal(creative.calls.filter(call => call.method !== "GET").length, 0);
+  receipt.checks.push("Wrong-property requests cannot change the tool; agent cutaways open visibly and Reel Studio receives the exact property with no AI dispatch");
+  await entry("aerial", { id: "do-not-replay-after-property-switch" });
+  await expect(kind).toHaveValue("aerial");
+  const property = page.getByRole("combobox", { name: "Property", exact: true });
+  await property.selectOption(second); await expect(creativeNav("AI Photo Studio")).toHaveAttribute("aria-current", "page");
+  await property.selectOption(first); await expect(creativeNav("AI Photo Studio")).toHaveAttribute("aria-current", "page");
+  await entry("scripts"); await expect(page.getByLabel("Property video script")).toHaveValue("Keep my unfinished desktop script.");
+  receipt.checks.push("Property changes do not replay stale card actions and scoped recovery retains the original property's unsaved script");
+
+  const office = await context.newPage(); office.on("pageerror", error => receipt.errors.push(error.message)); office.setDefaultTimeout(10000);
+  await office.goto(`${origin}/tests/business-fixture.html`);
+  const businessNav = name => office.getByRole("navigation", { name: "Business tools" }).getByRole("button", { name, exact: true });
+  const section = (name, id) => office.evaluate(({ name, id }) => window.businessFixture.section(name, id), { name, id });
+  await section("brand"); await office.getByLabel("Display name", { exact: true }).fill("My unsaved agent card");
+  await section("team"); await office.getByRole("textbox", { name: /^Email addresses/ }).fill("unsent@example.invalid");
+  await section("account"); await office.getByLabel("New leads", { exact: true }).uncheck();
+  await office.getByRole("button", { name: "Refresh allowance", exact: true }).click();
+  await expect(office.getByLabel("New leads", { exact: true })).not.toBeChecked();
+  await office.evaluate(() => window.businessFixture.refreshWorkspace());
+  await section("brand"); await expect(office.getByLabel("Display name", { exact: true })).toHaveValue("My unsaved agent card");
+  await section("team"); await expect(office.getByRole("textbox", { name: /^Email addresses/ })).toHaveValue("unsent@example.invalid");
+  await section("account"); await expect(office.getByLabel("New leads", { exact: true })).not.toBeChecked();
+  receipt.checks.push("Agent card, unsent invite and notification edits remain intact across feature-card navigation and background account refresh");
+  await section("leads", "leads-once"); await businessNav("Agent card").click();
+  await section("leads", "leads-once"); await expect(businessNav("Agent card")).toHaveAttribute("aria-current", "page");
+  await office.evaluate(() => window.businessFixture.marketing()); await section("activity");
+  await expect(businessNav("Account & plan")).toHaveAttribute("aria-current", "page");
+  await expect(businessNav("Team activity")).toHaveCount(0);
+  const calls = await office.evaluate(() => window.businessFixture.calls());
+  assert.equal(calls.filter(call => call.method !== "GET").length, 0);
+  receipt.checks.push("Business card requests are consumed once, restricted team activity stays unavailable and navigation creates no writes or invitations");
+  await section("brand"); await office.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await office.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 2));
+  assert.deepEqual(receipt.externalRequests, []); assert.deepEqual(receipt.errors, []);
+  receipt.status = "passed"; await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2));
+  console.log(JSON.stringify({ ...receipt, artifacts }, null, 2));
+} finally { await browser?.close(); if (server) await new Promise(done => server.close(done)); }

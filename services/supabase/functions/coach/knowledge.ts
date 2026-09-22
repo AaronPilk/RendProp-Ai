@@ -1,8 +1,8 @@
 // coach — the customer-service knowledge base.
 //
-// EVERY fact in this file is copied or tightly paraphrased from one of six
-// sources, named on each entry. Nothing here is invented, and nothing here
-// should ever drift from its source without this file changing too:
+// Facts are drawn from the documented sources below or the actual application
+// contract/source, named on each entry. Keep these facts aligned with their
+// sources rather than carrying forward stale account or publication claims:
 //
 //   description.txt   docs/appstore/metadata/en-US/description.txt
 //   review_notes.txt   docs/appstore/metadata/en-US/review_notes.txt
@@ -29,7 +29,7 @@
 /** One knowledge-base entry: a short topic label plus the fact(s) it covers. */
 export interface KnowledgeEntry {
   topic: string;
-  /** Which of the six sources this was drawn from, for anyone auditing drift. */
+  /** Documentation or implementation source, for anyone auditing drift. */
   source: string;
   fact: string;
 }
@@ -46,12 +46,12 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Signing in — what needs an account",
-    source: "review_notes.txt + description.txt",
+    source: "GPT-AGENT-BRIEF.md §2 + FlythroughDetailView.swift publishNow/FeatureSessionAction",
     fact:
-      "Recording, on-device rendering, the AI Photo Studio, reels, aerial intros and floor " +
-      "plans all work fully signed out. Sign in with Apple is needed only to PUBLISH a tour to " +
-      "the web, because publishing is the step that creates the hosted link and the contact " +
-      "form. Any Apple ID can sign in — there is no invite list.",
+      "No account is required to record, edit, build or publish a tour, or to use the AI Photo " +
+      "Studio, reels, aerial intros and floor plans. The app connects through an anonymous " +
+      "session. Publishing needs an internet connection. Sign in with Apple is optional " +
+      "for accessing your workspace on another device.",
   },
   {
     topic: "The two links every published tour gets",
@@ -149,21 +149,24 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Free trial",
-    source: "description.txt",
+    source: "description.txt + migration 0044 (plan_entitlement_overrides)",
     fact:
       "Every plan starts with a 7-day free trial, available once per Apple ID. Any unused " +
-      "portion of a trial is forfeited if the person buys a subscription before it ends.",
+      "portion of a trial is forfeited if the person buys a subscription before it ends. The " +
+      "free week is sized to the business: a real-estate workspace can publish 3 tours during " +
+      "it; a single-location business (venue, restaurant, retail, gym or studio, other) can " +
+      "publish 1 tour. Photo edits, reels and the aerial intro are included in both.",
   },
   {
     topic: "Deleting an account",
-    source: "support.html + review_notes.txt",
+    source: "SettingsView.swift deleteAccount + me/index.ts handleDelete",
     fact:
-      "In the app: Settings → \"Your data\" → \"Delete account\" (this is offered whether the " +
-      "person is signed in or not). It removes the server account, unpublishes every shared " +
-      "tour link, and deletes listings, tours, uploaded media and leads from the server, then " +
-      "wipes local data on the phone. It also works for guests who never signed in (a local " +
-      "wipe only, since there is no server account to remove). Deleting the account does NOT " +
-      "cancel an App Store subscription — cancel that with Apple separately.",
+      "In the app: Settings → \"Your data\" → \"Delete account\". Guests using an anonymous " +
+      "session also have a server account: this is not a local-only wipe. Account deletion " +
+      "requests removal of that account and its solo-workspace data; the phone clears its " +
+      "local data after server confirmation. Shared-team data is not all deleted with your " +
+      "account, and server cleanup may remain pending. Deleting the account does NOT cancel " +
+      "an App Store subscription — cancel that with Apple separately.",
   },
   {
     topic: "What the app needs to run",
@@ -202,9 +205,10 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
 
 /**
  * Monthly allowances by plan — COUNTS ONLY, never a price. Source:
- * description.txt "WHAT A PLAN INCLUDES". Seats is Team-only (solo/pro seat
- * count is implicitly 1 and not stated in copy, so it is left out rather than
- * guessed).
+ * description.txt "WHAT A PLAN INCLUDES", which mirrors plan_entitlements as
+ * migration 0044 (2026-09-12) sizes it — tests/invariants.sql pins the table.
+ * Seats is Team-only (starter/pro seat count is implicitly 1 and not stated in
+ * copy, so it is left out rather than guessed).
  */
 export const PLAN_ALLOWANCES: Array<{
   plan: string;
@@ -214,12 +218,12 @@ export const PLAN_ALLOWANCES: Array<{
   aerials: number;
   seats?: number;
 }> = [
-  { plan: "Starter", renders: 8, photoEdits: 150, reels: 8, aerials: 2 },
-  { plan: "Pro", renders: 25, photoEdits: 300, reels: 20, aerials: 6 },
-  { plan: "Team", renders: 80, photoEdits: 600, reels: 40, aerials: 15, seats: 3 },
+  { plan: "Starter", renders: 4, photoEdits: 100, reels: 6, aerials: 2 },
+  { plan: "Pro", renders: 10, photoEdits: 200, reels: 12, aerials: 4 },
+  { plan: "Team", renders: 25, photoEdits: 400, reels: 25, aerials: 8, seats: 2 },
 ];
 
-/** One line per plan, e.g. "Pro — 25 tour renders, 300 AI photo edits, 20 reels, 6 aerial intros a month." */
+/** One line per plan, e.g. "Pro — 10 tour renders, 200 AI photo edits, 12 reels, 4 aerial intros a month." */
 function allowanceLine(a: (typeof PLAN_ALLOWANCES)[number]): string {
   const seats = a.seats ? `, ${a.seats} seats` : "";
   return `${a.plan} — ${a.renders} tour renders, ${a.photoEdits} AI photo edits, ${a.reels} reels, ` +
@@ -238,7 +242,8 @@ export function knowledgeBlock(): string {
     facts,
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
-      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID. For " +
+      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID: 3 " +
+      "tours for a real-estate workspace, 1 tour for a single-location business. For " +
       "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
 }

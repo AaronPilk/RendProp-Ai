@@ -1,0 +1,11 @@
+{
+  "origin": "https://studio.rendprop.com",
+  "worker": "rendprop-studio",
+  "version": "0969a2bc-a822-46d3-94b9-7509ff2d749b",
+  "previousVersion": "4dda57a1-33b8-464f-b836-1d741c4dc4c0",
+  "deploymentStatus": "successful",
+  "readBackStatus": "passed",
+  "supabaseChanged": false,
+  "nativeBuildChanged": false,
+  "marketingHostChanged": false
+}

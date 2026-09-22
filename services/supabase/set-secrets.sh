@@ -47,7 +47,35 @@ supabase secrets set --project-ref "$REF" \
   QC_PASS_SCORE="85" \
   QC_MAX_RETRIES="2" \
   MAX_GEN_COST_PER_JOB_CENTS="2500" \
-  TOUR_PUBLIC_BASE_URL="https://rendprop.com"
+  TOUR_PUBLIC_BASE_URL="https://rendprop.com" \
+  APNS_KEY_P8="$(cat "${APNS_P8_PATH:-/dev/null}")" \
+  APNS_KEY_ID="OPTIONAL_BLANK" \
+  APNS_TEAM_ID="OPTIONAL_BLANK" \
+  RESEND_API_KEY="OPTIONAL_BLANK" \
+  NOTIFY_FROM_EMAIL="OPTIONAL_BLANK"
+#
+# LIFECYCLE NOTIFICATIONS (migration 0047 + functions/notify). All five are
+# OPTIONAL and the system SHIPS INERT without them: the outbox still fills
+# (a lead, a finished tour, a trial ending), the drain still runs, and every
+# row it cannot deliver is marked `skipped` with the exact variable names it
+# is missing. Nothing 500s, nothing crash-loops, and the two channels are
+# independent — e-mail set and push not (or the reverse) works fine.
+#
+#   APNS_KEY_P8 / APNS_KEY_ID / APNS_TEAM_ID   the .p8 token key from the
+#     Apple Developer portal (Keys → "Apple Push Notifications service"),
+#     its key id, and the 10-character team id. Set APNS_P8_PATH to the
+#     downloaded file before running this script. WITHOUT THEM: every push
+#     row is skipped with "push is not configured: set …". The topic is the
+#     bundle id (com.rendprop.app) and is NOT a secret — it is hardcoded.
+#   RESEND_API_KEY / NOTIFY_FROM_EMAIL        one Resend key and the From
+#     address (e.g. "Rendprop <hello@rendprop.com>", on a domain verified in
+#     Resend). WITHOUT THEM: every e-mail row is skipped with "email is not
+#     configured: set …". A second provider is a new function in
+#     functions/notify/email.ts, not a rewrite.
+#
+# A row that could not be delivered stays in the outbox until
+# notification_sweep() expires it at 72 hours, so a key added the same day
+# still delivers the backlog. See DEPLOYMENT.md §11.
 # AI ROUTER PROVIDERS (docs/AI-ROUTER-CONTRACT.md). KIE_API_KEY,
 # HIGGSFIELD_API_KEY_ID and HIGGSFIELD_API_KEY_SECRET are OPTIONAL and should
 # stay blank until the terms are signed: every Kie and Higgsfield row in

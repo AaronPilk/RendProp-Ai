@@ -83,7 +83,9 @@ run_step "Find the app record" app
 
 # 2. Subscriptions: group, six products, localizations, prices, availability,
 #    free trials, and the App Store Server Notification URLs.
-run_step "Subscriptions" subscriptions "$ACTION"
+#    com.rendprop.app.team.annual is not sold at launch (see step 6), so it is
+#    skipped here and in the App Review step, as tools/asc/README.md requires.
+run_step "Subscriptions" subscriptions "$ACTION" --skip-product com.rendprop.app.team.annual
 
 # 3. The listing: name, subtitle, categories, age rating, privacy policy,
 #    description, keywords, promotional text, release notes, URLs.
@@ -107,8 +109,8 @@ else
 fi
 
 # 5. App Review contact details, review notes, and the paywall screenshot that
-#    App Review needs on every subscription.
-run_step "App Review details" review "$ACTION"
+#    App Review needs on every subscription that is sold.
+run_step "App Review details" review "$ACTION" --skip-product com.rendprop.app.team.annual
 
 # 6. Where everything stands. `status` exits non-zero when something is still
 #    missing, which is information rather than a failure, so it runs last and

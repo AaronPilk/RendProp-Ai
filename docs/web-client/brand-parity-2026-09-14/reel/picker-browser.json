@@ -1,0 +1,13 @@
+{
+  "proof": "Real CloudEditor and media picker, using isolated uploaded source fixtures; no paid requests or live account",
+  "checks": [
+    "A home-card request opens its requested property once; opening, closing and replay leave the existing other-property draft untouched",
+    "The real 50-row media pagination reaches photo51; cross-property selection requires explicit move review and Cancel preserves the saved edit",
+    "Same-property phone source appends to the saved sequence with its actual asset identity; no new upload ticket, bytes or generated media",
+    "Three-step guide sends voiceover and shot-plan actions to the existing edit\u2019s actual property",
+    "Desktop and 390px picker/guide stay readable without document overflow"
+  ],
+  "errors": [],
+  "externalRequests": [],
+  "status": "passed"
+}

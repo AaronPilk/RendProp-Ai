@@ -1,0 +1,65 @@
+{
+  "sourceSHA256": {
+    "apps/ios/Rendprop/Capture/CameraManager.swift": "0f2e68b59e585a5a5074ce611029eeaef2709c4f78814d6b53836307f7eab97a",
+    "apps/ios/Rendprop/Capture/MotionRecorder.swift": "7d29d68c676e2b16b58842482310a923cc5de4f3840cab56966f6174aac7391d",
+    "tools/audit/call-20260919/timing/fixed_checks.swift": "89ed5b31602d6ab07ed8a6af892872e3bb2cb6addcf3ec6bb4502154d05b3220"
+  },
+  "commands": [
+    {
+      "label": "compile",
+      "exit": 0
+    },
+    {
+      "label": "execute",
+      "exit": 0
+    }
+  ],
+  "result": {
+    "finalizingPreservesRange": [
+      [
+        1,
+        10
+      ]
+    ],
+    "finiteClampedOrderedRanges": [
+      [
+        0,
+        2.5
+      ],
+      [
+        8.5,
+        10
+      ]
+    ],
+    "flooredCapTotals": [
+      599.9816666666667,
+      599.9833333333333,
+      600,
+      600
+    ],
+    "heatStopsEvidenceAndShowsUnavailable": [
+      [
+        0,
+        3.5
+      ]
+    ],
+    "oldGenerationRejectedAndSourceClockUsed": 1.5,
+    "pauseMergedBeforeFiltering": [
+      [
+        0.5,
+        2
+      ]
+    ],
+    "persistedMediaAlignedMotionTimes": [
+      9.900000000000006,
+      10.299999999999997,
+      10.499999999999995
+    ],
+    "resumeUnavailableHasFeedback": true,
+    "sidecarRebindRetainsSource": true,
+    "wallTimeCadenceCallsInTenSeconds": {
+      "30": 20,
+      "60": 20
+    }
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "status": "passed",
+  "checks": [
+    "actual native provenance resolver rejects video and must not be used for generated-video attachment",
+    "ordinary edits remain unstaged",
+    "known AI edits retain disclosure flag",
+    "completed nested edit accepted",
+    "revoked source verdict held at publication",
+    "nested source revocation held",
+    "disclosure source reassignment held",
+    "invented single original held",
+    "unfinished finalization held",
+    "output substitution held",
+    "cyclic source declaration held",
+    "private helper not callable by client"
+  ]
+}

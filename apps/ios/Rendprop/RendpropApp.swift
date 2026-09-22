@@ -17,12 +17,44 @@ final class BackgroundSessionBridge {
 }
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
+    // MARK: APNs (Push/PushManager.swift)
+    //
+    // The only reason this app has a delegate besides the background-upload
+    // bridge below. NEITHER of these prompts: `registerForRemoteNotifications`
+    // is silent, and the single system prompt is asked exactly once, at the
+    // first successful publish, from `PushManager`.
+
+    func application(_ application: UIApplication,
+                     didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
+        Task { @MainActor in PushManager.shared.handleDeviceToken(deviceToken) }
+    }
+
+    func application(_ application: UIApplication,
+                     didFailToRegisterForRemoteNotificationsWithError error: Error) {
+        // Only the text crosses to the main actor — an `Error` existential is
+        // not Sendable and there is nothing else here worth carrying.
+        let reason = error.localizedDescription
+        Task { @MainActor in PushManager.shared.handleRegistrationFailure(reason) }
+    }
+
     func application(_ application: UIApplication,
                      handleEventsForBackgroundURLSession identifier: String,
                      completionHandler: @escaping () -> Void) {
+        if identifier == SpatialUploadCoordinator.sessionIdentifier {
+            SpatialUploadCoordinator.shared.finishBackgroundEvents = completionHandler
+            SpatialUploadCoordinator.shared.reconnect()
+            return
+        }
         BackgroundSessionBridge.shared.completionHandler = completionHandler
         _ = UploadManager.shared // recreate the background session so events are delivered
     }
+}
+
+extension Notification.Name {
+    static let rendpropCloudBrandUpdated = Notification.Name("RendpropCloudBrandUpdated")
+    /// Posted (main thread) by `AppModel.markSpaceTypeOutOfSync()`: the server
+    /// does not have this device's business type. `AppModel` re-sends it.
+    static let rendpropSpaceTypeOutOfSync = Notification.Name("RendpropSpaceTypeOutOfSync")
 }
 
 // MARK: - App state
@@ -65,6 +97,43 @@ final class AppModel: ObservableObject {
     /// state a relaunch should ever restore.
     @Published var coachRoute: CoachRoute?
 
+    /// What the server last said about its 3D-walkthrough pipeline
+    /// (`GET /spatial/capability`) — one flag for every user alike. nil until
+    /// a fetch has succeeded in this process. Not persisted: the Home tile is
+    /// HIDDEN whenever this is nil or `enabled` is false, so an offline or
+    /// unanswered launch shows no 3D tile rather than one that scans a room,
+    /// uploads every frame and then fails at `/start` because the pipeline is
+    /// switched off (App Review 2.1 — no dead features on Home). Refreshed
+    /// once per foreground by `RendpropApp`; a failed refresh keeps the last
+    /// answer rather than yanking a tile mid-session.
+    @Published private(set) var spatialCapability: SpatialCapability?
+    @Published private(set) var isCloudSyncing = false
+    @Published private(set) var cloudSyncError: String?
+    @Published private(set) var lastCloudSyncAt: Date?
+    private var cloudRefreshTask: Task<Void, Never>?
+    private var cloudRefreshOperation: UUID?
+    var pendingCloudListingCount: Int {
+        guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) else { return 0 }
+        return listings.filter { CloudDraftCreation.canAutoSync($0, userID: owner) && ($0.serverID == nil || $0.needsServerSync == true) }.count
+    }
+    private var spatialCapabilityFetch: Task<Void, Never>?
+
+    /// True only once the server has said the 3D walkthrough is on.
+    var isSpatialWalkthroughAvailable: Bool { spatialCapability?.enabled == true }
+
+    /// Ask the server once (coalesced while a fetch is in flight). Called on
+    /// every return to the foreground and again when a session lands, since
+    /// the first launch of all may not have one yet when the scene appears.
+    func refreshSpatialCapability() {
+        guard spatialCapabilityFetch == nil else { return }
+        spatialCapabilityFetch = Task { [weak self] in
+            let answer = try? await self?.api.spatialCapability()
+            guard let self else { return }
+            if let answer { self.spatialCapability = answer }
+            self.spatialCapabilityFetch = nil
+        }
+    }
+
     // Mock by default (offline dev); LiveAPIClient when Config.useLiveBackend.
     let api: APIClient = Config.makeAPIClient()
 
@@ -76,16 +145,29 @@ final class AppModel: ObservableObject {
     private var isRestoring = false
     private var syncInFlight: Set<UUID> = []
     private var publishInFlight: Set<UUID> = []
+    private var serverCreationInFlight: Set<UUID> = []
+    private var identityOwnerUserID: UUID?
+    private var adoptionBindings: AdoptionLocalBindings?
+    private var adoptionBindingsUnreadable = false
     private var uploadObserver: NSObjectProtocol?
+    private var spaceTypeObserver: NSObjectProtocol?
+    /// The `space.type` raw value a PATCH /me/brand is carrying right now, so
+    /// two sync points firing together send one request, not two.
+    private var spaceTypeSyncInFlight: String?
 
     init() {
         renderCoordinator.model = self
-        // A different Apple ID signing in means every cached server id belongs
-        // to the previous account's org — drop them so publishing re-creates the
-        // listings instead of 404ing forever (audit F-E-12).
-        AuthStore.shared.onAccountChanged = { [weak self] in
-            Task { @MainActor [weak self] in self?.forgetServerIdentities() }
+        // Clear metadata synchronously: a queued Task could run AFTER receipt
+        // recovery and erase the IDs we just restored. No media work here.
+        AuthStore.shared.onAccountChanged = { [weak self] userID in
+            self?.forgetServerIdentities(for: userID)
         }
+        AuthStore.shared.onPrepareAdoption = { [weak self] in self?.prepareLocalAdoption($0) == true }
+        AuthStore.shared.onConfirmAdoption = { [weak self] in self?.confirmLocalAdoption($0, orgID: $1) == true }
+        AuthStore.shared.onAdoptionStorageReady = { [weak self] in
+            self?.hasLoaded == true && self?.adoptionBindingsUnreadable == false
+        }
+        AuthStore.shared.onDiscardAdoption = { [weak self] in self?.discardLocalAdoption(operationID: $0) }
         // A publish upload that outlived the process (killed mid-upload, resumed
         // by UploadManager on relaunch) completes here; nobody else is waiting
         // for it, so finish the publish with the completed asset (F-B-01 e).
@@ -98,23 +180,143 @@ final class AppModel: ObservableObject {
                 await self?.handleUploadCompleted(assetID: assetID, serverListingID: serverListingID)
             }
         }
+        // Somebody found out the server does not have the business type (an
+        // account switch, `/me` naming a different industry) — send it again.
+        // See "Business type → server", below.
+        spaceTypeObserver = NotificationCenter.default.addObserver(
+            forName: .rendpropSpaceTypeOutOfSync, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in self?.syncSpaceTypeIfNeeded() }
+        }
     }
 
     /// Clear every per-account server reference (called when the signed-in
     /// account changes). Local tours/assets are untouched.
-    func forgetServerIdentities() {
+    func forgetServerIdentities(for userID: UUID) {
+        cloudRefreshTask?.cancel()
+        cloudRefreshTask = nil
+        cloudRefreshOperation = nil
+        cloudSyncError = nil
+        lastCloudSyncAt = nil
+        let wasRestoring = isRestoring
+        isRestoring = true
+        let previousOwner = identityOwnerUserID
+        adoptionBindings = adoptionBindings?.detaching(listings, owner: identityOwnerUserID)
+        identityOwnerUserID = userID
+        // Rows first loaded from another device belong to that account. Their
+        // downloaded files stay on disk; signing back in restores the same IDs.
+        let cloudOnly = Set(listings.filter { $0.cloudImported == true }.map(\.id))
+        listings.removeAll { cloudOnly.contains($0.id) }
+        assets = assets.filter { !cloudOnly.contains($0.key) }
+        tours = tours.filter { !cloudOnly.contains($0.key) }
+        renders = renders.filter { !cloudOnly.contains($0.key) }
         for i in listings.indices {
+            if let sid = listings[i].serverID {
+                listings[i].cloudDetachedServerID = sid
+                listings[i].cloudSyncOwnerID = listings[i].cloudSyncOwnerID ?? previousOwner
+            }
             listings[i].serverID = nil
+            listings[i].serverOrgID = nil
+            listings[i].cloudUnavailable = nil
             listings[i].shareSlug = nil
             listings[i].shareURL = nil
             listings[i].unbrandedShareURL = nil
             listings[i].publishedRenderID = nil
-            listings[i].needsServerSync = nil
         }
         uploadedRenderAssets.removeAll()
         pendingPublish.removeAll()
         // Published compliance originals belong to the previous account's org.
         publishedOriginalAssets.removeAll()
+        publishedGalleryAssets.removeAll()
+        // The business type was synced to the OLD org; the new one has not
+        // heard it. This re-sends it once the new session has settled.
+        Self.markSpaceTypeOutOfSync()
+        isRestoring = wasRestoring
+        persist()
+    }
+
+    /// Called after the source Keychain envelope is durable, but BEFORE the
+    /// active session is replaced. Refuse optional sign-in if metadata is not
+    /// ready or source cloud writes have not settled; never race their replies.
+    func prepareLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending) -> Bool {
+        guard hasLoaded, !adoptionBindingsUnreadable, syncInFlight.isEmpty,
+              publishInFlight.isEmpty, serverCreationInFlight.isEmpty,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.sourceUserID,
+              identityOwnerUserID == nil || identityOwnerUserID == pending.sourceUserID else { return false }
+        if let old = adoptionBindings, old.confirmedOrgID == nil, !old.matches(pending) { return false }
+        do {
+            let next = try AdoptionLocalBindings.capture(pending, listings: listings)
+            let previous = adoptionBindings
+            adoptionBindings = next
+            if persist() { return true }
+            adoptionBindings = previous
+            return false
+        } catch { return false }
+    }
+
+    /// Only the currently verified destination + exact operation can restore
+    /// links. The restored IDs and confirmation marker share ONE atomic write;
+    /// Keychain credentials are retained until this returns true.
+    func confirmLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending, orgID: UUID) -> Bool {
+        guard hasLoaded, !adoptionBindingsUnreadable, let journal = adoptionBindings,
+              journal.matches(pending),
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.destinationUserID else { return false }
+        if journal.appliedToCurrentState, let confirmed = journal.confirmedOrgID {
+            return confirmed == orgID && identityOwnerUserID == pending.destinationUserID
+        }
+        do {
+            var restored = try journal.restoring(listings, pending: pending,
+                currentUserID: pending.destinationUserID, orgID: orgID)
+            for i in restored.indices where restored[i].serverID != nil {
+                restored[i].cloudSyncOwnerID = pending.destinationUserID
+                restored[i].cloudDetachedServerID = nil
+            }
+            let previousListings = listings, previousOwner = identityOwnerUserID
+            var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
+            isRestoring = true
+            listings = restored; adoptionBindings = confirmed; identityOwnerUserID = pending.destinationUserID
+            isRestoring = false
+            if persist() { return true }
+            isRestoring = true
+            listings = previousListings; adoptionBindings = journal; identityOwnerUserID = previousOwner
+            isRestoring = false
+            return false
+        } catch { return false }
+    }
+
+    private func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool {
+        if adoptionBindingsUnreadable { return true }
+        guard let journal = adoptionBindings else { return false }
+        if !journal.appliedToCurrentState {
+            // A fully completed transfer is historical metadata, not a gate
+            // on the next unrelated account. An UNFINISHED one whose Keychain
+            // record is gone (discarded at sign-out, or lost with a device
+            // restore) can never finish either — holding its listings for it
+            // would block them forever. Conversely, a Keychain read error
+            // must not discard an unfinished rebind after a failed clear.
+            do {
+                if try !AuthStore.shared.hasPendingAdoption(operationID: journal.operationID) { return false }
+            } catch { return true }
+        }
+        return journal.blocks(id, currentUserID: AuthStore.shared.userID.flatMap(UUID.init(uuidString:)))
+    }
+
+    /// The handoff's Keychain record was discarded without a receipt (sign-out,
+    /// clear/delete, or a stale record found at sign-in). Release the bindings
+    /// captured for it so its listings stop waiting on a transfer that will
+    /// never complete; a confirmed journal is history and stays. The listings
+    /// keep their local media and simply publish afresh under whoever signs
+    /// in next — the old anonymous org keeps the copies it already has.
+    func discardLocalAdoption(operationID: UUID?) {
+        guard let journal = adoptionBindings, journal.confirmedOrgID == nil else { return }
+        if let operationID, journal.operationID != operationID { return }
+        let previous = adoptionBindings
+        adoptionBindings = nil
+        if persist() { return }
+        // A write failure keeps the journal on disk, so keep it in memory too;
+        // the Keychain check in `pendingAdoptionBlocksServerListing` still
+        // unblocks its listings, because the record itself is gone.
+        adoptionBindings = previous
     }
 
     func load() async {
@@ -130,6 +332,15 @@ final class AppModel: ObservableObject {
         renders = saved.renders
         pendingPublish = saved.pendingPublish
         uploadedRenderAssets = saved.uploadedRenderAssets
+        identityOwnerUserID = saved.identityOwnerUserID
+        adoptionBindings = saved.adoptionBindings
+        adoptionBindingsUnreadable = saved.adoptionBindingsUnreadable
+        if let active = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+           let owner = identityOwnerUserID, owner != active {
+            forgetServerIdentities(for: active)
+        }
+        if identityOwnerUserID == nil { identityOwnerUserID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) }
+        if adoptionBindingsUnreadable { AuthStore.shared.reportUnreadableAdoptionBindings() }
         reconcileAfterRestore()
         isRestoring = false
 
@@ -142,7 +353,9 @@ final class AppModel: ObservableObject {
         // 3. In the background: push local edits the server hasn't seen and
         //    finish any publish that was interrupted.
         Task { [weak self] in
+            await AuthStore.shared.retryPendingAdoptionIfNeeded()
             await self?.syncDirtyListings()
+            await self?.refreshCloudWorkspace()
             await self?.resumePendingPublishes()
         }
     }
@@ -198,6 +411,75 @@ final class AppModel: ObservableObject {
         listings = real + SpaceType.current.sampleListings
     }
 
+    // MARK: - Business type → server
+    //
+    // The free week (server plan `trial`) is sized per industry — migration
+    // 0044: real estate gets 3 tours and 2 aerial intros, a single-location
+    // business (venue, restaurant, store, gym, other) 1 tour and 1 aerial
+    // intro — and the server reads that from `orgs.space_type`. The phone is
+    // the only place the choice is made, so it has to tell the server.
+    //
+    // Best-effort, and quiet about it: it never blocks the UI and never shows
+    // an error. A missed sync leaves the server on its default, which is what
+    // the app assumed before this existed; the next sync point tries again.
+    //
+    // SYNC POINTS (all call `syncSpaceTypeIfNeeded`):
+    //   * a session change — `RendpropApp.onChange(of: isSignedIn)` (the
+    //     anonymous bootstrap landing on a cold launch, a sign-out and back)
+    //     and `onChange(of: userID)` (an Apple sign-in that is a NEW org);
+    //   * `RootTabView.task` — a warm launch, where the session already exists
+    //     when Home mounts, and the type picked in the intro before it did;
+    //   * `RootTabView.onChange(of: spaceTypeRaw)` — the one place a type
+    //     change lands (Home menu, Settings, a re-pick in the intro);
+    //   * `.rendpropSpaceTypeOutOfSync` — posted by `markSpaceTypeOutOfSync`
+    //     when an account switch or a `/me` answer (PlanBanner) shows the
+    //     server does not have it.
+    // It sends ONLY when the value differs from the last one the server
+    // accepted (`space.type.synced`), so calling it often costs nothing.
+
+    /// UserDefaults key: the raw `space.type` the server last accepted on this
+    /// device. Absent until the first successful PATCH.
+    private static let syncedSpaceTypeKey = "space.type.synced"
+
+    /// Forget that the server has the current type and ask for it to be sent
+    /// again — a new org (account switch), or `/me` reporting a different
+    /// industry than the one chosen here (PlanBanner). Static, because the
+    /// callers have no model in hand; the model hears the notification.
+    static func markSpaceTypeOutOfSync() {
+        UserDefaults.standard.removeObject(forKey: syncedSpaceTypeKey)
+        NotificationCenter.default.post(name: .rendpropSpaceTypeOutOfSync, object: nil)
+    }
+
+    /// PATCH /me/brand {space_type} when the selection differs from what the
+    /// server last accepted. Fire-and-forget: returns at once, and the
+    /// request neither blocks nor reports. Safe to call from every sync point
+    /// — nothing is sent without a session, before the intro has finished
+    /// (the choice is not final until then), while the same value is already
+    /// on its way, or when the server already has it.
+    func syncSpaceTypeIfNeeded() {
+        guard Config.useLiveBackend else { return }
+        guard UserDefaults.standard.bool(forKey: "hasOnboarded") else { return }
+        guard AuthStore.shared.isSignedIn else { return }
+        let raw = SpaceType.current.rawValue
+        guard UserDefaults.standard.string(forKey: Self.syncedSpaceTypeKey) != raw else { return }
+        guard spaceTypeSyncInFlight != raw else { return }
+        spaceTypeSyncInFlight = raw
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                // The mock client answers this with a no-op (offline dev, the
+                // UI walk), which counts as accepted: there is no server to tell.
+                try await self.api.updateBrand(["space_type": raw])
+                UserDefaults.standard.set(raw, forKey: Self.syncedSpaceTypeKey)
+            } catch {
+                // Offline, a 401 before the token settled, an older server that
+                // does not know the field: keep quiet, keep the marker clear,
+                // and the next sync point retries.
+            }
+            if self.spaceTypeSyncInFlight == raw { self.spaceTypeSyncInFlight = nil }
+        }
+    }
+
     // MARK: - Mutations
 
     private func index(of id: UUID) -> Int? {
@@ -205,7 +487,13 @@ final class AppModel: ObservableObject {
     }
 
     func add(_ listing: Listing) {
-        listings.insert(listing, at: 0)   // persists via didSet
+        var draft = listing
+        if !draft.isSample {
+            draft.needsServerSync = true
+            if AuthStore.shared.isIdentified { draft.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) }
+        }
+        listings.insert(draft, at: 0)   // persists via didSet
+        if !draft.isSample { Task { [weak self] in await self?.syncListing(draft.id) } }
     }
 
     /// Local pipeline state only — never synced (the server owns its own status).
@@ -293,12 +581,29 @@ final class AppModel: ObservableObject {
         listings[i].lastError = value
     }
 
-    /// Flag a listing as having local edits the server hasn't seen. Meaningful
-    /// only once it has a server identity (before first publish the create
-    /// call sends the full listing anyway).
+    /// Flag facts waiting for first create or an update to their existing row.
     func markDirty(_ id: UUID) {
-        guard let i = index(of: id), !listings[i].isSample, listings[i].serverID != nil else { return }
+        guard let i = index(of: id), !listings[i].isSample else { return }
         if listings[i].needsServerSync != true { listings[i].needsServerSync = true }
+    }
+
+    /// Record the owner's answer to "List this tour on Google" for one listing.
+    ///
+    /// The hosted page is `noindex, nofollow` until its owner opts in, because
+    /// it carries their name, phone, e-mail and the property's street address.
+    /// That opt-in used to exist only as a `details` key nobody could reach,
+    /// which is the same as not existing — so the question is now asked in
+    /// plain words on the publish screen and the answer lands here.
+    ///
+    /// Local first: the flag is stored on the listing (so a kill mid-publish
+    /// does not lose it) and flagged for the next PATCH. A listing with no
+    /// server row yet needs no PATCH — `createListing` carries the whole
+    /// listing, this field included.
+    func setSearchIndexing(_ allowed: Bool, for id: UUID) {
+        guard let i = index(of: id), !listings[i].isSample else { return }
+        guard listings[i].allowSearchIndexing != allowed else { return }
+        listings[i].allowSearchIndexing = allowed    // persists via didSet
+        markDirty(id)
     }
 
     // MARK: - Delete
@@ -347,18 +652,29 @@ final class AppModel: ObservableObject {
     /// after each PATCH so an edit made mid-sync is not lost.
     func syncListing(_ id: UUID) async {
         guard Config.useLiveBackend else { return }
+        guard !pendingAdoptionBlocksServerListing(id) else { return }
         guard !syncInFlight.contains(id) else { return }
         syncInFlight.insert(id)
         defer { syncInFlight.remove(id) }
 
+        if let draft = listings.first(where: { $0.id == id }), draft.serverID == nil {
+            guard AuthStore.shared.isIdentified, let owner = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)),
+                  CloudDraftCreation.canAutoSync(draft, userID: owner) else { return }
+            do { _ = try await ensureServerListing(draft) }
+            catch { return }
+        }
+
         var attempts = 0
         while attempts < 3,
               let snapshot = listings.first(where: { $0.id == id }),
-              !snapshot.isSample, snapshot.serverID != nil, snapshot.needsServerSync == true {
+              !snapshot.isSample, snapshot.serverID != nil, snapshot.cloudUnavailable != true, snapshot.needsServerSync == true {
             attempts += 1
             guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }   // signed out: keep it dirty
+            let owner = AuthStore.shared.userID
+            let revision = AuthStore.shared.syncSessionRevision
             do {
                 _ = try await api.updateListing(snapshot)
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
                 if let i = index(of: id), listings[i] == snapshot {
                     listings[i].needsServerSync = false
                 }
@@ -371,42 +687,112 @@ final class AppModel: ObservableObject {
 
     /// Push every dirty listing (called on launch and by pull-to-refresh).
     func syncDirtyListings() async {
-        let dirty = listings.filter { !$0.isSample && $0.serverID != nil && $0.needsServerSync == true }.map { $0.id }
+        let dirty = listings.filter { !$0.isSample && ($0.needsServerSync == true || $0.serverID == nil) }.map { $0.id }
         for id in dirty {
             await syncListing(id)
         }
     }
 
+    /// Two-way refresh for launch, foreground, sign-in and pull-to-refresh.
+    /// Completed writes reach Studio; the complete remote snapshot then updates
+    /// this phone while retaining filenames, captures and unfinished edits.
+    func refreshCloudWorkspace() async {
+        guard hasLoaded, Config.useLiveBackend else { return }
+        guard AuthStore.shared.isIdentified, let cloud = api as? WorkspaceSyncAPI else {
+            await syncDirtyListings()
+            return
+        }
+        if let existing = cloudRefreshTask { await existing.value; return }
+        let operation = UUID()
+        let task = Task { [weak self] in
+            guard let self else { return }
+            self.isCloudSyncing = true
+            self.cloudSyncError = nil
+            defer { if self.cloudRefreshOperation == operation { self.isCloudSyncing = false } }
+            await AuthStore.shared.retryPendingAdoptionIfNeeded()
+            await self.syncDirtyListings()
+            guard await AuthStore.validAccessToken() != nil else { return }
+            let actor = AuthStore.shared.userID
+            let revision = AuthStore.shared.syncSessionRevision
+            do {
+                let bindingsAtRead = Dictionary(uniqueKeysWithValues: self.listings.map { ($0.id, $0.serverID) })
+                let remote = try await cloud.cloudListings()
+                try Task.checkCancellation()
+                guard AuthStore.shared.isIdentified, AuthStore.shared.userID == actor,
+                      AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+                var protected = self.syncInFlight.union(self.publishInFlight).union(self.serverCreationInFlight).union(self.pendingPublish)
+                protected.formUnion(self.listings.filter { $0.status == .processing || $0.status == .uploading }.map(\.id))
+                protected.formUnion(self.listings.filter { $0.serverID != (bindingsAtRead[$0.id] ?? nil) }.map(\.id))
+                let merged = try CloudListingMerge.merge(local: self.listings, remote: remote, protected: protected, ownerID: actor.flatMap(UUID.init(uuidString:)))
+                self.listings = merged
+                self.identityOwnerUserID = actor.flatMap(UUID.init(uuidString:))
+                self.lastCloudSyncAt = Date()
+                self.persist()
+                await self.syncDirtyListings()
+                // Brand reads are independent of media and use the same account
+                // fence. A transient brand error must not roll back listing sync.
+                if let brand = try? await cloud.cloudBrand(), !Task.isCancelled,
+                   AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision {
+                    AgentCard.acceptCloud(brand)
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+                self.cloudSyncError = error is CloudSyncError ? error.localizedDescription : "Cloud updates couldn't be loaded. Your saved files and edits are safe. Pull to refresh when you're connected."
+            }
+        }
+        cloudRefreshTask = task
+        cloudRefreshOperation = operation
+        await task.value
+        if cloudRefreshOperation == operation { cloudRefreshTask = nil; cloudRefreshOperation = nil }
+    }
+
     // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
 
     enum PublishError: LocalizedError {
-        case sampleListing, listingMissing, noLocalTour, noShareURL
+        case sampleListing, listingMissing, noLocalTour, noShareURL, workspaceRecoveryPending, serverIdentityBusy
         var errorDescription: String? {
             switch self {
             case .sampleListing:  return "Sample tours can't be published — create your own first."
             case .listingMissing: return "That listing no longer exists on this phone."
             case .noLocalTour:    return "There's no rendered tour to publish yet — create the tour first."
             case .noShareURL:     return "The server didn't return a share link. Please try again."
+            case .workspaceRecoveryPending: return "This listing's original cloud link is waiting for workspace recovery. Retry workspace transfer in Settings before publishing it again. Your local work is still available."
+            case .serverIdentityBusy: return "This listing's cloud link is being prepared. Please try again shortly."
             }
         }
     }
 
-    /// Return the server listing id for a local listing, creating the server
-    /// listing on first publish and adopting its id as the listing's server
-    /// identity (persisted). All later server calls for this listing use it.
+    /// Bind a listing once: identified draft sync and explicit upload/publish
+    /// share the same durable create key and adoption guards.
     func ensureServerListing(_ listing: Listing) async throws -> UUID {
         let localID = listing.id
+        if listings.first(where: { $0.id == localID })?.cloudUnavailable == true { throw CloudSyncError.cloudMissing }
+        guard !pendingAdoptionBlocksServerListing(localID) else { throw PublishError.workspaceRecoveryPending }
         if let existing = listings.first(where: { $0.id == localID })?.serverID {
             return existing
         }
+        guard !serverCreationInFlight.contains(localID) else { throw PublishError.serverIdentityBusy }
+        serverCreationInFlight.insert(localID)
+        defer { serverCreationInFlight.remove(localID) }
+        let requestedOwner = AuthStore.shared.userID
+        if Config.useLiveBackend { _ = await AuthStore.validAccessToken() }
+        guard AuthStore.shared.userID == requestedOwner else { throw CloudSyncError.identityChanged }
+        let identity = CloudDraftCreation.Identity(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision)
         // Sync using the freshest local copy (address/details may have changed).
-        let live = listings.first(where: { $0.id == localID }) ?? listing
-        let created = try await api.createListing(live)
-        let serverID = created.id
-        if let i = listings.firstIndex(where: { $0.id == localID }) {
-            listings[i].serverID = serverID   // persists via didSet
+        var live = listings.first(where: { $0.id == localID }) ?? listing
+        if live.cloudCreateFingerprint == nil { live.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(live) }
+        if let i = index(of: localID), AuthStore.shared.isIdentified {
+            listings[i].cloudSyncOwnerID = identity.userID.flatMap(UUID.init(uuidString:))
+            listings[i].cloudCreateFingerprint = live.cloudCreateFingerprint
         }
-        return serverID
+        return try await CloudDraftCreation.ensure(snapshot: live, identity: identity,
+            create: { try await self.api.createListing($0) },
+            current: { self.listings.first(where: { $0.id == localID }) },
+            activeIdentity: { .init(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision) },
+            save: { updated in if let i = self.index(of: localID) { self.listings[i] = updated } },
+            deleteRemoved: { sid in try? await self.api.deleteListing(serverID: sid) })
     }
 
     // MARK: - Compliance plumbing (W2-C3)
@@ -429,6 +815,7 @@ final class AppModel: ObservableObject {
     /// server says so in its `provenance.reason`.
     func serverListingIDForCompliance(_ id: UUID) async -> UUID? {
         guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return nil }
+        guard !pendingAdoptionBlocksServerListing(id) else { return nil }
         if let existing = listing.serverID { return existing }
         guard Config.useLiveBackend else { return nil }
         guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return nil }
@@ -443,17 +830,42 @@ final class AppModel: ObservableObject {
     ///
     /// Best effort: nil when there is no live backend, the file is gone, or the
     /// upload failed. The edit still runs; it is simply logged without a
-    /// "before", which the compliance card then shows in amber.
+    /// "before", which the compliance card then shows in amber — and the
+    /// failure is no longer swallowed: it lands on the listing's own
+    /// `lastError` line (Home card + detail banner), the app's one
+    /// non-blocking error surface, so a missing "View original" link has a
+    /// visible reason and an obvious retry (edit again).
     func publishOriginalForDisclosure(listingServerID: UUID, fileURL: URL) async -> String? {
         guard Config.useLiveBackend else { return nil }
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0 else { return nil }
         let memo = "\(FileStore.relativePath(for: fileURL))|\(bytes)"
         if let known = publishedOriginalAssets[memo] { return known }
-        guard let assetID = try? await UploadManager.shared.uploadOriginal(
-            fileURL: fileURL, listingID: listingServerID) else { return nil }
-        publishedOriginalAssets[memo] = assetID
-        return assetID
+        do {
+            let assetID = try await UploadManager.shared.uploadOriginal(fileURL: fileURL, listingID: listingServerID)
+            publishedOriginalAssets[memo] = assetID
+            return assetID
+        } catch {
+            noteUploadProblem("The untouched original of this edit didn't reach the tour, so its \"View original\" link will be missing. "
+                              + "Edit the photo again to retry. \(Self.userMessage(for: error))",
+                              listingServerID: listingServerID, error: error)
+            return nil
+        }
+    }
+
+    /// Route a best-effort upload failure to the listing's `lastError` line —
+    /// the warning the Home card and the detail screen already show — instead
+    /// of dropping it. Never an alert: nothing here blocks the feature the
+    /// person asked for. A cancellation (sign-out, task cancelled) is not a
+    /// failure and is left alone.
+    private func noteUploadProblem(_ message: String, listingLocalID: UUID, error: Error) {
+        if error is CancellationError { return }
+        setLastError(message, for: listingLocalID)
+    }
+
+    private func noteUploadProblem(_ message: String, listingServerID: UUID, error: Error) {
+        guard let id = listings.first(where: { $0.serverID == listingServerID && !$0.isSample })?.id else { return }
+        noteUploadProblem(message, listingLocalID: id, error: error)
     }
 
     /// Publish the ALTERED result of an AI photo edit and attach it to its
@@ -467,11 +879,73 @@ final class AppModel: ObservableObject {
         guard Config.useLiveBackend, !provenanceID.isEmpty else { return }
         let bytes = FileStore.fileSize(fileURL)
         guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { return }
-        guard let assetID = try? await UploadManager.shared.uploadAlteredPhoto(
-            fileURL: fileURL, listingID: listingServerID) else { return }
-        try? await api.attachProvenanceMedia(provenanceID: provenanceID,
-                                             originalAssetID: nil,
-                                             alteredAssetID: assetID)
+        do {
+            let assetID = try await UploadManager.shared.uploadAlteredPhoto(fileURL: fileURL, listingID: listingServerID)
+            try await api.attachProvenanceMedia(provenanceID: provenanceID,
+                                                originalAssetID: nil,
+                                                alteredAssetID: assetID)
+        } catch {
+            // Still best effort — the edit is already on screen — but said out
+            // loud on the listing rather than swallowed.
+            noteUploadProblem("The edited photo didn't reach the tour's before/after record. "
+                              + "Edit the photo again to retry. \(Self.userMessage(for: error))",
+                              listingServerID: listingServerID, error: error)
+        }
+    }
+
+    /// Every gallery photo already uploaded, memoised by
+    /// `<relative path>|<bytes>` the same way `publishedOriginalAssets` is. An
+    /// edit rewrites the file (new path, new size), so a changed photo misses
+    /// the memo and re-uploads, which is the behaviour we want.
+    private var publishedGalleryAssets: [String: String] = [:]
+
+    /// Put this listing's photos on its public tour page.
+    ///
+    /// THE DEFECT, in the owner's words: "It doesn't show any of the pictures."
+    /// The tour host renders `tour.gallery` (player.ts `galleryItems`), the
+    /// server now emits it from `role:"gallery"` uploads — and this is the only
+    /// thing that ever creates one. Without this call the gallery is an empty
+    /// array on every tour ever published.
+    ///
+    /// BEST EFFORT, NOT SILENT. A publish must not fail because a photo did not
+    /// upload — but "the gallery is empty and nobody knows why" was the defect,
+    /// so a photo that does not make it is reported on the listing's own
+    /// `lastError` line (Home card + detail banner) with the count and the
+    /// server's reason, and "Publish again" is the retry: the memo skips what
+    /// already landed. Bounded to the newest 40 and to photos under the
+    /// ceiling. Sequential on purpose: seventeen concurrent multi-megabyte
+    /// PUTs from a phone on cellular is how you turn a working publish into a
+    /// stall.
+    func syncGalleryPhotos(listingLocalID: UUID, listingServerID: UUID) async {
+        guard Config.useLiveBackend else { return }
+        guard !Config.enableAuth || AuthStore.shared.isSignedIn else { return }
+        guard let l = listings.first(where: { $0.id == listingLocalID }), !l.isSample else { return }
+        let photos = EnhancedPhoto.loadAll(listingID: listingLocalID).prefix(40)
+        var failures = 0
+        var lastProblem: Error?
+        for photo in photos {
+            if Task.isCancelled { return }
+            let url = photo.enhancedURL
+            let bytes = FileStore.fileSize(url)
+            guard bytes > 0, bytes <= Self.maxPublishedPhotoBytes else { continue }
+            let memo = "\(FileStore.relativePath(for: url))|\(bytes)"
+            if publishedGalleryAssets[memo] != nil { continue }
+            do {
+                publishedGalleryAssets[memo] = try await UploadManager.shared.uploadGalleryPhoto(
+                    fileURL: url, listingID: listingServerID)
+            } catch is CancellationError {
+                return   // signed out or cancelled mid-sync: not a failure to report
+            } catch {
+                failures += 1
+                lastProblem = error
+            }
+        }
+        if let lastProblem, failures > 0 {
+            let count = failures == 1 ? "1 photo" : "\(failures) photos"
+            noteUploadProblem("\(count) didn't reach the tour page's gallery. Publish again to retry. "
+                              + Self.userMessage(for: lastProblem),
+                              listingLocalID: listingLocalID, error: lastProblem)
+        }
     }
 
     /// Room tags → tap-to-jump chapters, sorted by time. Room tags are timed
@@ -517,13 +991,35 @@ final class AppModel: ObservableObject {
             // 1. Adopt (or create) the server listing identity.
             let serverID = try await ensureServerListing(listing)
 
+            // 1b. The publish screen's answer to "List this tour on Google",
+            //     on its way to the page that will carry it. A listing created
+            //     just now already sent it (createListing posts the whole
+            //     listing); an existing one is dirty and gets a PATCH here so
+            //     the page is right the moment it goes live.
+            //
+            //     BEST EFFORT BY CONSTRUCTION: `syncListing` never throws and
+            //     never rethrows a server error — it leaves the listing dirty
+            //     for the next attempt. A server that rejects the field, or is
+            //     simply unreachable, costs the answer, never the publish.
+            await syncListing(id)
+
             // 2. First-frame poster → og:image / video poster on the hosted page.
-            //    Best effort: publishing still works without it.
+            //    Best effort: publishing still works without it — but a poster
+            //    that fails to upload is said on the listing once the publish
+            //    lands (step 5), not swallowed into a page with no preview.
             var posterAssetID: String? = nil
             var posterFile: URL? = nil
+            var posterProblem: String? = nil
             if let poster = await PosterMaker.makePoster(from: renderOutputURL, listingID: id) {
                 posterFile = poster
-                posterAssetID = try? await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+                do {
+                    posterAssetID = try await UploadManager.shared.uploadPoster(fileURL: poster, listingID: serverID)
+                } catch is CancellationError {
+                    // Same as before: a cancelled poster is skipped, not reported.
+                } catch {
+                    posterProblem = "The tour's preview image didn't upload, so link previews show no picture. "
+                        + "Publish again to add it. \(Self.userMessage(for: error))"
+                }
             }
 
             // 3. Upload the rendered mp4 to the PUBLIC renders bucket (or reuse).
@@ -561,11 +1057,25 @@ final class AppModel: ObservableObject {
                     l.unbrandedShareURL = unbranded
                 }
                 if let rid = published.renderID { l.publishedRenderID = rid }
-                l.lastError = nil
+                // The publish succeeded; the only thing left to say is a
+                // poster that didn't make it (nil when it did).
+                l.lastError = posterProblem
                 l.status = .ready
                 listings[i] = l   // persists via didSet
             }
             Analytics.track("tour_published", ["space_type": SpaceType.current.rawValue, "ok": "true"])
+            // THE one moment this app may ask about notifications: a link now
+            // exists that a stranger can fill a form on. `noteTourPublished`
+            // does nothing at all after the first time, and nothing ever when
+            // the OS answer is already given — see Push/PushManager.swift.
+            PushManager.shared.noteTourPublished()
+            // The photos, onto the page that has never had any. Detached: the
+            // publish is DONE and the agent is looking at their link — waiting
+            // on seventeen uploads before handing it over would make a working
+            // feature feel broken.
+            Task { [weak self] in
+                await self?.syncGalleryPhotos(listingLocalID: id, listingServerID: serverID)
+            }
             pendingPublish.removeAll { $0 == id }
             uploadedRenderAssets.removeValue(forKey: id)
             if let posterFile { try? FileManager.default.removeItem(at: posterFile) }
@@ -672,10 +1182,12 @@ final class AppModel: ObservableObject {
         return text.isEmpty ? "Something went wrong. Please try again." : text
     }
 
-    private func persist() {
-        guard hasLoaded, !isRestoring else { return }
-        PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders,
-                             pendingPublish: pendingPublish, uploadedRenderAssets: uploadedRenderAssets)
+    @discardableResult
+    private func persist() -> Bool {
+        guard hasLoaded, !isRestoring else { return false }
+        return PersistentStore.save(listings: listings, assets: assets, tours: tours, renders: renders,
+                             pendingPublish: pendingPublish, uploadedRenderAssets: uploadedRenderAssets,
+                             identityOwnerUserID: identityOwnerUserID, adoptionBindings: adoptionBindings)
     }
 }
 
@@ -718,7 +1230,7 @@ struct RenderJobState: Equatable {
     enum Stage: String, Equatable {
         case rendering, enhancing, publishing          // running
         case rendered                                   // encoded; publish not attempted yet
-        case awaitingSignIn                             // parked: publishing needs sign-in
+        case awaitingConnection                         // local tour is safe; connection retries
         case published, publishFailed, failed, cancelled
     }
     var phase: String
@@ -742,7 +1254,87 @@ final class RenderCoordinator: ObservableObject {
     private var tasks: [UUID: Task<Void, Never>] = [:]
     private var runs: [UUID: UUID] = [:]
     private var skipRequested: Set<UUID> = []
+    /// Listings whose AI-enhance upload the stall watchdog gave up on. The
+    /// watchdog cancels the upload, so the `await` in `enhance` lands in its
+    /// `catch` as a plain failure — this is how the catch knows the honest note
+    /// has already been written and must not be buried under a generic one.
+    private var uploadStalled: Set<UUID> = []
     private var backgroundTasks: [UUID: UIBackgroundTaskIdentifier] = [:]
+
+    // MARK: Upload progress + stall thresholds (the 4,000 sq ft field test)
+    //
+    // The field test published an AI tier over a 343 MB master on 5G, walking
+    // the house (so almost certainly a Wi-Fi handover mid-upload). Twenty-two
+    // minutes later the screen still read "Uploading for AI enhance…" over a
+    // bare spinner, the asset row still said uploaded=false, and there was no
+    // way out. `UploadManager` was publishing real byte counts the whole time;
+    // nothing read them. These three constants and `startUploadObserver` do.
+
+    /// The AI-enhance stage's slice of the job's progress ring. Before this the
+    /// ring simply sat at 1 for the whole enhance (rendering had already filled
+    /// it), so a full ring hung over a spinner that meant nothing. Rendering
+    /// still owns 0 → 1 on its own; the enhance re-scales itself into this band
+    /// so the upload's real bytes have somewhere to show, and publishing ends
+    /// back at 1.
+    private static let enhanceUploadFractionStart = 0.55
+    private static let enhanceUploadFractionEnd = 0.80
+
+    /// No bytes for this long → say so out loud and keep Skip on screen. This
+    /// is a warning, not a verdict: a 343 MB upload on a weak signal really can
+    /// idle for a minute and then recover.
+    private static let uploadStallWarnSeconds: TimeInterval = 90
+
+    /// No bytes for this long → stop. Five minutes without a single byte is not
+    /// a slow connection, and `UploadManager` has no wall-clock stall concept of
+    /// its own to lean on (it counts RETRIES — per-part and whole-upload — with
+    /// exponential backoff, which is a different thing: a transfer that keeps
+    /// being accepted and then wedged never exhausts a retry budget). Rather
+    /// than add a competing timeout inside the engine, the enhance — the one
+    /// caller that HAS a fallback — gives up on its own and publishes the
+    /// standard tour.
+    private static let uploadStallAbortSeconds: TimeInterval = 5 * 60
+
+    // MARK: The AI-enhance length limit (a MIRROR — the server owns it)
+    //
+    // THE SERVER IS AUTHORITATIVE. The real rule is
+    // `DRONE_MAX_SOURCE_SECONDS` in
+    // services/supabase/functions/ai-video/dronecost.ts, enforced by
+    // `assertDroneWithinLimits` on POST /ai-video/drone (it also refuses on a
+    // per-submission COST ceiling, which is derived from that same 300 s at the
+    // 4K60 rate — so for every tier the app actually sends, LENGTH is the
+    // binding rule and the cost ceiling only catches a pathological
+    // target_fps we never set).
+    //
+    // This number exists for ONE reason: so the refusal arrives BEFORE the
+    // multi-hundred-megabyte upload instead of after it. It is not a second
+    // source of truth and it is not enforcement. If the two ever disagree the
+    // server still wins — its refusal is a 4xx with a human sentence, and
+    // `enhance`'s existing catch already turns any such error into "AI enhance
+    // unavailable (<the server's own sentence>) — publishing your standard tour
+    // instead". Nothing breaks when this drifts; the user just waits out an
+    // upload before hearing no. So: if you change one, change the other, and
+    // when in doubt leave this one ALONE.
+    //
+    // ERR PERMISSIVE, DELIBERATELY. Refusing locally something the server would
+    // have accepted is the bad failure — it silently withholds a feature the
+    // user paid for, with no server sentence to explain it and nothing in any
+    // log. Uploading something the server then refuses merely costs the wait we
+    // are trying to avoid, and still publishes the standard tour. So the local
+    // trigger sits a few seconds ABOVE the server's cap: inside that band we
+    // upload and let the server decide, which is the safe direction. It also
+    // keeps the copy honest — the server compares raw seconds but PRINTS a
+    // rounded figure, so a 300.4 s tour would be refused while reading "5 min",
+    // and the grace band means the app never has to say that.
+
+    /// The server's cap, mirrored. Named in the note ("limited to 5 minutes")
+    /// because it is the real rule — never the grace-adjusted trigger below.
+    private static let droneMaxSourceSeconds: Double = 300
+
+    /// The local trigger. Grace on the PERMISSIVE side (see above): a tour
+    /// between the cap and this uploads and is refused by the server, with the
+    /// server's own wording.
+    private static let dronePreflightRefuseAboveSeconds: Double =
+        RenderCoordinator.droneMaxSourceSeconds + 5
 
     private enum EnhanceOutcome {
         case enhanced
@@ -803,11 +1395,42 @@ final class RenderCoordinator: ObservableObject {
     }
 
     /// Stop waiting for the AI enhance and publish the standard tour now.
+    ///
+    /// THE 4,000 SQ FT FIELD TEST — this is the bug the developer actually saw.
+    /// This method used to set `skipRequested` and change the label, and that
+    /// was all. `enhance` only consults `skipRequested` between its awaits, and
+    /// the await it was parked on was a 22-minute upload — so for the entire
+    /// time the button was on screen, pressing it did nothing at all while the
+    /// label claimed "Finishing up…". Skip has to reach the thing that is
+    /// actually blocking, which is the upload: stop it exactly the way
+    /// `cancel(listingID:)` does. The awaited continuation then resolves as a
+    /// failure within milliseconds, `enhance`'s catch recognises the skip and
+    /// takes the clean fallback path (no error note — a user-requested skip is
+    /// not a failure), and publishing starts immediately. Which is what finally
+    /// makes "Finishing up…" an honest label rather than a lie.
     func skipEnhance(listingID id: UUID) {
         guard isRunning(id) else { return }
         skipRequested.insert(id)
         jobs[id]?.canSkipEnhance = false
         jobs[id]?.phase = "Finishing up…"
+        cancelRenderUpload(for: id)
+    }
+
+    /// Stop the in-flight `role=render` upload if — and only if — it is this
+    /// listing's. The predicate is the one `cancel(listingID:)` has always
+    /// used: our render upload (never a capture), not already landed, and
+    /// matching this listing's SERVER id, so one listing's Skip can never kill
+    /// another listing's publish or a walkthrough upload.
+    ///
+    /// Returns whether it actually cancelled anything — the stall watchdog uses
+    /// that to tell "I stopped this upload" from "there was nothing to stop".
+    @discardableResult
+    private func cancelRenderUpload(for id: UUID) -> Bool {
+        guard let model, let sid = model.listings.first(where: { $0.id == id })?.serverID,
+              let s = UploadManager.shared.state, s.role == "render", s.status != .done,
+              s.listingID == sid else { return false }
+        UploadManager.shared.cancel()
+        return true
     }
 
     /// Explicit user cancel. A render in progress → listing back to draft; a
@@ -819,11 +1442,9 @@ final class RenderCoordinator: ObservableObject {
         }
         tasks[id]?.cancel()
         // A publish upload that belongs to this listing must stop too (the awaited
-        // continuation then resolves as failed).
-        if let model, let sid = model.listings.first(where: { $0.id == id })?.serverID,
-           let s = UploadManager.shared.state, s.role == "render", s.status != .done, s.listingID == sid {
-            UploadManager.shared.cancel()
-        }
+        // continuation then resolves as failed). Shared with `skipEnhance`, which
+        // needs the identical predicate — see `cancelRenderUpload`.
+        cancelRenderUpload(for: id)
         let hasTour = model?.tours[id] != nil
         jobs[id] = RenderJobState(phase: hasTour ? "Publish cancelled" : "Render cancelled",
                                   fraction: hasTour ? 1 : 0, error: nil, isRunning: false, stage: .cancelled)
@@ -875,20 +1496,27 @@ final class RenderCoordinator: ObservableObject {
             Haptics.success()
             return
         }
-        if Config.enableAuth && !AuthStore.shared.isSignedIn {
-            // Publishing needs an account. Park it: the tour is viewable now and
-            // the listing detail (or this screen after sign-in) publishes it.
-            model.setStatus(.ready, for: id)
-            model.addPendingPublish(id)
-            update(id, run) { $0.stage = .awaitingSignIn; $0.phase = "Sign in to publish"; $0.isRunning = false }
-            Haptics.success()
-            return
-        }
         await runPublish(listingID: id, run: run, allowEnhance: true)
     }
 
     private func runPublish(listingID id: UUID, run: UUID, allowEnhance: Bool) async {
         guard let model, let tour = model.tours[id] else { return }
+        model.addPendingPublish(id)
+        if Config.enableAuth && !AuthStore.shared.isSignedIn {
+            model.setStatus(.ready, for: id)
+            update(id, run) {
+                $0.stage = .awaitingConnection; $0.phase = "Waiting for connection"
+                $0.isRunning = true; $0.fraction = 1
+            }
+        }
+        guard await AuthStore.shared.ensureSession(), !Task.isCancelled, runs[id] == run else {
+            // Explicit cancel owns its final state. An identity transition may
+            // also interrupt connection; keep the durable publish for retry.
+            update(id, run) {
+                $0.stage = .rendered; $0.phase = "Saved on your phone"; $0.isRunning = false
+            }
+            return
+        }
         let render = model.renders[id] ?? Render(listingID: id, tier: .smooth, durationS: tour.durationS)
 
         var existingAssetID: String? = nil
@@ -907,6 +1535,20 @@ final class RenderCoordinator: ObservableObject {
             $0.stage = .publishing; $0.phase = "Publishing tour…"
             $0.isRunning = true; $0.canSkipEnhance = false; $0.fraction = 1
         }
+        // `publishTour` uploads the tour itself when there is no asset to reuse
+        // — the same hundreds of megabytes, over the same connection, and it is
+        // where the user LANDS after tapping Skip. Same observer, label only:
+        // no fraction change (the ring is legitimately full by now — the render
+        // is done and the tour plays locally), no stall warning, and no
+        // give-up, because a publish has no fallback. It just stops being a
+        // silent spinner.
+        let observer = startUploadObserver(
+            id: id, run: run,
+            label: "Publishing tour…",
+            fallbackTotalBytes: FileStore.fileSize((model.tours[id] ?? tour).url),
+            fractionFrom: 1, fractionTo: 1,
+            isEnhanceUpload: false)
+        defer { observer.cancel() }
         do {
             guard let live = model.listings.first(where: { $0.id == id }) else { return }
             let current = model.tours[id] ?? tour   // may have been swapped to the enhanced file
@@ -918,6 +1560,7 @@ final class RenderCoordinator: ObservableObject {
                                             enhancements: render.enhancements,
                                             tier: render.tier,
                                             existingAssetID: existingAssetID)
+            observer.cancel()
             model.setStatus(.ready, for: id)
             update(id, run) {
                 $0.stage = .published; $0.phase = "Your tour is ready"
@@ -925,6 +1568,7 @@ final class RenderCoordinator: ObservableObject {
             }
             Haptics.success()
         } catch {
+            observer.cancel()
             if Task.isCancelled || error is CancellationError { return }
             // The LOCAL tour still plays in-app (local-first); only the link is missing.
             model.setStatus(.ready, for: id)
@@ -938,12 +1582,21 @@ final class RenderCoordinator: ObservableObject {
     }
 
     /// The REAL AI stage for the Cinematic / 4K Premium tiers: pre-flight the
-    /// plan (no multi-minute upload when Topaz isn't in it), upload the master
+    /// plan AND the tour's length (no multi-minute upload when Topaz isn't in
+    /// the plan, or when the tour is longer than the enhance will take — the
+    /// server refuses both, but only AFTER the upload), prepare the upload
+    /// source (`EnhanceSource` — a 1080p intermediate when the master is bigger
+    /// than the upscaler needs, otherwise the master itself), upload it
     /// (role=render, public bucket) → POST /ai-video/drone → poll every 6 s
     /// (≤ 20 min, skippable) → download the enhanced mp4 → swap the local tour
     /// to it. ANY failure falls back to the standard tour with an honest note —
-    /// and hands back the master's server asset so the fallback publish doesn't
-    /// upload the same file twice.
+    /// and, when what we uploaded WAS the master, hands back its server asset so
+    /// the fallback publish doesn't upload the same file twice.
+    ///
+    /// Everything the 4,000 sq ft field test hit lives in step b: the upload is
+    /// now observed (real byte counts, real fraction), watched (a stall says so
+    /// and eventually gives up), and interruptible (Skip cancels it instead of
+    /// setting a flag nobody reads until the upload it is blocked on finishes).
     private func enhance(listingID id: UUID, run: UUID,
                          tour: AppModel.RenderedTour, tier: Render.Tier) async -> EnhanceOutcome {
         guard let model else { return .fallback(masterAssetID: nil) }
@@ -963,6 +1616,24 @@ final class RenderCoordinator: ObservableObject {
                 return .fallback(masterAssetID: nil)
             }
         }
+        // a2. Length pre-flight. `/ai-video/drone` refuses a source over
+        //     `DRONE_MAX_SOURCE_SECONDS`, and it refuses it on the POST — which
+        //     happens AFTER the master is uploaded. Without this check a
+        //     five-and-a-half-minute tour would render, sit through the exact
+        //     multi-hundred-megabyte wait this round of work exists to fix, and
+        //     only then be told it was too long. Refusing here costs nothing
+        //     and arrives before a single byte moves.
+        //
+        //     Runs AFTER the entitlement checks on purpose: "your plan doesn't
+        //     include AI enhance" is the truer answer for someone who has no
+        //     enhance to spend, and naming a length limit first would send them
+        //     off trimming a tour that was never going to be enhanced.
+        if tour.durationS > Self.dronePreflightRefuseAboveSeconds {
+            setNote(id, run,
+                    "This tour is \(Self.spokenDuration(tour.durationS)) and AI enhance is limited to "
+                    + "\(Self.spokenDurationLimit(Self.droneMaxSourceSeconds)) — publishing your standard tour at full length instead.")
+            return .fallback(masterAssetID: nil)
+        }
         if skipRequested.contains(id) {
             setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
             return .fallback(masterAssetID: nil)
@@ -975,22 +1646,84 @@ final class RenderCoordinator: ObservableObject {
             }
             let serverID = try await model.ensureServerListing(live)
 
-            // b. Upload the on-device master to the PUBLIC renders bucket so fal
-            //    can fetch it (the drone route 400s on private-bucket assets).
-            update(id, run) { $0.phase = "Uploading for AI enhance…" }
-            let meta = UploadMetadata(durationS: tour.durationS, bytes: FileStore.fileSize(tour.url))
-            let assetID = try await UploadManager.shared.upload(
-                fileURL: tour.url, listingID: serverID, role: "render", metadata: meta)
-            masterAssetID = assetID
-            model.uploadedRenderAssets[id] = AppModel.UploadedRenderAsset(
-                relPath: FileStore.relativePath(for: tour.url), assetID: assetID)
+            // b0. Pick the file fal will actually fetch. `/ai-video/drone` is a
+            //     Topaz UPSCALE, so shipping it the biggest frame we have is
+            //     backwards — see EnhanceSource for the full argument. Above
+            //     1080p this exports a 1080p intermediate; at or below 1080p it
+            //     hands the master straight back and does no work. It NEVER
+            //     fails the enhance: every error path returns the master.
+            update(id, run) {
+                $0.phase = "Preparing for AI enhance…"; $0.fraction = Self.enhanceUploadFractionStart
+            }
+            let source = await EnhanceSource.prepare(master: tour.url, listingID: id)
+            // The temp intermediate must not outlive this attempt — deleted
+            // eagerly the moment the bytes are on the server (below) and again
+            // here on every exit, including a throw. No-op when `source.url` is
+            // the master itself, and safe to call twice.
+            defer { source.cleanUp() }
+            // Skip stays live through the export, and the export is the one
+            // stretch `cancelRenderUpload` can't reach (there is no upload to
+            // cancel yet) — so honour it here before spending the bytes.
+            if skipRequested.contains(id) {
+                setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
+                return .fallback(masterAssetID: nil)
+            }
+
+            // b. Upload it to the PUBLIC renders bucket so fal can fetch it
+            //    (the drone route 400s on private-bucket assets).
+            //
+            //    The dimensions and frame rate go up WITH it now. The server
+            //    derives the Topaz upscale factor from the source's long edge
+            //    and skips frame interpolation when the source already runs at
+            //    the target fps; with neither declared it fell back to a flat
+            //    2× and always interpolated, so "4K Premium" on the app's own
+            //    master resolved to 2560, not 3840.
+            let uploadBytes = FileStore.fileSize(source.url)
+            let meta = UploadMetadata(durationS: tour.durationS,
+                                      fps: source.fps,
+                                      width: source.width,
+                                      height: source.height,
+                                      bytes: uploadBytes)
+            // Real numbers on screen for the whole upload, plus the stall
+            // watchdog — the two halves of "a bare spinner for 22 minutes".
+            // Cancelled the instant the await returns, either way.
+            let observer = startUploadObserver(
+                id: id, run: run,
+                label: "Uploading for AI enhance…",
+                fallbackTotalBytes: uploadBytes,
+                fractionFrom: Self.enhanceUploadFractionStart,
+                fractionTo: Self.enhanceUploadFractionEnd,
+                isEnhanceUpload: true)
+            let assetID: String
+            do {
+                assetID = try await UploadManager.shared.upload(
+                    fileURL: source.url, listingID: serverID, role: "render", metadata: meta)
+            } catch {
+                observer.cancel()
+                throw error
+            }
+            observer.cancel()
+            source.cleanUp()   // the bytes are on the server; give the disk back now
+
+            // Only an upload of the MASTER ITSELF can be reused by a fallback
+            // publish. When we uploaded a downscaled intermediate the server's
+            // asset is a DIFFERENT file, and handing its id back as
+            // `masterAssetID` would publish the 1080p intermediate in place of
+            // the master the user rendered.
+            masterAssetID = source.isIntermediate ? nil : assetID
+            if !source.isIntermediate {
+                model.uploadedRenderAssets[id] = AppModel.UploadedRenderAsset(
+                    relPath: FileStore.relativePath(for: tour.url), assetID: assetID)
+            }
             if skipRequested.contains(id) {
                 setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
                 return .fallback(masterAssetID: masterAssetID)
             }
 
             // c. Submit + poll. 4K Premium → 4k30 @ 30 fps; Cinematic → 4k60 @ 60 fps.
-            update(id, run) { $0.phase = "Enhancing with AI…" }
+            update(id, run) {
+                $0.phase = "Enhancing with AI…"; $0.fraction = Self.enhanceUploadFractionEnd
+            }
             let job = try await model.api.aiVideoDrone(assetID: assetID,
                                                        tier: tier.droneTierParam,
                                                        targetFps: tier.droneTargetFPS,
@@ -1022,7 +1755,10 @@ final class RenderCoordinator: ObservableObject {
             guard let enhancedRemoteURL else { throw EnhanceError.noVideo }
 
             // d. Download promptly (fal result URLs expire) into Recordings.
-            update(id, run) { $0.phase = "Downloading enhanced tour…"; $0.canSkipEnhance = false }
+            update(id, run) {
+                $0.phase = "Downloading enhanced tour…"
+                $0.fraction = 0.92; $0.canSkipEnhance = false
+            }
             let (tmp, resp) = try await URLSession.shared.download(from: enhancedRemoteURL)
             if let http = resp as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
                 throw APIError.badResponse(http.statusCode)
@@ -1037,13 +1773,157 @@ final class RenderCoordinator: ObservableObject {
                                                     speedFactor: tour.speedFactor)
             return .enhanced
         } catch {
+            // e. Three kinds of "we didn't enhance", and only one of them is a
+            //    failure the user should read about.
+
+            // USER SKIPPED. Since the 4,000 sq ft field test, `skipEnhance`
+            // cancels the in-flight upload, so a skip arrives HERE as an
+            // ordinary upload failure. Checked first, and deliberately before
+            // the cancellation check: it is a completed user intent, not an
+            // error, and it gets the same clean note the post-await skip paths
+            // above use. Publishing then starts immediately, which is what
+            // makes skipEnhance's "Finishing up…" label true.
+            if skipRequested.contains(id) {
+                setNote(id, run, "Published your standard tour — you skipped the AI enhance.")
+                return .fallback(masterAssetID: masterAssetID)
+            }
+            // WATCHDOG GAVE UP. It already wrote a specific, honest note before
+            // it cancelled the upload — don't bury it under a generic one.
+            if uploadStalled.contains(id) {
+                return .fallback(masterAssetID: masterAssetID)
+            }
             if Task.isCancelled || error is CancellationError {
                 return .fallback(masterAssetID: masterAssetID)
             }
-            // e. Honest fallback, with the server's reason when it gave one.
+            // Honest fallback, with the server's reason when it gave one.
             let reason = AppModel.userMessage(for: error)
             setNote(id, run, "AI enhance unavailable (\(reason)) — publishing your standard tour instead.")
             return .fallback(masterAssetID: masterAssetID)
+        }
+    }
+
+    /// Turn `UploadManager`'s published byte counts into a phase label, a real
+    /// progress fraction, and a stall verdict, once a second, for as long as
+    /// the caller's upload `await` is parked.
+    ///
+    /// THE 4,000 SQ FT FIELD TEST, part two. `UploadManager` has always
+    /// published `state.bytesSent` / `state.bytesTotal` (and per-part state for
+    /// multipart) — a background `URLSession`, retries, network-regain resume,
+    /// the lot. `enhance` set one static string and never looked again, so 343
+    /// MB of real progress rendered as a bare spinner for 22 minutes. This
+    /// reads what is already there; it adds no upload machinery of its own.
+    ///
+    /// Watchdog. `UploadManager` counts RETRIES with exponential backoff, per
+    /// part and per whole upload — it has no wall-clock "these bytes stopped
+    /// moving" concept, and a transfer that is repeatedly accepted and then
+    /// wedged (a 5G → Wi-Fi handover mid-upload, which is exactly what the
+    /// field test looked like) never exhausts a retry budget. Rather than add a
+    /// competing timeout inside the engine, the clock lives here, in the one
+    /// caller that has somewhere to fall back to:
+    ///   • `uploadStallWarnSeconds` of no movement → say so, and make sure Skip
+    ///     is on screen as the escape hatch.
+    ///   • `uploadStallAbortSeconds` → give up: cancel the upload, note why,
+    ///     and let `enhance`'s catch publish the standard tour.
+    /// `isEnhanceUpload` gates every skip-aware behaviour: the warning, the
+    /// give-up, and standing down when a skip is writing its own label. The
+    /// publish upload passes false — it has no fallback (the tour has to reach
+    /// the server for a link to exist), it must not resurrect a Skip button
+    /// whose flag nothing reads by then, and it runs precisely BECAUSE the user
+    /// skipped, so a lingering `skipRequested` must not silence it. For publish
+    /// this is a label-only observer.
+    ///
+    /// Returns the observing `Task`; the caller MUST cancel it the moment its
+    /// await returns, or it will keep overwriting a phase that has moved on.
+    private func startUploadObserver(id: UUID, run: UUID,
+                                     label: String,
+                                     fallbackTotalBytes: Int64,
+                                     fractionFrom: Double,
+                                     fractionTo: Double,
+                                     isEnhanceUpload: Bool) -> Task<Void, Never> {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            var lastSeenBytes: Int64 = -1
+            var lastMovedAt = Date()
+            var warned = false
+
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                if Task.isCancelled { return }
+                // A superseded/cancelled run must never write to a newer job.
+                guard self.runs[id] == run else { return }
+                // A skip is already writing its own label ("Finishing up…") —
+                // stop before we flicker over it. It also gets a second swing
+                // at the upload: a skip that landed while `begin()` was still
+                // starting the transfer found nothing to cancel, and that
+                // window is exactly the one the field test sat in.
+                // Enhance only: the publish that FOLLOWS a skip still has the
+                // flag set, and silencing that observer is the whole reason the
+                // user would be staring at a spinner again.
+                if isEnhanceUpload, self.skipRequested.contains(id) {
+                    self.cancelRenderUpload(for: id)
+                    return
+                }
+
+                // Read ONLY this listing's render upload. A capture upload, or
+                // another listing's publish, must never move these numbers.
+                var sent: Int64 = 0
+                var total = fallbackTotalBytes
+                if let sid = self.model?.listings.first(where: { $0.id == id })?.serverID,
+                   let s = UploadManager.shared.state,
+                   s.role == "render", s.status != .done, s.listingID == sid {
+                    sent = max(0, s.bytesSent)
+                    if s.bytesTotal > 0 { total = s.bytesTotal }
+                }
+
+                if sent > lastSeenBytes {
+                    lastSeenBytes = sent
+                    lastMovedAt = Date()
+                    warned = false
+                }
+                let idleSeconds = Date().timeIntervalSince(lastMovedAt)
+
+                if isEnhanceUpload, idleSeconds >= Self.uploadStallAbortSeconds {
+                    // Cancelling resolves the caller's continuation as a
+                    // failure; `uploadStalled` is how its catch knows this note
+                    // is already the honest explanation. Only claim the failure
+                    // if we actually caused it — if there was nothing left to
+                    // cancel, the upload resolved on its own and the flag would
+                    // only mislabel some later, unrelated error.
+                    self.uploadStalled.insert(id)
+                    if self.cancelRenderUpload(for: id) {
+                        self.setNote(id, run,
+                                     "The upload for the AI enhance couldn't finish on this connection — publishing your standard tour instead.")
+                    } else {
+                        self.uploadStalled.remove(id)
+                    }
+                    return
+                }
+
+                if idleSeconds >= Self.uploadStallWarnSeconds {
+                    // Written once per stall, not once a second, so the label
+                    // stops flickering while nothing is happening.
+                    if isEnhanceUpload, !warned {
+                        warned = true
+                        self.update(id, run) {
+                            $0.phase = "Still uploading — your connection looks slow. You can skip and publish the standard tour."
+                            $0.canSkipEnhance = true
+                        }
+                    }
+                    continue   // leave the warning up until bytes actually move
+                }
+
+                // `Formatters.bytes` is the app's ByteCountFormatter wrapper;
+                // before the first byte lands it would read "Zero KB of 343 MB",
+                // so the plain label carries that moment.
+                let text = (sent > 0 && total > 0)
+                    ? "\(label) \(Formatters.bytes(sent)) of \(Formatters.bytes(total))"
+                    : label
+                let ratio = total > 0 ? min(max(Double(sent) / Double(total), 0), 1) : 0
+                self.update(id, run) {
+                    $0.phase = text
+                    $0.fraction = fractionFrom + (fractionTo - fractionFrom) * ratio
+                }
+            }
         }
     }
 
@@ -1055,6 +1935,43 @@ final class RenderCoordinator: ObservableObject {
 
     private func setNote(_ id: UUID, _ run: UUID, _ text: String) {
         update(id, run) { $0.note = text; $0.canSkipEnhance = false }
+    }
+
+    /// "6 min 50 s" / "5 min" / "42 s" — a duration said the way a person says
+    /// it. A deliberate mirror of `formatDuration` in
+    /// services/supabase/functions/ai-video/dronecost.ts, so the length note
+    /// this app writes BEFORE the upload and the one the server writes after it
+    /// read as the same sentence rather than two dialects. `Formatters.duration`
+    /// is not it: "6:50" reads as a timestamp, not as prose in a warning.
+    ///
+    /// `nonisolated`: pure arithmetic on a Double with no state, so it is safe
+    /// from any isolation — a `@MainActor` static reached from somewhere
+    /// non-isolated is exactly the mistake that broke an earlier build.
+    ///
+    /// NaN/±inf/negative are clamped BEFORE the `Int` conversion: `Int(Double.nan)`
+    /// traps, and `durationS` is a persisted, decoded value (`?? 0` on a missing
+    /// key) — it must never be able to crash a publish.
+    nonisolated private static func spokenDuration(_ seconds: Double) -> String {
+        let safe = (seconds.isFinite && seconds > 0) ? min(seconds, 86_400) : 0
+        let total = Int(safe.rounded())
+        if total < 60 { return "\(total) s" }
+        let minutes = total / 60, remainder = total % 60
+        return remainder == 0 ? "\(minutes) min" : "\(minutes) min \(remainder) s"
+    }
+
+    /// The same duration said as a LIMIT ("5 minutes") — how a person reads a
+    /// rule rather than a measurement. Mirrors `formatDurationLimit` in
+    /// dronecost.ts, including its fallback: a cap that is not a whole number of
+    /// minutes is spoken as a plain duration, so the copy stays correct if
+    /// `DRONE_MAX_SOURCE_SECONDS` ever moves off 300.
+    nonisolated private static func spokenDurationLimit(_ seconds: Double) -> String {
+        let safe = (seconds.isFinite && seconds > 0) ? min(seconds, 86_400) : 0
+        let total = Int(safe.rounded())
+        if total >= 60, total % 60 == 0 {
+            let minutes = total / 60
+            return minutes == 1 ? "1 minute" : "\(minutes) minutes"
+        }
+        return spokenDuration(seconds)
     }
 
     /// Apply a state change only if `run` is still the listing's current run —
@@ -1069,6 +1986,7 @@ final class RenderCoordinator: ObservableObject {
         let run = UUID()
         runs[id] = run
         skipRequested.remove(id)
+        uploadStalled.remove(id)
         if backgroundTasks[id] == nil {
             let bg = UIApplication.shared.beginBackgroundTask(withName: "rendprop.job.\(id.uuidString)") { [weak self] in
                 Task { @MainActor [weak self] in self?.endBackground(id) }
@@ -1084,6 +2002,7 @@ final class RenderCoordinator: ObservableObject {
         runs[id] = nil
         tasks[id] = nil
         skipRequested.remove(id)
+        uploadStalled.remove(id)
         endBackground(id)
         refreshIdleTimer()
     }
@@ -1130,6 +2049,7 @@ enum PersistentStore {
         var bytes: Int64
         var isDrone: Bool
         var roomTags: [RoomTag]
+        var personVisibleRanges: [TimeRange]
     }
 
     fileprivate struct PersistedTour: Codable {
@@ -1146,15 +2066,24 @@ enum PersistentStore {
         // Added 2026-09-03 — Optional so snapshots from older builds decode.
         var pendingPublish: [UUID]? = nil
         var uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset]? = nil
+        var identityOwnerUserID: UUID? = nil
+        var adoptionBindings: AdoptionLocalBindings? = nil
+        var adoptionBindingsUnreadable = false
     }
 
+    @discardableResult
     static func save(listings: [Listing],
                      assets: [UUID: CaptureAsset],
                      tours: [UUID: AppModel.RenderedTour],
                      renders: [UUID: Render],
                      pendingPublish: [UUID] = [],
-                     uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:]) {
+                     uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:],
+                     identityOwnerUserID: UUID? = nil,
+                     adoptionBindings: AdoptionLocalBindings? = nil) -> Bool {
+        guard !refusesRecoveryOverwrite else { return false }
         var state = PersistedState()
+        state.identityOwnerUserID = identityOwnerUserID
+        state.adoptionBindings = adoptionBindings
         state.listings = listings.filter { !$0.isSample }
         let realIDs = Set(state.listings.map { $0.id })
 
@@ -1164,7 +2093,8 @@ enum PersistentStore {
                 relPath: FileStore.relativePath(for: a.localURL),
                 motionRelPath: a.motionSidecarURL.map { FileStore.relativePath(for: $0) },
                 durationS: a.durationS, fps: a.fps, width: a.width, height: a.height,
-                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags)
+                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags,
+                personVisibleRanges: a.personVisibleRanges)
         }
         for (id, t) in tours where realIDs.contains(id) {
             state.tours[id] = PersistedTour(
@@ -1182,13 +2112,15 @@ enum PersistentStore {
         // still has. Real content is always allowed through (audit F-C-15).
         let isEmpty = state.listings.isEmpty && state.assets.isEmpty
             && state.tours.isEmpty && state.renders.isEmpty
-        if isEmpty && refusesEmptyOverwrite { return }
+        if isEmpty && refusesEmptyOverwrite { return false }
 
         do {
+            try adoptionBindings?.validate()
             let data = try JSONEncoder().encode(state)
             try data.write(to: fileURL, options: .atomic)
             if !isEmpty { refusesEmptyOverwrite = false }
-        } catch { /* non-fatal: files are safe, only this snapshot is lost */ }
+            return true
+        } catch { return false }
     }
 
     struct Loaded {
@@ -1198,71 +2130,72 @@ enum PersistentStore {
         var renders: [UUID: Render] = [:]
         var pendingPublish: [UUID] = []
         var uploadedRenderAssets: [UUID: AppModel.UploadedRenderAsset] = [:]
+        var identityOwnerUserID: UUID? = nil
+        var adoptionBindings: AdoptionLocalBindings? = nil
+        var adoptionBindingsUnreadable = false
     }
 
-    /// Armed by `load()` when a snapshot existed on disk but could NOT be read
-    /// or decoded AND could not be moved aside. While it is armed, `save()`
-    /// refuses to write an EMPTY snapshot — a transient read error must never
-    /// turn into "all your listings are gone" one auto-save later. Disarmed as
-    /// soon as a snapshot with real content is written.
+    /// A transient read error must never turn into "all your listings are gone"
+    /// one auto-save later. Recovery refusal below also protects nonempty edits
+    /// from replacing an original library we have not successfully loaded.
     /// Main-actor only: `load()`/`save()` are called from `AppModel` (@MainActor).
     private static var refusesEmptyOverwrite = false
+    // Salvage readable listings, but never silently drop an unreadable recovery
+    // journal during the next autosave. Original bytes stay in place for help.
+    private static var refusesRecoveryOverwrite = false
 
-    /// Move an unusable snapshot to `rendprop-state.corrupt-<unix>.json`.
-    /// MOVE, not copy: once it is out of the way the next save writes a clean
-    /// file and nothing the user still has is destroyed. Returns false when even
-    /// the move failed — the caller then protects the file by refusing to
-    /// overwrite it with an empty snapshot.
-    @discardableResult
-    private static func quarantineSnapshot() -> Bool {
-        let stamp = Int(Date().timeIntervalSince1970)
-        let backup = FileStore.documents.appendingPathComponent("rendprop-state.corrupt-\(stamp).json")
-        do {
-            try FileManager.default.moveItem(at: fileURL, to: backup)
-            return true
-        } catch {
-            // Last resort: a copy at least preserves the bytes for forensics.
-            try? FileManager.default.copyItem(at: fileURL, to: backup)
-            return false
-        }
+    private static func unreadableSnapshot() -> Loaded {
+        // Leave the original at its exact path. Moving it aside would look
+        // like a fresh empty install after relaunch and permit an empty local
+        // handoff snapshot despite an unknown original library.
+        refusesEmptyOverwrite = true
+        refusesRecoveryOverwrite = true
+        return Loaded(adoptionBindingsUnreadable: true)
     }
 
     static func load() -> Loaded {
         let fm = FileManager.default
         guard fm.fileExists(atPath: fileURL.path) else {
             refusesEmptyOverwrite = false   // fresh install / after a wipe: nothing to protect
+            refusesRecoveryOverwrite = false
             return Loaded()
         }
         guard let data = try? Data(contentsOf: fileURL) else {
             // The file is THERE but unreadable (transient I/O, protected data
             // still locked, disk pressure). Getting this wrong is what destroys
             // a user's library, so do not treat it as "no data".
-            refusesEmptyOverwrite = !quarantineSnapshot()
-            return Loaded()
+            return unreadableSnapshot()
         }
         guard let state = try? JSONDecoder().decode(PersistedState.self, from: data) else {
             // Truly undecodable at the TOP level (truncated write, not JSON at
             // all) — per-collection and per-element salvage already ran inside
             // PersistedState.init, so reaching here means there was nothing to
-            // salvage. Move it aside rather than let the next save clobber it.
-            refusesEmptyOverwrite = !quarantineSnapshot()
-            return Loaded()
+            // salvage. Preserve the original path and refuse handoff/autosave.
+            return unreadableSnapshot()
         }
 
-        // The decode succeeded but salvaged NOTHING out of a file that clearly
-        // held something (an honestly-empty snapshot is ~48 bytes). Everything
-        // in it was undecodable, so keep a copy before the next auto-save
-        // replaces it, and don't let that save be an empty one.
+        // An empty snapshot can exceed128 bytes now that it has ownership
+        // metadata. Inspect actual collection shape rather than guessing from
+        // file size. All-malformed content is unknown, not an empty library.
         let salvagedNothing = state.listings.isEmpty && state.assets.isEmpty
             && state.tours.isEmpty && state.renders.isEmpty
-        if salvagedNothing && data.count > 128 {
-            _ = quarantineSnapshot()
-            refusesEmptyOverwrite = true
-        } else {
-            refusesEmptyOverwrite = false
+        if salvagedNothing {
+            let raw = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] ?? [:]
+            let heldContent = ["listings", "assets", "tours", "renders"].contains { key in
+                guard let value = raw[key], !(value is NSNull) else { return false }
+                if let array = value as? [Any] { return !array.isEmpty }
+                if let object = value as? [String: Any] { return !object.isEmpty }
+                return true
+            }
+            if heldContent { return unreadableSnapshot() }
         }
+        refusesEmptyOverwrite = false
 
         var out = Loaded()
+        refusesRecoveryOverwrite = state.adoptionBindingsUnreadable
+        out.identityOwnerUserID = state.identityOwnerUserID
+        out.adoptionBindings = state.adoptionBindings
+        out.adoptionBindingsUnreadable = state.adoptionBindingsUnreadable
         out.listings = state.listings
 
         for (id, a) in state.assets {
@@ -1272,7 +2205,8 @@ enum PersistentStore {
                 id: a.id, localURL: localURL,
                 motionSidecarURL: a.motionRelPath.map { FileStore.url(fromRelativePath: $0) },
                 durationS: a.durationS, fps: a.fps, width: a.width, height: a.height,
-                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags)
+                bytes: a.bytes, isDrone: a.isDrone, roomTags: a.roomTags,
+                personVisibleRanges: a.personVisibleRanges)
         }
         for (id, t) in state.tours {
             let url = FileStore.url(fromRelativePath: t.relPath)
@@ -1297,7 +2231,7 @@ enum PersistentStore {
 // save() uses; encoding stays synthesized, so the JSON shape is unchanged.
 extension PersistentStore.PersistedAsset {
     enum CodingKeys: String, CodingKey {
-        case id, relPath, motionRelPath, durationS, fps, width, height, bytes, isDrone, roomTags
+        case id, relPath, motionRelPath, durationS, fps, width, height, bytes, isDrone, roomTags, personVisibleRanges
     }
 
     init(from decoder: Decoder) throws {
@@ -1313,6 +2247,14 @@ extension PersistentStore.PersistedAsset {
         isDrone       = try c.decodeIfPresent(Bool.self, forKey: .isDrone) ?? false
         // Losing chapters beats losing the video: salvage what decodes.
         roomTags      = ((try? c.decodeIfPresent([RoomTag].self, forKey: .roomTags)) ?? nil) ?? []
+        // Older snapshots have no detections. A malformed detection never costs
+        // the video; only finite, ordered ranges inside its timeline survive.
+        let ranges = rpSalvagedArray(TimeRange.self, from: c, forKey: .personVisibleRanges)
+        let timelineEnd = durationS
+        personVisibleRanges = ranges.filter {
+            $0.startS.isFinite && $0.endS.isFinite && $0.startS >= 0 &&
+            $0.endS > $0.startS && $0.endS <= timelineEnd
+        }
     }
 }
 
@@ -1376,7 +2318,7 @@ private func rpSalvagedUUIDDict<V: Decodable, K: CodingKey>(
 }
 
 extension PersistentStore.PersistedState {
-    enum CodingKeys: String, CodingKey { case listings, assets, tours, renders, pendingPublish, uploadedRenderAssets }
+    enum CodingKeys: String, CodingKey { case listings, assets, tours, renders, pendingPublish, uploadedRenderAssets, identityOwnerUserID, adoptionBindings }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -1397,6 +2339,13 @@ extension PersistentStore.PersistedState {
         let uploaded = rpSalvagedUUIDDict(AppModel.UploadedRenderAsset.self,
                                           from: c, forKey: .uploadedRenderAssets)
         uploadedRenderAssets = uploaded.isEmpty ? nil : uploaded
+        // Missing fields mean an old snapshot, not failed recovery. Present but
+        // invalid metadata must remain visible and must survive every autosave.
+        do {
+            identityOwnerUserID = try c.decodeIfPresent(UUID.self, forKey: .identityOwnerUserID)
+            adoptionBindings = try c.decodeIfPresent(AdoptionLocalBindings.self, forKey: .adoptionBindings)
+            try adoptionBindings?.validate()
+        } catch { adoptionBindingsUnreadable = true }
     }
 }
 
@@ -1433,6 +2382,28 @@ enum Appearance: String, CaseIterable, Identifiable {
 
 @main
 struct RendpropApp: App {
+    /// The Universal Link this launch (or this tap) arrived on, if any.
+    /// Presented as a full-screen cover OVER whatever the app was doing:
+    /// a buyer who tapped a house link wants the house, not the agent tool,
+    /// and an agent who tapped their own link is checking what a buyer sees.
+    /// Either way it is a visit, not a mode - Done puts the app back.
+    @State private var incomingLink: DeepLink?
+    /// The root's ONE sheet slot, for the same reason `HomeDashboardView` has
+    /// one: separate `.sheet` modifiers on a single view fight each other for
+    /// the presentation, and this chain already carries `.paywallHost()` and a
+    /// `.fullScreenCover`. Both root-level sheets go through this.
+    ///
+    /// `.pushPrePrompt` is the notification permission pre-prompt; `.leadsInbox`
+    /// is where a tapped "someone enquired" notification lands — over whatever
+    /// the app was doing, following the same "a visit, not a mode" rule
+    /// `incomingLink` does.
+    private enum RootSheet: String, Identifiable {
+        case pushPrePrompt
+        case leadsInbox
+        var id: String { rawValue }
+    }
+    @State private var rootSheet: RootSheet?
+    @ObservedObject private var push = PushManager.shared
     @UIApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var model = AppModel()
     @StateObject private var uploads = UploadManager.shared
@@ -1452,11 +2423,21 @@ struct RendpropApp: App {
     var body: some Scene {
         WindowGroup {
             Group {
+#if DEBUG
+                if Config.isSessionNetworkTesting {
+                    PhaseOneFixtureRoot()
+                } else if hasOnboarded {
+                    RootTabView()
+                } else {
+                    OnboardingView()
+                }
+#else
                 if hasOnboarded {
                     RootTabView()
                 } else {
                     OnboardingView()
                 }
+#endif
             }
             .environmentObject(model)
             .environmentObject(uploads)
@@ -1471,6 +2452,16 @@ struct RendpropApp: App {
             // First-party analytics only: our own /events route, no third-party
             // SDK, no IDFA, no ATT prompt. `start` is idempotent.
             .task { Analytics.start(api: model.api as? AnalyticsAPI) }
+            // GUIDELINE 5.1.1(v). A session with NO personal information, minted
+            // silently at launch, is what lets every feature and the paywall
+            // work without anybody registering. Idempotent, and a no-op when a
+            // session already exists — including a real Apple one.
+            .task { AuthStore.shared.signInAnonymouslyIfNeeded() }
+            .task { SpatialUploadCoordinator.shared.reconnect() }
+            // Whether Home may offer the 3D walkthrough at all: one server flag
+            // for everyone, asked once per foreground (and again below when a
+            // session lands). Unknown means hidden.
+            .task { model.refreshSpatialCapability() }
             // A previous launch's Apple authorizationCode submission may have
             // been interrupted (killed mid-flight, offline, timeout) — give it
             // exactly one more try now that the app is back up (audit finding
@@ -1478,13 +2469,136 @@ struct RendpropApp: App {
             .task { await AuthStore.retryPendingAppleAuthorizationCodeIfNeeded() }
             // Backgrounding is the one moment we KNOW the person is done, so it
             // is the most valuable flush there is.
-            .onChange(of: scenePhase) { phase in Analytics.sceneChanged(phase) }
-            .onChange(of: analyticsAuth.isSignedIn) { signedIn in Analytics.authChanged(signedIn) }
+            .onChange(of: scenePhase) { phase in
+                Analytics.sceneChanged(phase)
+                // A launch with no network leaves the device sessionless.
+                // Retry on the way back rather than stranding it.
+                if phase == .active {
+                    AuthStore.shared.signInAnonymouslyIfNeeded()
+                    model.refreshSpatialCapability()
+                    Task { await model.refreshCloudWorkspace() }
+                    // iOS Settings can change the notification permission while
+                    // the app is in the background, in BOTH directions — and a
+                    // device token can be reissued. Re-read it on the way back
+                    // so Settings never shows a stale answer.
+                    Task { await push.refreshAuthorization(registerIfAllowed: true) }
+                }
+            }
+            // Universal Links. `onContinueUserActivity` is the https path (a
+            // tap in Messages, Mail, Safari); `onOpenURL` catches the
+            // rendprop:// custom scheme. A URL this app has no screen for
+            // returns nil from `DeepLink.parse` and is left alone rather than
+            // swallowed - opening the app to nothing is worse than not opening
+            // it.
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                guard let url = activity.webpageURL, let link = DeepLink.parse(url) else { return }
+                incomingLink = link
+            }
+            .onOpenURL { url in
+                guard let link = DeepLink.parse(url) else { return }
+                incomingLink = link
+            }
+            .fullScreenCover(item: $incomingLink) { link in
+                // A tour and a portfolio are both a page in the viewer. An
+                // invite is not a page at all - it is an action against the
+                // account - so it gets the Join sheet with its code already
+                // filled in. Routing it to TourViewerView would have opened a
+                // web view onto /join/<code>, which is the page the person
+                // just tapped OUT of.
+                switch link {
+                case .join(let code):
+                    JoinTeamView(prefilledCode: code) { incomingLink = nil }
+                        .environmentObject(model)
+                default:
+                    TourViewerView(link: link)
+                        .environmentObject(model)
+                }
+            }
+            // MARK: - push additions (1.0.2)
+            // Reads the OS answer and, when it is already yes, refreshes the
+            // APNs token. Prompts nothing — see Push/PushManager.swift.
+            .task { push.start() }
+            // The one root sheet slot. The permission pre-prompt is presented
+            // from HERE so that EVERY publish path reaches it, not just the
+            // detail screen's button.
+            .sheet(item: $rootSheet) { sheet in
+                switch sheet {
+                case .pushPrePrompt:
+                    PushPrePromptView()
+                case .leadsInbox:
+                    NavigationStack {
+                        LeadsView()
+                            .toolbar {
+                                ToolbarItem(placement: .cancellationAction) {
+                                    Button("Done") { rootSheet = nil }
+                                }
+                            }
+                    }
+                    .environmentObject(model)
+                }
+            }
+            // `PushManager` owns "should we be asking"; this mirrors it into the
+            // slot. Both of the pre-prompt's buttons clear `showPrePrompt`, so
+            // the same mirror closes the sheet.
+            .onChange(of: push.showPrePrompt) { show in
+                if show {
+                    rootSheet = .pushPrePrompt
+                } else if rootSheet == .pushPrePrompt {
+                    rootSheet = nil
+                }
+            }
+            // A tapped notification, resolved by `DeepLink` (Push/PushManager
+            // `handle(payload:)`). `onChange` covers a tap while the app is
+            // running; the `task` covers a COLD launch, where the route is
+            // already set before this scene exists and no change is ever
+            // delivered.
+            .onChange(of: push.pendingRoute) { _ in consumePushRoute() }
+            .task {
+                if push.showPrePrompt { rootSheet = .pushPrePrompt }
+                consumePushRoute()
+            }
+            // MARK: - end push additions
+            .onChange(of: analyticsAuth.isSignedIn) { signedIn in
+                Analytics.authChanged(signedIn)
+                // The very first launch has no session when the scene appears;
+                // ask again once one exists so the answer is not "unknown" all day.
+                if signedIn {
+                    model.refreshSpatialCapability()
+                    Task { await model.refreshCloudWorkspace() }
+                    // …and tell the new session which industry this is, so the
+                    // server sizes the free week for it (AppModel, "Business
+                    // type → server").
+                    model.syncSpaceTypeIfNeeded()
+                }
+            }
+            // A different account (an Apple sign-in after an anonymous week) is
+            // a different org, which has not heard the business type yet.
+            .onChange(of: analyticsAuth.userID) { _ in
+                model.syncSpaceTypeIfNeeded()
+                Task { await model.refreshCloudWorkspace() }
+            }
+            .onChange(of: analyticsAuth.isIdentified) { identified in
+                if identified { Task { await model.refreshCloudWorkspace() } }
+            }
             // `externalSink` is `nonisolated` and hops to the main actor itself,
             // so the purchase flow keeps knowing nothing about Analytics.
             .onAppear { PaywallEvents.sink = Analytics.externalSink }
             // MARK: - end analytics additions
         }
+    }
+
+    /// Take whatever a tapped notification resolved to and put the app there,
+    /// exactly once. A tour reuses `incomingLink` — the same presentation a
+    /// Universal Link gets, because it IS the same destination; a lead opens
+    /// the inbox, which is the screen you can actually act on one from.
+    @MainActor
+    private func consumePushRoute() {
+        guard let route = push.pendingRoute else { return }
+        switch route {
+        case .tour(let link): incomingLink = link
+        case .leads:          rootSheet = .leadsInbox
+        }
+        push.clearPendingRoute()
     }
 }
 
@@ -1519,12 +2633,14 @@ struct RootTabView: View {
         .task {
             await model.load()        // idempotent
             model.reseedSamples()     // the intro may have changed the type before this mounted
+            model.syncSpaceTypeIfNeeded()   // …and the server has not heard about it yet
         }
         // Resolve the App Store storefront once. Informational only — no UI and
         // no purchase path is conditioned on it (see `Storefronts`, below).
         .resolveStorefront()
         .onChange(of: spaceTypeRaw) { _ in
             model.reseedSamples()     // venue owners see venues, not houses
+            model.syncSpaceTypeIfNeeded()   // the free week is sized by industry, server-side
         }
         // Coach (docs/COACH-CONTRACT.md): the tab-switch half of acting on a
         // tapped action. HomeDashboardView's own `.onChange` (same value)
@@ -1632,17 +2748,29 @@ struct HomeDashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                // A brand-new user gets the guide FIRST. The owner's stepdad —
+                // an older broker, exactly the person this has to work for —
+                // opened the app and followed none of the instructions, and the
+                // reason is visible in the order: a marketing hero and a plan
+                // banner came before the thing that says what to do, and a
+                // seven-tile grid came after it. When nothing has been done
+                // yet, nothing outranks the guide.
+                if guideLeadsTheScreen {
+                    firstProjectGuideCard
+                        .modifier(Reveal(index: 0, on: revealed))
+                }
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
-                if !FirstProjectGuide.isHiddenForever {
-                    FirstProjectCard { action in
-                        switch action {
-                        case .startProject:       open(.tour)
-                        case .open(let route):    go(route.listing, route.feature)
-                        case .share(let listing): go(listing, .tour)
-                        }
-                    }
+                // Which plan you are on, said where somebody will actually read
+                // it. Draws nothing until /me answers and nothing at all if it
+                // fails — an empty space beats a wrong claim about their money.
+                // Asks for an upgrade only in the last two days of the free week
+                // and after it ends. Plan/PlanBanner.swift.
+                PlanBanner()
                     .modifier(Reveal(index: 0, on: revealed))
+                if !guideLeadsTheScreen {
+                    firstProjectGuideCard
+                        .modifier(Reveal(index: 0, on: revealed))
                 }
                 homesSection
                     .modifier(Reveal(index: 1, on: revealed))
@@ -1685,7 +2813,8 @@ struct HomeDashboardView: View {
             gateSheet(sheet)
         }
         .sheet(isPresented: $showCoach, onDismiss: flushCoachRoute) {
-            CoachView(model: model, originScreen: "home")
+            CoachView(model: model, originScreen: AskAIScreen.home.rawValue,
+                      starters: AskAIScreen.home.starters)
         }
         // Coach (docs/COACH-CONTRACT.md): the "which sheet/route" half of
         // acting on a tapped action. RootTabView's own `.onChange` (same
@@ -1758,19 +2887,21 @@ struct HomeDashboardView: View {
 
     /// Entry point 1 of 2 into Coach (the other is Settings → "Coach &
     /// help") — docs/COACH-CONTRACT.md.
+    /// Home's Ask AI. Same control the rest of the app now wears
+    /// (`AskAIButton`), so it is recognisable as the same thing in the same
+    /// place everywhere - and it says the words, which the bare sparkle in a
+    /// circle it replaces did not.
+    ///
+    /// Home keeps its own `showCoach` + sheet rather than taking `.askAI(.home)`
+    /// because its `onDismiss: flushCoachRoute` is what routes a tapped coach
+    /// action ("Open the tour") after the sheet closes. The modifier owns a
+    /// plain sheet; this one has a job on the way out.
     private var askCoachButton: some View {
-        Button {
+        AskAIButton {
             Haptics.selection()
             showCoach = true
-        } label: {
-            Image(systemName: "sparkles")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Theme.accent)
-                .padding(8)
-                .background(Theme.accentSoft, in: Circle())
         }
         .accessibilityIdentifier("home.askCoach")
-        .accessibilityLabel(Text("Ask the coach"))
     }
 
     private func loadLeadCount() async {
@@ -1802,6 +2933,9 @@ struct HomeDashboardView: View {
     private func go(_ listing: Listing, _ feature: ProjectFeature) {
         if feature == .aerial {
             gate = .aerial(listing)
+        } else if feature == .reel {
+            // Presented, not pushed — see ProjectGateSheet.reel.
+            gate = .reel(listing)
         } else {
             route = ProjectRoute(listing: listing, feature: feature)
             showRoute = true
@@ -1834,6 +2968,13 @@ struct HomeDashboardView: View {
             // The aerial is grounded on a REAL home's exterior photo.
             AerialIntroSheet(listing: listing)
                 .environmentObject(model)
+        case .reel(let listing):
+            // Same two inputs the listing screen's tile passes: the listing's
+            // own edited photos, and its aerial as an optional opening clip.
+            ReelStudioView(listing: listing,
+                           photos: EnhancedPhoto.loadAll(listingID: listing.id),
+                           extraClipURLs: listing.aerialURL.map { [$0] } ?? [])
+                .environmentObject(model)
         }
     }
 
@@ -1843,11 +2984,26 @@ struct HomeDashboardView: View {
         if let route {
             switch route.feature {
             case .photos:
-                PhotoStudioView(listing: route.listing)
+                PhotoStudioView(listing: route.listing, entry: .photos)
+            case .photoStudio:
+                PhotoStudioView(listing: route.listing, entry: .studio)
             case .reel:
-                PhotoStudioView(listing: route.listing, intent: .reel)
+                // Unreachable: go() sends .reel to the gate sheet above, because
+                // Reel Studio owns its own NavigationStack and pushing it would
+                // nest two. The home itself is the honest fallback if a future
+                // caller ever pushes this case.
+                FlythroughDetailView(listing: route.listing)
             case .floorPlan:
                 FloorPlanView(listing: route.listing)
+            case .spatial:
+                // Same gate as the tile: the product only opens while the
+                // server says its pipeline is on. A route that arrives anyway
+                // (a coach action, a stale push) lands on the home itself.
+                if model.isSpatialWalkthroughAvailable {
+                    SpatialTourView(listing: route.listing)
+                } else {
+                    FlythroughDetailView(listing: route.listing)
+                }
             case .tour:
                 tourDestination(route.listing)
             case .aerial:
@@ -1873,6 +3029,26 @@ struct HomeDashboardView: View {
     }
 
     // MARK: Hero — animated gradient billboard
+
+    /// True while the user has finished none of the five steps. Once they have
+    /// done even one, the guide drops back below the hero — it is a first-run
+    /// aid, not a permanent fixture.
+    private var guideLeadsTheScreen: Bool {
+        !FirstProjectGuide.isHiddenForever
+            && FirstProjectGuide.progress(model: model).completedCount == 0
+    }
+
+    @ViewBuilder private var firstProjectGuideCard: some View {
+        if !FirstProjectGuide.isHiddenForever {
+            FirstProjectCard { action in
+                switch action {
+                case .startProject:       open(.tour)
+                case .open(let route):    go(route.listing, route.feature)
+                case .share(let listing): go(listing, .tour)
+                }
+            }
+        }
+    }
 
     private var heroCard: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -2014,7 +3190,15 @@ struct HomeDashboardView: View {
         LazyVGrid(columns: [GridItem(.flexible(), spacing: 12),
                             GridItem(.flexible(), spacing: 12)], spacing: 12) {
             featureButton(.tour)
+            // Only while the server says the 3D pipeline is on — for everyone,
+            // the same flag. Until a fetch has said so (offline, unknown, or
+            // switched off) there is no tile: a tile that scans a room, uploads
+            // every frame and then fails at /start is a dead feature on Home.
+            if model.isSpatialWalkthroughAvailable {
+                featureButton(.spatial)
+            }
             featureButton(.photos)
+            featureButton(.photoStudio)
             featureButton(.reel)
             featureButton(.floorPlan)
             featureButton(.aerial)
@@ -2399,10 +3583,9 @@ struct Reveal: ViewModifier {
 //  parties, INCLUDING WITH THIRD-PARTY AI, and obtain explicit permission
 //  before doing so."  — App Review Guidelines 5.1.2(i)
 //
-// Every AI tool in Rendprop uploads a photo or a video the user picked and
-// hands it to an outside model (Google's Gemini for photo edits, Google's Veo
-// and Seedance for generated video, Topaz Labs for motion smoothing/upscale).
-// That is personal data leaving the device for a third party, so it needs an
+// Cloud AI tools can send media, text and project context to outside services,
+// including image-based quality checks after generation. That can include
+// personal information in a photo or script, so it needs an
 // explicit, affirmative opt-in BEFORE the first transmission — a line buried in
 // the privacy policy is not enough, and a pre-checked box is not enough.
 //
@@ -2420,8 +3603,9 @@ final class AIConsent: ObservableObject {
 
     /// Bumped if the set of processors or what we send them ever changes — a
     /// new suffix re-asks everyone, which is what a materially different
-    /// disclosure requires.
-    private static let storageKey = "ai.thirdPartyProcessing.consent.v1"
+    /// disclosure requires. v2 corrects omitted recipients and media/text uses;
+    /// a prior grant must not silently stand in for the corrected disclosure.
+    private static let storageKey = "ai.thirdPartyProcessing.consent.v2"
 
     /// Drives the disclosure overlay on whichever AI surface is open.
     @Published private(set) var isAsking = false
@@ -2441,12 +3625,14 @@ final class AIConsent: ObservableObject {
         let detail: String
     }
     static let processors: [Processor] = [
-        Processor(name: "Google",
-                  detail: "Gemini edits your listing photos. Veo and Seedance generate aerial intros and reel clips."),
-        Processor(name: "Topaz Labs",
-                  detail: "Smooths the motion in your walkthrough and upscales it to 4K."),
+        Processor(name: "Google (Gemini)",
+                  detail: "Receives photos, video or text for photo editing, video analysis and writing assistance."),
+        Processor(name: "fal.ai",
+                  detail: "Receives photos, video and prompts for AI edits, generated clips and upscaling. Available models include ByteDance Seedance, Google Veo, Topaz Labs, Bria, FLUX and MiniMax Hailuo."),
         Processor(name: "Anthropic and OpenAI",
-                  detail: "Answer what you type to the coach. Your photos and videos are never sent to them."),
+                  detail: "Receive chat, project context and writing requests. Quality checks can also send source photos and frames from generated clips; OpenAI can edit photos."),
+        Processor(name: "ElevenLabs",
+                  detail: "Receives your voiceover script, including any address or personal details in it, and your selected voice to generate narration."),
     ]
 
     /// Ask once, then never again on this device. Returns true when the person
@@ -2514,6 +3700,10 @@ struct AIConsentGate: ViewModifier {
                         .transition(.opacity)
                 }
             }
+            // The disclosure is an in-place overlay, so the native floating
+            // tab bar otherwise remains above it and obscures its actions.
+            // Restore the host's normal navigation after either decision.
+            .toolbar(consent.isAsking ? .hidden : .automatic, for: .tabBar)
             .animation(.easeInOut(duration: 0.2), value: consent.isAsking)
             // Backing out of the screen (nav Back, swipe-dismiss of the host
             // sheet) must resume whoever is awaiting `ensureGranted()` — an
@@ -2528,8 +3718,8 @@ extension View {
     func aiConsentGate() -> some View { modifier(AIConsentGate()) }
 }
 
-/// The disclosure itself. Names the processors, says exactly what leaves the
-/// phone and what never does, and offers a real decline.
+/// The disclosure itself. Names the services and data uses, warns that selected
+/// content can include personal information, and offers a real decline.
 struct AIConsentView: View {
     @ObservedObject private var consent = AIConsent.shared
 
@@ -2545,7 +3735,7 @@ struct AIConsentView: View {
                         Text("Rendprop's AI runs in the cloud")
                             .font(.rpTitle)
                             .foregroundStyle(Theme.ink)
-                        Text("AI photo edits, aerial intros, reel clips and AI-upscaled tours are not made on your phone. To make one, Rendprop sends the photo or video you pick to these AI providers:")
+                        Text("Cloud AI tools send the media, text and project context needed for your request through Rendprop's servers to the providers below. Some tools use more than one provider, including for quality checks or fallback.")
                             .font(.rpBody)
                             .foregroundStyle(Theme.inkDim)
                             .fixedSize(horizontal: false, vertical: true)
@@ -2569,11 +3759,11 @@ struct AIConsentView: View {
 
                     VStack(alignment: .leading, spacing: 10) {
                         bullet("checkmark.circle.fill", Theme.good,
-                               "What we send: the image or video you choose, the words you type into a custom edit, and — for an aerial — the city and state only.")
+                               "What we send depends on the tool: selected media and sampled frames, edit prompts, chat history, project context, script text and transcript excerpts. For aerials, enter only city and state in the region field.")
                         bullet("xmark.circle.fill", Theme.bad,
-                               "What we never send: your street address, your name, your email, your phone number or your device's location.")
+                               "Review before sending: media can show people, addresses or documents. Text and project labels can contain personal information. Remove anything you do not want processed by these providers.")
                         bullet("clock.arrow.circlepath", Theme.inkDim,
-                               "They process the file to return your result. Rendprop does not sell your media and does not use it for advertising.")
+                               "These services process what is sent to return your result. Rendprop does not sell your media and does not use it for advertising.")
                     }
 
                     Link("Read the Privacy Policy",
@@ -2586,11 +3776,16 @@ struct AIConsentView: View {
                             Haptics.success()
                             consent.grant()
                         }
-                        Button("Not now") {
+                        .accessibilityIdentifier("aiConsent.agree")
+                        Button {
                             consent.decline()
+                        } label: {
+                            Text("Not now")
+                                .frame(maxWidth: .infinity, minHeight: 44)
                         }
                         .font(.rpBody)
                         .foregroundStyle(Theme.inkDim)
+                        .accessibilityIdentifier("aiConsent.decline")
                         Text("You can turn this off any time in Settings → Your data. Capture, on-device rendering and sharing keep working either way.")
                             .font(.rpCaption)
                             .foregroundStyle(Theme.inkDim)
@@ -2601,6 +3796,9 @@ struct AIConsentView: View {
                 }
                 .padding(22)
             }
+            // This ScrollView IS the consent root. Giving its ancestor a
+            // second ID overwrites the exposed scroll ID in SwiftUI's AX tree.
+            .accessibilityIdentifier("aiConsent.root")
         }
     }
 
@@ -2691,7 +3889,12 @@ extension View {
 
 /// A feature a Home tile can open — once we know which home it is for.
 enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
-    case tour, photos, reel, floorPlan, aerial
+    /// `.photos` is the LIBRARY - add photos, they get brightened on the way
+    /// in, they live in the home. `.photoStudio` is the AI. They were one case
+    /// (and one screen) and that conflation is the defect the owner reported
+    /// across five sessions: the AI menu could not be the first thing you saw,
+    /// because the screen had to be a photo manager first.
+    case tour, spatial, photos, photoStudio, reel, floorPlan, aerial
 
     var id: String { rawValue }
 
@@ -2699,7 +3902,9 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var actionTitle: String {
         switch self {
         case .tour:      return "Make a tour"
-        case .photos:    return "Take photos"
+        case .spatial:   return "3D walkthrough"
+        case .photos:    return "Add photos"
+        case .photoStudio: return "AI Photo Studio"
         case .reel:      return "Make a reel"
         case .floorPlan: return "Make a floor plan"
         case .aerial:    return "Make an aerial shot"
@@ -2711,8 +3916,11 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var promise: String {
         switch self {
         case .tour:      return "Walk it once — glide forever"
-        case .photos:    return SpaceType.current == .realEstate
-            ? "Twilight · blue sky · staging" : "Twilight · blue sky · furnish it"
+        case .spatial:   return "Scan rooms. Walk through them."
+        case .photos:    return "Brightened automatically \u{2014} free"
+        case .photoStudio: return SpaceType.current == .realEstate
+            ? "Declutter \u{00B7} staging \u{00B7} twilight \u{00B7} sky"
+            : "Declutter \u{00B7} furnish it \u{00B7} twilight \u{00B7} sky"
         case .reel:      return "Photos → one social video"
         case .floorPlan: return "Scan in 3D or upload"
         case .aerial:    return "A cinematic opening shot"
@@ -2722,7 +3930,11 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var systemImage: String {
         switch self {
         case .tour:      return "video.fill"
-        case .photos:    return "wand.and.stars"
+        // Not `view.3d`: that glyph IS the letters "3D", so stacked over the
+        // title the tile read "3D 3D walkthrough" on iOS 26.
+        case .spatial:   return "rotate.3d"
+        case .photos:    return "photo.stack"
+        case .photoStudio: return "wand.and.stars"
         case .reel:      return "film.stack"
         case .floorPlan: return "cube.transparent"
         case .aerial:    return "airplane.departure"
@@ -2732,7 +3944,9 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     var gradient: LinearGradient {
         switch self {
         case .tour:      return RPGradient.drone
+        case .spatial:   return RPGradient.drone
         case .photos:    return RPGradient.photo
+        case .photoStudio: return RPGradient.photo
         case .reel:      return RPGradient.reel
         case .floorPlan: return RPGradient.plan
         case .aerial:    return RPGradient.aerial
@@ -2742,8 +3956,12 @@ enum ProjectFeature: String, Identifiable, Hashable, CaseIterable {
     /// AI does the work here (shows the AI pill).
     var usesAI: Bool {
         switch self {
-        case .tour, .photos, .reel, .aerial: return true
-        case .floorPlan:                     return false
+        // `.photos` is DELIBERATELY not an AI tile any more. Importing a
+        // photo runs `PhotoEnhancer` on this phone: no network, no model, no
+        // charge. Wearing the AI pill there implied a cost that isn't real and
+        // hid the free win the owner actually likes.
+        case .tour, .photoStudio, .reel, .aerial: return true
+        case .photos, .floorPlan, .spatial:       return false
         }
     }
 }
@@ -2761,12 +3979,20 @@ enum ProjectGateSheet: Identifiable {
     case start(ProjectFeature)      // no homes yet — name one
     case pick(ProjectFeature)       // 2+ homes — which one?
     case aerial(Listing)            // the aerial tool is itself a sheet
+    // Reel Studio is its own full-screen world with its own NavigationStack and
+    // its own Close — the same shape as the aerial, and the reason it is a
+    // presentation and not a push. It used to be reached by opening PHOTO STUDIO
+    // with `intent: .reel` and tapping a card at the bottom, which is exactly
+    // why the owner kept finding "Make a reel" inside AI Photo Studio and told
+    // us twice it did not belong there. The reel has its own door now.
+    case reel(Listing)
 
     var id: String {
         switch self {
         case .start(let f):  return "start-\(f.rawValue)"
         case .pick(let f):   return "pick-\(f.rawValue)"
         case .aerial(let l): return "aerial-\(l.id.uuidString)"
+        case .reel(let l):   return "reel-\(l.id.uuidString)"
         }
     }
 }

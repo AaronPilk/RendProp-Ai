@@ -1,0 +1,84 @@
+{
+  "scope": "offline-extracted-real-functions; framework outputs are controlled fixtures",
+  "sourceSHA256": {
+    "apps/ios/Rendprop/Capture/CameraManager.swift": "338e38215afc58a2360c69505c7c483689c906a2648f3ac69a63dbb923507df8",
+    "apps/ios/Rendprop/Capture/MotionRecorder.swift": "791b31a39a57950a68eccd7342d9a830cf01fb3876091d3f5fd913b726784079",
+    "apps/ios/Rendprop/Capture/CaptureView.swift": "8499cf1f45029e688727f1ea6d097e2ba1bba54688fe9b011b7fdc58ba6397a1",
+    "tools/audit/call-20260919/timing/checks.swift": "fef7350298d2481146d57093973fa9bed1df54078867d23373101b8dab67d9b0"
+  },
+  "commands": [
+    {
+      "label": "compile",
+      "command": [
+        "xcrun",
+        "swiftc",
+        "-swift-version",
+        "5",
+        "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-call-timing-20260919-9s0adabd/TimingChecks.swift",
+        "-o",
+        "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-call-timing-20260919-9s0adabd/timing-checks"
+      ],
+      "exit": 0
+    },
+    {
+      "label": "execute",
+      "command": [
+        "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-call-timing-20260919-9s0adabd/timing-checks"
+      ],
+      "exit": 0
+    }
+  ],
+  "result": {
+    "actualSamplerCadence": {
+      "30fpsCallsIn10s": 20,
+      "60fpsCallsIn10s": 40
+    },
+    "delayedMotionCallbackAfterResume": [
+      99.9,
+      69.99000000000001,
+      100.00999999999999
+    ],
+    "finalizingDropsEightSecondRange": [],
+    "motionLoggingThroughJoin": {
+      "lastPersistedSidecarSampleS": 14,
+      "mediaDurationS": 10
+    },
+    "motionPauseTapVsActualSegmentEnd": {
+      "expectedLastJoinedTime": 10.5,
+      "lostWrittenTailSample": true,
+      "offsetS": -0.4000000000000057,
+      "sampleTimes": [
+        9.900000000000006,
+        10.099999999999994
+      ]
+    },
+    "pauseDropsTwoAdjacentHalfSecondDetectedSpans": [],
+    "pauseWallTimeExcludedControl": [
+      [
+        1,
+        4.5
+      ]
+    ],
+    "queuedOldTakeDetectionAttributedToNewTakeS": 0.1,
+    "rangePastTenSecondMedia": [
+      [
+        0,
+        10.5
+      ]
+    ],
+    "thermalSkipWithoutNewEvidence": {
+      "ranges": [
+        [
+          0,
+          61
+        ]
+      ],
+      "warningStillOn": true
+    },
+    "thermalMessageThreadSanitizer": {
+      "exit": 0,
+      "raceDetected": false,
+      "log": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-call-timing-20260919-9s0adabd/thermal-race.log"
+    }
+  }
+}

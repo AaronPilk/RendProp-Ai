@@ -14,7 +14,7 @@
 #
 # THE UNINSTALL IS THE POINT. `ReviewerWalk` passes only `-uiTesting` and
 # `-appearance light`; it does NOT pass `-hasOnboarded YES` or
-# `-ai.thirdPartyProcessing.consent.v1 YES` the way the UI walk and the store
+# `-ai.thirdPartyProcessing.consent.v2 YES` the way the UI walk and the store
 # shots do. Those two flags live in UserDefaults inside the app's container, so
 # a container left over from a previous run would already have `hasOnboarded`
 # true and the AI consent granted — the intro would not show, the consent sheet
@@ -66,7 +66,7 @@ echo "SIM_STATE=$(xcrun simctl list devices | grep "$UDID" | sed 's/.*(\(.*\))/\
 # Must come AFTER the boot (uninstall needs a booted device) and BEFORE the
 # test. This is what makes the run a first-run: it deletes the app's
 # UserDefaults, so `hasOnboarded` is false and
-# `ai.thirdPartyProcessing.consent.v1` is unset. Not-installed is not an error.
+# `ai.thirdPartyProcessing.consent.v2` is unset. Not-installed is not an error.
 xcrun simctl uninstall "$UDID" "$APP_ID" 2>/dev/null
 echo "UNINSTALL_EXIT=$? (app $APP_ID — 'not installed' is fine, the container is gone either way)"
 

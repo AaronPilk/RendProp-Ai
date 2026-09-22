@@ -130,7 +130,7 @@ class LeaseLost(db.JobNotOwned):
 
     Raised by the heartbeat thread's out-of-band check (`hb.check()`, polled
     between pipeline steps). `db.JobNotOwned` itself is raised INLINE by the
-    ownership-scoped mutations (`db.set_progress`, `db.finish_job`) the instant
+    ownership-scoped mutations (`db.set_progress`, `db.publish_worker_render`) the instant
     they observe zero rows matched — the tighter checkpoint that closes the
     gap between heartbeats (release audit, Fix 2). Same underlying condition
     — "another worker owns this job now" — two detection points; `except
@@ -197,14 +197,6 @@ def _upload_enhancements(result: EnhanceResult, listing_id: str, render_id: str,
             print(f"    ⚠ hero upload failed (continuing): {e}")
             hero_key = None
     return rows, hero_key
-
-
-def _record_enhancement_photos(rows: list[dict]) -> None:
-    """Insert the `photos` rows for a tour that is now actually published."""
-    for row in rows:
-        db.insert_photo(row)
-    if rows:
-        print(f"    ✓ {len(rows)} enhanced still(s) recorded on the listing")
 
 
 # ── uploaded-artifact ledger (audit F-G-21) ───────────────────────────────────
@@ -361,6 +353,7 @@ def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancement
     step = "load"
     artifacts = _Artifacts()
     try:
+        db.validate_publish_claim(job)
         # 1. Resolve listing (→ org_id) + capture asset.
         db.set_progress(job_id, 0.05, "loading")
         listing = db.fetch_listing(listing_id) if listing_id else None
@@ -450,34 +443,22 @@ def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancement
         stream_uid = _register_stream(video_key, listing_id, render_id, local_mp4=out_mp4)
         artifacts.stream_uid = stream_uid
 
-        # 7. Insert the renders row (the published tour).
+        # 7. Publish render + outcome + photos + ready state atomically. The
+        # heartbeat is an early-abort hint, not ownership at the write: the RPC
+        # locks the job and checks the actual database-time lease and attempt.
         step = "publish"
-        hb.check()          # never publish twice
+        hb.check()
         db.set_progress(job_id, 0.94, "publishing")
-        render_row = db.insert_render({
+        render_row = db.publish_worker_render(job, {
             "id": render_id,
-            "job_id": job_id,
-            "listing_id": listing_id,
             "slug": new_slug(),
             "duration_s": duration_s,
             "speed_factor": speed_factor,
             "video_key": video_key,
             "stream_uid": stream_uid,
             "poster_key": poster_key,
-            "staged": bool(enh.staged),
-            "published_at": db.now_iso(),
-        }, extra={"hero_key": hero_key} if hero_key else None)
-        artifacts.published = True     # everything above is now referenced
-        _record_enhancement_photos(photo_rows)
-        slug = render_row.get("slug")
-        print(f"    ✓ published render {render_id} slug={slug} staged={enh.staged}")
-
-        # Record what the AI pipeline actually DID, so ops (and the status
-        # screen) can tell a skipped add-on from one that ran — and so
-        # `renders.staged` can be driven by OUTCOME instead of the request
-        # toggles (audit F-G-01 #2 / F-G-09). Needs migration 0016; without it
-        # this logs one warning per job and changes nothing else.
-        db.set_enhancement_result(job_id, {
+            "hero_key": hero_key,
+        }, {
             "ran": bool(enh.ran),
             "staged": bool(enh.staged),
             "reason": enh.reason,
@@ -490,7 +471,10 @@ def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancement
                 for seg in (enh.manifest.get("segments") or [])
             ],
             "ts": db.now_iso(),
-        })
+        }, photo_rows)
+        artifacts.published = True     # exact commit receipt, never merely HTTP 2xx
+        slug = render_row["slug"]
+        print(f"    ✓ published render {render_row['id']} slug={slug} staged={enh.staged}")
 
         # 8. Stream storage cost + final rollup.
         #    Only when Stream actually holds the asset: with no token (or a failed
@@ -504,20 +488,26 @@ def _process_job_inner(job: dict, job_id: str, listing_id, asset_id, enhancement
         db.rollup_job_best_effort(job_id)
         db.flush_cost_spool()          # opportunistic: retire any spooled rows
 
-        # 9. Flip the listing to ready + finish the job.
-        db.set_listing_status(listing_id, "ready")
-        db.finish_job(job_id)
+        # Ready state was part of step 7's transaction, not a later patch that
+        # could strand an already-public render in 'processing' after a crash.
         print(f"=== job {job_id} READY → /f/{slug} ===")
 
     except db.JobNotOwned as e:
         # Another worker owns the job now (LeaseLost from the heartbeat thread,
-        # or db.JobNotOwned raised inline by set_progress/finish_job — audit
+        # or db.JobNotOwned raised inline by progress/publication — audit
         # Fix 2). Touch NOTHING further — not even to fail it: fail_job()
         # is itself ownership-scoped and would just no-op, and calling it is
         # pointless ceremony for a row we no longer own.
         print(f"    ↩ job {job_id} abandoned at step '{step}': {e}")
         # Do NOT roll back: the worker that owns the job now may be using or
         # about to reference these very objects.
+    except (db.PublishUncertain, db.PublishRejected) as e:
+        # An ambiguous response may conceal a committed transaction. Preserve
+        # artifacts and never turn a possible winner into a failed job. Explicit
+        # rejection also avoids a separate, raceable job-state write. The lease
+        # expires for recovery; durable orphan cleanup remains a separate gap.
+        print(f"    ↩ job {job_id} publication not confirmed: {e}")
+        raise  # --once/--job-id must exit non-zero; run_loop already catches and retries.
     except ffmpeg_render.RenderAborted as e:
         # Shutdown, not failure: hand the job back so the next worker retries it.
         print(f"    ↩ job {job_id} aborted at step '{step}': {e} — re-queueing")

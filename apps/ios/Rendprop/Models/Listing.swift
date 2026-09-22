@@ -41,6 +41,22 @@ struct Listing: Identifiable, Codable, Hashable {
     /// The server `listings.id` adopted on first publish. Once set, every server
     /// call for this listing (uploads, publish) uses this id, not the local `id`.
     var serverID: UUID? = nil
+    /// The shared workspace that owns this server row (including team listings).
+    var serverOrgID: UUID? = nil
+    /// True for a row first discovered on another device. Optional for old snapshots.
+    var cloudImported: Bool? = nil
+    /// A complete cloud read no longer returned this listing. Keep local files,
+    /// but do not recreate or publish into a workspace whose access has changed.
+    var cloudUnavailable: Bool? = nil
+    /// Keeps automatic draft sync within the account that created this draft.
+    var cloudSyncOwnerID: UUID? = nil
+    /// Retained across account changes so returning to the same account can
+    /// reattach an authorized row without creating another listing.
+    var cloudDetachedServerID: UUID? = nil
+    /// Initial facts fingerprint survives an interrupted first create.
+    var cloudCreateFingerprint: String? = nil
+    /// Response metadata used only while adopting a create receipt.
+    var cloudCreateReplayed: Bool? = nil
     /// The published tour's server slug (never fabricated from the local UUID).
     var shareSlug: String? = nil
     /// The full public share URL returned by the server (e.g. rendprop.com/f/<slug>).
@@ -77,6 +93,29 @@ struct Listing: Identifiable, Codable, Hashable {
     /// the street. Drives the California AB 723 compliance banner without
     /// re-geocoding on every open.
     var stateCode: String? = nil
+
+    // MARK: - Added 2026-09-12 (1.0.2). Optional → older snapshots decode.
+    /// SEARCH-ENGINE OPT-IN for this listing's hosted tour page, answered by the
+    /// owner on the publish screen. nil = never asked (the server's own default
+    /// applies, which is `noindex`); false = they said no; true = they said yes.
+    ///
+    /// WHY IT IS A FIELD AND NOT A `details` KEY, which is where the server
+    /// reads it from: `ListingFormData.apply(to:)` sets `details = nil` for
+    /// every real-estate listing, so a flag parked in that bag would be wiped
+    /// the first time an agent tapped "Edit details" — silently un-listing a
+    /// page they had asked to be listed. `LiveAPIClient.listingBody` merges this
+    /// into the wire `details` under the key the tour host actually reads
+    /// (`allow_indexing` — services/edge/tour-host/src/player.ts,
+    /// `allowsIndexing`), so the transport is unchanged and the local truth
+    /// survives every edit path.
+    var allowSearchIndexing: Bool? = nil
+
+    /// The wire key for `allowSearchIndexing`, inside the listing's `details`
+    /// bag. `allowsIndexing()` accepts three spellings and checks them in the
+    /// order `allow_indexing`, `allowIndexing`, `search_indexing`, stopping at
+    /// the first one present — so this one wins, and it is the spelling the
+    /// Worker's own tests, its README and the sitemap all use.
+    static let searchIndexingKey = "allow_indexing"
 
     func detail(_ key: String) -> String { details?[key] ?? "" }
 
@@ -267,10 +306,10 @@ extension Listing {
     enum CodingKeys: String, CodingKey {
         case id, address, beds, baths, sqft, price, status, isSample, spaceTypeRaw,
              createdAt, soldAt, zillowURL, mainPhotoRelPath, latitude, longitude,
-             tagline, details, serverID, shareSlug, shareURL,
+             tagline, details, serverID, serverOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, publishedRenderID,
-             unbrandedShareURL, stateCode
+             unbrandedShareURL, stateCode, allowSearchIndexing
     }
 
     init(from decoder: Decoder) throws {
@@ -296,6 +335,13 @@ extension Listing {
         tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)
         details          = try c.decodeIfPresent([String: String].self, forKey: .details)
         serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
+        serverOrgID      = try c.decodeIfPresent(UUID.self,   forKey: .serverOrgID)
+        cloudImported    = try c.decodeIfPresent(Bool.self,   forKey: .cloudImported)
+        cloudUnavailable = try c.decodeIfPresent(Bool.self,   forKey: .cloudUnavailable)
+        cloudSyncOwnerID = try c.decodeIfPresent(UUID.self, forKey: .cloudSyncOwnerID)
+        cloudDetachedServerID = try c.decodeIfPresent(UUID.self, forKey: .cloudDetachedServerID)
+        cloudCreateFingerprint = try c.decodeIfPresent(String.self, forKey: .cloudCreateFingerprint)
+        cloudCreateReplayed = try c.decodeIfPresent(Bool.self, forKey: .cloudCreateReplayed)
         shareSlug        = try c.decodeIfPresent(String.self, forKey: .shareSlug)
         shareURL         = try c.decodeIfPresent(String.self, forKey: .shareURL)
         exteriorPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .exteriorPhotoRelPath)
@@ -307,6 +353,7 @@ extension Listing {
         publishedRenderID = try c.decodeIfPresent(UUID.self,  forKey: .publishedRenderID)
         unbrandedShareURL = try c.decodeIfPresent(String.self, forKey: .unbrandedShareURL)
         stateCode        = try c.decodeIfPresent(String.self, forKey: .stateCode)
+        allowSearchIndexing = try c.decodeIfPresent(Bool.self, forKey: .allowSearchIndexing)
     }
 }
 
@@ -363,6 +410,53 @@ enum SpaceType: String, CaseIterable, Identifiable {
         }
     }
     var spaceNounCap: String { spaceNoun.prefix(1).uppercased() + spaceNoun.dropFirst() }
+    /// "homes" / "venues" / "places" / "stores" / "studios" / "spaces".
+    var spaceNounPlural: String { spaceNoun + "s" }
+
+    // MARK: Free week (server plan `trial`, sized per industry)
+    //
+    // The server enforces the week's allowances from `orgs.space_type`
+    // (migration 0044): an agent lists several homes at once and gets 3 tours;
+    // a venue, restaurant, store, gym or other business is ONE location and
+    // gets 1. Photo edits (60) and reel clips (4) are the same everywhere. The
+    // app SENDS its type to the server (`AppModel.syncSpaceTypeIfNeeded`) and
+    // READS the live numbers from `GET /me` wherever it can (`PlanBanner`);
+    // these are the offline / pre-session fallback and the onboarding copy.
+
+    /// A business with one location to tour, as opposed to an agent with a
+    /// changing set of listings.
+    var isSingleLocation: Bool { self != .realEstate }
+
+    /// Tour renders in the free week.
+    var trialTourCount: Int { isSingleLocation ? 1 : 3 }
+
+    /// Aerial intros in the free week.
+    var trialAerialCount: Int { isSingleLocation ? 1 : 2 }
+
+    /// AI photo edits in the free week — the same for every industry.
+    static let trialPhotoEditCount = 60
+
+    /// Reel clips in the free week — the same for every industry.
+    static let trialReelClipCount = 4
+
+    /// "3 tours, 60 photo edits and 4 reel clips" / "1 tour, 60 photo edits
+    /// and 4 reel clips". The free-week sentence, minus its ending, so
+    /// onboarding ("…, free. No card, no account.") and the Home banner
+    /// ("… — 5 days left.") say the same thing.
+    var freeWeekLine: String {
+        Self.makeFreeWeekLine(tours: trialTourCount,
+                              photoEdits: Self.trialPhotoEditCount,
+                              reelClips: Self.trialReelClipCount)
+    }
+
+    /// The same sentence from live numbers (`GET /me` → `entitlement`), so a
+    /// server-side change to the week shows up without an app release.
+    static func makeFreeWeekLine(tours: Int, photoEdits: Int, reelClips: Int) -> String {
+        let tourNoun = tours == 1 ? "tour" : "tours"
+        let editNoun = photoEdits == 1 ? "edit" : "edits"
+        let clipNoun = reelClips == 1 ? "clip" : "clips"
+        return "\(tours) \(tourNoun), \(photoEdits) photo \(editNoun) and \(reelClips) reel \(clipNoun)"
+    }
 
     /// The trade, for copy that addresses the business rather than the space
     /// ("For a busy gym or studio…"). Real estate is the agent; callers that

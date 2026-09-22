@@ -43,6 +43,7 @@ import { adminClient } from "../_shared/supabase.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 import { buildAgentCard } from "../_shared/agentcard.ts";
 import { buildCta } from "./cta.ts";
+import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
 
@@ -57,7 +58,9 @@ const MAX_ALTERED_MEDIA = 40;
 
 /** The model family in plain words — the public page never names a vendor model. */
 function modelFamily(kind: string): string {
-  return kind === "aerial" || kind === "reel" ? "AI video" : "AI image edit";
+  return kind === "aerial" || kind === "reel" || kind === "video_reflection_removal"
+    ? "AI video"
+    : kind === "other" ? "Edited media" : "AI image edit";
 }
 
 interface AlteredMedium {
@@ -97,6 +100,49 @@ async function alteredMediaFor(admin: any, listingId: string): Promise<AlteredMe
     altered_url: publicR2Url(r.altered_key as string | null),
     created_at: (r.created_at as string | null) ?? null,
   }));
+}
+
+/** How many gallery photos a tour page will carry. A listing with more than
+ * this many is not a gallery, it is a contact sheet. */
+const MAX_GALLERY = 40;
+
+/**
+ * The listing's own photos, for the gallery on the tour page.
+ *
+ * Selected off the key prefix `/uploads` mints for `role:"gallery"`, because
+ * `capture_assets` has no role column and the poster / original / gallery
+ * distinction is server-derived from the key everywhere else too. `uploaded`
+ * is the completion flag: a ticket writes its row BEFORE the bytes land, so
+ * without it a cancelled upload would publish a 404 into the gallery.
+ *
+ * PROPERTY INFORMATION, NOT BRANDING — so this rides to the unbranded `/u/`
+ * twin as well, on exactly the reasoning `floorplan_url` already carries. A
+ * photo of the kitchen says nothing about which brokerage listed it.
+ *
+ * Never fatal: a gallery lookup must not take the tour down.
+ */
+// deno-lint-ignore no-explicit-any
+async function galleryFor(admin: any, listingId: string): Promise<Array<{ url: string }>> {
+  const { data, error } = await admin
+    .from("capture_assets")
+    .select("storage_key, created_at")
+    .eq("listing_id", listingId)
+    .eq("kind", "photo")
+    .eq("bucket", "renders")
+    .eq("uploaded", true)
+    .like("storage_key", "%/gallery-%")
+    .order("created_at", { ascending: true })
+    .limit(MAX_GALLERY);
+  if (error) {
+    console.error("gallery lookup failed:", error.message);
+    return [];
+  }
+  const out: Array<{ url: string }> = [];
+  for (const r of data ?? []) {
+    const url = publicR2Url((r as Record<string, unknown>).storage_key as string | null);
+    if (url) out.push({ url });
+  }
+  return out;
 }
 
 /**
@@ -305,9 +351,10 @@ Deno.serve(async (req) => {
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
     const altered_media = await alteredMediaFor(admin, listing.id as string);
+    const gallery = await galleryFor(admin, listing.id as string);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
-    let chapters: Array<{ label: string; t_ms: number; sort: number }> = [];
+    let chapters: SpatialChapter[] = [];
     const { data: job } = await admin
       .from("render_jobs")
       .select("capture_asset_id")
@@ -325,6 +372,19 @@ Deno.serve(async (req) => {
         t_ms: c.t_ms as number,
         sort: c.sort as number,
       }));
+    }
+
+    // A scan added after a video was published lights up its existing chapter.
+    // This is a private-table read with an explicit approved subset; it never
+    // returns original keys, pending reviews, or ambiguous room-label guesses.
+    if (chapters.length) {
+      const { data: scenes, error: spatialError } = await admin.from("spatial_jobs")
+        .select("id,status,approved,excluded,published_at,artifact_revision,review_revision,output_state,redactions,scene_manifest")
+        .eq("listing_id", listing.id).eq("org_id", listing.org_id).eq("status", "ready")
+        .eq("approved", true).eq("excluded", false).not("published_at", "is", null).limit(100);
+      // Before 0040 is rolled out, the existing flythrough must remain usable.
+      // Any read error suppresses only optional 3D anchors, never opens access.
+      if (!spatialError && scenes) chapters = bindSpatialChapters(chapters, scenes);
     }
 
     // 4. Assemble the safe agent card from the org's brand kit (allow-listed
@@ -384,6 +444,9 @@ Deno.serve(async (req) => {
       // Floor plan, promoted out of details so the host can render it above the
       // gallery on BOTH pages (it is property information, not branding).
       floorplan_url: floorplanUrl(listing.details),
+      // The listing's photos. Same reasoning as floorplan_url: property
+      // information, so it goes to the unbranded twin too.
+      gallery,
       staged,
       staged_disclosure: staged ? STAGED_DISCLOSURE : null,
       // The staged chip is unchanged; a tour with AI media but no staging now

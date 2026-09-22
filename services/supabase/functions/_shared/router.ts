@@ -11,7 +11,9 @@
 // The master flag `app_config.ai_router.enabled` defaults to FALSE, and while
 // it is false resolveRoute() returns exactly ONE step: the row tagged
 // `note = 'legacy'` for that task, which carries the provider/model the shipped
-// edge functions hardcode TODAY. Behaviour is byte-for-byte unchanged, and the
+// edge functions hardcode TODAY. Photo fallbacks additionally require an
+// enabled, eligible row (0056); disabled rows never authorize photo execution.
+// Non-photo legacy behavior is unchanged, and the
 // legacy answer comes out of the database rather than out of a second copy of
 // the model ids in TypeScript — so there is only ever one place to look.
 //
@@ -27,7 +29,7 @@
 // 2. DO NOT RE-FILTER THE CHAIN. Everything returned is a step you may run
 //    right now: plan, capabilities, retirement, privacy and the flag have all
 //    already been applied. In particular do not filter on `step.enabled` — the
-//    resolver has done it (and the flag-off legacy step is reported enabled
+//    resolver has done it (and the non-photo flag-off legacy step is reported enabled
 //    precisely so a defensive caller cannot accidentally drop the only step it
 //    was given).
 //
@@ -61,16 +63,62 @@ export interface RouteStep {
 }
 
 /**
- * A RouteStep plus the two columns the ORDERING needs and the frozen §1
- * interface does not carry. It is a strict superset, so everything typed
- * `RouteStep` accepts one and the contract's interface stays byte-identical —
- * see HANDOFF-DB.md.
+ * A RouteStep plus the columns the ORDERING and the ADAPTERS need and the
+ * frozen §1 interface does not carry. It is a strict superset, so everything
+ * typed `RouteStep` accepts one and the contract's interface stays
+ * byte-identical — see HANDOFF-DB.md §1.
  */
 export interface ChainStep extends RouteStep {
   /** ai_routes.position — the curated "best" order. */
   position: number;
   /** ai_routes.retire_after (YYYY-MM-DD) or null. */
   retire_after: string | null;
+  /**
+   * ai_routes.params — per-step vendor knobs, or null (the overwhelming
+   * majority of rows, which is what makes this additive).
+   *
+   * WHY IT LIVES HERE AND NOT ON RouteStep. Same reason as `position`: §1 of
+   * docs/AI-ROUTER-CONTRACT.md is frozen and three other functions build
+   * against it, so the interface stays byte-identical and the superset carries
+   * what the resolver and the adapters need on top. Read it with paramsOf()
+   * below rather than casting at each call site.
+   *
+   * WHAT IT IS FOR. Two models on the same task do not always want the same
+   * request shape — a reasoning model priced for hard work is crippled by the
+   * `reasoning.effort:"none"` the classifier steps want, and a 1,600-token
+   * answer does not fit a ceiling sized for a 300-token verdict. Before this
+   * column those were CONSTANTS in the adapters, which meant adding a model
+   * with a different shape was a deploy and not a row — the exact thing the
+   * router exists to avoid. Now it is a row.
+   *
+   * WHAT IT IS NOT. Not a passthrough to the vendor. It is operator-supplied
+   * config that reaches a third party's API, so every adapter WHITELISTS the
+   * keys and the values it will act on and treats everything else as absent
+   * (_shared/providers/params.ts). An absent or unreadable blob must always
+   * mean "today's behaviour", never "no ceiling".
+   */
+  params: Record<string, unknown> | null;
+}
+
+/**
+ * The one place a §1-typed `RouteStep` is read for the superset's `params`.
+ *
+ * Callers hold `RouteStep` — that is what resolveRoute() declares — but every
+ * step it actually returns is a `ChainStep`, and so is the in-code fallback a
+ * function builds for the flag-off path (which simply has no params). One
+ * documented widening here beats a cast at every adapter call site, and it is
+ * total: anything that is not a plain JSON object reads as null, so a row whose
+ * `params` an operator set to `[]`, `"low"` or `3` behaves exactly as an empty
+ * one rather than reaching a vendor as a malformed body.
+ */
+export function paramsOf(step: RouteStep | null | undefined): Record<string, unknown> | null {
+  return normalizeParams((step as Partial<ChainStep> | null | undefined)?.params);
+}
+
+/** jsonb → a plain object, or null. Arrays and scalars are NOT objects here. */
+function normalizeParams(raw: unknown): Record<string, unknown> | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  return raw as Record<string, unknown>;
 }
 
 export interface RouteContext {
@@ -114,7 +162,13 @@ export function healthKey(provider: string, model: string): string {
 // An unrecognised plan ranks as `free`, the most restrictive answer: a typo in
 // a plan string must never hand out a premium step.
 
-const PLAN_ORDER = ["free", "trial", "starter", "solo", "pro", "team"] as const;
+// `brokerage` (migration 0050) sits at the top: it is a signed, invoiced
+// contract, so it must clear every min_plan gate `team` clears. Leaving it
+// out was not a cosmetic omission — planRank() returns 0 ("free", the most
+// restrictive answer) for anything it does not recognise, so a 400-seat
+// brokerage would have been routed to the cheapest model on every request
+// and refused outright by any route gated above free.
+const PLAN_ORDER = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
 
 function planRank(plan: string | null | undefined): number {
   const i = PLAN_ORDER.indexOf(String(plan ?? "").trim().toLowerCase() as typeof PLAN_ORDER[number]);
@@ -198,6 +252,11 @@ async function defaultPolicyFor(plan: string): Promise<"best" | "cheapest"> {
 
 // ── resolveRoute ────────────────────────────────────────────────────────────
 
+/** Every photo task requires live database authorization, even with the router off. */
+export function requiresActivePhotoRoute(task: string): boolean {
+  return task.trim().startsWith("photo.");
+}
+
 /**
  * Ordered, filtered, circuit-aware chain for `task`.
  *
@@ -213,7 +272,7 @@ export async function resolveRoute(task: string, ctx: RouteContext): Promise<Rou
   const t = String(task ?? "").trim();
   if (!t) return [];
 
-  if (!(await routerEnabled())) return await legacyChain(t);
+  if (!(await routerEnabled())) return await legacyChain(t, ctx);
 
   let rows: RouteRow[];
   try {
@@ -227,12 +286,12 @@ export async function resolveRoute(task: string, ctx: RouteContext): Promise<Rou
     rows = (data ?? []) as RouteRow[];
   } catch (e) {
     console.error(`router: route read failed for ${t}, falling back to legacy:`, msg(e));
-    return await legacyChain(t);
+    return await legacyChain(t, ctx);
   }
 
   // A task with the flag on but no enabled rows still has a legacy answer in
   // most cases; using it beats returning nothing.
-  if (rows.length === 0) return await legacyChain(t);
+  if (rows.length === 0) return await legacyChain(t, ctx);
 
   const steps = rows.map(toStep);
   const health = await readHealth();
@@ -240,17 +299,19 @@ export async function resolveRoute(task: string, ctx: RouteContext): Promise<Rou
 }
 
 /**
- * THE FLAG-OFF PATH. One row, looked up by note, returned verbatim except that
- * `enabled` is reported true — see rule 2 in the header: every step a caller is
- * handed is a step it may run.
+ * Photo fallback requires the exact marker AND an enabled, eligible row.
+ * Non-photo legacy behavior remains unchanged outside this repair's scope.
  */
-async function legacyChain(task: string): Promise<RouteStep[]> {
+async function legacyChain(task: string, ctx: RouteContext): Promise<RouteStep[]> {
   try {
-    const { data, error } = await db()
+    const activePhoto = requiresActivePhotoRoute(task);
+    let query = db()
       .from("ai_routes")
       .select(SELECT_COLS)
       .eq("task", task)
-      .eq("note", "legacy")
+      .eq("note", "legacy");
+    if (activePhoto) query = query.eq("enabled", true);
+    const { data, error } = await query
       .order("position", { ascending: true })
       .limit(1);
     if (error) throw new Error(error.message);
@@ -258,6 +319,10 @@ async function legacyChain(task: string): Promise<RouteStep[]> {
     if (!row) {
       console.error(`router: no legacy step seeded for task ${task}`);
       return [];
+    }
+    if (activePhoto) {
+      if (row.enabled !== true) return [];
+      return orderSteps([toStep(row)], ctx, new Map());
     }
     return [{ ...toStep(row), enabled: true }];
   } catch (e) {
@@ -390,8 +455,11 @@ export function pickLedgerProvider(step: RouteStep): { provider: string; model: 
 
 // ── Row plumbing ────────────────────────────────────────────────────────────
 
+// ONE string literal, never a concatenation: supabase-js parses the column list
+// at the TYPE level and a built-up string degrades the row type to
+// GenericStringError[] (the same note admin/index.ts carries on its own copy).
 const SELECT_COLS =
-  "id, task, position, provider, model, unit, unit_cents, capabilities, max_latency_s, min_plan, same_model_as, privacy_tier, enabled, retire_after, note";
+  "id, task, position, provider, model, unit, unit_cents, capabilities, max_latency_s, min_plan, same_model_as, privacy_tier, enabled, retire_after, note, params";
 
 interface RouteRow {
   id: string;
@@ -409,6 +477,7 @@ interface RouteRow {
   enabled: boolean | null;
   retire_after: string | null;
   note: string | null;
+  params: unknown;
 }
 
 const PRIVACY_TIERS = ["no_retention", "retained_30d", "trains_by_default"] as const;
@@ -434,6 +503,11 @@ function toStep(row: RouteRow): ChainStep {
     privacy_tier: tier,
     enabled: row.enabled === true,
     retire_after: row.retire_after ?? null,
+    // Normalised HERE, once, rather than trusted at each adapter: a jsonb
+    // column can legally hold an array, a string or a number, and none of those
+    // is a params blob. Anything that is not a plain object reads as null,
+    // which every adapter already treats as "today's behaviour".
+    params: normalizeParams(row.params),
   };
 }
 

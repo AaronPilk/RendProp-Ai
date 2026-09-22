@@ -7,7 +7,7 @@
 // and gallery images are served from this Worker's own /assets (public/assets),
 // so the demo can never break on a cross-site miss.
 
-import type { Tour } from "./types";
+import type { Portfolio, Tour } from "./types";
 
 export const DEMO_SLUG = "estate-demo";
 
@@ -36,6 +36,44 @@ export function demoSpaceFrom(raw: string | null | undefined): DemoSpace | undef
  * so no real-estate brokerage is presented to a gym. The footage and its
  * chapters are unchanged — the point of the card is the scroll-scrub tour.
  */
+/** The demo agent's handle. Fictional, so no org will ever answer for it. */
+export const DEMO_HANDLE = "meridian";
+
+export function isDemoHandle(handle: string): boolean {
+  return handle === DEMO_HANDLE || handle === "demo";
+}
+
+/**
+ * The demo agent's portfolio, served entirely from this Worker.
+ *
+ * Linking "See all their homes" off the agent card exposed what the card had
+ * always implied and nothing had tested: Alexandra Reyes exists only in this
+ * file, so `GET /portfolio/meridian` finds no org and the route falls to its
+ * branded 404 — on the page a prospective agent clicks through from the demo.
+ *
+ * The demo TOUR is already served from here for the same reason. This is that,
+ * for the portfolio. A real agent's portfolio is untouched and still comes from
+ * the edge function.
+ */
+export function buildDemoPortfolio(): Portfolio {
+  const tour = buildDemoTour();
+  return {
+    org: { name: "Meridian Estates", handle: DEMO_HANDLE, space_type: "real_estate" },
+    agent_card: tour.agent_card ?? {},
+    tours: [
+      {
+        slug: DEMO_SLUG,
+        share_url: tour.share_url ?? `https://rendprop.com/f/${DEMO_SLUG}`,
+        space_type: "real_estate",
+        address: tour.listing.address,
+        tagline: tour.listing.tagline,
+        price: tour.listing.price,
+        poster: tour.poster ?? null,
+      },
+    ],
+  };
+}
+
 export function buildDemoTour(as?: DemoSpace): Tour {
   const tour = buildEstateDemoTour();
   if (!as) return tour;

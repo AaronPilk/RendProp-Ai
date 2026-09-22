@@ -11,8 +11,12 @@
 // GET/PATCH are what make lead capture a real feature for every tenant (audit
 // F-supabase-02, decision A13): the app lists leads per listing and marks them
 // worked. Both require a user JWT (this function is deployed --no-verify-jwt
-// for the public POST, so getUser() validates the token itself). Email alerts
-// are a later step (needs an email provider) — the app copy says so.
+// for the public POST, so getUser() validates the token itself).
+//
+// PUSH/E-MAIL ALERTS EXIST NOW (migration 0047): the insert below fires an
+// AFTER INSERT trigger that queues a `lead_received` message for every
+// owner/admin, and functions/notify delivers it. Nothing in this file changes
+// shape for it and nothing here can be slowed down or failed by a provider.
 //
 // Bot protection on the public POST (audit — "Turnstile fails open when
 // unconfigured"): Cloudflare Turnstile now FAILS CLOSED when
@@ -296,8 +300,16 @@ Deno.serve(async (req) => {
       await admin.from("leads").update({ synced_crm: true }).eq("id", lead.id);
     }
 
-    // Agent notification (email/push) is a later step — the app's Leads screen
-    // (GET /leads) is the delivery channel for now (decision A13).
+    // The agent is TOLD. Migration 0047 puts an AFTER INSERT trigger on `leads`
+    // that queues a `lead_received` message — carrying the buyer's name and the
+    // listing — for every owner/admin of the org, inside the same transaction as
+    // the insert above, so it cannot be missed and cannot be sent twice (the
+    // outbox dedupe key is the lead's own id). functions/notify drains it.
+    // Nothing here waits on a provider: the capture commits either way, and if
+    // no APNs or e-mail secret is set the row is marked `skipped` with a reason.
+    // (This replaces decision A13's "the Leads screen is the delivery channel
+    // for now" — GET /leads is still where the details live, but silence until
+    // the agent happens to open the app is no longer how they find out.)
     return json({ ok: true, id: lead.id }, 201);
   } catch (err) {
     return respondError(err);

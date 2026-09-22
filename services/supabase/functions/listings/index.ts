@@ -15,7 +15,9 @@
 
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { createListingRow } from "./create.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
 // server-controlled and never taken from the body. Must stay in sync with the
@@ -43,7 +45,8 @@ const WRITABLE = [
 // draft|uploading|processing|ready|expired; the server additionally knows
 // capturing|archived.
 const STATUSES = ["draft", "capturing", "uploading", "processing", "ready", "expired", "archived"];
-const SPACE_TYPES = ["real_estate", "venue", "restaurant", "retail", "fitness", "other"];
+// SPACE_TYPES comes from _shared/spacetypes.ts — the same six values PATCH
+// /me/brand accepts for orgs.space_type and the 0044 DB CHECK enforces.
 const SOURCES = ["manual", "url", "mls"];
 const MAX_DETAILS_BYTES = 16_000;
 const MAX_TEXT = 500;
@@ -63,7 +66,7 @@ function validate(patch: Record<string, unknown>, orgId: string, listingId: stri
       `status must be one of ${STATUSES.join(", ")}`);
   }
   if ("space_type" in patch) {
-    assert(typeof patch.space_type === "string" && SPACE_TYPES.includes(patch.space_type), 400,
+    assert(typeof patch.space_type === "string" && (SPACE_TYPES as readonly string[]).includes(patch.space_type), 400,
       `space_type must be one of ${SPACE_TYPES.join(", ")}`);
   }
   if ("source" in patch) {
@@ -147,10 +150,8 @@ Deno.serve(async (req) => {
       const org_id = await orgForUser(user.id, preferredOrg(req));
       const patch = pick(body);
       validate(patch, org_id, null);
-      const row = { ...patch, org_id, agent_id: user.id };
-      const { data, error } = await db.from("listings").insert(row).select().single();
-      if (error) throw new HttpError(400, `Create failed: ${error.message}`);
-      return json(data, 201);
+      const result = await createListingRow(db, patch, user.id, org_id, req.headers.get("Idempotency-Key"));
+      return json({ ...result.data, create_replayed: result.replayed }, result.replayed ? 200 : 201);
     }
 
     // ---- GET /listings ----

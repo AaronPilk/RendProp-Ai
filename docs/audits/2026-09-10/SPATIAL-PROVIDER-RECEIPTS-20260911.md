@@ -1,0 +1,184 @@
+# Spatial provider receipts and one-room continuation
+
+Source branch: `fix/spatial-provider-receipts-20260911`, based on `baf77f9`.
+This document records source verification and the completed private room run.
+Training completion is not production quality, automatic service deployment,
+or iPhone acceptance.
+
+## Durable provider journal
+
+`0041_spatial_provider_attempts.sql` introduces a service-only, RLS-protected
+table without cascading foreign keys. It retains distinct paid `attempt_key`
+and dispatch `lease_token`, immutable provider name/ID, bounded source hash,
+deadline, terminal code and independent file-removal/termination flags.
+
+The worker must commit intent before CREATE and acknowledge the returned
+provider ID before transferring any source or media. Replayed intent grants
+no second dispatch. An ambiguous CREATE remains pending and is reconciled only
+by its exact pre-recorded name. A finished sandbox does not by itself prove
+explicit directory deletion. Cleanup acknowledgements remain writable after
+the job/listing/account disappears; the deletion integration consumes both
+confirmed flags. Arbitrary SDK bodies, tokens, photos, poses and raw logs are
+not stored in this journal.
+
+`provider_journal.py` sends small receipts outside the controller's temporary
+directory. A locally successful cleanup without a durable acknowledgement is
+not a successful job. An interrupted controller can still leave a pending
+journal row requiring assisted provider cleanup; no autonomous orphan-sweeper
+has been proven by this unit. A missing/ambiguous provider is never treated as
+deleted merely because its TTL elapsed.
+
+A failed download or adapter validation now records an atomic `not_created`
+receipt before the normal failure callback. It does not grant dispatch. Its
+conflict path cannot overwrite an existing planned/unknown/created attempt:
+another controller may have invoked CREATE even when this one did not. The
+worker flips `provider_attempted` before CREATE, including ambiguous exceptions,
+so those failures never assert the new no-allocation proof. Missing receipt
+acknowledgements remain cleanup debt, not inferred success.
+
+The scheduled deployment source is explicitly disabled (`DEPLOYMENT_ENABLED`
+false) and attaches no service Secret or recurring schedule. Even a stale environment
+`SPATIAL_WORKER_ENABLED=true` cannot activate it. Enabling the deployment,
+its service credential and operational budgets is a separate reviewed action.
+
+## Actual verification
+
+- `python3 -m unittest discover -s services/spatial-worker -v`: 41 tests,
+  exit0. Includes actual disabled entry invocation with synthetic decorators,
+  no-allocation on missing journal acknowledgement, no transfer before ID
+  acknowledgement, temporary-directory removal with retained external receipt,
+  lost CREATE response, terminal failure, durable cleanup failure, pre-provider
+  validation failure, and remote `/root/app.py` import without local mounts.
+- `python3 -m unittest discover -s tools/spatial-spike/training
+  -p 'test_modal*.py' -v`: 35 tests, exit0. Six continuation tests prove prior
+  charge retention, unchanged original marker, no second attempt, rejected
+  changed evidence, active GPU/unterminated old allocation, and ambiguous CREATE
+  preserving the new reservation. The initial test fixture used an unresolved
+  macOS temporary path and correctly failed lineage checks; the fixture was
+  fixed to use its resolved path, not by weakening the production check.
+- `deno test --allow-net --allow-env --no-check spatial/`: 26 tests, exit0.
+  Executes the provider receipt route with injected database fixtures; actual
+  Postgres behavior is covered separately below.
+- `/tmp/spatial-training-verify.rUYL0A/venv/bin/python -m unittest discover
+  -s tools/spatial-spike/training -v`: 98 tests, exit0, using verified Python3.12.14
+  and Pillow12.1.1. Includes actual JPEG adapter validation and bounded child
+  process timeout tests, not only mocked provider boundaries.
+- `python3 tools/audit/run_spatial_provider_regression.py`: exit0. New owned
+  socket-only PostgreSQL17 database; 23 assertions on first apply/replay/restore.
+  Red-before-migration exit3; deliberate always-dispatch mutant exit3 at the
+  replay guard. Evidence: `/tmp/rendprop-provider-db-56spmv_v/receipt.json`.
+  The owned database was stopped. No production SQL was executed.
+- Targeted Python negative control replaced `ProviderJournal.plan` with a no-op
+  in memory. `test_no_allocation_without_durable_intent_acknowledgement` exited1
+  because CREATE was called once. The source was never weakened.
+
+## Existing approval continuation
+
+The prior failed allocation's independently read usage is **$1.09974939**.
+Its original allocation marker and all receipts remain unchanged. Its provider
+exit137 and historical billing-limit reason do not prove today's allocation
+eligibility; the newer dashboard shows headroom and only a fresh CREATE can
+establish whether Modal will allocate now.
+
+Fresh read-only observation at `2026-09-11T21:09:45.528674Z`, pinned Modal1.5.3:
+the exact experiment app had **zero active sandboxes** and the previous sandbox
+polled terminal137. No allocation was made by that check.
+
+The reviewed private continuation plan is
+`/Users/pilksclaes/LocalSpatialExperiments/room-retry-20260911-plan-v1.json`.
+It hashes the original marker, prior provider/billing receipts, exact approved
+153-frame prepared dataset and runner source. It records the still-unconfirmed
+prior remote-directory deletion honestly. It does not erase old reservations
+or infer an unused $25 allowance.
+
+Published compute rates checked September11: L4 $0.000222/s, Sandbox CPU
+$0.00003942/core/s, RAM $0.00000667/GiB/s. The reviewed profile is one L4,
+4-core hard limit,32GiB hard limit,7200s provider TTL, broad-US1.15 multiplier:
+**$4.9110336000** conservative full-lifetime compute, not an invoice.
+Prior plus fresh bound is **$6.0107829900**, within the existing **$25 total**
+approval. Sources: [Modal pricing](https://modal.com/pricing),
+[region selection](https://modal.com/docs/guide/region-selection).
+
+The new runner holds the same approval lock and writes a separate immutable
+retry marker before its single call to the existing `modal_room.run`.
+It rechecks plan hashes, committed clean source, the exact app, zero active
+sandboxes and previous termination. It never creates a new app, changes billing,
+retries allocation automatically or increases the budget.
+
+Executed command, after parent review and clean source:
+
+```sh
+MODAL_PROFILE=rendprop-room-experiment \
+  /Users/pilksclaes/.local/bin/uv tool run --from modal==1.5.3 python \
+  tools/spatial-spike/training/modal_retry.py run \
+  --plan '/Users/pilksclaes/LocalSpatialExperiments/room-retry-20260911-plan-v1.json' \
+  --state '/Users/pilksclaes/LocalSpatialExperiments/modal-room-20260911-01' \
+  --confirm-one-allocation
+```
+
+The experiment runner requests900s training/3000 steps/500000-gaussian maximum,
+collects bounded private PLY/held-out diagnostics, then removes its scoped
+remote directory and terminates/polls the sandbox in `finally`. A source-bound
+provider receipt saves the allocation ID immediately. Logs are streamed and
+bounded; failures preserve terminal evidence without printing SDK credentials.
+No scheduled production budgets, Apple review settings, or public room
+publication are part of this experiment authorization.
+
+## Completed private execution (September11)
+
+Parent reviewed the exact plan and authorized its single attempt after the
+source was committed and clean. Commit`88066a3887852d3d6e4c021ac901783cea05d133`
+passed the clean source gate. The above command was executed once.
+
+Modal accepted sandbox`sb-2fqSw5zWu2dFlWhRAsmq2z` at
+`2026-09-11T21:12:48.138521Z`; the actual outbound-policy API succeeded before
+setup. Setup started`21:12:52.644388Z` and exited0. Outbound networking was denied
+at`21:21:25.139223Z`, before any private media transfer. Training started
+at`21:22:48.568848Z` and exited0. Artifacts were collected at`21:26:52.210002Z`.
+
+Actual run: 153 images,9,226 initial seeds,3,000 steps,29,733 final gaussians,
+209.441 seconds trainer runtime and a7,018,464-byte PLY. Twenty held-out renders,
+training logs and metrics are retained privately. The original capture has not
+been committed or publicly published. The held-out metrics were PSNR19.6598568,
+SSIM0.8109714 and LPIPS0.5567622. **The held-out prediction is visibly blurry;
+this is not production-quality acceptance.** Geometry initialization used all
+capture frames even though the held-out images were excluded from training loss.
+Reported GPU render timing is not iPhone FPS.
+
+The exact remote directory deletion returned success. Terminate-with-wait and
+independent terminal poll returned137 at`21:26:53.721114Z`; training had already
+exited0. A fresh exact-app readback at`21:27:53.534993Z` found zero active
+sandboxes and confirmed the exact sandbox's terminal137. A scoped receipt is
+saved privately as`modal-room-20260911-01/terminal-readback.json`.
+
+Provider usage read at`21:28:07.168208Z` reported **$0.57381695** for this exact
+app's current-hour run: CPU$0.15307022, L4$0.21466670, RAM$0.20608003. This is
+**provisional**, before the hour closed; reporting can lag and it is not a final
+invoice. The previous failed run's$1.09974939 remains recorded separately. No
+second allocation is authorized or initiated. The end-to-end automatic app
+queue and real iPhone quality/navigation still need their own proof.
+
+A separate follow-up adds the truthful`Rendprop-Spatial-Worker/1.0` User-Agent
+to control-plane, private-input and output-upload requests. The parent's live
+upload proof found Cloudflare error1010 for Python's default agent and succeeded
+with an explicit Rendprop agent. Local tests assert the actual Request headers
+on all three paths. No experiment runner source or reviewed plan changed.
+
+The parent's first disabled-service deployment reached Modal validation and
+failed because`ephemeral_disk=8192` is below the provider's allowed range.
+Local SDK import and decorator fixtures did not prove that remote admission
+rule. The override was removed and a regression asserts its absence. No512GiB
+disk request is substituted, because explicit disk requests raise billable
+memory at20:1. The application's2GiB input/32MiB output limits are real; an8GiB
+provider disk cap was not. [Modal resource documentation](https://modal.com/docs/guide/resources)
+was checked for this correction. This source-only change does not affect the
+running private sandbox or its reviewed cost policy.
+
+A real remote disabled invocation then caught a second cloud-only issue: Modal
+reimports the deployment module at`/root/app.py`, where`parents[2]` does not
+exist. The local repository import was not sufficient proof. Remote import now
+uses the explicit uploaded`/workspace` root; local file mounts are constructed
+only on the deploying machine. A new test executes the actual module with the
+remote`__file__` layout and requires zero local mount lookups. The disabled
+function returns before importing the queue/provider modules. Remote acceptance
+must still be re-run by the parent; these fixtures alone do not claim it passes.

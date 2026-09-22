@@ -1,0 +1,390 @@
+{
+  "result": "PASS",
+  "run_id": "c0210924-e11f-4e93-adf3-94c547b5b5d3",
+  "source_commit": "c0257e4a68a60224fa6c1448d2abe54055c07b17",
+  "fixture_user_id": "9a6cfd65-58ad-42a3-b83b-3b791eb305b6",
+  "fixture_org_id": "34dc23e9-444b-4088-a004-3f79de071267",
+  "fixture_listing_id": "3f5e3bf8-54d9-4d82-a9c9-6ecf412dfbb3",
+  "render_id": "3771ed1d-2032-457f-b75d-883374a41ac2",
+  "assets": [
+    {
+      "fixture": "fixture.png",
+      "asset_id": "b30aa84b-27a1-4406-9ded-901b99876fc1",
+      "storage_key": "uploads/34dc23e9-444b-4088-a004-3f79de071267/3f5e3bf8-54d9-4d82-a9c9-6ecf412dfbb3/b30aa84b-27a1-4406-9ded-901b99876fc1-complete-63750060-e1b9-48ac-9e10-7463ffcfa962.png",
+      "bytes": 73,
+      "sha256": "88bd6dcbd691d2b45610cc51a707c79557b5f9cd10dafbfbbc77aa09b357d44b",
+      "transport_version": 2
+    },
+    {
+      "fixture": "single.mp4",
+      "asset_id": "77061ea2-517c-4970-845a-26aa1614e2ed",
+      "storage_key": "renders/34dc23e9-444b-4088-a004-3f79de071267/3f5e3bf8-54d9-4d82-a9c9-6ecf412dfbb3/77061ea2-517c-4970-845a-26aa1614e2ed-complete-e040b2cf-0c38-4d97-a5ae-d8300b9b9854.mp4",
+      "bytes": 1855,
+      "sha256": "79b436d2d8149c82f0bc13ea14150b0f3a10c94aa3a6fced25684b62056af091",
+      "transport_version": 2
+    },
+    {
+      "fixture": "multipart.mp4",
+      "asset_id": "4a416b82-ee2d-4951-9c1f-9bf352eb88e9",
+      "storage_key": "uploads/34dc23e9-444b-4088-a004-3f79de071267/3f5e3bf8-54d9-4d82-a9c9-6ecf412dfbb3/4a416b82-ee2d-4951-9c1f-9bf352eb88e9.mp4",
+      "bytes": 1855,
+      "sha256": "79b436d2d8149c82f0bc13ea14150b0f3a10c94aa3a6fced25684b62056af091",
+      "transport_version": 2
+    }
+  ],
+  "events": [
+    {
+      "step": "anonymous_signup",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 2,
+      "response_bytes": 1134,
+      "at": "2026-09-11T21:02:45Z"
+    },
+    {
+      "step": "own_listing_reconciliation",
+      "method": "GET",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 0,
+      "response_bytes": 2,
+      "at": "2026-09-11T21:02:47Z"
+    },
+    {
+      "step": "create_fixture_listing",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 211,
+      "response_bytes": 571,
+      "at": "2026-09-11T21:02:48Z"
+    },
+    {
+      "step": "fixture.png:ticket",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 257,
+      "response_bytes": 425,
+      "at": "2026-09-11T21:02:50Z"
+    },
+    {
+      "step": "fixture.png:ticket_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 257,
+      "response_bytes": 424,
+      "at": "2026-09-11T21:02:52Z"
+    },
+    {
+      "step": "fixture.png:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 409,
+      "request_bytes": 78,
+      "response_bytes": 95,
+      "at": "2026-09-11T21:02:54Z"
+    },
+    {
+      "step": "fixture.png:transfer",
+      "method": "PUT",
+      "origin": "https://uploads.rendprop.com",
+      "status": 403,
+      "request_bytes": 73,
+      "response_bytes": 17,
+      "at": "2026-09-11T21:02:55Z"
+    },
+    {
+      "step": "diagnose_undispatched_403",
+      "method": "PUT",
+      "origin": "https://uploads.rendprop.com",
+      "status": 403,
+      "request_bytes": 73,
+      "response_bytes": 17,
+      "at": "2026-09-11T21:04:09Z"
+    },
+    {
+      "step": "undispatched_fixture_identified_client",
+      "method": "PUT",
+      "origin": "https://uploads.rendprop.com",
+      "status": 200,
+      "request_bytes": 73,
+      "response_bytes": 0,
+      "at": "2026-09-11T21:04:30Z"
+    },
+    {
+      "step": "fixture.png:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:04:52Z"
+    },
+    {
+      "step": "fixture.png:complete_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:04:54Z"
+    },
+    {
+      "step": "single.mp4:ticket",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 257,
+      "response_bytes": 425,
+      "at": "2026-09-11T21:04:56Z"
+    },
+    {
+      "step": "single.mp4:ticket_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 257,
+      "response_bytes": 424,
+      "at": "2026-09-11T21:04:58Z"
+    },
+    {
+      "step": "single.mp4:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 409,
+      "request_bytes": 78,
+      "response_bytes": 95,
+      "at": "2026-09-11T21:05:00Z"
+    },
+    {
+      "step": "single.mp4:transfer",
+      "method": "PUT",
+      "origin": "https://uploads.rendprop.com",
+      "status": 200,
+      "request_bytes": 1855,
+      "response_bytes": 0,
+      "at": "2026-09-11T21:05:00Z"
+    },
+    {
+      "step": "single.mp4:complete",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:05:04Z"
+    },
+    {
+      "step": "single.mp4:complete_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:05:06Z"
+    },
+    {
+      "step": "single.mp4:final_object_digest",
+      "method": "GET",
+      "origin": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev",
+      "status": 200,
+      "request_bytes": 0,
+      "response_bytes": 1855,
+      "at": "2026-09-11T21:05:06Z"
+    },
+    {
+      "step": "multipart.mp4:ticket",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 260,
+      "response_bytes": 647,
+      "at": "2026-09-11T21:05:08Z"
+    },
+    {
+      "step": "multipart.mp4:ticket_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 260,
+      "response_bytes": 646,
+      "at": "2026-09-11T21:05:10Z"
+    },
+    {
+      "step": "multipart.mp4:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 409,
+      "request_bytes": 91,
+      "response_bytes": 95,
+      "at": "2026-09-11T21:05:12Z"
+    },
+    {
+      "step": "multipart.mp4:part_url",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 16,
+      "response_bytes": 194,
+      "at": "2026-09-11T21:05:13Z"
+    },
+    {
+      "step": "multipart.mp4:transfer",
+      "method": "PUT",
+      "origin": "https://uploads.rendprop.com",
+      "status": 200,
+      "request_bytes": 1855,
+      "response_bytes": 0,
+      "at": "2026-09-11T21:05:14Z"
+    },
+    {
+      "step": "multipart.mp4:complete",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 152,
+      "response_bytes": 825,
+      "at": "2026-09-11T21:05:17Z"
+    },
+    {
+      "step": "multipart.mp4:complete_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 152,
+      "response_bytes": 825,
+      "at": "2026-09-11T21:05:19Z"
+    },
+    {
+      "step": "publish_synthetic_app_render",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 196,
+      "response_bytes": 659,
+      "at": "2026-09-11T21:05:20Z"
+    },
+    {
+      "step": "publish_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 196,
+      "response_bytes": 659,
+      "at": "2026-09-11T21:05:21Z"
+    },
+    {
+      "step": "fixture.png:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:06:55Z"
+    },
+    {
+      "step": "fixture.png:complete_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:06:57Z"
+    },
+    {
+      "step": "single.mp4:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:06:58Z"
+    },
+    {
+      "step": "single.mp4:complete_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 78,
+      "response_bytes": 810,
+      "at": "2026-09-11T21:06:59Z"
+    },
+    {
+      "step": "single.mp4:final_object_digest",
+      "method": "GET",
+      "origin": "https://pub-70303ef2ff484a179c03ff19b26aa63d.r2.dev",
+      "status": 200,
+      "request_bytes": 0,
+      "response_bytes": 1855,
+      "at": "2026-09-11T21:07:00Z"
+    },
+    {
+      "step": "multipart.mp4:complete_probe",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 152,
+      "response_bytes": 825,
+      "at": "2026-09-11T21:07:01Z"
+    },
+    {
+      "step": "multipart.mp4:complete_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 200,
+      "request_bytes": 152,
+      "response_bytes": 825,
+      "at": "2026-09-11T21:07:02Z"
+    },
+    {
+      "step": "publish_synthetic_app_render",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 196,
+      "response_bytes": 659,
+      "at": "2026-09-11T21:07:04Z"
+    },
+    {
+      "step": "publish_replay",
+      "method": "POST",
+      "origin": "https://ymgqpbnjpztwjsyvceld.supabase.co",
+      "status": 201,
+      "request_bytes": 196,
+      "response_bytes": 659,
+      "at": "2026-09-11T21:07:05Z"
+    },
+    {
+      "step": "hosted_share_url",
+      "method": "GET",
+      "origin": "https://rendprop.com",
+      "status": 200,
+      "request_bytes": 0,
+      "response_bytes": 75858,
+      "at": "2026-09-11T21:07:07Z"
+    },
+    {
+      "step": "hosted_unbranded_url",
+      "method": "GET",
+      "origin": "https://rendprop.com",
+      "status": 200,
+      "request_bytes": 0,
+      "response_bytes": 58198,
+      "at": "2026-09-11T21:07:09Z"
+    }
+  ],
+  "limits": {
+    "gpu_or_ai_calls": 0,
+    "customer_records_touched": 0,
+    "deletions": 0
+  },
+  "not_proven": [
+    "iPhone background suspension",
+    "real room reconstruction",
+    "legacy ticket migration",
+    "global budget contention"
+  ]
+}

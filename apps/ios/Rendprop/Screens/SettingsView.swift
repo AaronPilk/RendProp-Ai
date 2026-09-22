@@ -4,6 +4,7 @@ import PhotosUI
 import WebKit
 
 struct SettingsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     // Key is shared with UploadManager.shouldWarnCellular (which reads it via
     // UserDefaults). The launch code registers the default (`true`) so the
     // toggle and the upload manager agree on a fresh install.
@@ -31,6 +32,19 @@ struct SettingsView: View {
     @State private var usage: UsageSummary?
     @State private var usageError: String?
     @State private var isLoadingUsage = false
+
+    // MARK: Notifications (Push/PushManager.swift)
+    @ObservedObject private var push = PushManager.shared
+    /// What the ACCOUNT wants to be told about (`GET /me` → `notifications`).
+    /// nil means the server sent no such object — this deployment has no
+    /// notification preferences yet — which is why the category rows are drawn
+    /// from this being non-nil rather than from a flag we could get wrong.
+    @State private var notificationPrefs: NotificationPrefs?
+    @State private var isSavingNotificationPrefs = false
+    /// Set when a save failed for a reason that is NOT "the route isn't
+    /// deployed". A missing route is a fact about the server and says nothing
+    /// on screen; a real failure is the person's business.
+    @State private var notificationSaveError: String?
 
     // Owner console visibility. Decided by the SERVER — never a hardcoded email
     // and never a local flag. `/me` may one day carry `is_admin`; today it does
@@ -61,6 +75,12 @@ struct SettingsView: View {
     /// Entry point 2 of 2 into Coach (the other is Home's sparkles button).
     /// docs/COACH-CONTRACT.md.
     @State private var showCoach = false
+
+#if SPATIAL_CAPTURE_LAB
+    // Only the explicit TestFlight project includes the local capture harness.
+    // The reviewed App Store configuration must not acquire an experimental door.
+    @State private var showSpatialCaptureLab = false
+#endif
 
     /// True when a server account exists to sign into / delete. In the offline
     /// (mock) build there is no account — only data on this phone.
@@ -94,6 +114,20 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+#if SPATIAL_CAPTURE_LAB
+            Section {
+                Button {
+                    showSpatialCaptureLab = true
+                } label: {
+                    Label("Spatial capture (TestFlight)", systemImage: "viewfinder")
+                }
+                .accessibilityIdentifier("settings.spatialCapture")
+            } header: {
+                Text("TestFlight lab")
+            } footer: {
+                Text("Experimental one-room capture. Images and camera poses stay on this iPhone until you export them. This does not publish a tour.")
+            }
+#endif
             Section {
                 NavigationLink {
                     BusinessTypeView()
@@ -162,6 +196,23 @@ struct SettingsView: View {
                     } else if s.status == .paused || s.status == .failed {
                         Button("Resume upload") { uploads.resume() }
                     }
+                    // The engine ran its own bounded recovery on this upload
+                    // ticket dry. Resume stays (the server may have re-planned
+                    // the transfer by now); Start over is the guaranteed way
+                    // out — the same video again under a fresh ticket.
+                    if s.canStartOver {
+                        Button("Start over") { uploads.startOver() }
+                            .accessibilityIdentifier("settings.upload.startOver")
+                        Text("Recovery on this upload's ticket ran out. Resume checks the same ticket once more; Start over sends the video again under a new upload ticket. Your original stays on this phone either way.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                    if s.status == .paused {
+                        Text("Transfers already in progress can finish. No new parts start until you resume.")
+                            .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
+                    if let message = s.failureMessage, !message.isEmpty {
+                        Text(message).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                    }
                     // No cancel once it's finished — nothing left to cancel.
                     if s.status != .done {
                         Button("Cancel upload", role: .destructive) { uploads.cancel() }
@@ -186,14 +237,14 @@ struct SettingsView: View {
                 Text(brandKitFooter)
             }
 
-            // Notifications section is hidden until push (APNs) is wired — a
-            // reviewer must never see "Coming soon" placeholder rows (App Store
-            // 2.1). Re-enable this block behind Config.enablePush when APNs ships.
+            // APNs shipped in 1.0.2, so this section is real now. The rule that
+            // hid it still stands and still shapes it: a reviewer must never
+            // meet a placeholder row (App Store 2.1). So every row below is
+            // either a live switch or an honest statement of a fact the app can
+            // actually see — and the per-category rows appear ONLY once the
+            // server sends preferences to put in them.
             if Config.enablePush {
-                Section("Notifications") {
-                    LabeledContent("Render ready", value: "On")
-                    LabeledContent("New lead", value: "On")
-                }
+                notificationsSection
             }
 
             // Source of truth for shooting guidance is the capture screen's
@@ -211,7 +262,7 @@ struct SettingsView: View {
             Section {
                 LabeledContent("Account", value: accountStatusLabel)
                 if serverAccountsEnabled {
-                    if auth.isSignedIn {
+                    if auth.isIdentified {
                         Button("Sign out", role: .destructive) { showSignOutConfirm = true }
                     } else {
                         Button {
@@ -219,6 +270,18 @@ struct SettingsView: View {
                         } label: {
                             Label("Sign in with Apple", systemImage: "apple.logo")
                         }
+                    }
+                }
+                if serverAccountsEnabled {
+                    // Seats. Opening this screen requires nothing; holding a
+                    // seat requires Sign in with Apple, and that is the ONE
+                    // place in the app where sign-in is genuinely required
+                    // (App Store 5.1.1(v) allows it precisely because a team
+                    // seat is an account-based feature). Team/TeamView.swift.
+                    NavigationLink {
+                        TeamView()
+                    } label: {
+                        Label("Team", systemImage: "person.2")
                     }
                 }
                 Button {
@@ -234,6 +297,30 @@ struct SettingsView: View {
                 Text("Account")
             } footer: {
                 Text(accountFooter)
+            }
+
+            if let message = auth.adoptionRecoveryMessage {
+                Section {
+                    Text(message)
+                        .font(.rpBody)
+                        .accessibilityIdentifier("settings.workspaceRecovery.status")
+                    Button {
+                        Task {
+                            await auth.refreshIfNeeded()
+                            await auth.retryPendingAdoptionIfNeeded()
+                        }
+                    } label: {
+                        Label("Retry workspace transfer", systemImage: "arrow.clockwise")
+                    }
+                    .accessibilityIdentifier("settings.workspaceRecovery.retry")
+                    Link(destination: Self.supportMailURL(subject: "Workspace recovery help")) {
+                        Label("Get recovery help", systemImage: "envelope")
+                    }
+                } header: {
+                    Text("Workspace recovery")
+                } footer: {
+                    Text("A saved transfer only retries for the account it was started with. Your other features remain available. No workspace is deleted by retrying.")
+                }
             }
 
             if Config.useLiveBackend {
@@ -263,10 +350,24 @@ struct SettingsView: View {
                         Label("Funnel", systemImage: "chart.bar.xaxis")
                     }
                     // MARK: - end funnel additions
+                    // MARK: - growth additions (1.0.2)
+                    NavigationLink {
+                        AdminCohortsView()
+                    } label: {
+                        Label("Cohorts", systemImage: "calendar.badge.clock")
+                    }
+                    .accessibilityIdentifier("admin.tab.cohorts")
+                    NavigationLink {
+                        AdminChurnView()
+                    } label: {
+                        Label("Churn", systemImage: "person.crop.circle.badge.xmark")
+                    }
+                    .accessibilityIdentifier("admin.tab.churn")
+                    // MARK: - end growth additions
                 } header: {
                     Text("Owner console")
                 } footer: {
-                    Text("Spend and providers are read-only. Funnel shows where people stop and whether the app is crashing. AI routing can be changed — it decides which provider runs each AI job. This row is here because the server says this account is an admin; it enforces that on every request, so nothing on this phone can unlock it.")
+                    Text("Spend and providers are read-only. Funnel shows where people stop and whether the app is crashing. Cohorts follows each signup week forward — who published, how fast, who's paying. Churn shows who cancelled and how that compares with the period before. AI routing can be changed — it decides which provider runs each AI job. This row is here because the server says this account is an admin; it enforces that on every request, so nothing on this phone can unlock it.")
                 }
             }
 
@@ -356,26 +457,51 @@ struct SettingsView: View {
         }
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.settings)
         .task { await loadUsage() }
-        .refreshable { await loadUsage() }
+        .task { await loadNotificationPrefs() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { Task { await loadUsage(); if !isSavingNotificationPrefs { await loadNotificationPrefs() } } }
+        }
+        .refreshable {
+            await loadUsage()
+            await loadNotificationPrefs()
+        }
         .sheet(isPresented: $showCoach) {
             CoachView(model: model, originScreen: "settings")
         }
+#if SPATIAL_CAPTURE_LAB
+        .fullScreenCover(isPresented: $showSpatialCaptureLab) {
+            SpatialCaptureLabView()
+        }
+#endif
         .onChange(of: auth.isSignedIn) { signedIn in
             if signedIn {
                 adminProbeDone = false
                 Task { await loadUsage() }
+                Task { await loadNotificationPrefs() }
             } else {
                 usage = nil
                 usageError = nil
                 showAdminConsole = false
                 adminProbeDone = false
+                // The preferences belong to the account, not to the phone.
+                notificationPrefs = nil
+                notificationSaveError = nil
             }
         }
+        .onChange(of: auth.userID) { _ in
+            usage = nil; usageError = nil; notificationPrefs = nil; notificationSaveError = nil
+            showAdminConsole = false; adminProbeDone = false
+            Task { await loadUsage(); await loadNotificationPrefs() }
+        }
         .sheet(isPresented: $showSignIn) {
-            SignInView {
-                Task { await loadUsage() }
-            }
+            // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
+            // the user that registering will enable them to access the purchased
+            // content from any of their supported devices and provide them a way
+            // to register at any time." That is what this sheet is for, and it
+            // is why nothing here presents it as a requirement.
+            SignInView.optionalUpgrade { Task { await loadUsage() } }
         }
         .confirmationDialog("Sign out?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) {
@@ -388,7 +514,7 @@ struct SettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Your \(localItemNoun)s, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again.")
+            Text(signOutMessage)
         }
         .alert("Upload in progress", isPresented: $showIntroConfirm) {
             Button("Watch anyway", role: .destructive) { hasOnboarded = false }
@@ -429,7 +555,7 @@ struct SettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(serverAccountsEnabled
-                 ? "Removes every \(localItemNoun), video, tour and card stored on this phone and signs you out — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
+                 ? "Removes every \(localItemNoun), video, tour and card stored on this phone\(auth.isIdentified ? " and signs you out" : "") — including this phone's copies of the untouched originals behind your AI-edited photos. Your account, your published tours and the originals published with them are NOT deleted; use Delete account for that."
                  : "Removes every \(localItemNoun), video, tour and card stored on this phone — including this phone's copies of the untouched originals behind your AI-edited photos.")
         }
         .alert("Data cleared", isPresented: $showDataCleared) {
@@ -442,6 +568,16 @@ struct SettingsView: View {
     }
 
     // MARK: - Small labels
+
+    /// Sign-out now also drops a workspace transfer that is still waiting
+    /// (AuthStore.signOut), so the confirmation says so when there is one.
+    private var signOutMessage: String {
+        var text = "Your \(localItemNoun)s, videos and tours stay on this phone. Publishing and AI tools ask you to sign in again."
+        if auth.adoptionRecoveryMessage != nil {
+            text += " The workspace transfer that is still waiting will be cancelled; those tours stay on this phone and can be published again."
+        }
+        return text
+    }
 
     private func uploadStatusLabel(_ status: UploadManager.Status) -> String {
         switch status {
@@ -474,9 +610,167 @@ struct SettingsView: View {
         guard serverAccountsEnabled else {
             return "Offline build — capture and on-device rendering work without an account."
         }
-        return auth.isSignedIn
+        return auth.isIdentified
             ? "Signed in with Apple. Publishing, leads and AI tools use this account."
-            : "Capture and on-device rendering work without an account. Sign in to publish tours, see leads and use AI tools."
+            : "Everything works without signing in — your homes, tours, leads and plan live in a workspace held for this iPhone. Sign in with Apple to carry them to a new phone, and to get them back if you delete the app."
+    }
+
+    // MARK: - Notifications (1.0.2)
+    //
+    // FOUR STATES, and the section shows exactly one, because there is exactly
+    // one true answer at a time:
+    //
+    //   DENIED at the OS level    → ONE row that opens iOS Settings. No
+    //       switches: iOS does not let an app turn its own notifications back
+    //       on, and a switch that silently does nothing is worse than none.
+    //   NEVER ASKED               → one button that asks. The single system
+    //       prompt is spent here deliberately: somebody who opened Settings and
+    //       went looking for this has already said yes in every way that
+    //       matters.
+    //   ALLOWED, prefs available  → the master switch plus one row per
+    //       category, each saved with `PATCH /me/notifications`.
+    //   ALLOWED, no prefs         → one row STATING that notifications are on,
+    //       and a footer naming what arrives. This is a signed-out phone, or a
+    //       server that predates the route (they are shipping in parallel). A
+    //       category switch with nowhere to save to is exactly the "Coming
+    //       soon" placeholder this section was hidden to avoid — App Store 2.1.
+
+    @ViewBuilder
+    private var notificationsSection: some View {
+        Section {
+            if push.isDenied {
+                Button { PushManager.openSystemSettings() } label: {
+                    Label("Turn on notifications in iOS Settings", systemImage: "arrow.up.forward.app")
+                }
+                .accessibilityIdentifier("settings.notifications.openSystem")
+            } else if push.isUndecided {
+                Button {
+                    Task { await push.requestAuthorization() }
+                } label: {
+                    Label("Turn on notifications", systemImage: "bell.badge")
+                }
+                .accessibilityIdentifier("settings.notifications.enable")
+            } else if let prefs = notificationPrefs {
+                Toggle("Notifications", isOn: Binding(
+                    get: { notificationPrefs?.enabled ?? true },
+                    set: { setNotificationsEnabled($0) }))
+                    .disabled(isSavingNotificationPrefs)
+                    .accessibilityIdentifier("settings.notifications.master")
+                if prefs.enabled {
+                    ForEach(NotificationCategory.allCases) { category in
+                        Toggle(isOn: Binding(
+                            get: { notificationPrefs?[category] ?? true },
+                            set: { setNotificationCategory(category, to: $0) })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(category.title)
+                                Text(category.blurb)
+                                    .font(.rpCaption)
+                                    .foregroundStyle(Theme.inkDim)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                        }
+                        .disabled(isSavingNotificationPrefs)
+                        .accessibilityIdentifier("settings.notifications.\(category.rawValue)")
+                    }
+                }
+                if let notificationSaveError {
+                    Text(notificationSaveError)
+                        .font(.rpCaption)
+                        .foregroundStyle(Theme.warn)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                // Allowed at the OS level, but this account has no preferences
+                // to change — a signed-out phone, or a server that predates the
+                // route. A row that STATES a fact the app can see, never a
+                // switch that would save nowhere.
+                LabeledContent("Notifications", value: "On")
+                    .accessibilityIdentifier("settings.notifications.state")
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text(notificationsFooter)
+        }
+    }
+
+    private var notificationsFooter: String {
+        if push.isDenied {
+            return "Notifications are off for Rendprop in iOS Settings. Only iOS can turn them back on — this opens the right page."
+        }
+        if push.isUndecided {
+            return "We'll tell you when someone enquires about a tour, and when a render finishes. Nothing else."
+        }
+        let arrives = "You'll get a notification when someone enquires about a tour, and when a render finishes."
+        if notificationPrefs == nil {
+            return auth.isSignedIn
+                ? arrives + " Choosing which ones isn't available on this server yet — those switches appear here on their own once it is."
+                : arrives + " Choosing which ones belongs to your account, so those switches appear once this iPhone is connected."
+        }
+        return "These apply to every device signed into this account."
+    }
+
+    /// Read the account's choices. Silent by design: a server without the
+    /// `notifications` object leaves `notificationPrefs` nil, which draws the
+    /// section's "here's what arrives" state instead of an error.
+    @MainActor
+    private func loadNotificationPrefs() async {
+        guard Config.enablePush, Config.useLiveBackend, auth.isSignedIn else {
+            notificationPrefs = nil
+            return
+        }
+        guard let api = model.api as? NotificationPrefsAPI else {
+            notificationPrefs = nil
+            return
+        }
+        // A failure here is silence on purpose: a preferences read that cannot
+        // answer is not something a person can act on, and the section already
+        // has an honest state for "no preferences".
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
+        let fetched: NotificationPrefs? = try? await api.notificationPrefs()
+        guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+        notificationPrefs = fetched
+        notificationSaveError = nil
+    }
+
+    private func setNotificationsEnabled(_ enabled: Bool) {
+        guard var prefs = notificationPrefs else { return }
+        prefs.enabled = enabled
+        saveNotificationPrefs(prefs)
+    }
+
+    private func setNotificationCategory(_ category: NotificationCategory, to value: Bool) {
+        guard var prefs = notificationPrefs else { return }
+        prefs[category] = value
+        saveNotificationPrefs(prefs)
+    }
+
+    /// Optimistic, then corrected by whatever the server says it stored.
+    ///
+    /// A 404 means the route is not deployed: the rows disappear rather than
+    /// lying about having saved anything, and nothing is said — a person cannot
+    /// act on "your server is older than your app". Any other failure puts the
+    /// previous value back and says so in one line.
+    private func saveNotificationPrefs(_ prefs: NotificationPrefs) {
+        guard let api = model.api as? NotificationPrefsAPI else { return }
+        let previous = notificationPrefs
+        notificationPrefs = prefs
+        notificationSaveError = nil
+        isSavingNotificationPrefs = true
+        Haptics.selection()
+        Task { @MainActor in
+            defer { isSavingNotificationPrefs = false }
+            do {
+                notificationPrefs = try await api.updateNotificationPrefs(prefs)
+            } catch let error as APIError where error.isNotFound {
+                notificationPrefs = nil
+            } catch {
+                if error is CancellationError { return }
+                notificationPrefs = previous
+                notificationSaveError = "Couldn't save that just now. Try again in a moment."
+            }
+        }
     }
 
     // MARK: - Plan & usage (live backend only)
@@ -485,7 +779,10 @@ struct SettingsView: View {
     private var usageSection: some View {
         Section {
             if !auth.isSignedIn {
-                Text("Sign in to see your plan and this month's usage.")
+                // Not a sign-in prompt: every launch opens a session by itself,
+                // so the only way to be here is that the phone hasn't reached
+                // Rendprop yet.
+                Text("Not connected yet — your plan and this month's usage appear as soon as this iPhone reaches Rendprop.")
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
             } else if let usage {
@@ -570,7 +867,10 @@ struct SettingsView: View {
         if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
             if let ends = e.trialEndsAt, ends > Date() {
-                LabeledContent("Trial ends", value: ends.formatted(date: .abbreviated, time: .omitted))
+                // "Free week", never "trial": the paywall's StoreKit
+                // introductory offer is the "7-day free trial", and the server
+                // week must not share its name (see OnboardingView).
+                LabeledContent("Free week ends", value: ends.formatted(date: .abbreviated, time: .omitted))
             }
             usageRow("Tour renders", used: e.used["renders"], cap: e.rendersPerMonth)
             usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth)
@@ -609,6 +909,8 @@ struct SettingsView: View {
     private static func planLabel(_ e: Entitlements) -> String {
         let name = e.plan.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return "—" }
+        // The server calls the week `trial`; the person is told "free week".
+        if name.lowercased() == "trial" { return "Free week" }
         return name.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
@@ -620,11 +922,16 @@ struct SettingsView: View {
         }
         isLoadingUsage = true
         defer { isLoadingUsage = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
         do {
-            usage = try await model.api.me()
+            let fetched = try await model.api.me()
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            usage = fetched
             usageError = nil
         } catch {
             if error is CancellationError { return }
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             usageError = UserFacingError.message(error, fallback: "Couldn't load usage. Pull down to refresh.")
         }
         await resolveAdminAccess()
@@ -667,7 +974,11 @@ struct SettingsView: View {
     /// What the Account row shows — the real state, never a dev placeholder.
     private var accountStatusLabel: String {
         guard serverAccountsEnabled else { return "Offline build" }
-        guard auth.isSignedIn else { return "Not signed in" }
+        // An anonymous session is a session, not an identity. Claiming "Signed
+        // in with Apple" here would be a lie to everyone who never tapped it.
+        guard auth.isIdentified else {
+            return auth.isSignedIn ? "Not signed in" : "Connecting…"
+        }
         let name = auth.displayName.trimmingCharacters(in: .whitespaces)
         return name.isEmpty ? "Signed in with Apple" : name
     }
@@ -769,6 +1080,8 @@ struct SettingsView: View {
         }
 
         // 2. Local erasure: session, listings + videos + tours, profile cards.
+        //    signOut() also drops any saved workspace-transfer handoff (and the
+        //    anonymous refresh token inside it) — the account it was for is gone.
         if uploads.state != nil { uploads.cancel() }
         auth.signOut()
         wipeLocalData()
@@ -781,7 +1094,15 @@ struct SettingsView: View {
     @MainActor
     private func clearLocalDataTapped() {
         if uploads.state != nil { uploads.cancel() }
-        auth.signOut()
+        // Anonymous sessions keep their session: this alert promises the
+        // published tours survive, and for an anonymous workspace the token is
+        // the ONLY key to them. Delete account is the honest way to end one.
+        if auth.isIdentified { auth.signOut() }
+        // A saved workspace-transfer handoff is data on this phone too, and it
+        // can only ever have belonged to an identified session that is now
+        // gone (or, from an older build, to an anonymous user this phone no
+        // longer holds). Left behind, it made every later Apple sign-in fail.
+        auth.discardPendingAdoption()
         wipeLocalData()
         Haptics.success()
         showDataCleared = true
@@ -799,11 +1120,15 @@ struct SettingsView: View {
     /// ── WRITE-LOCATION CHECKLIST (keep in sync; add a line when you add a writer) ──
     /// Documents/                (wiped wholesale, step 1)
     ///   Recordings/             capture + on-device renders + enhanced-*.mp4   FileStore.recordingsDir
+    ///   Captures/<UUID>/        local spatial TestFlight images + poses         CaptureArchive (lab overlay only)
     ///   Imports/                imported source clips                          FileStore.importsDir
     ///   Aerials/                AI aerial intros <id>-<stamp>.mp4              FileStore.aerialsDir
     ///   Photos/<listingID>/     AI photo studio originals + edits              FlythroughDetailView
     ///   FloorPlans/             <id>.usdz, <id>.json, <id>-upload.*            FlythroughDetailView
     ///   reels/                  <id>-<stamp>.mp4                               FlythroughDetailView
+    ///   reels/<id>-parked/      finished, ALREADY-BILLED reel clips kept when
+    ///                           Reel Studio is closed mid-job                  FlythroughDetailView
+    ///   Voiceovers/             <id>-<stamp>.m4a|mp3 reel voiceovers           Voiceover.persistAudio
     ///   Previews/               generated preview-*.html                       PlayerWebView
     ///   agent-headshot*.jpg     brand photo per business type                  AgentCard
     ///   rendprop-state.json     the model snapshot (+ .corrupt-* quarantines)  PersistentStore
@@ -818,7 +1143,13 @@ struct SettingsView: View {
     /// WKWebsiteDataStore        cookies/localStorage from hosted tour pages     (step 4)
     /// UserDefaults              agent cards, brand bookkeeping, aerial job records,
     ///                           AI-processing consent (step 5)
-    /// Keychain                  auth tokens — cleared by AuthStore.signOut() before this runs;
+    /// Keychain                  auth tokens — cleared by AuthStore.signOut(), which Delete
+    ///                           account always runs first and Clear local data runs only for
+    ///                           an identified session (an anonymous session keeps its token:
+    ///                           it is the only key to that workspace's published tours);
+    ///                           the saved workspace-transfer handoff (+ the anonymous refresh
+    ///                           token inside it) — AuthStore.signOut() / discardPendingAdoption(),
+    ///                           both paths, before this runs;
     ///                           analytics device id — Analytics.resetDeviceIdentity() (step 6)
     /// UserDefaults              analytics device id fallback — same call, step 6
     /// ──────────────────────────────────────────────────────────────────────────────
@@ -958,6 +1289,7 @@ enum UserFacingError {
 // the detail screen. Lives in this in-target file (new-file rule).
 
 struct LeadsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     /// nil = every lead for the account; a listing = only that listing's leads.
     var listing: Listing? = nil
 
@@ -1007,8 +1339,10 @@ struct LeadsView: View {
         .navigationTitle("Leads")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .onChange(of: scenePhase) { phase in if phase == .active { Task { await load() } } }
         .refreshable { await load() }
-        .onChange(of: auth.isSignedIn) { _ in Task { await load() } }
+        .onChange(of: auth.isSignedIn) { _ in leads = []; Task { await load() } }
+        .onChange(of: auth.userID) { _ in leads = []; errorMessage = nil; Task { await load() } }
         .sheet(isPresented: $showSignIn) {
             SignInView {
                 Task { await load() }
@@ -1131,13 +1465,17 @@ struct LeadsView: View {
         if let listing, listing.isSample || listing.serverID == nil { hasLoaded = true; return }
         isLoading = true
         defer { isLoading = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
         do {
             let fetched = try await model.api.leads(listingServerID: listing?.serverID)
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
             leads = fetched.sorted { $0.createdAt > $1.createdAt }
             errorMessage = nil
             hasLoaded = true
         } catch {
             if error is CancellationError { return }
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             errorMessage = UserFacingError.message(error, fallback: "Couldn't load leads. Pull down to try again.")
             hasLoaded = true
         }
@@ -1159,6 +1497,9 @@ struct LeadRow: View {
                 Text(lead.createdAt, style: .time)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+            }
+            if let status = lead.status, ["new", "contacted", "won", "lost"].contains(status) {
+                Text(status.capitalized).font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
             }
             if showListing, let address = lead.listingAddress?.trimmingCharacters(in: .whitespaces), !address.isEmpty {
                 Label(address, systemImage: SpaceType.current.systemImage)
@@ -1185,24 +1526,49 @@ struct LeadRow: View {
                     }
                 }
             }
-            HStack(spacing: 14) {
+            // Two SEPARATE actions with their own hit targets. Owner feedback,
+            // 15 Sep: "when I click the phone number it should call not open up
+            // email." The links were always built correctly — the row merged
+            // them. Each one now carries its own contentShape and 44pt minimum
+            // so a thumb lands where the eye aimed, and `.buttonStyle(.plain)`
+            // stops a surrounding List row from swallowing the tap first.
+            HStack(spacing: 8) {
                 if let phone = lead.phone?.trimmingCharacters(in: .whitespaces), !phone.isEmpty,
                    let url = Self.telURL(phone) {
                     Link(destination: url) {
                         Label(phone, systemImage: "phone.fill")
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text("Call \(phone)"))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("lead.call")
                 }
                 if let email = lead.email?.trimmingCharacters(in: .whitespaces), !email.isEmpty,
                    let url = Self.mailURL(email) {
                     Link(destination: url) {
                         Label(email, systemImage: "envelope.fill")
                             .lineLimit(1)
+                            .padding(.vertical, 10)
+                            .padding(.horizontal, 8)
+                            .frame(minHeight: 44)
+                            .contentShape(Rectangle())
                     }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Theme.accent)
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel(Text("Email \(email)"))
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityIdentifier("lead.email")
                 }
+                Spacer(minLength: 0)
             }
             .font(.rpCaption.weight(.semibold))
-            .foregroundStyle(Theme.accent)
-            .padding(.top, 2)
             if let source = lead.source?.trimmingCharacters(in: .whitespaces), !source.isEmpty, source != "tour" {
                 Text("via \(source)")
                     .font(.caption2)
@@ -1210,7 +1576,12 @@ struct LeadRow: View {
             }
         }
         .padding(.vertical, 4)
-        .accessibilityElement(children: .combine)
+        // NOT `.accessibilityElement(children: .combine)`. That merged the whole
+        // card — both Links included — into ONE element, which made the two
+        // actions indistinguishable to VoiceOver and is the likeliest reason a
+        // tap on the phone number resolved to the mail link. `.contain` keeps
+        // the card grouped while leaving the two actions separately addressable.
+        .accessibilityElement(children: .contain)
     }
 
     /// "eventDate" → "Event date"; "party_size" → "Party size".
@@ -1277,6 +1648,30 @@ struct AgentCard {
     static let primaryTypeKey = "brand.primaryType"
     /// Snapshot of the last payload pushed to PATCH /me/brand (skip identical pushes).
     static let lastPushedKey = "brand.lastPushed"
+    static let cloudOwnerKey = "brand.cloudOwner"
+
+    /// Pull a shared card only when it cannot erase an edit waiting to upload.
+    /// A previous account's card is archived locally before replacing it.
+    @MainActor static func acceptCloud(_ brand: CloudBrand) {
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == brand.userID,
+              let type = SpaceType(rawValue: brand.spaceType) else { return }
+        let defaults = UserDefaults.standard
+        let owner = "\(brand.userID.uuidString):\(brand.orgID.uuidString)"
+        let previousOwner = defaults.string(forKey: cloudOwnerKey)
+        let current = card(for: type).brandFields
+        let currentSignature = fieldNames.map { current[$0] ?? "" }.joined(separator: "\u{1F}")
+        let lastPushed = defaults.string(forKey: lastPushedKey)
+        if previousOwner == owner || previousOwner == nil {
+            if card(for: type).isSet && currentSignature != lastPushed { return }
+        } else {
+            defaults.set(current, forKey: "brand.archive.\(previousOwner!).\(type.rawValue)")
+        }
+        for field in fieldNames { defaults.set(brand.fields[field] ?? "", forKey: key(field, for: type)) }
+        defaults.set(fieldNames.map { brand.fields[$0] ?? "" }.joined(separator: "\u{1F}"), forKey: lastPushedKey)
+        defaults.set(owner, forKey: cloudOwnerKey)
+        primaryBrandType = type
+        NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
+    }
 
     /// Storage key NAMESPACED by business type, so each industry keeps its own
     /// card — a restaurant's card is separate from a real-estate agent's.
@@ -1576,6 +1971,7 @@ struct AgentCardEditorView: View {
         }
         .navigationTitle(editingType.profileCardName)
         .navigationBarTitleDisplayMode(.inline)
+        .askAI(.agentCard)
         .onAppear { headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: editingType).path) }
         .onDisappear {
             // Sync the card to the org's brand kit so it renders on every
@@ -1760,6 +2156,9 @@ struct ProfileView: View {
             .onChange(of: spaceTypeRaw) { _ in
                 card = AgentCard.current   // load THIS industry's card
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropCloudBrandUpdated)) { _ in
+                card = AgentCard.current
             }
             .sheet(isPresented: $showPortfolioShare) {
                 if let u = portfolioURL { ShareSheet(items: [u]) }

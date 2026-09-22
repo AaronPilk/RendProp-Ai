@@ -107,13 +107,13 @@ final class StoreShots: XCTestCase {
     /// `step09to11IndustryHomes` drops again. Keys verified against source:
     /// RendpropApp.swift @AppStorage("hasOnboarded"), RootTabView
     /// @AppStorage("space.type"), @AppStorage("appearance"), AIConsent
-    /// "ai.thirdPartyProcessing.consent.v1".
+    /// "ai.thirdPartyProcessing.consent.v2".
     private var baseLaunchArguments: [String] {
         var args = [
             "-uiTesting",
             "-hasOnboarded", "YES",
             "-appearance", "light",
-            "-ai.thirdPartyProcessing.consent.v1", "YES",
+            "-ai.thirdPartyProcessing.consent.v2", "YES",
             "-ui.sampleLeads",       // the mock's three invented leads (s14)
         ]
         // STORESHOT_PHOTOS (bridge-cmd-storeshots.sh passes it as

@@ -150,8 +150,13 @@ two-pass or Gyroflow-grade) is the v3 slot — see TODOs.
    default we don't block on transcode (`STREAM_REQUIRE_READY=0`).
 
 `direct_upload()` (multipart) **is** the automatic fallback: if Cloudflare can't
-reach the presigned R2 url, the worker pushes the bytes itself; if that fails too,
-the tour publishes with the R2 mp4. If only the readiness poll
+reach the presigned R2 url, the worker pushes small files itself. This fallback
+has a **16 MiB source-payload cap** because Requests buffers multipart bodies:
+empty/oversized files are refused before opening, and the actual read is bounded
+and checked again. This is a local safety policy, not a 16 MiB process-RSS limit
+or Cloudflare's upload limit. Larger files keep R2 MP4 playback; resumable tus is
+not implemented. If the allowed small-file fallback fails too, the tour also
+publishes with the R2 mp4. If only the readiness poll
 (`STREAM_REQUIRE_READY=1`) times out, the UID is kept (Stream keeps transcoding).
 A Stream asset registered by a job that then FAILS is deleted during rollback, so
 it can't transcode and bill forever unreferenced. **No Stream token? We skip

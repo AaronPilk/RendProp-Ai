@@ -3,6 +3,35 @@ import Foundation
 /// Central app configuration + feature flags.
 /// Phase 2 features are stubbed behind flags — see docs/MASTER-BUILD-PROMPT.md.
 enum Config {
+    /// Real-network regression tests use a disposable simulator and localhost.
+    /// These switches do not exist in Release and cannot point at a remote host.
+    static var isSessionNetworkTesting: Bool {
+#if DEBUG
+        ProcessInfo.processInfo.arguments.contains("-sessionNetworkTesting")
+#else
+        false
+#endif
+    }
+
+    static var sessionTestRun: String {
+#if DEBUG
+        ProcessInfo.processInfo.environment["RENDP_TEST_RUN"] ?? "isolated"
+#else
+        ""
+#endif
+    }
+
+    static var sessionTestURL: URL? {
+#if DEBUG
+        guard isSessionNetworkTesting,
+              let raw = ProcessInfo.processInfo.environment["RENDP_TEST_URL"],
+              let url = URL(string: raw), url.scheme == "http",
+              url.host == "127.0.0.1", url.user == nil, url.password == nil else { return nil }
+        return url
+#else
+        return nil
+#endif
+    }
     // MARK: - Backend (Supabase + Cloudflare) — see docs/BACKEND-ARCHITECTURE.md §2
 
     /// Supabase project root, e.g. https://<project-ref>.supabase.co
@@ -10,6 +39,7 @@ enum Config {
     /// Reads Info.plist key `RENDPROP_SUPABASE_URL` (inject via a build setting /
     /// xcconfig) if present, otherwise the constant below.
     static let supabaseURL: URL? = {
+        if isSessionNetworkTesting { return sessionTestURL }
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_URL") as? String,
            !s.isEmpty, let u = URL(string: s) { return u }
         return URL(string: "https://ymgqpbnjpztwjsyvceld.supabase.co")   // dedicated RendProp project (Pro)
@@ -25,6 +55,7 @@ enum Config {
     /// service-role key (that stays server-side only — architecture §4).
     /// Reads Info.plist `RENDPROP_SUPABASE_ANON_KEY` if present, else the constant.
     static let supabaseAnonKey: String = {
+        if isSessionNetworkTesting { return "local-fixture-public-key" }
         if let s = Bundle.main.object(forInfoDictionaryKey: "RENDPROP_SUPABASE_ANON_KEY") as? String,
            !s.isEmpty { return s }
         // Supabase anon key (public by design; RLS enforces access).
@@ -86,10 +117,23 @@ enum Config {
         return Int(args[i + 1])
     }
 
+    /// `-ui.planBanner <trial|ending|ended|paid>` (screenshots only): forces
+    /// Home's plan banner into one state. The banner otherwise draws only from
+    /// a live `/me`, which the mock cannot answer — so without this it can
+    /// never be photographed, and a thing nobody has looked at is a thing
+    /// nobody has checked. nil outside `-uiTesting` or when the arg is missing.
+    static var uiTestPlanBanner: String? {
+        guard isUITesting else { return nil }
+        let args = ProcessInfo.processInfo.arguments
+        guard let i = args.firstIndex(of: "-ui.planBanner"), i + 1 < args.count else { return nil }
+        return args[i + 1]
+    }
+
     /// Builds the active API client from `useLiveBackend`. Falls back to Mock if
     /// the live client can't be constructed (e.g. no base URL). Single source of
     /// truth so AppModel and UploadManager stay in sync.
     static func makeAPIClient() -> APIClient {
+        if isSessionNetworkTesting, let live = LiveAPIClient() { return live }
         // The UI walk is checked BEFORE the live client: `-uiTesting` always
         // means the offline mock, whatever `useLiveBackend` says.
         if isUITesting { return MockAPIClient() }
@@ -145,6 +189,30 @@ enum Config {
     // will actually succeed (DEPLOYMENT.md).
     static let enableAuth = true       // Sign in with Apple → Supabase; tokens in Keychain
     static let enableIAP  = true       // StoreKit 2 auto-renewable subscriptions (Purchases/) — read by nothing yet; documents the state
-    static let enablePush = false      // TODO: APNs render-ready / lead-received
+
+    /// APNs — "someone enquired about your tour" and "your render is ready".
+    ///
+    /// TRUE from 1.0.2. What this flag now means, precisely, because it is NOT
+    /// "the app asks for notifications":
+    ///
+    ///   • It un-hides Settings → Notifications and lets `PushManager` register
+    ///     with APNs and POST the token to `/me/devices`.
+    ///   • It does NOT raise the iOS dialog on its own. That one-shot prompt is
+    ///     spent ONLY on a yes, from a plain-words pre-prompt sheet that can be
+    ///     declined for free. The sheet appears at up to two moments in a
+    ///     lifetime: when onboarding finishes (`noteOnboardingFinished`, added
+    ///     13 Sep 2026 because the only other route was Settings, which nobody
+    ///     finds) and, if that one was declined, after the first successful
+    ///     publish (`noteTourPublished`), where the sentence is finally about a
+    ///     tour that exists. Nothing asks on a cold launch, ever.
+    ///   • Everything it enables is written to survive the server not having the
+    ///     routes yet: a 404 from `/me/devices` or `/me/notifications` is "not
+    ///     deployed", not an error, and is never retried in the same launch.
+    ///
+    /// Set it back to false and the app returns exactly to its 1.0.1 behaviour:
+    /// no registration, no prompt, Notifications hidden (App Store 2.1 — a
+    /// reviewer must never meet a placeholder row).
+    static let enablePush = true
+
     static let showTutorials = false   // flip on once tutorial videos are filmed (no "coming soon" placeholders ship)
 }

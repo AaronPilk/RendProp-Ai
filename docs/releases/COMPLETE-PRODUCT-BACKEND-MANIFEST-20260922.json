@@ -1,0 +1,725 @@
+{
+  "kind": "review-only, not deployed",
+  "baseCommit": "0687a0f97fe7a00e598e11a1b0fa73eb4fc4bb8e",
+  "sourceNote": "Working tree hashes are authoritative; the base commit may precede current edits.",
+  "prerequisites": [
+    "Confirm live migration names/content; eight Studio migrations are already applied under live timestamp versions.",
+    "Apply only missing 0055_video_reflection_jobs and 0056_active_photo_fallback, each atomically, before new ai-video/ai-photo dispatch.",
+    "Preserve disabled routes, current runtime flags, provider keys and existing per-function verify_jwt values.",
+    "Read back every declared changed function after deployment; compare each bundled source and record its new version."
+  ],
+  "functions": [
+    {
+      "name": "admin",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "admin/funnel.ts",
+        "admin/index.ts",
+        "admin/probe.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 24,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 9,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "admin/index.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "adopt",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/supabase.ts",
+        "adopt/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "ai-chapters",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/entitlements.ts",
+        "_shared/fairhousing.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/provenance.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "ai-chapters/gemini.ts",
+        "ai-chapters/index.ts",
+        "ai-chapters/postprocess.ts",
+        "ai-chapters/prompt.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts",
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 20,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 14,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "_shared/router.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "ai-copy",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/entitlements.ts",
+        "_shared/fairhousing.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/providers/anthropic.ts",
+        "_shared/providers/chain.ts",
+        "_shared/providers/common.ts",
+        "_shared/providers/openai.ts",
+        "_shared/providers/params.ts",
+        "_shared/providers/types.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "ai-copy/agentreel.ts",
+        "ai-copy/guard.ts",
+        "ai-copy/index.ts",
+        "ai-copy/prompt.ts",
+        "ai-copy/shotlist.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 13,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 19,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "ai-enhance",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/supabase.ts",
+        "ai-enhance/index.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 29,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 5,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "ai-photo",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/entitlements.ts",
+        "_shared/fairhousing.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/provenance.ts",
+        "_shared/providers/anthropic.ts",
+        "_shared/providers/chain.ts",
+        "_shared/providers/common.ts",
+        "_shared/providers/elevenlabs.ts",
+        "_shared/providers/fal.ts",
+        "_shared/providers/gemini.ts",
+        "_shared/providers/higgsfield.ts",
+        "_shared/providers/index.ts",
+        "_shared/providers/kie.ts",
+        "_shared/providers/openai.ts",
+        "_shared/providers/params.ts",
+        "_shared/providers/types.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "ai-copy/prompt.ts",
+        "ai-photo/index.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 45,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 24,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts",
+        "ai-photo/index.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "ai-video",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/drift.ts",
+        "_shared/entitlements.ts",
+        "_shared/fairhousing.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/provenance.ts",
+        "_shared/providers/anthropic.ts",
+        "_shared/providers/chain.ts",
+        "_shared/providers/common.ts",
+        "_shared/providers/elevenlabs.ts",
+        "_shared/providers/fal.ts",
+        "_shared/providers/gemini.ts",
+        "_shared/providers/higgsfield.ts",
+        "_shared/providers/index.ts",
+        "_shared/providers/jobtoken.ts",
+        "_shared/providers/kie.ts",
+        "_shared/providers/openai.ts",
+        "_shared/providers/params.ts",
+        "_shared/providers/types.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "ai-video/dronecost.ts",
+        "ai-video/erase.ts",
+        "ai-video/index.ts",
+        "ai-video/motion.ts",
+        "ai-video/mp4duration.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 41,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 27,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts",
+        "ai-video/index.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "ai-voice",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/entitlements.ts",
+        "_shared/fairhousing.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/provenance.ts",
+        "_shared/providers/chain.ts",
+        "_shared/providers/common.ts",
+        "_shared/providers/types.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "ai-voice/index.ts",
+        "ai-voice/shared-result.ts",
+        "ai-voice/storage-reservation.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 29,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 15,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "apple-subscriptions",
+      "sources": [
+        "_shared/applejws.ts",
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "apple-subscriptions/index.ts",
+        "apple-subscriptions/logic.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "beacon",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "beacon/index.ts",
+        "beacon/logic.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "coach",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/providers/anthropic.ts",
+        "_shared/providers/chain.ts",
+        "_shared/providers/common.ts",
+        "_shared/providers/openai.ts",
+        "_shared/providers/params.ts",
+        "_shared/providers/types.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "coach/actions.ts",
+        "coach/index.ts",
+        "coach/knowledge.ts",
+        "coach/prompt.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 15,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 16,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts",
+        "_shared/providers/chain.ts",
+        "_shared/router.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "events",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "events/index.ts",
+        "events/schema.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "leads",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/ghl.ts",
+        "_shared/http.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "leads/index.ts",
+        "leads/turnstile.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "listings",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/spacetypes.ts",
+        "_shared/supabase.ts",
+        "listings/create.ts",
+        "listings/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 33,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 6,
+      "liveDifferentFiles": [],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "me",
+      "sources": [
+        "_shared/apple.ts",
+        "_shared/applejws.ts",
+        "_shared/cors.ts",
+        "_shared/entitlements.ts",
+        "_shared/ghl.ts",
+        "_shared/http.ts",
+        "_shared/r2.ts",
+        "_shared/ratelimit.ts",
+        "_shared/spacetypes.ts",
+        "_shared/stream.ts",
+        "_shared/supabase.ts",
+        "me/deletion.ts",
+        "me/index.ts",
+        "me/logic.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 39,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 14,
+      "liveDifferentFiles": [],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "notify",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/supabase.ts",
+        "notify/apns.ts",
+        "notify/copy.ts",
+        "notify/deliver.ts",
+        "notify/email.ts",
+        "notify/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "portfolio",
+      "sources": [
+        "_shared/agentcard.ts",
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/r2.ts",
+        "_shared/supabase.ts",
+        "portfolio/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "property",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ledger.ts",
+        "_shared/property/provider.ts",
+        "_shared/property/rentcast.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "property/index.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/ledger.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 10,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 8,
+      "liveDifferentFiles": [
+        "_shared/ledger.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "renders",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/r2.ts",
+        "_shared/supabase.ts",
+        "renders/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "spatial",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/supabase.ts",
+        "spatial/capability.ts",
+        "spatial/contract.ts",
+        "spatial/index.ts",
+        "spatial/storage.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "studio",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/providers/common.ts",
+        "_shared/providers/jobtoken.ts",
+        "_shared/providers/types.ts",
+        "_shared/r2.ts",
+        "_shared/router.ts",
+        "_shared/supabase.ts",
+        "studio/context.ts",
+        "studio/creative-quality.ts",
+        "studio/creative.ts",
+        "studio/documents.ts",
+        "studio/edit-output.ts",
+        "studio/generated-proof.ts",
+        "studio/handler.ts",
+        "studio/index.ts",
+        "studio/listing-actions.ts",
+        "studio/listing-state.ts",
+        "studio/repository.ts"
+      ],
+      "changedSharedDependencies": [
+        "_shared/router.ts"
+      ],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 6,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 16,
+      "liveDifferentFiles": [
+        "studio/documents.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "team",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/ratelimit.ts",
+        "_shared/supabase.ts",
+        "team/codes.ts",
+        "team/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    },
+    {
+      "name": "tours",
+      "sources": [
+        "_shared/agentcard.ts",
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/r2.ts",
+        "_shared/supabase.ts",
+        "spatial/chapters.ts",
+        "spatial/contract.ts",
+        "tours/cta.ts",
+        "tours/index.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": true,
+      "liveSnapshot": "saved read-only source",
+      "liveVersionBefore": 38,
+      "preserveVerifyJwt": true,
+      "liveComparedFiles": 8,
+      "liveDifferentFiles": [
+        "tours/index.ts"
+      ],
+      "liveFilesAbsentLocally": []
+    },
+    {
+      "name": "uploads",
+      "sources": [
+        "_shared/cors.ts",
+        "_shared/http.ts",
+        "_shared/r2.ts",
+        "_shared/supabase.ts",
+        "uploads/content_type.ts",
+        "uploads/gateway_contract.ts",
+        "uploads/index.ts",
+        "uploads/maintenance.ts",
+        "uploads/publication.ts",
+        "uploads/transport.ts"
+      ],
+      "changedSharedDependencies": [],
+      "candidateForDeployment": false,
+      "liveSnapshot": "unavailable; read before deployment"
+    }
+  ],
+  "sourceFiles": {
+    "_shared/agentcard.ts": "6fce25024a093805010eef47727f3b43542765efc435ccd9ba2cffeb52ae4c0a",
+    "_shared/apple.ts": "23d78360f6c9a7b417e8b4a8fa2070226da5669dbbda852f9cb48d4751f94913",
+    "_shared/applejws.ts": "ca1984500fb58f8cb3a27389cf8fe4ab312664bad52653b1853b1ea87e4f7eac",
+    "_shared/cors.ts": "367995f1c333e34e3076c158e92ea46a8a2964dba4a82dc95502efbb339c9f9c",
+    "_shared/drift.ts": "b4c813ece18ffd455c80f31b1e173b5f82212a832a00145957d5f1d2b93fba7d",
+    "_shared/entitlements.ts": "ae2edbe28130cdcb50312ab6a149da4dca335805767c3a8d076a3b858125674e",
+    "_shared/fairhousing.ts": "9a5a36739a2cbf166d89b9e816910f24abe7336043f6d398052da48a4e9eedeb",
+    "_shared/ghl.ts": "d71f56382b5a0ba4ffc476c2cba342cc760f8b25b997007e62c72694eba30aea",
+    "_shared/http.ts": "d215a595f409506730a529d753d58a9ff6efc68dfc053913adfb5c6527eeb6a9",
+    "_shared/ledger.ts": "c4544cc596d63768e77ca4a2bf5f8e0400df5c8f4b26c43c3401c20cbf5cc00f",
+    "_shared/property/provider.ts": "772747a500fe361e5ac3aa3acf78b731e4ed1aa5a3889d6653d9269b618f9c26",
+    "_shared/property/rentcast.ts": "2be15e6c36b3319546a7b4420f3a615ea1acc660819315e4284db34282948960",
+    "_shared/provenance.ts": "05be585a586070285846ddda9df9b4dcc83e9b8b10dc2f852d5f5eb6f07c457b",
+    "_shared/providers/anthropic.ts": "9a871009005094617f666df505e11d48df9c659834de1f814672131618ccf792",
+    "_shared/providers/chain.ts": "d29cbdae97fbcf9f5c4a54dc80dc1bbcf0051e06439206befceba698ccda0eb0",
+    "_shared/providers/common.ts": "9f8769c90025d07f2cdea9ef746892ea4e0aa56bea8f1e4d5bd4a6de353cf8f4",
+    "_shared/providers/elevenlabs.ts": "e8aec5792e94316a01a0f9d262a4245bdfec210ccd1b4d47e28bb25ad037f4e3",
+    "_shared/providers/fal.ts": "a2948288a435c12669ae3140ec71f0c9b87ff783d3c53245e68accc8bcf9f3b5",
+    "_shared/providers/gemini.ts": "5bf189ea7857b87c512024273d76329088c8007507ad8925976a4cdd3d8afe23",
+    "_shared/providers/higgsfield.ts": "c25f4f408b3e7765e05a5439b0832449fd164cb1e9595d07d171cde7b8305606",
+    "_shared/providers/index.ts": "fb7e8a959cfcbbf2e7075ffb0bce3b61f04455d47db4b67a611c70960e264b9f",
+    "_shared/providers/jobtoken.ts": "c83e3a39139841a44f03751abab481d868a7d40b550048a1c59e4a868d4ca06c",
+    "_shared/providers/kie.ts": "7f6a8bd26629a92586d462411bcae81d6aad3cf72b06564f2157fff83b4b469c",
+    "_shared/providers/openai.ts": "8eee34f0570dba9a7df26834f1d4ce090301a1e3bfd6ca8edf79ca461c06444c",
+    "_shared/providers/params.ts": "3835bd34b45a9eee4aac46b708764db4f8fd73341c3d7bdf98921580f16b9a6c",
+    "_shared/providers/types.ts": "1c61ebecdf29e0511b7a5bee6a13d30b7ea5f6f770c43fd95fefd25a0ba82bcd",
+    "_shared/r2.ts": "56ff4869091aab6c44836ed22d5e396101d5cdc72fe62e841a11fb424c68d49a",
+    "_shared/ratelimit.ts": "d8833a1cd766fe624950e18f62fd822c70df55efeb47de4447f5562a8f0c1430",
+    "_shared/router.ts": "c79cdb9fc0f357b82f1593493528a98556212ab4b4dff8e6b28ac024bf6c6a3d",
+    "_shared/spacetypes.ts": "df1f0702b774224365eb10215d1448a942243109074403d30ebdee4e5aacc211",
+    "_shared/stream.ts": "8fc011bfe4f4680c1401daa7673b5fdbdfc4b8051b1aff685f27a695f98300e6",
+    "_shared/supabase.ts": "cfe93768d4e8fb945f2dceb4c3d941e8e49404e391eef5ef231b43c2a7609f66",
+    "admin/funnel.ts": "a2bd6da8907b265c9889176aef3096a1f65f1971bfaf69504aff179a01363b05",
+    "admin/index.ts": "7361d714b3bd1f8ca03fef0cfca9154f226180198362940cee2ebb6c6baf1402",
+    "admin/probe.ts": "ac47f4821eeb06a7148e8ec0ddd8d32c6b2ba8e1d56c0f2456136f4e5d90e597",
+    "adopt/index.ts": "21b47d857674a591e7f366b4a62fdcfd8c70ba49a57cd04691947d3b3f96d9f7",
+    "ai-chapters/gemini.ts": "e4ab8bbdd6b2d3e996b5dc080237aafe686988044cbd906f68a48232d7d78619",
+    "ai-chapters/index.ts": "5d87d0b9b09f982c52a106c21ec42c755c37f3a02ddb4ffbbac30a4a833bc081",
+    "ai-chapters/postprocess.ts": "a20a19bcaf0abe99e3471d7c53fc8e260db04a7c5a9792f06f35159226d77a7e",
+    "ai-chapters/prompt.ts": "fcd3ea58879af293938cf4a5d263e47f92400c382201490679808eb2bbc14f80",
+    "ai-copy/agentreel.ts": "8adff54f76f5171a812b1411aed361c27a4a8ff09e12c020238af1cd4dd732c5",
+    "ai-copy/guard.ts": "b5e4f85419f2b972190e61bc2dfc21ac32061cae4fa28f1a5ef9cae29c8f9b03",
+    "ai-copy/index.ts": "aaff42ee545d1ef7b29563e391fe8a3d92ad50806eb2d82f672433f5d0cc7c39",
+    "ai-copy/prompt.ts": "2aa870ddeff28675e9dc3fa3397da26db1b63e3f05d15cae4ba4ed17bb8289f4",
+    "ai-copy/shotlist.ts": "5bafc014c41f9702b42e436ba39a35bc34d733f8727029bf8b27d31bab58d2de",
+    "ai-enhance/index.ts": "0d1ea5c37bae2aaa35f5d5e114ec018567773b22c895751cd232551dd3adbca6",
+    "ai-photo/index.ts": "3d0cfea20b017b83fa5ee4dbc0322d29a59d462e5912369cafd9ab914d45f72c",
+    "ai-video/dronecost.ts": "219990823f53503f53ed2f6c4e8d48a1efaf2b1bd509e1574b581dc065d98a96",
+    "ai-video/erase.ts": "f4a4f27878b582ccbd4c29aa6e8d9bce4d8e3c89b17cbfb07813b9e858b01491",
+    "ai-video/index.ts": "59a0cb0d109fe8ddc16b43a76fe14139f66c916cab33a01e2dae653f81a74099",
+    "ai-video/motion.ts": "fbdccc2c171366af36a20b07d43503b3e7f464345ff2d6184c87441117612f15",
+    "ai-video/mp4duration.ts": "caf8977456f64943c124d1901386a948d7c1c15e34d8a29d8b2f3a88572155f0",
+    "ai-voice/index.ts": "d11c65b769814eb2814cc496ea49573137aef55c3a62a3c1aa29ebe7b4f756da",
+    "ai-voice/shared-result.ts": "4756a995168a326198195e1bd0dd7984cb88f8804831b44a53d224595da81e19",
+    "ai-voice/storage-reservation.ts": "a577ebcb9dbf12595ad839cb3d939fda4a3041667c3765af471b1227bc9914db",
+    "apple-subscriptions/index.ts": "f9507182ddfa0af3386892c67a3b3c8a296dcdad77080d068a826feb186ae9b1",
+    "apple-subscriptions/logic.ts": "5aaf2ad94ebe174b88e255f4a8f71261ea739142d81ac8a5c2783b5f25f49dd9",
+    "beacon/index.ts": "0edb917d3a6e6d9f3d15553fe0b4174b54e3879dd8402c49e26113efbb7e2143",
+    "beacon/logic.ts": "c622d3b4a9d9630cb1b63024905cf741b11488417377b52e2a9209086906a25d",
+    "coach/actions.ts": "0cec20d7f1fde1026a78a567d7538d0b068f9d574577d98e2e76dc458daf6f30",
+    "coach/index.ts": "2a0e20554092bce50d8afb0b57a1ef7401a44ff95b78db770fa1066007d65796",
+    "coach/knowledge.ts": "62b86194f11c464c471df18d0d6dad5d1264bcfa9c5952303908e2c5b951f52a",
+    "coach/prompt.ts": "cd0aa3dfea9f69a18be9dd54a3357efb742033d3d51b2873dd3e939a5f43d4fd",
+    "events/index.ts": "c3f734c9dfe5550b183f9b66d349911fb952e7549cf554f612cb1a5edb416776",
+    "events/schema.ts": "ba1b4acfa81b30f4711bed44d4591a3df930e18525a05758ad99aa75fd0f4abb",
+    "leads/index.ts": "d8bdfdeae3e8060b596530012b97d1c78919b713d3f1dfed1ccbcf4c0702cbe0",
+    "leads/turnstile.ts": "d434ed3a7bc5f2e2347915173702f18c2ec8f4708a9a6b5d38b00fd2f8a98846",
+    "listings/create.ts": "be69ab140a24140bf60c5ebb5318d8f547c460544b0febeda451d0b6035a9197",
+    "listings/index.ts": "70b4aaca21779a4893dab0660ffdab6bab1c8f2a698df3126fedbd4cbd0c63f1",
+    "me/deletion.ts": "cf030031ec20df40b1eaf7499cafe3e9a58fb6272054c312232c4971e4ce6c1a",
+    "me/index.ts": "0a0e57c2edbdf95b333a464aa12868cf920cdd0e4b2084a95eb6edd1cecddae8",
+    "me/logic.ts": "3c96b3165c3420a2705a32ee9449a8d950778b6e1e4d74b6d75eee3d92299624",
+    "notify/apns.ts": "d584c70f401d0e25a489dcf873a893cdaed15aa98e04f766fde91f944bb44cb5",
+    "notify/copy.ts": "192cdcd9b1de6f49826fad9fb263bad19979942ee1490f33240da3cb90d47eda",
+    "notify/deliver.ts": "3e06e797ab72a73548054b3ea8234d379c6ac2ed24fd29777b70d0cdccc8c317",
+    "notify/email.ts": "9f5b6dcc1834b7f29dbf66a0c25677ebb503a20fe7e89e234879191a325e5457",
+    "notify/index.ts": "27d51e53088051032b7110eca87a66215bb1ba4d32f9cfed6fcba09fcb8580ed",
+    "portfolio/index.ts": "24eccfe8d32c9476ddbd2be495c66f49591db28f216a2f40c710d15bde032e7a",
+    "property/index.ts": "8fb0e37f8ef35aa4d0a7b33e90fdd2fe44028b75c391b165aa210f4b042e98b7",
+    "renders/index.ts": "aa1c551563f9befc08740c4f728b541299c0809e09de8d9414bbaa80b4cbf1d1",
+    "spatial/capability.ts": "f29d0eda19476b05eea05eb1c54f44d7318b7ffa430d00457456c8a2c6a01442",
+    "spatial/chapters.ts": "4c13c856024b217f158c154f54130a8913f2ebfee3ca1c89fa844ce0816d0ba7",
+    "spatial/contract.ts": "2fb25fa537de1ce4bad2af6ce01d0ffbe7ba52c9a2fd341d01b28fb2cab1815d",
+    "spatial/index.ts": "513c988cfa6bffd915f3d1656af8d2b405d2250e25bb7fc5e05784962d633687",
+    "spatial/storage.ts": "222d3736775e0f4123f65777f533867e0c42ec3f9d13a308d6254d080e92ec85",
+    "studio/context.ts": "9d31d41ff0091cd14c68df5da7e1c609a223d30f3d8e1b864ef0b8fde8926f79",
+    "studio/creative-quality.ts": "e19e0c387e930cbf6ba92004523ba2c92cabecacc92a481e1c26139eaa86bff1",
+    "studio/creative.ts": "d82103de246dcf793c30933d6c5db329cabd4b22c03a778e9058ddf5efdac58b",
+    "studio/documents.ts": "9f5fc102e683d866cabcd0f421880272693a025a8a27df358c196b1a0ffd5be3",
+    "studio/edit-output.ts": "8c293143eae6e4bf5f9c0ce99a301c0c661084e4c326bfe62011b4d30cad1063",
+    "studio/generated-proof.ts": "123b88b2f36a0fb664c7a907a2fe7ddaa10ae1b32349c666b87a811e5872409e",
+    "studio/handler.ts": "ea539466b0d41eb91f695cff5a87f2fe31dae940036f8d1dfcc7174f4c19d4ae",
+    "studio/index.ts": "9247bd7a6c566c7443b2176c45ddb2c0da1bfde899155afdc251197e00cb7a30",
+    "studio/listing-actions.ts": "12df2e8bda3848ed89439c8d00a3a47a47854c165427771be0ae83721f4909ae",
+    "studio/listing-state.ts": "9011a6cfe2c98a90f600e78d58be720a92f9682058b5a7c014ebab45562182cf",
+    "studio/repository.ts": "e334bd8026a9265ca7475ac9af83cf1fc09f46f3119c304303c4bda8fa5d3af7",
+    "team/codes.ts": "29492672c39f5118dc982b60d26a435d96f6d3d79b0bfe740936600c7335bbef",
+    "team/index.ts": "3595a56aa377d13aa00e4884fb701af683a54710eb63744f3f476a7db0a0b4b2",
+    "tours/cta.ts": "6b952efd34beb6a1467d9f531d6d2ca77373bde70f8481899e2e587104ee46a5",
+    "tours/index.ts": "6dc0d93b655bf7733f2c2975c47f8361c61542e9347be194649cdbcfa9be6d2c",
+    "uploads/content_type.ts": "630b2bc98f67d1f5ea95e910cd740fceefc2abd0e48a3197ef1950c113ccf6c6",
+    "uploads/gateway_contract.ts": "651109a429bb72782e6164ddf11e0a2eb9f8a7781f4cb855ad1d929bd1727d92",
+    "uploads/index.ts": "e34c9b48d4fa310c1a52131e9ad89c05364f63bdf21266bef4e2ec435dc24df3",
+    "uploads/maintenance.ts": "4580c04890a6c5275f5efaaf9bc72d679fbcc26bf963523e1b692425fb2fbb3a",
+    "uploads/publication.ts": "dceafe667e26082176eecb73d1dca0bc5bb45b25547f75bf0b48477fe01a2b76",
+    "uploads/transport.ts": "6429be96ed25d82395b625c875d4571537dd33fb39b292cfeeba5e405ced277f"
+  },
+  "deployCandidates": [
+    "admin",
+    "ai-chapters",
+    "ai-copy",
+    "ai-enhance",
+    "ai-photo",
+    "ai-video",
+    "ai-voice",
+    "coach",
+    "property",
+    "studio",
+    "tours"
+  ],
+  "requiredReadbacks": [],
+  "migrations": {
+    "0055_video_reflection_jobs.sql": "10f358bf8a18b4c211b31d3f4fbaf4dfbf32ce1d367e6407c0cfdb508f31981e",
+    "0056_active_photo_fallback.sql": "edb85d4526eefeb008c885204056dd37757bde232fd7593a06a015969ae3f09d"
+  }
+}

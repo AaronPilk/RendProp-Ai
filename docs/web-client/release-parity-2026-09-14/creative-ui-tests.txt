@@ -1,0 +1,25 @@
+✔ SRT import retains exact cue starts and reviews subtitle markup as ordinary words (2.90825ms)
+✔ WebVTT import reads real cue times, cue IDs and multiline captions while ignoring subtitle styling (0.300083ms)
+✔ subtitle import refuses missing times, overlapping cues and text outside the selected video (0.417083ms)
+✔ subtitle import is bounded and never creates missing speech phrases (0.140667ms)
+✔ copy assist uses property facts without exporting street address, owner or access notes (16.045375ms)
+✔ shot plans only match offered photo IDs and reject duplicate or unusable timing (0.824042ms)
+✔ timed agent transcripts preserve actual speech order and reject guessed timestamps (0.704125ms)
+✔ agent cutaways cannot cover the opening/closing face or unrelated photos (0.37325ms)
+✔ room chapters drop missing or invalid times instead of inventing zero (0.128125ms)
+✔ creative documents roundtrip typed content and reject unknown schema (0.1545ms)
+✔ creative results reject unapproved media hosts and do not decode arbitrary provider metadata (0.236667ms)
+✔ caption export uses service timing and removes embedded line breaks (0.113958ms)
+✔ cutaway gaps and interval boundaries reveal the continuously playing base video (2.274541ms)
+✔ a cutaway plan rejects overlaps, reversed time and ranges beyond its actual base footage (0.337917ms)
+✔ only bounded complete still-photo references survive import and URLs are discarded (1.398625ms)
+✔ saved cutaways have distinct IDs, bounded captions and supported photo motions (0.49775ms)
+✔ repeated cutaway images share one recoverable source while returned references remain detached (0.323833ms)
+ℹ tests 17
+ℹ suites 0
+ℹ pass 17
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 175.570542

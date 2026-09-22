@@ -23,6 +23,22 @@ struct UploadTicket: Codable, Sendable {
     var partCount: Int? = nil     // ceil(bytes / partSize)
     // both
     var storageKey: String? = nil // R2 object key the file lands at
+    /// Server ticket version, not the app build. Never infer an upgrade from a retry.
+    var transportVersion: Int? = nil
+    var uploaded: Bool? = nil
+    var replayed: Bool? = nil
+    var confirmedParts: [ConfirmedPart]? = nil
+    struct ConfirmedPart: Codable, Sendable, Equatable {
+        let number: Int
+        let etag: String
+    }
+}
+
+struct UploadAbortReceipt: Decodable {
+    let ok: Bool
+    let uploadAborted: Bool
+    enum CodingKeys: String, CodingKey { case ok; case uploadAborted = "upload_aborted" }
+    var isConfirmed: Bool { ok && uploadAborted }
 }
 
 /// Probed video metadata threaded into `POST /uploads/:id/complete` (contract
@@ -148,7 +164,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
     /// `media_provenance.id` (a server UUID string).
     let id: String
     var listingID: UUID? = nil
-    /// photo_edit | virtual_stage | declutter | aerial | reel | other.
+    /// photo_edit | virtual_stage | declutter | aerial | reel | video_reflection_removal | other.
     var kind: String
     /// "Living room", "Aerial intro" — may be null; fall back to `displayLabel`.
     var label: String? = nil
@@ -172,7 +188,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
     /// services/supabase/functions/tours/index.ts, for the routes that send the
     /// raw `model_id` instead.
     static func modelFamily(_ kind: String) -> String {
-        (kind == "aerial" || kind == "reel") ? "AI video" : "AI image edit"
+        (kind == "aerial" || kind == "reel" || kind == "video_reflection_removal") ? "AI video" : "AI image edit"
     }
 
     /// Human name for a `kind` — used when the row carries no label.
@@ -183,6 +199,7 @@ struct ProvenanceRecord: Identifiable, Hashable, Sendable {
         case "declutter":     return "Decluttered photo"
         case "aerial":        return "Aerial intro"
         case "reel":          return "Reel clip"
+        case "video_reflection_removal": return "Walkthrough reflection removal"
         default:              return "Altered media"
         }
     }
@@ -331,6 +348,10 @@ struct AIVoiceResult: Sendable, Equatable {
     /// no listing id yet). The audio itself still succeeded.
     let provenanceRecorded: Bool
 
+    /// Optional private creative-history receipt. A missing receipt must never
+    /// fail audio that was generated and paid for successfully.
+    var sharedResultID: UUID? = nil
+
     /// True when the server gave a duration it actually measured or computed,
     /// rather than admitting it has none.
     var hasReliableDuration: Bool { durationSource != "unknown" && durationS > 0 }
@@ -428,6 +449,221 @@ struct AIChaptersResult: Sendable, Hashable {
     var hasSuggestions: Bool { !chapters.isEmpty }
 }
 
+// MARK: - AI copy (ai-copy edge function — the two prompt assists)
+//
+// Two TEXT-ONLY routes that write words for the agent, instead of making the
+// agent write words for the AI. Nothing here touches a photo, a video or a byte
+// of media: facts go up, sentences come back — which is why neither call is
+// charged against a media allowance and why both are cheap enough to re-run
+// until the words are right.
+//
+// THE STREET ADDRESS IS NEVER SENT. `AICopyFacts.region` carries the coarse
+// city/state line ("Charlotte, NC"), exactly the line the aerial path already
+// sends and for the same reason: the model needs to know it is writing about a
+// home in the Carolinas, not WHICH home. The server writes the literal
+// placeholder `{address}` where the property should be named and the APP
+// substitutes the real address on-device (`ReelStudioView.filledAddress`), so
+// the address exists only on this phone and in the words the agent reads —
+// never in a third-party model's request logs.
+
+/// What the copy writer is allowed to know about a listing.
+///
+/// Every field is optional because every field is genuinely optional in the
+/// app: a venue has no beds, a draft has no tagline, a listing imported without
+/// a coordinate has no region.
+///
+/// There is deliberately NO `address` field. Adding one would be the only
+/// change needed to leak a street address to a third-party model, so the type
+/// is built so that it cannot express one.
+struct AICopyFacts: Sendable, Hashable {
+    var beds: Int? = nil
+    var baths: Double? = nil
+    var sqft: Int? = nil
+    /// Already formatted for reading aloud ("$1,175,000", "From $3,500") — the
+    /// server never sees raw cents and never has to guess a currency.
+    var priceLabel: String? = nil
+    /// The owner's own one-line pitch, for the types that use one.
+    var tagline: String? = nil
+    /// City/state only ("Charlotte, NC"). NEVER a street address.
+    var region: String? = nil
+    /// The industry fields the owner filled in (`SpaceType.detailFields` key →
+    /// value): cuisine, capacity, hours, amenities. Short strings only.
+    var details: [String: String] = [:]
+
+    /// True when there is nothing here worth sending. The call still works (the
+    /// model can write from the space type alone) — this only says the result
+    /// will be generic.
+    var isEmpty: Bool {
+        beds == nil && baths == nil && sqft == nil && priceLabel == nil
+            && tagline == nil && region == nil && details.isEmpty
+    }
+}
+
+/// `POST /ai-copy/script` — write the reel's voiceover script from the
+/// listing's own data, so the agent never faces an empty box.
+struct AIScriptRequest: Sendable, Hashable {
+    /// SERVER listing id when the listing already has one. Attribution only:
+    /// this route writes no provenance row (there is no media to disclose), so
+    /// a listing that has never synced sends nothing rather than paying for a
+    /// round-trip to create a server row it does not need.
+    var listingServerID: UUID? = nil
+    /// `SpaceType.rawValue`.
+    var spaceType: String
+    var facts: AICopyFacts = AICopyFacts()
+    /// The tagged areas in WALK ORDER, so the script can follow the tour the
+    /// way the buyer will see it.
+    var roomTags: [String] = []
+    /// How many pictures the reel is built from.
+    var photoCount: Int
+    /// How long the finished reel runs, in seconds — the script is written to
+    /// FIT it. Clamped to the server's 10…45 window on the way out.
+    var targetSeconds: Int
+    /// "warm" | "punchy" | "luxury". nil lets the server choose.
+    var tone: String? = nil
+}
+
+/// The finished script from `POST /ai-copy/script`.
+struct AIScriptResult: Sendable, Hashable {
+    /// The words to speak. Contains the literal `{address}` placeholder where
+    /// the property should be named — SUBSTITUTE IT before this is shown to
+    /// anyone or spoken (`ReelStudioView.filledAddress`), or the voice reads
+    /// the placeholder out loud.
+    let script: String
+    /// Characters the server counted, against the voiceover's 1,000-char cap.
+    let characters: Int
+    /// The server's own estimate of how long this takes to read, in seconds.
+    let estimatedSeconds: Double
+    /// The model that wrote it, in whatever words the server used.
+    let model: String
+
+    /// How many characters of script one second of finished video is worth.
+    ///
+    /// The working number from real takes: ElevenLabs' narration voices land
+    /// around 11 characters a second at their default pace. It lives HERE, on
+    /// the shared contract type, because two places need it and they must not
+    /// drift — the client uses it to tell the agent how long their script will
+    /// run before they spend a cent, and to fall back to when a server sends no
+    /// estimate of its own. It is an estimate and the UI says so.
+    static let charactersPerSecond: Double = 11
+}
+
+// MARK: - AI shot list (`POST /ai-copy/shotlist`)
+//
+// The reel's EDIT, written before a cent is spent on clips. Same text-only,
+// no-media, no-street-address contract as `/ai-copy/script` — and it returns the
+// script too, so a caller that wants both makes one call rather than two.
+//
+// WHY THIS EXISTS AT ALL. Every reel this app made sent `prompt: nil` for all six
+// clips, so all six came back with the server's single default move — a slow
+// push-in — and six identical slow push-ins in a row is the loudest possible tell
+// that a video was generated rather than shot. A real reel alternates: push in on
+// the kitchen, pull back on the great room, tilt up the staircase, hold on the
+// view. That variety is one short text call away and it costs nothing.
+
+/// One shot in the plan.
+struct AIShot: Sendable, Hashable, Identifiable {
+    /// Echoed back untouched from the request — the app's own local photo id,
+    /// which is how the plan is matched to the picture it was written for.
+    let photoID: String
+    /// 1-BASED place in the reel (COPY-ASSIST-CONTRACT §1.2). The planner OWNS
+    /// the order — it opens on the best establishing shot and closes on the best
+    /// CTA frame, with the caller's own tap order as the tiebreak inside a rank —
+    /// so a client that keeps tap order gets the right words on the right picture
+    /// and the wrong picture first.
+    let order: Int
+    /// The camera move for THIS photo, as one of `ai-video/motion.ts`
+    /// `REEL_MOTIONS` — `push_in`, `pull_back`, `tilt_up`, `tilt_down`,
+    /// `orbit_left`, `orbit_right`, `rack_focus`, `static_parallax`. nil means
+    /// the server had no opinion, and nil must keep meaning "let the video
+    /// server choose" all the way down — see `APIClient.aiVideoReelClip`.
+    let motion: String?
+    /// The area the photo shows ("Kitchen", "Primary bath"), when the copy model
+    /// could tell. Sent on to the clip route as context, never shown as truth.
+    let room: String?
+    /// Three to five words to burn onto this shot. May contain the literal
+    /// `{address}` placeholder — SUBSTITUTE IT on-device before it is rendered
+    /// or a reel goes out with "{address}" across it.
+    let onScreenText: String?
+    /// How long this shot should be on screen. The composer trims or holds to
+    /// reach it; nothing here changes what the clip costs to generate.
+    let seconds: Double?
+    /// The sentence of the script that belongs to this shot. Also `{address}`-
+    /// bearing. Kept because it is what makes the voice and the pictures land
+    /// together; the app does not have to use it.
+    let voiceLine: String?
+
+    var id: String { "\(order)-\(photoID)" }
+
+    /// The moves `POST /ai-video/reel-clip` will actually render
+    /// (`ai-video/motion.ts` `REEL_MOTIONS`). A motion outside this set is a
+    /// **400** from that route, which would fail a clip the agent is standing
+    /// there waiting for — so an unrecognised move is dropped to nil on the way
+    /// in and the video server picks its own.
+    ///
+    /// The drift cuts one way on purpose. If the server ever adds a ninth move,
+    /// an old build filters it out and gets the server's choice: slightly less
+    /// variety, nothing broken. If instead we passed anything through, the same
+    /// mismatch would be a hard failure on every clip of the reel.
+    static let renderableMotions: Set<String> = [
+        "push_in", "pull_back", "tilt_up", "tilt_down",
+        "orbit_left", "orbit_right", "rack_focus", "static_parallax",
+    ]
+}
+
+/// What comes back from `POST /ai-copy/shotlist`: the plan AND the script it was
+/// written against, so the two can never disagree about the reel's length.
+struct AIShotList: Sendable, Hashable {
+    let shots: [AIShot]
+    /// The words to speak, `{address}`-bearing exactly as `/ai-copy/script`
+    /// returns them.
+    let script: String
+    let characters: Int
+    let estimatedSeconds: Double
+    let model: String
+}
+
+/// What the shot planner is allowed to know. Everything `AIScriptRequest` sends
+/// plus the photos themselves — as IDs and, where the app already knows it, the
+/// area each one shows. NO IMAGES: this is a text route, it does not look at a
+/// single pixel, and it must stay cheap enough to run on every reel.
+///
+/// THE STREET ADDRESS IS NOT IN HERE, for the same reason it is not in
+/// `AIScriptRequest`: `AICopyFacts` cannot express one.
+struct AIShotListRequest: Sendable, Hashable {
+    /// One photo the reel is built from.
+    struct Photo: Sendable, Hashable {
+        /// The app's own local id for the picture. Opaque to the server, echoed
+        /// back as `photo_id`.
+        var id: String
+        /// The area it shows, when the app knows ("Kitchen"). nil is normal.
+        var room: String? = nil
+
+        init(id: String, room: String? = nil) {
+            self.id = id
+            self.room = room
+        }
+    }
+
+    var listingServerID: UUID? = nil
+    /// `SpaceType.rawValue`.
+    var spaceType: String
+    var facts: AICopyFacts = AICopyFacts()
+    /// The reel's photos in the order the agent tapped them. The planner may
+    /// REORDER them and says so in each shot's `order`; tap order is what it
+    /// falls back to where its own rules are indifferent.
+    ///
+    /// There is deliberately no `roomTags` here even though `/ai-copy/script`
+    /// takes one: this route wants the area PER PHOTO (`Photo.room`), and a walk
+    /// order that cannot be attached to a particular picture would only tell the
+    /// planner about rooms it cannot place.
+    var photos: [Photo]
+    /// How long the finished reel runs, in seconds. Clamped to 10…45 on the way
+    /// out, same window as the script route.
+    var targetSeconds: Int
+    /// "warm" | "punchy" | "luxury". nil lets the server choose.
+    var tone: String? = nil
+}
+
 /// A prospect who submitted the hosted tour's lead form (`GET /leads`).
 struct Lead: Identifiable, Codable, Hashable {
     var id: UUID
@@ -440,6 +676,7 @@ struct Lead: Identifiable, Codable, Hashable {
     var createdAt: Date
     var source: String? = nil
     var listingAddress: String? = nil
+    var status: String? = nil
 }
 
 /// One tap-to-jump chapter sent with a publish (`{label, t_ms, sort}` on the
@@ -462,7 +699,68 @@ struct ChapterInput: Codable, Hashable, Sendable {
 /// `"ticket:<sha256|path-hash>:<bytes>"`, and the AI generate calls take a
 /// caller-supplied key — one UUID per user TAP (so a retry of the same tap
 /// replays instead of billing twice, and a second tap is a new job).
+/// The body of `POST /leads`. Field names mirror the contract in
+/// services/supabase/functions/leads/index.ts exactly; `note` rides in `extra`
+/// because that is the free-form slot the route already accepts.
+struct LeadSubmission: Sendable, Equatable {
+    var slug: String
+    var name: String
+    var phone: String
+    var email: String?
+    var note: String?
+}
+
+/// What the public record says about an address (`GET /property`).
+///
+/// NO PHOTOS, and there is no field for them: no vendor licenses a listing's
+/// photographs, because they belong to the photographer or the MLS rather than
+/// to the portal or the agent. An agent's own listing photos come from the
+/// agent, which for their own listing is the real source anyway.
+struct PropertyFacts: Sendable, Equatable {
+    /// What the provider actually matched. Shown to the agent, because a lookup
+    /// that resolved a DIFFERENT house has to be visible rather than silent.
+    var matchedAddress: String?
+    var beds: Int?
+    /// 2.5 is a real number of bathrooms, not a rounding error.
+    var baths: Double?
+    var sqft: Int?
+    var lotSqft: Int?
+    var yearBuilt: Int?
+    var propertyType: String?
+    /// What it LAST SOLD FOR — never the asking price. Shown, never auto-filled.
+    var lastSalePriceCents: Int?
+    var lastSaleDate: String?
+}
+
+/// The whole answer, including the two "nothing to show" cases, which are
+/// different and must not be collapsed: no provider credential on this deploy,
+/// versus a provider that has no record of that address.
+struct PropertyLookup: Sendable, Equatable {
+    /// False when the deploy has no provider key. The button hides — an agent
+    /// must not be shown a failure for something they did not do wrong.
+    var configured: Bool
+    var cached: Bool = false
+    var source: String?
+    var facts: PropertyFacts?
+}
+
 protocol APIClient: Sendable {
+    func spatialJobs(listingID: UUID) async throws -> [SpatialJob]
+    func spatialJob(id: UUID) async throws -> SpatialJob
+    func createSpatialJob(_ request: SpatialCreateRequest, operationID: UUID) async throws -> SpatialJob
+    func attachSpatialInputs(jobID: UUID, files: [SpatialInput]) async throws -> SpatialJob
+    func startSpatialJob(id: UUID) async throws -> SpatialJob
+    func reviewSpatialJob(id: UUID, review: SpatialReviewRequest) async throws -> SpatialJob
+    func publishSpatialJob(id: UUID, artifactRevision: UUID) async throws -> SpatialJob
+    func retrySpatialJob(id: UUID, operationID: UUID) async throws -> SpatialJob
+    func cancelSpatialJob(id: UUID) async throws -> SpatialJob
+    func resumeSpatialJob(id: UUID) async throws -> SpatialJob
+    /// GET /spatial/capability — whether this deployment can generate 3D rooms
+    /// at all, and a short reason when it cannot. Read BEFORE offering a scan:
+    /// the alternative is a room that uploads every frame and fails at
+    /// `/start` with "not configured". `enabled == false` is a state to show
+    /// plainly, not an error to retry.
+    func spatialCapability() async throws -> SpatialCapability
     func listings() async throws -> [Listing]
     func createListing(_ listing: Listing) async throws -> Listing
     /// PATCH `listings/<serverID>` (falls back to the local id only when the
@@ -513,6 +811,9 @@ protocol APIClient: Sendable {
     /// POST /uploads/:asset_id/abort — tears down the in-flight R2 multipart
     /// session. Safe to call on cancel.
     func abortUpload(assetID: String) async throws
+    /// Renews only this existing reservation. Unlike POST /uploads, cannot
+    /// allocate a second ticket if completion won a race with recovery.
+    func renewUpload(assetID: String) async throws -> UploadTicket
 
     /// POST /uploads/batch → one presigned PUT slot per photo (contract §2.5).
     func requestPhotoBatch(listingID: UUID, files: [PhotoUploadRequest]) async throws -> [PhotoTicket]
@@ -552,6 +853,26 @@ protocol APIClient: Sendable {
     /// GET /leads[?listing_id=] — every lead captured on the org's hosted tours
     /// (RLS-scoped), newest first. `listingServerID` filters to one listing.
     func leads(listingServerID: UUID?) async throws -> [Lead]
+
+    /// GET /property?address= — beds, baths, size, year, lot and last sale from
+    /// the public record, via a licensed data provider.
+    ///
+    /// Not Zillow: Zillow retired its public API in 2021 and what is left is
+    /// MLS-gated, and scraping a portal would put the copyright and terms-of-use
+    /// exposure on us rather than on the agent. The facts themselves are county
+    /// public record and licensed vendors sell them nationwide.
+    ///
+    /// Costs real money per call, so the SERVER caches by normalised address,
+    /// rate-limits per org and writes a ledger row. The client asks once per tap
+    /// and never retries on its own.
+    func propertyLookup(address: String) async throws -> PropertyLookup
+
+    // `submitLead` is deliberately NOT here. A native lead form was written
+    // and removed within the hour: `POST /leads` verifies Cloudflare Turnstile
+    // and FAILS CLOSED, an iOS app cannot run a Turnstile widget, and the
+    // answer to that is not a second, weaker bot-protection story for the same
+    // route. The in-app viewer scrolls the hosted page to its own end card,
+    // which already has the form and the right protection.
 
     /// PATCH /me/brand — push the agent/business card into the org's brand kit
     /// so it renders on every HOSTED tour page (the public tours/portfolio
@@ -602,13 +923,61 @@ protocol APIClient: Sendable {
     /// charged against the monthly photo-edit allowance (separate burst limit).
     func aiPhotoSuggest(imageBase64: String, mime: String) async throws -> [AIEditSuggestion]
 
-    /// POST /ai-photo with `edit: "improve_prompt"` — rewrites a rough
-    /// custom-edit idea (≤ 300 chars sent) into a sharper, more specific prompt
-    /// (≤ 400 back). TEXT-ONLY: the server never looks at the image for this
-    /// mode, so `imageBase64` is accepted for source compatibility and is NOT
-    /// sent (uploading several MB over cellular for a call that ignores them
-    /// was audit F-E-16). Not charged against the monthly allowance.
-    func aiImprovePrompt(imageBase64: String, mime: String, prompt: String) async throws -> String
+    /// POST /ai-copy/edit-prompt — rewrites a rough custom-edit idea
+    /// (≤ 300 chars sent) into a sharper, more specific prompt (≤ 400 back).
+    ///
+    /// TEXT-ONLY, and now honestly so. `improve_prompt` never looked at the
+    /// image (audit F-E-16 stopped the client SENDING one) but the call site
+    /// went on base64-encoding a 1024 px JPEG on the main path for a payload
+    /// that was thrown away, so the photo is gone from the signature too. Not
+    /// charged against the monthly photo-edit allowance.
+    ///
+    /// `roomHint` is the area the photo shows ("Kitchen", "Patio") when the app
+    /// knows it — it is what turns "make it brighter" into an instruction about
+    /// a kitchen. nil is normal and fully supported.
+    ///
+    /// `listingServerID` is what scopes the server's fair-housing gate to THIS
+    /// listing's real space type (contract §5: the LISTING wins over the body's
+    /// claim, so a request cannot loosen its own gate by saying it is a bar).
+    /// Without it the gate falls back to the strictest — housing — rules, which
+    /// is deliberately fail-closed but would refuse a restaurant's
+    /// "family-style patio". Send it whenever the listing already has one.
+    ///
+    /// The old `ai-photo` `edit: "improve_prompt"` route still answers on the
+    /// server, so this is a re-point and not a breaking change; the name and
+    /// the meaning are unchanged.
+    func aiImprovePrompt(rough: String, roomHint: String?,
+                         listingServerID: UUID?) async throws -> String
+
+    /// POST /ai-copy/script — write a reel's voiceover script from the
+    /// listing's own facts, so the agent never faces an empty box.
+    ///
+    /// TEXT-ONLY and NOT charged against a media allowance. The street address
+    /// is never sent (see `AICopyFacts`), and the script names the property
+    /// with the literal `{address}` placeholder for the APP to substitute.
+    ///
+    /// Fair housing is enforced server-side exactly as it is for `aiVoiceTTS`,
+    /// and for the same reason — a script that steers on family status,
+    /// religion, race, disability, sex, or the safety / school / "exclusive"
+    /// proxies is refused as `APIError.server(status: 400, code:
+    /// "unsupported_edit", …)` with a message naming the offending phrase.
+    /// Show that message, let the agent re-word, and NEVER auto-retry: the same
+    /// facts will always be refused.
+    func aiCopyScript(_ request: AIScriptRequest) async throws -> AIScriptResult
+
+    /// POST /ai-copy/shotlist — plan the reel's EDIT: a camera move, an area, a
+    /// three-to-five-word on-screen line and a length for each photo, plus the
+    /// script those shots were written against.
+    ///
+    /// TEXT-ONLY, no media, NOT charged against a media allowance, and it never
+    /// sees the street address — same contract as `aiCopyScript`, and the same
+    /// fair-housing gate with the same rule: show the server's message, let the
+    /// agent re-word, NEVER auto-retry.
+    ///
+    /// A caller that cannot get a plan must carry on WITHOUT one. Every field of
+    /// every shot is optional and the whole call is optional: no plan means the
+    /// reel is made exactly as it was before this route existed.
+    func aiCopyShotlist(_ request: AIShotListRequest) async throws -> AIShotList
 
     // MARK: AI video (ai-video edge function — async fal submit + poll)
 
@@ -631,13 +1000,46 @@ protocol APIClient: Sendable {
     /// clip (Seedance image-to-video). `listingServerID` anchors the clip's
     /// provenance row so the generated motion is disclosed on the tour and in
     /// the broker's audit log.
+    ///
+    /// `prompt` is the agent's own typed instruction and outranks everything;
+    /// `motion` is one move from the shot plan ("slow push in", "tilt up") and is
+    /// what stops six clips in a row being the same slow push-in. `room` is the
+    /// area the photo shows, and `shotIndex`/`shotCount` tell the server where in
+    /// the reel this clip sits so an opener and a closer can be treated
+    /// differently from the middle.
+    ///
+    /// ALL FOUR ARE OPTIONAL AND nil IS LOAD-BEARING. Sending no motion means
+    /// "the server chooses" — its own space-aware anti-hallucination prompt
+    /// (F-A-24) — and a client that invents a sentence to fill the gap both
+    /// skips that stronger default and writes its own words into the listing's
+    /// provenance log as if the agent had typed them.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         motion: String?, room: String?, shotIndex: Int?, shotCount: Int?,
                          listingServerID: UUID?, label: String?,
                          idempotencyKey: String?) async throws -> AIVideoJob
 
     /// GET /ai-video/status — poll one submitted job. fal result URLs EXPIRE, so
     /// download the video promptly on `.completed`.
     func aiVideoStatus(_ job: AIVideoJob) async throws -> AIVideoStatus
+
+    func reflectionQuote(listingID: UUID) async throws -> ReflectionQuote
+    func removeReflections(assetID: String, listingID: UUID, batchID: UUID,
+                           idempotencyKey: UUID) async throws -> AIVideoJob
+    func cancelReflectionBatch(_ batchID: UUID) async throws
+    func applyReflectionBatch(_ batchID: UUID, originalAssetID: String,
+                              alteredAssetID: String) async throws -> ReflectionApplication
+
+    /// POST /ai-video/drift — THE QUALITY GATE.
+    ///
+    /// Judges a finished clip's first/middle/last frames against the source
+    /// still and answers whether it may be published. The rubric, the model,
+    /// the thresholds, the retry accounting and the audit row are all
+    /// server-side, because a tenant must not be able to write a passing
+    /// verdict about their own listing media.
+    ///
+    /// Throwing is NOT a pass. Every caller treats a throw the same way it
+    /// treats `.unavailable`: hold the clip.
+    func aiVideoDrift(_ request: DriftCheckRequest) async throws -> DriftVerdict
 
     // MARK: AI voiceover (ai-voice edge function — docs/VOICEOVER-CONTRACT.md)
 
@@ -828,18 +1230,35 @@ extension APIClient {
         try await aiVideoDrone(assetID: assetID, tier: tier, targetFps: targetFps, idempotencyKey: nil)
     }
 
+    /// Source-compatible reel clip with no shot plan — every planning field nil,
+    /// which is exactly "the server chooses", the behaviour every caller had
+    /// before the shot list existed.
+    func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
+                         listingServerID: UUID?, label: String?,
+                         idempotencyKey: String?) async throws -> AIVideoJob {
+        try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
+                                  seconds: seconds, motion: nil, room: nil,
+                                  shotIndex: nil, shotCount: nil,
+                                  listingServerID: listingServerID, label: label,
+                                  idempotencyKey: idempotencyKey)
+    }
+
     /// Source-compatible reel clip with no listing anchor — the generation is
     /// NOT entered in the compliance log. Prefer the listing-aware requirement.
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int,
                          idempotencyKey: String?) async throws -> AIVideoJob {
         try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
-                                  seconds: seconds, listingServerID: nil, label: nil,
+                                  seconds: seconds, motion: nil, room: nil,
+                                  shotIndex: nil, shotCount: nil,
+                                  listingServerID: nil, label: nil,
                                   idempotencyKey: idempotencyKey)
     }
 
     func aiVideoReelClip(imageBase64: String, mime: String, prompt: String?, seconds: Int) async throws -> AIVideoJob {
         try await aiVideoReelClip(imageBase64: imageBase64, mime: mime, prompt: prompt,
-                                  seconds: seconds, listingServerID: nil, label: nil,
+                                  seconds: seconds, motion: nil, room: nil,
+                                  shotIndex: nil, shotCount: nil,
+                                  listingServerID: nil, label: nil,
                                   idempotencyKey: nil)
     }
 

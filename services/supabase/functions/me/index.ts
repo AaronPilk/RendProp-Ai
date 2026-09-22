@@ -3,19 +3,36 @@
 //   GET    /me                  -> { user, org, plan, plan_raw, trial_ends_at, entitlement,
 //                                    plan_source, plan_expires_at, apple_product_id,
 //                                    usage: { month, by_feature, windows, renders, leads, leads_new, listings, cost_cents },
-//                                    portfolio_url }
+//                                    notifications, portfolio_url }
 //                                  plan = EFFECTIVE plan (an expired trial reads `free`),
 //                                  entitlement = the plan_entitlements row the server enforces,
 //                                  usage.by_feature = this window's consumption per meter
-//                                  (audit F-supabase-16 / F-E-15; decision B4).
-//   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle }, portfolio_url }
+//                                  (audit F-supabase-16 / F-E-15; decision B4),
+//                                  notifications = the EFFECTIVE notification switches, so the
+//                                  settings screen renders without a second call (0047)
+//   POST   /me/devices          -> { ok, device: { id, environment, bundle_id, last_seen_at } }
+//                                  { device_token, environment?, bundle_id?, locale?, app_version? }
+//                                  Registers this phone's APNs token for the CALLER (0047).
+//   PATCH  /me/notifications    -> { ok, notifications }
+//                                  any of { lead_received, render_ready, upload_stuck,
+//                                  free_week_ending, allowance_low, first_tour_nudge } as
+//                                  booleans, plus { muted_until: ISO-8601 | null }
+//   PATCH  /me/brand            -> { ok, brand_kit, org: { name, handle, space_type }, portfolio_url }
 //                                  brand-kit fields + `handle` (public portfolio slug,
 //                                  unique → 409) + `org_name` (business name; never an email)
+//                                  + `space_type` (the workspace's industry, one of the six
+//                                  the app knows; 400 otherwise — 0044 reads it for the
+//                                  industry-aware trial)
 //   GET    /me/compliance       -> { org_id, from, to, count, truncated, rows[] }
-//                                  ?from=&to=&listing_id=&limit=&format=csv
+//                                  ?from=&to=&listing_id=&limit=&format=csv&scope=
 //                                  The BROKER-EXPORTABLE AI audit log: every
 //                                  media_provenance row for the workspace (see
 //                                  §"Compliance export" below).
+//                                  scope=org (owner/admin only) adds the AGENT
+//                                  to every row via compliance_audit() — the
+//                                  same evidence, attributed, for a compliance
+//                                  officer who has to answer for the whole
+//                                  brokerage. Default scope is unchanged.
 //   PATCH  /me/compliance/:id   -> { ok, provenance }
 //                                  { original_asset_id?, altered_asset_id?, label? }
 //                                  Attaches the untouched original and/or the
@@ -30,30 +47,27 @@
 //                                  the StoreKit 2 JWS the app holds after a verified
 //                                  purchase or restore. See §"Entitlement sync" below.
 //   DELETE /me                  -> { ok, deletion_request_id, cleanup_complete, pending, warnings? }
-//   POST   /me/sweep-deletions  -> { ok, processed }   (service-role only; retry queue)
+//   POST   /me/sweep-deletions  -> { ok, processed, manual_review, deferred, escalated }
+//                                  (service-role only; retry queue)
 //
-// Account deletion (audit P0-4) is DURABLE now:
-//   1. Every cleanup target — R2 objects, Stream UIDs, CRM lead contacts (each
-//      paired with the org whose TAG it must carry, never deleted by email
-//      alone — see cleanupGhlContactForTenant), the Apple refresh token, and
-//      this user's app_events/profile rows — is collected and written to a
-//      deletion_requests tombstone BEFORE anything is destroyed.
-//   2. Share links are revoked immediately (renders unpublished → tours 404).
-//   3. DB rows are purged, then EVERY item above (including analytics-forget
-//      and the profile row) is attempted inline through the same
-//      processPayload() the sweeper reuses.
-//   4. Whatever fails or exceeds inline caps STAYS in the tombstone and is
-//      retried by /me/sweep-deletions (wire it to a schedule — see runbook)
-//      until the payload is empty. `cleanup_complete` is computed AFTER every
-//      one of those steps has actually run, from their real outcome — never
-//      before — so it cannot be true while something is still queued.
-//   5. The auth record is deleted last; if THAT fails the request stays
-//      pending and the response is a 500, not a false success. `ok` is true
-//      once the auth record is gone regardless of `cleanup_complete`: the
-//      account itself is deleted either way, which is what Apple's
-//      requirement is actually about — but a caller that only checks `ok`
-//      instead of `cleanup_complete` will miss real, queued leftover work.
+// Deletion ownership is now DB-owned (0039), not an Edge enumeration followed
+// by later DELETEs. Under the same Auth/profile/org locks as adoption, SQL
+// snapshots verified listing keys, writes the intent, revokes/purges DB rows,
+// and returns a bound cleanup lease. Any SQL failure rolls everything back.
+// The handler and sweeper execute only that receipt; failed external work and
+// Auth deletion remain queued. Unbound legacy requests are manual-only and
+// cannot erase an adoption winner. A separate controlled old-handler drain
+// is required at rollout; a migration cannot retract a sent provider DELETE.
+// `ok` requires the Auth user to be gone; `cleanup_complete` additionally
+// requires all queued work done and no historical manual-review leftovers.
+// Retained work no sweep can finish does not loop forever: after twelve
+// passes without progress, or a GPU lease still unjournaled a day later, the
+// DB parks the row (manual_review_required + escalation_reason) and the
+// sweeper stops picking it up; nothing is erased to force completion.
+// A non-`RPnnn` database failure on either RPC is a 503 "retry", never a 400
+// that echoes the error text.
 
+import { deleteAccount, sweepAccounts } from "./deletion.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import {
   HttpError,
@@ -67,7 +81,9 @@ import {
   throwRpc,
 } from "../_shared/http.ts";
 import { entitlementFor } from "../_shared/entitlements.ts";
+import { isSpaceType, SPACE_TYPES } from "../_shared/spacetypes.ts";
 import {
+  abortMultipartUpload,
   deleteObjects,
   publicR2Url,
   R2_BUCKET_RENDERS,
@@ -95,12 +111,9 @@ import {
   userClient,
 } from "../_shared/supabase.ts";
 import {
-  chunk,
-  dbEmpty,
   decideGhlTagAction,
   type DeletionPayload,
   type GhlCleanupTarget,
-  payloadEmpty,
 } from "./logic.ts";
 
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -134,10 +147,14 @@ Deno.serve(async (req) => {
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
       if (seg[0] === "brand") return await handleBrandPatch(req, user.id);
-      throw new HttpError(404, "Unknown route — PATCH /me/brand or PATCH /me/compliance/:id");
+      if (seg[0] === "notifications") return await handleNotificationsPatch(req, user.id);
+      throw new HttpError(404, "Unknown route — PATCH /me/brand, /me/notifications or /me/compliance/:id");
     }
     if (req.method === "POST" && seg[0] === "apple-code") {
       return await handleAppleCode(req, user.id);
+    }
+    if (req.method === "POST" && seg[0] === "devices") {
+      return await handleDeviceRegister(req, user.id);
     }
     if (req.method === "POST" && seg[0] === "entitlement") {
       return await handleEntitlement(req, user.id);
@@ -146,7 +163,7 @@ Deno.serve(async (req) => {
 
     throw new HttpError(
       405,
-      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/entitlement, and DELETE are supported",
+      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/notifications, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/devices, POST /me/entitlement, and DELETE are supported",
     );
   } catch (err) {
     return respondError(err);
@@ -184,8 +201,18 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const month = monthStart.slice(0, 7); // YYYY-MM
   const meterKeys = Object.values(METERS).map((k) => `${k}:${orgId}`);
 
-  const [profileRes, orgRes, ledgerRes, leadsRes, leadsNewRes, listingsRes, jobsRes, metersRes, entitlement] =
-    await Promise.all([
+  const [
+    profileRes,
+    orgRes,
+    ledgerRes,
+    leadsRes,
+    leadsNewRes,
+    listingsRes,
+    jobsRes,
+    metersRes,
+    prefsRes,
+    entitlement,
+  ] = await Promise.all([
       db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
       db.from("orgs").select(
         "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
@@ -204,6 +231,11 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
         .gte("created_at", monthStart),
       // rate_limits is service-role only (0004): read the org's meters here.
       admin.from("rate_limits").select("key, count, window_start, window_seconds").in("key", meterKeys),
+      // notification_preferences is service-role only too (0047). The RPC —
+      // not a table read — because it answers the EFFECTIVE switches: a person
+      // who has never opened the settings screen has NO ROW, and every category
+      // is on. The app must render the same answer the enqueuer acts on.
+      admin.rpc("notification_preferences_for", { p_user: userId }),
       entitlementFor(orgId),
     ]);
 
@@ -278,8 +310,142 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       listings: listingsRes.count ?? 0,
       cost_cents: costCents,        // internal provider COGS this month (legacy field)
     },
+    // 0047. Additive: a build older than this migration ignores the key.
+    notifications: shapePreferences(prefsRes.data),
     portfolio_url: portfolioUrl,
   });
+}
+
+// ── Notification settings (migration 0047) ────────────────────────────────────
+//
+// The app's Settings → Notifications screen is six switches and a mute. It
+// renders from GET /me (no second call) and writes through PATCH
+// /me/notifications; the phone's APNs token arrives at POST /me/devices.
+//
+// BOTH WRITES GO THROUGH A SECURITY DEFINER RPC WITH THE SERVICE ROLE, with
+// p_user resolved from the caller's own verified JWT — never from the body.
+// notification_devices and notification_preferences carry no tenant grant at
+// all (0047 §5: RLS on, no policies), precisely so one signed-in tenant can
+// never enumerate or re-point another tenant's push tokens.
+//
+// Neither route calls assertNotDeleting(). That guard exists because a write
+// slipping in during DELETE /me could create an R2 object that is not in the
+// tombstone and survives as an orphan. Both rows here are
+// `references profiles(id) on delete cascade`, so they cannot outlive the
+// account under any ordering — there is nothing for them to orphan.
+
+/**
+ * The six switches + the mute, in the shape the app renders.
+ *
+ * Tolerant on purpose: an absent row, an absent key, or a single-element array
+ * (PostgREST's shape for some composite returns) all resolve to the SAME answer
+ * the enqueuer gives — every category on unless it was explicitly switched off.
+ * A settings screen that disagrees with the queue is worse than no screen.
+ */
+function shapePreferences(row: unknown): Record<string, unknown> {
+  const unwrapped = Array.isArray(row) ? row[0] : row;
+  const p = (unwrapped && typeof unwrapped === "object" ? unwrapped : {}) as Record<string, unknown>;
+  const on = (k: string) => p[k] !== false; // absent row / absent key = ON
+  return {
+    lead_received: on("lead_received"),
+    render_ready: on("render_ready"),
+    upload_stuck: on("upload_stuck"),
+    free_week_ending: on("free_week_ending"),
+    allowance_low: on("allowance_low"),
+    first_tour_nudge: on("first_tour_nudge"),
+    muted_until: (p.muted_until as string | null) ?? null,
+  };
+}
+
+const NOTIFICATION_CATEGORIES = [
+  "lead_received", "render_ready", "upload_stuck",
+  "free_week_ending", "allowance_low", "first_tour_nudge",
+] as const;
+
+const APNS_TOKEN_RE = /^[0-9a-fA-F]{16,400}$/;
+
+async function handleDeviceRegister(req: Request, userId: string): Promise<Response> {
+  const body = await readJson<Record<string, unknown>>(req);
+  const token = String(body.device_token ?? "").trim();
+  assert(APNS_TOKEN_RE.test(token), 400, "device_token must be the hexadecimal APNs token");
+
+  const environment = String(body.environment ?? "production").trim().toLowerCase();
+  assert(
+    environment === "sandbox" || environment === "production",
+    400,
+    "environment must be sandbox or production",
+  );
+
+  const clip = (v: unknown, n: number) => {
+    const s = typeof v === "string" ? v.trim() : "";
+    return s ? s.slice(0, n) : null;
+  };
+
+  const { data, error } = await adminClient().rpc("notification_register_device", {
+    p_user: userId,
+    p_token: token,
+    p_bundle_id: clip(body.bundle_id, 120),
+    p_environment: environment,
+    p_locale: clip(body.locale, 32),
+    p_app_version: clip(body.app_version, 40),
+  });
+  if (error) {
+    if (/RP\d{3}:/.test(error.message)) throwRpc(error.message);
+    console.error("notification_register_device failed:", error.message);
+    throw new HttpError(503, "Could not register this device — try again.", "upstream");
+  }
+
+  const row = (data ?? {}) as Record<string, unknown>;
+  // The token itself is NEVER echoed: it is a device credential, and a response
+  // body is the easiest place for one to end up in a log.
+  return json({
+    ok: true,
+    device: {
+      id: row.id ?? null,
+      bundle_id: row.bundle_id ?? null,
+      environment: row.environment ?? environment,
+      last_seen_at: row.last_seen_at ?? null,
+    },
+  });
+}
+
+async function handleNotificationsPatch(req: Request, userId: string): Promise<Response> {
+  const body = await readJson<Record<string, unknown>>(req);
+  const patch: Record<string, unknown> = {};
+
+  for (const key of NOTIFICATION_CATEGORIES) {
+    if (!(key in body)) continue;
+    assert(typeof body[key] === "boolean", 400, `${key} must be true or false`);
+    patch[key] = body[key];
+  }
+  if ("muted_until" in body) {
+    const v = body.muted_until;
+    if (v === null || v === "") {
+      patch.muted_until = null;
+    } else {
+      assert(typeof v === "string", 400, "muted_until must be an ISO-8601 timestamp or null");
+      const t = Date.parse(v);
+      assert(Number.isFinite(t), 400, "muted_until must be an ISO-8601 timestamp or null");
+      patch.muted_until = new Date(t).toISOString();
+    }
+  }
+  assert(
+    Object.keys(patch).length > 0,
+    400,
+    `No notification settings provided. Accepted: ${NOTIFICATION_CATEGORIES.join(", ")}, muted_until`,
+  );
+
+  const { data, error } = await adminClient().rpc("notification_set_preferences", {
+    p_user: userId,
+    p_prefs: patch,
+  });
+  if (error) {
+    if (/RP\d{3}:/.test(error.message)) throwRpc(error.message);
+    console.error("notification_set_preferences failed:", error.message);
+    throw new HttpError(503, "Could not save your notification settings — try again.", "upstream");
+  }
+
+  return json({ ok: true, notifications: shapePreferences(data) });
 }
 
 // ── PATCH /me/brand ───────────────────────────────────────────────────────────
@@ -291,10 +457,16 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
 // (0005) restrict the update to orgs the caller may edit, and `plan` stays
 // untouchable.
 //
-// Also accepts the two org columns the card needs (audit F-supabase-15/06):
-//   handle    public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
-//             not a reserved word, unique (→ 409). null/"" clears it.
-//   org_name  the business name shown on the portfolio page (never an email).
+// Also accepts the org columns the card needs (audit F-supabase-15/06):
+//   handle      public portfolio slug (/a/:handle) — ^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$,
+//               not a reserved word, unique (→ 409). null/"" clears it.
+//   org_name    the business name shown on the portfolio page (never an email).
+//   space_type  the workspace's industry — exactly one of _shared/spacetypes.ts
+//               (real_estate | venue | restaurant | retail | fitness | other), 400
+//               otherwise; the DB CHECK (0044) refuses anything else too. It is
+//               what org_entitlement() reads for the industry-aware trial, so the
+//               app should send it as soon as the person picks their business
+//               type. Never cleared: the column is NOT NULL (default real_estate).
 // When `name` (the card name) is set and the org still carries a placeholder
 // name ("My business" or an email left by the old trigger), the org is named
 // after the card so the portfolio page heals without a second call.
@@ -358,12 +530,18 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
     assert(!n.includes("@"), 400, "org_name must be a business name, not an email address");
     orgPatch.name = n;
   }
+  if ("space_type" in body) {
+    const v = body.space_type;
+    const s = typeof v === "string" ? v.trim().toLowerCase() : v;
+    assert(isSpaceType(s), 400, `space_type must be one of ${SPACE_TYPES.join(", ")}`);
+    orgPatch.space_type = s;
+  }
 
   assert(Object.keys(patch).length + Object.keys(orgPatch).length > 0, 400,
-    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name`);
+    `No brand fields provided. Accepted: ${BRAND_FIELDS.join(", ")}, handle, org_name, space_type`);
 
   const { data: org, error: oErr } = await db
-    .from("orgs").select("id, name, handle, brand_kit").eq("id", orgId).maybeSingle();
+    .from("orgs").select("id, name, handle, space_type, brand_kit").eq("id", orgId).maybeSingle();
   if (oErr) throw new HttpError(500, `Org lookup failed: ${oErr.message}`);
   if (!org) throw new HttpError(404, "Org not found");
 
@@ -383,11 +561,16 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   if (Object.keys(patch).length > 0) update.brand_kit = merged;
 
   const { data: updated, error: upErr } = await db
-    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, brand_kit").maybeSingle();
+    .from("orgs").update(update).eq("id", orgId).select("id, name, handle, space_type, brand_kit").maybeSingle();
   if (upErr) {
     // 23505 = unique_violation on orgs.handle.
     if ((upErr as { code?: string }).code === "23505" || /duplicate key|orgs_handle_key/i.test(upErr.message)) {
       throw new HttpError(409, "That handle is already taken — choose another", "conflict");
+    }
+    // 23514 = check_violation: orgs_space_type_check (0044). Unreachable past
+    // the allowlist above unless the two lists drift — say so, not "500".
+    if ((upErr as { code?: string }).code === "23514" || /orgs_space_type_check/i.test(upErr.message)) {
+      throw new HttpError(400, `space_type must be one of ${SPACE_TYPES.join(", ")}`);
     }
     throw new HttpError(500, `Brand update failed: ${upErr.message}`);
   }
@@ -398,7 +581,7 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
   return json({
     ok: true,
     brand_kit: updated.brand_kit ?? merged,
-    org: { name: updated.name, handle },
+    org: { name: updated.name, handle, space_type: updated.space_type ?? org.space_type ?? null },
     portfolio_url: handle ? `${TOUR_BASE}/a/${handle}` : null,
   });
 }
@@ -426,6 +609,23 @@ async function handleBrandPatch(req: Request, userId: string): Promise<Response>
 //   ?listing_id=  one listing only (this is what the iOS COMPLIANCE card reads)
 //   ?limit=  default 500, max 5000
 //   ?format=csv  → text/csv attachment instead of JSON
+//   ?scope=org   → the WHOLE TEAM's record, with the agent on every row
+//
+// ── scope=org, and why it is a different code path (migration 0048) ──────────
+//
+// A brokerage's compliance officer does not ask "what did I publish", they ask
+// "show me every AI-altered image WE published in March and prove the
+// disclosure ran". The rows were always readable — media_provenance's policy is
+// `is_org_member(org_id)` (0012), not an owner check — but the AGENT was not:
+// `profiles` has exactly one policy, `id = auth.uid()` (0001), so a query run as
+// the broker can name nobody but the broker. compliance_audit() does that join
+// as a definer for owners and admins of one org. No policy was weakened to get
+// it; a plain member asking for scope=org gets a 403 from the RPC.
+//
+// EVERYTHING ELSE IS UNCHANGED. Without `scope=org` — which is every existing
+// caller, including the iOS COMPLIANCE card — this route runs exactly the query
+// it ran before, on the caller's own JWT, and returns exactly the same bytes.
+// The `agent` column exists ONLY in org scope.
 
 const COMPLIANCE_DEFAULT_LIMIT = 500;
 const COMPLIANCE_MAX_LIMIT = 5000;
@@ -435,10 +635,49 @@ const CSV_COLUMNS = [
   "model_id", "disclosure", "original_url", "altered_url", "prompt_summary", "id",
 ] as const;
 
+/**
+ * Org scope: the same columns in the same order with ONE added — `agent`, in
+ * second place, because a compliance officer reads a row as "when / who / which
+ * listing". It is a single self-sufficient cell ("Name <email>") rather than
+ * three, so the exported file can be forwarded without a key to decode it.
+ */
+const ORG_CSV_COLUMNS = [
+  "created_at", "agent", "listing_id", "listing_address", "kind", "label", "edit", "style",
+  "model_id", "disclosure", "original_url", "altered_url", "prompt_summary", "id",
+] as const;
+
 /** RFC4180-ish cell: quote everything, double interior quotes, never a raw newline. */
 function csvCell(v: unknown): string {
   const s = v == null ? "" : String(v).replace(/\r?\n/g, " ");
   return `"${s.replace(/"/g, '""')}"`;
+}
+
+/** The CSV attachment both scopes emit. Same quoting, same CRLF, same headers. */
+function csvAttachment(
+  columns: readonly string[],
+  rows: Array<Record<string, unknown>>,
+  filename: string,
+): Response {
+  const lines = [columns.map(csvCell).join(",")];
+  for (const r of rows) {
+    lines.push(columns.map((c) => csvCell(r[c])).join(","));
+  }
+  return new Response(lines.join("\r\n") + "\r\n", {
+    status: 200,
+    headers: {
+      ...corsHeaders,
+      "Content-Type": "text/csv; charset=utf-8",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+    },
+  });
+}
+
+/** One printable identity for a row's agent, or "" when the row has no listing. */
+function agentCell(r: Record<string, unknown>): string {
+  const name = typeof r.agent_name === "string" ? r.agent_name.trim() : "";
+  const email = typeof r.agent_email === "string" ? r.agent_email.trim() : "";
+  if (name && email && name !== email) return `${name} <${email}>`;
+  return name || email || "";
 }
 
 /** An ISO date/timestamp query param, or null. Rejects junk rather than ignoring it. */
@@ -465,6 +704,11 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
     ? Math.min(COMPLIANCE_MAX_LIMIT, Math.max(1, Math.round(rawLimit)))
     : COMPLIANCE_DEFAULT_LIMIT;
   const wantCsv = (params.get("format") ?? "").toLowerCase() === "csv";
+  const scope = (params.get("scope") ?? "user").trim().toLowerCase();
+  assert(scope === "user" || scope === "org", 400, "scope must be user or org");
+  if (scope === "org") {
+    return await handleComplianceOrg(userId, orgId, { from, to, listingId, limit, wantCsv });
+  }
 
   let q = db
     .from("media_provenance")
@@ -513,19 +757,12 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
   });
 
   if (wantCsv) {
-    const lines = [CSV_COLUMNS.map(csvCell).join(",")];
-    for (const r of rows) {
-      lines.push(CSV_COLUMNS.map((c) => csvCell((r as Record<string, unknown>)[c])).join(","));
-    }
     const stamp = new Date().toISOString().slice(0, 10);
-    return new Response(lines.join("\r\n") + "\r\n", {
-      status: 200,
-      headers: {
-        ...corsHeaders,
-        "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="rendprop-ai-disclosure-${stamp}.csv"`,
-      },
-    });
+    return csvAttachment(
+      CSV_COLUMNS,
+      rows as unknown as Array<Record<string, unknown>>,
+      `rendprop-ai-disclosure-${stamp}.csv`,
+    );
   }
 
   return json({
@@ -533,6 +770,84 @@ async function handleCompliance(req: Request, userId: string): Promise<Response>
     from,
     to,
     listing_id: listingId || null,
+    count: rows.length,
+    truncated,
+    rows,
+  });
+}
+
+/**
+ * `?scope=org` — the same export across every member, with the agent named.
+ *
+ * compliance_audit() (0048 §6) owns the authorisation: it refuses anyone who is
+ * not the owner or an admin of THIS org, so there is one authority and not two
+ * that can drift. It also owns the 5000-row ceiling; `limit` and `listing_id`
+ * are applied here afterwards so both keep the meaning they already have, and
+ * `truncated` is true if EITHER the RPC hit its ceiling or the caller's own
+ * limit cut the list short.
+ */
+async function handleComplianceOrg(
+  userId: string,
+  orgId: string,
+  opts: { from: string | null; to: string | null; listingId: string; limit: number; wantCsv: boolean },
+): Promise<Response> {
+  const { data, error } = await adminClient().rpc("compliance_audit", {
+    p_org: orgId,
+    p_actor: userId,
+    p_from: opts.from,
+    p_to: opts.to,
+  });
+  if (error) throwRpc(error.message);
+
+  const report = (data ?? {}) as Record<string, unknown>;
+  const all = (Array.isArray(report.rows) ? report.rows : []) as Array<Record<string, unknown>>;
+  const scoped = opts.listingId ? all.filter((r) => r.listing_id === opts.listingId) : all;
+  const truncated = report.truncated === true || scoped.length > opts.limit;
+
+  // Identical field order to the per-user rows, with the agent appended — so
+  // one renderer serves both and a diff between the two exports is only ever
+  // the attribution. The RPC returns R2 KEYS; publicR2Url stays the single
+  // place a key becomes a link.
+  const rows = scoped.slice(0, opts.limit).map((r) => ({
+    id: r.id as string,
+    created_at: r.created_at as string,
+    listing_id: (r.listing_id as string | null) ?? null,
+    listing_address: (r.listing_address as string | null) ?? null,
+    space_type: (r.space_type as string | null) ?? null,
+    render_id: (r.render_id as string | null) ?? null,
+    kind: r.kind as string,
+    label: (r.label as string | null) ?? null,
+    edit: (r.edit as string | null) ?? null,
+    style: (r.style as string | null) ?? null,
+    model_id: (r.model_id as string | null) ?? null,
+    prompt_summary: (r.prompt_summary as string | null) ?? null,
+    disclosure: r.disclosure as string,
+    original_url: publicR2Url(r.original_key as string | null),
+    altered_url: publicR2Url(r.altered_key as string | null),
+    original_available: publicR2Url(r.original_key as string | null) !== null,
+    agent_id: (r.agent_id as string | null) ?? null,
+    agent_name: (r.agent_name as string | null) ?? null,
+    agent_email: (r.agent_email as string | null) ?? null,
+    agent: agentCell(r),
+  }));
+
+  if (opts.wantCsv) {
+    const stamp = new Date().toISOString().slice(0, 10);
+    // A distinct filename: a team export and a personal one landing in the same
+    // folder must not be told apart by opening them.
+    return csvAttachment(
+      ORG_CSV_COLUMNS,
+      rows as unknown as Array<Record<string, unknown>>,
+      `rendprop-team-ai-disclosure-${stamp}.csv`,
+    );
+  }
+
+  return json({
+    org_id: orgId,
+    scope: "org",
+    from: opts.from,
+    to: opts.to,
+    listing_id: opts.listingId || null,
     count: rows.length,
     truncated,
     rows,
@@ -956,87 +1271,13 @@ async function replayPendingNotifications(
 
 // ── DELETE /me ────────────────────────────────────────────────────────────────
 
-const ROLE_RANK: Record<string, number> = { owner: 0, admin: 1, agent: 2, marketing: 3 };
 const INLINE_R2_CAP = 5000;
 const INLINE_STREAM_CAP = 50;
 const INLINE_CRM_CAP = 50;
 
-// DeletionPayload, dbEmpty, payloadEmpty, chunk and decideGhlTagAction live in
+// DeletionPayload and decideGhlTagAction live in
 // ./logic.ts (imported above) so they can be unit-tested without pulling in
 // Deno.serve — see logic.ts's own header for what each one is responsible for.
-
-/**
- * Re-run the row deletions + share revocation for a tombstone. Idempotent:
- * every statement is a delete-by-id or an update to a terminal state, so
- * re-running after a partial success is safe.
- */
-// deno-lint-ignore no-explicit-any
-async function retryDbCleanup(admin: any, db: NonNullable<DeletionPayload["db"]>): Promise<string[]> {
-  const notes: string[] = [];
-  const run = async (label: string, fn: () => PromiseLike<{ error: { message: string } | null }>) => {
-    try {
-      const { error } = await fn();
-      if (error) notes.push(`${label}: ${error.message}`);
-    } catch (e) {
-      notes.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  };
-  const listingIds = db.listing_ids ?? [];
-  const renderIds = db.render_ids ?? [];
-  const jobIds = db.job_ids ?? [];
-  const assetIds = db.asset_ids ?? [];
-
-  for (const ids of chunk(listingIds)) {
-    await run("revoke share links", () =>
-      admin.from("renders").update({ published_at: null }).in("listing_id", ids));
-  }
-  for (const orgId of db.org_ids ?? []) {
-    await run("metering (org)", () => admin.from("metering").delete().eq("org_id", orgId));
-    await run("leads (org)", () => admin.from("leads").delete().eq("org_id", orgId));
-    await run("cost_ledger (org)", () => admin.from("cost_ledger").delete().eq("org_id", orgId));
-  }
-  for (const ids of chunk(renderIds)) {
-    await run("metering (renders)", () => admin.from("metering").delete().in("render_id", ids));
-    await run("leads (renders)", () => admin.from("leads").delete().in("render_id", ids));
-  }
-  for (const ids of chunk(listingIds)) {
-    await run("leads (listings)", () => admin.from("leads").delete().in("listing_id", ids));
-  }
-  for (const ids of chunk(jobIds)) {
-    await run("cost_ledger (jobs)", () => admin.from("cost_ledger").delete().in("job_id", ids));
-  }
-  for (const ids of chunk(listingIds)) {
-    await run("renders", () => admin.from("renders").delete().in("listing_id", ids));
-    await run("render_jobs", () => admin.from("render_jobs").delete().in("listing_id", ids));
-  }
-  for (const ids of chunk(assetIds)) {
-    await run("capture_chapters", () => admin.from("capture_chapters").delete().in("asset_id", ids));
-  }
-  for (const ids of chunk(listingIds)) {
-    await run("capture_assets", () => admin.from("capture_assets").delete().in("listing_id", ids));
-    await run("photos", () => admin.from("photos").delete().in("listing_id", ids));
-  }
-  for (const orgId of db.org_ids ?? []) {
-    await run("listings", () => admin.from("listings").delete().eq("org_id", orgId));
-    await run("memberships", () => admin.from("memberships").delete().eq("org_id", orgId));
-    await run("org", () => admin.from("orgs").delete().eq("id", orgId));
-  }
-  return notes;
-}
-
-// deno-lint-ignore no-explicit-any
-async function collectIds(admin: any, table: string, column: string, filterColumn: string, filterIds: string[]): Promise<string[]> {
-  const out: string[] = [];
-  for (const ids of chunk(filterIds)) {
-    const { data, error } = await admin.from(table).select(column).in(filterColumn, ids);
-    if (error) throw new HttpError(500, `Deletion aborted — could not enumerate ${table}: ${error.message}`);
-    for (const row of (data ?? []) as Record<string, unknown>[]) {
-      const v = row[column];
-      if (typeof v === "string" && v) out.push(v);
-    }
-  }
-  return out;
-}
 
 /**
  * Reach every GHL contact matching an exact email, and do to EACH ONE only
@@ -1134,19 +1375,40 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
     apple_refresh_token: payload.apple_refresh_token ?? null,
     analytics_user_id: payload.analytics_user_id ?? null,
     profile_id: payload.profile_id ?? null,
+    auth_user_id: payload.auth_user_id ?? null,
+    provider_leases: [],
+    multipart_uploads: [],
+    unresolved_uploads: [...(payload.unresolved_uploads ?? [])],
+    unresolved_render_jobs: [...(payload.unresolved_render_jobs ?? [])],
+    storage_not_before: payload.storage_not_before ?? null,
   };
 
-  // Row deletions / share revocation that failed on an earlier pass.
-  if (!dbEmpty(payload.db)) {
-    const dbNotes = await retryDbCleanup(adminClient(), payload.db!);
-    if (dbNotes.length) {
-      notes.push(...dbNotes.map((n) => `db retry: ${n}`));
-      remaining.db = payload.db; // still failing — keep it queued
-    }
+  // Only the durable journal can prove a provider is finished with room files.
+  // It is intentionally independent of spatial_jobs, whose sidecars and
+  // manifests were already purged in the deletion transaction.
+  for (const [i, target] of (payload.provider_leases ?? []).entries()) {
+    if (i>=16) { remaining.provider_leases!.push(target); continue; }
+    try {
+      const {data,error}=await adminClient().rpc("account_deletion_provider_ready",
+        {p_job:target.job_id,p_lease:target.lease_token});
+      if(error || data!==true) remaining.provider_leases!.push(target);
+    } catch { remaining.provider_leases!.push(target); }
+  }
+  if(remaining.provider_leases!.length) notes.push("spatial: provider file removal and shutdown remain queued");
+  if(remaining.unresolved_uploads!.length) notes.push("uploads: ambiguous multipart allocation needs reconciliation; queued");
+  if(remaining.unresolved_render_jobs!.length) notes.push("renders: legacy worker output cleanup needs reconciliation; queued");
+  const storageDrained=!payload.storage_not_before || Date.parse(payload.storage_not_before)<=Date.now();
+  if(storageDrained) remaining.storage_not_before=null;
+  else notes.push("storage: waiting for previously issued writes to expire; queued");
+  for(const [i,target] of (payload.multipart_uploads??[]).entries()) {
+    if(!storageDrained || i>=16) {remaining.multipart_uploads!.push(target);continue;}
+    try { await abortMultipartUpload({bucket:target.bucket,key:target.key,uploadId:target.upload_id}); }
+    catch { remaining.multipart_uploads!.push(target);notes.push("multipart: abort failed; queued"); }
   }
 
   // R2 (bounded per pass; leftovers stay queued).
-  if (payload.r2.length) {
+  if (!storageDrained) remaining.r2.push(...payload.r2);
+  else if (payload.r2.length) {
     const batch = payload.r2.slice(0, INLINE_R2_CAP);
     const rest = payload.r2.slice(INLINE_R2_CAP);
     try {
@@ -1259,307 +1521,25 @@ async function processPayload(payload: DeletionPayload): Promise<{ remaining: De
     }
   }
 
+  // Auth deletion is last and remains in the SAME durable payload on failure.
+  // 404 means this exact identity is already gone; other errors must retry.
+  if (payload.auth_user_id) {
+    try {
+      const { error } = await adminClient().auth.admin.deleteUser(payload.auth_user_id);
+      if (error && error.status !== 404) notes.push("auth: sign-in deletion failed; queued");
+      else remaining.auth_user_id = null;
+    } catch {
+      notes.push("auth: sign-in deletion unavailable; queued");
+    }
+  }
+
   return { remaining, notes };
 }
 
-async function handleDelete(userId: string, userEmail: string | null): Promise<Response> {
-  const admin = adminClient();
-  const warnings: string[] = [];
-
-  async function step(label: string, fn: () => PromiseLike<{ error: { message: string } | null }>) {
-    try {
-      const { error } = await fn();
-      if (error) warnings.push(`${label}: ${error.message}`);
-    } catch (e) {
-      warnings.push(`${label}: ${e instanceof Error ? e.message : String(e)}`);
-    }
-  }
-  async function deleteIn(label: string, table: string, column: string, ids: string[]) {
-    for (const part of chunk(ids)) {
-      await step(label, () => admin.from(table).delete().in(column, part));
-    }
-  }
-
-  // ── Phase 0: enumerate memberships. A failure here ABORTS (nothing touched).
-  const { data: myMemberships, error: memErr } = await admin
-    .from("memberships").select("org_id").eq("user_id", userId);
-  if (memErr) throw new HttpError(500, `Deletion aborted — membership lookup failed: ${memErr.message}`);
-
-  const orgIds = [...new Set((myMemberships ?? []).map((m) => m.org_id as string))];
-  const soloOrgs: string[] = [];
-  const sharedOrgs: string[] = [];
-  for (const orgId of orgIds) {
-    const { count, error } = await admin
-      .from("memberships").select("id", { count: "exact", head: true }).eq("org_id", orgId);
-    if (error) throw new HttpError(500, `Deletion aborted — member count failed for org ${orgId}: ${error.message}`);
-    ((count ?? 0) <= 1 ? soloOrgs : sharedOrgs).push(orgId);
-  }
-
-  // ── Phase 1: collect EVERY cleanup target before destroying anything.
-  const payload: DeletionPayload = { r2: [], stream_uids: [], ghl_targets: [], apple_refresh_token: null };
-  const allListingIds: string[] = [];
-  const allJobIds: string[] = [];
-  const allRenderIds: string[] = [];
-  const allAssetIds: string[] = [];
-
-  for (const orgId of soloOrgs) {
-    const listingIds = await collectIds(admin, "listings", "id", "org_id", [orgId]);
-    const jobIds = await collectIds(admin, "render_jobs", "id", "listing_id", listingIds);
-    const renderIds = await collectIds(admin, "renders", "id", "listing_id", listingIds);
-    const assetIds = await collectIds(admin, "capture_assets", "id", "listing_id", listingIds);
-    allListingIds.push(...listingIds);
-    allJobIds.push(...jobIds);
-    allRenderIds.push(...renderIds);
-    allAssetIds.push(...assetIds);
-
-    for (const ids of chunk(listingIds)) {
-      const { data: assets, error: aErr } = await admin
-        .from("capture_assets").select("storage_key, bucket").in("listing_id", ids);
-      if (aErr) throw new HttpError(500, `Deletion aborted — asset key enumeration failed: ${aErr.message}`);
-      for (const row of (assets ?? []) as { storage_key: string | null; bucket: string | null }[]) {
-        if (row.storage_key) {
-          payload.r2.push({
-            bucket: row.bucket === "renders" ? R2_BUCKET_RENDERS : R2_BUCKET_UPLOADS,
-            key: row.storage_key,
-          });
-        }
-      }
-      const { data: photos, error: pErr } = await admin
-        .from("photos").select("original_key, enhanced_key").in("listing_id", ids);
-      if (pErr) throw new HttpError(500, `Deletion aborted — photo key enumeration failed: ${pErr.message}`);
-      for (const row of (photos ?? []) as { original_key: string | null; enhanced_key: string | null }[]) {
-        if (row.original_key) payload.r2.push({ bucket: R2_BUCKET_UPLOADS, key: row.original_key });
-        if (row.enhanced_key) payload.r2.push({ bucket: R2_BUCKET_RENDERS, key: row.enhanced_key });
-      }
-      const { data: renders, error: rErr } = await admin
-        .from("renders").select("video_key, poster_key, stream_uid").in("listing_id", ids);
-      if (rErr) throw new HttpError(500, `Deletion aborted — render key enumeration failed: ${rErr.message}`);
-      for (const row of (renders ?? []) as { video_key: string | null; poster_key: string | null; stream_uid: string | null }[]) {
-        if (row.video_key) payload.r2.push({ bucket: R2_BUCKET_RENDERS, key: row.video_key });
-        if (row.poster_key) payload.r2.push({ bucket: R2_BUCKET_RENDERS, key: row.poster_key });
-        if (row.stream_uid) payload.stream_uids.push(row.stream_uid);
-      }
-    }
-
-    // CRM cleanup targets: the org's captured lead emails (pushed to GHL),
-    // paired with the org so cleanup can check THIS org's tag on the contact
-    // rather than deleting by email alone (cross-tenant deletion, audit).
-    const { data: leadRows, error: lErr } = await admin
-      .from("leads").select("email").eq("org_id", orgId).not("email", "is", null);
-    if (lErr) throw new HttpError(500, `Deletion aborted — lead enumeration failed: ${lErr.message}`);
-    for (const row of (leadRows ?? []) as { email: string | null }[]) {
-      if (row.email) payload.ghl_targets.push({ email: row.email, org_id: orgId });
-    }
-  }
-  // Dedupe by (org, email): the same lead can appear more than once for one
-  // org, but the same email across TWO of this user's own orgs still needs a
-  // cleanup pass each, since each carries its own tag on the shared contact.
-  {
-    const seen = new Set<string>();
-    payload.ghl_targets = payload.ghl_targets.filter((t) => {
-      const k = `${t.org_id}|${t.email.toLowerCase()}`;
-      if (seen.has(k)) return false;
-      seen.add(k);
-      return true;
-    });
-  }
-
-  // Profile read failure is NOT ignorable: silently losing the Apple refresh
-  // token means the grant is never revoked and nothing records that (audit).
-  const { data: profile, error: profErr } = await admin
-    .from("profiles").select("apple_refresh_token, email").eq("id", userId).maybeSingle();
-  if (profErr) {
-    throw new HttpError(500, `Deletion aborted — profile lookup failed: ${profErr.message}`);
-  }
-  payload.apple_refresh_token = (profile?.apple_refresh_token as string | null) ?? null;
-
-  // These two run through processPayload alongside R2/Stream/CRM/Apple (Phase
-  // 6) so `cleanup_complete` — computed AFTER that phase — is honest about
-  // them too. Before this fix both ran later, unconditionally, with a failure
-  // recorded as a warning only; the tombstone had already been marked
-  // `completed` and the response could already say `cleanup_complete: true`
-  // by the time either one even ran (P0-4).
-  payload.analytics_user_id = userId;
-  payload.profile_id = userId;
-
-  // ── Phase 2: tombstone FIRST. If this fails, nothing has been destroyed.
-  const { data: tombstone, error: tErr } = await admin
-    .from("deletion_requests")
-    .insert({
-      user_id: userId,
-      email: userEmail ?? (profile?.email as string | null) ?? null,
-      status: "processing",
-      attempts: 1,
-      payload: payload as unknown as Record<string, unknown>,
-    })
-    .select("id")
-    .single();
-  if (tErr) throw new HttpError(500, `Deletion aborted — could not record the deletion request: ${tErr.message}`);
-  const requestId = tombstone.id as string;
-
-  // ── Phase 3: immediate share-link revocation (tours 404 from this moment).
-  for (const ids of chunk(allListingIds)) {
-    await step("revoke share links", () =>
-      admin.from("renders").update({ published_at: null }).in("listing_id", ids));
-  }
-
-  // ── Phase 4: shared orgs — reassign authored listings, drop membership.
-  for (const orgId of sharedOrgs) {
-    const { data: others, error } = await admin
-      .from("memberships").select("user_id, role").eq("org_id", orgId).neq("user_id", userId);
-    if (error || !others || others.length === 0) {
-      warnings.push(`org ${orgId}: no other member found to reassign listings to`);
-    } else {
-      others.sort((a, b) => (ROLE_RANK[a.role as string] ?? 9) - (ROLE_RANK[b.role as string] ?? 9));
-      const heir = others[0].user_id as string;
-      await step(`reassign listings in shared org ${orgId}`, () =>
-        admin.from("listings").update({ agent_id: heir }).eq("org_id", orgId).eq("agent_id", userId));
-    }
-    await step(`leave shared org ${orgId}`, () =>
-      admin.from("memberships").delete().eq("org_id", orgId).eq("user_id", userId));
-  }
-
-  // ── Phase 5: purge solo-org rows, children first (targets already collected).
-  for (const orgId of soloOrgs) {
-    await step("delete metering (org)", () => admin.from("metering").delete().eq("org_id", orgId));
-    await step("delete leads (org)", () => admin.from("leads").delete().eq("org_id", orgId));
-    await step("delete cost_ledger (org)", () => admin.from("cost_ledger").delete().eq("org_id", orgId));
-  }
-  await deleteIn("delete metering (renders)", "metering", "render_id", allRenderIds);
-  await deleteIn("delete leads (renders)", "leads", "render_id", allRenderIds);
-  await deleteIn("delete leads (listings)", "leads", "listing_id", allListingIds);
-  await deleteIn("delete cost_ledger (jobs)", "cost_ledger", "job_id", allJobIds);
-  await deleteIn("delete renders", "renders", "listing_id", allListingIds);
-  await deleteIn("delete render_jobs", "render_jobs", "listing_id", allListingIds);
-  await deleteIn("delete capture_chapters", "capture_chapters", "asset_id", allAssetIds);
-  await deleteIn("delete capture_assets", "capture_assets", "listing_id", allListingIds);
-  await deleteIn("delete photos", "photos", "listing_id", allListingIds);
-  for (const orgId of soloOrgs) {
-    await step("delete listings", () => admin.from("listings").delete().eq("org_id", orgId));
-    await step("delete memberships", () => admin.from("memberships").delete().eq("org_id", orgId));
-    await step(`delete org ${orgId}`, () => admin.from("orgs").delete().eq("id", orgId));
-  }
-
-  // ── Phase 6: external cleanup, inline attempt. Leftovers stay tombstoned.
-  const { remaining, notes } = await processPayload(payload);
-  warnings.push(...notes);
-
-  // Any row-deletion or share-revocation failure above becomes a RETRYABLE
-  // payload, not just a warning — the sweeper re-runs it until it drains
-  // (audit round 4: these were silently non-retryable while the response
-  // still reported ok:true).
-  if (warnings.length > 0) {
-    remaining.db = {
-      org_ids: soloOrgs,
-      listing_ids: allListingIds,
-      render_ids: allRenderIds,
-      job_ids: allJobIds,
-      asset_ids: allAssetIds,
-    };
-  }
-
-  // `cleanup_complete` is computed from the ACTUAL outcome of every
-  // destructive step, including analytics-forget and the profile row —
-  // both of which just ran inside processPayload() above, not after this
-  // point. Before this fix they ran later and unconditionally, past the
-  // tombstone write below: a failure there was recorded as a warning only,
-  // while the tombstone was already `completed` and the response could
-  // already say `cleanup_complete: true` (P0-4 — Apple requires that a
-  // reported deletion actually finished).
-  const cleanupComplete = payloadEmpty(remaining) && warnings.length === 0;
-  await step("update deletion request", () =>
-    admin.from("deletion_requests").update({
-      status: cleanupComplete ? "completed" : "pending",
-      payload: remaining as unknown as Record<string, unknown>,
-      last_error: warnings.length ? warnings.slice(0, 10).join(" | ").slice(0, 2000) : null,
-      completed_at: cleanupComplete ? new Date().toISOString() : null,
-    }).eq("id", requestId));
-
-  // ── Phase 7: the auth record. This MUST succeed — the account is not
-  // "deleted" while its sign-in record still exists, whatever else is still
-  // draining in the background. Deliberately unconditional: analytics/profile/
-  // R2/Stream/CRM/Apple leftovers stay queued for the sweeper (reported above
-  // and in `pending` below) rather than blocking the one step Apple's account-
-  // deletion requirement is actually about.
-  const { error: authErr } = await admin.auth.admin.deleteUser(userId);
-  if (authErr) {
-    return json({
-      ok: false,
-      deletion_request_id: requestId,
-      error: `Account data was removed but the sign-in record could not be deleted: ${authErr.message}`,
-      ...(warnings.length ? { warnings } : {}),
-    }, 500);
-  }
-
-  return json({
-    ok: true,
-    deletion_request_id: requestId,
-    deleted_orgs: soloOrgs.length,
-    left_orgs: sharedOrgs.length,
-    // Honest per P0-4: true only when payloadEmpty(remaining) — every
-    // destructive step, analytics and profile included, actually finished.
-    // `ok` stays true above regardless: the auth record — the account itself
-    // — is gone either way, which is what Apple's requirement is about.
-    cleanup_complete: cleanupComplete,
-    pending: {
-      r2_objects: remaining.r2.length,
-      stream_videos: remaining.stream_uids.length,
-      crm_contacts: remaining.ghl_targets.length,
-      apple_revocation: Boolean(remaining.apple_refresh_token),
-      analytics_cleanup: Boolean(remaining.analytics_user_id),
-      profile_row: Boolean(remaining.profile_id),
-    },
-    ...(warnings.length ? { warnings } : {}),
-  });
+async function handleDelete(userId: string, _userEmail: string | null): Promise<Response> {
+  return await deleteAccount(adminClient(), userId, processPayload);
 }
 
-// ── POST /me/sweep-deletions (service-role) ───────────────────────────────────
-// Retries pending tombstones until their payloads drain. Wire to a schedule
-// (Supabase cron → this endpoint with the service key) — see the runbook.
-
 async function sweepDeletions(): Promise<Response> {
-  const admin = adminClient();
-  // Pick up `pending` AND stranded `processing` rows. A tombstone is inserted
-  // as `processing` before any destruction; if the request then times out or
-  // the status update itself fails, the row would sit in `processing` forever
-  // and never be retried (audit: the sweeper only read `pending`). Anything
-  // still `processing` after 15 minutes is by definition stranded.
-  const stranded = new Date(Date.now() - 15 * 60 * 1000).toISOString();
-  const { data: rows, error } = await admin
-    .from("deletion_requests")
-    .select("id, payload, attempts, status")
-    .or(`status.eq.pending,and(status.eq.processing,requested_at.lt.${stranded})`)
-    .order("requested_at", { ascending: true })
-    .limit(5);
-  if (error) throw new HttpError(500, `Sweep query failed: ${error.message}`);
-
-  let processed = 0;
-  for (const row of rows ?? []) {
-    const raw = (row.payload ?? {}) as Record<string, unknown>;
-    const rawGhlTargets = Array.isArray(raw.ghl_targets) ? raw.ghl_targets as unknown[] : [];
-    const payload: DeletionPayload = {
-      r2: Array.isArray(raw.r2) ? raw.r2 as R2Object[] : [],
-      stream_uids: Array.isArray(raw.stream_uids) ? raw.stream_uids as string[] : [],
-      ghl_targets: rawGhlTargets.filter((t): t is GhlCleanupTarget =>
-        Boolean(t) && typeof t === "object" &&
-        typeof (t as Record<string, unknown>).email === "string" &&
-        typeof (t as Record<string, unknown>).org_id === "string"
-      ),
-      apple_refresh_token: (raw.apple_refresh_token as string | null) ?? null,
-      analytics_user_id: (raw.analytics_user_id as string | null) ?? null,
-      profile_id: (raw.profile_id as string | null) ?? null,
-      db: (raw.db as DeletionPayload["db"]) ?? undefined,
-    };
-    const { remaining, notes } = await processPayload(payload);
-    const done = payloadEmpty(remaining);
-    await admin.from("deletion_requests").update({
-      status: done ? "completed" : "pending",
-      payload: remaining as unknown as Record<string, unknown>,
-      attempts: (row.attempts as number ?? 0) + 1,
-      last_error: notes.length ? notes.slice(0, 10).join(" | ").slice(0, 2000) : null,
-      completed_at: done ? new Date().toISOString() : null,
-    }).eq("id", row.id);
-    processed++;
-  }
-  return json({ ok: true, processed });
+  return await sweepAccounts(adminClient(), processPayload);
 }

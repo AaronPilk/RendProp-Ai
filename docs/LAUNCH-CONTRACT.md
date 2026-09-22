@@ -28,6 +28,23 @@ subscription becomes. `solo` is a legacy alias of `starter` — never sell it.
 Subscription group id (ASC): `rendprop_plans`. All three products in ONE group so
 upgrades/downgrades are Apple-managed.
 
+**2026-09-12 rework (owner-approved; prices above unchanged).** Monthly allowances are now:
+
+| plan | tour renders | AI photo edits | reel clips | AI aerial intros | drone-glide upscales | seats |
+|---|---|---|---|---|---|---|
+| starter | 4 | 100 | 6 | 2 | 0 | 1 |
+| pro | 10 | 200 | 12 | 4 | 0 | 1 |
+| team | 25 | 400 | 25 | 8 | 2 | 2 (was 3) |
+
+The **free week** (no card, no account, automatic on install — deliberately not called a
+"free trial" in the UI) is sized per industry: real estate = 3 tour renders, 60 photo edits,
+4 reel clips, 2 aerial intros; single-location businesses (event venue, restaurant/bar,
+retail/grocery, gym/studio, other) = 1 tour render, 60 photo edits, 4 reel clips, 1 aerial
+intro. After the week, `free` = 1 tour render a month. The 7-day introductory offer stays
+on every paid product, once per Apple ID. The metered unit is "reel clips" (never "reels" as
+a count) and "tour renders" wherever a number is stated on the web or in the App Store.
+Anything above this note that quotes the launch-day numbers is history, not the contract.
+
 ## Entitlement sync (P1 ↔ P2)
 
 ```
@@ -75,8 +92,13 @@ Event vocabulary (exact strings): `app_open`, `signup`, `signin`, `home_created`
 docs/GEAR-STORE.md), `guide_step_tapped`, `guide_completed` (the first-project
 guide on Home), `review_prompt_shown` (the StoreKit review request),
 `coach_opened`, `coach_message_sent`, `coach_action_tapped` (the coach — see
-docs/COACH-CONTRACT.md; never the message text), `crash` (MetricKit diagnostic
-summary, no PII), `error` (non-fatal, category only).
+docs/COACH-CONTRACT.md; never the message text), `ai_script_written`,
+`ai_prompt_improved`, `reel_planned` (prompt assistance and the reel shot list —
+see docs/COPY-ASSIST-CONTRACT.md; never the script, the idea or the captions,
+only counts and whether the call worked), `file_saved` (an agent saved one of
+their own files to their camera roll — the kind, never a filename),
+`crash` (MetricKit diagnostic summary, no PII), `error` (non-fatal, category
+only).
 No PII in props, ever. No email, no address, no photo.
 
 **Deploy order for 1.0.1.** The `events` function rejects the WHOLE batch on one

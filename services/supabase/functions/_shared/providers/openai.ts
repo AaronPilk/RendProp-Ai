@@ -15,14 +15,23 @@
 //  • whisper-1 gives word timings only with BOTH response_format=verbose_json
 //    and timestamp_granularities[]=word. Ask for one without the other and you
 //    silently get segment timings.
-//  • every chat call sends reasoning: { effort: "none" }. These are one-shot
-//    classifier and captioning calls; reasoning tokens on them are pure cost.
+//  • every chat call sent reasoning: { effort: "none" } and capped the answer at
+//    300 tokens, because the router only ever sent this model one-shot
+//    classifier and captioning work, where reasoning tokens are pure cost. Both
+//    are still the DEFAULTS and still what every existing route gets. They are
+//    no longer constants: a route row may carry `params` (migration 0030) and
+//    openaiChatConfig() below turns it into the effort and the ceiling for that
+//    ONE step. That is what lets a reasoning model — which either refuses
+//    effort:"none" outright or pays a premium price for a deliberately crippled
+//    answer — sit in the same chain as a classifier without a second adapter.
 //
 // Everything here answers inside the submit call, so submit() stashes the
 // finished state and poll() hands it back once (see common.ts stashInline).
 
 import type { RouteStep } from "../router.ts";
+import { paramsOf } from "../router.ts";
 import type { DoneState, GenerateInput, JobRef, JobState, ProviderAdapter } from "./types.ts";
+import { paramEnum, paramTokens } from "./params.ts";
 import {
   BUDGETS,
   ProviderError,
@@ -117,19 +126,79 @@ export interface JudgeVerdict {
 }
 
 /**
- * One bounded chat call. `reasoning: { effort: "none" }` on EVERY call — the
- * router only ever sends this model one-shot classifier work.
+ * The reasoning efforts /v1/responses accepts. "none" is the historical default
+ * this adapter shipped with and is still what a row without params gets.
+ *
+ * A value outside this set reads as absent (→ "none"), because a row is not a
+ * place to discover a vendor's vocabulary: an unrecognised effort would come
+ * back as a 400, which classifyStatus() calls `validation`, which runChain()
+ * RETHROWS rather than failing over. A typo in a params blob must not be able
+ * to take a route down when the chain behind it is healthy.
+ */
+export const OPENAI_REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high"] as const;
+export type OpenAiReasoningEffort = typeof OPENAI_REASONING_EFFORTS[number];
+
+/** The two constants this adapter shipped with, and still uses when `params` is
+ *  absent. Named so a test can assert "no params == today" against the literal
+ *  values rather than against a second copy of them. */
+export const OPENAI_CHAT_DEFAULT_EFFORT: OpenAiReasoningEffort = "none";
+export const OPENAI_CHAT_DEFAULT_MAX_OUTPUT_TOKENS = 300;
+
+/**
+ * Turn a step's `params` (or none) into the two knobs of one chat call.
+ *
+ * PRECEDENCE, and why it is this way round:
+ *
+ *   effort     params.effort → "none"
+ *              There is no caller-supplied effort and there never was: the
+ *              constant was the whole problem 0030 exists to remove.
+ *
+ *   ceiling    params.max_output_tokens → the CALLER's opts.maxOutputTokens
+ *              → 300
+ *              The row wins over the caller deliberately. The caller's number
+ *              sizes the VISIBLE answer it needs (ai-copy asks for 1,600 tokens
+ *              of shot list); a reasoning model bills — and spends — reasoning
+ *              tokens out of that same budget, so the model that needs more
+ *              headroom for the identical answer is the one the row knows
+ *              about. Clamped to MAX_PARAM_OUTPUT_TOKENS in params.ts so a row
+ *              can raise the ceiling but never remove it.
+ *
+ * Pure and exported so the "params absent == today's exact request" promise is
+ * a unit test and not a comment.
+ */
+export function openaiChatConfig(
+  params: Record<string, unknown> | null | undefined,
+  callerMaxOutputTokens?: number,
+): { effort: OpenAiReasoningEffort; maxOutputTokens: number } {
+  return {
+    effort: paramEnum(params, "effort", OPENAI_REASONING_EFFORTS) ?? OPENAI_CHAT_DEFAULT_EFFORT,
+    maxOutputTokens: paramTokens(params, "max_output_tokens") ??
+      callerMaxOutputTokens ?? OPENAI_CHAT_DEFAULT_MAX_OUTPUT_TOKENS,
+  };
+}
+
+/**
+ * One bounded chat call.
+ *
+ * `target` is either the ROUTE STEP or a bare model id. Pass the step wherever
+ * you have one — that is the only way `params` reaches the request, and a
+ * caller holding the frozen §1 `RouteStep` can pass it as-is (paramsOf() reads
+ * the superset column). A bare string is the pre-0030 call and gets the
+ * pre-0030 body: reasoning effort "none", 300 output tokens unless the caller
+ * says otherwise.
  */
 export async function openaiChat(
-  model: string,
+  target: string | RouteStep,
   input: unknown,
   opts: { maxOutputTokens?: number; json?: boolean } = {},
 ): Promise<string> {
+  const model = typeof target === "string" ? target : target.model;
+  const cfg = openaiChatConfig(typeof target === "string" ? null : paramsOf(target), opts.maxOutputTokens);
   const body: Record<string, unknown> = {
     model,
     input,
-    reasoning: { effort: "none" },
-    max_output_tokens: opts.maxOutputTokens ?? 300,
+    reasoning: { effort: cfg.effort },
+    max_output_tokens: cfg.maxOutputTokens,
   };
   if (opts.json) body.text = { format: { type: "json_object" } };
   const data = await fetchJson<Record<string, unknown>>(
@@ -138,6 +207,26 @@ export async function openaiChat(
     { method: "POST", headers: { ...authHeader(), "Content-Type": "application/json" }, body: JSON.stringify(body) },
     BUDGETS.submitMs,
   );
+  // HTTP 200 is only transport success: a Responses answer can contain usable-
+  // looking text (even valid JSON) while its token budget or content filter
+  // stopped generation. Returning that prefix would mark an unfinished EDL or
+  // review verdict as successful. Require an explicit completed envelope before
+  // either extraction path; unknown/pending states are not synchronous answers.
+  if (data.status !== "completed" || data.error != null || data.incomplete_details != null) {
+    const details = data.incomplete_details;
+    const reason = details && typeof details === "object"
+      ? (details as Record<string, unknown>).reason
+      : undefined;
+    // A content refusal is terminal under runChain's existing policy: do not
+    // send it to another vendor. No raw error body or partial output is echoed.
+    if (reason === "content_filter") {
+      throw new ProviderError(PROVIDER, "nsfw", "OpenAI did not complete the response because of its content filter");
+    }
+    const message = reason === "max_output_tokens"
+      ? "OpenAI response was incomplete: max_output_tokens reached"
+      : "OpenAI did not return a completed response";
+    throw new ProviderError(PROVIDER, "upstream", message);
+  }
   if (typeof data.output_text === "string" && data.output_text.trim()) return data.output_text;
   const output = Array.isArray(data.output) ? data.output : [];
   for (const item of output as Array<Record<string, unknown>>) {
@@ -149,10 +238,15 @@ export async function openaiChat(
   throw new ProviderError(PROVIDER, "upstream", `OpenAI returned no text: ${snippet(data, 200)}`);
 }
 
-/** The OpenAI half of the fair-housing OR-gate (flag if EITHER judge flags). */
-export async function openaiJudge(model: string, subject: string, rubric: string): Promise<JudgeVerdict> {
+/** The OpenAI half of the fair-housing OR-gate (flag if EITHER judge flags).
+ *  `target` is the step or a bare model id, exactly as openaiChat() takes it. */
+export async function openaiJudge(
+  target: string | RouteStep,
+  subject: string,
+  rubric: string,
+): Promise<JudgeVerdict> {
   const raw = await openaiChat(
-    model,
+    target,
     [{
       role: "user",
       content: [{

@@ -80,7 +80,7 @@ const MAX_MESSAGE_CHARS = 1200;
 
 const MAX_LISTINGS = 25;
 const MAX_TITLE_CHARS = 120;
-const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team"] as const;
+const KNOWN_PLANS = ["free", "trial", "starter", "solo", "pro", "team", "brokerage"] as const;
 
 // Where the coach was opened from. A CLOSED SET, like KNOWN_PLANS and the
 // action enum — not a length-capped free string. `screen` is a hint to the
@@ -282,8 +282,11 @@ Deno.serve(async (req) => {
 
     const attempt = await runChain("coach.chat", chain, async (step) => {
       if (step.provider === "anthropic") {
+        // The STEP, not step.model: that is what carries the row's `params`
+        // (migration 0030) into the request. No coach.chat row seeds any, so
+        // this is byte-identical today and stays a row edit tomorrow.
         return await anthropicMessages({
-          model: step.model,
+          model: step,
           system,
           content: [{ type: "text", text: userTurn }],
           maxTokens: MAX_TOKENS,
@@ -296,7 +299,7 @@ Deno.serve(async (req) => {
         // object outright; parseCoachOutput() still re-validates every field,
         // because "valid JSON" is not the same thing as "safe to execute".
         return await openaiChat(
-          step.model,
+          step,
           [{ role: "user", content: [{ type: "input_text", text: `${system}\n\n---\n\n${userTurn}` }] }],
           { maxOutputTokens: MAX_TOKENS, json: true },
         );
