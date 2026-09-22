@@ -1,0 +1,183 @@
+.content-planner .planner-edit-note {
+  padding: 12px 14px;
+  border-left: 3px solid var(--line);
+  background: var(--surface);
+  border-radius: 0 8px 8px 0;
+  color: var(--accent-text);
+  font-size: 0.82rem;
+  overflow-wrap: anywhere;
+}
+.content-planner .planner-validation,
+.content-planner .planner-time-choice {
+  padding: 12px 14px;
+  background: var(--warn-soft);
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  color: var(--warn);
+  font-size: 0.82rem;
+
+  border-color: var(--warn-line);
+}
+.content-planner .planner-validation {
+  margin: 0;
+}
+.content-planner .planner-form-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.content-planner .planner-form-actions .primary {
+  flex: 1;
+}
+.content-planner .planner-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 20px 0 12px;
+}
+.content-planner .planner-filters label {
+  min-width: 0;
+}
+.content-planner .planner-week {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.content-planner .planner-week-buttons {
+  display: flex;
+  gap: 6px;
+}
+.content-planner .planner-week-buttons button {
+  min-width: 44px;
+  padding: 8px 12px;
+  font-size: 0.75rem;
+}
+.content-planner .planner-week p {
+  font-size: 0.8rem;
+  margin: 0;
+}
+.content-planner .planner-week small {
+  display: block;
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin-top: 5px;
+  overflow-wrap: anywhere;
+}
+.content-planner .planner-result-count {
+  color: var(--muted);
+  font-size: 0.74rem;
+  margin: 13px 0;
+}
+.content-planner .planned-item.is-editing {
+  border-color: var(--line);
+}
+.content-planner .planner-legacy {
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.content-planner .planner-remove {
+  color: var(--bad);
+  border-color: var(--bad-line);
+}
+.content-planner .planner-remove-confirm {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 15px;
+}
+.content-planner .planner-remove-confirm h4 {
+  margin: 0;
+  color: var(--bad);
+  font-size: 0.88rem;
+}
+.content-planner .planner-remove-confirm p {
+  font-size: 0.76rem;
+}
+.content-planner .planned-items {
+  max-height: 850px;
+}
+.content-planner .planner-backups {
+  margin-top: 18px;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.content-planner .planner-backups h3,
+.content-planner .planner-import-preview h4 {
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--accent-text);
+}
+.content-planner .planner-backups p,
+.content-planner .planner-backups label {
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.content-planner .planner-backups > small {
+  display: block;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.content-planner .planner-import-preview,
+.content-planner .planner-import-progress {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.content-planner .planner-backup-name {
+  font-weight: 600;
+}
+.content-planner .planner-import-total {
+  color: var(--accent-text);
+}
+.content-planner .planner-import-items {
+  max-height: 280px;
+  overflow-y: auto;
+  padding: 0;
+  margin: 16px 0;
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.content-planner .planner-import-items li {
+  padding: 12px;
+  border-bottom: 1px solid var(--line);
+  overflow-wrap: anywhere;
+  font-size: 0.78rem;
+}
+.content-planner .planner-import-items li:last-child {
+  border-bottom: 0;
+}
+.content-planner .planner-import-items span {
+  display: block;
+  margin-top: 5px;
+  color: var(--muted);
+  font-size: 0.7rem;
+}
+.content-planner .planner-import-items p {
+  margin-bottom: 0;
+  white-space: pre-wrap;
+}
+@media (max-width: 560px) {
+  .content-planner .planner-filters,
+  .content-planner .form-row {
+    grid-template-columns: 1fr;
+  }
+  .content-planner .planner-form-actions button {
+    width: 100%;
+  }
+  .content-planner .planner-week {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .content-planner .planned-item {
+    padding: 14px;
+  }
+}

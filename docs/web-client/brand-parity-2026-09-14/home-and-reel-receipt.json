@@ -1,0 +1,72 @@
+{
+  "status": "passed",
+  "proof": "Real App and StudioServices, isolated Auth/API and synthetic phone media; no customer data or AI provider calls.",
+  "checks": [
+    "native home cards use a keyboard-dismissable home picker and route the chosen property to AI Photo Studio",
+    "all six additional AI cards open their exact tool and preset with the selected second property",
+    "tour, photo and floor-plan cards select the matching property task",
+    "Agent card and leads go directly to their business tools; unfinished profile text survives Home navigation",
+    "an unfinished new-home form survives moving Home and back",
+    "home matches exact native light/dark backgrounds with no horizontal overflow at1440 and390",
+    "System appearance follows operating-system changes while explicit choices persist",
+    "all card navigation is read-only: zero generation, upload, property, or profile writes",
+    "3D walkthrough appears only when the real capability contract is enabled",
+    "one-home accounts go directly into the tool; zero-home accounts open the creation form",
+    "Home Make a reel imports actual selected phone-photo bytes into the editor and autosaves with source reuse, without another upload",
+    "Opening another home\u2019s reel picker and cancelling leaves the prior edit, source files and property assignment intact",
+    "reel journey and real synthetic media picker remain usable at desktop and mobile widths in both appearances"
+  ],
+  "errors": [],
+  "externalRequests": [],
+  "visuals": [
+    {
+      "mode": "light",
+      "width": 1440,
+      "bg": "rgb(250, 250, 252)",
+      "overflow": false,
+      "screenshot": "home-light-1440.png"
+    },
+    {
+      "mode": "light",
+      "width": 390,
+      "bg": "rgb(250, 250, 252)",
+      "overflow": false,
+      "screenshot": "home-light-390.png"
+    },
+    {
+      "mode": "dark",
+      "width": 1440,
+      "bg": "rgb(14, 13, 20)",
+      "overflow": false,
+      "screenshot": "home-dark-1440.png"
+    },
+    {
+      "mode": "dark",
+      "width": 390,
+      "bg": "rgb(14, 13, 20)",
+      "overflow": false,
+      "screenshot": "home-dark-390.png"
+    },
+    {
+      "mode": "light",
+      "width": 1440,
+      "screenshot": "reel-light-1440.png"
+    },
+    {
+      "mode": "light",
+      "width": 390,
+      "screenshot": "reel-light-390.png"
+    },
+    {
+      "mode": "dark",
+      "width": 1440,
+      "screenshot": "reel-dark-1440.png"
+    },
+    {
+      "mode": "dark",
+      "width": 390,
+      "screenshot": "reel-dark-390.png"
+    }
+  ],
+  "artifacts": "screenshots"
+}

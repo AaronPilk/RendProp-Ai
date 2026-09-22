@@ -24,7 +24,8 @@ enum DirectUploader {
         }
         let owner = AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject)
         let key = keyPrefix + ":" + sha256Hex("\(listingID.uuidString)|\(role)|\(digest)|\(bytes)")
-        let journalKey = "\(owner ?? "anonymous-pending")|\(key)"
+        let journalKey = photoJournalKey(owner: owner ?? "anonymous-pending", listingID: listingID,
+            role: role, keyPrefix: keyPrefix, digest: digest, bytes: bytes)
         func checkOwner() throws {
             try Task.checkCancellation()
             guard AuthStore.currentAccessToken.flatMap(AuthStore.jwtSubject) == owner else { throw CancellationError() }
@@ -124,6 +125,12 @@ enum DirectUploader {
             throw error
         }
     }
+    /// One shared definition for writes and later, read-only photo identity lookup.
+    static func photoJournalKey(owner: String, listingID: UUID, role: String, keyPrefix: String,
+                                digest: String, bytes: Int64) -> String {
+        "\(owner)|\(keyPrefix):" + sha256Hex("\(listingID.uuidString)|\(role)|\(digest)|\(bytes)")
+    }
+
     /// Streaming SHA-256 — never loads the file into memory. Run off-main.
     static func sha256(of url: URL) -> String? {
         guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }

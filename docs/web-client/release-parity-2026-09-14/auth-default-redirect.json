@@ -1,0 +1,9 @@
+{
+  "status": "passed",
+  "project": "ymgqpbnjpztwjsyvceld",
+  "defaultRedirect": "https://studio.rendprop.com",
+  "existingNativeAndWebAudiencesPreserved": true,
+  "allowedRedirectsPreserved": true,
+  "otherAuthFieldsPreserved": true,
+  "reason": "Expired OAuth sessions must return to the production Studio instead of localhost."
+}

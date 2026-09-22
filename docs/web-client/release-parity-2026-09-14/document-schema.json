@@ -1,0 +1,13 @@
+{
+  "status": "passed",
+  "checks": [
+    "migration executes on Postgres17",
+    "owner read",
+    "foreign user denied",
+    "anon denied",
+    "client mutation denied",
+    "trusted results hidden",
+    "deleted workspace denied",
+    "payload constraint"
+  ]
+}

@@ -4,6 +4,7 @@ import PhotosUI
 import WebKit
 
 struct SettingsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     // Key is shared with UploadManager.shouldWarnCellular (which reads it via
     // UserDefaults). The launch code registers the default (`true`) so the
     // toggle and the upload manager agree on a fresh install.
@@ -459,6 +460,9 @@ struct SettingsView: View {
         .askAI(.settings)
         .task { await loadUsage() }
         .task { await loadNotificationPrefs() }
+        .onChange(of: scenePhase) { phase in
+            if phase == .active { Task { await loadUsage(); if !isSavingNotificationPrefs { await loadNotificationPrefs() } } }
+        }
         .refreshable {
             await loadUsage()
             await loadNotificationPrefs()
@@ -485,6 +489,11 @@ struct SettingsView: View {
                 notificationPrefs = nil
                 notificationSaveError = nil
             }
+        }
+        .onChange(of: auth.userID) { _ in
+            usage = nil; usageError = nil; notificationPrefs = nil; notificationSaveError = nil
+            showAdminConsole = false; adminProbeDone = false
+            Task { await loadUsage(); await loadNotificationPrefs() }
         }
         .sheet(isPresented: $showSignIn) {
             // Apple's own wording in the 5.1.1(v) rejection: "You may explain to
@@ -717,7 +726,10 @@ struct SettingsView: View {
         // A failure here is silence on purpose: a preferences read that cannot
         // answer is not something a person can act on, and the section already
         // has an honest state for "no preferences".
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
         let fetched: NotificationPrefs? = try? await api.notificationPrefs()
+        guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
         notificationPrefs = fetched
         notificationSaveError = nil
     }
@@ -910,11 +922,16 @@ struct SettingsView: View {
         }
         isLoadingUsage = true
         defer { isLoadingUsage = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
         do {
-            usage = try await model.api.me()
+            let fetched = try await model.api.me()
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            usage = fetched
             usageError = nil
         } catch {
             if error is CancellationError { return }
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             usageError = UserFacingError.message(error, fallback: "Couldn't load usage. Pull down to refresh.")
         }
         await resolveAdminAccess()
@@ -1272,6 +1289,7 @@ enum UserFacingError {
 // the detail screen. Lives in this in-target file (new-file rule).
 
 struct LeadsView: View {
+    @Environment(\.scenePhase) private var scenePhase
     /// nil = every lead for the account; a listing = only that listing's leads.
     var listing: Listing? = nil
 
@@ -1321,8 +1339,10 @@ struct LeadsView: View {
         .navigationTitle("Leads")
         .navigationBarTitleDisplayMode(.inline)
         .task { await load() }
+        .onChange(of: scenePhase) { phase in if phase == .active { Task { await load() } } }
         .refreshable { await load() }
-        .onChange(of: auth.isSignedIn) { _ in Task { await load() } }
+        .onChange(of: auth.isSignedIn) { _ in leads = []; Task { await load() } }
+        .onChange(of: auth.userID) { _ in leads = []; errorMessage = nil; Task { await load() } }
         .sheet(isPresented: $showSignIn) {
             SignInView {
                 Task { await load() }
@@ -1445,13 +1465,17 @@ struct LeadsView: View {
         if let listing, listing.isSample || listing.serverID == nil { hasLoaded = true; return }
         isLoading = true
         defer { isLoading = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
         do {
             let fetched = try await model.api.leads(listingServerID: listing?.serverID)
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
             leads = fetched.sorted { $0.createdAt > $1.createdAt }
             errorMessage = nil
             hasLoaded = true
         } catch {
             if error is CancellationError { return }
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             errorMessage = UserFacingError.message(error, fallback: "Couldn't load leads. Pull down to try again.")
             hasLoaded = true
         }
@@ -1473,6 +1497,9 @@ struct LeadRow: View {
                 Text(lead.createdAt, style: .time)
                     .font(.rpCaption)
                     .foregroundStyle(Theme.inkDim)
+            }
+            if let status = lead.status, ["new", "contacted", "won", "lost"].contains(status) {
+                Text(status.capitalized).font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
             }
             if showListing, let address = lead.listingAddress?.trimmingCharacters(in: .whitespaces), !address.isEmpty {
                 Label(address, systemImage: SpaceType.current.systemImage)
@@ -1621,6 +1648,30 @@ struct AgentCard {
     static let primaryTypeKey = "brand.primaryType"
     /// Snapshot of the last payload pushed to PATCH /me/brand (skip identical pushes).
     static let lastPushedKey = "brand.lastPushed"
+    static let cloudOwnerKey = "brand.cloudOwner"
+
+    /// Pull a shared card only when it cannot erase an edit waiting to upload.
+    /// A previous account's card is archived locally before replacing it.
+    @MainActor static func acceptCloud(_ brand: CloudBrand) {
+        guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == brand.userID,
+              let type = SpaceType(rawValue: brand.spaceType) else { return }
+        let defaults = UserDefaults.standard
+        let owner = "\(brand.userID.uuidString):\(brand.orgID.uuidString)"
+        let previousOwner = defaults.string(forKey: cloudOwnerKey)
+        let current = card(for: type).brandFields
+        let currentSignature = fieldNames.map { current[$0] ?? "" }.joined(separator: "\u{1F}")
+        let lastPushed = defaults.string(forKey: lastPushedKey)
+        if previousOwner == owner || previousOwner == nil {
+            if card(for: type).isSet && currentSignature != lastPushed { return }
+        } else {
+            defaults.set(current, forKey: "brand.archive.\(previousOwner!).\(type.rawValue)")
+        }
+        for field in fieldNames { defaults.set(brand.fields[field] ?? "", forKey: key(field, for: type)) }
+        defaults.set(fieldNames.map { brand.fields[$0] ?? "" }.joined(separator: "\u{1F}"), forKey: lastPushedKey)
+        defaults.set(owner, forKey: cloudOwnerKey)
+        primaryBrandType = type
+        NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
+    }
 
     /// Storage key NAMESPACED by business type, so each industry keeps its own
     /// card — a restaurant's card is separate from a real-estate agent's.
@@ -2105,6 +2156,9 @@ struct ProfileView: View {
             .onChange(of: spaceTypeRaw) { _ in
                 card = AgentCard.current   // load THIS industry's card
                 headshot = UIImage(contentsOfFile: AgentCard.headshotURL.path)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropCloudBrandUpdated)) { _ in
+                card = AgentCard.current
             }
             .sheet(isPresented: $showPortfolioShare) {
                 if let u = portfolioURL { ShareSheet(items: [u]) }

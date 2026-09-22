@@ -1,0 +1,165 @@
+{
+  "gate": "studio-deployed-application-bytes",
+  "origin": "https://studio.rendprop.com",
+  "readAt": "2026-09-14T18:32:20.765Z",
+  "status": "passed",
+  "files": [
+    {
+      "path": "/",
+      "bytes": 867,
+      "sha256": "01a171dd6d6cf96a905994fb7c362dfe382e972c8362cc96e3a2b217d69a681b",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/robots.txt",
+      "bytes": 1862,
+      "sha256": "88be9851380141c6e5a1679253ecc58594d53545f62780d263a1b89908d1c4cc",
+      "status": 200,
+      "transformation": {
+        "kind": "known-cloudflare-managed-robots-prefix",
+        "prefixSha256": "842b34303164ead41bccb7c05d1707422e98d108753b397b6dcc19683eb02101",
+        "originSha256": "331ea9090db0c9f6f597bd9840fd5b171830f6e0b3ba1cb24dfa91f0c95aedc1"
+      }
+    },
+    {
+      "path": "/rendprop-mark.svg",
+      "bytes": 21252,
+      "sha256": "18c5edd6e6801cc33754b41619f167d28b8da33c5604776e70faf76311a31199",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/BusinessWorkspace-B2RRTIoT.css",
+      "bytes": 8218,
+      "sha256": "aed84f5fde2f2c36b82f7694847b3a012c165fdbc573c83ccf074350cd102dcd",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/BusinessWorkspace-vF04wPz0.js",
+      "bytes": 44444,
+      "sha256": "4bd65275d162130bb8f06376bdb91967b10b69245aa344c4dc6d592920a41a32",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CloudEditor-BunaX4X8.js",
+      "bytes": 29671,
+      "sha256": "9501ccf920c7b50b3fab78c173ec15362aa25bb70a338f494a64f599b8528188",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CloudPlanner-BeYMEQwg.js",
+      "bytes": 7064,
+      "sha256": "1adf3de679d5aeb497026774e305fb39ceb015d3a69289543f4420224bef6bb7",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CloudPlanner-kODEfhvb.css",
+      "bytes": 659,
+      "sha256": "9418a3bfc8b437ea23c38c1c3cce26fcad012a7ded625332fad75224847a0f2d",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CreativeWorkspace-C3Syv6d8.css",
+      "bytes": 8945,
+      "sha256": "51434e24e4a6e79c8b4d7f584d79f7941eb8d0401fe1d4c10f7a8a3221806dfd",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/CreativeWorkspace-DMihiYpf.js",
+      "bytes": 45122,
+      "sha256": "d379349388649a53abbc747ee39fa08d0867baf90b3c234ee206974d491f54e2",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/ListingWorkflow-C2iUid73.js",
+      "bytes": 43171,
+      "sha256": "93302ebea953a0b89b14617f2338b0d92baf9239f6c84ed19799eab596943e83",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/ListingWorkflow-DLgi7hJW.css",
+      "bytes": 7097,
+      "sha256": "2f15a019ecc9c968ea946a703161b7305f7fbe12b4e53c99755d4d43422ce94f",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/SyncStatus-C99QCrD4.js",
+      "bytes": 4315,
+      "sha256": "127264517fd44cce86f228e1f532bbb52af7858115539ff15ff2820a6b09b8ee",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/VideoEditor-B3BfZ8G-.css",
+      "bytes": 10278,
+      "sha256": "d3157336f79b2581ea23c2d45a5a4d913d07511fb5c01594cab585e8854d6808",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/VideoEditor-CMcQR1li.js",
+      "bytes": 46394,
+      "sha256": "233ac816477b63d85943a8e69727bae075f8ccdf43952c4645f6c30795824eaa",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/index-BktufRr8.css",
+      "bytes": 25659,
+      "sha256": "e706b1995b11c3cd2ef14eab749a38fa5fc9a7475b469b9867b6fb6226b9430d",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/index-DIalyR-v.js",
+      "bytes": 529107,
+      "sha256": "b92d5236dee6d9324090cb1d38ccfd9db1ac952f97a85d5791a393e9acde43f8",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/model-BkpOSc4R.js",
+      "bytes": 4250,
+      "sha256": "db8fedaa32d0329d30fe4d7fb0276755d6993e2d1755542fc60953aaaa8aa7c9",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/model-CpYxyDr4.js",
+      "bytes": 5758,
+      "sha256": "a828a3d521af58b160e2c0702a1fbf6057a1761a7692ccb35883cfbdfb730a11",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/qrcode-DtWdxa9d.js",
+      "bytes": 20628,
+      "sha256": "4d4f1742456b3e0406bba78d1d1c891386c40676bc217ef3d5e3f29bc2989034",
+      "status": 200,
+      "transformation": null
+    },
+    {
+      "path": "/assets/uploads-CkMf04zn.js",
+      "bytes": 6636,
+      "sha256": "5fdab0904b566bd6c00d789cfb551e7f755305b28fb863f8716bbe11ba9311fe",
+      "status": 200,
+      "transformation": null
+    }
+  ],
+  "spaFallback": true,
+  "accountLoginVerified": false,
+  "robotsCrawlBlockingVerified": false,
+  "warnings": [
+    "Cloudflare managed robots prepends wildcard Allow, which can conflict with origin Disallow. Crawl blocking is NOT verified. X-Robots-Tag and HTML meta noindex remain enabled. No zone crawler setting was changed."
+  ]
+}

@@ -101,6 +101,19 @@ struct HomeListingsView: View {
     /// card keeps its own design.
     private var listBody: some View {
         List {
+            if let error = model.cloudSyncError {
+                Label(error, systemImage: "icloud.slash")
+                    .font(.footnote).foregroundStyle(Theme.inkDim)
+                    .listRowBackground(Color.clear)
+            } else if model.isCloudSyncing {
+                HStack { ProgressView(); Text("Syncing with Studio…").font(.footnote) }
+                    .listRowBackground(Color.clear)
+            } else if model.pendingCloudListingCount > 0 {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(model.pendingCloudListingCount) listing update\(model.pendingCloudListingCount == 1 ? " is" : "s are") waiting to sync.").font(.footnote)
+                    Button("Retry Studio sync") { Task { await model.refreshCloudWorkspace() } }.font(.footnote.weight(.semibold))
+                }.foregroundStyle(Theme.inkDim).listRowBackground(Color.clear)
+            }
             if !hasRealListing && search.isEmpty {
                 firstTourCard
                     .listRowInsets(rowInsets)
@@ -158,7 +171,7 @@ struct HomeListingsView: View {
         }
         .listStyle(.plain)
         .searchable(text: $search, prompt: "Search \(noun)s")
-        .refreshable { await model.syncDirtyListings() }
+        .refreshable { await model.refreshCloudWorkspace() }
     }
 
     private var rowInsets: EdgeInsets {

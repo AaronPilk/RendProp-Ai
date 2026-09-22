@@ -619,7 +619,9 @@ struct NewListingView: View {
         // must not resurrect one the user has since deleted.
         if let existing = photosListing,
            model.listings.contains(where: { $0.id == existing.id }) {
-            model.modify(existing.id, sync: false) {
+            // The draft may already be in Studio. Keep corrections queued until
+            // the cloud confirms them so a foreground refresh cannot erase them.
+            model.modify(existing.id, sync: true) {
                 form.apply(to: &$0)
                 if let coordinate = pendingCoord {
                     $0.latitude = coordinate.latitude
@@ -635,7 +637,7 @@ struct NewListingView: View {
         // Review, now wants photos instead) — reuse it rather than duplicate it.
         if let existing = createdListing,
            model.listings.contains(where: { $0.id == existing.id }) {
-            model.modify(existing.id, sync: false) {
+            model.modify(existing.id, sync: true) {
                 form.apply(to: &$0)
                 if let coordinate = pendingCoord {
                     $0.latitude = coordinate.latitude
@@ -672,7 +674,7 @@ struct NewListingView: View {
            model.tours[existing.id] == nil {
             // Came back from Review and picked a different video: keep the
             // listing, refresh its fields, drop the previous file.
-            model.modify(existing.id, sync: false) {
+            model.modify(existing.id, sync: true) {
                 form.apply(to: &$0)
                 // A location fix taken AFTER the listing was created used to be
                 // dropped here (audit F-B-06).

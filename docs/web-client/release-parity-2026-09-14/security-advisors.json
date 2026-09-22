@@ -1,0 +1,69 @@
+{
+  "checkedAt": "2026-09-14T18:25:46.970Z",
+  "scope": "Studio release objects only; existing unrelated project advisories are outside this receipt.",
+  "status": "reviewed",
+  "findings": [
+    {
+      "name": "rls_enabled_no_policy",
+      "title": "RLS Enabled No Policy",
+      "level": "INFO",
+      "facing": "EXTERNAL",
+      "categories": [
+        "SECURITY"
+      ],
+      "description": "Detects cases where row level security (RLS) has been enabled on a table but no RLS policies have been created.",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0008_rls_enabled_no_policy",
+      "count": 2,
+      "findings": [
+        {
+          "detail": "Table \\`public.studio_creative_results\\` has RLS enabled, but no policies exist",
+          "metadata": {
+            "name": "studio_creative_results",
+            "type": "table",
+            "schema": "public"
+          },
+          "observed_at": "2026-09-14T18:25:46.970Z"
+        },
+        {
+          "detail": "Table \\`public.voice_storage_reservations\\` has RLS enabled, but no policies exist",
+          "metadata": {
+            "name": "voice_storage_reservations",
+            "type": "table",
+            "schema": "public"
+          },
+          "observed_at": "2026-09-14T18:25:46.970Z"
+        }
+      ]
+    },
+    {
+      "name": "authenticated_security_definer_function_executable",
+      "title": "Signed-In Users Can Execute SECURITY DEFINER Function",
+      "level": "WARN",
+      "facing": "EXTERNAL",
+      "categories": [
+        "SECURITY"
+      ],
+      "description": "Detects `SECURITY DEFINER` functions that are callable by signed-in users. Revoke `EXECUTE`, switch the function to `SECURITY INVOKER`, or move it out of your exposed API schema if signed-in users should not call it.",
+      "remediation": "https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable",
+      "count": 1,
+      "findings": [
+        {
+          "detail": "Function `public.studio_named_account_active()` can be executed by the `authenticated` role as a `SECURITY DEFINER` function via `/rest/v1/rpc/studio_named_account_active`. Revoke `EXECUTE` or switch it to `SECURITY INVOKER` if that is not intentional.",
+          "metadata": {
+            "name": "studio_named_account_active",
+            "schema": "public",
+            "language": "sql",
+            "arguments": "",
+            "security_definer": true
+          },
+          "observed_at": "2026-09-14T18:25:46.970Z"
+        }
+      ]
+    }
+  ],
+  "review": [
+    "studio_creative_results and voice_storage_reservations intentionally have no client RLS policies. They are private server metadata, and all client/direct reservation writes are revoked.",
+    "studio_named_account_active is intentionally SECURITY DEFINER because the invoker gallery transaction must check the caller's current auth.users and deletion state. It takes no inputs, returns only a boolean for auth.uid(), sets an empty search_path, has no writes, and is executable only by authenticated callers. All gallery writes remain SECURITY INVOKER under RLS and named editor membership checks.",
+    "16 actual PostgreSQL gallery groups verify role, anonymous, deleting-account, wrong-listing and stale-snapshot rejection. 20 cleanup checks verify reservation grants, fixed deadlines and retained deletion inventory."
+  ]
+}

@@ -22,6 +22,7 @@ import SwiftUI
 // not before.
 
 struct TeamView: View {
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var auth = AuthStore.shared
 
     @State private var summary: TeamSummary?
@@ -47,6 +48,12 @@ struct TeamView: View {
             .navigationTitle("Team")
             .navigationBarTitleDisplayMode(.inline)
             .task { await load() }
+            .onChange(of: scenePhase) { phase in if phase == .active { Task { await load() } } }
+            .onChange(of: auth.userID) { _ in
+                summary = nil; createdInvite = nil; pendingRemoval = nil; loadError = nil
+                Task { await load() }
+            }
+            .onChange(of: auth.isIdentified) { identified in if !identified { summary = nil; createdInvite = nil; pendingRemoval = nil } }
             .refreshable { await load() }
             .sheet(isPresented: $showSignIn) {
                 SignInView.optionalUpgrade { Task { await load() } }
@@ -277,10 +284,15 @@ struct TeamView: View {
         guard !needsIdentity else { summary = nil; return }
         isLoading = true
         defer { isLoading = false }
+        _ = await AuthStore.validAccessToken()
+        let actor = auth.userID, revision = auth.syncSessionRevision
         do {
-            summary = try await TeamAPI.summary()
+            let fetched = try await TeamAPI.summary()
+            guard auth.isIdentified, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            summary = fetched
             loadError = nil
         } catch {
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             summary = nil
             loadError = (error as? TeamAPI.Failure)?.message
                 ?? "Couldn't load your team. Check your connection and try again."
@@ -357,7 +369,7 @@ private struct NewInviteView: View {
                         Text("Marketing").tag("marketing")
                     }
                 } footer: {
-                    Text("The email is only so you can see who you invited — the code is what lets them in, and you can send it however you like. An admin can invite and remove people; an agent can't.")
+                    Text("Adding an email sends this person an invitation. Leave it blank to create a code you share yourself. An admin can invite and remove people; an agent can't.")
                 }
             }
             .navigationTitle("Invite someone")
@@ -367,7 +379,7 @@ private struct NewInviteView: View {
                     Button("Cancel") { dismiss() }.disabled(sending)
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Create code") {
+                    Button(email.isEmpty ? "Create code" : "Create & send") {
                         sending = true
                         Task {
                             await send(email.isEmpty ? nil : email, role)

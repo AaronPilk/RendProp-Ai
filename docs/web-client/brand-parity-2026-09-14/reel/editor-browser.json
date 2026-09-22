@@ -1,0 +1,21 @@
+{
+  "proof": "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.",
+  "checks": [
+    "Import automatically uploads the exact source and CAS-saves edit plus source asset reference",
+    "Fresh browser device restores original bytes, verifies SHA-256 and relinks clips without another upload",
+    "Changing property saves originals to that property instead of silently retaining another property\u2019s source",
+    "Fresh device restores narration by trusted result ID, exact video bytes, speed, styled captions and both transition choices",
+    "Decoded exported frames prove actual dissolve blending and horizontal whip movement",
+    "Actual exported MP4 is H264/AAC, 2x speed gives 3.02s edit, and decoded narration has 660Hz tone (RMS 0.088)",
+    "Real MP4 export saves to workspace and a lost completion/repeated Save reconciles without duplicate ticket or bytes",
+    "Library import from another property requires review and cannot silently upload into the saved edit\u2019s old property",
+    "Shot-plan missing-photo failure preserves current edit; confirmed valid plan atomically restores photo order, timing, captions and motion without duplicate uploads",
+    "Saved native phone recipe restores every linked photo, aspect, title, caption style and transitions with explicit review and no generation",
+    "Agent export preserves original duration and uninterrupted audio across photo-overlay boundaries (weakest 40ms RMS 0.087); decoded picture returns to the agent and a fresh device restores both sources",
+    "Removing a clip prunes its cloud document source reference while retaining original property media",
+    "Other-device edit surfaces a reload conflict and preserves the current local edit"
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "status": "passed"
+}

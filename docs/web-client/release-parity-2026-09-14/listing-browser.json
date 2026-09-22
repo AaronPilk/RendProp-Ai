@@ -1,0 +1,21 @@
+{
+  "proof": "Isolated real property UI and native-contract fixtures. No live account, paid rendering, publication, or uploads.",
+  "checks": [
+    "Public record match reviewed and adopted, asking price preserved, property saved",
+    "Phone-side property update preserves dirty office fields and requires explicit reload before saving",
+    "File imported, verified asset completed, gallery attached, refresh shows photo",
+    "Three-photo gallery caption, cover identity, and atomic order persist across a fresh property mount",
+    "Concurrent phone caption change keeps office text and requires an explicit conflict choice",
+    "Mark sold and clear sold status persist through native listing PATCH including explicit null",
+    "Existing phone source requests render-and-publish; ready unpublished job can be published with marketing and MLS links",
+    "QR code generated and downloaded locally with no external request",
+    "Saved phone chapters restored and updated through the native route",
+    "Floor plan attachment roundtrip and honest disabled 3D capability",
+    "Destructive property removal requires matching typed property name",
+    "Property workspace has no horizontal overflow at 390px"
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "status": "passed",
+  "artifact_directory": "/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-listing-browser-LG9idH"
+}

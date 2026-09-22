@@ -202,7 +202,54 @@ import Foundation
               "Original media remains byte-identical after every recovery")
         try await multipartRuntimeTests(root: root)
         try await boundedRecoveryTests(root: root)
+        try await photoReferenceTests(root: root)
         print("PASS UploadRecoveryTests \(assertions) assertions")
+    }
+
+    @MainActor static func photoReferenceTests(root: URL) async throws {
+        let file = root.appendingPathComponent("original.jpg")
+        let owner = UUID(uuidString: "11111111-1111-4111-8111-111111111111")!
+        let org = UUID(uuidString: "22222222-2222-4222-8222-222222222222")!
+        let other = UUID(uuidString: "33333333-3333-4333-8333-333333333333")!
+        let source = UUID(uuidString: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")!
+        let store = CloudPhotoReferences(directory: root.appendingPathComponent("cloud-photo-references"))
+        let journals = DirectUploadJournal(directory: root.appendingPathComponent("complete-loss"))
+        let lookup = try await store.sourceID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: journals)
+        check(lookup == source, "Native reel resolves genuine completed upload receipt without re-importing or another upload")
+        let renamed = root.appendingPathComponent("different-name.jpg")
+        try FileManager.default.copyItem(at: file, to: renamed)
+        check(try await store.sourceID(fileURL: renamed, ownerID: owner, orgID: org, listingID: owner, journalStore: journals) == source,
+              "Photo identity matches exact bytes independent of filename and selection order")
+        check(try await store.sourceID(fileURL: file, ownerID: other, orgID: org, listingID: owner, journalStore: journals) == nil,
+              "Upload photo receipts cannot cross accounts")
+        check(try await store.sourceID(fileURL: file, ownerID: owner, orgID: org, listingID: other, journalStore: journals) == nil,
+              "Upload photo receipts cannot cross listings")
+        var changed = try Data(contentsOf: renamed); changed[0] ^= 1; try changed.write(to: renamed)
+        check(try await store.sourceID(fileURL: renamed, ownerID: owner, orgID: org, listingID: owner, journalStore: journals) == nil,
+              "Same-size edited bytes cannot reuse an older uploaded photo identity")
+        let pendingStore = DirectUploadJournal(directory: root.appendingPathComponent("pending-photo-identity"))
+        let key = DirectUploader.photoJournalKey(owner: owner.uuidString.lowercased(), listingID: owner, role: "capture", keyPrefix: "photo",
+            digest: DirectUploader.sha256(of: file)!, bytes: FileStore.fileSize(file))
+        var pending = UploadRecovery.Journal(); pending.ticket = UploadTicket(assetID: source.uuidString, mode: .single); pending.dispatched = true
+        try await pendingStore.save(pending, for: key)
+        check(try await store.sourceID(fileURL: file, ownerID: owner, orgID: org, listingID: owner, journalStore: pendingStore) == nil,
+              "A dispatched but unconfirmed upload does not become a shared photo")
+        let imported = UUID(uuidString: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")!
+        try await store.save(sourceID: imported, fileURL: renamed, ownerID: owner, orgID: org, listingID: owner)
+        let reopened = CloudPhotoReferences(directory: root.appendingPathComponent("cloud-photo-references"))
+        check(try await reopened.sourceID(fileURL: renamed, ownerID: owner, orgID: org, listingID: owner, journalStore: pendingStore) == imported,
+              "A cloud import retains its actual response identity across relaunch")
+        check(try await reopened.sourceID(fileURL: renamed, ownerID: owner, orgID: other, listingID: owner, journalStore: pendingStore) == nil,
+              "Imported photo identities cannot cross workspaces")
+        check(try await reopened.sourceID(fileURL: renamed, ownerID: other, orgID: org, listingID: owner, journalStore: pendingStore) == nil,
+              "Imported photo identities cannot cross accounts")
+        let metadataFiles = try FileManager.default.contentsOfDirectory(at: root.appendingPathComponent("cloud-photo-references"), includingPropertiesForKeys: nil)
+        let metadata = String(decoding: try Data(contentsOf: metadataFiles[0]), as: UTF8.self)
+        check(!metadata.contains("https://") && !metadata.contains(renamed.path), "Shared photo metadata retains no capability URLs or local file paths")
+        let empty = root.appendingPathComponent("empty.jpg"); try Data().write(to: empty)
+        await expectFailure("Empty photos cannot be matched to cloud identities") {
+            _ = try await store.sourceID(fileURL: empty, ownerID: owner, orgID: org, listingID: owner, journalStore: journals)
+        }
     }
 
     @MainActor static func until(_ message: String, _ predicate: () -> Bool) async {

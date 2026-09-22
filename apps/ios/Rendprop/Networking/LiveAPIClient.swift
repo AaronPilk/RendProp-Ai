@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient {
+final class LiveAPIClient: APIClient, WorkspaceSyncAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -359,9 +359,141 @@ final class LiveAPIClient: APIClient {
         return dtos.map(mapListing)
     }
 
+    /// Unlike the legacy native /listings route, a complete RLS read paginates
+    /// across all memberships. Count drift, duplicate IDs and partial pages
+    /// fail before AppModel applies anything to its saved library.
+    func cloudListings() async throws -> [Listing] {
+        let rows: [ListingDTO] = try await cloudRows(table: "listings", columns:
+            "id,org_id,space_type,address,tagline,details,price_cents,beds,baths,sqft,lat,lng,status,sold_at,zillow_url,main_photo_key,created_at", filters: [URLQueryItem(name: "deleted_at", value: "is.null")])
+        guard rows.allSatisfy({ $0.id.flatMap(UUID.init(uuidString:)) != nil && $0.orgId.flatMap(UUID.init(uuidString:)) != nil }),
+              Set(rows.compactMap(\.id)).count == rows.count else { throw CloudSyncError.invalidResponse }
+        var result = rows.map(mapListing)
+        struct PublishedDTO: Decodable { let id: UUID; let listingId: UUID; let slug: String; let publishedAt: String }
+        let published: [PublishedDTO] = try await cloudRows(table: "renders", columns: "id,listing_id,slug,published_at", filters: [URLQueryItem(name: "published_at", value: "not.is.null")])
+        guard Set(published.map(\.id)).count == published.count else { throw CloudSyncError.incomplete }
+        var newest: [UUID: PublishedDTO] = [:]
+        for render in published {
+            guard CloudListingMerge.date(render.publishedAt) != nil,
+                  render.slug.range(of: "^[A-Za-z0-9_-]{1,128}$", options: .regularExpression) != nil else { throw CloudSyncError.invalidResponse }
+            if let old = newest[render.listingId], (CloudListingMerge.date(old.publishedAt) ?? .distantPast) > (CloudListingMerge.date(render.publishedAt) ?? .distantPast) { continue }
+            newest[render.listingId] = render
+        }
+        for i in result.indices {
+            guard let sid = result[i].serverID, let published = newest[sid] else { continue }
+            result[i].shareSlug = published.slug
+            result[i].shareURL = "https://rendprop.com/f/\(published.slug)"
+            result[i].unbrandedShareURL = "https://rendprop.com/u/\(published.slug)"
+            result[i].publishedRenderID = published.id
+        }
+        return result
+    }
+
+    private func cloudRows<T: Decodable>(table: String, columns: String, filters: [URLQueryItem]) async throws -> [T] {
+        guard ["listings", "renders"].contains(table), let token = await AuthStore.validAccessToken() else { throw CloudSyncError.identityChanged }
+        let fence = await MainActor.run { (AuthStore.shared.userID, AuthStore.shared.syncSessionRevision) }
+        guard fence.0 != nil else { throw CloudSyncError.identityChanged }
+        var root = base.deletingLastPathComponent().deletingLastPathComponent()
+        root.appendPathComponent("rest/v1/\(table)")
+        let size = 500
+        var total: Int?, offset = 0, bytes = 0, result: [T] = []
+        while true {
+            try Task.checkCancellation()
+            var components = URLComponents(url: root, resolvingAgainstBaseURL: false)!
+            components.queryItems = filters + [URLQueryItem(name: "select", value: columns), URLQueryItem(name: "order", value: "id.asc"), URLQueryItem(name: "limit", value: String(size)), URLQueryItem(name: "offset", value: String(offset))]
+            guard let target = components.url else { throw CloudSyncError.invalidResponse }
+            var request = makeRequest(url: target)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue("count=exact", forHTTPHeaderField: "Prefer")
+            request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 30
+            let (data, response) = try await session.data(for: request)
+            let current = await MainActor.run { AuthStore.shared.isSignedIn && AuthStore.shared.userID == fence.0 && AuthStore.shared.syncSessionRevision == fence.1 }
+            guard current else { throw CloudSyncError.identityChanged }
+            guard let http = response as? HTTPURLResponse else { throw CloudSyncError.invalidResponse }
+            guard (200..<300).contains(http.statusCode) else { throw Self.serverError(status: http.statusCode, data: data) }
+            bytes += data.count
+            guard data.count <= 8 * 1024 * 1024, bytes <= 32 * 1024 * 1024,
+                  let range = http.value(forHTTPHeaderField: "Content-Range"), let countPart = range.split(separator: "/").last, let count = Int(countPart), count >= 0, count <= 10_000,
+                  total == nil || total == count else { throw CloudSyncError.incomplete }
+            total = count
+            let page: [T] = try decode(data)
+            let expected = min(size, count - offset)
+            guard expected >= 0, page.count == expected else { throw CloudSyncError.incomplete }
+            if expected > 0 {
+                guard range.hasPrefix("\(offset)-\(offset + expected - 1)/") else { throw CloudSyncError.incomplete }
+            } else if count != 0 || range != "*/0" { throw CloudSyncError.incomplete }
+            result += page; offset += page.count
+            if offset == count { return result }
+        }
+    }
+
+    func cloudListingState(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudListingState {
+        guard offset >= 0, offset <= 10000, offset % 100 == 0 else { throw CloudSyncError.invalidResponse }
+        var request = makeRequest(url: url(["studio", "listing-state"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        let decoded: CloudListingState = try decodeExact(data)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+    }
+    func cloudMedia(listingID: UUID, orgID: UUID, offset: Int = 0) async throws -> CloudMediaPage {
+        guard offset >= 0, offset <= 10000, offset % 50 == 0 else { throw CloudSyncError.invalidResponse }
+        var request = makeRequest(url: url(["studio", "media"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased()), URLQueryItem(name: "org_id", value: orgID.uuidString.lowercased()), URLQueryItem(name: "offset", value: String(offset))]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
+        let decoded: CloudMediaPage = try decodeExact(data)
+        return try decoded.checked(listingID: listingID, orgID: orgID, offset: offset)
+    }
+    func cloudBrand() async throws -> CloudBrand {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        guard let r = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let user = r["user"] as? [String: Any], let userRaw = user["id"] as? String, let userID = UUID(uuidString: userRaw),
+              let org = r["org"] as? [String: Any], let orgRaw = org["id"] as? String, let orgID = UUID(uuidString: orgRaw),
+              let type = org["space_type"] as? String else { throw CloudSyncError.invalidResponse }
+        let fields = (org["brand_kit"] as? [String: Any] ?? [:]).compactMapValues { $0 as? String }
+        return CloudBrand(userID: userID, orgID: orgID, spaceType: type, fields: fields)
+    }
+    func cloudCreative(listingID: UUID, orgID: UUID) async throws -> CloudCreative {
+        var resultRequest = makeRequest(url: url(["studio", "creative-results"], query: [URLQueryItem(name: "listing_id", value: listingID.uuidString.lowercased())]))
+        resultRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Results: Decodable { let results: [CloudCreative.Result] }
+        let results: Results = try decodeExact(try await execute(resultRequest))
+        guard results.results.count <= 100, Set(results.results.map(\.id)).count == results.results.count,
+              results.results.allSatisfy({ $0.listing_id == listingID && ["voice", "video"].contains($0.kind) && $0.words.count <= 20_000 && $0.words.allSatisfy({ $0.start.isFinite && $0.end.isFinite && $0.start >= 0 && $0.end >= $0.start && $0.text.count <= 1000 }) }) else { throw CloudSyncError.invalidResponse }
+        for result in results.results {
+            if let media = result.url, let expiry = result.expires_at { try CloudListingMerge.validateMedia(media, expiry: expiry, listingID: listingID, orgID: orgID, now: Date(), voice: result.kind == "voice") }
+            else if result.url != nil { throw CloudSyncError.invalidResponse }
+        }
+        var documentRequest = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "creative:\(listingID.uuidString.lowercased())")]))
+        documentRequest.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct DocumentEnvelope: Decodable {
+            struct Document: Decodable { struct Payload: Decodable { let script: String }; let listing_id: UUID; let payload: Payload }
+            let document: Document?
+        }
+        let document: DocumentEnvelope = try decodeExact(try await execute(documentRequest))
+        if let document = document.document { guard document.listing_id == listingID, document.payload.script.count <= 100_000 else { throw CloudSyncError.invalidResponse } }
+        return CloudCreative(script: document.document?.payload.script ?? "", results: results.results)
+    }
+
+    func cloudNativeReel(listingID: UUID, orgID: UUID) async throws -> CloudNativeReelDocument? {
+        var request = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "native:\(listingID.uuidString.lowercased())")]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudNativeReelDocument? }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document?.checked(listingID: listingID)
+    }
+    func saveCloudNativeReel(_ draft: NativeReelDraft, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudNativeReelDocument {
+        _ = try draft.checked()
+        guard revision >= 0, revision < 2_147_483_646 else { throw CloudSyncError.invalidResponse }
+        let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(draft))
+        var request = makeRequest(url: url(["studio", "documents"]), method: "POST", json: ["key": "native:\(listingID.uuidString.lowercased())", "kind": "native", "listing_id": listingID.uuidString.lowercased(), "expected_revision": revision, "payload": payload])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudNativeReelDocument }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document.checked(listingID: listingID)
+    }
+
     func createListing(_ listing: Listing) async throws -> Listing {
         let data = try await execute(makeRequest(url: url(["listings"]), method: "POST",
-                                                 json: listingBody(listing, forPatch: false)))
+                                                 json: listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())")))
         return mapListing(try decode(data))
     }
 
@@ -1235,7 +1367,8 @@ final class LiveAPIClient: APIClient {
             durationSource: clean(dto.durationSource) ?? "unknown",
             disclosure: clean(dto.disclosure),
             provenanceID: dto.provenance?.id,
-            provenanceRecorded: dto.provenance?.recorded ?? false)
+            provenanceRecorded: dto.provenance?.recorded ?? false,
+            sharedResultID: dto.sharedResultId.flatMap(UUID.init(uuidString:)))
     }
 
     // MARK: - AI room chapters (docs/AI-CHAPTERS-CONTRACT.md)
@@ -1647,6 +1780,11 @@ final class LiveAPIClient: APIClient {
             details: dto.details?.value
         )
         l.serverID = serverID
+        l.serverOrgID = dto.orgId.flatMap(UUID.init(uuidString:))
+        l.cloudCreateReplayed = dto.createReplayed
+        if let raw = l.details?[Listing.searchIndexingKey]?.lowercased() {
+            l.allowSearchIndexing = ["true", "1", "yes"].contains(raw)
+        }
         return l
     }
 
@@ -1666,7 +1804,7 @@ final class LiveAPIClient: APIClient {
             extra: dto.extra?.value,
             createdAt: Self.parseDate(dto.createdAt) ?? Date(),
             source: clean(dto.source),
-            listingAddress: clean(dto.listingAddress))
+            listingAddress: clean(dto.listingAddress), status: clean(dto.status))
     }
 
     /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
@@ -1747,6 +1885,8 @@ final class LiveAPIClient: APIClient {
 
     private struct ListingDTO: Decodable {
         let id: String?
+        let orgId: String?
+        let createReplayed: Bool?
         let spaceType: String?
         let address: String?
         let tagline: String?
@@ -1911,6 +2051,7 @@ final class LiveAPIClient: APIClient {
         let characters: LenientInt?
         let disclosure: String?
         let provenance: ProvenanceEnvelopeDTO?
+        let sharedResultId: String? // shared_result_id; only present after a private history receipt
     }
 
     /// Body of POST /ai-chapters. Every field optional → tolerant decode; the
@@ -2017,5 +2158,6 @@ final class LiveAPIClient: APIClient {
         let createdAt: String?
         let source: String?
         let listingAddress: String?
+        let status: String?
     }
 }

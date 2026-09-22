@@ -424,6 +424,46 @@ async function main() {
   }
   ok("ordinary routes answer as documented");
 
+  // ---- Studio entry points -------------------------------------------------
+  // The apex route stays usable for shared links; each public marketing page
+  // also links directly to the deployed app so finding it needs only one click.
+  for (const path of ["/studio", "/studio/", "/studio?ref=site&next=%2Fworkspace"]) {
+    for (const method of ["GET", "HEAD"]) {
+      const r = await get(worker, path, { method });
+      expect(r.status === 302, `[${method} ${path}] redirects to the deployed Studio`);
+      expect(r.h("location") === "https://studio.rendprop.com/",
+        `[${method} ${path}] uses the fixed Studio destination without forwarding query parameters`);
+      expect(r.h("cache-control") === "no-store", `[${method} ${path}] redirect can be updated immediately`);
+      expect(r.h("referrer-policy") === "no-referrer", `[${method} ${path}] does not send the source URL to Studio`);
+      expect(r.body === "", `[${method} ${path}] redirect has no body`);
+    }
+  }
+  const studioPost = await get(worker, "/studio", { method: "POST" });
+  expect(studioPost.status === 405 && studioPost.h("allow") === "GET, HEAD",
+    "[POST /studio] preserves the public host's read-only method policy");
+  expect((await get(worker, "/studio/unknown")).status === 404,
+    "[/studio/unknown] does not redirect unrelated paths");
+  const studioLink = '<a href="https://studio.rendprop.com/">Studio</a>';
+  for (const page of ["index", "features", "pricing", "compare", "support"]) {
+    const html = readFileSync(join(ROOT, "public", `${page}.html`), "utf8");
+    const nav = html.match(/<div class="nav-menu" id="navMenu">([\s\S]*?)<\/div>/)?.[1] || "";
+    const footer = html.match(/<nav class="foot-links" aria-label="Footer">([\s\S]*?)<\/nav>/)?.[1] || "";
+    expect(nav.includes(studioLink), `[${page}] Studio is present in the shared desktop/mobile navigation`);
+    expect(footer.includes(studioLink), `[${page}] Studio is present in the footer`);
+    if (page === "index") {
+      const hero = html.match(/<div class="hero-ctas">([\s\S]*?)<\/div>/)?.[1] || "";
+      expect(hero.includes('href="https://studio.rendprop.com/">Open Studio</a>'),
+        "[index] Studio has a visible homepage hero action");
+      expect(hero.includes("ct=site&amp;mt=8") && hero.includes('href="/f/estate-demo"'),
+        "[index] Studio preserves the App Store campaign link and live demo action");
+    }
+  }
+  expect(!existsSync(join(ROOT, "public", "studio.html")),
+    "[public/studio.html] no stale static preview page shadows the live Studio redirect");
+  expect((await get(worker, "/")).body.includes('href="https://studio.rendprop.com/">Open Studio</a>'),
+    "[/ fallback] Studio stays discoverable if the static homepage is unavailable");
+  ok("Studio is discoverable from the homepage, public navigation and apex redirect");
+
   // ---- canonical origin: https + apex ---------------------------------------
   // Live on 2026-09-05, http://rendprop.com/terms answered 200 over plain HTTP
   // and https://www.rendprop.com/ was a Cloudflare 525. The Worker's own paths

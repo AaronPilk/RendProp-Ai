@@ -1,0 +1,18 @@
+{
+  "checkedAt": "2026-09-14T19:21:40.075572+00:00",
+  "origin": "https://studio.rendprop.com",
+  "status": "passed",
+  "method": "Read-only visible UI in the existing Apple-authenticated Chrome session",
+  "checks": [
+    "Existing session restored the same workspace and property after reload",
+    "Native home and additional AI cards visible",
+    "AI Photo Studio opened the selected property and its saved draft",
+    "Actual shared photo allowance loaded",
+    "Open Reel Studio retained the selected property and showed the three-step guide and property media picker",
+    "Returned to Home with the selected property intact"
+  ],
+  "generationPerformed": false,
+  "customerMutationPerformed": false,
+  "physicalIPhoneCaptureTested": false,
+  "privateScreenshotStored": false
+}

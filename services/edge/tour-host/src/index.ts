@@ -451,6 +451,20 @@ async function route(req: Request, env: Env, ctx: ExecutionContext): Promise<Res
 
   const path = rawPath;
 
+  // Keep the discoverable apex entry pointed at the deployed browser app.
+  // The destination is fixed; query strings do not cross into the app.
+  if (path === "/studio") {
+    return new Response(null, {
+      status: 302,
+      headers: {
+        Location: "https://studio.rendprop.com/",
+        "Cache-Control": "no-store",
+        "Referrer-Policy": "no-referrer",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+      },
+    });
+  }
+
   if (path === "/spatial-viewer.js") {
     const response = spatialModule();
     return req.method === "HEAD" ? new Response(null, response) : response;
@@ -605,6 +619,7 @@ function landingPage(): string {
   photos, social reels, floor plans, and a link buyers scroll through like it's social.</p>
   <div>
     <a class="pill" href="${appStoreUrl("site")}">Download on the App Store</a>
+    <a class="soon" href="https://studio.rendprop.com/">Open Studio</a>
     <span class="soon">Free on iPhone · iOS 16 or later</span>
   </div>
   <footer>

@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # September 21 ASC preflight found 29 as the newest uploaded build. Recheck
-    # immediately before archive/upload; never let export renumber silently.
-    CURRENT_PROJECT_VERSION: "30"
+    # Build 30 shipped the capture repairs. This release also restores Studio
+    # continuity. Recheck Apple inventory before upload; never auto-renumber.
+    CURRENT_PROJECT_VERSION: "31"
 targets:
   Rendprop:
     settings:

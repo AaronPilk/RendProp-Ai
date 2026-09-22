@@ -1,0 +1,15 @@
+{
+  "proof": "Isolated real business UI with native-contract responses; no live customer account or outgoing mail",
+  "checks": [
+    "Lead details and status roundtrip through native route",
+    "Brand persists through remote reload and matches card preview",
+    "Notification preference write and guarded account deletion",
+    "Invite email requires explicit form opt-in and displays one-time share link",
+    "Team publishing and disclosure records render without raw payloads",
+    "Marketing role has read-only lead and brand controls; no team overview",
+    "Responsive business workspace at 390px"
+  ],
+  "externalRequests": [],
+  "errors": [],
+  "status": "passed"
+}

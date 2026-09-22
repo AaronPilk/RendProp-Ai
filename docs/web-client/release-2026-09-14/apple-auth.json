@@ -1,0 +1,13 @@
+{
+  "project": "ymgqpbnjpztwjsyvceld",
+  "applied": true,
+  "servicesId": "com.rendprop.studio",
+  "nativeId": "com.rendprop.app",
+  "nativeAudiencePreserved": true,
+  "existingRedirectsPreserved": true,
+  "studioRedirect": "https://studio.rendprop.com/",
+  "keyId": "YRH7FM6336",
+  "secretExpiresAt": "2027-03-13T15:07:12.000Z",
+  "renewBefore": "2027-02-27T15:07:12.000Z",
+  "readAt": "2026-09-14T15:07:18.474Z"
+}

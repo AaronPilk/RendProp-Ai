@@ -1,0 +1,55 @@
+# Studio property and editor parity — 14 September 2026
+
+This report covers the property workflow, media recovery, desktop editor, and native/creative handoffs implemented in this change. It distinguishes tested Studio behavior from features that still require iPhone hardware, local files, or a live provider.
+
+## Implemented behavior
+
+| Workflow | Studio behavior |
+| --- | --- |
+| Property management | Create, edit address/headline/facts/asking price, look up and review optional public-record facts, archive/restore, mark sold/clear sold status, and guarded removal. A phone-side change preserves dirty desktop fields and requires an explicit reload before saving. |
+| Original media | Import up to 200 files, with an independent recoverable reservation per file. Supported video imports reach 2 GiB. Multipart recovery checks server-confirmed parts and an exact complete receipt. Resuming requires matching account, workspace, property, and all original file bytes. The confirmed immutable object key can legitimately differ from the initial reservation key. |
+| Photos | JPG/PNG/WebP gallery attachment, source previews/downloads, editable captions, cover-photo selection, and whole-gallery reordering. Caption conflicts preserve unsaved text; reorder/cover changes use an atomic transaction and explicit expected state. Server-derived altered-media disclosures remain intact. Completed public assets and provenance must match the same property. Original HEIC and larger photos remain source downloads. |
+| Tours | Select existing phone walkthroughs, choose a worker quality tier, review automatic publication behavior, and follow progress. Edited MP4/MOV/M4V files can be uploaded for publication. Branded and MLS links, copied links, offline SVG QR downloads, optional edited-video covers, and live room chapter editing are supported. Raw worker creation preserves captured phone room tags; it does not expose unsupported pre-render cover/chapter fields. |
+| Publication accuracy | Trusted generated-video quality projections disable held sources. Finished editor files are finalized through `/studio/edit-output`, which validates completed source identities and records conservative edited/AI disclosures. The browser preserves the upload reservation if that finalization response is lost. |
+| Floor plans | Import and attach a JPG/PNG/WebP floor-plan image using canonical server-owned property details. Existing details are preserved; concurrent details changes reject the update. |
+| 3D workflows | Read existing spatial jobs and room progress, open the current viewer, approve/exclude the reviewed artifact, publish only a permitted reviewed artifact, and retry/cancel/resume supported jobs. Unavailable generation capability is represented explicitly. |
+| Desktop editing | Trim/reorder clips, per-shot duration, 0.25–4× video speed, portrait/landscape/square output, framing, gentle photo pan/push/pull motion, title/caption overlays, clean/center/highlight caption styles, cut/dissolve/whip transitions, and bounded undo/redo. |
+| Narration | Select completed cloud voice results by stable result ID, restore a fresh signed audio download on another browser, set narration offset/volume, include timed narration captions, and mix narration with reduced original sound. No signed URL is stored in the edit draft. |
+| AI shot plans | Explicitly review replacement of the existing sequence. Restore and inspect every selected source before changing the edit; apply photo order, timing, captions, supported photo motion, and selected saved narration. A missing photo leaves the current edit intact. Existing cloud source identities are reused. |
+| Agent camera plans | Keep the base video and its speech running continuously under timed still-photo cutaways. Preview/export the overlay only in its interval, then return to the agent. Edit/remove cutaway times and captions. Base and overlay identities participate in save, restore, undo, export validation, and output provenance. |
+| Phone reel setup | Load `native:<listingId>` setup with explicit review. Restore every linked cloud photo with native aspect/title/caption-style/transition and saved narration settings, or apply available settings to the current sequence. Since the native setup stores selection/settings rather than generated timings, restored photos start at 3 seconds; saved AI shot plans carry generated timings separately. |
+| Device continuity | Save drafts with revision-checked writes, preserve uncertain saves and local recovery, restore original file bytes and verify full SHA-256 before relinking, and surface remote changes without overwriting the current edit. Repeated output save does not duplicate the upload. Cross-property library imports require review before moving an existing edit. |
+| Media ID compatibility | Resolve native capture IDs omitted by gallery deduplication through scoped listing-state storage-key relationships. An original capture can use `original_url` only when its exact original key matches; it is never silently replaced with an altered gallery image. |
+
+## Verification evidence
+
+- 15 property/upload/model unit checks pass, including the immutable completion-key contract fixed during the live integration run.
+- 11 listing-action Edge tests pass for property scope, completed uploads, gallery permissions, provenance, caption conflict/replay/disclosure preservation, request-owned RPC scoping, floor-plan details preservation, and concurrent-update rejection.
+- 32 media-handler/repository checks pass. A semantic repository-to-handler regression verifies that saved gallery order controls database page boundaries, capture aliases cannot replace gallery captions or return on a different page, and distinct untouched originals remain available. The live release check exposed and corrected the earlier UUID-only media ordering.
+- 16 actual PostgreSQL gallery checks pass against all ordered migrations: order/cover updates and replay, stale/add/remove/replacement conflicts, unchanged photo/disclosure fields, role/workspace isolation, named-account checks, pending/processing deletion, and exact one-cover state.
+- 52 focused editor/history/media/document/overlay/native/alias unit checks pass. They cover speed-to-source timing, narration persistence/undo, bounded input, cutaway intervals, exact source retention, native schema mapping, original-versus-altered alias selection, canonical JSONB ordering, lost responses, deliberate undo, and revision conflicts.
+- The isolated property browser fixture passes 12 workflow groups with no external requests or runtime errors. It covers facts, dirty property fields, imports, gallery caption/cover/order persistence through a fresh property mount, explicit phone/office caption conflict review, sold/clear-sold status, worker/publication controls, QR downloads, restored/live chapters, floor plans, removal guards, and a 390-pixel viewport.
+- The isolated cloud editor browser fixture passes 13 workflow groups with no external requests or runtime errors. It restores work on fresh browser contexts and checks actual exported media, rather than only control values.
+- A real H.264/AAC export measures about 3.02 seconds for the speed-adjusted 3-second timeline. Decoded pixels show dissolve blending and the horizontal whip. Decoded narration is the expected 660 Hz fixture tone, RMS 0.088.
+- A real agent MP4 preserves the four-second base duration. Decoded frames show the agent before and after the photo interval. Original 880 Hz sound continues through both overlay boundaries; the weakest 40 ms audio window has RMS 0.087. A fresh browser restores the base video and cutaway source without a new upload.
+- Apple Vision independently decodes the downloaded marketing QR to the expected tour URL.
+- Root-agent production verification separately passed nine bounded live integration groups, including two sessions, listing-create replay, revision conflicts, real upload completion/media byte reads, and edited-output finalization/replay. Those tests used an isolated synthetic account; the receipts do not claim an owner Apple login or an iPhone hardware capture.
+
+Property browser artifacts: `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-listing-browser-LG9idH`
+
+Cloud editor browser artifacts: `/var/folders/j3/n4p7jg5x5lv35xgcv9hw9yx80000gn/T/rendprop-cloud-editor-lRash0`
+
+Portable property evidence: [browser receipt](release-parity-2026-09-14/listing-browser.json), [actual database receipt](release-parity-2026-09-14/gallery-schema.json), and [mobile screenshot](release-parity-2026-09-14/listing-mobile.png).
+
+The browser fixtures make no paid AI/render/provider calls and do not publish a real tour.
+
+## Remaining practical boundaries
+
+- Camera, ARKit, LiDAR, and RoomPlan acquisition remain iPhone functions. Studio manages cloud media and spatial results. Floor-plan PDF/USDZ import, editable measured geometry, and spatial coordinate-redaction tools are not implemented in the desktop property panel; image attachment and review/exclude/rescan workflows are available.
+- The native recipe cannot restore phone-only extra clips or narration lacking a saved cloud result ID. It explains the missing files instead of skipping them. iPhone build 27 now associates completed original-photo uploads and generated narration with genuine cloud IDs; users need that client build for its improved source-reference save behavior.
+- Browser editing is bounded to 12 base clips, 12 photo cutaways, 128 MiB per source, 512 MiB combined source files, a 180-second timeline, and 128 MiB encoded output. Decoder pixel limits remain 12 million for photos and 8.4 million for videos. Source video duration is capped at 300 seconds. Full SHA-256 hashing runs sequentially with at most one 128 MiB source allocation at a time. A 2 GiB library upload does not imply a 2 GiB browser-editing session.
+- Browser dissolve/whip transitions use the final outgoing frame during the incoming 0.28/0.18 seconds and preserve sequence duration. They are functioning rendered effects; they are not identical to AVFoundation's simultaneous moving-track overlap.
+- Photo motion supports still, gentle push/pull, and horizontal pan. A freeform orbit or structural camera-move prompt requires a generated video result; the editor does not simulate new property geometry.
+- MP4 export depends on browser H.264/AAC recording support. The verified path uses current desktop Chrome. Browsers offering only WebM can download their local file but cannot upload it through the MP4 tour-publication path.
+- Whole-gallery reordering is bounded to 500 photos and applies to published gallery rows. Private original captures remain source media until a public gallery copy is attached. Gallery caption edits allow 500 characters plus the required server-retained disclosure.
+- Actual owner Apple sign-in, supported-device camera/LiDAR capture, and paid render/AI outcomes require their real device/provider runs. The isolated and synthetic-session tests establish the shared data and editor contracts; they do not substitute for those checks.

@@ -323,6 +323,10 @@ final class AuthStore: ObservableObject {
 
     // MARK: - Session lifecycle
 
+    /// Read-only fence for a multi-request cloud sync. Includes sign-out and
+    /// same-account reauthentication, so A → B → A cannot apply A's old response.
+    @MainActor var syncSessionRevision: UInt64 { sessionEpoch }
+
     @MainActor
     private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?) {
         sessionEpoch &+= 1

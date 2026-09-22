@@ -1,0 +1,45 @@
+{
+  "status": "verified",
+  "project": "ymgqpbnjpztwjsyvceld",
+  "job": "account-deletion-drain",
+  "schedule": "every five minutes",
+  "active": true,
+  "credential": "Existing project credential in Vault; no secret in migration or cron command",
+  "firstRequest": {
+    "id": 10,
+    "httpStatus": 200,
+    "timedOut": false,
+    "ok": true,
+    "processed": 3
+  },
+  "storageCleanup": "Pending until original upload write windows drain; normal queue leases and ownership receipts remain authoritative",
+  "syntheticRequests": [
+    {
+      "id": "849086a5-0ce7-4626-8a69-5315f1298ce4",
+      "storageNotBefore": "2026-09-14T18:43:58.673285Z",
+      "objectsPendingAtTest": 2
+    },
+    {
+      "id": "ac480768-bad6-4e02-afe3-1ed5836b4553",
+      "storageNotBefore": "2026-09-14T18:49:59.784417Z",
+      "objectsPendingAtTest": 2
+    },
+    {
+      "id": "1ae4ffe4-5d0a-4ffa-8836-77e782c18c91",
+      "storageNotBefore": "2026-09-14T19:08:23.511499Z",
+      "objectsPendingAtTest": 4
+    },
+    {
+      "id": "0dd8879e-94c1-43e7-8984-e3913ea20562",
+      "storageNotBefore": "2026-09-14T19:43:10.515495Z",
+      "objectsPendingAtTest": 4
+    },
+    {
+      "id": "ada89771-c846-4d54-8450-e0296162c108",
+      "storageNotBefore": "2026-09-14T19:51:56.60524Z",
+      "objectsPendingAtTest": 7
+    }
+  ],
+  "lastReceiptCheck": "2026-09-14T18:38:00Z",
+  "allFiveRequestsStillPendingStorage": true
+}

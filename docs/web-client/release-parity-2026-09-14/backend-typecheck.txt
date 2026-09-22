@@ -1,0 +1,4 @@
+Check services/supabase/functions/studio/index.ts
+Check services/supabase/functions/listings/index.ts
+Check services/supabase/functions/tours/index.ts
+Check services/supabase/functions/ai-voice/index.ts

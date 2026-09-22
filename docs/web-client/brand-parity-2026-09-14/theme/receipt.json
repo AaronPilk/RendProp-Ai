@@ -1,0 +1,285 @@
+{
+  "status": "passed",
+  "proof": "Actual Studio CSS and AppearanceSelector, with isolated local workflow fixtures. All non-local browser requests are aborted; fixture media is intentionally unavailable. No customer data, provider, or account operation.",
+  "appearance": [
+    "System defaults to native light palette",
+    "System follows an OS theme change without reload",
+    "Explicit Light persists and overrides dark OS",
+    "Explicit Dark persists",
+    "Appearance updates across tabs",
+    "Invalid stored values safely fall back to System",
+    "Unavailable browser storage does not prevent appearance changes"
+  ],
+  "contrast": [
+    {
+      "scheme": "light",
+      "label": "Body",
+      "ratio": 16.43,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Card",
+      "ratio": 17.12,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Secondary labels",
+      "ratio": 5.66,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Purple links",
+      "ratio": 7.1,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Primary button",
+      "ratio": 5.7,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Success",
+      "ratio": 5.18,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Warning",
+      "ratio": 5.84,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "light",
+      "label": "Error",
+      "ratio": 5.83,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Body",
+      "ratio": 17.14,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Card",
+      "ratio": 15.5,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Secondary labels",
+      "ratio": 8.67,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Purple links",
+      "ratio": 8.22,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Primary button",
+      "ratio": 5.28,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Success",
+      "ratio": 9.37,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Warning",
+      "ratio": 9.62,
+      "minimum": 4.5
+    },
+    {
+      "scheme": "dark",
+      "label": "Error",
+      "ratio": 8.54,
+      "minimum": 4.5
+    }
+  ],
+  "layouts": [
+    {
+      "scheme": "light",
+      "width": 1440,
+      "fixture": "creative",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 1440,
+      "fixture": "business",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 1440,
+      "fixture": "listing-workflow",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 1440,
+      "fixture": "cloud-editor",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 1440,
+      "fixture": "cloud-planner",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 390,
+      "fixture": "creative",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 390,
+      "fixture": "business",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 390,
+      "fixture": "listing-workflow",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 390,
+      "fixture": "cloud-editor",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "light",
+      "width": 390,
+      "fixture": "cloud-planner",
+      "bg": "rgb(250, 250, 252)",
+      "ink": "rgb(28, 25, 45)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 1440,
+      "fixture": "creative",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 1440,
+      "fixture": "business",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 1440,
+      "fixture": "listing-workflow",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 1440,
+      "fixture": "cloud-editor",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 1440,
+      "fixture": "cloud-planner",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 390,
+      "fixture": "creative",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 390,
+      "fixture": "business",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 390,
+      "fixture": "listing-workflow",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 390,
+      "fixture": "cloud-editor",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    },
+    {
+      "scheme": "dark",
+      "width": 390,
+      "fixture": "cloud-planner",
+      "bg": "rgb(14, 13, 20)",
+      "ink": "rgb(242, 240, 250)",
+      "overflow": false
+    }
+  ],
+  "errors": [],
+  "sourceFiles": {
+    "src/styles.css": "7b5a834bbc76eb0f27e8d2bb3dd0439c82b17455903245c6f931adbb8eaff50e",
+    "src/Appearance.tsx": "946efa2d2877dd5d4422e463c1551f6e8d06f8354b2b4d8329f9f72edc841d5d",
+    "src/theme.ts": "09348d5a43f726ee14727082d607b5c5f2ed2f2b23ed0638ed53e6a88c5cac4a",
+    "src/editor/editor.css": "0adf14f1561def325535eb0a3b18ddc9d52ff94d2bcb6042812fc9f6925e53d6",
+    "src/planner.css": "339948a91095f57a5ba67ce109aa47a9996bb844bd463abf9fc13f7abaeb294b",
+    "src/features/creative/creative.css": "f75c6a64d97bdb137617f9e807e2f146364dd3fe420fb519f06c76559ef5d75e",
+    "src/features/business/business.css": "2fcf3c2c124553fcfd3bbb5f8a243f3b6ae9d0369a8428b2d3c405902800845b",
+    "src/features/listings/listings.css": "9d66744652a9c77f0970c10ab9cd7f598f0ee6f548ef3ffa36a65b81096bd899",
+    "src/features/sync/reel.css": "b428d5dfb9d305c984c4e6d9b5a09009072f9eae51f624541364a4710d914d0e"
+  }
+}
