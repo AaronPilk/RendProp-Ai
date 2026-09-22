@@ -105,6 +105,8 @@ jobs:
       - run: npm run verify
       - name: Install the locked browser for isolated UI fixtures
         run: npx playwright install --with-deps chromium
+      - name: Install synthetic video and archive verification tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg unzip
       - name: Property switching, recovery and listing completion
         run: |
           node tests/property-reels-browser.mjs
