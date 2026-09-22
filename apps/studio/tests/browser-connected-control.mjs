@@ -21,7 +21,10 @@ assert.equal(outcome.code, 1, "Deliberately broken App must exit exactly 1");
 const receipt = JSON.parse(outcome.output);
 assert.equal(receipt.status, "failed");
 assert.equal(receipt.mutation, true);
-assert.equal(receipt.checks.length, 1, "Mutant must reach the first real browser check before failing");
+assert.deepEqual(receipt.checks, [
+  "an Apple account with an empty profile name retains a visible and accessible account control",
+  "real App restores fixture account and stores its edit under user + organization + property",
+], "Mutant must finish fixture setup, then fail at the real refresh-binding assertion");
 assert.match(receipt.failure, /REFRESH_BINDING_REGRESSION/);
 assert.deepEqual(receipt.errors, []);
 assert.deepEqual(receipt.externalRequests, []);

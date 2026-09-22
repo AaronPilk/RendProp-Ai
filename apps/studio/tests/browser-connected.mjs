@@ -22,7 +22,7 @@ const labels = {"Video editor":"Make a reel","Content library":"Photos & videos"
 const nav = (name) => page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: new RegExp(`^${labels[name]??name}(?:\\s*NEW)?$`) });
 const title = () => page.getByLabel("Title overlay", { exact: true });
 const check = (name) => receipt.checks.push(name);
-const savedKey = "rendprop-studio:v1:11111111-1111-4111-8111-111111111111:33333333-3333-4333-8333-333333333333:edit";
+let savedKey;
 try {
   await build({ configFile: false, root, publicDir: "public", logLevel: "error",
     plugins: mutation ? [{ name: "deliberate-refresh-regression", enforce: "pre", transform(code, id) {
@@ -60,12 +60,15 @@ try {
   await expect(page.getByRole("button", {name:"Manage Your account",exact:true})).toContainText("Your account");
   check("an Apple account with an empty profile name retains a visible and accessible account control");
   await nav("Video editor").click();
+  await expect(page.getByLabel("Property reel", { exact: true })).not.toHaveValue("");
+  const propertyId = await page.getByLabel("Property reel", { exact: true }).inputValue();
+  savedKey = `rendprop-studio:v1:11111111-1111-4111-8111-111111111111:33333333-3333-4333-8333-333333333333:edit:${propertyId}`;
   const png = await page.evaluate(() => { const c = document.createElement("canvas"); c.width = 800; c.height = 450; const g = c.getContext("2d"); g.fillStyle = "#7d39ec"; g.fillRect(0, 0, c.width, c.height); return c.toDataURL().split(",")[1]; });
   await page.getByLabel("Add photos or videos", { exact: true }).setInputFiles({ name: "isolated.png", mimeType: "image/png", buffer: Buffer.from(png, "base64") });
   await expect(page.getByRole("button", { name: /Select clip 1:/ })).toBeVisible();
   await title().fill("Scoped business edit");
   await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(key) ?? "null")?.title, savedKey)).toBe("Scoped business edit");
-  check("real App restores fixture account and stores its edit under user + organization");
+  check("real App restores fixture account and stores its edit under user + organization + property");
 
   await nav("Content library").click();
   await page.evaluate(() => window.studioFixture.setMode("hold"));

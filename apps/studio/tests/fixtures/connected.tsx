@@ -15,7 +15,14 @@ let mode = "ok";
 let callbacks: (event: AuthChangeEvent, session: Session | null) => void = () => {};
 let release: (() => void) | undefined;
 const documents = new Map<string, unknown>();
-const listingRows: Record<string, unknown>[] = [];
+// Every account/workspace has its own property: the real editor now correctly
+// requires a property before an editable reel can be mounted.
+const listingRows: Record<string, unknown>[] = [A, B].flatMap((actor, actorIndex) => [ORG, OTHER].map((orgId, orgIndex) => ({
+  id: `55555555-5555-4555-8555-5555555555${actorIndex}${orgIndex}`,
+  org_id: orgId, agent_id: actor, space_type: "real_estate", address: `Isolated property ${actorIndex + 1}-${orgIndex + 1}`,
+  tagline: null, details: {}, status: "draft", created_at: "2026-09-22T00:00:00Z", deleted_at: null,
+  main_photo_key: null, beds: null, baths: null, sqft: null, price_cents: null,
+})));
 const calls: { path: string; org?: string | null }[] = [];
 const session = (): Session => ({
   access_token: "isolated-fixture-not-a-token",
