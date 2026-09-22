@@ -59,7 +59,6 @@ def main():
         assert run('identity', psql + ['-Atc', "select current_setting('data_directory'),current_setting('listen_addresses'),current_database();"]).strip() == f'{cluster}||rendprop_provider_audit'
         env['PGOPTIONS'] = '-c statement_timeout=15000 -c lock_timeout=5000'
         run('bootstrap', psql + ['-q', '-f', root / 'services/supabase/tests/ci-bootstrap.sql'])
-        run('auth-schema', psql + ['-qc', 'alter table auth.users add column is_anonymous boolean not null default false;'])
         for migration in sorted((root / 'services/supabase/migrations').glob('*.sql')):
             if migration.name < '0041':
                 run('apply-' + migration.stem, psql + ['-q', '-1', '-f', migration])

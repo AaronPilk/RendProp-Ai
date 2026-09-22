@@ -64,7 +64,6 @@ def main():
         assert identity.strip() == f'{cluster}||rendprop_adoption_audit'
         env['PGOPTIONS'] = '-c statement_timeout=15000 -c lock_timeout=5000'
         run('bootstrap', psql + ['-q', '-f', str(bootstrap)])
-        run('auth-fixture-schema', psql + ['-qc', 'alter table auth.users add column is_anonymous boolean not null default false;'])
         for migration in migrations:
             if migration != target:
                 run('apply-' + migration.stem, psql + ['-q', '-1', '-f', str(migration)])
