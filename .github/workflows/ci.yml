@@ -112,6 +112,8 @@ jobs:
           node tests/property-reels-browser.mjs
           node tests/listing-finish-browser.mjs
           node tests/listing-kit-browser.mjs
+          node tests/browser-connected.mjs
+          node tests/browser-connected-control.mjs
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -124,6 +126,8 @@ jobs:
             /tmp/rendprop-listing-finish-*/*.png
             /tmp/rendprop-listing-kit-*/receipt.json
             /tmp/rendprop-listing-kit-*/*.png
+            /tmp/rendprop-connected-browser-*/receipt.json
+            /tmp/rendprop-connected-browser-*/*.png
           if-no-files-found: warn
 
   worker-edge:
