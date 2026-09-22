@@ -109,6 +109,7 @@ jobs:
         run: |
           node tests/property-reels-browser.mjs
           node tests/listing-finish-browser.mjs
+          node tests/listing-kit-browser.mjs
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -119,6 +120,8 @@ jobs:
             /tmp/rendprop-property-reels-*/*.png
             /tmp/rendprop-listing-finish-*/receipt.json
             /tmp/rendprop-listing-finish-*/*.png
+            /tmp/rendprop-listing-kit-*/receipt.json
+            /tmp/rendprop-listing-kit-*/*.png
           if-no-files-found: warn
 
   worker-edge:
