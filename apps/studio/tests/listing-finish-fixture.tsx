@@ -2,7 +2,7 @@ import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import ListingWorkflow from "../src/features/listings/ListingWorkflow";
 import type { Workspace, Listing } from "../src/data/contracts";
-import type { StudioServices } from "../src/data/services";
+import type { SessionSnapshot, StudioServices } from "../src/data/services";
 import type { Asset } from "../src/features/listings/model";
 import "../src/styles.css";
 const org = "10000000-0000-4000-8000-000000000001", id = "20000000-0000-4000-8000-000000000002", assetId = "30000000-0000-4000-8000-000000000003", jobId = "40000000-0000-4000-8000-000000000004";
@@ -13,7 +13,11 @@ const image = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w
 const assets: Asset[] = scenario === "empty" ? [] : [{ id: assetId, listing_id: id, storage_key: `renders/${org}/${id}/fixture.jpg`, kind: ["qc", "readonly", "processing", "failed"].includes(scenario) ? "video" : "photo", bucket: "renders", uploaded: true, duration_s: 30, created_at: listing.createdAt, ...(["qc", "readonly"].includes(scenario) ? { qc_required: true, qc_publishable: false, qc_message: "Review property accuracy" } : {}) }];
 if (["processing", "failed"].includes(scenario)) assets[0] = { ...assets[0], bucket: "uploads", storage_key: `uploads/${org}/${id}/source.mp4` };
 const calls: { path: string; method: string }[] = [];
+const session: SessionSnapshot = { status: "signed-in", identityVersion: 1, identity: { userId: workspace.user.id, email: workspace.user.email, isAnonymous: false }, error: null };
+const subscribers = new Set<(snapshot: SessionSnapshot) => void>();
 const services = {
+  getSnapshot: () => session,
+  subscribe: (listener: (snapshot: SessionSnapshot) => void) => { subscribers.add(listener); return () => { subscribers.delete(listener); }; },
   api: async (path: string, options: { method?: string; orgId: string }) => {
     calls.push({ path, method: options.method ?? "GET" });
     if (options.method && options.method !== "GET") throw new Error("This fixture forbids all mutations, paid calls and publication");
