@@ -94,6 +94,15 @@ errors. The latest Studio's 23 served files and SPA entry match the built bytes.
 Apple web-auth configuration is enabled and correctly scoped; this does not
 establish the owner's interactive Apple sign-in roundtrip.
 
+The live kit was independently downloaded for both retained synthetic properties:
+one ZIP contains exact saved PNG/MP4 bytes and office facts; the second contains
+the other property's exact original PNG. Both unzip cleanly and open their
+START-HERE pages offline. Neither unpublished property gets invented links or
+QR codes, and no signed URLs enter the archives. Before/after property, activity
+and reel-document snapshots are identical. This check made 67 GET requests,
+zero mutations and zero browser errors. Receipt:
+`/Users/pilksclaes/LocalRendpropAudits/complete-kit-production-20260922/receipt.json`.
+
 Full receipts are retained locally under
 `/Users/pilksclaes/LocalRendpropAudits/complete-product-20260922` and
 `/Users/pilksclaes/LocalRendpropAudits/listing-delivery-kit-20260922`.
