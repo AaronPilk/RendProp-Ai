@@ -38,6 +38,8 @@ jobs:
       # the consent persistence gate. None of them is a UI runtime test.
       - name: Phase 1 source and executable-Swift gates (tests/phase1/*.test.mjs)
         run: node --test tests/phase1/*.test.mjs
+      - name: Draft corrections survive an older cloud snapshot
+        run: python3 tools/audit/complete-product-20260922/photos_sync.py
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -82,6 +84,42 @@ jobs:
         run: >-
           deno run --no-config --no-lock --cached-only --deny-net --deny-env
           --allow-read --allow-write=/tmp --allow-run tools/style-policy/verify.ts
+
+  studio:
+    name: Studio contracts, build and property workflows (offline)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: apps/studio
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: apps/studio/package-lock.json
+      - run: npm ci --ignore-scripts
+      - run: npm run verify
+      - name: Install the locked browser for isolated UI fixtures
+        run: npx playwright install --with-deps chromium
+      - name: Property switching, recovery and listing completion
+        run: |
+          node tests/property-reels-browser.mjs
+          node tests/listing-finish-browser.mjs
+      - name: Retain browser failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-property-workflows-${{ github.run_attempt }}
+          path: |
+            /tmp/rendprop-property-reels-*/receipt.json
+            /tmp/rendprop-property-reels-*/*.png
+            /tmp/rendprop-listing-finish-*/receipt.json
+            /tmp/rendprop-listing-finish-*/*.png
+          if-no-files-found: warn
 
   worker-edge:
     name: Cloudflare Worker (tour-host)
@@ -311,12 +349,21 @@ jobs:
         run: |
           createdb rendprop_replay
           psql -v ON_ERROR_STOP=1 -q -f services/supabase/tests/ci-bootstrap.sql
+          # Use the same exact replay policy as the disposable runner. The
+          # eight transactional Studio migrations still run once in EACH
+          # fresh database; their CREATE statements are not replay APIs.
+          python3 - <<'PY' > /tmp/rendprop-replayable-migrations.txt
+          from pathlib import Path
+          from tools.audit.run_database_regression import replayable_migration
+          for path in sorted(Path('services/supabase/migrations').glob('*.sql')):
+              if replayable_migration(path.name):
+                  print(path)
+          PY
           for f in $(ls services/supabase/migrations/*.sql | LC_ALL=C sort); do
             psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
-            case "$f" in
-              */0005b_*|*/0008b_*) psql -v ON_ERROR_STOP=1 -q -1 -f "$f" ;;
-              *) if [[ "$f" > "services/supabase/migrations/0009" ]]; then psql -v ON_ERROR_STOP=1 -q -1 -f "$f"; fi ;;
-            esac
+            if grep -Fxq "$f" /tmp/rendprop-replayable-migrations.txt; then
+              psql -v ON_ERROR_STOP=1 -q -1 -f "$f"
+            fi
           done
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/video_erase.sql
           psql -v ON_ERROR_STOP=1 -f services/supabase/tests/legacy_photo_fallback.sql

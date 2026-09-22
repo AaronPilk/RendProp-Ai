@@ -40,20 +40,26 @@ test('actual AppModel method bodies + complete PersistentStore execute durable l
   const out = mkdtempSync(join(tmpdir(), 'rendprop-local-binding-swift-'));
   const methods = ['struct RenderedTour', 'struct UploadedRenderAsset', 'enum PublishError',
     'func forgetServerIdentities(', 'func prepareLocalAdoption(', 'func confirmLocalAdoption(',
-    'func pendingAdoptionBlocksServerListing(', 'func ensureServerListing(', 'func load()',
+    'func pendingAdoptionBlocksServerListing(', 'func ensureServerListing(', 'func index(of ', 'func load()',
     'func reconcileAfterRestore()', 'func reseedSamples()', 'func persist()'].map(declaration).join('\n');
   const store = app.slice(app.indexOf('enum PersistentStore {'), app.indexOf('// MARK: - Entry'));
   assert.ok(store.includes('extension PersistentStore.PersistedState'));
   // Mechanical extraction, no function-body edits. Only unavailable app/OS
-  // dependencies are inert. Full Listing/CaptureAsset/Render/RoomTag are real.
+  // dependencies are inert. Full model types and the current CloudDraftCreation
+  // implementation are real; do not replace its identity/fingerprint/save logic.
   const scaffold = `import Foundation
+enum Config { static let useLiveBackend = false }
 enum FileStore {
  static var documents = URL(fileURLWithPath: "/nonexistent/fixture-not-initialized")
  static func url(fromRelativePath p:String)->URL { documents.appendingPathComponent(p) }
  static func relativePath(for url:URL)->String { String(url.path.dropFirst(documents.path.count+1)) }
 }
 @MainActor final class AuthStore {
- static let shared=AuthStore(); var userID:String?; var errors=0; var pendingExists=true; var pendingReadFails=false
+ static let shared=AuthStore()
+ var userID:String? { didSet { if userID != oldValue { syncSessionRevision &+= 1 } } }
+ var syncSessionRevision:UInt64=0; var isIdentified:Bool { userID != nil }
+ var errors=0; var pendingExists=true; var pendingReadFails=false
+ static func validAccessToken() async -> String? { nil }
  func retryPendingAdoptionIfNeeded() async {}
  func reportUnreadableAdoptionBindings() { errors += 1 }
  func hasPendingAdoption(operationID:UUID) throws -> Bool {
@@ -61,10 +67,11 @@ enum FileStore {
  }
 }
 @MainActor final class FixtureAPI {
- var calls=0; var onCreate:(() async -> Void)?
+ var calls=0; var deleted:[UUID]=[]; var onCreate:(() async -> Void)?
  func createListing(_ listing:Listing) async throws -> Listing {
   calls += 1; await onCreate?(); var created=listing; created.id=UUID(); return created
  }
+ func deleteListing(serverID:UUID) async throws { deleted.append(serverID) }
 }
 @MainActor final class AppModel {
  var listings:[Listing]=[] { didSet { persist() } }
@@ -72,12 +79,15 @@ enum FileStore {
  var uploadedRenderAssets:[UUID:UploadedRenderAsset]=[:]; var pendingPublish:[UUID]=[]
  var publishedOriginalAssets:[String:String]=[:]; var publishedGalleryAssets:[String:String]=[:]
  var hasLoaded=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
+ var cloudRefreshTask:Task<Void,Never>?; var cloudRefreshOperation:UUID?
+ var cloudSyncError:String?; var lastCloudSyncAt:Date?
  var serverCreationInFlight:Set<UUID>=[]; var identityOwnerUserID:UUID?
  var adoptionBindings:AdoptionLocalBindings?; var adoptionBindingsUnreadable=false; let api=FixtureAPI()
  // Business-type preferences/notifications are outside metadata adoption.
  // Keep this dependency inert instead of touching the host's preferences.
  static func markSpaceTypeOutOfSync() {}
  func syncDirtyListings() async {}
+ func refreshCloudWorkspace() async {}
  func resumePendingPublishes() async {}
 ${methods}
 }
@@ -86,7 +96,8 @@ ${store}
   const generated = join(out, 'ActualAppModelMetadata.swift');
   writeFileSync(generated, scaffold, { flag: 'wx' });
   const files = ['Listing', 'Money', 'RoomTag', 'CaptureAsset', 'Render'].map(n => root + `apps/ios/Rendprop/Models/${n}.swift`);
-  files.push(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', root + 'apps/ios/Rendprop/Auth/AdoptionLocalBindings.swift');
+  files.push(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', root + 'apps/ios/Rendprop/Auth/AdoptionLocalBindings.swift',
+    root + 'apps/ios/Rendprop/Networking/WorkspaceSync.swift', root + 'apps/ios/Rendprop/Networking/NativeReelDraft.swift');
   const binary = join(out, 'local-binding-tests');
   const compiled = spawnSync('/usr/bin/swiftc', ['-parse-as-library', ...files, generated,
     root + 'tests/phase1/AdoptionLocalBindingsTests.swift', '-o', binary], { encoding: 'utf8', timeout: 60_000 });
@@ -124,7 +135,7 @@ ${store}
   const checked = [...files, root + 'apps/ios/Rendprop/RendpropApp.swift', root + 'apps/ios/Rendprop/Auth/AuthStore.swift',
     root + 'tests/phase1/AdoptionLocalBindingsTests.swift', fileURLToPath(import.meta.url)];
   writeFileSync(join(out, 'receipt.json'), JSON.stringify({ accepted: true,
-    runtimeScope: 'Mechanically extracted actual AppModel metadata methods and complete PersistentStore; inert Auth/transport/FileStore dependencies; full production model types',
+    runtimeScope: 'Mechanically extracted actual AppModel metadata methods and complete PersistentStore; complete production WorkspaceSync/NativeReelDraft and model types; inert Auth/transport/FileStore/background refresh dependencies',
     negativeControlExit: negative.status, actualExit: result.status, actualMutantsRejected: 3,
     sourceHashes: Object.fromEntries(checked.map(path => [path.slice(root.length), createHash('sha256').update(readFileSync(path)).digest('hex')])),
     extractedSourceSHA256: createHash('sha256').update(scaffold).digest('hex'),

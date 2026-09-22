@@ -40,14 +40,16 @@ grant anon, authenticated, service_role to current_user;
 create schema if not exists auth;
 grant usage on schema auth to anon, authenticated, service_role, supabase_auth_admin;
 
--- Minimal auth.users: only what public.handle_new_user() touches (id, email,
--- raw_user_meta_data) plus the columns invariants.sql's fixture sets.
+-- Minimal auth.users: signup/invariant fields plus the named-account predicate
+-- used by Studio RLS. is_anonymous matches the live platform column's type,
+-- NOT NULL and false default; this is test setup, never a production migration.
 create table if not exists auth.users (
   id                 uuid primary key default gen_random_uuid(),
   instance_id        uuid,
   aud                text,
   role               text,
   email              text,
+  is_anonymous       boolean not null default false,
   raw_user_meta_data jsonb not null default '{}'::jsonb,
   raw_app_meta_data  jsonb not null default '{}'::jsonb,
   created_at         timestamptz not null default now(),

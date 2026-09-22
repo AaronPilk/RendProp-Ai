@@ -10,7 +10,6 @@ try{
  run('initdb',['-D',join(temp,'data'),'-A','trust','--no-locale','--encoding=UTF8']);
  run('pg_ctl',['-D',join(temp,'data'),'-l',join(temp,'server.log'),'-o',`-k ${temp} -p ${port} -c listen_addresses=''`,'start']);started=true;
  run('psql',[...psql,'-f',join(root,'services/supabase/tests/ci-bootstrap.sql')]);
- run('psql',[...psql,'-c','alter table auth.users add column is_anonymous boolean not null default false;']);
  for(const name of (await readdir(join(root,'services/supabase/migrations'))).filter(name=>name.endsWith('.sql')).sort()){
   run('psql',[...psql,'-f',join(root,'services/supabase/migrations',name)]);receipt.migrations.push(name);
  }

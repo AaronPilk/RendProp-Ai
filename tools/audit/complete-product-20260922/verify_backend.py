@@ -93,7 +93,6 @@ def postgres():
             run(name + "-create", [binary / "createdb", *connection, name], env=pg_env)
             psql = [binary / "psql", "-X", "--no-password", *connection, "-d", name, "-v", "ON_ERROR_STOP=1"]
             run(name + "-bootstrap", [*psql, "-q", "-f", SQL / "tests/ci-bootstrap.sql"], env=pg_env)
-            run(name + "-auth-shape", [*psql, "-c", "alter table auth.users add column is_anonymous boolean not null default false"], env=pg_env)
             for m in sequence: run(name + "-apply-" + m.stem, [*psql, "-q", "-1", "-f", m], env=pg_env)
             for suffix in ("before-replay", "after-replay"):
                 if suffix == "after-replay":

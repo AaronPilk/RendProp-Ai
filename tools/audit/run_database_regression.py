@@ -51,6 +51,26 @@ KEPT_RED = {
 # included — keeps the number it had.
 INVARIANT_COUNT = 266
 
+# These already-shipped transactional Studio migrations intentionally create
+# their tables/policies once. Apply all eight on BOTH fresh database paths, but
+# do not manufacture a second CREATE as an idempotency requirement. Keep this
+# list exact: an unknown/new migration still receives the historical replay rule.
+SINGLE_APPLICATION_MIGRATIONS = frozenset({
+    "20260914161954_studio_cross_device_workspace.sql",
+    "20260914164554_studio_documents_named_accounts.sql",
+    "20260914170849_studio_generated_quality_gate.sql",
+    "20260914173513_studio_edit_output_disclosure.sql",
+    "20260914174519_studio_voice_history_cleanup.sql",
+    "20260914175636_studio_account_cleanup_schedule.sql",
+    "20260914180739_studio_voice_storage_reservations.sql",
+    "20260914185000_studio_gallery_controls.sql",
+})
+
+
+def replayable_migration(name):
+    return name not in SINGLE_APPLICATION_MIGRATIONS and (
+        name.startswith(("0005b_", "0008b_")) or name >= "0009")
+
 
 def require(ok, message):
     if not ok:
@@ -181,10 +201,11 @@ def main():
                 replay = []
                 for migration in migrations:
                     run("historical-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
-                    if migration.name.startswith(("0005b_", "0008b_")) or migration.name >= "0009":
+                    if replayable_migration(migration.name):
                         run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
                         replay.append(migration)
                 receipt["replayedMigrations"] = len(replay)
+                receipt["singleApplicationMigrations"] = sorted(SINGLE_APPLICATION_MIGRATIONS)
                 receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
             output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
             # Preserve a genuine red suite, but still test migration replay.

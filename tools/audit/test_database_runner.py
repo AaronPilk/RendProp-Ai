@@ -209,6 +209,20 @@ class CoreRegressionTests(RunnerCase):
 
 
 class InventoryTests(RunnerCase):
+    def test_studio_creates_run_on_each_fresh_path_without_duplicate_replay(self):
+        result = self.invoke()
+        self.assertIsNone(result.failure)
+        commands = {row['name'] for row in result.receipt['commands']}
+        for filename in subject_module().SINGLE_APPLICATION_MIGRATIONS:
+            stem = Path(filename).stem
+            self.assertIn('apply-' + stem, commands)
+            self.assertIn('historical-' + stem, commands)
+            self.assertNotIn('replay-' + stem, commands)
+        for stem in ('0055_video_reflection_jobs', '0056_active_photo_fallback'):
+            self.assertIn('replay-' + stem, commands)
+        # The exception is exact, never a wildcard covering future Studio work.
+        self.assertTrue(subject_module().replayable_migration('20260923000000_studio_future_change.sql'))
+
     def test_publication_exit_zero_without_required_marker_rejects(self):
         self.rejected(publication_positive=('printed without actually finishing', 0))
 
