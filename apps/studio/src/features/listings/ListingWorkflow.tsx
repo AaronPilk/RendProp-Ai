@@ -13,6 +13,7 @@ import "./listings.css";
 import { FeatureCards } from "../home/Dashboard";
 import { FEATURES, homeWords, type FeatureId } from "../home/features";
 import FinishListing from "./FinishListing";
+import ListingKit from "./ListingKit";
 import { canEditListing, listingFinish } from "./readiness";
 import type { ListingDestination } from "./readiness";
 
@@ -247,6 +248,7 @@ function PropertyWorkspace({ services, workspace, listing, onChanged, entryReque
   return <div className="lw-property">
     <header className="lw-property-heading"><div><h2>{listing.address || "Untitled property"}</h2><p>{listing.tagline || "Everything you need to bring this property to market."}</p></div><button onClick={() => { onChanged(); void refresh(true); }} disabled={loading}>↻ {loading ? "Refreshing…" : "Refresh"}</button></header>
     <FinishListing finish={finish} canWrite={canWrite} busy={!!busy} onNavigate={navigateFinish} onPhotos={onOpenFeature ? () => onOpenFeature("studio", listing.id) : undefined} />
+    <ListingKit services={services} workspace={workspace} listingId={listing.id} />
     {onOpenFeature && <fieldset className="lw-creation-tools" disabled={!canWrite}><section className="app-property-tools" aria-label="Create with this home"><h2>Make something with this {homeWords(workspace.org.spaceType).noun}</h2><FeatureCards features={FEATURES.filter(f=>["studio","reel","tour","aerial"].includes(f.id))} onOpen={id=>onOpenFeature(id,listing.id)}/></section></fieldset>}
     <div className="lw-tabs" role="tablist" aria-label="Property tasks">{([["media", "1", "Media"], ["tour", "2", "Create & publish"], ["floorplan", "3", "Floor plan & 3D"], ["details", "", "Details"]] as const).map(([value, number, title]) => <button key={value} role="tab" aria-selected={tab === value} aria-controls={`lw-${value}`} id={`lw-tab-${value}`} onClick={() => setTab(value)}><span>{number}</span>{title}</button>)}</div>
     {error && <div role="alert" className="lw-error">{error}<button onClick={() => void refresh()}>Refresh property</button></div>}{notice && <p role="status" className="lw-notice">✓ {notice}</p>}

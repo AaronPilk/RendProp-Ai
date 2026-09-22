@@ -375,7 +375,7 @@ export function decodeListings(
   return rows.filter((row) => row.orgId === orgId);
 }
 
-function mediaURL(
+export function mediaURL(
   value: unknown,
   orgId: string,
   listingId: string,
