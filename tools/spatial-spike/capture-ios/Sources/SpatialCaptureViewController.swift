@@ -7,6 +7,7 @@ import Darwin
 // Shared by the standalone diagnostic target and Rendprop's explicit TestFlight
 // build overlay. This file has no app entry point or production service dependency.
 final class SpatialCaptureViewController: UIViewController {
+    static let captureInstructions = "Take small steps and slow turns. Pause near bright windows until the picture settles. Gently look toward the upper wall corners, keeping a doorway or furniture in view. Revisit corners from another position."
     /// Product handoff is deliberately separate from the Files export. Only a
     /// fully re-read archive may enter upload; recorder completion alone proves
     /// neither that every JPEG is readable nor that its pose belongs to this room.
@@ -18,6 +19,8 @@ final class SpatialCaptureViewController: UIViewController {
     private let export = UIButton(type: .system)
     private let saved = UIButton(type: .system)
     private let status = UILabel()
+    private let instructions = UILabel()
+    private let messageScroll = UIScrollView()
     private var controls = CaptureControls()
     private var finishedURL: URL?
     private var finishedStopReason: CaptureStopReason?
@@ -27,19 +30,36 @@ final class SpatialCaptureViewController: UIViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
         status.text = ARWorldTrackingConfiguration.isSupported
-            ? (onVerifiedCapture == nil ? "Walk slowly around one room. Revisit doorways and corners from different positions, then stop. Files stay on this phone." : "Walk slowly around one room. Keep the phone steady and revisit doorways and corners. Stop when the room is covered.")
+            ? (onVerifiedCapture == nil ? "Room photos stay on this phone until you export them." : "Start a new room when you're ready.")
             : "A physical iPhone supporting AR world tracking is required. The simulator cannot capture a room."
         status.accessibilityIdentifier = "spatial.status"
         start.accessibilityIdentifier = "spatial.start"
         stop.accessibilityIdentifier = "spatial.stop"
         export.accessibilityIdentifier = "spatial.export"
         saved.accessibilityIdentifier = "spatial.saved"
-        status.numberOfLines = 0
-        status.textColor = .white
-        status.backgroundColor = UIColor.black.withAlphaComponent(0.75)
-        status.textAlignment = .center
-        status.font = .preferredFont(forTextStyle: .body)
-        let stack = UIStackView(arrangedSubviews: [status, start, stop, export, saved])
+        instructions.text = Self.captureInstructions
+        instructions.accessibilityIdentifier = "spatial.instructions"
+        for label in [instructions, status] {
+            label.numberOfLines = 0
+            label.textColor = .white
+            label.textAlignment = .center
+            label.font = .preferredFont(forTextStyle: .body)
+            label.adjustsFontForContentSizeCategory = true
+            label.setContentCompressionResistancePriority(UILayoutPriority(751), for: .vertical)
+        }
+        // Advice has its own label: saved-count and tracking callbacks cannot
+        // replace it. Long text can scroll at larger Dynamic Type sizes while
+        // Stop and the other controls remain outside the scrolling region.
+        let messages = UIStackView(arrangedSubviews: [status, instructions])
+        messages.axis = .vertical
+        messages.spacing = 12
+        messages.translatesAutoresizingMaskIntoConstraints = false
+        messageScroll.backgroundColor = UIColor.black.withAlphaComponent(0.75)
+        messageScroll.layer.cornerRadius = 12
+        messageScroll.translatesAutoresizingMaskIntoConstraints = false
+        messageScroll.addSubview(messages)
+        view.addSubview(messageScroll)
+        let stack = UIStackView(arrangedSubviews: [start, stop, export, saved])
         stack.axis = .vertical
         stack.spacing = 8
         stack.translatesAutoresizingMaskIntoConstraints = false
@@ -54,10 +74,22 @@ final class SpatialCaptureViewController: UIViewController {
             button.addTarget(self, action: action, for: .touchUpInside)
         }
         refreshControls()
+        let preferredMessageHeight = messageScroll.heightAnchor.constraint(equalTo: messages.heightAnchor, constant: 16)
+        preferredMessageHeight.priority = .defaultLow
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             stack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16)
+            stack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -16),
+            messageScroll.leadingAnchor.constraint(equalTo: stack.leadingAnchor),
+            messageScroll.trailingAnchor.constraint(equalTo: stack.trailingAnchor),
+            messageScroll.topAnchor.constraint(greaterThanOrEqualTo: view.safeAreaLayoutGuide.topAnchor, constant: 16),
+            messageScroll.bottomAnchor.constraint(equalTo: stack.topAnchor, constant: -12),
+            messages.leadingAnchor.constraint(equalTo: messageScroll.contentLayoutGuide.leadingAnchor, constant: 8),
+            messages.trailingAnchor.constraint(equalTo: messageScroll.contentLayoutGuide.trailingAnchor, constant: -8),
+            messages.topAnchor.constraint(equalTo: messageScroll.contentLayoutGuide.topAnchor, constant: 8),
+            messages.bottomAnchor.constraint(equalTo: messageScroll.contentLayoutGuide.bottomAnchor, constant: -8),
+            messages.widthAnchor.constraint(equalTo: messageScroll.frameLayoutGuide.widthAnchor, constant: -16),
+            preferredMessageHeight
         ])
         recorder.onStatus = { [weak self] message in if self?.controls.isRecording == true { self?.status.text = message } }
         recorder.onFinished = { [weak self] url, message, ready, stopReason in
@@ -206,6 +238,8 @@ final class SpatialCaptureViewController: UIViewController {
         }
     }
     private func refreshControls() {
+        instructions.isHidden = !ARWorldTrackingConfiguration.isSupported || !controls.instructionsVisible
+        messageScroll.setContentOffset(.zero, animated: false)
         start.isEnabled = controls.startEnabled
         stop.isEnabled = controls.stopEnabled
         export.isEnabled = controls.exportEnabled
