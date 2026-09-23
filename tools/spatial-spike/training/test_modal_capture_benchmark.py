@@ -111,6 +111,7 @@ class CaptureBenchmarkTests(unittest.TestCase):
             path.write_bytes(payload)
             artifacts.append({"path": relative, "bytes": len(payload), "sha256": room.sha(path)})
         receipt = {"phase": "terminated", "outcome": "trained", "app_id": "ap-" + label, "sandbox_id": "sb-" + label,
+                   "dependency_baseline_sha256": plan["dependency_baseline_sha256"],
                    "terminate": {"poll_exit_code": 137}, "remote_copy_delete": {"response": "success"},
                    "pose_optimization": plan["pose_optimization"], "dataset_files": room.inventory(self.dataset),
                    "artifacts": artifacts}
@@ -271,6 +272,19 @@ class CaptureBenchmarkTests(unittest.TestCase):
         _, state, _ = self.completed("f01")
         self.write(state / "download/result/stats/val_step2999.json", {"psnr": 999, "ssim": 1, "lpips": 0})
         with self.assertRaisesRegex(ValueError, "artifact does not match"):
+            self.plan("p01")
+
+    def test_predecessor_dependency_baseline_cannot_change_between_stages(self):
+        self.completed("f01")
+        self.write(self.baseline, {"resolved_dependencies": ["fixture==2"]})
+        with self.assertRaisesRegex(ValueError, "different dependency baseline"):
+            self.plan("p01")
+
+    def test_predecessor_provider_dependency_receipt_must_match_frozen_plan(self):
+        _, state, receipt = self.completed("f01")
+        receipt["dependency_baseline_sha256"] = "0" * 64
+        self.write(state / "provider-receipt.json", receipt)
+        with self.assertRaisesRegex(ValueError, "different dependency baseline"):
             self.plan("p01")
 
     def test_a_saved_plan_rejects_changed_source_before_any_provider_call(self):

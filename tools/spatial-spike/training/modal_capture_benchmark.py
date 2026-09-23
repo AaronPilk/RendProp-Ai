@@ -171,6 +171,9 @@ def prerequisite(stage, binding, source, files, predecessors):
         plan_path = private_path(Path(marker["plan_path"]))
         prior_plan = bounded_json(plan_path)
         room.require(room.sha(plan_path) == marker.get("plan_sha256"), "predecessor frozen plan changed")
+        room.require(prior_plan.get("dependency_baseline_sha256") == room.sha(ablation.BASELINE_RUN) and
+                     receipt.get("dependency_baseline_sha256") == prior_plan["dependency_baseline_sha256"],
+                     "predecessor used a different dependency baseline")
         room.require(prior_plan.get("cohort") == binding and prior_plan.get("dataset") == str(DATASET.resolve()) and
                      prior_plan.get("source", {}).get("files") == source["files"] and
                      receipt.get("dataset_files") == files, "predecessor used different data, split or source")
