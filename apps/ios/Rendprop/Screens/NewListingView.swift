@@ -652,8 +652,9 @@ struct NewListingView: View {
         model.add(listing)
         createdListing = listing
         photosListing = listing
-        Analytics.track("listing_started_with_photos",
-                        ["space_type": SpaceType.current.rawValue])
+        // Use the shared contract event. The old undeclared event name
+        // crashed this entry path in Debug builds.
+        Analytics.track("home_created", ["space_type": SpaceType.current.rawValue, "source": "photos"])
         Haptics.selection()
         goToPhotos = true
     }

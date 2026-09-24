@@ -342,6 +342,22 @@ struct FlythroughDetailView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: Theme.spacing) {
+                if space == .realEstate && !currentListing.isSample {
+                    NavigationLink { ProductionPlanView(listing: currentListing) } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "checklist").font(.title2)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Plan your video").font(.rpHeadline)
+                                Text("Choose a format, collect your shots, continue in Studio.")
+                                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption.weight(.bold))
+                        }
+                        .padding(16).background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                    .accessibilityIdentifier("listing.productionPlan")
+                }
                 tourSection
                 if let shareURL {
                     shareSection(shareURL)
@@ -7407,6 +7423,13 @@ struct ReelStudioView: View {
     // this file has hit the type-checker's expression budget before, so
     // `setupSection` stays a short list of identifiers and nothing else.
     @ViewBuilder private var setupSection: some View {
+        if space == .realEstate && !listing.isSample {
+            NavigationLink { ProductionPlanView(listing: listing) } label: {
+                Label("Plan your shots and collect video takes", systemImage: "checklist")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(14)
+                    .background(Theme.accentSoft, in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
         nativeSetupCard
         setupHeader
 

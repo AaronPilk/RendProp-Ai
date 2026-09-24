@@ -55,6 +55,7 @@ try {
   assert.equal((await second.evaluate(() => window.cloudFixture.snapshot())).tickets, 2);
   receipt.checks.push("Changing property opens a separate empty reel; new sources save only with that property and the original edit remains intact");
   await second.getByLabel("Add photos or videos", {exact:true}).setInputFiles(sourceVideo);
+  await second.getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(second.getByLabel("Playback speed", {exact:true})).toBeVisible();
   await second.getByLabel("Playback speed", {exact:true}).selectOption("2");
   await second.getByLabel("Transition into this clip", {exact:true}).selectOption("dissolve");
@@ -77,6 +78,7 @@ try {
   await expect(third.getByText(/Narration is ready/)).toBeVisible();
   await expect(third.getByRole("button", {name:/Select clip 2:/})).not.toHaveAccessibleName(/original file missing/);
   await third.getByRole("button", {name:/Select clip 2:/}).click();
+  await third.getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(third.getByLabel("Playback speed", {exact:true})).toHaveValue("2");
   await expect(third.getByLabel("Transition into this clip", {exact:true})).toHaveValue("dissolve");
   await expect(third.getByLabel("Caption style", {exact:true})).toHaveValue("center");
@@ -126,6 +128,7 @@ try {
   await expect(second.getByRole("button", {name:/Select clip /})).toHaveCount(2);
   await expect(second.getByLabel("Photo duration (seconds)", {exact:true})).toHaveValue("2");
   await expect(second.getByLabel("Clip caption", {exact:true})).toHaveValue("The closing view");
+  await second.getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(second.getByLabel("Photo motion", {exact:true})).toHaveValue("push_in");
   await expect.poll(async () => (await second.evaluate(() => window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000003"]?.payload.sources?.length).toBe(2);
   const applied=await second.evaluate(() => window.cloudFixture.snapshot());assert.equal(applied.tickets,beforeImport.tickets);

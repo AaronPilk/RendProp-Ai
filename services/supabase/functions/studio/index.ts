@@ -15,6 +15,7 @@ import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
 import { handleDocuments } from "./documents.ts";
+import { handleProductionReview } from "./production-review.ts";
 import { handleListingState } from "./listing-state.ts";
 import { handleListingActions } from "./listing-actions.ts";
 import { handleCreative } from "./creative.ts";
@@ -75,6 +76,8 @@ export async function handleStudio(req: Request): Promise<Response> {
     assert(!rate.error, 503, "Workspace actions are temporarily unavailable.");
     assert(rate.data === true, 429, "Please wait a moment before refreshing again.");
     if (seg.length === 1 && seg[0] === "documents") return await handleDocuments(req, context);
+    const review = await handleProductionReview(req, context);
+    if (review) return review;
     if (seg.length === 1 && seg[0] === "listing-state") return await handleListingState(req, context);
     const action = await handleListingActions(req, context);
     if (action) return action;

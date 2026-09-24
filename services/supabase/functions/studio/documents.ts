@@ -1,10 +1,11 @@
 import { assert, HttpError, json, readJsonLimited } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
+import { authorizeProductionPlan, productionPlanInput } from "./production-plan.ts";
 export const DOCUMENT_LIMIT = 2 * 1024 * 1024;
 const fields = "key,kind,listing_id,revision,payload,updated_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function documentKey(value: unknown): string {
-  assert(typeof value === "string" && /^(edit|planner|(?:edit|creative|native):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value), 400, "Choose a valid document.");
+  assert(typeof value === "string" && /^(edit|planner|(?:edit|creative|native|production):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value), 400, "Choose a valid document.");
   return value;
 }
 export function documentInput(body: Record<string, unknown>) {
@@ -20,7 +21,8 @@ export function documentInput(body: Record<string, unknown>) {
     assert((body.payload as Record<string, unknown>).listingId === listing, 400, "This edit belongs to a different listing.");
   }
   assert(new TextEncoder().encode(JSON.stringify(body.payload)).byteLength <= DOCUMENT_LIMIT - 1024, 413, "This draft is too large to sync.");
-  return { key, kind, listing_id: listing as string | null, expected: Number(body.expected_revision), payload: body.payload };
+  const payload = kind === "production" ? productionPlanInput(body.payload, listing as string) : body.payload;
+  return { key, kind, listing_id: listing as string | null, expected: Number(body.expected_revision), payload };
 }
 export async function handleDocuments(req: Request, context: StudioContext): Promise<Response> {
   const { userId, orgId, db, admin } = context;
@@ -34,6 +36,7 @@ export async function handleDocuments(req: Request, context: StudioContext): Pro
   assert(req.method === "POST", 405, "Use Save to update this document.");
   const input = documentInput(await readJsonLimited(req, DOCUMENT_LIMIT));
   if (input.listing_id) await context.authorizeListing(input.listing_id);
+  if (input.kind === "production") await authorizeProductionPlan(productionPlanInput(input.payload, input.listing_id!), context, req.signal);
   const row = { user_id: userId, org_id: orgId, key: input.key, kind: input.kind,
     listing_id: input.listing_id, revision: input.expected + 1, payload: input.payload, updated_at: new Date().toISOString() };
   const result = input.expected === 0

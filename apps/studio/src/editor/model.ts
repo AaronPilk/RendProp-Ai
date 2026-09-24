@@ -185,7 +185,9 @@ export function validateFileBatch(
     throw new Error(
       `This local editor supports ${EDIT_LIMITS.clips} clips; this selection would make ${files.length + existing.length}.`,
     );
-  let total = existing.reduce((sum, clip) => sum + clip.source.size, 0);
+  // Split clips can refer to one file many times without allocating that file
+  // again. New selections remain conservatively counted until their hash is read.
+  let total = [...new Map(existing.map(clip => [clip.source.sha256, clip.source])).values()].reduce((sum, source) => sum + source.size, 0);
   for (const file of files) {
     mediaKind(file);
     if (!Number.isSafeInteger(file.size) || file.size <= 0)
@@ -375,18 +377,13 @@ export function validateDraft(value: unknown): EditDraft {
   });
   if (timelineDuration(clips) > EDIT_LIMITS.timelineSeconds + 0.00001)
     throw new Error("The edit exceeds the 180-second local timeline limit.");
-  if (
-    clips.reduce((sum, clip) => sum + clip.source.size, 0) >
-    EDIT_LIMITS.totalBytes
-  )
-    throw new Error("The edit exceeds the 512 MiB total media limit.");
   const overlays = draft.overlays !== undefined ? validateOverlays(draft.overlays, timelineDuration(clips)) : undefined;
   if (overlays?.some(overlay => ids.has(overlay.id))) throw new Error("A cutaway and a base clip cannot share the same ID.");
-  const allSources = new Map(clips.map(clip => [clip.source.sha256, clip.source]));
-  for (const overlay of overlays ?? []) {
-    const previous = allSources.get(overlay.source.sha256);
-    if (previous) assertSourceMatch(previous, overlay.source);
-    allSources.set(overlay.source.sha256, overlay.source);
+  const allSources = new Map<string, SourceRef>();
+  for (const item of [...clips, ...(overlays ?? [])]) {
+    const previous = allSources.get(item.source.sha256);
+    if (previous) assertSourceMatch(previous, item.source);
+    allSources.set(item.source.sha256, item.source);
   }
   if ([...allSources.values()].reduce((sum, source) => sum + source.size, 0) > EDIT_LIMITS.totalBytes) throw new Error("Base footage and cutaway photos exceed the 512 MiB total source limit.");
   const validated: EditDraft = {

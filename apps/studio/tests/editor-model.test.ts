@@ -251,7 +251,7 @@ test("all duration, caption, media, and timeline limits fail visibly", () => {
         ...base,
         clips: Array.from({ length: 6 }, (_, index) => ({
           ...photo(String(index)),
-          source: { ...photo().source, size: EDIT_LIMITS.fileBytes },
+          source: { ...photo().source, sha256: String(index).repeat(64), size: EDIT_LIMITS.fileBytes },
         })),
       }),
     /512 MiB/,

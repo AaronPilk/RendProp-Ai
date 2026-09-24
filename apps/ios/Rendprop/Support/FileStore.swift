@@ -117,6 +117,8 @@ enum FileStore {
         // unplayable and permanent. `removeFiles` also removes DIRECTORIES whose
         // name matches, which is what sweeps `reels/<id>-parked/` above.
         removeFiles(in: documents.appendingPathComponent("Voiceovers", isDirectory: true), withPrefix: "\(idString)-")
+        ProductionVideoLibrary.removeLocalCopies(listingID: id)
+        ProductionPlanCache.remove(listingID: id)
         removeFiles(in: recordingsDir, withPrefix: "enhanced-\(idString)")
         removeFiles(in: recordingsDir, withPrefix: "preview-enhanced-\(idString)")
         // Legacy locations (files written by earlier builds at the Documents root).

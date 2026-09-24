@@ -1,4 +1,7 @@
 import {OverlayPainter} from "./overlay-renderer";
+import { RecipePanel, type RecipeRequest } from "./RecipePanel";
+import { RECIPE_CATALOG, type RecipeResult } from "./recipes";
+import { splitVideoAtTime } from "./edit-actions";
 import {
   useEffect,
   useRef,
@@ -81,6 +84,13 @@ export type VideoEditorProps = {
   onPlanApplied?: (draft: EditDraft) => void;
   onPlanFailed?: (message: string) => void;
   onSwitchBlockChange?: (reason: string | null) => void;
+  /** Opens an explicit recipe review; never applies a replacement without review. */
+  recipeRequest?: RecipeRequest;
+  onRecipeApplied?: (result: RecipeResult) => void;
+  initialMode?: "simple" | "pro";
+  readOnly?: boolean;
+  seekRequest?: { id: string; time: number };
+  onPlayheadChange?: (time: number) => void;
 };
 
 function errorText(error: unknown): string {
@@ -123,7 +133,14 @@ export function VideoEditor({
   settingsRequest,
   onSettingsApplied,
   onSwitchBlockChange,
+  recipeRequest,
+  onRecipeApplied,
+  initialMode = "pro",
+  readOnly = false,
+  seekRequest,
+  onPlayheadChange,
 }: VideoEditorProps) {
+  const [editorMode, setEditorMode] = useState(initialMode);
   const [initial] = useState(() => {
     try {
       return {
@@ -218,7 +235,17 @@ export function VideoEditor({
       URL.revokeObjectURL(media.current.get(id)!.url);
       media.current.delete(id);
     }
-    if (released.length) setMediaVersion((version) => version + 1);
+    // A split/redo can introduce a second clip for a file already in memory.
+    // Give each clip its own URL so releasing one cannot invalidate another.
+    let rebound = false;
+    for (const item of draftMedia(next)) {
+      if (media.current.has(item.id)) continue;
+      const match = [...media.current.values()].find(local => {
+        try { assertSourceMatch(item.source, local.source); return true; } catch { return false; }
+      });
+      if (match) { media.current.set(item.id, { ...match, url: URL.createObjectURL(match.file) }); rebound = true; }
+    }
+    if (released.length || rebound) setMediaVersion((version) => version + 1);
     historyRef.current = nextHistory;
     draftRef.current = next;
     setHistory(nextHistory);
@@ -231,7 +258,7 @@ export function VideoEditor({
     historyRef.current = closeHistoryGroup(historyRef.current);
   };
   const update = (patch: Parameters<typeof reviseDraft>[1], label = "edit", group: string | null = null) => {
-    if (importAbort.current) return false;
+    if (readOnly || importAbort.current) return false;
     try {
       return replaceHistory(editHistory(historyRef.current, patch, label, group));
     } catch (error) {
@@ -253,8 +280,28 @@ export function VideoEditor({
       ),
     }, label, `clip:${id}:${field}`);
   };
+  const applyRecipe = (result: RecipeResult) => {
+    if (importing || exporting || savingOutput) return;
+    if (result.draft.id !== draftRef.current.id || result.draft.revision !== draftRef.current.revision) {
+      notice("The edit changed. Review the guided draft again before applying it."); return;
+    }
+    const { clips, overlays, narration, audio, ratio, title } = result.draft;
+    if (update({ clips, overlays, narration, audio, ratio, title }, `apply ${result.recipe}`)) {
+      const applied = { ...result, draft: draftRef.current };
+      onRecipeApplied?.(applied);
+      timeRef.current = 0; setTime(0); setScrubVersion(value => value + 1);
+      notice(`${RECIPE_CATALOG.find(item => item.id === result.recipe)?.name} applied. Review the complete preview and adjust any timing or captions. Undo restores the previous edit.`);
+    } else notice("These guided draft settings are already applied.");
+  };
+  const splitAtPlayhead = () => {
+    if (importing || exporting || savingOutput) return;
+    try {
+      const next = splitVideoAtTime(draftRef.current, timeRef.current, crypto.randomUUID());
+      if (update({ clips: next.clips }, "split video")) notice("Video split at the playhead. Both pieces retain the original source, audio and speed.");
+    } catch (error) { notice(errorText(error)); }
+  };
   const travelHistory = (direction: "undo" | "redo") => {
-    if (!activeRef.current || importAbort.current) return;
+    if (readOnly || !activeRef.current || importAbort.current) return;
     try {
       const current = historyRef.current;
       const label = (direction === "undo" ? current.past : current.future).at(-1)?.label;
@@ -278,8 +325,12 @@ export function VideoEditor({
   };
 
   useEffect(() => {
-    callbacks.current.onDraftChange?.(draft);
-  }, [draft]);
+    if (!readOnly) callbacks.current.onDraftChange?.(draft);
+  }, [draft, readOnly]);
+  useEffect(() => { onPlayheadChange?.(time); }, [time, onPlayheadChange]);
+  useEffect(() => {
+    if (readOnly) { exportAbort.current?.abort(); importAbort.current?.abort(); }
+  }, [readOnly]);
   useEffect(() => {
     if (!active) {
       setPlaying(false);
@@ -306,7 +357,7 @@ export function VideoEditor({
   }, []);
 
   const importFiles = async (files: File[]) => {
-    if (!files.length) return;
+    if (readOnly || !files.length) return;
     if (importAbort.current) {
       notice(
         "Wait for the current media import to finish, then add these files again.",
@@ -368,7 +419,7 @@ export function VideoEditor({
   };
 
   useEffect(() => {
-    if (!importRequest || consumedRequest.current.has(importRequest.id)) return;
+    if (readOnly || !importRequest || consumedRequest.current.has(importRequest.id)) return;
     consumedRequest.current.add(importRequest.id);
     void importFiles(importRequest.files);
     // Each stable request ID is consumed once; local changes must not replay an import.
@@ -376,7 +427,7 @@ export function VideoEditor({
   }, [importRequest]);
 
   useEffect(() => {
-    if (!settingsRequest || consumedRequest.current.has(settingsRequest.id)) return;
+    if (readOnly || !settingsRequest || consumedRequest.current.has(settingsRequest.id)) return;
     consumedRequest.current.add(settingsRequest.id);
     if (importAbort.current) {onPlanFailed?.("Wait for the media import to finish, then apply phone settings again."); return;}
     const {ratio, title, narration, captionStyle, transition, clearCaptions} = settingsRequest;
@@ -385,7 +436,7 @@ export function VideoEditor({
   }, [settingsRequest]);
 
   useEffect(() => {
-    if (!planRequest || consumedRequest.current.has(planRequest.id)) return;
+    if (readOnly || !planRequest || consumedRequest.current.has(planRequest.id)) return;
     if (importAbort.current) { onPlanFailed?.("Wait for the current import to finish, then apply the shot plan again."); return; }
     consumedRequest.current.add(planRequest.id);
     const controller = new AbortController(), staged: {clip: EditClip; local: LocalMedia}[] = []; let accepted = false;
@@ -410,7 +461,7 @@ export function VideoEditor({
   }, [planRequest]);
 
   useEffect(() => {
-    if (!agentRequest || consumedRequest.current.has(agentRequest.id)) return;
+    if (readOnly || !agentRequest || consumedRequest.current.has(agentRequest.id)) return;
     if (importAbort.current) {onPlanFailed?.("Wait for the current import, then apply the agent plan again.");return;}
     consumedRequest.current.add(agentRequest.id);
     const controller = new AbortController(), staged: LocalMedia[] = []; let accepted = false;
@@ -456,13 +507,15 @@ export function VideoEditor({
           }
         } finally { if (!used) URL.revokeObjectURL(local.url); }
       }
-      if (!controller.signal.aborted) { setMediaVersion(v=>v+1); notice("Saved source files restored. Continue editing where you left off."); }
+      if (!controller.signal.aborted) { setMediaVersion(v=>v+1); notice(readOnly ? "Saved source files restored for review." : "Saved source files restored. Continue editing where you left off."); }
     })().catch(error => { if (!controller.signal.aborted) notice(errorText(error)); });
     return () => controller.abort();
-  }, [relinkRequest]);
+  // Request IDs identify immutable deliveries. Parent playback/comment updates
+  // can recreate the wrapper object while this delivery is still decoding.
+  }, [relinkRequest?.id]);
   useEffect(() => {
-    onSourcesChange?.([...new Map([...media.current.values()].map(local => [local.source.sha256, {file:local.file,sha256:local.source.sha256}])).values()]);
-  }, [mediaVersion, onSourcesChange]);
+    if (!readOnly) onSourcesChange?.([...new Map([...media.current.values()].map(local => [local.source.sha256, {file:local.file,sha256:local.source.sha256}])).values()]);
+  }, [mediaVersion, onSourcesChange, readOnly]);
 
   useEffect(() => {
     const id = draft.narration?.resultId;
@@ -571,11 +624,18 @@ export function VideoEditor({
   }, [active, draft, mediaVersion, playing, scrubVersion, total, voice]);
 
   const scrubTo = (seconds: number) => {
+    if (!Number.isFinite(seconds)) return;
     setPlaying(false);
-    timeRef.current = seconds;
-    setTime(seconds);
+    const bounded = Math.max(0, Math.min(seconds, total));
+    timeRef.current = bounded;
+    setTime(bounded);
     setScrubVersion((version) => version + 1);
   };
+  useEffect(() => {
+    if (!seekRequest || consumedRequest.current.has(`seek:${seekRequest.id}`)) return;
+    consumedRequest.current.add(`seek:${seekRequest.id}`);
+    scrubTo(seekRequest.time);
+  }, [seekRequest]);
   const togglePlayback = () => {
     if (!activeRef.current) return;
     if (!playing && timeRef.current >= total - 0.01) {
@@ -595,7 +655,7 @@ export function VideoEditor({
       notice("Clip removed. Undo restores its cuts and text; reselect the original file to restore its media.");
   };
   const openPlan = async (file?: File) => {
-    if (!file) return;
+    if (readOnly || !file) return;
     if (importAbort.current) {
       notice(
         "Wait for the current media import before opening another edit plan.",
@@ -683,6 +743,7 @@ export function VideoEditor({
     }
   };
   const startExport = async () => {
+    if (readOnly) return;
     const format = formats.find((item) => item.mime === formatMime);
     if (!activeRef.current || !format || exportAbort.current) return;
     invalidateExport();
@@ -741,17 +802,16 @@ export function VideoEditor({
   };
 
   return (
-    <section className="rp-editor" aria-label="Local video editor" onBlur={finishHistoryGroup} onPointerUp={finishHistoryGroup} onKeyDown={historyShortcut}>
+    <section className={`rp-editor${readOnly ? " is-readonly" : ""}`} aria-label={readOnly ? "Saved edit review" : "Local video editor"} onBlur={finishHistoryGroup} onPointerUp={finishHistoryGroup} onKeyDown={historyShortcut}>
       <div className="rp-editor-heading">
         <div>
           <p className="rp-editor-eyebrow">YOUR FOOTAGE. YOUR STORY.</p>
-          <h2>Bring your story to life.</h2>
+          <h2>{readOnly ? "Review the saved edit" : "Bring your story to life."}</h2>
           <p>
-            Arrange your media, refine the details, and create a video right
-            here.
+            {readOnly ? `Saved revision ${draft.revision}. Playback and comments do not change this edit.` : "Arrange your media, refine the details, and create a video right here."}
           </p>
         </div>
-        <div className="rp-editor-plan-actions">
+        {!readOnly && <div className="rp-editor-plan-actions">
           <button
             type="button"
             disabled={importing}
@@ -771,13 +831,21 @@ export function VideoEditor({
           >
             Save edit plan
           </button>
-        </div>
+        </div>}
       </div>
+      {!readOnly && <>
       <div className="rp-editor-history" role="group" aria-label="Edit history">
         <button type="button" disabled={importing || !history.past.length} title={`Undo ${history.past.at(-1)?.label ?? "last edit"}`} aria-keyshortcuts="Control+Z Meta+Z" onClick={() => travelHistory("undo")}>Undo</button>
         <button type="button" disabled={importing || !history.future.length} title={`Redo ${history.future.at(-1)?.label ?? "last edit"}`} aria-keyshortcuts="Control+Shift+Z Meta+Shift+Z Control+Y" onClick={() => travelHistory("redo")}>Redo</button>
         <p>Up to {HISTORY_LIMITS.steps} recent steps. Undoing a removal requires original-file reselection.</p>
       </div>
+      <div className="rp-editor-view-mode" role="group" aria-label="Editor view">
+        <button type="button" aria-pressed={editorMode === "simple"} onClick={() => setEditorMode("simple")}>Simple view</button>
+        <button type="button" aria-pressed={editorMode === "pro"} onClick={() => setEditorMode("pro")}>Pro view</button>
+        <p>{editorMode === "simple" ? "Trim, order and caption the same editable draft. Pro view adds motion and transition controls." : "Full controls for this same editable draft."}</p>
+      </div>
+      <RecipePanel draft={draft} busy={importing || exporting || savingOutput} request={recipeRequest} onApply={applyRecipe} />
+      </>}
       <input
         ref={filesInput}
         className="rp-editor-file-input"
@@ -785,6 +853,7 @@ export function VideoEditor({
         type="file"
         accept="image/jpeg,image/png,image/webp,video/mp4,video/webm,video/quicktime"
         multiple
+        disabled={readOnly}
         onChange={handleFileInput}
       />
       <input
@@ -793,6 +862,7 @@ export function VideoEditor({
         aria-label="Open saved edit plan"
         type="file"
         accept=".json,application/json"
+        disabled={readOnly}
         onChange={(event) => {
           const file = event.target.files?.[0];
           event.target.value = "";
@@ -826,6 +896,8 @@ export function VideoEditor({
           reconnect its original file.
         </div>
       )}
+      {readOnly && draft.narration && (voiceIssue || !voiceReady) && <p className="rp-editor-missing" role="status">{voiceIssue || "Restoring saved narration for this review…"}{voiceIssue && <button type="button" onClick={() => setVoiceRetry(value => value + 1)}>Retry narration</button>}</p>}
+      {readOnly && audioUnavailable && <p className="rp-editor-missing" role="status">This browser cannot preview the saved audio. Use a browser with audio playback support before approving the sound.</p>}
       <div className="rp-editor-workspace">
         <div className="rp-editor-main">
           <div className="rp-editor-preview-panel">
@@ -854,14 +926,14 @@ export function VideoEditor({
                   </span>
                   <h3>A great story starts here.</h3>
                   <p>Drop in your photos and video clips.</p>
-                  <button
+                  {!readOnly && <button
                     type="button"
                     className="rp-editor-primary"
                     disabled={importing}
                     onClick={() => filesInput.current?.click()}
                   >
                     {importing ? "Checking media…" : "Add photos & videos"}
-                  </button>
+                  </button>}
                   <small>JPG, PNG, WebP, MP4, WebM, supported MOV</small>
                 </div>
               )}
@@ -916,13 +988,13 @@ export function VideoEditor({
                   {draft.clips.length} / {EDIT_LIMITS.clips}
                 </span>
               </h3>
-              <button
+              {!readOnly && <button
                 type="button"
                 disabled={importing || draft.clips.length >= EDIT_LIMITS.clips}
                 onClick={() => filesInput.current?.click()}
               >
                 {importing ? "Checking media…" : "+ Add media"}
-              </button>
+              </button>}
             </div>
             {draft.clips.length ? (
               <ol className="rp-editor-clips">
@@ -972,7 +1044,7 @@ export function VideoEditor({
             </p>
           </div>
         </div>
-        <aside className="rp-editor-inspector" aria-label="Edit controls">
+        {!readOnly && <aside className="rp-editor-inspector" aria-label="Edit controls">
           <div className="rp-editor-settings">
             <div className="rp-editor-panel-bar">
               <h3>Video settings</h3>
@@ -1118,10 +1190,13 @@ export function VideoEditor({
                     </small>
                   </div>
                 )}
+                {selected.source.kind === "video" && <div className="rp-editor-split-actions"><button type="button" disabled={importing || exporting || savingOutput || draft.clips.length >= EDIT_LIMITS.clips} onClick={splitAtPlayhead}>Split video at playhead</button><small>Move the playhead inside a video. Leave at least 0.5 seconds of source on both sides.</small></div>}
+                {editorMode === "pro" && <>
                 {selected.source.kind === "video" && <label>Playback speed<select aria-label="Playback speed" value={selected.speed ?? 1} disabled={importing} onChange={event => updateClip(selected.id, {speed: Number(event.target.value)})}><option value={0.25}>0.25× · Quarter speed</option><option value={0.5}>0.5× · Slow</option><option value={1}>1× · Normal</option><option value={1.5}>1.5×</option><option value={2}>2× · Fast</option><option value={4}>4×</option></select></label>}
                 <label>Transition into this clip<select aria-label="Transition into this clip" value={selected.transition ?? "cut"} disabled={importing || selectedIndex === 0} onChange={event => updateClip(selected.id, {transition: event.target.value as Transition})}><option value="cut">Cut</option><option value="dissolve">Dissolve · 0.28 seconds</option><option value="whip">Whip · 0.18 seconds</option></select></label>
                 {selected.source.kind === "image" && <label>Photo motion<select aria-label="Photo motion" value={selected.motion ?? "still"} disabled={importing} onChange={event => updateClip(selected.id, {motion: event.target.value as EditClip["motion"]})}><option value="still">Still</option><option value="push_in">Gentle push in</option><option value="pull_out">Gentle pull out</option><option value="pan_left">Pan left</option><option value="pan_right">Pan right</option></select></label>}
                 <label>Caption style<select aria-label="Caption style" value={selected.captionStyle ?? "clean"} disabled={importing} onChange={event => updateClip(selected.id, {captionStyle: event.target.value as CaptionStyle})}><option value="clean">Clean lower third</option><option value="center">Bold center</option><option value="highlight">Highlight box</option></select></label>
+                </>}
                 <label>
                   Clip caption
                   <textarea
@@ -1325,7 +1400,7 @@ export function VideoEditor({
               }}>{savingOutput ? "Saving to your listing…" : "Save video to listing"}</button>
             )}
           </div>
-        </aside>
+        </aside>}
       </div>
     </section>
   );

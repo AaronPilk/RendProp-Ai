@@ -631,3 +631,23 @@
     animation: none !important;
   }
 }
+
+.rp-editor-view-mode { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-bottom:16px; }
+.rp-editor-view-mode p { color:var(--editor-muted); font-size:12px; flex:1 1 250px; }
+.rp-editor-view-mode button[aria-pressed="true"] { background:var(--accent-soft); border-color:var(--accent); }
+.rp-editor-recipes { border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:20px; background:var(--editor-surface); }
+.rp-editor-recipe-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.rp-editor-recipes h3 { font-size:16px; }
+.rp-editor-recipes p, .rp-editor-recipes small, .rp-editor-split-actions small { color:var(--editor-muted); font-size:13px; line-height:1.6; }
+.rp-editor-recipes fieldset { min-width:0; border:0; padding:16px 0 0; margin:0; }
+.rp-editor-recipes label { display:block; font-size:13px; margin:12px 0; }
+.rp-editor-recipes select, .rp-editor-recipes input { display:block; width:100%; min-width:0; min-height:44px; padding:8px; margin-top:6px; background:var(--surface); color:var(--ink); border:1px solid var(--input-line); border-radius:8px; }
+.rp-editor-recipe-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:12px; align-items:center; }
+.rp-editor-recipe-review { padding:14px; margin:14px 0 !important; background:var(--surface-subtle); border-radius:8px; font-size:13px; line-height:1.6; overflow-wrap:anywhere; }
+.rp-editor-recipe-review ul { padding-left:20px; }
+.rp-editor-recipes small { display:block; margin-top:10px; }
+.rp-editor-split-actions { margin:0 0 14px; }
+.rp-editor-split-actions small { display:block; margin-top:6px; }
+.rp-editor-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.rp-editor.is-readonly .rp-editor-workspace { grid-template-columns:minmax(0,1fr); }
+@media (max-width:600px) { .rp-editor-recipe-heading { align-items:flex-start; flex-direction:column; } .rp-editor-recipe-fields { grid-template-columns:minmax(0,1fr); gap:0; } }

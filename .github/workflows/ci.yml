@@ -40,6 +40,17 @@ jobs:
         run: node --test tests/phase1/*.test.mjs
       - name: Draft corrections survive an older cloud snapshot
         run: python3 tools/audit/complete-product-20260922/photos_sync.py
+      - name: Phone production plan preservation and sync receipts
+        run: |
+          production_test_dir=$(mktemp -d)
+          swiftc -parse-as-library \
+            apps/ios/Rendprop/Models/ProductionGuidance.swift \
+            apps/ios/Rendprop/Networking/ProductionPlan.swift \
+            apps/ios/tests/ProductionPlanTests.swift \
+            -o "$production_test_dir/production-plan-tests"
+          "$production_test_dir/production-plan-tests"
+      - name: Phone production autosync survives lost replies and relaunch
+        run: bash apps/ios/tests/run-production-writer.sh
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -110,6 +121,9 @@ jobs:
       - name: Property switching, recovery and listing completion
         run: |
           node tests/property-reels-browser.mjs
+          node tests/editor-recipes-browser.mjs
+          node tests/production-browser.mjs
+          node tests/cloud-editor-browser.mjs
           node tests/listing-finish-browser.mjs
           node tests/listing-kit-browser.mjs
           node tests/browser-connected.mjs
@@ -122,6 +136,12 @@ jobs:
           path: |
             /tmp/rendprop-property-reels-*/receipt.json
             /tmp/rendprop-property-reels-*/*.png
+            /tmp/rendprop-guided-recipes-*/receipt.json
+            /tmp/rendprop-guided-recipes-*/*.png
+            /tmp/rendprop-production-*/receipt.json
+            /tmp/rendprop-production-*/*.png
+            /tmp/rendprop-cloud-editor-*/receipt.json
+            /tmp/rendprop-cloud-editor-*/*.png
             /tmp/rendprop-listing-finish-*/receipt.json
             /tmp/rendprop-listing-finish-*/*.png
             /tmp/rendprop-listing-kit-*/receipt.json
@@ -485,6 +505,7 @@ jobs:
           python3 tools/audit/run_deletion_handler_regression.py
           python3 tools/audit/run_spatial_edge_regression.py
           python3 tools/audit/test_upload_transport_db.py
+          python3 services/supabase/tests/production_review.py
       # A real red invariant suite still runs positive/negative publication
       # fixtures before exiting nonzero. Preserve its evidence, not a green
       # override. Preflight can fail before the runner creates any evidence.
@@ -497,6 +518,8 @@ jobs:
           path: |
             /tmp/rendprop-*/receipt.json
             /tmp/rendprop-*/*.log
+            build/pr-*/receipt.json
+            build/pr-*/server.log
           retention-days: 7
           if-no-files-found: ${{ steps.database.outcome == 'success' && 'error' || 'warn' }}
 

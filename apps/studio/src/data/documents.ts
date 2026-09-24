@@ -105,6 +105,8 @@ export class DocumentSync {
     } catch { this.status("offline"); }
   }
   get hasUnsavedWork(): boolean { return this.running || this.pending !== null || this.uncertain !== null || this.state === "conflict"; }
+  /** Last server-confirmed revision, used to bind review actions to saved work. */
+  get confirmedRevision(): number { return this.revision; }
   /** When another device saves, ask to reload instead of silently replacing an open edit. */
   async checkRemote(): Promise<void> {
     if (this.stopped || this.state !== "saved" || this.hasUnsavedWork) return;

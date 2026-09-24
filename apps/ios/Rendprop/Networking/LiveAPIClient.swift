@@ -43,7 +43,7 @@ func coarseCoordinate(_ v: Double) -> Double { (v * 1000).rounded() / 1000 }
 /// via `.convertFromSnakeCase`) and map to the app's models, and we build write
 /// bodies as explicit snake_case dictionaries (mirrors the AI/ clients' style),
 /// so the app models never have to match the DB column names.
-final class LiveAPIClient: APIClient, WorkspaceSyncAPI {
+final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     private let base: URL
     private let session: URLSession
     /// Longer timeout for the AI routes (`Config.aiRequestTimeout`) — a Gemini
@@ -487,6 +487,28 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI {
         var request = makeRequest(url: url(["studio", "documents"]), method: "POST", json: ["key": "native:\(listingID.uuidString.lowercased())", "kind": "native", "listing_id": listingID.uuidString.lowercased(), "expected_revision": revision, "payload": payload])
         request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
         struct Envelope: Decodable { let document: CloudNativeReelDocument }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document.checked(listingID: listingID)
+    }
+
+    func productionPlan(listingID: UUID, orgID: UUID) async throws -> CloudProductionDocument? {
+        var request = makeRequest(url: url(["studio", "documents"], query: [URLQueryItem(name: "key", value: "production:\(listingID.uuidString.lowercased())")]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudProductionDocument? }
+        let result: Envelope = try decodeExact(try await execute(request))
+        return try result.document?.checked(listingID: listingID)
+    }
+
+    func saveProductionPlan(_ plan: ProductionPlan, listingID: UUID, orgID: UUID, revision: Int) async throws -> CloudProductionDocument {
+        _ = try plan.checked(listingID: listingID)
+        guard revision >= 0, revision < 2_147_483_646 else { throw ProductionPlanError.invalidDocument }
+        let payload = try JSONSerialization.jsonObject(with: JSONEncoder().encode(plan))
+        var request = makeRequest(url: url(["studio", "documents"]), method: "POST", json: [
+            "key": "production:\(listingID.uuidString.lowercased())", "kind": "production",
+            "listing_id": listingID.uuidString.lowercased(), "expected_revision": revision, "payload": payload
+        ])
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let document: CloudProductionDocument }
         let result: Envelope = try decodeExact(try await execute(request))
         return try result.document.checked(listingID: listingID)
     }

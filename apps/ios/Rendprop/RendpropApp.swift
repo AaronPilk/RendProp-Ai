@@ -615,6 +615,8 @@ final class AppModel: ObservableObject {
         guard let listing = listings.first(where: { $0.id == id }), !listing.isSample else { return }
 
         renderCoordinator.cancel(listingID: id)
+        ProductionVideoLibrary.shared.cancelForPropertyDeletion(id)
+        ProductionPlanSyncStore.shared.remove(id)
         // A publish upload for THIS listing must not keep streaming a file we
         // are about to delete.
         if let s = UploadManager.shared.state, s.status != .done, s.role == "render",
