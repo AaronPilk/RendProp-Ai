@@ -127,6 +127,14 @@ Offline checks on the final implementation:
   The execution run includes the actual TypeScript controller and native upload
   lifecycle. These local databases use synthetic identities, not live Supabase.
   All owned clusters stopped; production calls were zero.
+- Full database regression accepted at source commit `0747a44`: all migrations
+  and historical replay, both 266-assertion inventories, publication fixtures
+  and negative controls completed. Each inventory retains the **one preexisting
+  owner-kept-red Astra token-ceiling assertion**; no unexpected failures and no
+  new exceptions. The first run caught an ordinary legacy compliance-key
+  regression, which was fixed and reproduced in the new 92-check suite before
+  this successful rerun. Receipt:
+  `/tmp/rendprop-db-audit-3jp58dag/receipt.json`.
 
 Local receipts: `build/pex-wxn9v56n/receipt.json`,
 `build/pres-j6_e5gsv/receipt.json`, `build/pr-iwqu5aqm/receipt.json`, and
