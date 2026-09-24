@@ -1,4 +1,5 @@
 import type { SupabaseClient, User } from "npm:@supabase/supabase-js@2";
+import { mediaVisibility } from "../_shared/media-source-access.ts";
 import { HttpError } from "../_shared/http.ts";
 import { PAGE_SIZE, type StudioDependencies } from "./handler.ts";
 
@@ -13,10 +14,11 @@ export interface StudioRepositoryDependencies {
 export function createStudioRepository(
   req: Request,
   deps: StudioRepositoryDependencies,
-): Pick<StudioDependencies, "authorize" | "read"> {
+): Pick<StudioDependencies, "authorize" | "read" | "mediaVisibility"> {
   let client: SupabaseClient | undefined;
   const db = () => client ??= deps.userClient(req);
   return {
+    mediaVisibility: (scope, refs) => mediaVisibility(db(), scope.listingId, refs),
     async authorize(request, orgId, listingId) {
       const user = await deps.getUser(request);
       await deps.assertNotDeleting(user.id);

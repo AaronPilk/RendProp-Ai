@@ -18,7 +18,7 @@ import { canEditListing, listingFinish } from "./readiness";
 import type { ListingDestination } from "./readiness";
 
 export type ListingEntryRequest = {id:string;listingId:string;tab:Tab};
-type Props = { entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => void };
+type Props = { entryRequest?:ListingEntryRequest; createRequest?:string; onOpenFeature?:(feature:FeatureId,listingId:string)=>void; services: StudioServices; workspace: Workspace; listings: Listing[]; listingId?: string; onChanged: () => void; onSelectListing?: (id: string) => boolean | void };
 type Tab = "media" | "tour" | "floorplan" | "details";
 const terminal = new Set(["ready", "failed", "completed", "published", "cancelled"]);
 const message = (error: unknown) => error instanceof Error ? error.message : "This action could not finish. Please try again.";
@@ -56,7 +56,7 @@ export default function ListingWorkflow(props: Props) {
   },[props.createRequest,props.entryRequest]);
   const words=homeWords(props.workspace.org.spaceType);
   const listing = props.listings.find((item) => item.id === selected);
-  const choose = (id: string) => { setCreating(false); setSelected(id); props.onSelectListing?.(id); };
+  const choose = (id: string) => { if (props.onSelectListing?.(id) === false) return; setCreating(false); setSelected(id); };
   return <section className="listing-workflow" aria-label="Property workspace">
     <div className="lw-title"><div><p className="eyebrow">From your phone to your desk</p><h1>{words.collection}</h1><p>Every uploaded photo, walkthrough, and published tour belongs to the same workspace.</p></div><button className="primary" disabled={props.workspace.memberships.find((m) => m.orgId === props.workspace.org.id)?.role === "marketing"} onClick={() => setCreating(true)}>＋ New property</button></div>
     <div className="lw-property-switch"><label htmlFor="property-workspace-select">Working on</label><select id="property-workspace-select" value={listing?.id ?? ""} onChange={(event) => choose(event.target.value)}><option value="" disabled>Choose a property</option>{props.listings.map((item) => <option key={item.id} value={item.id}>{item.address || item.tagline || "Untitled property"}</option>)}</select><span className="lw-sync-dot">Same account as your iPhone</span></div>

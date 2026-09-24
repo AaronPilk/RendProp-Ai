@@ -28,6 +28,7 @@ function fixture() {
     renders: { data: [], error: null },
   };
   const client = {
+    rpc(_name: string, args: Record<string, string[]>) { return Promise.resolve({ data: { assets: Object.fromEntries(args.p_assets.map(id => [id, true])), renders: Object.fromEntries(args.p_renders.map(id => [id, true])), keys: Object.fromEntries(args.p_keys.map(key => [key, true])) }, error: null }); },
     from(table: string) {
       events.push(table);
       const operations: [string, ...unknown[]][] = [];

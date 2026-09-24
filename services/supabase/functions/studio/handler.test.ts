@@ -15,6 +15,7 @@ function fixture() {
   let reads = 0;
   const deps: StudioDependencies = {
     authorize: async () => scope,
+    mediaVisibility: async (_scope, refs) => ({ assets: Object.fromEntries((refs.assets ?? []).map(id => [id, true])), renders: Object.fromEntries((refs.renders ?? []).map(id => [id, true])), keys: Object.fromEntries((refs.keys ?? []).map(key => [key, true])) }),
     rateLimit: async () => true,
     read: async () => {
       reads++;
@@ -79,6 +80,24 @@ Deno.test("OPTIONS requires no authorization or media read", async () => {
   const r = await createStudioHandler(f.deps)(request("", "OPTIONS"));
   assertEquals(r.status, 200);
   assertEquals(f.reads(), 0);
+});
+
+Deno.test("revoked gallery links are filtered before signing", async () => {
+  const f = fixture();
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  f.deps.mediaVisibility = async () => ({ assets: {}, renders: {}, keys: { [key]: false } });
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 200); assertEquals(f.signed, []);
+  assertEquals((await response.json()).photos, []);
+});
+
+Deno.test("library never releases a URL when lineage is revoked during signing", async () => {
+  const f = fixture(); let calls = 0;
+  f.deps.read = async () => ({ photos: [photo], assets: [], renders: [] });
+  f.deps.mediaVisibility = async () => ({ assets: {}, renders: {}, keys: { [key]: ++calls === 1 } });
+  const response = await createStudioHandler(f.deps)(request());
+  assertEquals(response.status, 404); assertEquals(f.signed.length, 1);
+  assert(!(await response.text()).includes("objects.example"));
 });
 Deno.test("POST cannot mutate anything", async () => {
   const f = fixture();

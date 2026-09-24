@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type { Listing, StudioPhoto, Workspace } from "../../data/contracts";
 import type { StudioServices } from "../../data/services";
 import { uploadListingAsset } from "../listings/uploads";
@@ -37,6 +37,8 @@ import {
 import "./creative.css";
 import BatchPhotoStudio from "./BatchPhotoStudio";
 import { importSubtitleTranscript, TRANSCRIPT_FILE_BYTES } from "./transcript";
+const PresenterPanel = lazy(() => import("../presenter/PresenterPanel"));
+const PromptLibrary = lazy(() => import("../prompts/PromptLibrary"));
 
 type Props = {
   services: StudioServices;
@@ -49,18 +51,31 @@ type Props = {
   onUseAgentPlan?: (plan: AgentPlanHandoff) => void;
   entryRequest?: CreativeEntryRequest;
   onOpenEditor?: (listingId: string) => void;
+  onPresenterPendingChange?: (pending: boolean, busy?: boolean) => void;
 };
-type Panel = "photos" | "copy" | "voice" | "video" | "chapters" | "coach";
+type Panel = "photos" | "copy" | "voice" | "video" | "chapters" | "coach" | "presenter";
 const PANELS: { id: Panel; label: string }[] = [
   { id: "photos", label: "AI Photo Studio" },
   { id: "copy", label: "Scripts & shot plans" },
   { id: "voice", label: "Voiceover" },
   { id: "video", label: "AI video" },
+  { id: "presenter", label: "AI Presenter" },
   { id: "chapters", label: "Room chapters" },
   { id: "coach", label: "Ask Rendprop" },
 ];
 export default function CreativeWorkspace(props: Props) {
+  const [promptsOpen, setPromptsOpen] = useState(false);
+  useEffect(() => { if (props.entryRequest) setPromptsOpen(false); }, [props.entryRequest?.id]);
   const consumedEntries = useRef(new Set<string>());
+  const presenterState = useRef({ pending: false, busy: false });
+  const presenterChanged = useCallback((pending: boolean, busy = false) => {
+    presenterState.current = { pending, busy };
+    props.onPresenterPendingChange?.(pending, busy);
+  }, [props.onPresenterPendingChange]);
+  const canLeavePresenter = useCallback(() => {
+    if (presenterState.current.busy) { window.alert("Wait for Creative Studio to confirm the current save before switching."); return false; }
+    return !presenterState.current.pending || window.confirm("Leave unsaved Creative Studio changes? Save them first to continue on another device.");
+  }, []);
   const [selected, setSelected] = useState(
     props.listingId ?? props.listings[0]?.id ?? "",
   );
@@ -87,10 +102,11 @@ export default function CreativeWorkspace(props: Props) {
             turn them into your next property story.
           </p>
         </div>
-        <label>
+        {!promptsOpen && <label>
           Property<select
             value={listing?.id ?? ""}
             onChange={(e) => {
+              if (!canLeavePresenter()) return;
               setSelected(e.target.value);
               props.onSelectListing?.(e.target.value);
             }}
@@ -101,15 +117,18 @@ export default function CreativeWorkspace(props: Props) {
               </option>
             ))}
           </select>
-        </label>
+        </label>}
       </header>
-      {listing
+      <nav className="creative-tabs" aria-label="Creative sections"><button aria-current={!promptsOpen ? "page" : undefined} onClick={() => { if (!promptsOpen || canLeavePresenter()) setPromptsOpen(false); }}>Property tools</button><button aria-current={promptsOpen ? "page" : undefined} onClick={() => { if (promptsOpen || canLeavePresenter()) setPromptsOpen(true); }}>Prompt library</button></nav>
+      {promptsOpen ? <Suspense fallback={<p role="status">Opening prompt library…</p>}><PromptLibrary key={`${props.workspace.user.id}:${props.workspace.org.id}`} services={props.services} workspace={props.workspace} onPendingChange={presenterChanged} /></Suspense> : listing
         ? (
           <ListingCreative
             key={`${props.workspace.user.id}:${props.workspace.org.id}:${listing.id}`}
             {...props}
             listing={listing}
             consumeEntry={consumeEntry}
+            presenterChanged={presenterChanged}
+            canLeavePresenter={canLeavePresenter}
           />
         )
         : (
@@ -137,9 +156,11 @@ function ListingCreative(
     entryRequest,
     consumeEntry,
     onOpenEditor,
+    presenterChanged,
+    canLeavePresenter,
   }:
     & Props
-    & { listing: Listing; consumeEntry: (request: CreativeEntryRequest) => boolean },
+    & { listing: Listing; consumeEntry: (request: CreativeEntryRequest) => boolean; presenterChanged: (pending: boolean, busy?: boolean) => void; canLeavePresenter: () => boolean },
 ) {
   const orgId = workspace.org.id, listingId = listing.id;
   const [panel, setPanel] = useState<Panel>("photos"),
@@ -229,6 +250,7 @@ function ListingCreative(
       case "aerial": setPanel("video"); setVideoKind("aerial"); break;
       case "chapters": setPanel("chapters"); break;
       case "coach": setPanel("coach"); break;
+      case "presenter": setPanel("presenter"); break;
     }
   }, [entryRequest, consumeEntry, listingId]);
   const [chapterAsset, setChapterAsset] = useState(""),
@@ -1204,7 +1226,7 @@ function ListingCreative(
           <button
             key={item.id}
             aria-current={panel === item.id ? "page" : undefined}
-            onClick={() => setPanel(item.id)}
+            onClick={() => { if (item.id === panel || panel !== "presenter" || canLeavePresenter()) setPanel(item.id); }}
           >
             {item.label}
           </button>
@@ -1239,6 +1261,7 @@ function ListingCreative(
           for permission to create new media.
         </p>
       )}
+      {panel === "presenter" && <Suspense fallback={<p role="status">Loading AI Presenter…</p>}><PresenterPanel services={services} workspace={workspace} listing={listing} onChanged={onChanged} onPendingChange={presenterChanged} onUseAgentPlan={onUseAgentPlan} /></Suspense>}
       {panel === "photos" && (
         <div className="creative-two-column">
           <div className="creative-card">

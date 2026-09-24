@@ -40,6 +40,8 @@
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
+import { assertMediaVisible, mediaVisibility, type MediaSourceRefs } from "../_shared/media-source-access.ts";
+import { bucketForKey } from "../studio/handler.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 import { buildAgentCard } from "../_shared/agentcard.ts";
 import { buildCta } from "./cta.ts";
@@ -78,7 +80,7 @@ interface AlteredMedium {
  * disclosure — but only the public subset leaves this function.
  */
 // deno-lint-ignore no-explicit-any
-async function alteredMediaFor(admin: any, listingId: string): Promise<AlteredMedium[]> {
+async function alteredMediaFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }): Promise<AlteredMedium[]> {
   const { data, error } = await admin
     .from("media_provenance")
     .select("kind, label, disclosure, original_key, altered_key, created_at")
@@ -91,7 +93,11 @@ async function alteredMediaFor(admin: any, listingId: string): Promise<AlteredMe
     console.error("altered_media lookup failed:", error.message);
     return [];
   }
-  return (data ?? []).map((r: Record<string, unknown>) => ({
+  const scopedKeys = (data ?? []).flatMap((r: Record<string, unknown>) => [r.original_key, r.altered_key]).filter((key: unknown): key is string => bucketForKey(key, { orgId, listingId }) !== null);
+  const visible = await mediaVisibility(admin, listingId, { keys: scopedKeys });
+  return (data ?? []).filter((r: Record<string, unknown>) => [r.original_key, r.altered_key].every(key => !key || (typeof key === "string" && visible.keys[key] === true))).map((r: Record<string, unknown>) => {
+    for (const key of [r.original_key, r.altered_key]) if (typeof key === "string") refs.keys.push(key);
+    return ({
     label: (r.label as string | null) ?? null,
     kind: r.kind as string,
     disclosure: r.disclosure as string,
@@ -99,7 +105,7 @@ async function alteredMediaFor(admin: any, listingId: string): Promise<AlteredMe
     original_url: publicR2Url(r.original_key as string | null),
     altered_url: publicR2Url(r.altered_key as string | null),
     created_at: (r.created_at as string | null) ?? null,
-  }));
+  }); });
 }
 
 /** How many gallery photos a tour page will carry. A listing with more than
@@ -122,10 +128,10 @@ const MAX_GALLERY = 40;
  * Never fatal: a gallery lookup must not take the tour down.
  */
 // deno-lint-ignore no-explicit-any
-async function galleryFor(admin: any, listingId: string): Promise<Array<{ url: string }>> {
+async function galleryFor(admin: any, orgId: string, listingId: string, refs: { keys: string[]; assets: string[] }): Promise<Array<{ url: string }>> {
   const { data, error } = await admin
     .from("capture_assets")
-    .select("storage_key, created_at")
+    .select("id, storage_key, created_at")
     .eq("listing_id", listingId)
     .eq("kind", "photo")
     .eq("bucket", "renders")
@@ -137,10 +143,13 @@ async function galleryFor(admin: any, listingId: string): Promise<Array<{ url: s
     console.error("gallery lookup failed:", error.message);
     return [];
   }
+  const eligible = (data ?? []).filter((r: Record<string, unknown>) => bucketForKey(r.storage_key, { orgId, listingId }) !== null);
+  const visible = await mediaVisibility(admin, listingId, { assets: eligible.map((r: { id: string }) => r.id), keys: eligible.map((r: { storage_key: string }) => r.storage_key) });
   const out: Array<{ url: string }> = [];
-  for (const r of data ?? []) {
+  for (const r of eligible) {
+    if (visible.assets[r.id] !== true || visible.keys[r.storage_key] !== true) continue;
     const url = publicR2Url((r as Record<string, unknown>).storage_key as string | null);
-    if (url) out.push({ url });
+    if (url) { out.push({ url }); refs.assets.push(r.id); refs.keys.push(r.storage_key); }
   }
   return out;
 }
@@ -342,6 +351,8 @@ Deno.serve(async (req) => {
     if (lErr) throw new HttpError(500, `Listing lookup failed: ${lErr.message}`);
     if (!listing || listing.deleted_at) throw new HttpError(404, "Tour not found or not published");
 
+    const visibleRefs: MediaSourceRefs & { keys: string[]; assets: string[] } = { renders: [render.id], assets: [], keys: [] };
+    await assertMediaVisible(admin, listing.id, visibleRefs);
     const [{ data: org }, { data: agentProfile }] = await Promise.all([
       admin.from("orgs").select("handle, space_type, brand_kit").eq("id", listing.org_id).maybeSingle(),
       listing.agent_id
@@ -350,8 +361,8 @@ Deno.serve(async (req) => {
     ]);
 
     // 3a. Every AI-altered asset for this listing — the public disclosure list.
-    const altered_media = await alteredMediaFor(admin, listing.id as string);
-    const gallery = await galleryFor(admin, listing.id as string);
+    const altered_media = await alteredMediaFor(admin, listing.org_id, listing.id as string, visibleRefs);
+    const gallery = await galleryFor(admin, listing.org_id, listing.id as string, visibleRefs);
 
     // 3. Chapters (tap-to-jump dots) live on the capture asset behind the job.
     let chapters: SpatialChapter[] = [];
@@ -407,6 +418,9 @@ Deno.serve(async (req) => {
     const sold_at = (listing.sold_at as string | null) ?? null;
     const status = (listing.status as string) ?? "ready";
 
+    // These service-role reads bypass RLS; recheck every exposed lineage after
+    // assembling the response, so revocation during optional reads cannot leak.
+    await assertMediaVisible(admin, listing.id, visibleRefs);
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),

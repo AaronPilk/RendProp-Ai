@@ -66,6 +66,17 @@ function fixture() {
   };
   let updates = 0;
   const admin = {
+    rpc: (name: string, args: Record<string, unknown>) => {
+      assertEquals(name, "studio_presenter_media_visibility");
+      assertEquals(args.p_listing, listing);
+      assertEquals(args.p_renders, []);
+      const assets = args.p_assets as string[], keys = args.p_keys as string[];
+      return Promise.resolve({ error: null, data: {
+        assets: Object.fromEntries(assets.map(id => [id, tables.capture_assets.some(a => a.id === id && a.uploaded)])),
+        renders: {},
+        keys: Object.fromEntries(keys.map(value => [value, tables.capture_assets.some(a => a.storage_key === value && a.uploaded)])),
+      } });
+    },
     from: (table: string) => {
       const filters: ((row: any) => boolean)[] = [];
       let patch: any;

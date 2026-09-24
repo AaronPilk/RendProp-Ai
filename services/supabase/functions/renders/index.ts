@@ -22,6 +22,7 @@
 //                                    chapters?, poster_asset_id? } -> { ...render, id, job_id, share_url, unbranded_url }
 //   PATCH /renders/:render_id/chapters { chapters:[{label,t_ms,sort}] } -> { ok, count, chapters }
 
+import { assertMediaVisible } from "../_shared/media-source-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
 import { assertNotDeleting, getUser, userClient } from "../_shared/supabase.ts";
@@ -114,6 +115,7 @@ Deno.serve(async (req) => {
         p_poster_asset: optionalUuid(body.poster_asset_id, "poster_asset_id"),
       });
       if (error) throwRpc(error.message);
+      await assertMediaVisible(db, render.listing_id, { renders: [render.id] });
       return json({
         ...render,
         share_url: shareUrl(render.slug as string),
@@ -166,6 +168,7 @@ Deno.serve(async (req) => {
         if (fErr) console.error("fail_render_job after publish failure:", fErr.message);
         throwRpc(pErr.message);
       }
+      await assertMediaVisible(db, render.listing_id, { renders: [render.id] });
       return json({
         ...render,
         id: render.id,
@@ -232,6 +235,7 @@ Deno.serve(async (req) => {
       // the adaptive fallback only. See tours/index.ts for the full rationale.
       let tour: Record<string, unknown> | null = null;
       if (render) {
+        await assertMediaVisible(db, job.listing_id, { renders: [render.id] });
         const scrubUrl = publicR2Url(render.video_key as string);
         const hlsUrl = streamHlsUrl(render.stream_uid as string);
         tour = {
@@ -249,6 +253,7 @@ Deno.serve(async (req) => {
         };
       }
 
+      if (render) await assertMediaVisible(db, job.listing_id, { renders: [render.id] });
       return json({
         id: job.id,
         listing_id: job.listing_id,

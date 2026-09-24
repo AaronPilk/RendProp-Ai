@@ -12,7 +12,7 @@ export async function handleListingState(req: Request, context: StudioContext): 
   const offset = Number(rawOffset);
   const { db } = context;
   const rows = await Promise.all([
-    db.from("capture_assets").select("id,listing_id,storage_key,kind,bucket,uploaded,duration_s,bytes,created_at")
+    db.from("capture_assets").select("id,listing_id,storage_key,kind,bucket,uploaded,duration_s,bytes,created_at,presenter_job_id")
       .eq("listing_id", listingId).order("created_at", { ascending: false }).order("id").range(offset, offset + PAGE).abortSignal(req.signal),
     db.from("render_jobs").select("id,listing_id,capture_asset_id,status,progress,current_step,tier,error,enhancements,created_at")
       .eq("listing_id", listingId).order("created_at", { ascending: false }).order("id").range(offset, offset + PAGE).abortSignal(req.signal),

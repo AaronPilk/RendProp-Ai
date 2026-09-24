@@ -23,6 +23,9 @@ const listingRows: Record<string, unknown>[] = [A, B].flatMap((actor, actorIndex
   tagline: null, details: {}, status: "draft", created_at: "2026-09-22T00:00:00Z", deleted_at: null,
   main_photo_key: null, beds: null, baths: null, sqft: null, price_cents: null,
 })));
+if (new URLSearchParams(window.location.search).has("secondProperty")) listingRows.push({
+  ...listingRows[0], id:"66666666-6666-4666-8666-666666666666", address:"Second property for navigation checks",
+});
 const calls: { path: string; org?: string | null }[] = [];
 const session = (): Session => ({
   access_token: "isolated-fixture-not-a-token",
@@ -44,6 +47,13 @@ const fetcher: typeof fetch = async (input, options) => {
   const actor = user;
   calls.push({ path: url.pathname, org });
   if (url.pathname === "/functions/v1/spatial/capability") return Response.json({enabled:false});
+  if (url.pathname === "/functions/v1/studio/creative-results") return Response.json({results:[],next_offset:null});
+  if (url.pathname === "/functions/v1/studio/presenter/jobs" && options?.method !== "POST") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),quotes:[],jobs:[],runtime:{available:false,code:"enterprise_contract_required",reason:"AI generation is not connected."}});
+  if (url.pathname === "/functions/v1/studio/presenter" && options?.method !== "POST") return Response.json({
+    org_id:org, listing_id:url.searchParams.get("listing_id"), profiles:[], drafts:[], reference_candidates:[], source_candidates:[],
+    permissions:{can_save_profile:true,can_create_draft:true},
+    runtime:{available:false,code:"enterprise_contract_required",reason:"AI generation is not enabled. Save your presenter setup or edit original footage."},
+  });
   if (calls.length > 100) throw new Error("Unexpected request loop");
   if (url.pathname === "/functions/v1/listings" && options?.method === "POST") {
     const body = JSON.parse(String(options.body));

@@ -1,11 +1,12 @@
 import { assert, HttpError, json, readJsonLimited } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 import { authorizeProductionPlan, productionPlanInput } from "./production-plan.ts";
+import { promptLibraryInput } from "./prompt-library.ts";
 export const DOCUMENT_LIMIT = 2 * 1024 * 1024;
 const fields = "key,kind,listing_id,revision,payload,updated_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function documentKey(value: unknown): string {
-  assert(typeof value === "string" && /^(edit|planner|(?:edit|creative|native|production):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value), 400, "Choose a valid document.");
+  assert(typeof value === "string" && /^(edit|planner|prompts|(?:edit|creative|native|production):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value), 400, "Choose a valid document.");
   return value;
 }
 export function documentInput(body: Record<string, unknown>) {
@@ -13,6 +14,7 @@ export function documentInput(body: Record<string, unknown>) {
   const kind = key.split(":")[0];
   assert(body.kind === kind, 400, "Document type does not match.");
   const listing = body.listing_id ?? null;
+  assert(kind !== "prompts" || listing === null, 400, "Saved prompts belong to your workspace, not a property.");
   assert(listing === null || (typeof listing === "string" && UUID.test(listing)), 400, "Choose a valid listing.");
   assert(!key.includes(":") || key.split(":")[1] === listing, 400, "Document does not match this listing.");
   assert(Number.isSafeInteger(body.expected_revision) && Number(body.expected_revision) >= 0 && Number(body.expected_revision) < 2147483647, 400, "Document revision is invalid.");
@@ -21,7 +23,7 @@ export function documentInput(body: Record<string, unknown>) {
     assert((body.payload as Record<string, unknown>).listingId === listing, 400, "This edit belongs to a different listing.");
   }
   assert(new TextEncoder().encode(JSON.stringify(body.payload)).byteLength <= DOCUMENT_LIMIT - 1024, 413, "This draft is too large to sync.");
-  const payload = kind === "production" ? productionPlanInput(body.payload, listing as string) : body.payload;
+  const payload = kind === "production" ? productionPlanInput(body.payload, listing as string) : kind === "prompts" ? promptLibraryInput(body.payload) : body.payload;
   return { key, kind, listing_id: listing as string | null, expected: Number(body.expected_revision), payload };
 }
 export async function handleDocuments(req: Request, context: StudioContext): Promise<Response> {

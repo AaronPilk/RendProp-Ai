@@ -1,3 +1,5 @@
+import { mediaVisibility, withVisibleMedia } from "../_shared/media-source-access.ts";
+import { bucketForKey } from "./handler.ts";
 import { HttpError, json, readJsonLimited } from "../_shared/http.ts";
 import {
   headObject,
@@ -267,7 +269,29 @@ async function resultRow(context: StudioContext, id: unknown) {
   await context.authorizeListing(data.listing_id);
   return data;
 }
-async function publicResult(context: StudioContext, row: any) {
+// Check saved source identity before signing, and again before returning. Voice
+// uses a separate namespace and does not carry Presenter likeness lineage.
+async function publicResult(context: StudioContext, row: any): Promise<Record<string, unknown>> {
+  if (row.kind !== "video") return await buildPublicResult(context, row);
+  const metadata = object(row.metadata);
+  const refs = {
+    assets: [metadata.asset_id, metadata.source_asset_id, ...(Array.isArray(metadata.source_asset_ids) ? metadata.source_asset_ids : [])].filter(value => value !== null && value !== undefined),
+    keys: bucketForKey(row.storage_key, { orgId: context.orgId, listingId: row.listing_id }) ? [row.storage_key] : [],
+  };
+  try {
+    return await withVisibleMedia(context.admin, row.listing_id, refs, () => buildPublicResult(context, row));
+  } catch (error) {
+    if (!(error instanceof HttpError) || error.status !== 404) throw error;
+    // History remains readable, but a withdrawn result never receives a new
+    // signed URL, source URL, or an exportable quality projection.
+    return { id: row.id, kind: row.kind, listing_id: row.listing_id, created_at: row.created_at,
+      state: metadata.state ?? "pending", label: metadata.label ?? "", video_kind: metadata.video_kind ?? null,
+      asset_id: metadata.asset_id ?? null, duration_s: metadata.duration_s ?? null,
+      message: "This video's source permission changed. It is no longer available.",
+      qc_required: true, qc_publishable: false, qc_message: "Source permission changed." };
+  }
+}
+async function buildPublicResult(context: StudioContext, row: any) {
   const metadata = object(row.metadata);
   const result: Record<string, unknown> = {
     id: row.id,
@@ -406,14 +430,24 @@ export async function handleCreative(
     if (error) {
       throw new HttpError(503, "Creative results could not be loaded.");
     }
-    return json({
-      results: await Promise.all(
-        (data ?? []).slice(0, 100).map((row: unknown) =>
-          publicResult(context, row)
-        ),
-      ),
-      next_offset: (data ?? []).length > 100 ? offset + 100 : null,
+    const rows = (data ?? []).slice(0, 100);
+    const results = await Promise.all(rows.map((row: unknown) => publicResult(context, row)));
+    // One result can finish signing while a different result is still loading.
+    // Recheck the entire outgoing page after all producers have completed.
+    const refs = rows.map((row: any, index: number) => {
+      const metadata = object(row.metadata), result = results[index];
+      if (row.kind !== "video" || (!result.url && !result.source_url)) return { assets: [], keys: [] };
+      return { assets: [metadata.asset_id, metadata.source_asset_id].filter(value => value !== null && value !== undefined),
+        keys: bucketForKey(row.storage_key, { orgId: context.orgId, listingId }) ? [row.storage_key] : [] };
     });
+    const finalAccess = await mediaVisibility(context.admin, listingId, { assets: refs.flatMap(ref => ref.assets), keys: refs.flatMap(ref => ref.keys) });
+    for (let index = 0; index < results.length; index++) {
+      if (refs[index].assets.some(asset => finalAccess.assets[asset] !== true) || refs[index].keys.some(key => finalAccess.keys[key] !== true)) {
+        delete results[index].url; delete results[index].source_url; delete results[index].expires_at;
+        Object.assign(results[index], { qc_required: true, qc_publishable: false, qc_message: "Source permission changed.", message: "This video's source permission changed. It is no longer available." });
+      }
+    }
+    return json({ results, next_offset: (data ?? []).length > 100 ? offset + 100 : null });
   }
   if (req.method !== "POST") {
     throw new HttpError(405, "This creative action requires POST.");

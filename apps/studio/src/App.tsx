@@ -1,4 +1,5 @@
 import {
+  useCallback,
   lazy,
   Suspense,
   useEffect,
@@ -195,7 +196,21 @@ export default function App({ servicesFactory }: {
   const entry = featureEntry?.scope === editScope ? featureEntry : undefined;
   const mediaScope = useRef("");
   mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
+  const presenterPending = useRef({scope: "", pending: false, busy: false});
+  const presenterPendingChanged = useCallback((pending: boolean, saving = false) => {
+    presenterPending.current = {scope: editScope, pending, busy: saving};
+  }, [editScope]);
+  function canReplacePresenter() {
+    const state = presenterPending.current;
+    if (state.scope !== editScope) return true;
+    if (state.busy) {
+      setNotice("Wait for your Creative Studio save to finish before switching.");
+      return false;
+    }
+    return !state.pending || window.confirm("Discard unsaved Creative Studio changes?");
+  }
   function setRequestedOrg(orgId: string | undefined) {
+    if (orgId !== workspace?.org.id && !canReplacePresenter()) return;
     setRequestedSelection(
       orgId ? { orgId, identityVersion: session.identityVersion } : undefined,
     );
@@ -204,12 +219,14 @@ export default function App({ servicesFactory }: {
     setNoticeScope(editScope);
     setNoticeValue(message);
   }
-  function selectListing(id: string) {
+  function selectListing(id: string, alreadyConfirmed = false) {
+    if (!alreadyConfirmed && id !== selected?.id && !canReplacePresenter()) return false;
     const found = listings.find(item => item.id === id);
     // A newly created row can arrive before the workspace refresh. Preserve
     // its selection so moving from Properties to Create opens the same work.
     initialListing.current = found ? null : id;
     setSelected(found ?? null);
+    return true;
   }
   function openBusiness(section: BusinessSectionRequest["section"]) {
     if (!workspace) { setShowLogin(true); return; }
@@ -218,7 +235,8 @@ export default function App({ servicesFactory }: {
   }
   function openCreative(listingId:string,tool:CreativeTool) {
     if (!workspace || !listings.some(item=>item.id===listingId)) return;
-    selectListing(listingId);
+    if (!canReplacePresenter()) return;
+    selectListing(listingId, true);
     setFeatureEntry({scope:editScope,creative:{id:crypto.randomUUID(),listingId,tool}});
     navigate("creative");
   }
@@ -237,16 +255,17 @@ export default function App({ servicesFactory }: {
       else setFeatureEntry({scope:editScope,gate:feature});
       return;
     }
-    selectListing(target.id);
     const id=crypto.randomUUID();
     if (["tour","spatial","photos","floorplan"].includes(feature)) {
+      if (!selectListing(target.id)) return;
       setFeatureEntry({scope:editScope,property:{id,listingId:target.id,tab:feature==="tour"?"tour":feature==="photos"?"media":"floorplan"}});
       navigate("properties");
     } else if(feature === "reel") {
+      if (!selectListing(target.id)) return;
       setFeatureEntry({scope:editScope,reel:{id,listingId:target.id}});
       navigate("editor");
     } else {
-      const tool=({studio:"photo-studio",aerial:"aerial",voice:"voiceover",copy:"shot-plans",animate:"animate",chapters:"chapters",coach:"coach"} as Partial<Record<FeatureId,CreativeTool>>)[feature];
+      const tool=({studio:"photo-studio",aerial:"aerial",voice:"voiceover",copy:"shot-plans",animate:"animate",chapters:"chapters",coach:"coach",presenter:"presenter"} as Partial<Record<FeatureId,CreativeTool>>)[feature];
       if(tool)openCreative(target.id,tool);
     }
   }
@@ -586,6 +605,7 @@ export default function App({ servicesFactory }: {
   }
   async function signOut() {
     if (!services) return;
+    if (!canReplacePresenter()) return;
     setAuthBusy(true);
     transfer.current?.abort();
     try {
@@ -940,7 +960,7 @@ export default function App({ servicesFactory }: {
             <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
           </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "creative" || creativeOpened) && <section hidden={page !== "creative"} aria-label="Creative workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening creative tools…</p>}>
-            <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} />
+            <CreativeWorkspace entryRequest={entry?.creative} onOpenEditor={id=>openFeature("reel",id)} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={id => selectListing(id, true)} onUseShotPlan={useShotPlan} onUseAgentPlan={useAgentPlan} onPresenterPendingChange={presenterPendingChanged} />
           </Suspense> : <EmptyConnect onConnect={() => setShowLogin(true)} />}</section>}
           {(page === "editor" || editorOpened) && (
             <section

@@ -166,6 +166,10 @@ jobs:
           node tests/listing-kit-browser.mjs
           node tests/browser-connected.mjs
           node tests/browser-connected-control.mjs
+          node tests/auth-browser.mjs
+          node tests/presenter-app-browser.mjs
+          node tests/presenter-browser.mjs
+          node tests/prompts-browser.mjs
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -184,6 +188,12 @@ jobs:
             /tmp/rendprop-listing-kit-*/*.png
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
+            /tmp/rendprop-presenter-*/*.json
+            /tmp/rendprop-presenter-*/*.png
+            /tmp/rendprop-auth-sdk-*/*.json
+            /tmp/rendprop-auth-sdk-*/*.png
+            /tmp/rendprop-prompts-*/*.json
+            /tmp/rendprop-prompts-*/*.png
           if-no-files-found: warn
 
   worker-edge:
@@ -542,6 +552,9 @@ jobs:
           python3 tools/audit/run_spatial_edge_regression.py
           python3 tools/audit/test_upload_transport_db.py
           python3 services/supabase/tests/production_review.py
+          python3 services/supabase/tests/presenter_workspace.py
+          python3 services/supabase/tests/presenter_execution.py --controller
+          python3 services/supabase/tests/prompt_library.py
       # A real red invariant suite still runs positive/negative publication
       # fixtures before exiting nonzero. Preserve its evidence, not a green
       # override. Preflight can fail before the runner creates any evidence.
@@ -556,6 +569,14 @@ jobs:
             /tmp/rendprop-*/*.log
             build/pr-*/receipt.json
             build/pr-*/server.log
+            build/pres-*/receipt.json
+            build/pres-*/server.log
+            build/pres-*/controller.log
+            build/pex-*/receipt.json
+            build/pex-*/controller.log
+            build/pex-*/server.log
+            build/prm-*/receipt.json
+            build/prm-*/server.log
           retention-days: 7
           if-no-files-found: ${{ steps.database.outcome == 'success' && 'error' || 'warn' }}
 

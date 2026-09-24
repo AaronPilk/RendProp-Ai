@@ -6,6 +6,13 @@ export type CreativeQuality = {
   qc_publishable: boolean;
   qc_message: string | null;
 };
+export async function presenterQualityProjection(context: StudioContext, assetId: string): Promise<CreativeQuality> {
+  const { data, error } = await context.admin.rpc("studio_presenter_asset_access", { p_asset: assetId });
+  if (error || typeof data !== "boolean") throw new HttpError(503, "Presenter approval could not be checked.");
+  return { qc_required: true, qc_publishable: data, qc_message: data
+    ? "The represented agent approved this AI Presenter output."
+    : "This Presenter output no longer has active approval. Open AI Presenter to review its status." };
+}
 export async function editQualityProjection(
   context: StudioContext,
   assetId: string,
@@ -117,6 +124,10 @@ export async function projectAssetQuality(
     );
   }
   for (const asset of assets) {
+    if (asset.presenter_job_id) {
+      Object.assign(asset, await presenterQualityProjection(context, asset.id));
+      continue;
+    }
     const result = results.find((row) =>
       row.metadata?.asset_id === asset.id ||
       row.metadata?.import_asset_id === asset.id

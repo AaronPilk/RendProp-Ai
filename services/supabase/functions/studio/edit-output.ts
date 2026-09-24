@@ -105,7 +105,7 @@ export async function handleEditOutput(
   }
   const [assetRead, photoRead] = await Promise.all([
     context.admin.from("capture_assets").select(
-      "id,listing_id,kind,bucket,uploaded,storage_key,duration_s",
+      "id,listing_id,kind,bucket,uploaded,storage_key,duration_s,presenter_job_id",
     )
       .eq("listing_id", input.listingId).in("id", [
         input.assetId,

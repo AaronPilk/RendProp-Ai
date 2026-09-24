@@ -1,3 +1,4 @@
+import type { MediaSourceRefs, MediaVisibility } from "../_shared/media-source-access.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { assert, HttpError, json, pathSegments } from "../_shared/http.ts";
 
@@ -43,6 +44,7 @@ export interface StudioDependencies {
     scope: MediaScope,
     offset: number,
   ): Promise<{ photos: PhotoRow[]; assets: AssetRow[]; renders: RenderRow[]; photoAssetAliases?: string[] }>;
+  mediaVisibility(scope: MediaScope, refs: MediaSourceRefs): Promise<MediaVisibility>;
   sign(
     bucket: "uploads" | "renders",
     key: string,
@@ -160,12 +162,19 @@ export function createStudioHandler(deps: StudioDependencies) {
         422,
         "This space exceeds the Studio library paging limit. Contact support to access the remaining media.",
       );
+      const pagePhotos = rows.photos.slice(0, PAGE_SIZE), pageAssets = rows.assets.slice(0, PAGE_SIZE), pageRenders = rows.renders.slice(0, PAGE_SIZE);
+      const access = await deps.mediaVisibility(scope, {
+        assets: pageAssets.map(row => row.id), renders: pageRenders.map(row => row.id),
+        keys: [...pagePhotos.flatMap(row => [row.original_key, row.enhanced_key]), ...pageAssets.map(row => row.storage_key), ...pageRenders.map(row => row.video_key)]
+          .filter((key): key is string => bucketForKey(key, scope) !== null),
+      });
+      const usedAssets: string[] = [], usedRenders: string[] = [];
       const expires_at = new Date(
         deps.now() + MEDIA_TTL_SECONDS * 1000,
       ).toISOString();
       const photos: Record<string, unknown>[] = [],
         videos: Record<string, unknown>[] = [];
-      const signed = new Set<string>();
+      const signed = new Set<string>(), exposedKeys = new Set<string>();
       let unavailable = 0;
       async function sign(
         key: unknown,
@@ -178,23 +187,26 @@ export function createStudioHandler(deps: StudioDependencies) {
           unavailable++;
           return null;
         }
+        if (access.keys[key as string] !== true) { unavailable++; return null; }
         if (signed.has(key as string)) return null;
         signed.add(key as string);
+        exposedKeys.add(key as string);
         return await deps.sign(bucket, key as string, MEDIA_TTL_SECONDS);
       }
       // Sequential signing is intentionally bounded (at most 200 objects per page).
       // It does no object download, provider work, mutation, or publication.
-      for (const photo of rows.photos.slice(0, PAGE_SIZE)) {
+      for (const photo of pagePhotos) {
         const url = await sign(
           photo.enhanced_key || photo.original_key,
           photo.listing_id,
         );
         if (url) {
           const originalBucket = bucketForKey(photo.original_key, scope);
-          const originalURL = originalBucket && photo.original_key
+          const originalURL = originalBucket && photo.original_key && access.keys[photo.original_key] === true
             ? photo.original_key === (photo.enhanced_key || photo.original_key) ? url
               : await deps.sign(originalBucket, photo.original_key, MEDIA_TTL_SECONDS)
             : null;
+          if (originalURL && photo.original_key) exposedKeys.add(photo.original_key);
           photos.push({
             id: photo.id,
             listing_id: listingId,
@@ -208,7 +220,8 @@ export function createStudioHandler(deps: StudioDependencies) {
           });
         }
       }
-      for (const asset of rows.assets.slice(0, PAGE_SIZE)) {
+      for (const asset of pageAssets) {
+        if (access.assets[asset.id] !== true) { unavailable++; continue; }
         if (!asset.uploaded || !["photo", "video"].includes(asset.kind)) {
           continue;
         }
@@ -222,6 +235,7 @@ export function createStudioHandler(deps: StudioDependencies) {
           asset.bucket,
         );
         if (!url) continue;
+        usedAssets.push(asset.id);
         if (asset.kind === "photo") {
           photos.push({
             id: asset.id,
@@ -248,13 +262,15 @@ export function createStudioHandler(deps: StudioDependencies) {
           });
         }
       }
-      for (const render of rows.renders.slice(0, PAGE_SIZE)) {
+      for (const render of pageRenders) {
+        if (access.renders[render.id] !== true) { unavailable++; continue; }
         if (!render.video_key) {
           unavailable++;
           continue;
         }
         const url = await sign(render.video_key, render.listing_id, "renders");
         if (url) {
+          usedRenders.push(render.id);
           videos.push({
             id: render.id,
             listing_id: listingId,
@@ -276,6 +292,8 @@ export function createStudioHandler(deps: StudioDependencies) {
         403,
         "Workspace authorization failed.",
       );
+      const finalAccess = await deps.mediaVisibility(scope, { assets: usedAssets, renders: usedRenders, keys: [...exposedKeys] });
+      assert(usedAssets.every(id => finalAccess.assets[id] === true) && usedRenders.every(id => finalAccess.renders[id] === true) && [...exposedKeys].every(key => finalAccess.keys[key] === true), 404, "Media access changed. Refresh the library.");
       assert(
         deps.now() < Date.parse(expires_at),
         503,

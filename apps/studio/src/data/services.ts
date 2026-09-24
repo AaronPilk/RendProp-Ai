@@ -1,8 +1,8 @@
 import {
-  createClient,
   type AuthChangeEvent,
   type Session,
-} from "@supabase/supabase-js";
+} from "@supabase/auth-js";
+import { createStudioAuth } from "./auth-client";
 import { StudioError, validateStudioConfig, type StudioConfig } from "./config";
 import {
   decodeListings,
@@ -206,16 +206,7 @@ export function createStudioServices(
   const storageKey = `rendprop-studio-auth:${new URL(config.supabaseUrl).host}`;
   const auth: StudioAuth =
     dependencies.auth ??
-    createClient(config.supabaseUrl, config.publishableKey, {
-      auth: {
-        flowType: "pkce",
-        persistSession: true,
-        autoRefreshToken: true,
-        detectSessionInUrl: true,
-        storage,
-        storageKey,
-      },
-    }).auth;
+    createStudioAuth(config, storage);
   let session: Session | null = null;
   let snapshot: SessionSnapshot = Object.freeze({
     status: "loading",

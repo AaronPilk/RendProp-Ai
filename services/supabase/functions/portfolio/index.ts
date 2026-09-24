@@ -12,6 +12,8 @@
 // as a poster only when it is a PUBLIC `renders/` key — an `uploads/` key lives
 // in the private bucket and rendered as a broken image (audit F-supabase-08).
 
+import { mediaVisibility } from "../_shared/media-source-access.ts";
+import { bucketForKey } from "../studio/handler.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, json, pathSegments, respondError } from "../_shared/http.ts";
 import { adminClient } from "../_shared/supabase.ts";
@@ -30,9 +32,8 @@ function formatUSD(cents: number | null | undefined): string | null {
 }
 
 /** Only keys in the public renders bucket can be served as images. */
-function publicPosterKey(key: unknown): string | null {
-  const k = String(key ?? "");
-  return k.startsWith("renders/") ? k : null;
+function publicPosterKey(key: unknown, orgId: string, listingId: string): string | null {
+  return bucketForKey(key, { orgId, listingId }) === "renders" ? key as string : null;
 }
 
 Deno.serve(async (req) => {
@@ -72,7 +73,7 @@ Deno.serve(async (req) => {
       // 3. Their published renders (newest first → one tour per listing).
       const { data: rRows, error: rErr } = await admin
         .from("renders")
-        .select("slug, listing_id, poster_key, published_at")
+        .select("id, slug, listing_id, poster_key, published_at")
         .in("listing_id", listingIds)
         .not("published_at", "is", null)
         .order("published_at", { ascending: false });
@@ -89,20 +90,20 @@ Deno.serve(async (req) => {
 
     const listingById = new Map((listings ?? []).map((l) => [l.id as string, l]));
 
-    const tours = [...latestByListing.entries()].map(([lid, r]) => {
-      const l = listingById.get(lid)!;
-      const posterKey = publicPosterKey(r.poster_key) ?? publicPosterKey(l.main_photo_key);
-      return {
-        slug: r.slug as string,
-        share_url: `${TOUR_BASE}/f/${r.slug as string}`,
-        space_type: l.space_type as string,
-        address: l.address as string | null,
-        tagline: l.tagline as string | null,
-        price: formatUSD(l.price_cents as number | null),
-        poster: publicR2Url(posterKey),
-        published_at: r.published_at,
-      };
+    // Service-role reads bypass render RLS. Keep the exact render identity and
+    // scoped poster key until the final visibility check, before releasing URLs.
+    const candidates = [...latestByListing.entries()].map(([lid, render]) => {
+      const listing = listingById.get(lid);
+      if (!listing) throw new HttpError(503, "Portfolio media scope could not be verified.");
+      return { lid, render, listing, posterKey: publicPosterKey(render.poster_key, org.id, lid) ?? publicPosterKey(listing.main_photo_key, org.id, lid) };
     });
+    const visibleCandidates: typeof candidates = [];
+    const isVisible = async (card: typeof candidates[number]): Promise<boolean> => {
+      const id = card.render.id as string;
+      const access = await mediaVisibility(admin, card.lid, { renders: [id], keys: card.posterKey ? [card.posterKey] : [] });
+      return access.renders[id] === true && (!card.posterKey || access.keys[card.posterKey] === true);
+    };
+    for (const card of candidates) if (await isVisible(card)) visibleCandidates.push(card);
 
     // Agent-card name fallback: the profile of the most common listing agent
     // (usually the only one) — never the org name.
@@ -120,6 +121,17 @@ Deno.serve(async (req) => {
     // brand_kit jsonb (audit P1-4 — same discipline as tours/index.ts).
     const agent_card = buildAgentCard(org.brand_kit, { profileName, orgHandle: org.handle ?? null });
 
+    const tours: Record<string, unknown>[] = [];
+    // A profile lookup can outlive a subject's approval. Recheck after that
+    // async work and omit any withdrawn card's poster AND tour slug/link.
+    for (const card of visibleCandidates) {
+      if (!await isVisible(card)) continue;
+      const { render: r, listing: l, posterKey } = card;
+      tours.push({ slug: r.slug as string, share_url: `${TOUR_BASE}/f/${r.slug as string}`,
+        space_type: l.space_type as string, address: l.address as string | null,
+        tagline: l.tagline as string | null, price: formatUSD(l.price_cents as number | null),
+        poster: publicR2Url(posterKey), published_at: r.published_at });
+    }
     return json({
       org: { name: publicName(org.name), handle: org.handle, space_type: org.space_type },
       agent_card,

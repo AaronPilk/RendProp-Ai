@@ -481,7 +481,7 @@ export function VideoEditor({
       const next = editHistory(historyRef.current, {clips:[clip],overlays,narration:undefined,audio:"original"}, "apply agent cutaways");
       media.current.set(clip.id,base); overlays.forEach((overlay,index)=>media.current.set(overlay.id,staged[index+1]));
       accepted=true;replaceHistory(next);onPlanApplied?.(next.present);setMediaVersion(value=>value+1);scrubTo(0);
-      notice("Agent plan applied. The original video and speech continue beneath each photo cutaway.");
+      notice(overlays.length ? "Agent plan applied. The original video and speech continue beneath each photo cutaway." : "Agent plan applied. Your original recording and audio are ready to edit.");
     })().catch(error=>{if(!controller.signal.aborted){notice(errorText(error));onPlanFailed?.(errorText(error));}})
       .finally(()=>{if(!accepted)staged.forEach(local=>URL.revokeObjectURL(local.url));if(importAbort.current===controller){importAbort.current=null;setImporting(false);}});
     return ()=>controller.abort();

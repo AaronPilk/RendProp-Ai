@@ -42,10 +42,14 @@ function fixture() {
     media_provenance: [],
     studio_creative_results: [],
   };
-  let role = "agent", proofFailures = 0, writes = 0;
+  let role = "agent", proofFailures = 0, writes = 0, presenterApproved = true;
   const qualityCalls: any[] = [];
   const admin = {
     rpc: async (name: string, args: any) => {
+      if (name === "studio_presenter_asset_access") {
+        assertEquals(args, { p_asset: source });
+        return { data: presenterApproved, error: null };
+      }
       assertEquals(name, "assert_studio_edit_quality");
       qualityCalls.push(args);
       return { data: null, error: null };
@@ -163,6 +167,7 @@ function fixture() {
     qualityCalls,
     setRole: (v: string) => role = v,
     failProofOnce: () => proofFailures = 1,
+    revokePresenter: () => presenterApproved = false,
     get writes() {
       return writes;
     },
@@ -344,4 +349,26 @@ Deno.test("the existing per-property disclosure ceiling is preserved before rese
   );
   await assertRejects(() => f.call(), HttpError, "disclosure limit");
   assertEquals(f.writes, 0);
+});
+
+Deno.test("accepted presenter sources retain AI disclosure in edits and revoked sources cannot be finalized", async () => {
+  for (const approved of [true, false]) {
+    const f = fixture();
+    Object.assign(f.tables.capture_assets[1], { kind: "video", presenter_job_id: crypto.randomUUID() });
+    f.tables.media_provenance.push({
+      id: crypto.randomUUID(), org_id: org, listing_id: listing, kind: "other",
+      model_id: "higgsfield/genjutsu/motion-transfer", altered_key: key("kitchen.png"),
+      disclosure: "AI-generated representation approved by the represented person.",
+    });
+    if (!approved) {
+      f.revokePresenter();
+      await assertRejects(() => f.call(), HttpError, "generated source clips");
+      assertEquals(f.writes, 0);
+    } else {
+      const response = await (await f.call()).json();
+      assertStringIncludes(response.disclosure, "AI-altered or generated visuals");
+      assertEquals(f.tables.studio_creative_results[0].metadata.has_visual_ai, true);
+      assertEquals(f.tables.studio_creative_results[0].metadata.source_asset_ids, [source]);
+    }
+  }
 });

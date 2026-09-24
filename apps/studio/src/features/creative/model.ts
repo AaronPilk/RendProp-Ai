@@ -10,7 +10,7 @@ export type Edit =
 export type CreativeTool =
   | "photo-studio" | "scripts" | "shot-plans" | "agent-cutaways"
   | "voiceover" | "ai-video" | "animate" | "drone" | "aerial"
-  | "chapters" | "coach";
+  | "chapters" | "coach" | "presenter";
 export type CreativeEntryRequest = {
   id: string;
   listingId: string;

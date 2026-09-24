@@ -389,7 +389,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     setSourceBusy(true); setMessage("Restoring the agent video and its cutaway photos…");
     try {
       const validId = (id: string) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(id);
-      if (!validId(request.listingId) || !validId(request.assetId) || !request.cutaways.length || request.cutaways.length > 12 || request.cutaways.some(item => !validId(item.photoId) || !Number.isFinite(item.start) || !Number.isFinite(item.end) || item.start < 0 || item.end <= item.start || item.end > 180)) throw new Error("Choose a saved agent plan with valid photos and cutaways inside the 3-minute edit.");
+      if (!validId(request.listingId) || !validId(request.assetId) || request.cutaways.length > 12 || request.cutaways.some(item => !validId(item.photoId) || !Number.isFinite(item.start) || !Number.isFinite(item.end) || item.start < 0 || item.end <= item.start || item.end > 180)) throw new Error("Choose a saved agent video with any cutaways inside the 3-minute edit.");
       const photos = new Map<string, ReadableMedia>(); let base: {url:string}|undefined, offset: number|null = 0;
       do {
         const page = await services.listMedia(workspace.org.id, request.listingId, controller.current.signal, offset);

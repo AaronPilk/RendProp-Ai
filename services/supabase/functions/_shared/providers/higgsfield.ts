@@ -4,6 +4,7 @@
 //   base   https://api.higgsfield.ai
 //   submit POST /bytedance/seedance/v1/pro/fast/image-to-video   (their Seedance proxy)
 //          POST /higgsfield-ai/dop/turbo                          (DoP turbo)
+//          POST /higgsfiled/genjutsu/motion-transfer/v1.0       (approved presenter input only)
 //       -> { request_id, status_url, cancel_url }
 //   poll   GET  {status_url} -> status ∈ queued | in_progress | completed | failed | nsfw | canceled
 //
@@ -15,7 +16,9 @@
 //     asking a second vendor to generate what the first one refused is exactly
 //     the behaviour a fair-housing / content review would hang us for.
 //
-//  2. enhance_prompt IS ALWAYS false. Their prompt rewriter is unreviewable, and
+//  2. Where supported, enhance_prompt IS ALWAYS false. Genjutsu has a closed
+//     schema with no enhancement parameter; send its reviewed prompt verbatim.
+//     Their prompt rewriter is unreviewable, and
 //     every prompt we send has already been through the fair-housing guardrails.
 //     A rewriter that re-adds "family home in a great school district" downstream
 //     of the gate would defeat the gate.
@@ -128,10 +131,225 @@ export async function motionId(name: string): Promise<string> {
 
 // ── Request shapes ───────────────────────────────────────────────────────────
 
-type HfPath = { path: string; kind: "seedance" | "dop" };
+// The spelling `higgsfiled` is intentional in the official API, verified
+// 2026-09-24: https://docs.higgsfield.ai/docs/models/genjutsu/motion-transfer.md
+export const HF_MOTION_TRANSFER_MODEL = "higgsfiled/genjutsu/motion-transfer/v1.0";
+export const HF_MOTION_TRANSFER_TASK = "video.agent_presenter";
+
+/** Server-resolved, approved assets, never the client's raw request body.
+ * The caller must check ownership, active consent, reference approval, media
+ * metadata, reviewed prompt and the enterprise/provider activation gates first.
+ * This interface and its process-local brand are not authorization themselves.
+ */
+export interface HfMotionTransferInput {
+  performanceVideoUrl: string;
+  performanceDurationSeconds: number;
+  approvedCharacterImageUrls: readonly string[];
+  reviewedPrompt: string;
+  resolution?: "720p" | "480p";
+}
+
+type MotionTransferPayload = {
+  prompt: string;
+  video_url: string;
+  image_urls: readonly string[];
+  resolution: "720p" | "480p";
+};
+
+// No marker a browser can forge in extra/JSON. Store an immutable snapshot so
+// later mutation cannot replace the previously approved references or prompt.
+const motionTransferInputs = new WeakMap<GenerateInput, Readonly<MotionTransferPayload>>();
+
+function motionTransferRequire(condition: boolean, message: string): asserts condition {
+  if (!condition) throw new ProviderError(PROVIDER, "validation", `higgsfield motion transfer: ${message}`);
+}
+
+function motionTransferUrl(value: unknown, label: string): string {
+  motionTransferRequire(typeof value === "string" && value.length > 0 && value.length <= 2083 &&
+    value === value.trim() && !/[\s\\]/u.test(value) &&
+    ![...value].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127),
+    `${label} must be an HTTPS URL of at most 2083 characters`);
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new ProviderError(PROVIDER, "validation", `higgsfield motion transfer: ${label} is not a valid HTTPS URL`);
+  }
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  motionTransferRequire(url.protocol === "https:" && !url.username && !url.password && !url.hash &&
+    !url.port && host.includes(".") && !host.includes(":") && !/^\d+(?:\.\d+)*$/.test(host) &&
+    !["localhost", "local", "internal", "test", "invalid"].some((suffix) => host === suffix || host.endsWith(`.${suffix}`)),
+    `${label} must use a public HTTPS host without credentials, fragments or a custom port`);
+  return value; // Preserve the exact signed URL; never log or normalize it.
+}
+
+/** Construct only after server-side approval checks; performs no I/O.
+ * Rendprop refuses >30s rather than silently accepting the vendor's truncation.
+ * Fractional measured durations are valid and are never rounded or clamped.
+ */
+export function createHfMotionTransferInput(approved: HfMotionTransferInput): GenerateInput {
+  motionTransferRequire(approved !== null && typeof approved === "object" && !Array.isArray(approved),
+    "approved server input is required");
+  const allowed = new Set(["performanceVideoUrl", "performanceDurationSeconds", "approvedCharacterImageUrls", "reviewedPrompt", "resolution"]);
+  motionTransferRequire(Object.keys(approved).every((key) => allowed.has(key)), "unsupported input field");
+  const seconds = approved.performanceDurationSeconds;
+  motionTransferRequire(typeof seconds === "number" && Number.isFinite(seconds) && seconds >= 4 && seconds <= 30,
+    "verified performance video duration must be 4–30 seconds");
+  motionTransferRequire(typeof approved.reviewedPrompt === "string" && [...approved.reviewedPrompt].length <= 10_000,
+    "reviewed prompt must be a string of at most 10000 characters");
+  const resolution = approved.resolution === undefined ? "720p" : approved.resolution;
+  motionTransferRequire(resolution === "720p" || resolution === "480p", "resolution must be 720p or 480p");
+  motionTransferRequire(Array.isArray(approved.approvedCharacterImageUrls) &&
+    approved.approvedCharacterImageUrls.length >= 1 && approved.approvedCharacterImageUrls.length <= 8,
+    "1–8 approved character image references are required");
+  const videoUrl = motionTransferUrl(approved.performanceVideoUrl, "performance video");
+  const imageUrls = Array.from(approved.approvedCharacterImageUrls, (url) => motionTransferUrl(url, "character reference"));
+  motionTransferRequire(imageUrls.every((url) => url !== videoUrl), "performance video and character image references must be separate assets");
+  const input: GenerateInput = Object.freeze({
+    task: HF_MOTION_TRANSFER_TASK,
+    prompt: approved.reviewedPrompt,
+    video_url: videoUrl,
+    seconds,
+  });
+  motionTransferInputs.set(input, Object.freeze({
+    prompt: approved.reviewedPrompt,
+    video_url: videoUrl,
+    image_urls: Object.freeze(imageUrls),
+    resolution,
+  }));
+  return input;
+}
+
+export interface HfMotionTransferEstimate {
+  credits: string;
+  usd: string;
+  ceilingCents: number;
+}
+
+// A parser bound, not an approved spending budget. The server caller must
+// separately enforce its much smaller per-job and account limits.
+export const HF_MAX_ESTIMATE_CENTS = 1_000_000;
+
+function estimateDecimal(value: unknown, name: string): string {
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d{0,8})(?:\.\d{1,9})?$/.test(value)) {
+    throw new ProviderError(PROVIDER, "upstream", `higgsfield estimate has an invalid ${name} amount`);
+  }
+  return value;
+}
+
+/** Account-specific quote only; does not submit a generation. Never retries.
+ * The official billing docs prescribe /estimate/{model_slug} with the same
+ * parameters. No price is inferred from unrelated example models or credits.
+ */
+export async function estimateHfMotionTransfer(input: GenerateInput): Promise<HfMotionTransferEstimate> {
+  const approved = motionTransferInputs.get(input);
+  motionTransferRequire(input.task === HF_MOTION_TRANSFER_TASK && !!approved,
+    "estimate requires approved server input from createHfMotionTransferInput");
+  const data = await motionRequest(
+    `${HF_BASE}/estimate/${HF_MOTION_TRANSFER_MODEL}`,
+    { method: "POST", body: JSON.stringify(approved) },
+    BUDGETS.submitMs,
+  );
+  const credits = estimateDecimal(data?.credits, "credits");
+  const usd = estimateDecimal(data?.usd, "USD");
+  const [whole, fraction = ""] = usd.split(".");
+  const scale = 10n ** BigInt(fraction.length);
+  const numerator = BigInt(whole) * scale + BigInt(fraction || "0");
+  const cents = (numerator * 100n + scale - 1n) / scale;
+  if (cents > BigInt(HF_MAX_ESTIMATE_CENTS)) {
+    throw new ProviderError(PROVIDER, "upstream", "higgsfield estimate exceeds the supported quote bound");
+  }
+  return { credits, usd, ceilingCents: Number(cents) };
+}
+
+export interface HfMotionTransferRef {
+  request_id: string;
+  status_url: string;
+  cancel_url: string;
+}
+/** Validate references on every read from the private ledger. Credentials are
+ * never sent to response-selected hosts or redirects. This is not a client API. */
+export function readHfMotionTransferRef(value: unknown): HfMotionTransferRef {
+  const row = value as Record<string, unknown> | null;
+  motionTransferRequire(!!row && typeof row === "object" && !Array.isArray(row), "request reference is missing");
+  const request_id = row.request_id;
+  motionTransferRequire(typeof request_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request_id), "invalid request identity");
+  const status_url = `${HF_BASE}/requests/${request_id}/status`;
+  const cancel_url = `${HF_BASE}/requests/${request_id}/cancel`;
+  motionTransferRequire(row.status_url === status_url && row.cancel_url === cancel_url, "request URLs must match the exact provider identity");
+  return { request_id, status_url, cancel_url };
+}
+
+async function motionRequest(url: string, init: RequestInit, timeout: number): Promise<Record<string, unknown>> {
+  const response = await fetch(url, { ...init, headers: hfHeaders(), redirect: "error", signal: AbortSignal.timeout(timeout) });
+  if (!response.ok) {
+    await response.body?.cancel();
+    // Never include vendor bodies: they can echo signed private media URLs.
+    throw new ProviderError(PROVIDER, classifyStatus(response.status), `higgsfield HTTP ${response.status}`, response.status);
+  }
+  const reader = response.body?.getReader();
+  motionTransferRequire(!!reader, "provider response is empty");
+  const chunks: Uint8Array[] = []; let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.length;
+      motionTransferRequire(size <= 64 * 1024, "provider response exceeds the supported limit");
+      chunks.push(value);
+    }
+  } finally { await reader.cancel(); }
+  const bytes = new Uint8Array(size); let offset = 0;
+  for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+  let data: unknown;
+  try { data = JSON.parse(new TextDecoder().decode(bytes)); } catch { throw new ProviderError(PROVIDER, "upstream", "Invalid higgsfield response"); }
+  motionTransferRequire(!!data && typeof data === "object" && !Array.isArray(data), "invalid provider response");
+  return data as Record<string, unknown>;
+}
+
+/** One POST only. Any transport/parse ambiguity must retain the caller's hold. */
+export async function submitHfMotionTransfer(input: GenerateInput): Promise<HfMotionTransferRef> {
+  const approved = motionTransferInputs.get(input);
+  motionTransferRequire(input.task === HF_MOTION_TRANSFER_TASK && !!approved, "submit requires approved server input");
+  const data = await motionRequest(`${HF_BASE}/${HF_MOTION_TRANSFER_MODEL}`, { method: "POST", body: JSON.stringify(approved) }, BUDGETS.submitMs);
+  // Retain a confirmed identity even if a fast job already left the queue.
+  // Polling determines the lifecycle; discarding these refs creates uncertainty.
+  return readHfMotionTransferRef(data);
+}
+
+export type HfMotionTransferStatus = { status: "queued" | "in_progress" | "failed" | "nsfw" | "canceled" } | { status: "completed"; video_url: string };
+export async function pollHfMotionTransfer(value: HfMotionTransferRef): Promise<HfMotionTransferStatus> {
+  const ref = readHfMotionTransferRef(value);
+  const data = await motionRequest(ref.status_url, { method: "GET" }, BUDGETS.pollMs);
+  motionTransferRequire(data.request_id === ref.request_id, "status identity does not match the retained request");
+  const status = data.status;
+  if (status === "completed") {
+    const video = data.video as { url?: unknown } | undefined;
+    return { status, video_url: motionTransferUrl(video?.url, "generated video") };
+  }
+  motionTransferRequire(status === "queued" || status === "in_progress" || status === "failed" || status === "nsfw" || status === "canceled", "unknown provider state");
+  return { status };
+}
+
+/** Official queued cancellation returns 202 with no JSON. A 400 means it has
+ * already started; it does not prove a refund and the caller must keep polling. */
+export async function cancelHfMotionTransfer(value: HfMotionTransferRef): Promise<"accepted" | "already_started"> {
+  const ref = readHfMotionTransferRef(value);
+  const response = await fetch(ref.cancel_url, { method: "POST", headers: hfHeaders(), redirect: "error", signal: AbortSignal.timeout(BUDGETS.pollMs) });
+  await response.body?.cancel();
+  if (response.status === 202) return "accepted";
+  if (response.status === 400) return "already_started";
+  throw new ProviderError(PROVIDER, classifyStatus(response.status), `higgsfield cancellation HTTP ${response.status}`, response.status);
+}
+
+type HfPath = { path: string; kind: "seedance" | "dop" | "motion_transfer" };
 
 export function hfEndpoint(model: string): HfPath {
   const m = model.trim().replace(/^\/+/, "");
+  if (m === HF_MOTION_TRANSFER_MODEL) return { path: `/${HF_MOTION_TRANSFER_MODEL}`, kind: "motion_transfer" };
+  if (m.includes("genjutsu")) {
+    throw new ProviderError(PROVIDER, "validation", "higgsfield: unsupported Genjutsu endpoint");
+  }
   if (m.includes("dop/turbo")) return { path: "/higgsfield-ai/dop/turbo", kind: "dop" };
   if (m.includes("seedance")) return { path: "/bytedance/seedance/v1/pro/fast/image-to-video", kind: "seedance" };
   throw new ProviderError(PROVIDER, "validation", `higgsfield: no endpoint is defined for model "${model}"`);
@@ -146,6 +364,13 @@ function clampDuration(seconds: number | undefined, dflt: number): number {
 
 export async function hfInput(step: RouteStep, input: GenerateInput): Promise<Record<string, unknown>> {
   const { kind } = hfEndpoint(step.model);
+  if (kind === "motion_transfer") {
+    const approved = motionTransferInputs.get(input);
+    motionTransferRequire(step.task === HF_MOTION_TRANSFER_TASK && input.task === HF_MOTION_TRANSFER_TASK && !!approved,
+      "requires approved server input from createHfMotionTransferInput");
+    // Exact closed vendor schema: no duration/aspect/enhance_prompt or extra.
+    return { ...approved, image_urls: [...approved.image_urls] };
+  }
   const imageUrl = await publicImageUrlFor(input, PROVIDER);
 
   if (kind === "dop") {
