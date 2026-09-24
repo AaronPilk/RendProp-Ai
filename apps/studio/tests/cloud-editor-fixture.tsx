@@ -26,6 +26,7 @@ const delayedCopies:(()=>void)[]=[];
 const otherDocuments: Record<string, FixtureDocument> = {};
 const reviewAPI=reviewFixture(org,()=>actorUser,()=>actorUser===user?cloud.documents:otherDocuments,id=>id===user?cloud.documents:otherDocuments);
 const delayedReads: (()=>void)[]=[];
+const documentWrites: FixtureDocument[]=[];
 const voiceId = "50000000-0000-4000-8000-000000000005";
 const voiceResult = {id:voiceId,kind:"voice",state:"completed",url:`https://${"a".repeat(32)}.r2.cloudflarestorage.com/fixture/narration.wav`,expires_at:"2099-09-14T12:00:00Z",duration_s:4,voice_name:"Fixture voice",label:"Saved office narration",words:[{text:"Welcome",start:0.2,end:0.8},{text:"home",start:0.8,end:1.4}]};
 const services = {
@@ -49,6 +50,7 @@ const services = {
     if(path.endsWith("/production-review/copy")){copyCalls++;if(holdCopy){holdCopy=false;await new Promise<void>(resolve=>delayedCopies.push(resolve));}}
     const review=reviewAPI(path,body);if(review!==undefined){persist();if(path.endsWith("/production-review/copy")&&loseCopy){loseCopy=false;if(loseCopyStatus)throw new StudioError("timeout","Fixture timed out after copying",loseCopyStatus);throw new Error("Fixture lost copy response");}return review;}
     if(path.includes("/studio/listing-state?")){const target=new URL(path,"https://fixture.invalid").searchParams.get("listing_id");return {org_id:org,listing_id:target,assets:cloud.assets.filter(a=>a.listing_id===target),photos:[],next_offset:null};}
+    if(path.endsWith("/studio/edit-plan")||path.endsWith("/studio/prompt-enhancement"))return {available:false,reason:"disabled",supportedOperations:[]};
     if(path.includes("/studio/creative-results?")) return {results:[voiceResult],next_offset:null};
     if(path.endsWith("/studio/edit-output")) {if(!Array.isArray(body?.source_asset_ids)||!body?.source_asset_ids.length)throw new Error("Edited export must retain source lineage");return {ok:true,asset_id:body?.asset_id};}
     if(path.endsWith("/studio/sign-media") && body?.result_id===voiceId) return {result:voiceResult};
@@ -58,7 +60,7 @@ const services = {
       if (body) {
         if(key.startsWith("edit:")&&(body.listing_id!==key.slice(5)||(body.payload as {listingId?:string}).listingId!==body.listing_id))throw new Error("Fixture property document binding mismatch");
         const previous = documents[key]; if ((previous?.revision ?? 0) !== body.expected_revision) throw new StudioError("conflict", "Fixture concurrent save", 409);
-        documents[key] = { key, kind: String(body.kind), listing_id: typeof body.listing_id==="string"?body.listing_id:null, payload: JSON.parse(canonicalDocument(body.payload)), revision: (previous?.revision ?? 0) + 1, updated_at: new Date().toISOString() }; cloud.writes++; persist();
+        documents[key] = { key, kind: String(body.kind), listing_id: typeof body.listing_id==="string"?body.listing_id:null, payload: JSON.parse(canonicalDocument(body.payload)), revision: (previous?.revision ?? 0) + 1, updated_at: new Date().toISOString() }; documentWrites.push(structuredClone(documents[key])); cloud.writes++; persist();
       }
       const result={ document: structuredClone(documents[key] ?? null) };
       if(!body&&holdRead&&key.startsWith("edit:")){holdRead=false;await new Promise<void>(resolve=>delayedReads.push(resolve));}
@@ -75,8 +77,9 @@ const services = {
   },
 } as unknown as StudioServices;
 Object.assign(window, { cloudFixture: {
+  writeHistory: () => structuredClone(documentWrites),
   snapshot: () => structuredClone(cloud), loseComplete: () => loseComplete = true,
-  remoteEdit: (id=other) => { const key=`edit:${id}`,doc = cloud.documents[key]; cloud.documents[key] = { ...doc, revision: doc.revision + 1, payload: { ...doc.payload, draft: { ...(doc.payload.draft as object), title: "Saved on another device" } } }; persist(); window.dispatchEvent(new Event("focus")); },
+  remoteEdit: (id=other, conversationText?:string) => { const key=`edit:${id}`,doc = cloud.documents[key],draft=doc.payload.draft as {id:string;revision:number},conversation=doc.payload.conversation as {schema:1;draftId:string;messages:unknown[]}|undefined; cloud.documents[key] = { ...doc, revision: doc.revision + 1, payload: { ...doc.payload, draft: { ...draft, title: "Saved on another device" }, ...(conversationText?{conversation:{schema:1,draftId:draft.id,messages:[...(conversation?.messages??[]),{id:crypto.randomUUID(),role:"assistant",text:conversationText,revision:draft.revision}].slice(-24)}}:{}) } }; persist(); window.dispatchEvent(new Event("focus")); },
   holdNextRead:()=>{holdRead=true;},releaseReads:()=>delayedReads.splice(0).forEach(resolve=>resolve()),pendingReads:()=>delayedReads.length,
   holdNextCopy:()=>{holdCopy=true;},releaseCopies:()=>delayedCopies.splice(0).forEach(resolve=>resolve()),pendingCopies:()=>delayedCopies.length,loseNextCopy:(status=0)=>{loseCopy=true;loseCopyStatus=status;},copyCalls:()=>copyCalls,actorDocuments:()=>structuredClone(actorUser===user?cloud.documents:otherDocuments),versions:()=>JSON.parse(localStorage.getItem("fixture-versions")??"[]"),
   failUpload:(value:boolean)=>{failUpload=value;},

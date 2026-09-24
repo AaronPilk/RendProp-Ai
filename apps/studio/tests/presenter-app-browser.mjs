@@ -17,9 +17,10 @@ try {
   const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:"block"});
   await context.route("**/*",route=>{if(new URL(route.request().url()).origin===origin&&route.request().method()==="GET")return route.continue();receipt.externalRequests.push(route.request().url());return route.abort();});
   page=await context.newPage();page.setDefaultTimeout(10000);page.on("pageerror",e=>receipt.errors.push(e.message));
-  const nav=name=>page.getByRole("navigation",{name:"Studio navigation"}).getByRole("button",{name,exact:true});
-  await page.goto(`${origin}/tests/fixtures/connected.html?secondProperty`);
+  const nav=name=>({click:async()=>{const button=page.getByRole("navigation",{name:"Studio navigation"}).getByRole("button",{name,exact:true});if(!await button.isVisible())await page.locator(".secondary-navigation>summary").click();await button.click();if(name==="Home")await page.locator(".app-all-tools>summary").click();}});
+  await page.goto(`${origin}/tests/fixtures/connected.html?view=overview&secondProperty`);
   await expect(page.getByText(/^Updated \d/)).toBeVisible();
+  await page.locator(".app-all-tools>summary").click();
   await page.getByRole("region",{name:"More AI tools"}).getByRole("button",{name:/AI Presenter/}).click();
   await page.getByRole("dialog").getByRole("button",{name:/Isolated property 1-1/}).click();
   await expect(page.getByRole("heading",{name:"Your agent. Your performance. A reviewed video."})).toBeVisible();

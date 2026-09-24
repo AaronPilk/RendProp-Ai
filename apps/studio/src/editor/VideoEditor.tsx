@@ -2,6 +2,10 @@ import {OverlayPainter} from "./overlay-renderer";
 import { RecipePanel, type RecipeRequest } from "./RecipePanel";
 import { RECIPE_CATALOG, type RecipeResult } from "./recipes";
 import { splitVideoAtTime } from "./edit-actions";
+import ConversationPanel from "./ConversationPanel";
+import {applyConversationPlan,interpretLocalEdit,type ConversationPlan} from "./conversation";
+import {appendConversation,decodeConversation,emptyConversation,type ConversationState} from "./conversation-state";
+import {enhancePromptLocally,decodePromptEnhancement,type PromptEnhancement} from "./prompt-enhancement";
 import {
   useEffect,
   useRef,
@@ -70,7 +74,15 @@ export type VideoEditorProps = {
   initialDraft?: EditDraft;
   /** Optional observer only; the editor already renders and announces its notices. */
   onNotice?: (message: string) => void;
-  onDraftChange?: (draft: EditDraft) => void;
+  onDraftChange?: (draft: EditDraft, conversation?:ConversationState) => void;
+  initialConversation?: ConversationState;
+  conversationStorageKey?: string;
+  editAssistAvailable?: boolean;
+  creationBlockedReason?: string;
+  requestEditPlan?: (message:string,draft:EditDraft,history:ConversationState["messages"],signal:AbortSignal)=>Promise<unknown>;
+  promptEnhanceAvailable?:boolean;
+  requestPromptEnhancement?: (message:string,draft:EditDraft,history:ConversationState["messages"],signal:AbortSignal)=>Promise<unknown>;
+  onChooseLibrary?:()=>void;
   importRequest?: { id: string; files: File[]; listingId?: string; sourceMedia?: {id: string; kind: "photo" | "video"}[] };
   relinkRequest?: { id: string; files: File[] };
   onSourcesChange?: (sources: { file: File; sha256: string }[]) => void;
@@ -87,7 +99,7 @@ export type VideoEditorProps = {
   /** Opens an explicit recipe review; never applies a replacement without review. */
   recipeRequest?: RecipeRequest;
   onRecipeApplied?: (result: RecipeResult) => void;
-  initialMode?: "simple" | "pro";
+  initialMode?: "conversation" | "simple" | "pro";
   readOnly?: boolean;
   seekRequest?: { id: string; time: number };
   onPlayheadChange?: (time: number) => void;
@@ -120,6 +132,14 @@ export function VideoEditor({
   initialDraft,
   onNotice,
   onDraftChange,
+  initialConversation,
+  conversationStorageKey,
+  editAssistAvailable=false,
+  creationBlockedReason,
+  requestEditPlan,
+  promptEnhanceAvailable=false,
+  requestPromptEnhancement,
+  onChooseLibrary,
   importRequest,
   relinkRequest,
   onSourcesChange,
@@ -141,6 +161,7 @@ export function VideoEditor({
   onPlayheadChange,
 }: VideoEditorProps) {
   const [editorMode, setEditorMode] = useState(initialMode);
+  useEffect(()=>{if(recipeRequest)setEditorMode("simple");},[recipeRequest?.id]);
   const [initial] = useState(() => {
     try {
       return {
@@ -155,6 +176,15 @@ export function VideoEditor({
     }
   });
   const [history, setHistory] = useState(() => createHistory(initial.draft));
+  const [conversationInitial]=useState(()=>{
+    try {const stored=conversationStorageKey?localStorage.getItem(conversationStorageKey):null;return {state:decodeConversation(initialConversation??(stored?JSON.parse(stored):undefined),initial.draft.id),error:""};}
+    catch{return {state:emptyConversation(initial.draft.id),error:"Earlier chat history could not be restored. Its browser copy is preserved; you can continue editing here."};}
+  });
+  const [conversation,setConversation]=useState(conversationInitial.state),conversationRef=useRef(conversation);
+  const [prompt,setPrompt]=useState(""),[chatBusy,setChatBusy]=useState(false),[pendingBrief,setPendingBrief]=useState("");
+  const chatFlight=useRef(false),chatAbort=useRef<AbortController|null>(null),mounted=useRef(true);
+  const [enhancement,setEnhancement]=useState<PromptEnhancement|null>(null),[enhancing,setEnhancing]=useState(false);
+  const enhanceAbort=useRef<AbortController|null>(null),enhancementRevision=useRef<{id:string;revision:number}|null>(null);
   const historyRef = useRef(history);
   const draft = history.present;
   const activeRef = useRef(active);
@@ -165,11 +195,13 @@ export function VideoEditor({
   const [voice, setVoice] = useState<{id: string; blob: Blob; url: string} | null>(null);
   const [voiceIssue, setVoiceIssue] = useState(""), [voiceRetry, setVoiceRetry] = useState(0);
   const [selectedId, setSelectedId] = useState(draft.clips[0]?.id ?? "");
-  const [message, setMessage] = useState(initial.issue);
+  const [message, setMessage] = useState(initial.issue||conversationInitial.error);
   const [importing, setImporting] = useState(false);
   const importAbort = useRef<AbortController | null>(null);
   const [exporting, setExporting] = useState(false);
   const [savingOutput, setSavingOutput] = useState(false);
+  const interaction=useRef({readOnly,importing,exporting,savingOutput,creationBlockedReason});
+  interaction.current={readOnly,importing,exporting,savingOutput,creationBlockedReason};
   const [outputKept, setOutputKept] = useState(false);
   const exportAbort = useRef<AbortController | null>(null);
   const [progress, setProgress] = useState(0);
@@ -194,8 +226,8 @@ export function VideoEditor({
   const [formatMime, setFormatMime] = useState(formats[0]?.mime ?? "");
   const total = timelineDuration(draft.clips);
   useEffect(() => {
-    onSwitchBlockChange?.(importing || exporting || savingOutput ? "Finish importing, exporting or saving before switching properties." : output && !outputKept ? "Download or save this finished video before switching properties. Your export is kept here." : null);
-  }, [importing, exporting, savingOutput, output, outputKept, onSwitchBlockChange]);
+    onSwitchBlockChange?.(importing || exporting || savingOutput || chatBusy || enhancing ? "Finish or stop the current creation task before switching." : prompt.trim() ? "Send or clear your unsent editing request before switching." : pendingBrief ? "Add media to finish your request, or clear the request before switching." : output && !outputKept ? "Download or save this finished video before switching properties. Your export is kept here." : null);
+  }, [importing, exporting, savingOutput, chatBusy,enhancing,prompt,pendingBrief,output, outputKept, onSwitchBlockChange]);
   const selected =
     draft.clips.find((clip) => clip.id === selectedId) ?? draft.clips[0];
   const selectedIndex = selected ? draft.clips.indexOf(selected) : -1;
@@ -258,7 +290,7 @@ export function VideoEditor({
     historyRef.current = closeHistoryGroup(historyRef.current);
   };
   const update = (patch: Parameters<typeof reviseDraft>[1], label = "edit", group: string | null = null) => {
-    if (readOnly || importAbort.current) return false;
+    if (readOnly || !activeRef.current || importAbort.current) return false;
     try {
       return replaceHistory(editHistory(historyRef.current, patch, label, group));
     } catch (error) {
@@ -324,9 +356,88 @@ export function VideoEditor({
     travelHistory(key === "y" || event.shiftKey ? "redo" : "undo");
   };
 
+  function chatMessage(role:"user"|"assistant",text:string,revision:number|null=null){
+    if(!mounted.current)return;
+    const base=conversationRef.current.draftId===draftRef.current.id?conversationRef.current:emptyConversation(draftRef.current.id);
+    const next=appendConversation(base,role,text,revision);conversationRef.current=next;setConversation(next);
+  }
+  function cancelChat(){chatAbort.current?.abort();enhanceAbort.current?.abort();setPendingBrief("");}
+  function changePrompt(text:string){setPrompt(text);setEnhancement(null);}
+  async function improvePrompt(){
+    const original=prompt.trim();
+    if(!original||chatFlight.current||enhanceAbort.current||!activeRef.current||interaction.current.readOnly||interaction.current.importing||interaction.current.exporting||interaction.current.savingOutput||interaction.current.creationBlockedReason)return;
+    const snapshot=structuredClone(draftRef.current),controller=new AbortController();
+    enhanceAbort.current=controller;setEnhancing(true);setEnhancement(null);
+    try{
+      const raw=promptEnhanceAvailable&&requestPromptEnhancement
+        ?await requestPromptEnhancement(original,snapshot,conversationRef.current.messages.slice(-8),controller.signal)
+        :enhancePromptLocally(original,snapshot);
+      if(controller.signal.aborted||!mounted.current||!activeRef.current)return;
+      if(interaction.current.readOnly||interaction.current.creationBlockedReason)throw new Error("Editing access changed. Improve your prompt again when the workspace is ready.");
+      assertCurrentRevision(snapshot,draftRef.current,controller.signal);
+      enhancementRevision.current={id:snapshot.id,revision:snapshot.revision};
+      setEnhancement(decodePromptEnhancement(raw,original));
+    }catch(error){if(mounted.current)notice(controller.signal.aborted?"Prompt improvement stopped. Your original wording is kept.":`${errorText(error)} Your original wording is kept.`);}
+    finally{if(enhanceAbort.current===controller){enhanceAbort.current=null;if(mounted.current)setEnhancing(false);}}
+  }
+  function useEnhancedPrompt(){
+    if(!enhancement||enhanceAbort.current||!activeRef.current||interaction.current.readOnly||interaction.current.creationBlockedReason)return;
+    const at=enhancementRevision.current;
+    if(!at||at.id!==draftRef.current.id||at.revision!==draftRef.current.revision||prompt.trim()!==enhancement.original){setEnhancement(null);notice("Your edit or wording changed. Improve the current prompt again.");return;}
+    setPrompt(enhancement.enhanced);setEnhancement(null);notice("Improved prompt is ready. Review it, then send it when you’re ready to edit.");
+  }
+  async function sendEdit(text=prompt,continuing=false){
+    const intent=text.trim();
+    if(!intent||intent.length>2000||chatFlight.current||enhanceAbort.current||!activeRef.current||interaction.current.readOnly||interaction.current.importing||interaction.current.exporting||interaction.current.savingOutput||interaction.current.creationBlockedReason)return;
+    if(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(intent)){notice("Remove the unsupported control characters from your message and try again.");return;}
+    if(!continuing){chatMessage("user",intent);setPrompt("");setEnhancement(null);}
+    if(!draftRef.current.clips.length){setPendingBrief(intent);chatMessage("assistant","Add your photos or video clips and I’ll build this from your originals. You can drop them onto the preview or choose Add media.");return;}
+    setPendingBrief("");
+    if(/^(undo( that| last edit)?|redo( that| last edit)?)[.!]?$/i.test(intent)){
+      const direction=/^undo/i.test(intent)?"undo":"redo",before=draftRef.current.revision;
+      travelHistory(direction);chatMessage("assistant",draftRef.current.revision!==before?`${direction==="undo"?"Undid":"Redid"} the last edit. Preview the restored version.`:`There is nothing to ${direction} in this session.`,draftRef.current.revision);return;
+    }
+    const snapshot=structuredClone(draftRef.current),controller=new AbortController();
+    chatAbort.current=controller;chatFlight.current=true;setChatBusy(true);
+    try{
+      const local=interpretLocalEdit(intent,snapshot);
+      let plan:ConversationPlan|undefined;
+      if(local.kind==="plan")plan=local.plan;
+      else if(local.kind==="clarification"){chatMessage("assistant",local.message);return;}
+      else if(editAssistAvailable&&requestEditPlan){
+        const response=await requestEditPlan(intent,snapshot,conversationRef.current.messages.slice(-8),controller.signal);
+        if(!response||typeof response!=="object"||Array.isArray(response))throw new Error("The editing assistant returned an unreadable plan. Your video is unchanged.");
+        const row=response as {status?:string;reply?:string;plan?:ConversationPlan|null};
+        if(row.status==="clarification"||row.status==="unsupported"){
+          if(typeof row.reply!=="string"||!row.reply.trim()||row.reply.length>2000||row.plan!==null)throw new Error("The editing assistant returned an invalid answer. Your video is unchanged.");
+          if(!controller.signal.aborted&&mounted.current)chatMessage("assistant",row.reply);return;
+        }
+        if(row.status!=="plan"||!row.plan)throw new Error("The editing assistant did not return a supported edit. Your video is unchanged.");
+        plan=row.plan;
+      }else{chatMessage("assistant",`${local.message} Freeform AI planning is not enabled here.`);return;}
+      if(controller.signal.aborted||!mounted.current||!activeRef.current)return;
+      if(interaction.current.readOnly||interaction.current.importing||interaction.current.exporting||interaction.current.savingOutput||interaction.current.creationBlockedReason)throw new Error("The workspace is busy or its editing access changed. Send your request again after it is ready.");
+      assertCurrentRevision(snapshot,draftRef.current,controller.signal);
+      const result=applyConversationPlan(draftRef.current,plan),{clips,overlays,narration,audio,ratio,title}=result.draft;
+      const changed=update({clips,overlays,narration,audio,ratio,title},"conversation edit");
+      if(changed){timeRef.current=0;setTime(0);setScrubVersion(value=>value+1);}
+      chatMessage("assistant",changed?result.summary:"That setting is already applied. Your video is unchanged.",draftRef.current.revision);
+    }catch(error){if(mounted.current)chatMessage("assistant",controller.signal.aborted?"Stopped. This request was not applied to your video.":`${errorText(error)} Your existing edit is preserved.`);}
+    finally{if(chatAbort.current===controller){chatAbort.current=null;chatFlight.current=false;if(mounted.current)setChatBusy(false);}}
+  }
+  useEffect(()=>{if(!active||readOnly){chatAbort.current?.abort();enhanceAbort.current?.abort();}},[active,readOnly]);
+  useEffect(()=>()=>{mounted.current=false;chatAbort.current?.abort();enhanceAbort.current?.abort();},[]);
+  useEffect(()=>{if(pendingBrief&&draft.clips.length&&!importing&&active&&!readOnly&&!creationBlockedReason&&!chatFlight.current)void sendEdit(pendingBrief,true);},[pendingBrief,draft.clips.length,importing,active,readOnly,creationBlockedReason]);
+  useEffect(()=>{
+    if(conversation.draftId!==draft.id){const empty=emptyConversation(draft.id);conversationRef.current=empty;setConversation(empty);}
+  },[draft.id,conversation.draftId]);
+
   useEffect(() => {
-    if (!readOnly) callbacks.current.onDraftChange?.(draft);
-  }, [draft, readOnly]);
+    if (!readOnly&&conversation.draftId===draft.id) {
+      callbacks.current.onDraftChange?.(draft,conversation);
+      if(conversationStorageKey&&!conversationInitial.error)try{localStorage.setItem(conversationStorageKey,JSON.stringify(conversation));}catch{notice("Chat history could not be saved in this browser. Keep this tab open until you finish.");}
+    }
+  }, [draft, conversation,readOnly,conversationStorageKey,conversationInitial.error]);
   useEffect(() => { onPlayheadChange?.(time); }, [time, onPlayheadChange]);
   useEffect(() => {
     if (readOnly) { exportAbort.current?.abort(); importAbort.current?.abort(); }
@@ -801,12 +912,119 @@ export function VideoEditor({
     relinkInput.current?.click();
   };
 
+  const exportControls = (
+<div className="rp-editor-export">
+            <h3>Ready when you are.</h3>
+            <p>A local video file, made in this browser.</p>
+            {formats.length > 0 ? (
+              <label>
+                Export format
+                <select
+                  value={formatMime}
+                  disabled={exporting}
+                  onChange={(event) => setFormatMime(event.target.value)}
+                >
+                  {formats.map((format) => (
+                    <option key={format.mime} value={format.mime}>
+                      {format.label} · Browser encoder
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <p role="status">
+                Local recording is unavailable in this browser. You can still
+                save the edit plan and open it in a browser with canvas
+                recording support.
+              </p>
+            )}
+            {audioUnavailable && (
+              <p role="status">
+                This browser cannot export original audio. Choose Mute audio
+                explicitly or use a browser with Web Audio support.
+              </p>
+            )}
+            {exporting ? (
+              <>
+                <progress
+                  value={progress}
+                  max="1"
+                  aria-label="Local video export progress"
+                />
+                <p role="status">
+                  Exporting {Math.round(progress * 100)}% · keep this tab
+                  visible
+                </p>
+                <button
+                  type="button"
+                  onClick={() =>
+                    exportAbort.current?.abort(
+                      new DOMException(
+                        "Export cancelled. Your edit is unchanged.",
+                        "AbortError",
+                      ),
+                    )
+                  }
+                >
+                  Cancel export
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                className="rp-editor-primary rp-editor-export-button"
+                disabled={
+                  !draft.clips.length ||
+                  missing.length > 0 ||
+                  !formats.length ||
+                  audioUnavailable ||
+                  !voiceReady ||
+                  importing
+                }
+                onClick={() => void startExport()}
+              >
+                Export{" "}
+                {formats.find((format) => format.mime === formatMime)?.label ??
+                  "video"}
+              </button>
+            )}
+            <p className="rp-editor-export-note">
+              {draft.narration ? "Includes saved narration and timed captions when enabled; original sound is lowered beneath it." : draft.audio === "muted"
+                ? "Original clip audio will be muted."
+                : draft.overlays?.length ? "Original video audio continues through every photo cutaway." : "Keeps original audio within each video trim; photos are silent."}{" "}
+              Export takes about the length of your edit. Keep this tab visible.{" "}
+              {formats.some((format) => format.extension === "mp4")
+                ? "Choose the format supported by your destination."
+                : "This browser offers WebM, not MP4."}{" "}
+              This is a local draft, not a published tour.
+            </p>
+            {output && (
+              <a
+                className="rp-editor-download"
+                href={output.url}
+                download={`rendprop-local-r${output.revision}.${output.extension}`}
+                onClick={() => setOutputKept(true)}
+              >
+                Download {output.extension.toUpperCase()} ·{" "}
+                {(output.blob.size / 1024 / 1024).toFixed(1)} MiB
+              </a>
+            )}
+            {output && onSaveOutput && (
+              <button type="button" disabled={savingOutput} onClick={() => {
+                setSavingOutput(true);
+                void onSaveOutput(output).then(() => {setOutputKept(true); notice("Video saved to your listing. Open Properties to review and publish it.");})
+                  .catch(error => notice(errorText(error))).finally(() => setSavingOutput(false));
+              }}>{savingOutput ? "Saving to your listing…" : "Save video to listing"}</button>
+            )}
+          </div>
+  );
+
   return (
-    <section className={`rp-editor${readOnly ? " is-readonly" : ""}`} aria-label={readOnly ? "Saved edit review" : "Local video editor"} onBlur={finishHistoryGroup} onPointerUp={finishHistoryGroup} onKeyDown={historyShortcut}>
+    <section className={`rp-editor${readOnly ? " is-readonly" : ""}${editorMode==="conversation"&&!readOnly?" is-conversation":""}`} aria-label={readOnly ? "Saved edit review" : "Local video editor"} onBlur={finishHistoryGroup} onPointerUp={finishHistoryGroup} onKeyDown={historyShortcut}>
       <div className="rp-editor-heading">
         <div>
           <p className="rp-editor-eyebrow">YOUR FOOTAGE. YOUR STORY.</p>
-          <h2>{readOnly ? "Review the saved edit" : "Bring your story to life."}</h2>
+          <h2>{readOnly ? "Review the saved edit" : editorMode==="conversation"?"Let’s make something worth sharing.":"Bring your story to life."}</h2>
           <p>
             {readOnly ? `Saved revision ${draft.revision}. Playback and comments do not change this edit.` : "Arrange your media, refine the details, and create a video right here."}
           </p>
@@ -840,11 +1058,12 @@ export function VideoEditor({
         <p>Up to {HISTORY_LIMITS.steps} recent steps. Undoing a removal requires original-file reselection.</p>
       </div>
       <div className="rp-editor-view-mode" role="group" aria-label="Editor view">
+        <button type="button" aria-pressed={editorMode === "conversation"} onClick={() => setEditorMode("conversation")}>Chat</button>
         <button type="button" aria-pressed={editorMode === "simple"} onClick={() => setEditorMode("simple")}>Simple view</button>
         <button type="button" aria-pressed={editorMode === "pro"} onClick={() => setEditorMode("pro")}>Pro view</button>
         <p>{editorMode === "simple" ? "Trim, order and caption the same editable draft. Pro view adds motion and transition controls." : "Full controls for this same editable draft."}</p>
       </div>
-      <RecipePanel draft={draft} busy={importing || exporting || savingOutput} request={recipeRequest} onApply={applyRecipe} />
+      {editorMode!=="conversation"&&<RecipePanel draft={draft} busy={importing || exporting || savingOutput || chatBusy} request={recipeRequest} onApply={applyRecipe} />}
       </>}
       <input
         ref={filesInput}
@@ -899,6 +1118,7 @@ export function VideoEditor({
       {readOnly && draft.narration && (voiceIssue || !voiceReady) && <p className="rp-editor-missing" role="status">{voiceIssue || "Restoring saved narration for this review…"}{voiceIssue && <button type="button" onClick={() => setVoiceRetry(value => value + 1)}>Retry narration</button>}</p>}
       {readOnly && audioUnavailable && <p className="rp-editor-missing" role="status">This browser cannot preview the saved audio. Use a browser with audio playback support before approving the sound.</p>}
       <div className="rp-editor-workspace">
+        {!readOnly&&<div hidden={editorMode!=="conversation"}><ConversationPanel conversation={conversation} prompt={prompt} onPrompt={changePrompt} busy={chatBusy||enhancing||importing||exporting||savingOutput||!!creationBlockedReason} cancellable={chatBusy||enhancing} blockedReason={creationBlockedReason} hasMedia={!!draft.clips.length} assistAvailable={editAssistAvailable} onSubmit={()=>void sendEdit()} onAdd={()=>filesInput.current?.click()} onLibrary={onChooseLibrary} onCancel={cancelChat} waitingForMedia={!!pendingBrief} enhancement={enhancement} enhancing={enhancing} onEnhance={()=>void improvePrompt()} onUseEnhancement={useEnhancedPrompt} onDismissEnhancement={()=>setEnhancement(null)}/></div>}
         <div className="rp-editor-main">
           <div className="rp-editor-preview-panel">
             <div className="rp-editor-panel-bar">
@@ -1044,7 +1264,7 @@ export function VideoEditor({
             </p>
           </div>
         </div>
-        {!readOnly && <aside className="rp-editor-inspector" aria-label="Edit controls">
+        {!readOnly && editorMode!=="conversation" && <aside className="rp-editor-inspector" aria-label="Edit controls">
           <div className="rp-editor-settings">
             <div className="rp-editor-panel-bar">
               <h3>Video settings</h3>
@@ -1296,112 +1516,10 @@ export function VideoEditor({
             )}
           </div>
           {!!draft.overlays?.length && <div className="rp-editor-clip-settings"><h3>Agent photo cutaways</h3><p>The base video and its speech continue underneath. Cutaways replace only the picture during their selected times.</p>{draft.overlays.map((overlay,index)=><fieldset key={overlay.id} disabled={importing}><legend>Cutaway {index+1} · {overlay.source.name}</legend>{!media.current.has(overlay.id)&&<button onClick={()=>chooseOriginal(overlay.id)}>Reselect cutaway photo</button>}<label>Cutaway {index+1} starts (seconds)<input type="number" min={0} max={total} step={.1} value={overlay.start} onChange={event=>{if(event.target.value!=="")update({overlays:draft.overlays!.map(item=>item.id===overlay.id?{...item,start:Number(event.target.value)}:item)},"cutaway start");}} /></label><label>Cutaway {index+1} ends (seconds)<input type="number" min={0} max={total} step={.1} value={overlay.end} onChange={event=>{if(event.target.value!=="")update({overlays:draft.overlays!.map(item=>item.id===overlay.id?{...item,end:Number(event.target.value)}:item)},"cutaway end");}} /></label><label>Cutaway {index+1} caption<input value={overlay.caption} maxLength={120} onChange={event=>update({overlays:draft.overlays!.map(item=>item.id===overlay.id?{...item,caption:event.target.value}:item)},"cutaway caption")} /></label><button onClick={()=>scrubTo(overlay.start)}>Preview cutaway {index+1}</button><button onClick={()=>update({overlays:draft.overlays!.filter(item=>item.id!==overlay.id)},"remove cutaway")}>Remove cutaway {index+1}</button></fieldset>)}</div>}
-          <div className="rp-editor-export">
-            <h3>Ready when you are.</h3>
-            <p>A local video file, made in this browser.</p>
-            {formats.length > 0 ? (
-              <label>
-                Export format
-                <select
-                  value={formatMime}
-                  disabled={exporting}
-                  onChange={(event) => setFormatMime(event.target.value)}
-                >
-                  {formats.map((format) => (
-                    <option key={format.mime} value={format.mime}>
-                      {format.label} · Browser encoder
-                    </option>
-                  ))}
-                </select>
-              </label>
-            ) : (
-              <p role="status">
-                Local recording is unavailable in this browser. You can still
-                save the edit plan and open it in a browser with canvas
-                recording support.
-              </p>
-            )}
-            {audioUnavailable && (
-              <p role="status">
-                This browser cannot export original audio. Choose Mute audio
-                explicitly or use a browser with Web Audio support.
-              </p>
-            )}
-            {exporting ? (
-              <>
-                <progress
-                  value={progress}
-                  max="1"
-                  aria-label="Local video export progress"
-                />
-                <p role="status">
-                  Exporting {Math.round(progress * 100)}% · keep this tab
-                  visible
-                </p>
-                <button
-                  type="button"
-                  onClick={() =>
-                    exportAbort.current?.abort(
-                      new DOMException(
-                        "Export cancelled. Your edit is unchanged.",
-                        "AbortError",
-                      ),
-                    )
-                  }
-                >
-                  Cancel export
-                </button>
-              </>
-            ) : (
-              <button
-                type="button"
-                className="rp-editor-primary rp-editor-export-button"
-                disabled={
-                  !draft.clips.length ||
-                  missing.length > 0 ||
-                  !formats.length ||
-                  audioUnavailable ||
-                  !voiceReady ||
-                  importing
-                }
-                onClick={() => void startExport()}
-              >
-                Export{" "}
-                {formats.find((format) => format.mime === formatMime)?.label ??
-                  "video"}
-              </button>
-            )}
-            <p className="rp-editor-export-note">
-              {draft.narration ? "Includes saved narration and timed captions when enabled; original sound is lowered beneath it." : draft.audio === "muted"
-                ? "Original clip audio will be muted."
-                : draft.overlays?.length ? "Original video audio continues through every photo cutaway." : "Keeps original audio within each video trim; photos are silent."}{" "}
-              Export takes about the length of your edit. Keep this tab visible.{" "}
-              {formats.some((format) => format.extension === "mp4")
-                ? "Choose the format supported by your destination."
-                : "This browser offers WebM, not MP4."}{" "}
-              This is a local draft, not a published tour.
-            </p>
-            {output && (
-              <a
-                className="rp-editor-download"
-                href={output.url}
-                download={`rendprop-local-r${output.revision}.${output.extension}`}
-                onClick={() => setOutputKept(true)}
-              >
-                Download {output.extension.toUpperCase()} ·{" "}
-                {(output.blob.size / 1024 / 1024).toFixed(1)} MiB
-              </a>
-            )}
-            {output && onSaveOutput && (
-              <button type="button" disabled={savingOutput} onClick={() => {
-                setSavingOutput(true);
-                void onSaveOutput(output).then(() => {setOutputKept(true); notice("Video saved to your listing. Open Properties to review and publish it.");})
-                  .catch(error => notice(errorText(error))).finally(() => setSavingOutput(false));
-              }}>{savingOutput ? "Saving to your listing…" : "Save video to listing"}</button>
-            )}
-          </div>
+          {exportControls}
         </aside>}
       </div>
+      {!readOnly&&editorMode==="conversation"&&<div className="creation-export">{exportControls}</div>}
     </section>
   );
 }

@@ -27,3 +27,16 @@ the production database's RLS configuration. Connected acceptance also needs a
 real same-account web login, selected-workspace checks, and R2 browser GET CORS.
 See `docs/web-client/release-2026-09-14/README.md` before deploying. Do not redeploy all other
 functions or alter their JWT flags as part of this additive web route.
+
+## Conversational creation additions (2026-09-24)
+
+`GET/POST /edit-plan` and `GET/POST /prompt-enhancement` are optional authenticated
+text-only routes. Both default to disabled; no configured route or flag is added
+automatically. They use strict metadata input, current authorization, one bounded
+provider request, retry suppression, rate limits and estimated attempt accounting.
+Enhancement proposes text only. An edit plan proposes finite operations and never
+renders, uploads, publishes or starts generation from the server.
+
+See `docs/studio/conversational-creation.md` for the exact enablement, request and
+cost limitations. No migration is added by this feature; the underlying stacked
+Presenter branch has its own release prerequisites.

@@ -1,9 +1,10 @@
 import { canonicalDocument, type CloudDocument } from "../../data/documents";
 import { validateDraft, type EditDraft } from "../../editor/model";
+import {decodeConversation,type ConversationState} from "../../editor/conversation-state";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 export type ReelSource = {sha256: string; assetId: string; listingId: string};
-export type ReelPayload = {draft: EditDraft; listingId: string; sources: ReelSource[]};
+export type ReelPayload = {draft: EditDraft; listingId: string; sources: ReelSource[];conversation?:ConversationState};
 export type EarlierReel = {id: string; label: string; payload: ReelPayload};
 export function propertyReelKey(listingId: string): string {
   if (!UUID.test(listingId)) throw new Error("Choose a saved property for this reel.");
@@ -22,7 +23,7 @@ export function reelPayload(value: unknown, listingId: string, allowUnassigned =
       throw new Error("This reel contains files from another property. Its earlier copy is preserved.");
     return {sha256: source.sha256, assetId: source.assetId, listingId};
   });
-  return {draft, listingId, sources};
+  return {draft, listingId, sources,...(input.conversation===undefined?{}:{conversation:decodeConversation(input.conversation,draft.id)})};
 }
 /** Read only. The old workspace document and browser keys are never changed. */
 export function earlierReels(storage: Pick<Storage, "getItem">, legacyKey: string, listingId: string, cloud: CloudDocument | null): {copies: EarlierReel[]; unreadable: boolean} {

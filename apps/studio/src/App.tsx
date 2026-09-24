@@ -25,6 +25,7 @@ import type { IconName } from "./icons";
 import { INDUSTRIES, scopeKey, writePlans } from "./workspace";
 import { restoreDrafts } from "./drafts";
 import { canRetainWorkspace } from "./workspace-refresh";
+import {useEditingAssistant} from "./features/sync/useEditingAssistant";
 import type { Industry, PlanItem } from "./workspace";
 
 type Page = "overview" | "properties" | "creative" | "editor" | "library" | "planner" | "workspace";
@@ -42,14 +43,15 @@ function VideoEditor(props: VideoEditorProps) {
   );
 }
 const pages: { id: Page; label: string; icon: IconName }[] = [
-  { id: "overview", label: "Home", icon: "home" },
+  { id: "editor", label: "Create", icon: "film" },
   { id: "properties", label: "My homes", icon: "folder" },
+  { id: "library", label: "Media", icon: "library" },
+  { id: "workspace", label: "Business", icon: "settings" },
+  { id: "overview", label: "Home", icon: "home" },
   { id: "creative", label: "AI tools", icon: "plus" },
-  { id: "editor", label: "Make a reel", icon: "film" },
-  { id: "library", label: "Photos & videos", icon: "library" },
   { id: "planner", label: "Content planner", icon: "calendar" },
-  { id: "workspace", label: "My business", icon: "settings" },
 ];
+const primaryPages: readonly Page[] = ["editor", "properties", "library", "workspace"];
 const signedOut: SessionSnapshot = {
   status: "signed-out",
   identity: null,
@@ -87,7 +89,7 @@ export default function App({ servicesFactory }: {
   );
   const [page, setPage] = useState<Page>(() => {
     const view=new URL(window.location.href).searchParams.get("view");
-    return pages.some(item=>item.id===view) ? view as Page : "overview";
+    return pages.some(item=>item.id===view) ? view as Page : "editor";
   });
   const initialListing = useRef(new URL(window.location.href).searchParams.get("listing"));
   const [industry, setIndustry] = useState<Industry>("real_estate");
@@ -162,6 +164,7 @@ export default function App({ servicesFactory }: {
       ? storedWorkspace
       : null;
   const listings = workspace ? storedListings : [];
+  const localAssistant=useEditingAssistant(services,workspace,page==="editor");
   const accountName = workspace?.user.name?.trim() || (isConnected ? "Your account" : "Sign in");
   const selected =
     workspace &&
@@ -197,6 +200,21 @@ export default function App({ servicesFactory }: {
   const mediaScope = useRef("");
   mediaScope.current = `${editScope}:${selected?.id ?? ""}`;
   const presenterPending = useRef({scope: "", pending: false, busy: false});
+  // Local files and Creative drafts can both be mounted. Keep their guards
+  // independent so one component cannot clear another component's work.
+  const localCreationState = useRef({scope: "", hasSources: false, blockReason: null as string | null});
+  const savedCreationState = useRef({scope: "", blockReason: null as string | null});
+  const savedBlockChanged = useCallback((blockReason: string | null) => {
+    savedCreationState.current = {scope: editScope, blockReason};
+  }, [editScope]);
+  const localSourcesChanged = useCallback((sources: {file: File; sha256: string}[]) => {
+    const previous = localCreationState.current;
+    localCreationState.current = {scope: editScope, hasSources: sources.length > 0, blockReason: previous.scope === editScope ? previous.blockReason : null};
+  }, [editScope]);
+  const localBlockChanged = useCallback((blockReason: string | null) => {
+    const previous = localCreationState.current;
+    localCreationState.current = {scope: editScope, hasSources: previous.scope === editScope && previous.hasSources, blockReason};
+  }, [editScope]);
   const presenterPendingChanged = useCallback((pending: boolean, saving = false) => {
     presenterPending.current = {scope: editScope, pending, busy: saving};
   }, [editScope]);
@@ -210,10 +228,20 @@ export default function App({ servicesFactory }: {
     return !state.pending || window.confirm("Discard unsaved Creative Studio changes?");
   }
   function setRequestedOrg(orgId: string | undefined) {
-    if (orgId !== workspace?.org.id && !canReplacePresenter()) return;
+    if (orgId !== workspace?.org.id && !canReplaceAccountWork()) return;
     setRequestedSelection(
       orgId ? { orgId, identityVersion: session.identityVersion } : undefined,
     );
+  }
+  function canReplaceAccountWork() {
+    const saved = savedCreationState.current;
+    if (saved.scope === editScope && saved.blockReason) { setNotice(saved.blockReason); return false; }
+    const local = localCreationState.current;
+    if (local.scope === editScope) {
+      if (local.blockReason) { setNotice(`Local video: ${local.blockReason} Return to Local video in Create to finish it.`); return false; }
+      if (local.hasSources && !window.confirm("Switch accounts or workspaces? Your local video draft stays in this browser, but you will need to choose its original files again when you return.")) return false;
+    }
+    return canReplacePresenter();
   }
   function setNotice(message: string) {
     setNoticeScope(editScope);
@@ -605,7 +633,7 @@ export default function App({ servicesFactory }: {
   }
   async function signOut() {
     if (!services) return;
-    if (!canReplacePresenter()) return;
+    if (!canReplaceAccountWork()) return;
     setAuthBusy(true);
     transfer.current?.abort();
     try {
@@ -769,7 +797,14 @@ export default function App({ servicesFactory }: {
   );
   const navigation = pages.map(item=>item.id==="properties"?{...item,label:homeWords(workspace?.org.spaceType??industry).collection}:item);
   const heading = navigation.find((p) => p.id === page)!;
-  const compactLabels: Record<Page,string>={overview:"Home",properties:homeWords(workspace?.org.spaceType??industry).plural,creative:"AI tools",editor:"Reel",library:"Library",planner:"Planner",workspace:"Business"};
+  const compactLabels: Record<Page,string>={overview:"Home",properties:homeWords(workspace?.org.spaceType??industry).plural,creative:"AI tools",editor:"Create",library:"Media",planner:"Planner",workspace:"Business"};
+  const navigationButton = (item: typeof navigation[number]) => <button
+    key={item.id}
+    className={`nav-item ${page === item.id ? "active" : ""}`}
+    aria-label={item.label}
+    aria-current={page === item.id ? "page" : undefined}
+    onClick={() => navigate(item.id)}
+  ><Icon name={item.icon} /><span className="nav-label-full">{item.label}</span><span className="nav-label-short" aria-hidden="true">{compactLabels[item.id]}</span></button>;
   return (
     <div className="studio-shell">
       <aside className="sidebar">
@@ -792,20 +827,13 @@ export default function App({ servicesFactory }: {
             <small>{workspace ? "Connected workspace" : "Local workspace"}</small>
           </div>
         </div>
-        <p className="nav-label">CREATE & GROW</p>
+        <p className="nav-label">YOUR STUDIO</p>
         <nav aria-label="Studio navigation">
-          {navigation.map((item) => (
-            <button
-              key={item.id}
-              className={`nav-item ${page === item.id ? "active" : ""}`}
-              aria-label={item.label}
-              aria-current={page === item.id ? "page" : undefined}
-              onClick={() => navigate(item.id)}
-            >
-              <Icon name={item.icon} />
-              <span className="nav-label-full">{item.label}</span><span className="nav-label-short" aria-hidden="true">{compactLabels[item.id]}</span>
-            </button>
-          ))}
+          {navigation.filter(item => primaryPages.includes(item.id)).map(navigationButton)}
+          <details className="secondary-navigation" open={!primaryPages.includes(page) || undefined}>
+            <summary>More tools</summary>
+            <div className="secondary-navigation-menu">{navigation.filter(item => !primaryPages.includes(item.id)).map(navigationButton)}</div>
+          </details>
         </nav>
         <div className="sidebar-bottom">
           <div className="device-card">
@@ -931,7 +959,7 @@ export default function App({ servicesFactory }: {
               </button>
             </div>
           )}
-          {page !== "overview" && !(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
+          {page !== "overview" && page !== "editor" && !(workspace && (page === "properties" || page === "creative")) && <div className="page-title">
             <div>
               <p className="eyebrow">
                 {industryName(industry).toUpperCase()} / RENDPROP STUDIO
@@ -944,8 +972,6 @@ export default function App({ servicesFactory }: {
                     ? "Everything for a listing, from its first capture to the published tour."
                   : page === "creative"
                     ? "Create photos, narration, scripts, and videos for your listing."
-                  : page === "editor"
-                    ? "Turn your photos and footage into a story worth sharing."
                     : page === "library"
                       ? "The spaces and content from your Rendprop account."
                       : page === "planner"
@@ -954,7 +980,7 @@ export default function App({ servicesFactory }: {
               </p>
             </div>
           </div>}
-          {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
+          {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
           {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>
             <ListingWorkflow entryRequest={entry?.property} createRequest={entry?.create} onOpenFeature={openFeature} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} onChanged={() => setRefresh(v => v + 1)} onSelectListing={selectListing} />
@@ -968,13 +994,17 @@ export default function App({ servicesFactory }: {
               aria-label="Video editing workspace"
             >
               {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
-                <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} />
+                <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing} onSwitchBlockChange={savedBlockChanged} localCreationHasWork={!!draft?.clips.length} renderLocalCreation={(active, observeBlock) => workspaceDraftReady ? <VideoEditor {...localAssistant} key={`${editScope}:${restoreAttempt}`} active={active} initialMode="conversation" conversationStorageKey={`${key}:conversation`} initialDraft={draft} onDraftChange={saveDraft} onSourcesChange={localSourcesChanged} onSwitchBlockChange={reason => {localBlockChanged(reason); observeBlock(reason);}} importRequest={importRequest?.listingId ? undefined : importRequest} /> : <p role="status">Opening your local video…</p>} />
               </Suspense> : workspaceDraftReady ? (
                 <VideoEditor
                   key={`${editScope}:${restoreAttempt}`}
                   active={page === "editor"}
+                  initialMode="conversation"
+                  conversationStorageKey={`${key}:conversation`}
                   initialDraft={draft}
                   onDraftChange={saveDraft}
+                  onSourcesChange={localSourcesChanged}
+                  onSwitchBlockChange={localBlockChanged}
                   importRequest={importRequest}
                 />
               ) : (

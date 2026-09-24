@@ -22,6 +22,9 @@ import { presenterProduction } from "./presenter-production.ts";
 import { handleListingState } from "./listing-state.ts";
 import { handleListingActions } from "./listing-actions.ts";
 import { handleCreative } from "./creative.ts";
+import { handleEditPlan } from "./edit-plan.ts";
+import { editPlanProduction } from "./edit-plan-production.ts";
+import { handlePromptEnhancement } from "./prompt-enhancement.ts";
 import type { StudioContext } from "./context.ts";
 
 // Keep request-local RLS client ownership explicit: no global current-user client.
@@ -79,6 +82,8 @@ export async function handleStudio(req: Request): Promise<Response> {
     assert(!rate.error, 503, "Workspace actions are temporarily unavailable.");
     assert(rate.data === true, 429, "Please wait a moment before refreshing again.");
     if (seg.length === 1 && seg[0] === "documents") return await handleDocuments(req, context);
+    if (seg.length === 1 && seg[0] === "edit-plan") return await handleEditPlan(req, context, editPlanProduction(context));
+    if (seg.length === 1 && seg[0] === "prompt-enhancement") return await handlePromptEnhancement(req, context, editPlanProduction(context, "copy.prompt_enhancement"));
     if (seg.length === 2 && seg[0] === "presenter" && seg[1] === "jobs") {
       const jobs = await presenterJobsRequest(req, presenterProduction(req, context), context.authorizeListing);
       if (jobs) return jobs;

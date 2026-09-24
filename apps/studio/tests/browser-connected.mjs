@@ -18,9 +18,9 @@ const receipt = { status: "running", mutation, artifacts, checks: [], errors: []
   proof: "Separately compiled real App + real Studio services with injected offline Auth/fetch. This is NOT a live Apple sign-in or deployed media proof." };
 let browser, server, page;
 let transformed = false;
-const labels = {"Video editor":"Make a reel","Content library":"Photos & videos",Properties:"My homes",Workspace:"My business",Overview:"Home",Create:"AI tools"};
-const nav = (name) => page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: new RegExp(`^${labels[name]??name}(?:\\s*NEW)?$`) });
-const title = () => page.getByLabel("Title overlay", { exact: true });
+const labels = {"Video editor":"Create","Content library":"Media",Properties:"My homes",Workspace:"Business",Overview:"Home",Create:"AI tools"};
+const nav = (name) => ({click: async () => { const label=labels[name]??name; await page.getByRole("navigation", { name: "Studio navigation" }).getByRole("button", { name: label, exact:true }).click(); }});
+const title = () => page.locator(".rp-editor:visible").getByLabel("Title overlay", { exact: true });
 const check = (name) => receipt.checks.push(name);
 let savedKey;
 try {
@@ -55,11 +55,12 @@ try {
   page = await context.newPage();
   page.on("pageerror", (error) => receipt.errors.push(error.message));
   page.setDefaultTimeout(8000);
-  await page.goto(`${origin}/tests/fixtures/connected.html`, { waitUntil: "networkidle" });
+  await page.goto(`${origin}/tests/fixtures/connected.html?view=editor&listing=55555555-5555-4555-8555-555555555500`, { waitUntil: "networkidle" });
   await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await expect(page.getByRole("button", {name:"Manage Your account",exact:true})).toContainText("Your account");
   check("an Apple account with an empty profile name retains a visible and accessible account control");
   await nav("Video editor").click();
+  await page.locator(".rp-editor:visible").getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(page.getByLabel("Property reel", { exact: true })).not.toHaveValue("");
   const propertyId = await page.getByLabel("Property reel", { exact: true }).inputValue();
   savedKey = `rendprop-studio:v1:11111111-1111-4111-8111-111111111111:33333333-3333-4333-8333-333333333333:edit:${propertyId}`;
@@ -102,6 +103,9 @@ try {
 
   await page.evaluate(() => window.studioFixture.setMode("ok"));
   await page.getByRole("button", { name: "Retry connection", exact: true }).click();
+  await expect(page.getByLabel("Property reel", {exact:true})).toBeVisible();
+  await page.getByLabel("Property reel", {exact:true}).selectOption(propertyId);
+  await page.locator(".rp-editor:visible").getByRole("button", {name:"Pro view",exact:true}).click();
   await expect(title()).toHaveValue("Scoped business edit");
   await expect(page.getByText("1 original file needs reselection.", { exact: true })).toBeVisible();
   check("verified access recovery restores the right draft and honestly requests original-file reselection");
@@ -110,11 +114,13 @@ try {
   await page.getByRole("combobox", { name: "Workspace", exact: true }).selectOption("44444444-4444-4444-8444-444444444444");
   await expect(page.getByText(/^Updated \d/)).toBeVisible();
   await nav("Video editor").click();
+  await page.locator(".rp-editor:visible").getByRole("button",{name:"Pro view",exact:true}).click();
   await expect(title()).not.toHaveValue("Scoped business edit");
   await expect(page.getByRole("button", { name: /Select clip 1:/ })).toHaveCount(0);
   await title().fill("Second organization only");
   await page.evaluate(() => window.studioFixture.switchUser("B"));
   await expect(page.locator(".account-button")).toContainText("Fixture B");
+  await page.locator(".rp-editor:visible").getByRole("button", {name:"Pro view",exact:true}).click();
   await expect(title()).not.toHaveValue("Second organization only");
   await expect(title()).not.toHaveValue("Scoped business edit");
   check("organization and account switches still fence drafts and in-memory files");

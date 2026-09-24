@@ -79,7 +79,9 @@ jobs:
         env:
           STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
           TMPDIR: ${{ runner.temp }}
-        run: node tests/cloud-editor-browser.mjs
+        run: |
+          node tests/cloud-editor-browser.mjs
+          node tests/conversation-browser.mjs
       - name: Retain media export receipts and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -88,6 +90,9 @@ jobs:
           path: |
             ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
             ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
+            ${{ runner.temp }}/rendprop-conversation-*/receipt.json
+            ${{ runner.temp }}/rendprop-conversation-*/*.png
+            ${{ runner.temp }}/rendprop-conversation-*/*.mp4
           retention-days: 7
           if-no-files-found: warn
 
@@ -165,6 +170,7 @@ jobs:
           node tests/listing-finish-browser.mjs
           node tests/listing-kit-browser.mjs
           node tests/browser-connected.mjs
+          node tests/creation-shell-browser.mjs
           node tests/browser-connected-control.mjs
           node tests/auth-browser.mjs
           node tests/presenter-app-browser.mjs
@@ -188,6 +194,8 @@ jobs:
             /tmp/rendprop-listing-kit-*/*.png
             /tmp/rendprop-connected-browser-*/receipt.json
             /tmp/rendprop-connected-browser-*/*.png
+            /tmp/rendprop-creation-shell-*/receipt.json
+            /tmp/rendprop-creation-shell-*/*.png
             /tmp/rendprop-presenter-*/*.json
             /tmp/rendprop-presenter-*/*.png
             /tmp/rendprop-auth-sdk-*/*.json

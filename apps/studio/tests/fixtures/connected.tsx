@@ -15,8 +15,7 @@ let mode = "ok";
 let callbacks: (event: AuthChangeEvent, session: Session | null) => void = () => {};
 let release: (() => void) | undefined;
 const documents = new Map<string, unknown>();
-// Every account/workspace has its own property: the real editor now correctly
-// requires a property before an editable reel can be mounted.
+// Every account/workspace has its own property; noProperties covers local-first creation.
 const listingRows: Record<string, unknown>[] = [A, B].flatMap((actor, actorIndex) => [ORG, OTHER].map((orgId, orgIndex) => ({
   id: `55555555-5555-4555-8555-5555555555${actorIndex}${orgIndex}`,
   org_id: orgId, agent_id: actor, space_type: "real_estate", address: `Isolated property ${actorIndex + 1}-${orgIndex + 1}`,
@@ -26,7 +25,8 @@ const listingRows: Record<string, unknown>[] = [A, B].flatMap((actor, actorIndex
 if (new URLSearchParams(window.location.search).has("secondProperty")) listingRows.push({
   ...listingRows[0], id:"66666666-6666-4666-8666-666666666666", address:"Second property for navigation checks",
 });
-const calls: { path: string; org?: string | null }[] = [];
+if (new URLSearchParams(window.location.search).has("noProperties")) listingRows.length = 0;
+const calls: { path: string; org?: string | null; method: string }[] = [];
 const session = (): Session => ({
   access_token: "isolated-fixture-not-a-token",
   refresh_token: "isolated-fixture-not-a-refresh-token",
@@ -45,7 +45,8 @@ const fetcher: typeof fetch = async (input, options) => {
   const url = new URL(String(input));
   const org = new Headers(options?.headers).get("X-Org-Id") ?? ORG;
   const actor = user;
-  calls.push({ path: url.pathname, org });
+  calls.push({ path: url.pathname, org, method: options?.method ?? "GET" });
+  if ((url.pathname === "/functions/v1/studio/edit-plan" || url.pathname === "/functions/v1/studio/prompt-enhancement") && options?.method !== "POST") return Response.json({available:false,reason:"disabled",supportedOperations:[]});
   if (url.pathname === "/functions/v1/spatial/capability") return Response.json({enabled:false});
   if (url.pathname === "/functions/v1/studio/creative-results") return Response.json({results:[],next_offset:null});
   if (url.pathname === "/functions/v1/studio/presenter/jobs" && options?.method !== "POST") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),quotes:[],jobs:[],runtime:{available:false,code:"enterprise_contract_required",reason:"AI generation is not connected."}});

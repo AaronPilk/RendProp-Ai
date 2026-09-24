@@ -23,6 +23,15 @@ try{
   await context.route("**/*",route=>{const url=new URL(route.request().url());if(url.href===voiceURL)return route.fulfill({status:200,contentType:"audio/wav",body:voiceBytes});if(url.origin===origin||["blob:","data:"].includes(url.protocol))return route.continue();receipt.externalRequests.push(url.href);return route.abort();});
   page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(15000);
   await page.goto(`${origin}/tests/cloud-editor-fixture.html`);
+  async function openTools(){
+    await expect(page.getByRole("region",{name:"Confirm version handoff",exact:true})).toHaveCount(0);
+    for(const label of ["Capture plan & extra editing tools","Saved versions & team review","Team review & saved versions"]){
+      const summary=page.locator("summary").filter({hasText:new RegExp(`^${label}$`)});
+      if(await summary.evaluate(node=>!node.parentElement.open))await summary.click();
+    }
+    await page.getByRole("button",{name:"Pro view",exact:true}).click();
+  }
+  await openTools();
   const capture=page.getByRole("region",{name:"Capture plan",exact:true});
   await expect(capture.getByRole("button",{name:/Listing highlight/})).toHaveAttribute("aria-pressed","true");
   await capture.getByRole("button",{name:"Open shot checklist"}).click();
@@ -81,6 +90,7 @@ try{
   receipt.checks.push("Editing clears approval; old feedback stays tagged; team queue previews the exact saved edit without mutation controls");
   await page.getByRole("button",{name:"Close selected review"}).click();
   await page.reload();
+  await openTools();
   await page.getByRole("button",{name:"Open shot checklist"}).click();
   await expect(page.getByLabel("Set the scene status")).toHaveValue("captured");
   await expect(page.getByLabel("Set the scene notes")).toHaveValue("Use the steady afternoon view");
@@ -114,6 +124,7 @@ try{
   await expect.poll(()=>page.evaluate(()=>window.cloudFixture.pendingCopies())).toBe(1);
   await expect(page.getByRole("region",{name:"Confirm version handoff"})).toContainText("Editing and property switching are paused");
   await page.evaluate(()=>window.cloudFixture.releaseCopies());
+  await openTools();
   await expect(page.getByLabel("Title overlay",{exact:true})).toHaveValue("A revised opening");
   await expect.poll(()=>page.evaluate(key=>window.cloudFixture.snapshot().documents[key]?.revision,editKey)).toBe(beforeCopy.revision+1);
   const afterVersions=await page.evaluate(()=>window.cloudFixture.versions());
@@ -129,6 +140,7 @@ try{
   await expect(page.locator('fieldset[aria-label="Property editing workspace"]')).toHaveJSProperty("disabled",true);
   await expect(page.locator('fieldset[aria-label="Property editing workspace"] textarea').first()).toBeDisabled();
   await page.getByRole("button",{name:"Open latest saved edit",exact:true}).click();
+  await openTools();
   await expect(page.getByLabel("Title overlay",{exact:true})).toHaveValue("A revised opening");
   assert.equal(await page.evaluate(()=>window.cloudFixture.copyCalls()),callsBefore+1);
   }
@@ -144,6 +156,7 @@ try{
   assert.equal((await page.evaluate(()=>window.cloudFixture.snapshot())).documents[editKey].payload.draft.title,"Saved on another device");
   receipt.checks.push("A concurrent target save wins CAS; the copy is rejected and the open private edit stays mounted for recovery");
   await page.evaluate(()=>window.cloudFixture.switchAccount());
+  await openTools();
   await expect(page.getByLabel("Title overlay",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Open review queue",exact:true}).click();
   await page.getByRole("button",{name:"Open review",exact:true}).click();
@@ -152,6 +165,7 @@ try{
   await sharedHistory.getByRole("button",{name:`View version ${version}`,exact:true}).click();
   await sharedHistory.getByRole("button",{name:"Copy into my editable reel",exact:true}).click();
   await page.getByRole("button",{name:"Confirm copy to my edit",exact:true}).click();
+  await openTools();
   await expect(page.getByLabel("Title overlay",{exact:true})).toHaveValue("A revised opening");
   assert.equal((await page.evaluate(()=>window.cloudFixture.actorDocuments()))[editKey].payload.draft.title,"A revised opening");
   assert.equal((await page.evaluate(()=>window.cloudFixture.snapshot())).documents[editKey].payload.draft.title,"Saved on another device");
