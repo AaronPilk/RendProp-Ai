@@ -1,231 +1,167 @@
-# Rendprop — Supabase Edge Functions (the API)
+# Rendprop Supabase Edge Functions
 
-Deno + TypeScript Edge Functions that implement the API contract in
-`docs/BACKEND-ARCHITECTURE.md §2` and `docs/UPLOAD-AND-PUBLISH-CONTRACT.md`.
-Schema source of truth: `services/supabase/migrations/*.sql` (0001 → 0011, replayed
-and asserted by CI — see `tests/`). Cost model: `docs/AI-COST-MODEL.md`.
+Deno/TypeScript APIs shared by the iOS app, Studio and public tour host. Schema
+comes from [migrations](../migrations/), including the legacy numbered migrations
+and later timestamped releases; it does not stop at the original 0011 baseline.
+See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
+[upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
+[CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
-**Non-negotiables baked in:** video bytes go to R2/Stream only (functions return
-presigned PUTs + URLs, never file bytes) · AI keys stay server-side · RLS on
-every owner route (per-request JWT client) · public routes return a published,
-non-sensitive subset via the service-role client · every paid provider call is
-metered against `plan_entitlements` (the same numbers rendprop.com/pricing
-publishes — `tests/invariants.sql` asserts they agree) and capped by
-`MAX_GEN_COST_PER_JOB_CENTS` / the per-org monthly COGS ceiling.
+The latest Studio deployment is recorded in
+[CODEX-STUDIO-LIVE-20260924](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).
+It deployed the conversational Studio stack and four Presenter/prompt-library
+migrations. Guided chat and prompt enhancement are live; optional LLM enhancement
+and Higgsfield Presenter generation remain disabled. That record, not old setup
+instructions or a function's presence in this directory, establishes deployment
+versions and activation state.
 
----
+## Function map
 
-## Layout
+Supabase routes requests to `/functions/v1/<name>` and retains subpaths.
+`_shared/http.ts` provides `pathSegments` to normalize them. This inventory
+describes handler responsibilities; gateway settings are a separate deployment
+contract and must be preserved per function.
 
-```
-functions/
-  _shared/        cors · http (error envelope, RPnnn → HTTP) · supabase · r2 · ratelimit ·
-                  entitlements · ledger · stream · apple · agentcard      (not deployed on its own)
-  listings/       owner  · CRUD (+ DELETE unpublishes the hosted tour)
-  uploads/        owner  · tickets (single/multipart/batch/poster) · part-urls · complete · abort
-  renders/        owner  · publish-app (free) · POST /renders (worker) · status · chapters
-  me/             owner  · user + org + EFFECTIVE plan + entitlement + usage · brand/handle · apple-code · DELETE
-  leads/          public POST (end-card capture) · owner GET/PATCH (inbox)
-  ai-photo/       owner  · Gemini photo edits (industry-aware) + free suggest/improve helpers
-  ai-video/       owner  · fal: drone-glide (Topaz) · declutter (Bria) · aerial (Seedance i2v / Veo t2v) · reel-clip
-  ai-enhance/     server · thin validate + enqueue (202) — worker path only
-  tours/          public · a published tour by slug (for the tour host)
-  portfolio/      public · an org's published tours by handle (/a/:handle)
-  beacon/         public · view/scroll/streamed-minute metering
-  notify/         service · the lifecycle outbox DRAIN (APNs + e-mail). Invoked by cron,
-                  never by the app. Ships inert: no provider secret = rows marked
-                  `skipped` with the missing variable names, never a 500 (0047)
-```
+| Function | Access and responsibility |
+| --- | --- |
+| `listings` | Authenticated workspace listing CRUD, soft deletion and unpublication. |
+| `uploads` | Authorized single/multipart/batch upload tickets, completion and abort; media goes directly to storage. |
+| `renders` | Authorized native publication, worker jobs/status, publish and chapter updates; source visibility checks. |
+| `me` | Current user/workspace/entitlements, brand and notification settings, device tokens, Apple exchange, account deletion and service-only cleanup. |
+| `adopt` | Authenticated anonymous-to-connected workspace recovery with verified source/target authority. |
+| `team` | Workspace members, seat limits, single/bulk invitations, atomic acceptance and management. |
+| `property` | Authenticated property-data lookup/import. |
+| `studio` | Authenticated media, revisioned documents, listing/creative actions, production review, prompt library and gated Presenter/text services. [Details](studio/README.md). |
+| `ai-photo` | Authenticated photo transformations and prompting helpers using configured routing. |
+| `ai-video` | Authenticated drone, declutter/reflection, aerial, reel and output-quality workflows; bound async status recovery. |
+| `ai-copy` | Authenticated scripts, shot plans and agent cutaway assistance. |
+| `ai-voice` | Authenticated voice catalog and narration with timing/alignment. |
+| `ai-chapters` | Authenticated room/chapter assistance. |
+| `coach` | Authenticated Ask Rendprop guidance. [Details](coach/README.md). |
+| `ai-enhance` | Validates and queues worker enhancement requests; acceptance is not proof the worker produced output. |
+| `spatial` | Capture/job lifecycle, gated provider execution and permission-checked scene/artifact access. [Details](spatial/README.md). |
+| `tours` | Published, non-sensitive tour payload by slug, including current source permission checks. |
+| `portfolio` | Published portfolio by handle; filters unavailable/revoked sources. |
+| `leads` | Public protected lead submission; authenticated scoped inbox/status actions. [Details](leads/README.md). |
+| `beacon` | Public tour engagement/metering events. |
+| `events` | Authenticated product-event ingestion. |
+| `admin` | Authenticated administrative operations with server-side admin authorization. |
+| `apple-subscriptions` | StoreKit transaction verification and App Store server notifications, with route-specific authentication. [Details](apple-subscriptions/README.md). |
+| `notify` | Service-only lifecycle outbox delivery and recovery; missing provider configuration can produce skipped delivery. |
+| `presenter-drain` | Service-only Presenter recovery/cleanup; deployed but **unscheduled** in the latest release. |
 
-`_shared/` is underscore-prefixed so `supabase functions deploy` skips it; each
-function imports it with `../_shared/...`. Always deploy from the repo with
-`../deploy-functions.sh` so every function bundles the SAME `_shared` (hand
-deploys once left three functions on private, older copies).
+`_shared/` contains authorization, HTTP/CORS, storage, entitlements, routing,
+providers, ledger, notification and source-visibility helpers. It is bundled into
+functions, not deployed as its own endpoint. Deploy affected imports from the same
+source revision; source-file readback is stronger evidence than an upload log.
 
-### Routing
+## Authorization and data boundaries
 
-Supabase serves each function at `/functions/v1/<name>` and passes sub-paths
-through. `_shared/http.ts#pathSegments` strips the `functions/v1/<name>` prefix so
-handlers see clean segments:
+Owner/workspace routes validate the token and current membership, deletion state
+and role. Per-request user clients enforce RLS; service clients operate only after
+explicit authorization or through restricted transactional RPCs. Client-provided
+organization, listing and object identifiers never grant access. `X-Org-Id` selects
+a workspace only when membership permits it.
 
-| Function | Auth | Paths handled |
-|---|---|---|
-| listings | JWT | `POST /` · `GET /?status=&space_type=` · `PATCH /:id` (validated `status`, `zillow_url`, `sold_at:null`) · `DELETE /:id` (soft + unpublish) |
-| uploads | JWT | `POST /` (`role:"capture"\|"render"`, `kind:"video"\|"photo"`; render+photo = poster) · `POST /batch` (photos) · `POST /:asset_id/part-urls` · `POST /:asset_id/complete` (idempotent) · `POST /:asset_id/abort` |
-| renders | JWT | `POST /publish-app` (`p_source:'app'`, `poster_asset_id?`) · `POST /` (worker job) · `GET /:job_id` · `POST /:job_id/publish` · `PATCH /:render_id/chapters` |
-| me | JWT | `GET /` (carries `notifications`) · `PATCH /brand` (+ `handle`, `org_name`, `space_type`) · `PATCH /notifications` (the six category switches + `muted_until`) · `POST /apple-code` · `POST /devices` (register an APNs token) · `DELETE /` · `POST /sweep-deletions` (service role) |
-| leads | public + JWT | `POST /` (public capture) · `GET /?listing_id=&since=&status=&limit=` · `PATCH /:id {status}` |
-| notify | service role | `POST /` (claim a batch and deliver it) · `POST /sweep` (reclaim stalled / expire stale rows) |
-| ai-photo | JWT | `POST /` (`edit`, `space_type`, `style`, `prompt`; `suggest` / `improve_prompt` are not metered) |
-| ai-video | JWT | `POST /drone` · `POST /declutter` · `POST /aerial` · `POST /reel-clip` · `POST /drift` (the generated clip's quality gate — judges the output frames against the source still on `judge.qc_drift` and answers `publishable`) · `GET /status?status_url=&response_url=` (a completed job carries an additive `drift` block that reads `unchecked` until the gate has run) |
-| ai-enhance | service role / JWT | `POST /` |
-| tours | public | `GET /:slug` (404 for deleted listings; carries `status`, `sold_at`) |
-| portfolio | public | `GET /:handle` |
-| beacon | public | `POST /:slug` (or slug in body) |
+Public reads use a deliberately limited published subset, not arbitrary table
+access. Application-level public access does not imply `verify_jwt=false`: the
+tour host can supply a public legacy JWT to a gateway-verified read handler.
+Newly issued media access also respects tracked Presenter revocation; previously
+issued capabilities/downloads cannot be recalled immediately.
 
-### Error envelope
+Provider, service-role, Apple and storage credentials stay server-side. Uploads
+use direct storage tickets; document/text APIs do not imply permission to upload
+customer media to a generation provider. Estimated ledger entries are not provider
+invoices. Metering, reservations and limits differ by route; do not assume one
+universal hard spend cap covers every AI path. Consult the relevant handler and
+[AI cost model](../../../docs/AI-COST-MODEL.md).
 
-Every non-2xx response is `{ "error": string, "code": string, ...details }`.
-`error` is human copy the app may show verbatim; `code` is what it branches on:
+The shared error shape is `{ "error": string, "code": string, ...details }`.
+Typical codes include `validation`, `unauthorized`, `forbidden`, `not_found`,
+`conflict`, `plan_required`, `quota_exceeded`, `rate_limited`, `upstream` and
+`internal`. RPC `RPnnn:` errors are mapped in `_shared/http.ts`; unknown server
+errors should not expose credentials or internal records.
 
-`validation` · `unauthorized` · `forbidden` · `not_found` · `conflict` ·
-`plan_required` (402: the plan does not include the feature → upgrade prompt) ·
-`quota_exceeded` (this cycle's allowance is used up; carries `feature, used, cap, plan`) ·
-`rate_limited` (burst limit → "try again in a few minutes") · `payload_too_large` ·
-`upstream` (provider / storage / plan-lookup failure → retry) · `internal`.
+## Develop and verify
 
-RPC exceptions raised by the SECURITY DEFINER functions are prefixed `RPnnn:` and
-mapped by `_shared/http.ts#throwRpc`.
-
----
-
-## 1. Prereqs
-
-```bash
-# https://supabase.com/docs/guides/cli
-brew install supabase/tap/supabase
-supabase login
-supabase link --project-ref <your-project-ref>
-
-# Apply the schema (RLS + tables + RPCs): every file in ../migrations, in
-# LC_ALL=C sorted order (0001 … 0005b … 0008b … 0011). On the live project only
-# the NEW files are applied (see ../DEPLOYMENT.md §0); CI replays all of them on
-# a fresh Postgres and runs ../tests/invariants.sql.
-```
-
-## 2. Secrets
-
-`SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` are **injected
-automatically** into every function by the platform — do not set them. Set the
-rest with `../set-secrets.sh` (edit it first). Reference:
-
-| Secret | Used by | Notes |
-|---|---|---|
-| `CLOUDFLARE_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | uploads, renders, tours, me, ai-video | R2 SigV4 presign / HEAD / copy / delete |
-| `R2_BUCKET_UPLOADS` / `_RENDERS` / `_PUBLIC` | uploads, me | default to `rendprop-*` |
-| `R2_PUBLIC_BASE_URL` | renders, tours, portfolio, ai-video | public domain for the renders bucket; if unset, R2 video/poster URLs are `null` and fal cannot fetch assets |
-| `CLOUDFLARE_STREAM_CUSTOMER_CODE` | renders, tours | the `customer-<code>` subdomain for HLS manifests |
-| `CLOUDFLARE_STREAM_TOKEN` (alias `CLOUDFLARE_STREAM_API_TOKEN`, `CLOUDFLARE_API_TOKEN`) | me | Stream deletion on account delete; queued when unset |
-| `TOUR_PUBLIC_BASE_URL` | renders, tours, portfolio, me | base for `…/f/<slug>` and `…/a/<handle>` — **`https://rendprop.com`** (the routed domain) |
-| `MAX_GEN_COST_PER_JOB_CENTS` | ledger, ai-enhance | hard per-job cap (cents), default 2500 |
-| `GEMINI_API_KEY`, `GEMINI_IMAGE_MODEL`, `GEMINI_TEXT_MODEL` | ai-photo | image edits (default `gemini-2.5-flash-image`) and the suggest/improve helpers (default `gemini-2.5-flash`) |
-| `FAL_KEY` | ai-video | Topaz / Bria / Veo / Seedance queue |
-| `JOB_TOKEN_SIGNING_SECRET` | ai-video | HMAC-SHA256 key for the opaque async-job status token (`_shared/providers/jobtoken.ts`, audit item 4) — signs + verifies the org/user-bound, expiring token `GET /ai-video/status` accepts; a dedicated secret, never a vendor key, so rotating it can't also rotate a vendor credential. Unset means every routed job token is rejected as unverifiable (loud failure, not silent unsigned acceptance) |
-| `ANTHROPIC_API_KEY`, `KIE_API_KEY` | pipeline (via ai-enhance / worker) | provider keys — never shipped to the app |
-| `GHL_API_KEY`, `GHL_LOCATION_ID` | leads, me | optional; ONE shared location for every tenant. `leads` upserts and tags each contact `rendprop_org:<id>` (`_shared/ghl.ts`); deletion deletes a contact ONLY when this tenant's tag is the only one present, strips just this tag when another tenant's is also there, and never touches a contact whose tag it cannot confirm |
-| `TURNSTILE_SECRET_KEY` | leads | **required** — `POST /leads` FAILS CLOSED (rejects the submission) when unset, and logs a warning naming this var every time. When set, the end-card form must carry a valid Turnstile token. See `leads/README.md`. |
-| `TURNSTILE_OPTIONAL` | leads | optional escape hatch — set to `"1"` to knowingly accept NO bot protection while `TURNSTILE_SECRET_KEY` is unset (local dev, or a deliberately-unprotected launch). Still logs a warning every time. |
-| `APPLE_TEAM_ID`, `APPLE_CLIENT_ID`, `APPLE_KEY_ID`, `APPLE_PRIVATE_KEY_P8` | me | **all four required** for Sign in with Apple token exchange + revocation (TN3194); otherwise `/me/apple-code` answers `stored:false` |
-
-## 3. Deploy
-
-Public routes must be deployed with `--no-verify-jwt` (no user token; they use
-the service-role client internally and restrict to published data — `leads`
-validates the JWT itself on its owner routes). Owner routes keep JWT
-verification on (the render worker authenticates with the service-role key,
-which the gateway accepts).
+Use the Deno version pinned in [CI](../../../.github/workflows/ci.yml) (2.9.6 at the
+recorded release). From this directory, typecheck a handler and run an isolated
+fixture suite:
 
 ```bash
-cd services/supabase && ./deploy-functions.sh     # all 11, uniform _shared/, temp dir cleaned on exit
+deno check --no-config --no-lock --node-modules-dir=auto studio/index.ts
+deno test --no-config --no-lock --node-modules-dir=auto --deny-net --deny-run --deny-write --allow-read --allow-env studio/
 ```
 
-Equivalent per-function config if you prefer `supabase/config.toml`:
+Initial dependency resolution needs registry access. Network-denied tests use
+fixtures rather than real identity, storage or paid providers. The complete CI
+suite also typechecks every deployed entrypoint and exercises real disposable
+PostgreSQL with the [schema tests](../tests/). Run fixture SQL only on an owned
+throwaway database: some tests deliberately create/delete synthetic identities.
 
-```toml
-[functions.tours]
-verify_jwt = false
-[functions.leads]
-verify_jwt = false
-[functions.beacon]
-verify_jwt = false
-[functions.portfolio]
-verify_jwt = false
-```
+For Supabase local serving, stage the repository's nonstandard `services/supabase`
+layout into a scratch standard `supabase/functions` directory with matching config
+and local-only environment. Discover current CLI options with `supabase --help`
+and `supabase functions serve --help`; do not copy production credentials into
+fixtures or commit scratch staging. [Function configuration](https://supabase.com/docs/guides/functions/function-configuration)
+documents per-function JWT settings.
 
-**Order matters when a migration changes an RPC signature:** apply the migration
-first, then deploy the functions that call it (0011 → `renders`, `uploads`,
-`leads`, `me`, `listings`). The old function versions keep working against the
-new schema (defaults on every new parameter); the new versions do NOT work
-against the old schema.
+## Production release
 
-## 4. Scheduled work
+1. Confirm the source revision, project, live migration history and current
+   per-function JWT settings. Apply only reviewed pending schema changes before
+   dependent handlers; preserve intentional client-deny RLS/grants.
+2. Stage the affected functions and shared imports from that exact revision.
+   For a Presenter/privacy release, include every changed media read handler,
+   not only `studio`.
+3. Deploy with explicit existing gateway settings. Read back bundled source
+   hashes, inspect schema/grants/advisors, and probe authentication boundaries
+   before publishing dependent Studio assets.
+4. Keep capability activation and paid-provider trials separate from deploying
+   their disabled handlers. Record versions and verification limits in a handoff.
 
-`POST /me/sweep-deletions` (service-role bearer) drains deletion tombstones —
-R2 objects, Stream videos, CRM contacts (tag-scoped per tenant — see
-`me/logic.ts`'s `decideGhlTagAction`), Apple revocations, the analytics-forget
-update and the profile row, any of which failed or exceeded the inline caps —
-until each payload is empty. Nothing calls it on its own. Schedule it every 15
-minutes with Supabase cron (`pg_cron` + `pg_net`):
+The 24 September release preserved these settings:
 
-```sql
--- Dashboard → Database → Extensions: enable pg_cron and pg_net, then:
-select cron.schedule(
-  'sweep-deletions', '*/15 * * * *',
-  $$ select net.http_post(
-       url     := 'https://ymgqpbnjpztwjsyvceld.supabase.co/functions/v1/me/sweep-deletions',
-       headers := jsonb_build_object('Authorization', 'Bearer ' || current_setting('app.service_role_key'),
-                                     'Content-Type', 'application/json'),
-       body    := '{}'::jsonb) $$);
--- store the key once (superuser SQL editor): alter database postgres set app.service_role_key = '<service role key>';
-```
+| Function | Version | `verify_jwt` |
+| --- | ---: | --- |
+| `studio` | 10 | true |
+| `renders` | 38 | true |
+| `tours` | 41 | true |
+| `portfolio` | 35 | false |
+| `presenter-drain` | 1 | true, plus internal service-role authorization |
 
-Or, without pg_cron, a Cloudflare Worker cron trigger in `services/edge/tour-host`
-that does the same POST. Either way, `deletion_requests` rows should never sit
-in `pending` for more than one interval.
+The production-review migration ledger was reconciled to `20260924153826` without
+reapplying its SQL. The four subsequent Presenter/prompt-library source versions
+were applied and matched. Older historical ledger differences remain; an
+unreviewed `db push --include-all` is not a safe reconciliation procedure.
 
-## 5. Local dev
+**Legacy helper limitations:** [deploy-functions.sh](../deploy-functions.sh)
+lists 17 functions, omits newer handlers, and would set `tours` JWT verification
+false. The older [Studio backend helper](../../../apps/studio/scripts/deploy-backend.mjs)
+also omits required functions and applies a uniform setting. Neither is an
+up-to-date whole-product release command. Earlier sections of
+[DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work; use the latest
+release record for current production facts.
 
-```bash
-supabase start
-supabase functions serve --env-file services/supabase/functions/.env.local
+## Configuration and scheduled work
 
-# owner call (JWT from a signed-in session):
-curl -sX POST http://localhost:54321/functions/v1/listings \
-  -H "Authorization: Bearer $USER_JWT" -H "Content-Type: application/json" \
-  -d '{"space_type":"real_estate","address":"1247 Hillcrest Dr","beds":4,"baths":3,"sqft":2850,"price_cents":117500000}'
+Supabase supplies its own URL and API credentials to hosted functions. Additional
+server-only configuration includes R2/Stream access, public tour/media origins,
+provider credentials, job-token signing, Apple exchange/revocation, optional CRM,
+and notification delivery. Use the relevant handler/feature documentation as the
+exact variable contract; a listed adapter does not prove the account is enabled
+or correctly priced. Never place these secrets in Studio `VITE_*` variables.
 
-# public tour read:
-curl -s http://localhost:54321/functions/v1/tours/Abc123XyZ0
+Lead capture verifies Turnstile and uses a durable limiter. Missing
+`TURNSTILE_SECRET_KEY` fails closed unless the explicit development/operational
+opt-out is configured; the public site key alone does not establish protection.
+Notifications and team invitation enqueueing are implemented. Delivery depends
+on provider configuration, preferences and an authenticated outbox schedule;
+queued/skipped status is not evidence of delivery.
 
-# typecheck everything the way CI does:
-cd services/supabase/functions && echo '{"nodeModulesDir":"auto"}' > deno.json && for d in */; do [ "$d" = _shared/ ] || deno check "${d}index.ts"; done; rm deno.json
-```
-
----
-
-## Conventions
-
-- `Deno.serve` entrypoints; `createClient` from `npm:@supabase/supabase-js@2`;
-  R2 SigV4 via `aws4fetch` (esm.sh). Secrets via `Deno.env.get`.
-- Owner routes: `getUser(req)` validates the JWT, then a **per-request** client
-  (`userClient(req)`) runs queries under RLS as that user. Writes on locked-down
-  tables go through SECURITY DEFINER RPCs (`create_render_job`, `publish_render`,
-  `fail_render_job`, `set_render_chapters`, `set_lead_status`, `bump_rate`,
-  `bump_metering`, `log_job_cost`) or the service client after an RLS-scoped
-  read proved membership + role.
-- Public routes: `adminClient()` (service role) with **manual** filtering to
-  published/non-sensitive rows only; the agent card never publishes an email
-  (`_shared/agentcard.ts`).
-- Validate → charge → submit: every paid route validates its body and resolves
-  its asset BEFORE touching a quota, and charges immediately before the
-  provider call.
-- Money in integer cents. `render_jobs.cost_cents` == `round(sum(cost_ledger.total_cents))`.
-- Durable rate limits + monthly meters are Postgres rows (`bump_rate`), shared
-  by every instance; the in-memory limiter is only the degraded fallback.
-- Org selection: `orgForUser` picks the caller's highest-privilege membership.
-  Send `X-Org-Id` to act under a specific org (membership is verified; assets
-  must belong to that org).
-
-## Known gaps
-
-- **Lead notifications** (email/push) are not wired — the app's Leads screen
-  (`GET /leads`) is the delivery channel; the copy says "email alerts coming".
-- **Team seats / invitations** do not exist yet (`plan_entitlements.seats` is not
-  enforced anywhere).
-- **ai-enhance** enqueues onto `render_jobs.enhancements._requests`, which the
-  Python worker does not consume yet; the app no longer offers declutter/restage
-  on Review & Submit, so nothing calls it in the live path.
-- **AI photo/video spend** is metered per kind (counters) but not written to
-  `cost_ledger`, so `usage.cost_cents` only reflects worker jobs.
-- The Sign in with Apple provider and the `handle_new_user` trigger are
-  configured in Supabase (Auth → Providers) and `migrations/`, not here.
+Account-deletion/storage sweepers and `notify` need their existing authenticated
+operations schedule. Inspect current schedules before creating duplicates.
+`presenter-drain` is the exception documented above: it remains unscheduled and
+Presenter runtime remains disabled. Studio text routes also remain disabled and
+record estimated attempts only if later explicitly configured; see
+[conversational creation](../../../docs/studio/conversational-creation.md).

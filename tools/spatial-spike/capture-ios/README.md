@@ -14,12 +14,13 @@ These local verification scripts do not sign for distribution or upload anything
 
 ## Rendprop TestFlight integration
 
-`apps/ios/project-spatial-testflight.yml` owns the opted-in build. Its explicit
-shared source list is `Sources/SpatialCaptureViewController.swift`,
-`Sources/CaptureControls.swift`, `Sources/CaptureModel.swift`,
-`Sources/CaptureRecorder.swift`, `Sources/CaptureArchive.swift`, and `Sources/RasterWriter.swift` from this
-directory. Never include `Sources/App.swift`: its standalone `@main AppDelegate`
-would collide with Rendprop's existing app entry point. Do not add this whole
+`apps/ios/project-spatial-testflight.yml` owns the opted-in overlay and inherits
+its explicit shared source list from `apps/ios/project.yml`:
+`Sources/SpatialCaptureViewController.swift`, `Sources/CaptureControls.swift`,
+`Sources/CaptureQuality.swift`, `Sources/CaptureModel.swift`,
+`Sources/CaptureRecorder.swift`, `Sources/CaptureArchive.swift` and
+`Sources/RasterWriter.swift` from this directory. Never include `Sources/App.swift`:
+its standalone `@main AppDelegate` would collide with Rendprop's existing app entry point. Do not add this whole
 directory or its scripts/tests as resources.
 
 `apps/ios/Rendprop/Capture/SpatialCaptureLabView.swift` is entirely fenced by
@@ -66,6 +67,8 @@ these diagnostic files intentionally do not participate in device backups.
 
 ## Build and verification
 
+Run the commands in this section from `tools/spatial-spike/capture-ios/`.
+
 For the standalone diagnostic target, run `bash verify.sh --build`. The script asserts that new
 symbols exist, compiles the portable Swift checks, confirms an intentional failing
 assertion exits nonzero, runs the positive and negative checks, and builds an
@@ -89,10 +92,12 @@ camera access or allocating an AR renderer. No LiDAR-only API is used.
 This is an intended compatibility range, not proof of performance on every older
 iPhone. The currently available simulator runtime is iOS 26.4; minimum-iOS-15
 deployment can be checked by compilation, not by an iOS 15 runtime test here.
-Physical capture, sustained memory/thermal behavior, camera permission handling,
-and export still require a coordinated device run, initially on the owner's
-iPhone 15 Pro through TestFlight. That physical AR validation follows delivery;
-it is not a pre-upload gate. No simulator can supply AR room evidence.
+The owner has supplied a real 400-frame room capture, but it did not produce
+acceptable reconstruction. Every changed capture path still needs the owner's
+physical-device validation for guidance, sustained memory/thermal behavior,
+interruptions and export. Simulator compilation/UI checks do not validate a
+camera, AR tracking or the quality of a recapture. See the
+[current spatial evidence](../README.md#current-evidence--24-september-2026).
 
 For asserting simulator UI checks, supply a **separately owned disposable**
 simulator UUID to `bash verify-ui.sh <UUID>`. The script builds/tests Release in a
@@ -128,11 +133,21 @@ Re-audit this declaration whenever storage or timing code changes.
 
 ## One-room operator run
 
+The current source uses a provisional thumbnail-luma/baseline selector. It has
+no integrated full-rate exposure/rotation smear guard; passing its checks is
+not proof that frames are sharp enough for reconstruction. The September 24
+review found substantial motion blur in the supplied room. Favor bright,
+even daylight, slow turns and short pauses while retaining overlapping views.
+New blur-guard/guidance work on separate branches still needs review and phone
+validation before it can be described as delivered.
+
 1. Clear moving people from the room, turn on adequate light, and keep the phone
    steady while tracking initializes. Tap **Start new room**.
-2. Walk slowly around the room looking at the walls, floor, objects, and corners
-   from overlapping viewpoints. Translation matters; standing in place and
-   spinning does not establish useful baselines. Avoid mirrors and motion blur.
+2. Take small steps around the room, turn slowly and pause at doorways,
+   windows and corners. Include upper corners as well as the floor and objects,
+   retaining overlapping details between viewpoints. Translation matters;
+   standing in place and spinning does not establish useful baselines. Avoid
+   mirrors, moving objects and motion blur.
 3. Aim for roughly 300–350 saved photos with overlapping views, then tap **Stop
    and save** once the room is covered. Revisit doorways and corners from different
    positions and include upper and lower surfaces. A larger photo count alone
@@ -271,8 +286,9 @@ never named as successful frames in a final manifest.
 
 ## Existing RoomPlan integration findings (no shipping changes)
 
-The shipping `RoomScanController` lives at
-`apps/ios/Rendprop/Screens/FlythroughDetailView.swift:9821`. It owns one
+The shipping `RoomScanController` lives in
+`apps/ios/Rendprop/Screens/FlythroughDetailView.swift` (search for the class name;
+line numbers change as the product evolves). It owns one
 `RoomCaptureView`, keeps the AR session alive between rooms with
 `stop(pauseARSession: false)` on iOS 17+, then merges with `StructureBuilder`.
 This harness only runs ARKit; it neither subclasses nor replaces that controller.
@@ -302,10 +318,14 @@ Primary references checked against Apple's docs and the installed iPhoneOS 26.4 
 - [Interactive versus programmatic dismissal](https://developer.apple.com/documentation/swiftui/view/interactivedismissdisabled(_:))
 - [Backup exclusion resource flag](https://developer.apple.com/documentation/foundation/urlresourcevalues/isexcludedfrombackup)
 
-## Still required for Phase A acceptance
+## Still required for reconstruction acceptance
 
-A real room capture and manual transfer; training using the saved poses without
-SfM; PLY and SOG artifacts; and navigation in a physical phone browser. Record
-actual frame count, phone/OS, image bytes, training minutes, GPU model, PLY bytes,
-SOG bytes, and phone browser FPS. Neither this app nor its tests supply or claim
-any of those measurements.
+A better owner-operated capture, a source-bound reconstruction that passes
+fixed held-out and visual review, and the complete phone upload → automatic
+queue → private viewer flow remain required. Existing captures, PLY/SOG files
+and desktop reviews are evidence of experiments, not an accepted feature.
+Record capture device/OS, accepted frames, image bytes, trainer/profile, billed
+cost, artifact hashes and actual phone browser performance for the accepted
+run. The [capture-cap repair audit](../../../docs/audit/SPATIAL-CAPTURE-LIMITS-20260919.md)
+proves bounded completion/preservation and compilation; it does not close these
+quality or physical-device gates.

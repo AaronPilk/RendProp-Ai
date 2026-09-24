@@ -3,9 +3,15 @@
 Turns a listing's walkthrough clip + its data (address, price, beds/baths, features)
 into a cinematic, captioned vertical marketing reel (1080×1920) for agents to post.
 
-Two render paths, same design language (Rendprop purple, glass captions, hero moments):
+These are standalone composition prototypes, not the production Studio renderer.
+For the live chat editor, preview/export, prompt library and review workflow see
+[Studio](../../apps/studio/README.md) and the
+[24 September release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).
+No server queue or production deployment for these prototypes is established here.
 
-## 1) HyperFrames composition — `composition/index.html`  (production path)
+Two render approaches share the Rendprop purple/caption design language:
+
+## 1) HyperFrames composition — `composition/index.html` (prototype)
 An HTML→video composition for **HyperFrames** (HeyGen's open-source engine, Apache-2.0).
 Lint-clean, seek-safe (GSAP paused timeline, hard-kills at clip boundaries).
 Render on any Node 22 + FFmpeg + headless-Chrome host:
@@ -13,7 +19,7 @@ Render on any Node 22 + FFmpeg + headless-Chrome host:
     npx hyperframes render composition        # -> renders/main.mp4
 
 Hosts: a small container (Fly.io/Render/Railway), AWS Lambda (`hyperframes lambda`),
-or HeyGen cloud (`hyperframes cloud`, no local Chrome/ffmpeg). This is the path to
+or HeyGen cloud (`hyperframes cloud`, no local Chrome/ffmpeg). This is a proposed path to
 productize: a render worker takes {listing, agent clip} → mp4 → R2 → surfaced in the app.
 
 Note: headless Chrome needs display libs — it does NOT run in a stock non-root
@@ -40,11 +46,11 @@ to one machine. The brand mark is resolved relative to the repo
 cairosvg if installed, else with ffmpeg's librsvg; if neither is available the reel
 renders without it. Fonts degrade Poppins → DejaVu/Liberation → Pillow's default.
 
-Verified end to end here: 6 caption cards over a 26 s clip → a 24 s, 720-frame
+Recorded sample validation (not a new production test): 6 caption cards over a 26 s clip → a 24 s, 720-frame
 1080×1920 mp4.
 
 ## Sample
-`rendprop-marketing.mp4` (demo estate "1180 Crestline Ridge"). The footage is the app's
+[`sample-rendprop-marketing.mp4`](sample-rendprop-marketing.mp4) (demo estate "1180 Crestline Ridge"). The footage is the app's
 bundled demo reel; real listings use the agent's own walkthrough.
 
 ## Known gap
@@ -55,4 +61,5 @@ the same JSON-in treatment as `gen.py` before it can be a product path.
 ## Productization sketch
 iOS "Marketing Video" screen → pick listing + clip + template → POST to a render
 worker → poll (same pattern as the AI-video job flow) → download/share the mp4.
-Captions are 100% data-driven from the listing, so every agent's reel is auto-built.
+The FFmpeg prototype accepts listing JSON; the proposed automated worker and
+HTML template injection still need implementation.

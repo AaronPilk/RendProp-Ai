@@ -10,7 +10,9 @@ Every fixture and dataset is explicitly **SYNTHETIC — NOT A ROOM**. No phone,
 ARSession, reconstruction, GPU, cloud service, customer data, or benchmark is
 involved. macOS is required because the actual raster writer uses Apple CoreImage
 and ImageIO. Xcode Command Line Tools provide `swiftc`; the Python environment
-needs the training adapter's pinned Pillow dependency.
+needs the [training adapter's pinned Pillow dependency](../training/README.md).
+Run the commands below from `tools/spatial-spike/verification/`. Do not set
+`PYTHONOPTIMIZE` or use `python -O`: the harness requires active Python assertions.
 
 ```sh
 # First prove the harness itself exits nonzero on a known failure:
@@ -33,6 +35,9 @@ generates the valid capture, runs Python validation and preparation, and asserts
 - The 3D world is unchanged, JPEG bytes are unchanged, hashes agree, and no
   invented feature tracks or measured reprojection error appear.
 - An existing output directory is refused without modifying its contents.
+- A separate actual Swift `Float(1).nextUp` homogeneous-row fixture is accepted
+  within the finite float tolerance without rewriting raw pose/calibration/JPEG
+  bytes; its exported camera/model binaries match the canonical dataset.
 
 Artifacts and logs remain in the printed temporary directory. The negative and
 positive captures are separate and never rewritten. To run only the fixture CLI,
@@ -42,3 +47,7 @@ already exists. Directory creation fails atomically if that path already exists.
 Passing this check proves compatibility of serialization, raster writing, and
 dataset preparation. It does not prove ARKit pose accuracy, real-room coverage,
 Gaussian training quality, SOG visual quality, or physical-phone performance.
+
+For current room-quality results and the unresolved physical acceptance gates,
+see the [24 September experiment summary](../README.md#current-evidence--24-september-2026).
+This synthetic compatibility check does not supersede those NO-GO results.

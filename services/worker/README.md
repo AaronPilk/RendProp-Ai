@@ -6,8 +6,11 @@ scrubbable tour**. It's the server-side twin of the on-device
 buttery scrub), plus the things a phone can't do well — Cloudflare Stream
 hosting, AI declutter/restage/hero, and cost metering.
 
-The base render still runs free/instant on-device. This worker is the path for
-Stream-hosted + AI-enhanced tours.
+The base render runs on-device; render time depends on the media and phone.
+This optional worker handles server encodes and enhancement stills/hero clips.
+It does not establish that a production worker fleet is currently running.
+The [Studio editor](../../apps/studio/README.md) also has its own browser exporter;
+it does not submit every chat edit to this queue.
 
 ---
 
@@ -15,7 +18,7 @@ Stream-hosted + AI-enhanced tours.
 
 ```
 poll render_jobs where status in (created, queued) AND the capture asset is an uploaded video in the uploads bucket
-  └─ claim one            → status = processing (lock-free optimistic PATCH)
+  └─ claim one            → status = processing (CAS claim + worker/attempt lease)
      1. download capture   from R2 rendprop-uploads (S3 API)
      2. ffmpeg render      retime · 60fps · ≤1280 · all-intra H.264 · faststart · poster
                                                         → cost_ledger: render
@@ -23,10 +26,11 @@ poll render_jobs where status in (created, queued) AND the capture asset is an u
                            declutter / restage / hero   → cost_ledger: declutter|restage|hero|qc
      4. upload             mp4 + poster (+ enhanced stills) → R2 rendprop-renders
      5. Cloudflare Stream  copy-from-URL (presigned R2 GET) → stream_uid  (optional)
-     6. insert             renders (slug, duration, keys, staged)
-     7. finish             job → ready, progress=1, finished_at
+     6. publish RPC        atomically checks current lease/attempt, writes render,
+                           photos/outcome and job → ready
                                                         → cost_ledger: stream_store
-  └─ any failure          → status = failed + error jsonb
+  └─ explicit failure     ownership-scoped failure/cleanup
+  └─ ambiguous publish    preserve uploaded output and recover durable receipt
 ```
 
 Everything hits the **`public`** Postgres schema on the dedicated RendProp
@@ -62,7 +66,7 @@ Built in `ffmpeg_render.py`. For a handheld (non-drone) clip ≥12s (speed 2.0×
 
 ```
 ffmpeg -y -hide_banner -nostdin -i capture.mov \
-  -vf "setpts=PTS/2.000000,fps=60,scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p" \
+  -vf "setpts=PTS/2.000000,scale=w='min(1280,iw)':h='min(1280,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=60,format=yuv420p" \
   -an \
   -c:v libx264 -preset medium -profile:v high -pix_fmt yuv420p \
   -g 1 -keyint_min 1 -bf 0 \
@@ -96,7 +100,7 @@ encode (mapped into the 0.15–0.55 band).
 
 **HDR:** every source is probed (`ffprobe` colour metadata). PQ (`smpte2084`)
 and HLG (`arib-std-b67`) sources — the iPhone default — get a real tone-map
-(`zscale → linear → hable → bt709`) inserted after the scale step; SDR and
+(`zscale → linear → mobius → bt709` by default) inserted after the scale step; SDR and
 untagged sources are passed through untouched (the chain degrades SDR and
 errors on untagged input). Output is tagged bt709 either way. Needs an ffmpeg
 built with `zscale`/`tonemap` (the Docker image qualifies); on a build without
@@ -177,11 +181,13 @@ is the rolled-up `SUM(total_cents)`.
 - **Infra** (`render`, `stream_store`) — metered by the worker in `infra_costs.py`:
   - `render` = server encode compute, `RENDER_COMPUTE_CENTS_PER_MIN` × output
     minutes. **Estimate** — set it from real Modal/Cloud-Run bills.
-  - `stream_store` = Cloudflare Stream storage, `$0.005/min` × minutes (logged
-    once at publish; recurs monthly). Delivery (`$0.001/min` watched) is metered
-    per-view by the beacon path, not here.
+  - `stream_store` = configured `STREAM_STORE_CENTS_PER_MIN` × minutes
+    (default 0.5 cents/min, recorded once at publication). This is a code estimate,
+    not proof of current vendor pricing, monthly reconciliation or delivery bills.
+    The beacon path is separate.
 
-The pipeline enforces `MAX_GEN_COST_PER_JOB_CENTS` **before every AI call**.
+The pipeline checks estimated spend against `MAX_GEN_COST_PER_JOB_CENTS` before
+paid calls. That estimate-based guard is not a provider invoice guarantee.
 
 ---
 
@@ -207,17 +213,16 @@ python worker.py --job-id <render_jobs.id>
 python worker.py
 ```
 
-To enqueue a test job, insert a `render_jobs` row (status `queued`)
-pointing at a `capture_assets` row (`bucket = 'uploads'`, `uploaded = true`,
-`kind = 'video'`) whose `storage_key` exists in `rendprop-uploads` (the
-`/renders` edge function does this in prod).
+Use the authorized `/renders` workflow for a connected test. Manual job insertion
+belongs only in a disposable fixture database; it does not exercise production
+entitlement, upload and publication checks.
 
 ---
 
 ## Deploy
 
 It's a **long-running poller** by default, but each job is independent and
-idempotent enough to run **triggered/one-shot** (`--once` / `RUN_ONCE=1` /
+supports ownership-checked **triggered/one-shot** execution (`--once` / `RUN_ONCE=1` /
 `--job-id`), so it fits both models.
 
 **Container (generic / Cloud Run / Fly / ECS):**
@@ -225,15 +230,17 @@ idempotent enough to run **triggered/one-shot** (`--once` / `RUN_ONCE=1` /
 docker build -f services/worker/Dockerfile -t rendprop-worker services/
 docker run --rm --env-file services/worker/.env rendprop-worker
 ```
-- **Cloud Run:** deploy as a **Job** for one-shot drains (Cloud Scheduler → run
-  `--once`), or as a **Service** with `--min-instances=1` for the poller. Bump
-  CPU/memory + timeout — all-intra encodes are CPU-heavy.
+- **Cloud Run:** the current container supports a **Job** for one-shot drains
+  (`RUN_ONCE=1`, optionally triggered by Cloud Scheduler). It has no HTTP listener,
+  so a Service needs an additional serving adapter and suitable CPU allocation;
+  `--min-instances=1` alone is insufficient. Size CPU/memory and the job timeout
+  for the all-intra encode workload.
 - **Fly/ECS:** run the poller as one always-on machine; scale replicas to widen
   the queue (the lock-free claim makes multiple workers safe).
 
 **Modal:** wrap `process_specific(job_id)` in a `@app.function(timeout=...)` — set the
 function timeout **above** `FFMPEG_TIMEOUT_S` (default 5400 s) or lower the ffmpeg ceiling
-to match; a platform kill leaves the job stuck in `processing`
+to match; a platform kill requires lease expiry/recovery and confirmed cleanup
 (mount `services/pipeline` + `services/worker`, `apt_install("ffmpeg")`, set
 secrets). Trigger from the `/renders` edge function (webhook → Modal call), or
 run `process_one` on a `@app.schedule`. GPU tier only becomes worth it once
@@ -247,7 +254,10 @@ see TODOs.
 
 ## Tests
 
-Stdlib-only scripts (the repo has no Python test runner installed):
+Run the executable regression scripts directly; do not rely on pytest discovery
+for these custom assertion harnesses. Install the pinned worker requirements;
+media checks require FFmpeg/FFprobe with the necessary codecs and HDR filters.
+Missing media prerequisites are failures, not successful skips.
 
 ```bash
 cd services/worker
@@ -256,8 +266,19 @@ python3 tests/test_job_lease.py     # claim / lease / heartbeat / reclaim / reap
                                     # F-G-13 guards. Uses a fake PostgREST.
 python3 tests/test_hdr_tonemap.py   # synthesises SDR / untagged / PQ / HLG clips,
                                     # runs the REAL encode command, measures the
-                                    # result. Skips if ffmpeg lacks libzimg.
+                                    # result. Fails if required filters are absent.
 ```
+
+The [CI workflow](../../.github/workflows/ci.yml) also runs stale publication,
+reaper snapshot, prerequisite, bounded Stream fallback, lease-probe, specific-job,
+spool, R2 timeout and resource-limit regressions. Database publication/cleanup
+contracts are tested by the disposable PostgreSQL runners. These fixture tests
+are not a paid provider or live production worker test.
+
+Publication requires the transaction contract from
+[0035_worker_publish_transaction.sql](../supabase/migrations/0035_worker_publish_transaction.sql)
+and subsequent migrations. Schema uncertainty fails closed; do not deploy against
+an incomplete migration set or treat a generic network error as missing columns.
 
 ## Cost-ledger policy
 
@@ -283,19 +304,18 @@ the two it has at startup.
 - **GPU stabilization:** `vidstab` two-pass or a Gyroflow-grade pass to match the
   on-device Vision smoothing (skipped server-side today).
 - **HDR curve tuning:** the tone-map is on by default for HDR sources; the
-  `npl=100` + `hable` curve is usable but still compresses in-gamut content —
-  tune against real iPhone HLG clips.
+  `npl=100` + `mobius` default is covered by synthetic measurements above;
+  check representative real iPhone HLG clips before changing it.
 - **Hero clip has no first-class home:** it's uploaded to R2 and logged, but the
   schema has no column for it. Add `renders.hero_key` (or a `media` table) so the
   tour host can play it.
 - **Heartbeat / lease:** *implemented* in the worker (claim stamps
   `lease_expires_at`/`worker_id`/`attempts`, a heartbeat thread renews it, the
   claim query reclaims expired leases, and a reaper fails attempts-exhausted
-  orphans as `poison`). It needs **migration 0015** — see `HANDOFF.md`. Until that
-  lands the worker detects the missing columns, warns at startup, and behaves as
-  before.
+  orphans as `poison`). Migration 0015 introduced the lease fields; later
+  publication migrations are also required. See [the worker lease handoff](../../docs/handoff/audit-fixes/worker-leases.md) for
+  historical context, not a current pending-deployment claim.
 - **4K tier:** `render_jobs.tier` (`premium4k`/`cinematic`) is read but the encode
   is fixed at ≤1280. Branch the long-edge/bitrate on tier when 4K ships.
 - **Stream webhook:** subscribe to Stream's `video.ready` webhook instead of
   `poll_ready` when `STREAM_REQUIRE_READY` matters.
-```

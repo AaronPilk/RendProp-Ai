@@ -1,23 +1,78 @@
 # Spatial tour — Phase A experiment
 
-This is a **private experiment, not a released feature**. It is isolated from
-Rendprop's shipping app, database, AI routes, public tour pages, and billing.
-The branch is `spike/spatial-phase-a-20260910`, initially based on `4e28bb5` of
-`origin/feat/agent-reel`, with brand-only upstream commits through `2c5903f`
-integrated. The owner's Phase A approval is required before any
-Phase B–E product work.
+This directory contains the standalone capture harness, dataset adapter,
+bounded experiment tools and private SOG viewer. The capture sources and adapter
+are also reused by Rendprop's integrated spatial workflow; the directory is no
+longer wholly separate from the product. See the [spatial API](../../services/supabase/functions/spatial/README.md)
+and [automatic worker](../../services/spatial-worker/README.md) for that path.
 
-Start with [HANDOFF.md](HANDOFF.md) for what was actually executed, evidence
-locations, limitations, and the next physical test. The local gate is:
+**As of the 24 September 2026 evidence review, reconstruction is not accepted
+for release.** Seven completed ablations on the owner's 400-frame capture all
+failed visual acceptance. There is no winning production profile. Keep the
+worker and runtime disabled until real output passes; the successful Studio
+release does not enable spatial reconstruction.
+
+The original branch was `spike/spatial-phase-a-20260910`, based on `4e28bb5` with
+brand changes through `2c5903f`. [HANDOFF.md](HANDOFF.md) preserves that early
+experiment's historical record; its unmeasured fields are not the current
+experiment status. The local tooling gate remains:
 
 ```sh
 # From the repository root; use the adapter environment described in training/.
 SPATIAL_PYTHON=/path/to/adapter-venv/bin/python bash tools/spatial-spike/verify-local.sh
 ```
 
-It checks source symbols, 24 Python tests, 7 viewer tests, 36 Swift assertions,
-an unsigned standalone iPhone build, and the Swift-to-Python synthetic contract.
-The viewer's browser behavior and real-phone performance are separate checks.
+It checks source symbols, the current Python and viewer suites (including
+negative controls), portable Swift checks, an unsigned standalone iPhone build,
+and the Swift-to-Python synthetic contract. Use `--no-build` to omit the Xcode
+app build. The [training environment](training/README.md), Node 22+, macOS Swift
+tools and, for a device build, Xcode/XcodeGen must already be available. The
+viewer's browser behavior and real-phone performance are separate checks.
+
+## Current evidence — 24 September 2026
+
+This summary reconciles the owner's `CLAUDE-SPATIAL-REPORT-20260924.md` and
+`CODEX-REVIEW-CLAUDE-SPATIAL-20260924.md` handoffs. Those full reports, original
+capture, room artifacts and billing receipts are retained privately outside
+Git. The review confirmed the seven bills and corrected the seven-run subtotal
+to **$13.01280671**. Gross spend including earlier experiments is
+**$19.98118436 of the $25 ceiling**, with **$5.01881564 remaining** and no
+outstanding holds at that review. These are dated reconciled charges, not a
+fresh provider balance or an advertised per-room price.
+
+| Run | Change from its declared comparison | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Gross USD | Result |
+| --- | --- | ---: | ---: | ---: | ---: | --- |
+| f01 | Baseline, 3,000 steps, pose optimization off | 18.7851 | 0.7957 | 0.5736 | 0.61029876 | NO-GO |
+| p01 | Pose optimization on | 18.7285 | 0.7959 | 0.5748 | 0.62267687 | NO-GO |
+| s01 | 30,000 steps | 20.8456 | 0.8060 | 0.5012 | 2.19026254 | NO-GO |
+| g01 | Hybrid SfM poses and seeds | 19.2525 | 0.7758 | 0.4809 | 2.30056359 | NO-GO |
+| c01 | 1,000,000 Gaussian cap | 16.5350 | 0.7793 | 0.5954 | 2.38583029 | NO-GO |
+| n01 | MCMC noise learning rate 500,000 → 139,873 | 21.2317 | 0.8077 | 0.4824 | 2.39945690 | NO-GO |
+| z01 | World normalization on | 20.8806 | 0.8062 | 0.4932 | 2.50371776 | NO-GO |
+
+All runs use the frozen 400-frame capture with 350 training views and the same
+50 held-out views. The measurements belong to separately reviewed experiment
+branches; changing a runtime row cannot make the integrated 7,000-step,
+1,800-second, pose-optimization-off worker reproduce them. n01 has the highest
+PSNR, but none has legible enough detail and stable geometry to ship.
+
+The next priority is capture quality. Measured motion and exposure support blur
+as a strong contributor: 303/400 frames used 1/60-second exposure; predicted
+central rotational smear exceeded 5 pixels in 221 frames. Independent SfM
+registered 393/400 frames and broadly agreed with ARKit, arguing against gross
+trajectory failure. **Residual pose error and the benefit of training with
+independent SfM remain unresolved**; that registration was not itself trained.
+Numerically close scores do not establish statistical equivalence or causality.
+
+No further paid run on this capture is part of the documentation update. The
+capture-guidance/blur-guard and train-only adapter changes reviewed separately
+are not integrated here. That review identified product source-registration,
+frame selection, invalid-exposure, sparse-motion and fixed-holdout issues.
+Correct and review them before phone delivery or pre-rental quality claims. Any
+future sharp-training subset must preserve the original 50 held-out IDs and
+exclude those views from seed construction. A new owner-operated daylight
+capture with slow turns, pauses, overlapping views and upper-corner coverage is
+the next physical validation; a simulator cannot supply it.
 
 ## The hypothesis we are testing
 
@@ -81,25 +136,27 @@ misreported as two intentionally ignored tests. Evidence:
 
 ## Physical acceptance — not yet established
 
-Before renting a new GPU or using a new provider, obtain the owner's explicit
-approval and a cost ceiling. A real iPhone capture requires someone physically
-walking through an appropriate room. Do not reuse private customer media merely
-because it is present on the computer.
+The owner's total spatial ceiling remains **$25 across all attempts**; it is
+not reset for a new run or branch. Reconcile current spend and any outstanding
+holds before another paid allocation, and obtain approval before increasing that
+ceiling. No automatic paid retry is allowed after an ambiguous provider result.
+A real iPhone capture requires someone physically walking through an appropriate
+room. Do not reuse unrelated private customer media merely because it is present
+on the computer.
 
 Record these values from the actual run, retaining the commands and artifact
 hashes. Leave a value unmeasured instead of copying a number from a blog or a
 synthetic benchmark:
 
-| Required observation | Current evidence |
+| Required observation | Evidence as of 24 September |
 | --- | --- |
-| Real-room accepted frame count and capture device | Not measured |
-| GPU model, VRAM, trainer commit/configuration | No GPU run |
-| Training wall-clock minutes and actual billed cost | Not measured |
-| Trained Gaussian count and PLY bytes/hash | No real-room artifact |
-| SOG bytes/hash and conversion version | No real-room artifact |
-| Actual phone model, OS, browser, canvas resolution | Not measured |
-| Visible, moving real-room browser frame rate | Not measured |
-| Visual quality, failure regions, and navigation evidence | Not observed |
+| Real-room accepted frame count | Owner supplied 400 frames; parsing acceptance is not visual acceptance |
+| GPU and trainer | L4; pinned gsplat v1.5.3, with separate experiment configurations |
+| Training time and cost | Per-run receipts retained privately; gross charges above include setup/CPU/GPU/memory |
+| Trained Gaussian count and PLY bytes/hash | Private artifacts and inventories exist; none passes visual acceptance |
+| SOG conversion and desktop navigation | Private review performed; desktop movement still shows unacceptable defects |
+| Actual physical phone viewer workload/FPS | No accepted real-room phone performance result |
+| End-to-end phone upload → automatic queue → accepted private viewer | Not accepted |
 
 Desktop checks cannot establish phone performance. Render-loop timings are not
 GPU timing or proof that every submitted frame reached the display. Record what
@@ -110,12 +167,16 @@ the viewer measures, including invalidated/background runs and the warmup.
 - Keep test captures and generated artifacts outside version control.
 - Use an owner-approved room; remove or cover personal mail, medication,
   photographs, and other private material before this unredacted experiment.
-- No automatic upload, public hosting, share link, or production R2 destination.
+- The standalone harness and viewer do not automatically upload or publish;
+  the integrated product's explicit scan handoff uses its authenticated upload
+  and private-review path. Do not use the local experiment as a publishing bypass.
 - No inference that a private spike supplies the product's privacy-review,
   region-redaction, or room-exclusion requirements. Those remain public-launch
   gates and are deliberately not bypassed here.
-- No job queue, plan gating, room waypoints, floor-locked product navigation,
-  measurement tool, flythrough chapter binding, or changes to `/t/` and `/u/`.
+- The standalone viewer does not implement the product queue, room waypoints,
+  floor-locked navigation, measurement tools or flythrough chapter binding. The
+  integrated API/viewer are documented separately; measured dimensions and
+  actual region-redaction processing are not supplied by this spike.
 - No deployment, App Store Connect changes, disabled-route enabling, deletion,
   or unapproved GPU/provider spending.
 

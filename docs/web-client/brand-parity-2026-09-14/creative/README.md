@@ -1,5 +1,13 @@
 # Creative and business cards — 14 September 2026
 
+> **Historical evidence: 14 September 2026.** This report preserves the behavior,
+> versions, test counts and open checks observed at that release. For the current
+> Create-first navigation, property edit/chat sync, prompt library and deployment
+> state, read [the 24 September production record](../../../handoff/CODEX-STUDIO-LIVE-20260924.md). Guided prompt
+> enhancement is live; optional LLM enhancement and Presenter generation remain
+> disabled. Older screenshots, TestFlight references and local-only boundaries
+> below are not a current release checklist.
+
 The same native feature names now open the matching property tool directly. AI Photo Studio presents edit modes before photos, uses the native plain-language mode labels, exposes all four staging styles, and offers photo animation. Aerial opens the aerial controls; voiceover, scripts, shot plans, on-camera cutaways, room chapters and Ask Rendprop retain their existing generation and disclosure contracts. Open Reel Studio carries the selected property.
 
 A feature-card request selects its tool once, only for its intended property. It does not start an AI generation or reset an unsaved script, source selection or staging settings. Batch photo previews remain mounted when switching creative tools, and single-photo actions cannot overlap an active batch. Save or download unsaved AI previews before leaving their property.

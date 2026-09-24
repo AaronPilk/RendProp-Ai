@@ -1,5 +1,13 @@
 # Rendprop Studio appearance verification
 
+> **Historical evidence: 14 September 2026.** This report preserves the behavior,
+> versions, test counts and open checks observed at that release. For the current
+> Create-first navigation, property edit/chat sync, prompt library and deployment
+> state, read [the 24 September production record](../../../handoff/CODEX-STUDIO-LIVE-20260924.md). Guided prompt
+> enhancement is live; optional LLM enhancement and Presenter generation remain
+> disabled. Older screenshots, TestFlight references and local-only boundaries
+> below are not a current release checklist.
+
 Studio shares the iPhone's adaptive palette, rounded cards, feature colors and purple hero. The shell, Properties, AI tools, business tools, planner and reel controls use shared CSS tokens. The video canvas keeps a dark viewing surface in both appearances.
 
 | Token | Light | Dark |

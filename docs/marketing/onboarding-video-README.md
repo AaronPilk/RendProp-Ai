@@ -1,4 +1,16 @@
-# Onboarding video — how to make it
+# Onboarding video v1 — historical capture/build guide
+
+This preserves the September 6 cut and its original screen/segment descriptions.
+Use the [v2 guide](onboarding-video-v2/README.md) for the later storyboard. Neither
+video is evidence for the newly deployed [Studio Create workflow](../handoff/CODEX-STUDIO-LIVE-20260924.md).
+Recheck visible UI and claims before publishing a new marketing cut.
+
+The capture bridge is a legacy workstation script: it hardcodes
+`$HOME/Rendprop AI/repo/apps/ios` internally, has a default simulator UUID, can
+uninstall that simulator's app, and continues after failed stages. Running a copy
+from a different checkout does not retarget it. Use the
+[iOS test guide](../../apps/ios/RendpropUITests/README.md) to choose an isolated
+fixture environment; this README refresh did not run a simulator or camera.
 
 A narrated ~2½-minute "How it works" walkthrough of the real app, recorded from
 the iOS simulator, with a voice-over and burned-in captions. Two files come out:
@@ -149,7 +161,7 @@ whole head.
 - The aerial sheet shows its disclosure; the floor plan screen shows the
   upload path (the simulator has no LiDAR, so "Scan one room" does not appear —
   that is expected).
-- The paywall shows real prices ("/month") — if it shows "Plans aren't
+- The historical paywall take shows StoreKit fixture prices ("/month") — if it shows "Plans aren't
   available right now", the StoreKit test session did not start; the STOREKIT
   line in `activities.txt` says which lookup failed.
 - Every segment has a mark: `grep -c TOUR_MARK marks.txt` should print 14 (13 +
@@ -168,8 +180,10 @@ whole head.
 - RoomPlan scanning needs LiDAR; the floor plan screen shows the upload path.
 - The render ("Create my tour") is skipped by default for time; `TOUR_RENDER=1`
   runs it for a look.
-- Nothing is purchased, deleted, AI-edited, generated, recorded or published
-  by the tour, ever.
+- The walkthrough is intended to avoid purchases, paid generation and publication.
+  The bridge still records the simulator screen and uninstalls the simulator app
+  unless `KEEP_APP=1`. Inspect current fixture isolation before running it; this
+  historical description is not a guarantee that arbitrary live credentials are safe.
 
 ## The 6 Sep cut — exactly how it was built
 

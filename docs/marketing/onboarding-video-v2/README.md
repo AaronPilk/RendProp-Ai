@@ -1,4 +1,16 @@
-# Onboarding video v2 — how to make it
+# Onboarding video v2 — recorded mobile storyboard and build guide
+
+This guide describes the mobile marketing storyboard, not the current Studio
+interface or a device-quality test. The [24 September Studio release](../../handoff/CODEX-STUDIO-LIVE-20260924.md)
+adds Create/chat/prompt enhancement and requires a separate demonstration.
+Revalidate feature availability, trial language and visible screens before
+publishing this script as current advertising.
+
+The legacy bridge hardcodes `$HOME/Rendprop AI/repo/apps/ios`, defaults to a
+particular simulator UUID, uninstalls that simulator app unless `KEEP_APP=1`, and
+continues after failures. It is not a portable command for an arbitrary worktree
+or an acceptance test. Follow the [iOS fixture guide](../../../apps/ios/RendpropUITests/README.md)
+before recording with it. Camera/ARKit/LiDAR validation requires a physical phone.
 
 A narrated ~100–105 s ad-grade walkthrough of the real app, recorded from the
 iOS simulator: a cold open, one feature per beat in first-project order, a
@@ -21,7 +33,7 @@ used — only the test's beat order and the script changed — so this file only
 repeats what is different; **`bridge-cmd-onboardingtour.sh` runs exactly as
 it did for v1**, unchanged.
 
-Five pieces, in the order they run:
+Six pieces, in the order they run:
 
 | piece | file | changed for v2? |
 |---|---|---|
@@ -91,13 +103,13 @@ The Mac's own bundled `ffmpeg` (not a Homebrew build) is often missing
 fix is the same proxy step v1 needed:
 
 ```bash
-mkdir -p work && cd work
-cp ~/"Rendprop AI"/_bridge/out/onboardingtour/tour-raw.mp4 .
-cp ~/"Rendprop AI"/_bridge/out/onboardingtour/marks.txt .
-ffmpeg -i tour-raw.mp4 \
+mkdir -p work
+cp ~/"Rendprop AI"/_bridge/out/onboardingtour/tour-raw.mp4 work/
+cp ~/"Rendprop AI"/_bridge/out/onboardingtour/marks.txt work/
+ffmpeg -i work/tour-raw.mp4 \
   -vf "fps=30,scale=1080:2348:flags=bicubic,setsar=1" \
   -c:v libx264 -preset veryfast -crf 21 -pix_fmt yuv420p -an -movflags +faststart \
-  take-30fps.mp4
+  work/take-30fps.mp4
 ```
 
 (Run this wherever ffmpeg actually has the filters — if that isn't the Mac,
@@ -106,11 +118,10 @@ steps there too.)
 
 ## Step 3 — Narrate with ElevenLabs
 
-Put the API key where nothing else reads it (once):
-
-```bash
-umask 077; echo sk_your_real_key > ~/"Rendprop AI"/_bridge/.elevenlabs-key
-```
+Use a protected local file containing only the ElevenLabs API key. The default is
+`~/Rendprop AI/_bridge/.elevenlabs-key`; `--key-file` selects another location.
+Create it with private permissions through a secure editor or secret manager;
+never paste the real value into a shell command, recording or committed file.
 
 Pick a voice — this prints every voice the key can use, id and labels, and
 never prints the key itself:
@@ -131,10 +142,12 @@ python3 tools/video/narrate_elevenlabs.py \
   --voice <voice_id_from_above>
 ```
 
-A partial run (a quota, a dropped connection) resumes for free — existing
+A partial run skips existing local outputs — existing
 `work/narration/NN.mp3` files are left alone; add `--overwrite` to redo
-everything or `--only 07,08` to redo specific beats. `--dry-run` prints the
-plan (voice, model, per-segment status) without calling the API.
+everything or `--overwrite --only 07,08` to redo specific beats. `--dry-run --voice <known_voice_id>` prints the plan without API access. Without
+an explicit voice, the script may query the voice inventory even during a dry run.
+A missing output after a network failure does not prove the preceding call was
+unbilled; regenerating it may incur another charge.
 
 ## Step 4 — Build the full cut
 
@@ -280,8 +293,9 @@ python3 tools/video/build_onboarding.py \
   button sits on screen in beat 03 and is named in the narration, not opened.
 - RoomPlan scanning needs LiDAR; beat 10's floor plan screen shows the upload
   path instead.
-- Nothing is purchased, deleted, AI-edited, generated, recorded, or published
-  by the tour, ever — see `OnboardingTour.swift`'s own file header, "THINGS
-  THIS TEST NEVER DOES."
-- No price is ever spoken or shown; "free for 7 days" (the CTA card) is the
-  one number this video states, and it is true on every plan.
+- The walkthrough is intended to avoid purchases, paid generation and publication.
+  Screen recording and simulator-app uninstall still occur in the bridge. Its
+  header is not proof that arbitrary real-account credentials are isolated.
+- “Free for 7 days” is historical script/CTA wording, not a current entitlement
+  guarantee. Verify the active offering and audience eligibility before reuse;
+  do not derive a customer price or trial promise from this recording guide.

@@ -2,12 +2,19 @@
 
 Apple tells this endpoint when a subscription starts, renews, lapses, is
 refunded or is revoked. It verifies Apple's signature itself, then applies the
-result through `apply_apple_entitlement()` (migration `0019_subscriptions.sql`).
+result through `apply_apple_entitlement()`, introduced by migration
+`0019_subscriptions.sql` and hardened by `0021_launch_hardening.sql`.
+
+This README was reconciled with the committed handler on 24 September 2026.
+It documents deployment and owner-run purchase checks; it is not a fresh
+notification-delivery or App Store Connect receipt. The
+[24 September Studio release](../../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+did not redeploy this function or perform a phone purchase.
 
 | Route | Auth | Answers |
 |---|---|---|
-| `POST /apple-subscriptions/notify` | **none** — Apple's JWS *is* the auth | `200 {ok, duplicate?, applied?, ignored?, pending?}` · `401` bad signature · `400` malformed · `429` flood |
-| `GET /apple-subscriptions/health` | none | `{ok, configured, schema_ready, bundle_id, products[], checked_at}` |
+| `POST /apple-subscriptions/notify` | **none** — Apple's JWS *is* the auth | `200 {ok, duplicate?, applied?, ignored?, pending?}` · `401` bad signature · `400` malformed · `413` body too large · `429` flood · `503` database unavailable |
+| `GET /apple-subscriptions/health` | none | `{ok, configured, schema_ready, bundle_id_from_env, bundle_id, products[], checked_at}` |
 
 The sibling route on the device side is `POST /me/entitlement` (owner JWT), in
 `functions/me/index.ts`. Between them: the app links a purchase to a workspace,
@@ -18,25 +25,38 @@ Apple keeps that link up to date.
 ## 1. Deploy — `--no-verify-jwt` is not optional
 
 Apple has no Supabase JWT. With the gateway's JWT check on, every notification
-is rejected before this code runs, Apple retries for about a day, gives up, and
-subscriptions stop syncing with no error anywhere you would look.
+is rejected before this code runs, so notification-driven entitlement sync cannot
+work. This is an external webhook: signature validation happens in the handler,
+consistent with [Supabase's webhook authentication guidance](https://supabase.com/docs/guides/functions/auth#external-webhooks).
+
+The source uses a nonstandard repository layout. Follow the
+[targeted release staging guidance](../README.md#production-release): prepare a
+reviewed scratch workdir containing standard `supabase/functions` and
+`supabase/config.toml`, including the affected handlers and shared imports from
+the same revision. Run these commands against that staging directory, not
+against `services/supabase` directly:
 
 ```bash
-cd services/supabase
-supabase functions deploy apple-subscriptions --no-verify-jwt
-supabase functions deploy me            # normal — owner JWT
+supabase functions deploy --help
+supabase functions deploy apple-subscriptions --workdir <release-stage> --project-ref <project-ref> --no-verify-jwt
+supabase functions deploy me --workdir <release-stage> --project-ref <project-ref>  # preserve verify_jwt = true
 ```
 
-Or in `supabase/config.toml`:
+The staged `supabase/config.toml` must preserve `me` with `verify_jwt = true`
+and the webhook setting:
 
 ```toml
 [functions.apple-subscriptions]
 verify_jwt = false
 ```
 
-Apply migration `0019_subscriptions.sql` **before** deploying either function —
-both call `apply_apple_entitlement()`, and `me` also selects the three new
-`orgs` columns.
+Ensure the complete schema prerequisites, including `0019_subscriptions.sql`
+and `0021_launch_hardening.sql`, are applied before deploying. The latter
+enforces workspace/environment binding inside the shared RPC, handles product
+crossgrades and adds the account-token field used by `me`. Reconcile the
+existing migration ledger before applying files; do not replay historical
+migrations blindly. `/health` only checks that `apple_subscriptions` is
+readable, not that every RPC, grant or later migration is correct.
 
 ## 2. Secrets
 
@@ -49,7 +69,7 @@ rename never needs a code change.
 | `APPLE_BUNDLE_ID` | `com.rendprop.app` | every transaction and notification must carry this `bundleId`, or it is a 400 |
 
 ```bash
-supabase secrets set APPLE_BUNDLE_ID=com.rendprop.app
+supabase secrets set --project-ref <project-ref> APPLE_BUNDLE_ID=com.rendprop.app
 ```
 
 **No App Store Server API key is needed.** The JWS Apple signs — on the device
@@ -99,9 +119,9 @@ What to expect:
 * `200 {"ok":true}` with `"applied":false, "ignored":"no_entitlement_change"` —
   a `TEST` notification carries no transaction, so nothing is entitled. That is
   success.
-* Press the button twice and the second delivery answers
-  `{"ok":true,"duplicate":true}`: Apple resends with the same
-  `notificationUUID`, and the uuid is the primary key of `apple_notifications`.
+* Re-delivery of the **same signed notification UUID** answers
+  `{"ok":true,"duplicate":true}`. A separately requested test notification may
+  have a new UUID; pressing the request button twice is not a deduplication test.
 * Every delivery is stored. To see it:
 
 ```sql
@@ -120,9 +140,12 @@ range — use it after fixing an outage to backfill.
    one. Use an email that is *not* an existing Apple ID.
 2. On the device: Settings → App Store → **Sandbox Account** → sign in as the
    tester. (Do not sign the main Apple ID out.)
-3. Run the app from Xcode or TestFlight and buy a plan. Sandbox renewals are
-   compressed — a 1-month subscription renews every 5 minutes and auto-renews 6
-   times before it lapses, so a full lifecycle takes about half an hour.
+3. Use a dedicated sandbox tester with the owner's test build. Renewal timing
+   is configurable per account; do not assume a fixed half-hour lifecycle.
+   Apple currently documents a default one-month period of five minutes and
+   up to 12 automatic renewals; see
+   [sandbox account settings](https://developer.apple.com/help/app-store-connect/test-in-app-purchases/manage-sandbox-apple-account-settings/).
+   TestFlight has its own [purchase-testing guidance](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testing-subscriptions-and-in-app-purchases-in-testflight/).
 4. The app calls `POST /me/entitlement` with the JWS StoreKit handed it; Apple
    posts `SUBSCRIBED` here at roughly the same moment. Either order works — see
    *pending notifications* below.
@@ -137,9 +160,10 @@ select id, plan, plan_source, plan_expires_at, apple_product_id
   from orgs where id = '<org uuid>';
 ```
 
-To force the lapse path without waiting: in the sandbox, **Settings → App Store
-→ Sandbox Account → Manage → cancel** the subscription, and Apple sends
-`DID_CHANGE_RENEWAL_STATUS` then `EXPIRED`.
+Cancel auto-renewal through the sandbox account's subscription controls, then
+observe renewal-status change and eventual expiry. Cancelling renewal does not
+immediately end the already-paid period; verify the signed dates and resulting
+notification types instead of expecting an instant lapse.
 
 ### Sandbox cannot touch production
 
@@ -190,9 +214,43 @@ Two things a lapse will **not** do:
 | `401 {"code":"unauthorized"}` in our logs | the signature did not verify. The message names the check (`chain does not end at the pinned Apple root`, `leaf certificate has expired`, `payload signature`, …) |
 | `400 This notification is for a different app` | `APPLE_BUNDLE_ID` does not match the app that sent it |
 | `configured:false` on `/health` | `APPLE_BUNDLE_ID` unset, or migration 0019 not applied (`schema_ready` distinguishes them) |
-| plan does not change but the row is stored | check `apple_notifications.payload->>'verdict'` and the response's `ignored` field: `manual_plan`, `environment_mismatch`, `unmapped_product` and `another_subscription_active` are all deliberate |
-| everything answers `duplicate: true` | Apple is resending a uuid we already stored; the first delivery did the work |
+| plan does not change but the row is stored | inspect `payload->>'verdict'`, subscription dates, `orgs.plan_source`, and other active subscriptions. The handler exposes `environment_mismatch`, `unmapped_product`, `no_entitlement_change`, `no_transaction` or `refused`; it does not forward every RPC reason to the HTTP response. |
+| everything answers `duplicate: true` | the UUID is already stored; inspect its recorded verdict and the recovery limits below before assuming entitlement application succeeded |
 
-Logs carry only the notification type, subtype, uuid and environment. No
-payload, no account token, no credential — by design, and asserted by review
-rather than by hope.
+## 8. Limits, refusal and recovery
+
+The handler limits request bodies to **128 KiB** before JSON buffering and
+`signedPayload` to **64 KiB** of characters. Its durable limiter permits 240
+requests per 60 seconds for a source `cf-connecting-ip`; without that header,
+requests share the `unknown` bucket. Apple JWS verification covers the outer
+notification and any nested transaction/renewal blobs, with the pinned Apple
+root and bundle checks.
+
+A deterministic `RPnnn:` refusal from the RPC is recorded and returns 200 with
+`ignored: "refused"`; repeating the same UUID is then a no-op. Database failure
+returns 503 and attempts to remove the ledger row so a retry can apply it.
+That cleanup is best-effort: if deletion also fails, a later delivery may be
+classified duplicate without applying the entitlement. Investigate stored rows
+and RPC failures instead of treating every duplicate as proof of successful
+plan application.
+
+Logs include notification type, subtype, UUID, environment, verdict, unmapped
+product identifiers and deterministic RPC refusal messages. Raw signed blobs,
+account tokens and credentials must not be logged.
+
+## 9. Local checks
+
+From the repository root:
+
+```bash
+deno test --allow-env --allow-read \
+  services/supabase/functions/apple-subscriptions/notify.test.ts \
+  services/supabase/functions/_shared/applejws.test.ts
+```
+
+This command passed **53 tests** during the 24 September documentation refresh.
+The first run may fetch pinned test imports. `notify.test.ts` checks pure
+notification decisions; `applejws.test.ts` checks signature/parsing behavior.
+Neither proves the deployed database, gateway setting, Apple delivery or a
+real StoreKit purchase. Schema binding and concurrency need the disposable
+Postgres checks described in the broader Supabase test setup.

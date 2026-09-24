@@ -6,6 +6,13 @@ submission measurement. It is **not evidence that a room was captured, trained,
 or tested on a physical phone**. No room, GPU training, phone FPS, or engine winner
 is claimed by the included synthetic fixture.
 
+The integrated product viewer lives in `services/edge/tour-host/src/spatial.ts`
+and is served through the [spatial API's private/public access contract](../../../services/supabase/functions/spatial/README.md).
+The [24 September room experiments](../README.md#current-evidence--24-september-2026)
+produced artifacts and desktop reviews, but all seven runs failed quality
+acceptance. This viewer remains a local inspection/measurement tool, not a
+released automatic reconstruction workflow.
+
 ## Run locally
 
 Node 22+ is required. From this directory:
@@ -38,6 +45,8 @@ has a bounded streaming reader; its HTTP length is not trusted as the actual
 length. After engine decode, **1–500,000 integer splats** are admitted before a
 render entity is created, matching the selected Phase A trainer's Gaussian cap.
 These are local spike policy limits, **not safe-device capacity measurements**.
+The product API/worker output cap is **32 MiB**, so a file accepted by this
+64 MiB local viewer is not automatically admissible as a product artifact.
 ZIP/WebP decoding and texture allocations happen before the engine exposes the
 decoded count. A small malicious SOG can still exhaust decoder/GPU memory; use
 only trusted converted artifacts, not arbitrary public uploads.
@@ -89,8 +98,9 @@ acceptance certificate, proof of visible room pixels, or a reconstruction score.
 The engine load callback currently has no timeout/cancel boundary. A stalled
 decode can leave selection disabled until reload, and a context loss while a
 decode is pending has no generation guard against late completion. Reload after
-either condition; safe asynchronous teardown is still a gate before production
-embedding. A completed measurement remains exportable after input changes and
+either condition; safe asynchronous teardown would be required before embedding
+this standalone loader in production. The existing product viewer is a separate
+implementation. A completed measurement remains exportable after input changes and
 retains its original asset context: check the exported asset, not just the scene
 currently visible. This spike does not implement later Phase D joystick, floor
 lock, collisions, room anchors, public publishing or privacy review/blur.

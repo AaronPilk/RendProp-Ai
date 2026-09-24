@@ -24,6 +24,15 @@ in a comments row, and the original weight disappears there. That is a
 deliberate icon-legibility variant, not a rebrand — the app icon itself is
 unchanged.
 
+## Product usage
+
+The live Studio uses the same mark; its distribution gate checks the asset against
+this source. Product UI colors and components are defined separately in
+[Studio source](../../apps/studio/src) and [iOS source](../../apps/ios/Rendprop).
+The palette below documents the artwork, not an exhaustive UI token specification.
+See [the Studio release](../handoff/CODEX-STUDIO-LIVE-20260924.md) for the latest
+verified web build. Changing an export here does not automatically redeploy it.
+
 ## Palette
 
 | | hex | use |

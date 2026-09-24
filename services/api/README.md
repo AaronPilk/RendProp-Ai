@@ -1,10 +1,21 @@
-# Rendprop API / Backend
+# Historical API design
 
-Modular monolith for v1 (Part 8.1). Postgres primary, Redis cache/queue, R2 object storage.
+This directory contains the original [starter schema](db/schema.sql). It is not
+the production database migration source or a runnable Fastify/FastAPI service.
+Do not apply it to the live database as a schema update.
 
-- `db/schema.sql` — full starter schema (identity, listings, render pipeline, sharing/metering, billing ledger, audit)
-- API surface: Part 8.3 of the Master Build Prompt (`/v1`, Idempotency-Key on all creating/charging POSTs, RFC-7807 errors, HMAC-signed webhooks)
-- Billing: Apple IAP (StoreKit 2 + App Store Server Notifications v2) and Stripe both credit a single server-authoritative `credit_ledger`. Renders debit by duration band × tier. No double-credit: unique constraints on `apple_txn_id` / `stripe_pi`.
-- Metering: the player beacons streamed minutes → `share_views` → monthly `metering` rollup → cap enforcement (notify / Boost / auto-degrade to 720p).
+The implemented backend is in [services/supabase](../supabase):
 
-Stack decision pending: Node (Fastify/Hono) vs Python (FastAPI). Either way — signed upload URLs (tus/R2 multipart), signed playback URLs, org-scoped RBAC on every endpoint.
+- [Edge Functions and route/authentication map](../supabase/functions/README.md)
+- [Ordered schema, RLS and RPC migrations](../supabase/migrations)
+- [Database regression fixtures](../supabase/tests)
+- [Studio API](../supabase/functions/studio/README.md)
+- [Apple subscription handling](../supabase/functions/apple-subscriptions/README.md)
+
+The original Redis queue, generic `/v1` server, shared Stripe/Apple credit-ledger
+proposal and duration-band billing described by the starter design are not a
+description of today's production system. Render jobs, entitlements, provider
+cost records and subscription handlers use the current Supabase contracts.
+
+For production evidence and migration/deployment sequencing, start with the
+[24 September release record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).

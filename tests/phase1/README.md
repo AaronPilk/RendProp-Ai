@@ -3,6 +3,12 @@
 These are asserting tests, not the pre-existing screenshot walk. No production
 Supabase, R2, AI provider, purchase, account deletion or credential is needed.
 
+This folder name records the original audit phase, not the maturity of the whole
+product. For current release evidence see
+[the Studio deployment record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+and [iOS test guide](../../apps/ios/RendpropUITests/README.md). Camera, ARKit/LiDAR,
+interruption and thermal acceptance require the owner's physical phone.
+
 ## Offline production-source concurrency tests
 
 Run `bash tests/phase1/run-unit.sh` from this worktree. This compiles the real
@@ -85,7 +91,8 @@ through insertion/export.
 ## Boundaries
 
 The existing `-uiTesting` screenshot suites are not made safe generally by this
-new mode. Their old Keychain/direct-network issues remain a Phase 3 finding.
+new mode. Their historical Keychain/direct-network findings require checking the current
+[iOS test guide](../../apps/ios/RendpropUITests/README.md) before choosing a suite.
 Do not use those suites with real credentials as substitute verification.
 These tests also do not certify optional Apple adoption, a paid restore, account
 deletion, or all interactions during an unrelated workspace switch.

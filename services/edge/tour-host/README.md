@@ -1,22 +1,36 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
-Serves Rendprop's **public** pages at the edge:
+Serves Rendprop's public marketing, tour and portfolio pages, plus the spatial
+viewer shell and permission-checked artifact proxy. This is separate from the
+[Studio static Worker](../../../apps/studio/README.md). Studio's
+[24 September release](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+updated its website and Supabase read handlers; it does not establish a new
+tour-host deployment version.
+
+Routes implemented in the current source:
 
 | Route | Renders | Source |
 |---|---|---|
 | `GET /f/:slug` | the scroll-scrub **tour player** — branded | `GET ${SUPABASE_FUNCTIONS_URL}/tours/:slug` |
-| `GET /u/:slug` | the **same tour, unbranded** — MLS-safe | the same payload |
+| `GET /u/:slug` | the **same tour, unbranded** — for the MLS field | the same payload |
 | `GET /a/:handle` | an org's **portfolio grid** (cards → `/f/:slug`) | `GET ${SUPABASE_FUNCTIONS_URL}/portfolio/:handle` |
+| `GET /studio` | redirect to `https://studio.rendprop.com/` | Studio has its own Worker |
+| `GET /s/:scene` | spatial viewer shell | `src/spatial.ts` |
+| `GET /s/:scene/manifest`, `GET /s/:scene/model` | permission-checked spatial artifacts | Supabase `spatial` handler; no edge cache |
+| `GET /join/:code` | team invitation landing | native universal-link handoff |
+| `GET /terms`, `GET /privacy`, `GET /healthz` | legal pages and health check | Worker source |
 | `GET /sitemap.xml` | the crawl index — marketing + legal + the demo tour and portfolio | `src/sitemap.ts` (no upstream yet — see TODO 5) |
 
-Each request is server-rendered to a **self-contained HTML page** (no build step, no
-client framework). Customer pages check upstream on every request and return
-`Cache-Control: no-store`; only synthetic demo HTML remains cacheable. The player is a port of the
-proven iOS webview player (`apps/ios/Rendprop/Resources/player/index.html`) — same
+Tour and portfolio requests render HTML without a client framework; Wrangler
+bundles the TypeScript Worker at deployment. The spatial viewer additionally loads
+its dedicated browser module and runtime assets. Customer pages check upstream
+on every request and return `Cache-Control: no-store`; only synthetic demo HTML
+remains cacheable. The player shares the iOS webview design (`apps/ios/Rendprop/Resources/player/index.html`) — same
 rAF-lerp scrub loop, buffer gate, chapter rail, room label, jank watchdog and autoplay
 fallback — adapted to stream its video instead of bundling a demo file.
 
-This is the component from `docs/BACKEND-ARCHITECTURE.md` §1.5 / step 7.
+See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md) and
+[the spatial API](../../supabase/functions/spatial/README.md) for upstream contracts.
 
 ---
 
@@ -36,23 +50,20 @@ Every tour has **two** URLs off the same slug and the same payload:
 | App Store CTA + `ct=` campaign, `?ref=` on outbound links | yes | **no** |
 | Property media, address, details, floor plan, chapters | yes | yes |
 | **AI disclosure block** (`#disclosure`) | yes | **yes** — it is property information |
-| Robots | indexable, self-canonical | `noindex` meta **and** `X-Robots-Tag`, never in the sitemap |
+| Robots | noindex by default; owner opt-in for indexing, self-canonical | `noindex` meta **and** `X-Robots-Tag`, never in the sitemap |
 | View beacon | counted | counted, with `unbranded: true` |
 | Lead events | fired | never |
 | CSP | `frame-ancestors 'self'`, Turnstile allowed | `form-action 'none'`, `frame-ancestors *` (MLS systems iframe it) |
 
-**Use the right one.** MLS unbranded virtual-tour rules ban agent/broker
-identification, "comment or contact forms, ratings … or social media profiles",
-and "advertising of any kind, including links to additional content or external
-sites not related to the specific property". Branding violations are fined (RI
-Statewide MLS: $50 for a first offence, escalating). The unbranded field is
-also the one that syndicates to Zillow/Realtor.com — so `/u/` is what buyers see
-and `/f/` is what the agent sends by email, text, social and open-house QR.
+Use `/u/` for an unbranded tour field and `/f/` for the agent's branded sharing
+link. The renderer removes agent/contact/promotional content from the unbranded
+page; this is not a guarantee that every MLS accepts all submitted property
+content. Check the applicable listing service's rules before distribution.
 
-### How the guarantee is enforced
+### How unbranded output is enforced
 
 1. **One renderer, no fork.** `renderTourPage(tour, …, { unbranded: true })`.
-   A second copy of the page would drift, and the drift is a legal problem.
+   Both variants use the same renderer so fixes do not drift between copies.
 2. **Stripped at the DATA level, not with CSS.** `sanitizeTourForUnbranded()`
    builds a new tour with `agent_card: {}`, a no-op `cta`, no `share_url`, no
    lat/lng, and the contact/booking/social keys deleted from the freeform
@@ -71,7 +82,7 @@ and `/f/` is what the agent sends by email, text, social and open-house QR.
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # the unbranded (MLS-safe) gate
+npm test            # unbranded, routes, upstream, lead form, legal, spatial and bundle checks
 ```
 
 > **Deployment constraint:** the host rules ignore media-delivery URLs (any
@@ -83,16 +94,14 @@ npm test            # the unbranded (MLS-safe) gate
 
 ## How the player gets its video
 
-The tour JSON exposes two sources (both **zero-egress**), and the player's order is
-part of the product:
+The tour JSON exposes two video sources, in this preference order:
 
 - **`scrub_url` — PRIMARY.** The **all-intra R2 mp4** (every frame a keyframe) served
-  over HTTP byte-range. Set directly as `video.src` with `preload="auto"`; because
-  every frame is an I-frame, `currentTime` seeks are **frame-accurate**, which is what
-  makes the scroll-scrub buttery. This is the crown jewel — never trade it away.
+  over HTTP byte-range. Set directly as `video.src` with `preload="auto"`; all-intra encoding gives the browser a keyframe at every frame for responsive
+  seeking. Actual seeking remains subject to browser decoding and buffering.
 - **`hls_url` — FALLBACK ONLY.** Cloudflare Stream HLS (`…/manifest/video.m3u8`).
-  Stream re-encodes with normal GOPs, so seeking **snaps to keyframes** and degrades
-  the scrub. Used only when `scrub_url` is absent (or the mp4 errors before playback
+  Stream re-encodes with normal GOPs; decoding between keyframes can make
+  repeated scrub seeks less responsive. Used only when `scrub_url` is absent (or the mp4 errors before playback
   starts): **native HLS** on Safari/iOS, **hls.js** elsewhere (lazy-loaded from cdnjs,
   pinned `1.5.20` + SRI, big MSE buffers so seeks land inside the buffered range).
 - `video_url` (= `scrub_url ?? hls_url`) is kept for back-compat; if a payload only
@@ -117,11 +126,11 @@ The anon key is injected into the page (it's public by design — RLS enforces a
 
 ```bash
 cd services/edge/tour-host
-npm install
+npm ci
 
 # 1. Point it at your Supabase project (edit wrangler.toml [vars], or use a secret):
 #    SUPABASE_FUNCTIONS_URL = https://<project-ref>.supabase.co/functions/v1
-wrangler secret put SUPABASE_ANON_KEY      # recommended over the plaintext var
+npx wrangler secret put SUPABASE_ANON_KEY      # recommended over the plaintext var
 
 # 2. Ship it
 npm run deploy        # = wrangler deploy
@@ -134,6 +143,7 @@ npm run deploy        # = wrangler deploy
 ```toml
 routes = [
   { pattern = "rendprop.com/*", zone_name = "rendprop.com" },
+  { pattern = "www.rendprop.com/*", zone_name = "rendprop.com" },
 ]
 ```
 
@@ -142,7 +152,8 @@ Requirements:
 - The Worker owns the whole apex. Requests that exactly match a file under `./public` (the marketing
   site, `/assets/*`, `robots.txt`, `llms.txt`) are served by Workers Static Assets
   before the script runs; `/f/*`, `/u/*`, `/a/*`, `/terms`, `/privacy`, `/sitemap.xml`, `/healthz` and every
-  unknown path land in `src/index.ts`, which always answers with a branded page (404/500 included).
+  unknown path land in `src/index.ts`; tour errors preserve the branded or
+  unbranded variant, while spatial data endpoints return their own bounded errors.
   That precedence is why **`public/sitemap.xml` is deleted**: a file there wins over the route, so
   leaving it in place would make `src/sitemap.ts` unreachable. Do not re-add it.
 - `workers_dev = false`: there is no `*.workers.dev` hostname in production (duplicate content +
@@ -151,7 +162,7 @@ Requirements:
 
 ### Crawl policy
 
-`public/robots.txt` opens the marketing site to search engines and AI crawlers, but customer
+[public/robots.txt](public/robots.txt) configures the marketing site for search engines and AI crawlers, but customer
 tour pages (`/f/*`), the MLS-unbranded twin (`/u/*`) and portfolios (`/a/*`) are disallowed for
 the AI-crawler user agents (they carry agents' names and phone numbers); only `/f/estate-demo`
 stays open to them.
@@ -211,7 +222,8 @@ in the emitted script.
 | `npm run check:unbranded` | the MLS-safe `/u/<slug>` page: no sentinel, no branding, no form, no external link, and the required property content + AI disclosure still present. Also asserts the promo/indexing defaults from F-H-17/F-H-19 |
 | `npm run check:routes` | malformed paths (`/f/%`) answer with a branded 404 not a 500, the global error boundary, `/u/` failing unbranded, HSTS, customer revocation despite primed old caches, synthetic demo caching, and ordinary routes |
 | `node scripts/check-upstream.mjs` | actual-handler upstream deadline, decoded-body cap, malformed/absent/unavailable classification, cancellation, generic branded and MLS-neutral failures; synthetic offline inputs only |
-| `npm test` | unbranded, route and upstream gates |
+| `npm test` | unbranded, routes, upstream, lead-form, legal, spatial and bundled-runtime gates |
+| `npm run check:spatial` / `npm run check:bundle` | spatial viewer contracts and the actual bundled decoder/runtime output |
 | `npm run check:assets` | the demo media that is deliberately not in git is present and under the 25 MiB Static Assets cap (run via `npm run predeploy`) |
 
 ### Vars / secrets
@@ -219,10 +231,16 @@ in the emitted script.
 | Name | Where | Notes |
 |---|---|---|
 | `SUPABASE_FUNCTIONS_URL` | `[vars]` | e.g. `https://<ref>.supabase.co/functions/v1` (no trailing slash needed) |
-| `SUPABASE_ANON_KEY` | `[vars]` **or** `wrangler secret put` | public anon/publishable key; used as `apikey`/Bearer for the server read + browser lead/beacon |
+| `SUPABASE_ANON_KEY` | `[vars]` **or** `wrangler secret put` | public legacy anon JWT used as `apikey`/Bearer for server reads and browser lead/beacon; never a service-role key |
+| `TURNSTILE_SITE_KEY` | `[vars]` | public widget key; matching secret is verified by the Supabase `leads` handler |
 | `TOUR_CACHE_TTL` | `[vars]` (optional) | edge cache seconds for synthetic demo tour HTML only; `0` disables new demo writes; default `60`; customer HTML always bypasses caching |
 
-The upstream `tours`/`leads`/`beacon`/`portfolio` functions must be deployed **`--no-verify-jwt`** (they are, per `services/supabase/deploy-functions.sh`) so these anon-key calls pass the gateway.
+Preserve each upstream function's existing gateway setting. The 24 September
+release has `tours` JWT verification **on** and `portfolio` **off**; public tour
+reads pass a legacy anon JWT from the Worker, while handlers restrict results to
+published, visible data. Do not use the older all-functions deploy helper to
+normalize those flags. Verify upstream access with the actual configured key;
+opaque publishable keys are not interchangeable with JWT bearer tokens.
 
 ---
 
@@ -233,8 +251,10 @@ npm run typecheck            # tsc --noEmit
 npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
 ```
 
-`wrangler dev` proxies to your real Supabase functions (set the vars first). Bare `/`,
-`/f`, `/a` redirect to the marketing site; `/healthz` returns `ok`.
+`wrangler dev` uses the configured Supabase functions for non-demo requests; use
+a fixture/test project when developing write-capable flows such as lead capture.
+`/` serves the marketing page, bare `/f`, `/u` and `/a` redirect there, and
+`/healthz` returns `ok`.
 
 ---
 
@@ -262,7 +282,8 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
   budgets, not a provider SLA: freeform metadata/portfolio size is not fully bounded
   upstream, so an over-cap response is refused rather than silently truncated.
   Timers cannot preempt synchronous JSON parsing or rendering; this is not a total
-  Worker CPU/RSS/latency guarantee. Browser lead-form deadlines are separate work.
+  Worker CPU/RSS/latency guarantee. The browser lead form has its own bounded
+  submission deadline and does not automatically retry an uncertain submission.
 - This is not retroactive erasure: browser/intermediary HTML cached before rollout
   can remain until its old freshness period expires, and already-open pages,
   downloads, search-engine copies and previously issued media URLs are not revoked
@@ -270,9 +291,10 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
   access policy need separate validation. No cache purge is required for the Worker's
   own customer cache bypass to work, and none was performed by this patch.
 - `HEAD` is served (headers only); non-`GET`/`HEAD` → `405`.
-- Security headers on every HTML response: `nosniff`, `Referrer-Policy`, and a CSP that
+- Tour/portfolio HTML uses `nosniff`, `Referrer-Policy`, and a CSP that
   allows inline styles/scripts (the player engine), hls.js from cdnjs, `blob:` media/workers
-  (MSE), and `https:` `connect-src` (Supabase/Stream/R2).
+  (MSE), and `https:` `connect-src` (Supabase/Stream/R2). Spatial viewer/data routes
+  use their dedicated stricter headers and permission checks in `src/spatial.ts`.
 
 ---
 
@@ -284,9 +306,11 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
 2. ~~Scrub-over-HLS fidelity~~ — **resolved**: the tours function now returns `scrub_url`
    (all-intra R2 mp4, primary) + `hls_url` (fallback), and the player prefers `scrub_url`,
    attaching HLS only when there is no scrub source or the mp4 errors before start.
-3. **Rate-limit / Turnstile** on `/leads` + `/beacon` is best-effort in the Supabase
-   functions today (noted in their README). Add Cloudflare Turnstile to the lead form and a
-   durable limiter before launch; this Worker is the natural place to verify the Turnstile token.
+3. **Lead protection is implemented.** The form includes the configured Turnstile
+   widget; the Supabase `leads` handler validates the token and applies a durable
+   rate limit. Missing server configuration fails closed unless explicitly opted
+   out. The public site key in Wrangler does not prove the server secret or live
+   delivery works; see [the leads API](../../supabase/functions/leads/README.md).
 4. **`streamed_minutes`** is reported once as `≈ duration` per session (honest "delivery"
    accounting since the clip is downloaded once for scrubbing). Revisit if Stream billing
    should reflect re-buffered bytes.
@@ -298,6 +322,7 @@ npm run dev                  # wrangler dev  → http://localhost:8787/f/<slug>
    `src/sitemap.ts`; `sitemapXml()` already takes it. Until it ships, no tour of a real customer is
    in the sitemap — which is correct, not a gap to paper over: an entry is a *request to index*, and
    only the owner's opt-in may put one there.
-6. **`APPLE_PROVIDER_TOKEN` is empty** (`src/attribution.ts`). Campaign tokens ride on every App
+6. **`APPLE_PROVIDER_TOKEN` is an empty source constant** (`src/attribution.ts`). Campaign tokens ride on every App
    Store link already; `pt` is what files them under this provider in App Store Connect's Campaigns
-   report. One paste, no code change.
+   report. The owner must supply its value before changing the source; this README
+   refresh does not access App Store Connect.

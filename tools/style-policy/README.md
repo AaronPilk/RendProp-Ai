@@ -3,7 +3,13 @@
 This is **planning and experiment bookkeeping**, not a renderer or live feature.
 It never calls providers, changes routes, rewrites motion prompts, or publishes.
 All three original generic styles are draft-only. No accounts or dependencies
-are required beyond an existing Deno installation (verified with 2.7.13).
+are required beyond an existing Deno installation. The current CI pins Deno
+2.9.6; 2.7.13 was the original local verification version.
+
+The live [Studio editor](../../apps/studio/README.md) and
+[prompt library](../../docs/studio/prompt-library.md) are separate implementations.
+Their release does not turn these draft style policies into validated rendering
+presets or establish a real blind-pilot result.
 
 ## Run the complete gate
 

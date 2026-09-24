@@ -1,14 +1,45 @@
 # `tools/asc` — App Store Connect automation
 
-Two things live here:
+Owner-operated release tooling lives here:
 
 1. **`asc.py`** — creates Rendprop's six subscription products and fills in the
    App Store listing, using the App Store Connect REST API.
 2. **`bridge-600-archive-upload.sh`** — archives the iOS app and uploads the
    build to TestFlight.
+3. **`bridge-610-asc-apply.sh`** — runs the launch listing/subscription/review
+   preparation sequence. This changes store state; it is not a documentation check.
 
-Everything runs on your Mac. Python 3.9+ and `openssl`, both of which macOS
-already has. No `pip install`, no third-party libraries.
+The scripts run on a Mac with Python 3.9+ and `openssl` installed; archives also
+need Xcode and XcodeGen. The Python utility uses the standard library only.
+
+## Release target caution
+
+Reviewed against repository source on 24 September 2026. `asc.py` still declares
+`VERSION_STRING = "1.0"` and has **no `--version` option**. It prefers an editable
+1.0 version, then falls back to another editable version; if none exists its
+creation path targets 1.0. `--build` selects a build, not an App Store version.
+The native source currently declares 1.0.3 (31). Reconcile version selection and
+the exact intended build before using any write command for a newer release.
+Do not run the broad apply bridge as routine maintenance of an already shipped app.
+
+The latest committed [phone delivery receipt](../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md)
+records internal TestFlight 1.0.3 (31) on 22 September. The
+[24 September Studio release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+did not touch iOS or App Store Connect. This README refresh performed no store
+reads, uploads, metadata changes or submissions. Historical API observations
+below describe the launch run and do not establish current store state.
+
+Offline inspection that does not load credentials or call Apple:
+
+```bash
+python3 tools/asc/asc.py --help
+python3 tools/asc/asc.py review --help
+python3 -m unittest discover -s tools/asc -t tools/asc -v
+```
+
+`plan`, `--dry-run`, `status` and `app` still make authenticated reads; they are
+not offline commands. The archive bridge also reads its key configuration even
+with `--no-upload`.
 
 ---
 
@@ -56,7 +87,7 @@ Connect's **New App** form, then exits non-zero. Fill the form, then run it agai
 
 ---
 
-## The normal run
+## Launch preparation sequence (owner-run)
 
 ```bash
 bash tools/asc/bridge-610-asc-apply.sh
@@ -71,7 +102,7 @@ That runs, in order, stopping at the first failure:
 | 3 | `asc.py metadata apply` | App name, subtitle, categories, age rating, privacy policy URL, content rights (no third-party content), the app's own price (Free, base territory USA), US-only app availability, then the version's description, keywords, promotional text, support and marketing URLs. "What's New" is skipped until the app has a released version. |
 | 4 | `asc.py screenshots apply [--dir …] [--replace]` | Uploads the 6.9-inch set in filename order — `docs/appstore/screenshots/6.9-framed/*.png` (the composed set) when that directory has PNGs, else the raw `docs/appstore/screenshots/6.9/*.png`. `bash tools/asc/bridge-610-asc-apply.sh --replace-screenshots` passes `--replace`, which deletes every screenshot already in the set first — needed once after a re-frame, because a set holds at most 10 and the old images are still in it. |
 | 5 | `asc.py review apply --skip-product com.rendprop.app.team.annual` | App Review contact + notes, and the paywall screenshot on every subscription that is sold. |
-| 5b | `asc.py review stage --skip-product com.rendprop.app.team.annual` | Apple's "Add for Review" by API: one draft review submission with version 1.0, the subscription group and the five sold subscriptions as items. Nothing is submitted. Needs App Privacy published and every subscription priced in all territories (which `subscriptions apply` now does). |
+| 5b | `asc.py review stage --skip-product com.rendprop.app.team.annual` | Apple's "Add for Review" by API: one draft review submission with the selected editable version, the subscription group and the five sold subscriptions as items. Nothing is submitted. Needs App Privacy published and every subscription priced in all territories (which `subscriptions apply` now does). |
 | 6 | `asc.py status --skip-product com.rendprop.app.team.annual` | One page saying where everything stands and what is still missing. Team Yearly is deliberately withdrawn (see below), so it is shown but not counted. |
 
 `build attach` is not in the bridge: a build only exists after
@@ -83,10 +114,11 @@ To see what *would* happen without changing anything:
 bash tools/asc/bridge-610-asc-apply.sh --dry-run
 ```
 
-**Every command is idempotent.** Each one reads the current state first and only
-creates what is missing, so running the bridge twice is safe — the second run
-prints "already correct, nothing to do". If a run dies halfway through (network,
-rate limit, a typo in a metadata file), just fix the problem and run it again.
+Most reconciliation steps read existing state and avoid duplicate records.
+That is not permission to rerun the whole bridge blindly: `--replace` deletes
+the selected screenshot set, metadata can alter territories/prices, and review
+commands can change submission state. Inspect the plan and current release
+target before resuming a partial run.
 
 ### Individual commands
 
@@ -98,12 +130,14 @@ python3 tools/asc/asc.py screenshots apply
 python3 tools/asc/asc.py screenshots apply --dir docs/appstore/screenshots/6.9-framed --replace
                                                   # the composed set; --replace rebuilds the set
 python3 tools/asc/asc.py review apply
-python3 tools/asc/asc.py review submit            # send subscriptions to review
-python3 tools/asc/asc.py build attach             # newest VALID build -> version 1.0
+python3 tools/asc/asc.py review stage             # prepare the draft; does not submit
+python3 tools/asc/asc.py review submit            # legacy per-product subscription submission
+python3 tools/asc/asc.py review send --build 31 --dry-run  # inspect the draft submission only
+python3 tools/asc/asc.py build attach             # newest VALID build -> selected editable version
 python3 tools/asc/asc.py build attach --build 2   # a specific build number (or version)
 python3 tools/asc/asc.py status
 python3 tools/asc/asc.py status --skip-product com.rendprop.app.team.annual
-python3 tools/asc/asc.py status --json            # machine-readable
+python3 tools/asc/asc.py --json status            # machine-readable
 
 python3 tools/asc/asc.py subscriptions unprice com.rendprop.app.team.annual
 ```
@@ -131,15 +165,15 @@ stays and `<productId> is skipped but ON SALE in <territories> at USD <amount>`
 is listed as missing — a withdrawn product that is on sale at the wrong price is
 exactly what the banner exists for.
 
-This exists because `com.rendprop.app.team.annual` (USD 2490.00) has no price
-point — see **Apple's price ceiling** below. Until Apple grants higher price
+This exclusion comes from the 5 September price-point mismatch for
+`com.rendprop.app.team.annual` (USD 2490.00) — see the historical price finding below. Until Apple grants higher price
 points, that product should be excluded from every step rather than shipped at
 the wrong price. An unknown product id is an error, not a silent no-op.
 
 ### `build attach`
 
-Links a build to the editable 1.0 version, which is otherwise a click in App
-Store Connect. It lists the app's builds (newest first) and picks the newest one
+Links a build to the version selected by the legacy lookup described above,
+which is otherwise a click in App Store Connect. It lists the app's builds (newest first) and picks the newest one
 whose `processingState` is `VALID`, or the one named with `--build` (a build
 number such as `2`, or a version such as `1.0`). It refuses, with exit 1, if
 the newest build is still `PROCESSING` — wait for Apple to finish processing
@@ -176,15 +210,17 @@ Gets a wrongly priced product off sale. It tries, in order:
 
 It exits non-zero whenever a human still has something to do.
 
-`review submit` is deliberately separate: it is never run by `review apply` or by
-the bridge, because deciding to submit is the owner's call. It submits only
-products in state `READY_TO_SUBMIT`, skips anything still `MISSING_METADATA` with
+`review submit` is the separate legacy per-product subscription submission;
+it is never run by `review apply` or the bridge. `review send` submits the
+staged draft review (including the app version) and requires `--yes` to write.
+It can also require a specific attached build with `--build`. Neither submission
+command belongs in a routine metadata refresh. The legacy `review submit`
+path submits only products in state `READY_TO_SUBMIT`, skips anything still `MISSING_METADATA` with
 an explanation, leaves already-submitted products alone, and exits non-zero if
 anything was blocked.
 
-`plan` is the same as `apply --dry-run`. Add `--quiet` to stop the HTTP request
-log. Add `--key-dir <path>` to use a key somewhere other than the default. Add
-`--debug` to print the exact JSON body of any request that fails — useful when
+`plan` is the same as `apply --dry-run`. Put global options **before the subcommand**: `--quiet` stops the HTTP request
+log; `--key-dir <path>` selects a different key directory; `--debug` prints the exact JSON body of any request that fails — useful when
 App Store Connect returns one of its vaguer validation errors. `--debug` prints
 the JSON:API document only; headers, and therefore the bearer token, are never
 included.
@@ -203,14 +239,14 @@ missing"), `2` bad arguments.
 | `docs/appstore/metadata/en-US/description.txt` | description (≤4000) |
 | `docs/appstore/metadata/en-US/keywords.txt` | keywords (**≤100 bytes**, not characters) |
 | `docs/appstore/metadata/en-US/promotional_text.txt` | promotional text (≤170) |
-| `docs/appstore/metadata/en-US/release_notes.txt` | What's New (≤4000) — **unused until version 1.1**, see below |
+| `docs/appstore/metadata/en-US/release_notes.txt` | What's New (≤4000) — **omitted until a prior release exists**, see below |
 | `docs/appstore/metadata/en-US/support_url.txt` | support URL |
 | `docs/appstore/metadata/en-US/marketing_url.txt` | marketing URL (optional) |
 | `docs/appstore/metadata/en-US/privacy_url.txt` | privacy policy URL (optional) |
 | `docs/appstore/metadata/en-US/copyright.txt` | copyright line (optional) |
 | `docs/appstore/screenshots/6.9-framed/*.png` | the composed screenshots (`tools/screenshots/compose.py` from `docs/appstore/screenshots/plan.json`), uploaded in filename order; `--dir` picks another directory, `docs/appstore/screenshots/6.9/` is the raw fallback |
 | `docs/appstore/iap-review/paywall.png` | the review screenshot on each subscription |
-| `docs/appstore/review-notes.md` | App Review notes (≤4000) |
+| `docs/appstore/metadata/en-US/review_notes.txt` | Uploaded App Review notes (≤4000); skipped if absent. The separate Markdown review guide is not read by this script. |
 
 > **"What's New" is not written on a first release.** App Store Connect rejects
 > `whatsNew` on an app's first version with 409 `STATE_ERROR`, "Attribute
@@ -218,7 +254,7 @@ missing"), `2` bad arguments.
 > describe. `asc.py` checks whether any version has actually shipped and omits the
 > field until one has; if Apple rejects it anyway, the request is retried once
 > without it so the rest of the listing still lands. `release_notes.txt` stays in
-> the repo and starts being used at version 1.1.
+> the repo and is used when a prior released version exists, rather than at a hard-coded 1.1 threshold.
 
 Length limits are checked **before** anything is sent, and a file that is too
 long stops the run with a message naming the file and the overage. Screenshots
@@ -235,9 +271,11 @@ expects a support page. `asc.py` refuses to run with the bare domain in that fil
 
 ## Apple's price ceiling — read this before pricing an annual tier
 
-Apple offers **800 price points per currency**, and its USD points for a
-**yearly** subscription stop at **USD 1000.00**. `com.rendprop.app.team.annual`
-is meant to sell at USD 2490.00, so **no price point for it exists**.
+The 5 September 2026 account-specific launch run returned a yearly USD price
+ladder ending at **$1,000**, below the configured **$2,490** Team Yearly target.
+That historical observation is why the repository still excludes
+`com.rendprop.app.team.annual`; it is not a fresh statement about every Apple
+account's available price points.
 
 On the live run of 2026-09-05 the tool picked the nearest point — USD 1000.00 —
 and created it. That product became genuinely sellable at 40 % of its intended
@@ -254,8 +292,7 @@ price. It will not happen again:
 
 ### Requesting higher price points
 
-Every app gets 800 price points by default. The Account Holder can request
-**100 additional higher price points, up to USD 10,000**:
+The owner can inspect Apple's current higher-price-point request process:
 
 <https://developer.apple.com/contact/request/app-store-higher-price-points/>
 
@@ -280,7 +317,7 @@ python3 tools/asc/asc.py review submit          --skip-product com.rendprop.app.
 python3 tools/asc/asc.py status                 --skip-product com.rendprop.app.team.annual
 ```
 
-If the price already exists (it does, from the 2026-09-05 run):
+For the historical mispricing cleanup, the command was:
 
 ```bash
 python3 tools/asc/asc.py subscriptions unprice com.rendprop.app.team.annual
@@ -290,7 +327,8 @@ On the live run the price could not be deleted (`DELETE /v1/subscriptionPrices/�
 returned 409 `STATE_ERROR`), so `unprice` withdrew the product from every
 territory instead (`POST /v1/subscriptionAvailabilities` with an empty list,
 201). The product still carries the USD 1000.00 price but is available nowhere,
-so it cannot be sold. That is the state `status --skip-product` reports calmly.
+so that launch run recorded it as unavailable for sale. A new authenticated
+read is required to establish whether that remains the current store state.
 
 ---
 
@@ -313,8 +351,9 @@ for it.
 
 `--no-upload` archives without uploading.
 
-Processing takes 5–30 minutes after upload. Check with `asc.py status`; once the
-build shows `VALID`, attach it to the 1.0 version:
+Upload completion does not prove processing or tester-group availability. The
+bridge prints an estimated 5–30-minute processing window. For an owner-run
+release, verify the processed build and intended version before attachment:
 
 ```bash
 python3 tools/asc/asc.py build attach
@@ -332,8 +371,9 @@ python3 tools/asc/asc.py build attach
 
 ## What the API can and cannot do
 
-Verified against Apple's own OpenAPI specification for the App Store Connect API
-(v4.4.1), which you can download and grep yourself:
+The launch implementation was checked against Apple's App Store Connect
+OpenAPI v4.4.1. The list below describes this tool and recorded launch
+observations; it is not an exhaustive current API capability matrix. Apple's specification is available at:
 <https://developer.apple.com/sample-code/app-store-connect/app-store-connect-openapi-specification.zip>
 
 ### It can
@@ -375,7 +415,7 @@ Verified against Apple's own OpenAPI specification for the App Store Connect API
 * Create the 1.0 version, write every listing field, set categories and the age
   rating, upload screenshots, and set App Review details.
 
-### It cannot — these stay manual
+### Manual responsibilities and tool limits
 
 | Thing | Why | Where you do it |
 |---|---|---|
@@ -383,11 +423,11 @@ Verified against Apple's own OpenAPI specification for the App Store Connect API
 | **Paid Applications agreement, banking, tax** | Nothing in the API touches agreements or payment details; only `GET /v1/financeReports` exists, and that just reads payout reports. | Business → Agreements, Tax, and Banking |
 | **Privacy nutrition labels** | The spec contains no data-usage or privacy-label endpoints at all. | App Privacy → Get Started (see `docs/appstore/privacy-labels.md`) |
 | **Create sandbox testers** | `/v2/sandboxTesters` is GET-only. You can list, edit and clear purchase history, but not create. | Users and Access → Sandbox → Testers |
-| **Set the app's price to Free** | Technically possible via `POST /v1/appPriceSchedules`, but it needs a base territory and per-territory `appPrices`, and it is one click in the UI. Not automated here on purpose. | Pricing and Availability → Price Schedule |
+| **Inspect a price change before applying it** | `metadata apply` now calls `ensure_app_price_free()` and can create a free app price schedule. This is automated, so do not treat metadata apply as text-only. | Read the metadata plan before any owner-run apply. |
 | **Narrow an existing subscription availability** | `subscriptionAvailabilities` has POST and GET but no PATCH or DELETE. The tool re-POSTs in case that upserts; if Apple refuses it prints `FIX THIS BY HAND` and carries on. | Monetization → Subscriptions → the product → Availability |
-| **Submit the app version for review** | Deliberately not automated (subscriptions can be submitted with `review submit`). | The version page → Add for Review |
-| **Write "What's New" on a first version** | `PATCH /v1/appStoreVersionLocalizations/{id}` returns 409 `STATE_ERROR`, "Attribute 'whatsNew' cannot be edited at this time". There is nothing to describe until there is a previous release. `asc.py` omits it until a version has actually shipped. | Nothing to do — `release_notes.txt` is used from version 1.1 onward |
-| **Price above Apple's ceiling** | Yearly USD price points stop at USD 1000.00, so USD 2490.00 cannot be set at all. | Request higher points (link above), then re-run `subscriptions apply` |
+| **Automatically decide to submit the app** | `review stage` prepares a draft; `review send --yes` can submit it. Neither should be run without an explicit owner release decision. | Reconcile the draft, target version and attached build before submission. |
+| **Write "What's New" on a first version** | `PATCH /v1/appStoreVersionLocalizations/{id}` returns 409 `STATE_ERROR`, "Attribute 'whatsNew' cannot be edited at this time". There is nothing to describe until there is a previous release. `asc.py` omits it until a version has actually shipped. | Nothing to do — `release_notes.txt` is used after a prior version has shipped |
+| **Invent an unavailable price point** | The historical account ladder did not include the Team Yearly target; the tool refuses substitutes more than 2% away. | Verify account-specific available points before changing the excluded-product list. |
 
 The full list, with the remaining manual steps in order, is in
 [`docs/appstore/ASC-API-PLAN.md`](../../docs/appstore/ASC-API-PLAN.md).
@@ -400,8 +440,9 @@ The full list, with the remaining manual steps in order, is in
 python3 -m unittest discover -s tools/asc -t tools/asc -v
 ```
 
-178 tests, no network, no credentials needed. Every live failure listed above is
-reproduced by the fake API in `test_asc.py` and then proved fixed. They cover:
+The documentation refresh ran **208 tests successfully** on 24 September 2026,
+with no network or credentials. `test_asc.py` uses fake API state and temporary
+keys; it verifies local tooling behavior, not live App Store configuration. They cover:
 
 * **JWT** — header and payload exactly as Apple specifies, the 20-minute lifetime
   ceiling, and a real signature check: a throwaway P-256 key is generated with
@@ -412,8 +453,8 @@ reproduced by the fake API in `test_asc.py` and then proved fixed. They cover:
   short integers, and malformed input.
 * **Price points** — exact match, nearest-with-a-loud-warning, tie-breaking, and
   that all six Rendprop prices resolve exactly against a normal ladder.
-* **The price guard** — against a ladder that stops at USD 1000.00 (Apple's real
-  yearly ceiling) the 2490.00 product is **not** priced, the other five still
+* **The price guard** — against a ladder that stops at USD 1000.00 (the
+  historical account fixture) the 2490.00 product is **not** priced, the other five still
   are, the run still succeeds, and the refusal names both amounts. A substitute
   inside the 2 % tolerance is still used.
 * **`unprice`** — the DELETE path, the empty-`availableTerritories` fallback when
@@ -476,8 +517,10 @@ invalidates every token).
 
 **HTTP 403** — the API key's role is too low. It needs **App Manager**.
 
-**HTTP 429** — the hourly rate limit. Wait and re-run; nothing is lost because
-every step is idempotent. `asc.py` reports the `X-Rate-Limit` header it saw.
+**HTTP 429** — Apple rate-limited the request. Inspect the reported limit and
+current state before retrying the affected command. Reconciliation avoids many
+duplicate writes, but destructive screenshot replacement and uncertain submissions
+need separate review. `asc.py` reports the `X-Rate-Limit` header it saw.
 
 **A "PRICE POINT WARNING" block** — Apple did not offer the exact USD amount for
 that product. If the nearest point is within **2 %** of the target it is used and

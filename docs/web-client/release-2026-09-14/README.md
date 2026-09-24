@@ -1,5 +1,13 @@
 # Studio account connection release — September 14, 2026
 
+> **Historical evidence: 14 September 2026.** This report preserves the behavior,
+> versions, test counts and open checks observed at that release. For the current
+> Create-first navigation, property edit/chat sync, prompt library and deployment
+> state, read [the 24 September production record](../../handoff/CODEX-STUDIO-LIVE-20260924.md). Guided prompt
+> enhancement is live; optional LLM enhancement and Presenter generation remain
+> disabled. Older screenshots, TestFlight references and local-only boundaries
+> below are not a current release checklist.
+
 The live homepage now has Studio navigation, footer links and an Open Studio
 button. `/studio` redirects to `https://studio.rendprop.com/`. This release uses
 the latest native/product baseline `8d32f85`, preserving its invite links, pricing,

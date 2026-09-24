@@ -3,7 +3,12 @@
 Rendprop's in-app COACH — a text-only chat assistant with two jobs: walk a
 user through their first (or next) project one step at a time, and answer
 customer-service questions from a fixed knowledge base. Full contract:
-`docs/COACH-CONTRACT.md`.
+[COACH-CONTRACT.md](../../../../docs/COACH-CONTRACT.md).
+
+This is the onboarding/support assistant. It is separate from Studio's
+[chat editor and prompt enhancement](../../../../docs/studio/conversational-creation.md).
+Deploying those optional endpoints does not change the Coach route or activate
+Presenter generation.
 
 ## Files
 
@@ -17,32 +22,30 @@ customer-service questions from a fixed knowledge base. Full contract:
   each tagged with the doc it came from. No prices — ever.
 - `actions.ts` — pure. The closed action enum, the model's JSON output
   contract, and the parser/sanitizer that turns raw model text into
-  something the app can execute blindly (drops anything out-of-enum or
+  bounded actions that the client can validate and handle (drops anything out-of-enum or
   naming an unknown listing; never substitutes or guesses).
-- `actions_test.ts` — `deno test` coverage for `actions.ts` (23 cases: JSON
-  extraction, enum/id enforcement, clamping, the price backstop).
+- `actions_test.ts` — JSON extraction, enum/id enforcement, clamping and the
+  price backstop. `knowledge_test.ts` covers the account/support knowledge.
 
 ## Run the tests
 
 ```
-deno test services/supabase/functions/coach/actions_test.ts
+deno test --cached-only --deny-net --deny-env --deny-run services/supabase/functions/coach/
 ```
 
-Pure and offline — no env, no network, no Supabase. `actions.ts`, `prompt.ts`
+Pure and offline after the pinned test dependencies have been cached — no env,
+network, live Supabase or provider call. `actions.ts`, `prompt.ts`
 and `knowledge.ts` also pass `deno check` standalone; `index.ts` type-checks
-against the real `_shared/*` modules (see docs/COACH-CONTRACT.md's "Known
-sandbox limitation" note about `_shared/providers/common.ts`, which is
-pre-existing and unrelated to this function).
+against the real `_shared/*` modules in the repository's edge-function CI job.
 
-## Deploy
+## Deployment contract
 
-```
-_bridge/tools/deploy-fn.sh - coach
-```
-
-plus applying migration `0023_coach_routes.sql` (seeds the `coach.chat` task
-into `ai_routes` — anthropic primary, openai fallback, both reusing model ids
-already live in `0018_ai_routes.sql`).
+Keep `verify_jwt=true` and the handler's user authentication. The committed
+migration history contains the Coach route seed and later provider updates;
+do not reapply the original route seed to reset a production model selection.
+Use targeted deployment from a reviewed Supabase CLI staging directory, as
+explained in [the functions guide](../README.md). A local `_bridge` helper is
+not a portable checked-in release command.
 
 ## The two jobs, briefly
 
@@ -59,16 +62,13 @@ already live in `0018_ai_routes.sql`).
 ## Why this function is careful about resilience
 
 `coach.chat` is free on every plan (no entitlement check, no monthly quota —
-only the two per-user rate limits) and is asked, in the product brief, to
-"never be dead." Migration 0023 seeds no `note='legacy'` row (there is no
-prior shipped behaviour to preserve), so with the AI-router feature flag off
-— today's default — `resolveRoute()` normally returns `[]` for a brand-new
-task. Rather than accept single-provider risk during that (very common)
-state, `index.ts`'s `chooseChain()` substitutes a hardcoded TWO-step
-fallback (anthropic → openai, byte-identical to migration 0023's seeded
-rows) so one vendor outage never takes the coach down, even before the
-router flag is ever flipped on. Once the flag is on, the real seeded rows
-are used exactly as `resolveRoute()` returns them (never re-filtered).
+only the two per-user rate limits). Migration 0023 seeds no `note='legacy'`
+row, so a disabled AI router normally resolves this task to an empty chain.
+When the resolved chain is empty, `index.ts`'s `chooseChain()` supplies a
+built-in Anthropic → OpenAI fallback using the current source constants.
+Recovery depends on both providers being configured and available. A nonempty
+configured chain is used as returned, even if it contains only one provider;
+the fallback is not an availability guarantee.
 
 ## What this function deliberately does NOT do
 

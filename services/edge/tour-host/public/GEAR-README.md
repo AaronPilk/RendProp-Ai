@@ -1,12 +1,13 @@
 # gear.json — the "Gear we recommend" catalog (Amazon Associates)
 
-`gear.json` in this folder is served as-is at **https://rendprop.com/gear.json**
+[gear.json](gear.json) in this folder is served as-is at **https://rendprop.com/gear.json**
 by Workers Static Assets (`wrangler.toml` → `[assets] directory = "./public"`).
 The iOS app fetches it on launch, caches it on the phone, and shows the Gear
 section only when the file says so. No Worker code reads it.
 
 This README is **not** published: `public/.assetsignore` excludes it from the
-asset upload. Everything else in `public/` is public.
+asset upload. Treat other files in `public/` as publishable assets; the exclusions are listed in
+[.assetsignore](.assetsignore).
 
 ## The section stays hidden until three things are true
 
@@ -15,14 +16,15 @@ itself) only when **all** of these hold in the live `gear.json`:
 
 1. `"enabled": true`
 2. `"associates_tag"` is your Amazon Associates tracking ID (`rendprop-20` style)
-3. at least one item has a non-empty `"asin"`
+3. at least one item has a valid 10-character `"asin"` and non-empty category
 
 Items with an empty `asin` are never shown, so you can fill the catalog in
-gradually. The file ships with `enabled: false`, an empty tag and empty ASINs,
-which is why nothing is visible today.
+gradually. The checked-in catalog, reviewed on 24 September 2026, still has
+`enabled: false`, an empty tag and empty ASINs. This describes repository defaults,
+not a fresh read of live catalog or Associates approval state.
 
 **Do not set `enabled: true` until the app has been approved in Associates
-Central** — see `docs/GEAR-STORE.md` for the approval order. Amazon's mobile app
+Central** — see [the gear-store workflow](../../../../docs/GEAR-STORE.md) for the approval order. Amazon's mobile app
 approval is per app, after it is live and free in the App Store.
 
 ## How to fill it in
@@ -58,12 +60,14 @@ Set `"enabled": true`, keep `"version": 1`, save, then redeploy the Worker:
 
 ```bash
 cd services/edge/tour-host
-npm run deploy      # = wrangler deploy; predeploy runs typecheck + tests
+npm ci
+npm run deploy      # predeploy runs typecheck, all Worker tests and asset checks
 ```
 
-Phones pick up the change within about six hours (the app refreshes the
-catalog at most once every six hours and keeps the last good copy on disk),
-or immediately on a fresh install.
+The app tries on first access each launch, then throttles automatic refresh
+attempts for six hours. Pull-to-refresh requests a new copy immediately. Failed
+requests keep the last good disk copy; a refresh interval is not a delivery
+guarantee while the phone is offline.
 
 ## Editing the catalog
 
@@ -81,11 +85,16 @@ or immediately on a fresh install.
 - **`version`** — leave at `1`. The app ignores a catalog with any other value.
 
 Keep the file valid JSON (a trailing comma is enough to hide the whole
-section). A quick check before deploying:
+section). From `services/edge/tour-host`, check syntax before deploying:
 
 ```bash
 node -e 'JSON.parse(require("fs").readFileSync("public/gear.json","utf8")); console.log("gear.json ok")'
 ```
+
+The app-side parser, visibility rules and refresh/cache behavior live in
+[GearStore.swift](../../../../apps/ios/Rendprop/Gear/GearStore.swift). This catalog
+is independent of [Studio creation](../../../../apps/studio/README.md); updating
+README files does not enable affiliate links or publish a catalog change.
 
 ## What the app never does with this file
 

@@ -1,39 +1,91 @@
 # Rendprop
 
-**Walk it. Upload it. Fly through it.** Turn any phone walkthrough into a scroll-through cinematic flythrough.
+Rendprop brings phone capture, video editing, AI creative tools and property
+marketing into one workspace. Capture photos and walkthrough footage on iPhone,
+continue a property edit in Studio, and prepare reels and hosted property pages.
+Real estate is the primary workflow; the app also supports other space types.
 
-An iOS-first product: an agent records a continuous walkthrough of a property with their iPhone, Rendprop renders it into a drone-style cinematic glide, and the output is a shareable link where viewers scroll to fly through the home. Full product spec lives in [`docs/MASTER-BUILD-PROMPT.md`](docs/MASTER-BUILD-PROMPT.md) — that document is the single source of truth.
+[Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
+[Latest verified Studio deployment](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 
-## Repo layout
+## Current release — 24 September 2026
 
+| Area | Current state |
+| --- | --- |
+| Studio web | Live: Create is the main workspace, with chat editing, Simple/Pro controls, preview and browser MP4/WebM export. |
+| Prompt enhancement | Live guided suggestions, reviewed before use. Optional model-powered planning/enhancement endpoints are deployed but disabled. |
+| Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
+| Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Local videos remain browser-local. |
+| AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
+| iOS | Native capture, media, editing and connected workflows are implemented. A web release does not ship an iOS binary; phone capture testing and App Store Connect remain with the owner. |
+| 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
+
+The Studio release passed all 12 CI jobs. Live verification matched 27 web files
+and 75 deployed function source files, restored an existing signed-in workspace,
+and exercised prompt review without submitting an edit. This is not a fresh
+Apple sign-in, real-phone capture/sync or live AI-quality certification. Exact
+versions, migration history, remaining gates and evidence are in the release note.
+
+## Start developing
+
+For Studio, use Node.js **22.12 or newer**:
+
+```sh
+cd apps/studio
+npm ci
+npm run dev
 ```
-apps/
-  ios/            Native Swift/SwiftUI capture app (Part 4)
-  web/
-    player/       Scroll-scrub flythrough share player (Part 5) — WORKING DEMO
-    dashboard/    Agent dashboard (Part 13)
-services/
-  api/            Backend services + Postgres schema (Part 8)
-  pipeline/       GPU render pipeline: stabilize → interpolate → grade → encode (Part 6)
-infra/            IaC — Cloudflare R2/Stream, Modal, envs (Part 16)
-docs/             Master build prompt, architecture notes, roadmap
+
+Local creation works without a backend. A connected workspace requires the
+public Supabase configuration described in the [Studio README](apps/studio/README.md).
+Never put service-role or provider credentials in frontend environment variables.
+
+```sh
+# From apps/studio: unit tests, typecheck, build and distribution checks
+npm run verify
 ```
 
-## Current status
+Browser media tests also exercise real encoded synthetic videos. See the
+[CI workflow](.github/workflows/ci.yml) and each component's test instructions for
+the required browser, Deno, Python, PostgreSQL and Xcode environments. Simulator
+tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 
-**Phase 0 → Phase 1.** The scroll-scrub player (the product's face, and the hardest already-proven piece) has a working demo in `apps/web/player/`. Open `index.html` on an iPhone or desktop to feel the scrub.
+## Repository map
 
-Build order (Part 21):
-1. **Phase 1 MVP** — capture app + deterministic pipeline + mobile-perfect player + IAP duration-band pricing
-2. **Phase 2** — 4K, Cinematic AI hero clips, analytics, CRM, hosting subscriptions
-3. **Phase 3** — MLS/RESO, white-label, verticals
+| Path | Purpose |
+| --- | --- |
+| [apps/ios](apps/ios/README.md) | Swift/SwiftUI app and device workflow |
+| [apps/studio](apps/studio/README.md) | React/Vite production Studio |
+| [services/supabase/functions](services/supabase/functions/README.md) | Authenticated APIs, public handlers and provider orchestration |
+| [services/supabase/migrations](services/supabase/migrations) | Current database schema, RLS and RPC migration history |
+| [services/edge/tour-host](services/edge/tour-host/README.md) | Public website, hosted tours, agent pages and lead capture |
+| [services/edge/upload-gateway](services/edge/upload-gateway) | Upload transport gateway |
+| [services/worker](services/worker/README.md) | Optional server render worker, ownership leases and publication |
+| [services/pipeline](services/pipeline/README.md) | Python image/hero enhancement and cost accounting |
+| [services/spatial-worker](services/spatial-worker/README.md) | Gated spatial queue controller and provider lifecycle |
+| [tools/spatial-spike](tools/spatial-spike/README.md) | Capture/training/viewer experiments and evaluation |
+| [tools/style-policy](tools/style-policy/README.md) | Offline style plans and blind-comparison protocol |
+| [services/marketing-video](services/marketing-video/README.md) | Standalone marketing-video composition prototypes |
+| [apps/web/player](apps/web/player/README.md) | Archived standalone scroll-player prototype |
+| [services/api](services/api/README.md), [infra](infra/README.md) | Historical API design and infrastructure pointers |
 
-## The three decisions that define the economics
+## Workflow and release documentation
 
-1. **Cloudflare Stream** for delivery — per-minute billing, 4K = 1080p cost
-2. **Cloudflare R2** for storage — zero egress
-3. **Duration-band pricing + streamed-minute caps** — never flat-price a render
+- [Create with chat and Improve prompt](docs/studio/conversational-creation.md)
+- [Agency production, capture plans and review](docs/studio/agency-production-workflow.md)
+- [Prompt library](docs/studio/prompt-library.md)
+- [AI Presenter and activation requirements](docs/studio/ai-presenter.md)
+- [Brand assets](docs/brand/README.md)
+- [iOS test boundaries](apps/ios/RendpropUITests/README.md)
+- [Current Studio release record](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 
-## Non-negotiables (Part 38)
+The [original master build prompt](docs/MASTER-BUILD-PROMPT.md) records product
+intent and planned work. Current source, tests and dated deployment receipts
+establish what is implemented and live; roadmap language is not a shipping claim.
+Historical audit and release folders retain their original measurements.
 
-No full-length generative video. No canvas scrubbing for long/4K. No Mux for entry tiers. No flat pricing. No web-checkout CTAs inside the iOS app. Mobile perfect, deterministic-first, cost-aware, honest.
+Use isolated branches when collaborating. Preserve migration history and existing
+function authentication settings; apply schema before dependent handlers and web
+assets. The latest Studio release note documents why older broad deployment
+helpers are unsuitable for that release. No disabled provider or spatial gate
+should be activated merely to complete a UI demonstration.

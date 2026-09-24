@@ -1,10 +1,14 @@
 # Spatial service v1 — source contract and operational gates
 
-This service is implemented source, not a claim that a real room was
-reconstructed or that production has been deployed. It uses existing Supabase,
-private R2, the bounded upload-v2 gateway and the web tour viewer. There is no
-plan gate. There IS an account gate on spending: an anonymous session can read
-everything below (list, status, capability, the review page's manifest/model
+The spatial API and native capture/upload/viewer plumbing are integrated. They
+use Supabase, private R2, the bounded upload-v2 gateway and the web tour viewer.
+**Reconstruction remains disabled pending quality acceptance:** the September 24
+review rejected all seven new-capture ablations and selected no production
+runtime. See the [current experiment results](../../../../tools/spatial-spike/README.md#current-evidence--24-september-2026)
+and [worker activation gates](../../../spatial-worker/README.md).
+This source contract is not a fresh live deployment audit or a successful
+phone-to-GPU-to-viewer acceptance claim. There is no plan gate. There is an
+account gate on spending: an anonymous session can read everything below (list, status, capability, the review page's manifest/model
 reads) and can cancel, but `POST /spatial`, `/inputs`, `/start`, `/retry` and
 `/resume` refuse it with 403 `{code:"forbidden", reason:"sign_in_required"}`
 ("Sign in to build 3D rooms …") before any read or RPC. Every anonymous signup
@@ -147,8 +151,11 @@ Runtime default is **disabled and both budgets zero**. The fixed $6 worst-case
 reservation covers the current 7,200-second GPU lifecycle plus bounded
 controller cost; it is not an app price or expected reconstruction cost.
 Training separately defaults to 900 seconds, 3,000 iterations and 500,000
-Gaussians. No configuration change or paid provider allocation was performed by
-creating this source.
+Gaussians. The integrated worker accepts at most 1,800 training seconds and
+7,000 iterations, with pose optimization disabled. The separate 30,000-step
+experiments are not an accepted production configuration; changing runtime
+values alone cannot deploy them. The owner's $25 total experiment ceiling is
+independent of these per-attempt reservations and configured budget windows.
 
 ## Viewer, privacy and rollout
 
@@ -162,14 +169,17 @@ no redirect and no-store. Approved scenes late-bind uniquely named flythrough
 chapters; no video rerender is needed. Duplicate room labels remain inert
 instead of guessing.
 
-Production gates still required:
+Prerequisites to verify before enabling reconstruction:
 
-- Apply/test upload 0037, adoption 0038, spatial 0040, the provider journal
-  0041, the 0043 hardening (reservation release, binned/stale expiry) and the
-  deletion integration, in migration order. 0041 must be live before the
-  runtime is enabled; the Edge function fails closed (503) without it. The
-  existing account-deletion enumeration does **not yet include spatial output
-  and sidecars**; do not enable production capture upload until it does.
+- Verify the deployed migration ledger/schema for upload 0037, adoption 0038,
+  deletion 0039, spatial 0040, provider journal 0041 and hardening 0043
+  (reservation release and binned/stale expiry). Apply missing migrations in
+  order; do not reapply historical migrations blindly. Source 0039 already
+  enumerates spatial inputs, current/historical output keys and provider leases,
+  removes spatial sidecars, and keeps cleanup intent durable. Its spatial
+  behavior is covered by `services/supabase/tests/account_deletion_spatial.sql`.
+  Verify the live deletion/recovery stack; the Edge function fails closed (503)
+  if a required RPC such as the provider journal is missing.
 - Deploy this Edge function together with 0043 or before enabling the runtime:
   the anonymous spending gate lives in the handler, not in SQL.
 - Configure the upload-v2 gateway and its exact immutable-write lifecycle rules;
@@ -180,9 +190,12 @@ Production gates still required:
   only** because public approved reads and custom scoped output/viewer
   capabilities are authenticated by the handler. Owner routes always call
   Supabase Auth.
-- Deploy the bounded worker/controller and viewer assets, configure runtime
-  budgets under owner authorization, resolve Modal account billing limits, and
-  test one actual capture. Do not infer a GPU/model success from fixture tests.
+- Integrate a quality-accepted profile before deploying and enabling the
+  bounded worker/controller. Verify provider access, remaining authorized spend,
+  viewer assets and all four worker activation gates, then test one actual
+  phone capture end to end. Prior billing-limit failures are historical, and
+  fixture tests do not establish reconstruction quality. There is currently no
+  accepted winner to activate.
 - Complete real region-redaction processing before claiming the full privacy
   feature. Pending requests already prevent sharing; browser hiding is not a
   fix.

@@ -1,10 +1,15 @@
 # In-app purchase review screenshot — `paywall.png`
 
+This is an owner-run capture/upload procedure, reviewed against repository code
+on 24 September 2026. The stored PNG is an existing release asset; it has not
+been recaptured or uploaded by this documentation refresh. Local StoreKit
+fixtures do not establish current App Store prices or purchase success.
+
 Every auto-renewable subscription in App Store Connect has a **Review Information →
 Screenshot** field, and it is required before the product can be submitted. Apple wants an
 image of the purchase UI **as a customer sees it inside the app** — the real paywall, real
 product names, real prices. It is only ever seen by App Review; it is not a marketing
-screenshot and must not join the eight store shots in `docs/appstore/screenshots/`.
+screenshot and must not join the nine-frame store screenshot plan in `docs/appstore/screenshots/`.
 
 The file is **`docs/appstore/iap-review/paywall.png`**. That exact path is what
 `tools/asc/asc.py` reads (`IAP_SCREENSHOT`), and the same PNG is attached to every sold
@@ -20,7 +25,9 @@ python3 tools/asc/asc.py review apply --skip-product com.rendprop.app.team.annua
 bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-paywallshot.sh"
 ```
 
-That one command, run on the Mac build bridge, regenerates the project, boots the same
+The bridge script operates on `~/Rendprop AI/repo` regardless of the checkout
+from which it is invoked. Inspect that target before running it. It regenerates
+the project, boots the same
 "Store 6.9" simulator the store shots use (iPhone 17 Pro Max, 1320 × 2868, status bar frozen
 at 9:41), runs **one** XCUITest — `RendpropUITests/PaywallShot` — exports its screenshots,
 and copies the Monthly-tab shot into the repo as `paywall.png` **only** when it is exactly
@@ -28,7 +35,9 @@ and copies the Monthly-tab shot into the repo as `paywall.png` **only** when it 
 yearly and legal shots land beside it in `~/Rendprop AI/_bridge/out/paywallshot/` for a
 look; nothing empty is ever copied into the repo.
 
-Then commit `paywall.png` and run the `review apply` command above.
+Review the image before committing it. Before any owner-run upload, reconcile
+`asc.py`'s launch-era version selection with the intended release; see
+[the tooling caveats](../../../tools/asc/README.md#release-target-caution).
 
 ### Why this needed its own test
 
@@ -52,11 +61,10 @@ identifiers and the by-hand recipe are in `apps/ios/RendpropUITests/README.md`
 ### The caveat you are accepting
 
 This is **StoreKit Testing in Xcode, not the App Store.** The prices come from
-`apps/ios/Rendprop.storekit` (49 / 490 / 99 / 990 / 249, matching what App Store Connect is
-being configured with — see `docs/handoff/launch-P1.md` §5.3), the "Start 7-day free trial"
-eligibility is synthetic, and nothing in the PNG proves the real products load. For the review
-screenshot field that is fine: Apple asks to see the purchase UI, and this is the real UI
-with the real product names. It is not a substitute for checking the live products on a
+`apps/ios/Rendprop.storekit` (49 / 490 / 99 / 990 / 249 for the five displayed products,
+consistent with the repository's current listing copy), the "Start 7-day free trial"
+eligibility is synthetic, and nothing in the PNG proves the real products load. The capture shows the actual app purchase UI populated by a local fixture;
+the owner must confirm that its names, prices and offers match the intended release. It is not a substitute for checking the live products on a
 device before submission, and it is not a marketing asset.
 
 ## If the run comes back `PAYWALL_PNG=MISSING`
@@ -65,7 +73,7 @@ device before submission, and it is not a marketing asset.
   the StoreKit test environment did not reach the app. Read the activity notes the script
   prints the command for (`SKIP_NOTES=…`); the first one, `STOREKIT: …`, says which
   `SKTestSession` initialiser worked or why none did. The usual causes: `xcodegen generate`
-  did not run (the committed `.xcodeproj` predates the resource), or the app was not built
+  did not include the current test-bundle resource, or the app was not built
   Debug.
 * A `WRONG_SIZE` line means the test ran on a simulator that is not 1320 × 2868 — the script
   creates "Store 6.9" as an iPhone 17 Pro Max (16 Pro Max fallback); install one of those
@@ -77,20 +85,18 @@ device before submission, and it is not a marketing asset.
 If you would rather the screenshot show App Store prices, the manual path still works and
 produces a file that drops into the same place:
 
-1. App Store Connect → **Users and Access → Sandbox Testers** → create a tester (a fresh
-   email address that is not an existing Apple ID).
+1. Follow Apple's [sandbox account setup](https://developer.apple.com/help/app-store-connect/test-in-app-purchases/create-a-sandbox-apple-account/) for the intended device-testing flow.
 2. Create the products first (`docs/handoff/launch-P1.md` §5.3 has the ids, prices and
    levels) and make sure the **Paid Applications agreement is Active** — until it is,
    products return empty on a device too.
-3. On the iPhone: **Settings → App Store → Sandbox Account** → sign in as the tester (do not
-   sign the main Apple ID out).
+3. Follow the device's current sandbox sign-in flow; do not sign out the owner's main Apple account merely to take a screenshot.
 4. Install a Debug or TestFlight build of the version you are submitting.
 5. In the app: **Settings tab → Plan & usage → Upgrade plan**. Wait for the three plans to
    draw with prices and the **Start 7-day free trial** button.
 6. Screenshot (side button + volume up), AirDrop the PNG to the Mac, and save it as
-   `docs/appstore/iap-review/paywall.png`. Apple does not require a specific size for this
-   field, only that the purchase UI is legible; `asc.py review apply` uploads whatever is at
-   that path.
+   `docs/appstore/iap-review/paywall.png`. Check the current review-field image
+   requirements and confirm the selected file shows the intended product names,
+   prices and offers before the owner uploads it.
 
 Nothing in this directory is uploaded automatically — `asc.py review apply` is the step that
 attaches it, and it says so in its plan before doing anything.

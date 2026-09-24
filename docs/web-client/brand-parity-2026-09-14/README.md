@@ -1,5 +1,13 @@
 # Rendprop Studio — app branding and creation workflow
 
+> **Historical evidence: 14 September 2026.** This report preserves the behavior,
+> versions, test counts and open checks observed at that release. For the current
+> Create-first navigation, property edit/chat sync, prompt library and deployment
+> state, read [the 24 September production record](../../handoff/CODEX-STUDIO-LIVE-20260924.md). Guided prompt
+> enhancement is live; optional LLM enhancement and Presenter generation remain
+> disabled. Older screenshots, TestFlight references and local-only boundaries
+> below are not a current release checklist.
+
 The live Studio now uses the native app's purple hero, light/dark palette,
 rounded cards, feature names and project-first navigation. This is a frontend
 release on top of the tested September 14 account/media backend. It does not

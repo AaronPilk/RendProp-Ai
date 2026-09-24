@@ -1,70 +1,80 @@
-# docs/appstore — everything the App Store listing needs
+# App Store listing and review assets
 
-Written 2026-09-05 against the `launch` branch. `docs/APP-STORE-CHECKLIST.md` is still the
-in-order submission checklist; the files here are the **content** it tells you to paste, and
-where they disagree with the checklist, **these files win** — several checklist answers were
-written before subscriptions, first-party analytics, and SKAdNetwork existed.
+This directory contains the listing copy, review notes and screenshot recipes.
+Its launch material began on 5 September 2026; README guidance was reconciled
+with repository source on 24 September. These files are inputs to an owner-run
+release, not proof of what App Store Connect currently displays.
 
-| Path | What it is |
-|---|---|
-| `metadata/en-US/` | One file per App Store Connect field, each already inside Apple's limit. Paste the file, do not retype it. |
-| `review-notes.md` | The App Review Information panel: sign-in answer, notes field, contact fields, and what deliberately stays out. |
-| `privacy-labels.md` | Every App Privacy questionnaire answer, with the reason for each — including the ones that are now "Yes" and used to be "No". |
-| `age-rating.md` | Every age-rating answer → 4+, including the three that need a sentence of reasoning. |
-| `screenshots/README.md` | How the 6.9-inch set is captured, framed and uploaded: raw captures in `screenshots/6.9/`, the set itself in `screenshots/plan.json` (order, headlines, which captures), the composed PNGs in `screenshots/6.9-framed/` via `tools/screenshots/compose.py`. |
-| `iap-review/README.md` | Why the subscription review screenshot needs a phone, and how to take it. |
-| `ASC-API-PLAN.md` | Owned by another agent — the App Store Connect API automation plan. |
+The latest committed phone delivery receipt records
+[internal TestFlight 1.0.3 (31) on 22 September](../handoff/CLAUDE-LIVE-DELIVERY-20260922.md).
+The [24 September production release](../handoff/CODEX-STUDIO-LIVE-20260924.md)
+updated Studio/backend only. App Store Connect was not accessed during this
+README refresh, and new phone capture-plan/multi-video features must not be
+advertised as delivered solely because their backend is live.
 
-## Field lengths, measured
+| Path | Purpose |
+| --- | --- |
+| [metadata/en-US/](metadata/en-US/) | Per-field text consumed by the release tooling; inspect it against the exact binary before applying. |
+| [review-notes.md](review-notes.md) | Human-readable App Review instructions and context. |
+| [metadata/en-US/review_notes.txt](metadata/en-US/review_notes.txt) | Machine-uploaded notes; `asc.py` skips the field when this file is absent. Keep it aligned with the separate Markdown guidance. |
+| [privacy-labels.md](privacy-labels.md) | App Privacy questionnaire guidance; reconcile with actual collection and provider behavior for each release. |
+| [age-rating.md](age-rating.md) | Age-rating answer guidance. |
+| [screenshots/README.md](screenshots/README.md) | Nine-frame 6.9-inch plan, raw capture, composition and owner-run upload. |
+| [iap-review/README.md](iap-review/README.md) | Local StoreKit paywall capture and its real-device verification limits. |
+| [ASC-API-PLAN.md](ASC-API-PLAN.md) | Historical launch automation plan. Current tooling caveats are in [tools/asc](../../tools/asc/README.md). |
+| [APP-STORE-CHECKLIST.md](../APP-STORE-CHECKLIST.md) | Broader release checklist; use dated delivery evidence to distinguish completed work from old launch assumptions. |
 
-| Field | Chars | Apple's limit |
-|---|---:|---:|
-| `name.txt` | 8 | 30 |
-| `subtitle.txt` | 29 | 30 |
-| `promotional_text.txt` | 162 | 170 |
-| `keywords.txt` | 94 | 100 |
-| `description.txt` | 3519 | 4000 |
-| `release_notes.txt` | 1032 | 4000 |
+## Metadata measurements
 
-Promotional text is the one field you can change **without shipping a build** — use it for a
-seasonal line and leave the description alone.
+Measured from the committed files on 24 September 2026 after trimming outer
+whitespace, matching the tool's inputs:
 
-`keywords.txt` has 6 characters spare if you want to add a term. Keep the rules: no spaces
-after the commas, no word repeated across terms, and never the app's own name (Apple already
-indexes it).
+| Field | Characters | UTF-8 bytes | Tool limit |
+| --- | ---: | ---: | --- |
+| `name.txt` | 8 | 8 | 30 characters |
+| `subtitle.txt` | 29 | 29 | 30 characters |
+| `promotional_text.txt` | 162 | 164 | 170 characters |
+| `keywords.txt` | 94 | 94 | 100 bytes |
+| `description.txt` | 3730 | 3802 | 4000 characters |
+| `release_notes.txt` | 380 | 382 | 4000 characters |
+| `review_notes.txt` | 3974 | 3976 | 4000 characters |
 
-## The three things in the metadata that must stay true
+The review notes have only 26 characters of headroom. Re-measure after editing;
+old counts are not a validation result for new text. The tool checks limits
+before sending fields.
 
-1. **The prices in `description.txt` are the prices in App Store Connect.** They match
-   `apps/ios/Rendprop.storekit` and `docs/handoff/launch-P1.md` §5.3 today. If a price
-   changes in App Store Connect, this file has to change with it — the app itself never
-   hardcodes a price, but the listing does, because Apple requires it there.
-2. **The allowances are the server's allowances.** 8 / 150 / 8 / 2, 25 / 300 / 20 / 6, and
-   80 / 600 / 40 / 15 come from `plan_entitlements` via
-   `apps/ios/Rendprop/Purchases/Products.swift`. Settings → Plan & usage shows the same
-   numbers, so an inflated listing is contradicted by the app itself.
-3. **No fair-housing copy, anywhere.** No people, no neighbourhoods, no schools, no
-   demographics — not in the description, the keywords, the promotional text, the release
-   notes, or text laid over a screenshot.
+## Keep listing claims consistent with the product
 
-## Two things outside this directory that make the copy true or false
+- The repository's Starter/Pro/Team allowances in
+  [Products.swift](../../apps/ios/Rendprop/Purchases/Products.swift) are respectively
+  **4/100/6/2**, **10/200/12/4** and **25/400/25/8** for monthly tour renders,
+  AI photo edits, reel clips and aerial intros. Team has two seats. These match
+  the current description; verify live `plan_entitlements` when changing plans.
+- The five displayed subscription prices in the description and local StoreKit
+  fixture are Starter $49/month or $490/year, Pro $99/month or $990/year and
+  Team $249/month. The app excludes Team Yearly via `notSoldAtLaunch`.
+  A local fixture is not a fresh read of store availability or regional prices.
+- Named-account continuity requires the same account and workspace and completed
+  uploads. Do not turn offline capture or anonymous-session support into a claim
+  that unsynced local files automatically appear on another device.
+- Desktop chat editing and guided **Improve prompt** are live. Optional
+  model-powered planning/enhancement and Higgsfield Presenter generation remain
+  disabled in the 24 September release. Do not advertise disabled generation as
+  a shipping phone feature.
+- Keep property marketing focused on the space and product behavior; do not add
+  demographic, school or neighborhood suitability claims.
 
-Both were found while writing these files. Neither is fixed here, because neither file is
-this document's to edit.
+## Older launch notes that are no longer current
 
-**1. The marketing site sells a plan the App Store does not.**
-`services/edge/tour-host/public/pricing.html` lists the $49 tier as **"Solo"**, marked
-`schema.org/PreOrder`. The app, App Store Connect, and `Products.swift` all call it
-**"Starter"**, and `docs/LAUNCH-CONTRACT.md` is explicit: *"`solo` is a legacy alias of
-`starter` — never sell it."* A customer who follows a link from the app to that page sees a
-plan name that does not exist in the store. The Terms page no longer points at
-rendprop.com/pricing for exactly this reason (`services/edge/tour-host/src/legal.ts` §6 now
-says the app is the source of truth), but the web page still needs renaming before launch,
-and the `PreOrder` availability is wrong the moment the app ships.
+The marketing source now calls the $49 plan **Starter**; the old “Solo” naming
+blocker in this README was fixed. Analytics retention scheduling is implemented
+by [0022_app_events_purge_schedule.sql](../../services/supabase/migrations/0022_app_events_purge_schedule.sql),
+with an explicit fallback when `pg_cron` is unavailable. Check deployed schedule
+and job history when verifying retention; do not infer operation merely from
+having the migration file.
 
-**2. The privacy page promises a 180-day purge that a cron job has to perform.**
-`https://rendprop.com/privacy` §4 now states that analytics events are deleted 180 days
-after they are received. That is only true once the purge is scheduled — one `SELECT
-cron.schedule(...)` in the Supabase SQL editor, written out in `docs/handoff/launch-P3.md`
-§5.2. **Schedule it before the privacy page goes live**, or the policy says something the
-system does not do.
+`tools/asc/asc.py` still has a launch-era `VERSION_STRING = "1.0"`, may select
+another editable version, and has no `--version` override. Its apply bridge also
+changes prices, territories, screenshots and review state. Reconcile the exact
+release target before using that tooling; this documentation refresh does not
+submit or alter the listing.

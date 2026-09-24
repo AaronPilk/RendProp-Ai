@@ -1,5 +1,13 @@
 # Studio release evidence — September 14, 2026
 
+> **Historical evidence: 14 September 2026.** This report preserves the behavior,
+> versions, test counts and open checks observed at that release. For the current
+> Create-first navigation, property edit/chat sync, prompt library and deployment
+> state, read [the 24 September production record](../../handoff/CODEX-STUDIO-LIVE-20260924.md). Guided prompt
+> enhancement is live; optional LLM enhancement and Presenter generation remain
+> disabled. Older screenshots, TestFlight references and local-only boundaries
+> below are not a current release checklist.
+
 The expanded workspace is deployed at <https://studio.rendprop.com>. The homepage
 links to it, and `rendprop.com/studio` redirects there. Native version **1.0.3 (27)**
 is processed and available for internal TestFlight testing.

@@ -1,5 +1,13 @@
 # Reel and batch-photo workflow evidence
 
+> **Historical evidence: 14 September 2026.** This report preserves the behavior,
+> versions, test counts and open checks observed at that release. For the current
+> Create-first navigation, property edit/chat sync, prompt library and deployment
+> state, read [the 24 September production record](../../../handoff/CODEX-STUDIO-LIVE-20260924.md). Guided prompt
+> enhancement is live; optional LLM enhancement and Presenter generation remain
+> disabled. Older screenshots, TestFlight references and local-only boundaries
+> below are not a current release checklist.
+
 The native-style **Photos → Voice → Make it** entry uses the existing shared
 property media and saved editor document. Opening a card selects a media picker;
 it does not reset the sequence or move the current edit to another property.

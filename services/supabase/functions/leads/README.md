@@ -46,17 +46,17 @@ leads: TURNSTILE_SECRET_KEY is not set — ALLOWING public lead submissions with
 This is logged on **every** unconfigured request, not once at deploy — an
 operator who left `TURNSTILE_SECRET_KEY` unset cannot miss it in the function
 logs. See `turnstile.ts` (and `turnstile.test.ts` for the behavior this table
-promises) and `docs/LAUNCH-CHECKLIST.md` item 12.
+promises) and [launch checklist](../../../../docs/LAUNCH-CHECKLIST.md).
 
-Set the secret with the rest of the function secrets:
+Configure the secret through the project's secret manager or a protected local
+environment file using the Supabase CLI's `--env-file` option and explicit project
+reference. Do not put a real secret in shell history, a README or browser code.
 
-```bash
-cd services/supabase && supabase secrets set TURNSTILE_SECRET_KEY=<your secret key>
-```
-
-The end-card's Turnstile **site key** (public, not a secret) goes wherever the
-tour player widget is configured — see the tour-host worker / player config,
-not this function.
+The end-card's Turnstile **site key** is public and belongs in the
+[tour-host configuration](../../../edge/tour-host/README.md). It is different
+from the server secret. Verify a real permitted lead submission separately from
+an unauthenticated GET probe; the 24 September Studio release did not certify
+this form.
 
 ## Other secrets
 
@@ -69,6 +69,7 @@ not this function.
 Deployed `--no-verify-jwt` (the public `POST` has no user token; `GET`/`PATCH`
 validate the JWT themselves via `getUser(req)`):
 
-```bash
-cd services/supabase && ./deploy-functions.sh
-```
+Use a targeted deployment with `verify_jwt=false` preserved for this function.
+See [the functions deployment guide](../README.md); the historical broad deploy
+script is not an appropriate way to update one handler and can overwrite
+unrelated authentication settings.

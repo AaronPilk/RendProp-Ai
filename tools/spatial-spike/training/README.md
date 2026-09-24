@@ -1,10 +1,22 @@
 # Phase A: local ARKit capture → pinned gsplat trainer
 
-This prepares one manually captured room for a future, manually operated Linux
-NVIDIA GPU. It does **not** provision a GPU, upload media, contact an AI provider,
-run a production endpoint, or implement a reconstruction service. Preparation
-and its tests work on a Mac; the chosen trainer requires CUDA. A passing adapter
-test does not prove that an iPhone room has reconstructed successfully.
+`prepare_capture.py` validates a local capture and prepares a posed dataset;
+`run_training.py` runs a bounded trainer on an already available Linux NVIDIA
+CUDA host. Those two scripts do not provision a GPU or upload media. Preparation
+and its tests work on a Mac; the trainer requires CUDA.
+
+This directory also contains **paid-provider controllers**: `modal_room.py`
+allocates an ephemeral Modal GPU after explicit confirmation, and
+`modal_retry.py` is tied to one specific September 11 continuation. Their names
+do not make them offline checks or general-purpose retry commands. Do not run
+either as a documentation/test smoke check or reuse its historical approval as
+fresh spend authority. The production controller is documented in the
+[spatial worker README](../../../services/spatial-worker/README.md).
+
+As of the September 24 evidence review, seven completed GPU ablations all failed
+visual acceptance. The [results, costs and next capture work](../README.md#current-evidence--24-september-2026)
+supersede the early no-GPU-run status. There is no accepted production profile;
+a passing adapter test does not establish usable room reconstruction.
 
 ## What is implemented and verified
 
@@ -42,9 +54,12 @@ their number or stability, even between successive frames. This is a practical
 initialization experiment; textureless walls, glass, mirrors and moving objects
 may give too few useful seeds. The adapter refuses fewer than 100 distinct,
 visible seeds and never silently substitutes invented geometry. If real capture
-quality fails, the next measured experiment is confidence-filtered scene-depth
-unprojection on a supported LiDAR device, or matched-image triangulation with
-fixed poses. Neither is implemented or claimed here.
+quality fails, do not silently switch initialization. Capture blur is the
+current leading measured hypothesis; fine pose error remains unresolved. A
+hybrid SfM experiment already failed acceptance, and separate independent SfM
+registration has not been trained. Confidence-filtered scene-depth unprojection
+and matched-image triangulation with fixed poses are not implemented by this
+adapter.
 
 For each point ID, the latest estimate that projects inside its own frame is
 paired with color sampled from that same JPEG. Coincident locations are merged
@@ -52,8 +67,16 @@ at 1 μm rounding precision to avoid degenerate nearest-neighbor scales. Counts
 before and after this reduction are reported. These projected samples are not
 measured feature correspondences: `images.bin` has zero 2D observations,
 `points3D.bin` has zero tracks, and its required error field is an unused zero
-placeholder. **No reprojection accuracy has been measured.** The trainer's depth
+placeholder. **This adapter measures no reprojection accuracy.** The trainer's depth
 loss stays disabled because these files contain no measured tracks.
+
+**Evaluation limitation of the integrated adapter:** it currently builds seeds
+from all supplied frames, before the trainer's train/evaluation split. The frozen
+400-frame benchmark used separate train-only seed preparation and 50 fixed
+held-out IDs. The reviewed train-only adapter work is not integrated here; do
+not label a default adapter run equivalent to that benchmark or claim strictly
+held-out seed construction. Any future frame filtering must preserve the
+original evaluation membership and exclude those views from seeds.
 
 ## Pose and image contract
 
@@ -134,7 +157,7 @@ python -m pip install -r requirements-verify.txt
 python verify_upstream.py
 ```
 
-## Provisional GPU setup and bounded run — not yet executed
+## GPU setup and the integrated baseline command
 
 Selected upstream: **gsplat v1.5.3**, commit
 `937e29912570c372bed6747a5c9bf85fed877bae` (Apache-2.0).
@@ -146,13 +169,14 @@ Do not substitute the original graphdeco research implementation's license.
 The command below assumes an already authorized Linux NVIDIA CUDA host with a
 compatible driver, CUDA 12.8 toolkit (`nvcc`) and C++ build tools. The pinned
 trainer uses `cuda:<rank>` and its CUDA rasterizer; a Mac CPU/Metal test cannot
-verify it. VRAM and run time remain measurements to collect, not promises about
-8 GB fitting this capture or a five-minute run.
+verify it. VRAM and run time must be measured for each profile; the existing
+L4 experiments do not establish that an 8 GB GPU fits or a run takes five minutes.
 
-These are manual setup commands, **not an executed deployment**. Installing
-PyTorch/CUDA packages is intentionally not part of any local test or run script.
-PyTorch 2.7.1 / torchvision 0.22.1 / CUDA 12.8 is an upstream-documented wheel
-combination; the full gsplat build on that host still needs verification.
+These are manual setup commands, **not proof that the automatic worker is
+released**. Local unit/adapter verification does not install PyTorch/CUDA; the
+explicit Modal setup script does install remote dependencies when its paid
+controller is invoked. The baseline pins PyTorch 2.7.1 / torchvision 0.22.1 /
+CUDA 12.8. A new host or deployment image still needs its own build verification.
 
 ```sh
 git clone --branch v1.5.3 https://github.com/nerfstudio-project/gsplat.git /local/gsplat-phase-a
@@ -165,8 +189,8 @@ python3.12 -m venv /local/spatial-gpu-venv
 
 Upstream example requirements contain unpinned transitive packages. This is a
 pinned **trainer source and interface**, not a fully reproducible CUDA image.
-The first successful host build must record its resolved dependencies. The
-example's LPIPS metric may download public pretrained weights when constructing
+Each host build must record its resolved dependencies; keep the experiment's
+resolved dependency inventory when comparing results. The example's LPIPS metric may download public pretrained weights when constructing
 the runner; prepare that cache before an offline room run. Neither install nor
 weight download requires customer media. No provider account is selected here.
 
@@ -184,11 +208,15 @@ python /local/gsplat-phase-a/examples/simple_trainer.py mcmc \
 
 `sfm` is the upstream option name for consuming the supplied XYZ/RGB arrays; it
 does not invoke SfM. MCMC is chosen because its `cap_max` actually bounds the
-Gaussian count. DefaultStrategy has no equivalent cap. The command's fields
-were tested; its convergence on the room has not been tested.
+Gaussian count. DefaultStrategy has no equivalent cap. This is the integrated
+baseline command, not a recommended winning profile. Real-room experiments,
+including pose optimization and longer training on separate branches, have not
+produced accepted visual output.
 
-Use **the wrapper** for the real experiment so the process group is killed on a
-wall-clock timeout, subprocess failure propagates, and results are recorded:
+For an authorized baseline run on an already allocated host, use **the
+wrapper** so the process group is killed on a wall-clock timeout, subprocess
+failure propagates, and results are recorded. This example does not authorize
+a new allocation:
 
 ```sh
 CUDA_VISIBLE_DEVICES=0 /local/spatial-gpu-venv/bin/python run_training.py \
@@ -206,14 +234,20 @@ process group; injected-signal tests verify that behavior and restore the caller
 handlers. A killed supervisor (`SIGKILL`), lost host, or repeated interruption
 during cleanup cannot be made safe by a Python watchdog. Before any paid run,
 use an independently enforced provider/job TTL or host supervisor and an explicit
-machine shutdown plan. No such provider control is configured by this spike.
+machine shutdown plan. The manual wrapper supplies no provider TTL; the
+separate Modal controllers and production worker supply their own bounded
+provider lifecycle and cleanup receipts. Preserve those boundaries and never
+create a replacement paid GPU after an ambiguous result.
 
-Successful training must produce `ply/point_cloud_2999.ply`, final trainer stats,
-and `run.json`. The latter records frames, GPU, elapsed minutes, PLY bytes,
+The shown 3,000-step run must produce `ply/point_cloud_2999.ply`, final trainer
+stats and `run.json` (other step counts use `point_cloud_<max_steps - 1>.ply`).
+The latter records frames, GPU, elapsed minutes, PLY bytes,
 PLY SHA-256, Gaussian count, total GPU VRAM, peak allocated VRAM and resolved
 package versions. `phase_a_acceptance_complete` remains
-false: conversion to SOG, visual reconstruction review and real-phone browser
-FPS still have to be measured. Failure preserves partial output with status
+false: writing artifacts is not visual acceptance. Separate experiments have
+already produced and converted artifacts but failed real-room quality; an
+accepted end-to-end result and physical-phone viewer performance remain open.
+Failure preserves partial output with status
 `failed`, never a success claim. PLY conversion and viewer use are documented in
 the sibling `viewer` directory.
 

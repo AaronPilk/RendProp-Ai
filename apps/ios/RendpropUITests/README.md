@@ -1,490 +1,150 @@
-# RendpropUITests — the automated UI walk
+# Rendprop iOS UI tests
 
-One test, `RendpropUITests.testWalk()`, drives a booted simulator through every
-main screen and attaches a screenshot of each to the result bundle. It exists so
-the owner can look at nine PNGs and say "yes, ship it" without opening Xcode.
+This target contains screenshot walks **and** assertion-based integration tests.
+A passing screenshot walk can still contain skipped steps. Read its activity
+notes and inspect the actual attachments before accepting a screen. No
+simulator test validates a camera, LiDAR, AR tracking or real-house coverage.
 
-| # | Attachment | Screen |
-|---|---|---|
-| 01 | `01-home` | Home dashboard |
-| 02 | `02-add-home` | Add a home (New Home / the "name your first home" gate) |
-| 03 | `03-photo-studio` | AI Photo Studio for a real home |
-| 04 | `04-reel-studio-voice` | Reel Studio, scrolled to **STEP 2 · ADD YOUR VOICE** |
-| 05 | `05-settings` | Settings |
-| 06 | `06-owner-console` | Owner console (spend · providers · usage · health) |
-| 07 | `07-routing` | Owner console → AI routing |
-| 08 | `08-paywall` | Paywall sheet (via `settings.upgradePlan` in Settings) |
-| 09 | `09-health-probe` | Health section after "Test all keys" (`admin.testAllKeys`) |
+The [22 September phone receipt](../../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md)
+records internal TestFlight 1.0.3 (31). The
+[24 September Studio deployment](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+did not ship another iOS binary. Tests in source are not evidence that the owner
+has received those changes.
 
-Every screenshot is `lifetime = .keepAlways`, so it survives a passing run.
+## Choose the right case
 
-## What the walk assumes
+| Case | What it covers | Setup / limits |
+| --- | --- | --- |
+| `RendpropUITests/testWalk` | Home, Add a home, Photo Studio, Reel Studio voice, Settings, owner console, routing, paywall and health screenshots (`01`–`09`) | Mock API. Missing controls are noted and skipped. Reel entry needs photos. |
+| `ReviewerWalk/testReviewerWalk` | Onboarding, samples, profile, legal, deletion confirmation and AI consent (`r01`–`r11`) | Fresh app container. Required screenshots are asserted; sign-in `r10` is excluded for the mock identified session. Cancel is the only deletion action. |
+| `ReviewerWalk/testAIConsentDecisions` | Focused real consent-sheet path, actions and granted state | Assertions require all three captured consent states; no AI edit. |
+| `ReviewerWalk/testAskAILabelOnLongTitle` | Ask AI geometry/accessibility and opening Coach from a long-title sample | Assertions plus screenshots; no provider call. |
+| `StoreShots/testStoreShots` | Marketing screenshot capture, including industry variants, reels, leads and hosted demo surfaces | Seed listing photos; hosted demo requires network. No actual AI edit, purchase or publication. |
+| `PaywallShot/testPaywallShot` | Monthly, yearly and legal purchase UI | Local `SKTestSession` products; never presses Buy. Empty-price capture is not a deliverable. |
+| `IndustryWalk` | Six business types (`testRealEstate`, `testVenue`, `testRestaurant`, `testRetail`, `testFitness`, `testOther`) | Screenshot/activity checks; inspect `CHECK FAIL` and `SKIPPED` notes. |
+| `GuideShot`, `CoachShot`, `BuildFourteenShots` | Guide progress, mock Coach reply/actions, onboarding/plan banners and Team entry | Historical focused screenshot fixtures. Team/hosted screens may attempt their own requests; a UI mock flag is not a network firewall. |
+| `OnboardingTour` | Recorded mock onboarding/product walkthrough | `bridge-cmd-onboardingtour.sh`; optional local media and render mode. Not a camera recording. |
+| `SpatialCaptureIntegrationTests` | Lab navigation, honest unsupported controls and no export without capture | Simulator is expected to reject capture. |
+| `SpatialProductIntegrationTests` | Listing-scoped 3D card, runtime-off hiding and unsupported capture state | Mock/synthetic fixtures; does not produce a real room. |
+| `CaptureRecoveryTests` | Relaunch, joining a seeded saved take and opening original/part export sheets | Requires the isolated synthetic recovery setup below; does not write to a selected share destination. |
+| `ProductionPlanUITests` | Photo-first property plan, local checklist persistence, no false cloud-save claim | Mock, no camera, upload or paid provider. |
+| `SessionNetworkFlow` | Publish/photo/aerial/reel actions resume once after session-network recovery | Debug loopback server at `127.0.0.1:18765`, fixture control endpoints and a disposable simulator required. |
 
-The app is launched with these arguments (`-key value` pairs land in
-`UserDefaults`' argument domain, which `@AppStorage` reads):
+## Mock and local network behavior
 
+Most walks launch with:
+
+```text
+-uiTesting
+-hasOnboarded YES
+-space.type real_estate
+-appearance light
+-ai.thirdPartyProcessing.consent.v2 YES
 ```
--uiTesting                                   → Config.makeAPIClient() returns MockAPIClient
--hasOnboarded YES                            → skip the intro
--space.type real_estate                      → the Homes/real-estate identity
--appearance light                            → deterministic screenshots
--ai.thirdPartyProcessing.consent.v2 YES      → skip the Guideline 5.1.2(i) overlay
-```
 
-`-uiTesting` is the important one: the walk NEVER talks to the live backend, so
-no screenshot can contain a real customer, a real share link or a real spend
-figure. `MockAPIClient.me()` reports `isAdmin: true`, which is what makes the
-owner console reachable offline.
+`Config.makeAPIClient()` then returns `MockAPIClient` and `AuthStore` exposes a
+mock identified session. The old instruction to add an AuthStore hook is
+obsolete: the hook is already implemented. Mock API results are fixtures, not
+real AI outputs or live customer data. Do not use an existing customer-signed-in
+simulator: separate clients and hosted WebViews are not globally blocked by
+`-uiTesting`, and account deletion must never be confirmed in a screenshot walk.
 
-Two things outside this folder decide whether steps 04–09 produce a PNG:
+`ReviewerWalk` omits `hasOnboarded` for its full walk and explicitly sets consent
+to `NO`, real-estate identity and light appearance. Its two focused tests skip
+onboarding. Use a new simulator/app container for a genuine first-run walk;
+persisted onboarding completion otherwise changes the path.
 
-1. **A signed-in session.** Settings only draws the owner-console rows when
-   `AuthStore.shared.isSignedIn` is true, and with `Config.enableAuth == true`
-   that needs a Keychain token the simulator does not have. The one-line
-   `AuthStore` hook is written out in `HANDOFF-P5.md` (§ AuthStore hook) — it is
-   not applied here because this agent does not own that file.
-2. **Two photos in the simulator's library.** Reel Studio's card is disabled
-   until the home has two photos. The bridge script seeds them with
-   `xcrun simctl addmedia`; without them step 04 skips itself with a note.
+`SessionNetworkFlow` adds `-sessionNetworkTesting`, which takes precedence over
+the mock only in Debug. `RENDP_TEST_URL` must be loopback HTTP; the case expects
+`/__control/reset`, `state` and `unblock` at port 18765. It exercises actual
+local HTTP recovery, not Supabase or Apple sign-in. Do not select this case
+without its fixture server.
 
-Steps skip rather than fail. `continueAfterFailure = true`, no assertion in the
-walk, and each step is an `XCTContext.runActivity` whose name records what
-happened — so a missing paywall never costs you the other eight screenshots.
+## Run a focused case locally
 
-## Run it locally
-
-`xcodegen generate` is NOT optional. `Rendprop.xcodeproj/project.pbxproj` is
-committed and lists its sources individually; it contains neither the
-`RendpropUITests` target nor the new `Screens/AdminFunnelView.swift` and
-`Screens/AdminProbeAPI.swift`. Skip the generate step and `xcodebuild` fails
-with "scheme has no test action" or "Cannot find AdminFunnelView in scope".
+The source of truth is [project.yml](../project.yml). The committed project now
+contains the UI target; regenerate when source membership changes, and review
+the resulting diff in an isolated checkout. Choose an available disposable
+simulator rather than copying a UUID from a historical receipt:
 
 ```bash
 cd apps/ios
-xcodegen generate
-xcrun simctl boot CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E 2>/dev/null
+xcodegen generate --spec project.yml
+xcrun simctl list devices available
+# Set this to the UUID of the disposable simulator selected above.
+TEST_SIMULATOR_UDID='<simulator UUID>'
+xcrun simctl boot "$TEST_SIMULATOR_UDID"
+xcrun simctl bootstatus "$TEST_SIMULATOR_UDID" -b
 
 xcodebuild test \
   -project Rendprop.xcodeproj \
   -scheme Rendprop \
-  -destination 'platform=iOS Simulator,id=CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E' \
-  -only-testing:RendpropUITests \
-  -resultBundlePath /tmp/walk.xcresult
+  -destination "platform=iOS Simulator,id=$TEST_SIMULATOR_UDID" \
+  -only-testing:RendpropUITests/ProductionPlanUITests \
+  -resultBundlePath "/tmp/rendprop-production-plan-$(date +%Y%m%d-%H%M%S).xcresult"
 ```
 
-`-resultBundlePath` must not already exist — `xcodebuild` refuses to overwrite
-one. Use a timestamped name (the bridge script does).
+Replace `-only-testing` with one case from the table after satisfying its
+fixture needs. A result-bundle path must not already exist. Do not treat a
+whole-target run without recovery/network fixtures as meaningful acceptance.
 
-To watch it, open the Simulator app first; the walk runs in the foreground.
+Saved-take recovery has its own
+[fixture and source-preservation procedure](../../../tools/audit/call-20260919/join/RECOVERY-UI.md).
+It uses a new simulator, generated color clips, an ordered journal and denied
+camera/microphone access. Verify original hashes afterward.
 
-## Run it on the Mac build bridge
+## Existing Mac bridge scripts
 
-Use `apps/ios/RendpropUITests/bridge-cmd-uiwalk.sh` — it does xcodegen → boot → seed
-photos → test → export → `ls` in one block, and reports each stage's exit code
-without aborting the bridge.
+The `bridge-cmd-*.sh` scripts are legacy owner-machine recipes. Most set
+`ROOT="$HOME/Rendprop AI"` and operate on **`$ROOT/repo`**, even when invoked from
+another checkout. Several use a historical simulator UUID; the store/paywall
+scripts find or create “Store 6.9”. Inspect the selected checkout and simulator
+before using one. Do not point a reset/uninstall step at a phone or an existing
+simulator containing useful state.
 
-## Getting the PNGs out of the `.xcresult`
+| Script | Output under `~/Rendprop AI/_bridge/out/` |
+| --- | --- |
+| `bridge-cmd-uiwalk.sh` | `shots/` screenshots |
+| `bridge-cmd-reviewerwalk.sh` | `reviewerwalk/`; uninstalls the app first |
+| `bridge-cmd-storeshots.sh` | `storeshots/`; seeds photos and checks 1320 × 2868 size |
+| `bridge-cmd-paywallshot.sh` | `paywallshot/`; copies valid monthly PNG to the bridge checkout |
+| `bridge-cmd-industrywalk.sh` | `industrywalk/`, `checks.txt`, activity logs; `SIM_UDID` and `KEEP_APP` options |
+| `bridge-cmd-onboardingtour.sh` | Product walkthrough recording; inspect script options before capture |
 
-### Xcode 16 and later (this is the one to use on Xcode 26.4)
+These scripts report per-stage exit codes and preserve evidence; do not assume
+that their final shell exit alone certifies every screenshot or assertion.
+
+## Export evidence
 
 ```bash
 xcrun xcresulttool export attachments \
-  --path /tmp/walk.xcresult \
-  --output-path ./shots
-```
-
-That writes every attachment into `./shots` plus a `manifest.json` describing
-them. The exported files are named by the tool, not by the test, so map them
-back to `01-home` … `09-health-probe` with the manifest — each entry carries an
-`exportedFileName` and the name the test gave it
-(`suggestedHumanReadableName`). `bridge-cmd-uiwalk.sh` does that rename for
-you. Useful extra flags: `--test-id <identifier>` for one test, `--only-failures`
-to export only failed tests' attachments.
-
-### Legacy flow (still works, and is the fallback in the bridge script)
-
-Every pre-Xcode-16 `xcresulttool` verb now needs `--legacy`:
-
-```bash
-# 1. dump the object graph and find the attachment payload ids
-xcrun xcresulttool get --legacy --format json --path /tmp/walk.xcresult
-
-# 2. pull one attachment out by its payloadRef id
-xcrun xcresulttool export --legacy --type file \
-  --path /tmp/walk.xcresult \
-  --id <payloadRef id> \
-  --output-path 01-home.png
-```
-
-The graph is nested: `actions._values[].actionResult.testsRef.id` → that object's
-`summaryRef.id`s → each summary's `activitySummaries[].attachments._values[]`,
-where `name` is `01-home` and `payloadRef.id._value` is the id to export.
-`bridge-cmd-uiwalk.sh` walks exactly that path in its fallback branch.
-
-Without `--legacy` those two verbs fail on Xcode 16+ with a deprecation error.
-
-### Reading the skip notes
-
-If a PNG is missing, the reason is in the bundle as an activity name:
-
-```bash
-xcrun xcresulttool get test-results activities \
-  --path /tmp/walk.xcresult --test-id 'RendpropUITests/testWalk()'
-```
-
-Look for an activity whose name starts with `SKIPPED:` — it says exactly which
-control was not found.
-
----
-
-# ReviewerWalk — what an App Store reviewer sees first
-
-`ReviewerWalk.testReviewerWalk()` is a second, separate capture in the same
-bundle. The UI walk above and the store shots both launch with
-`-hasOnboarded YES` and `-ai.thirdPartyProcessing.consent.v2 YES`, so they land
-straight on Home with every gate already answered — which is precisely the part
-a reviewer never gets. This test launches like a **brand-new install** and
-photographs the first-run path in the order a reviewer walks it.
-
-| # | Attachment | Screen |
-|---|---|---|
-| 01 | `r01-onboarding-1` … `r01-onboarding-5` | Every page of the intro |
-| 02 | `r02-first-home` | Home, the moment onboarding completes |
-| 03 | `r03-homes` | The Homes tab (first-tour card + the two seeded samples) |
-| 04 | `r04-sample-detail` | The first sample home's detail (SAMPLE TOUR, "This is a sample", TOOLBOX dimmed) |
-| 05 | `r05-sample-player` | The tour player — Home → "Watch the sample tour" (hosted demo listing page) |
-| 06 | `r06-profile` | The Profile tab / agent card |
-| 07 | `r07-settings-legal` | Settings scrolled to **Legal & support** — Terms of Service + Privacy Policy |
-| 08 | `r08-delete-account` | Settings **Your data**, with "Delete account" in frame (Guideline 5.1.1(v)) |
-| 09 | `r09-delete-confirm` | The "Delete account?" confirmation alert |
-| 10 | `r10-signin-gate` | The Sign in with Apple sheet — **expected to skip**, see below |
-| 11 | `r11-ai-consent` | The Guideline 5.1.2(i) AI disclosure, first time an AI tool is opened |
-
-**There are five onboarding screens**: four feature cards in `OnboardingView`'s
-paged `TabView` ("Film with your phone", "An AI photo studio in your pocket",
-"Reels and floor plans, done for you", "One link. Real leads.") followed by the
-"What do you showcase?" business-type picker. Cards 1–3 carry a **Continue**
-button; card 4's says **Get started** and flips to the picker; the picker's own
-**Get started** sets `hasOnboarded = true`. The walk does not hard-code four —
-it screenshots whatever is on screen, presses whichever button is there, and
-stops once the picker has been photographed, so a fifth card added later is
-captured with no edit here. The real count for each run is written into the
-result bundle as an activity note.
-
-## What it launches with — and what it deliberately does not
-
-```
--uiTesting          → Config.makeAPIClient() returns MockAPIClient
--appearance light   → deterministic screenshots
-```
-
-That is the whole list. **No `-hasOnboarded`**, so `RendpropApp`'s
-`@AppStorage("hasOnboarded")` is false and `OnboardingView` is the root. **No
-consent override**, so `AIConsent` is ungranted and the disclosure really
-appears at the door of the AI Photo Studio — r11 is the proof it exists. **No
-`-space.type`** either: the default is `SpaceType.realEstate`, which is what the
-picker pre-selects, so the walk accepts the default the way a reviewer would.
-
-Because those flags live in **UserDefaults inside the app's container**, a
-container left over from a previous run would already have them set and the run
-would quietly capture the wrong app. `bridge-cmd-reviewerwalk.sh` therefore runs
-`xcrun simctl uninstall <udid> com.rendprop.app` **before** the test. Running
-`xcodebuild test` by hand without that uninstall gives you a walk that starts on
-Home with no intro and no consent sheet.
-
-## Safety rules this test is built around
-
-1. **No deletion is ever confirmed.** Step r09 taps "Delete account" once to
-   photograph the confirmation, then taps **Cancel** and nothing else.
-   `SettingsView.deleteAccount()` calls the live server —
-   `serverAccountsEnabled` is `Config.useLiveBackend && Config.enableAuth`,
-   neither of which `-uiTesting` turns off — so "Delete" is genuinely
-   destructive even here. The fallback path skips any button whose label
-   contains Delete / Clear / Erase / Remove / Confirm / Sign out, and leaves the
-   dialog standing rather than pressing one of them.
-2. **No AI edit is ever run.** r11 stops at the consent sheet and taps "Not
-   now". `MockAPIClient.aiPhotoEdit` echoes the submitted image back, so any
-   "result" would be a misleading screenshot.
-3. **No assertions.** `continueAfterFailure = true`, one
-   `XCTContext.runActivity` per step, and an unreachable step writes its reason
-   into the bundle instead of failing the run.
-
-## r10 is expected to skip
-
-`AuthStore` short-circuits on the walk flag —
-`isSignedIn = Config.isUITesting ? true : …` (`Auth/AuthStore.swift`) — so for
-the whole run the app believes it is signed in.
-`FlythroughDetailView.needsSignIn` is false, Settings draws "Sign out" instead
-of "Sign in with Apple", and nothing raises `SignInView`. Signing in for real
-needs an Apple ID on the simulator, which no automated walk can supply, so
-**capture the sign-in sheet by hand on a device** for the review notes. The step
-still makes the attempt, so if that `-uiTesting` shortcut is ever removed the
-shot starts appearing with no change to the test.
-
-One more consequence of the same flag: r11 creates the walk's **one real home**
-("24 Willow Bend Court") through the "Name this home first" gate, because every
-AI tool is a deliberate no-op on the seeded samples. That is why r11 runs last —
-every "fresh install" shot above is already taken by then.
-
-## Run it on the Mac build bridge
-
-```bash
-bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-reviewerwalk.sh"
-```
-
-It does xcodegen → boot → **uninstall** → status bar → test → export → `ls` in
-one block, on the existing 6.3-inch iPhone 17 Pro simulator
-`CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E`, and reports each stage's exit code
-without aborting the bridge. PNGs land in
-`~/Rendprop AI/_bridge/out/reviewerwalk/` as `r01-….png` … `r11-….png`.
-
-Unlike `bridge-cmd-storeshots.sh` it seeds **no photos** (a reviewer's phone has
-an empty library too, and r11 never picks one) and applies **no size gate**
-(these are review-notes screenshots, not App Store Connect uploads). It does
-apply the same 9:41 / full-battery / full-bars status bar, so a reviewer-walk
-PNG and a store PNG sit side by side without one being dated by a random clock.
-
-## Run it by hand
-
-```bash
-cd apps/ios
-xcodegen generate
-xcrun simctl boot CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E 2>/dev/null
-xcrun simctl uninstall CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E com.rendprop.app   # NOT optional
-
-xcodebuild test \
-  -project Rendprop.xcodeproj \
-  -scheme Rendprop \
-  -destination 'platform=iOS Simulator,id=CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E' \
-  -only-testing:RendpropUITests/ReviewerWalk \
-  -resultBundlePath /tmp/reviewerwalk.xcresult
-```
-
-Skip notes and the onboarding page count:
-
-```bash
-xcrun xcresulttool get test-results activities \
-  --path /tmp/reviewerwalk.xcresult --test-id 'ReviewerWalk/testReviewerWalk()'
-```
-
----
-
-# PaywallShot — the subscription review screenshot
-
-`PaywallShot.testPaywallShot()` is a third capture in the same bundle. It exists
-for one file: `docs/appstore/iap-review/paywall.png`, the **App Store Connect
-subscription review screenshot** that App Review requires on every
-auto-renewable subscription (`python3 tools/asc/asc.py review apply` attaches it
-to all five sold products). Apple wants the purchase UI as a customer sees it —
-real product names, real prices — and it is never shown to the public.
-
-| # | Attachment | Screen |
-|---|---|---|
-| 01 | `p01-paywall-monthly` | Settings → Plan & usage → **Upgrade plan** → the paywall, Monthly tab, with StoreKit prices. **The deliverable.** |
-| 02 | `p02-paywall-yearly` | The same sheet on the **Yearly** tab (Team falls back to its monthly price with a "Monthly only" note — Team Yearly is not sold at launch). |
-| 03 | `p03-paywall-legal` | Scrolled to the bottom: the auto-renew sentence, Terms of Use, Privacy Policy, and the pinned buy bar with **Restore purchases**. |
-| — | `p01-paywall-EMPTY` | Only when no price rendered within 20 s: the "Plans aren't available right now" state, so you can see what went wrong. Never copied into the repo. |
-
-## How it gets products under `xcodebuild test`
-
-`StoreShots` never opens the paywall because the scheme attaches
-`Rendprop.storekit` to the **Run** action only, and xcodegen has no
-`storeKitConfiguration` for the test action — so under `xcodebuild test`
-`Product.products(for:)` returns nothing and the paywall shows its (correct)
-empty state. `PaywallShot` therefore brings the StoreKit test environment up
-itself, in `setUpWithError()` **before** `app.launch()`:
-
-```swift
-let session = try SKTestSession(configurationFileNamed: "Rendprop")
-session.resetToDefaultState()
-session.disableDialogs = true
-session.clearTransactions()
-session.storefront = "USA"
-session.locale = Locale(identifier: "en_US")
-```
-
-This is Apple's automation API for StoreKit Testing in Xcode ("StoreKitTest
-works with XCTest for extending unit and UI test coverage to your in-app
-purchases" — WWDC20 10659). There is one test environment per simulator and
-every `SKTestSession` controls it, so a session created in the test runner is
-what the app sees when `PurchaseManager.loadProducts()` runs at launch. Two
-things in `project.yml` make it work:
-
-1. `Rendprop.storekit` is a **resource of the RendpropUITests target only**
-   (`sources: - path: Rendprop.storekit, buildPhase: resources`). StoreKitTest
-   resolves the name inside the bundles loaded into the runner, so the file has
-   to ride inside `RendpropUITests.xctest`. It is not in the app target and a
-   test bundle is never archived, so nothing reaches the .app.
-2. `FRAMEWORK_SEARCH_PATHS` on that target names
-   `$(PLATFORM_DIR)/Developer/Library/Frameworks`, where `StoreKitTest.framework`
-   sits next to `XCTest.framework`. Swift auto-links it on `import StoreKitTest`.
-
-The test tries `configurationFileNamed: "Rendprop"`, then `"Rendprop.storekit"`,
-then `init(contentsOf:)` on the bundle URL, and writes which one worked (or why
-none did) into the result bundle as the first activity (`STOREKIT: …`). If the
-paywall still shows its empty state, it presses the paywall's own **Try again**
-up to three times before giving up.
-
-## What it launches with
-
-The same five arguments as the UI walk and the store shots — `-uiTesting`,
-`-hasOnboarded YES`, `-space.type real_estate`, `-appearance light`,
-`-ai.thirdPartyProcessing.consent.v2 YES`. `-uiTesting` does not touch
-StoreKit: `PurchaseManager.loadProducts()` calls `Product.products(for:)`
-unconditionally, and `Config.makeAPIClient()` only swaps the REST client for the
-mock. It does make `AuthStore.isSignedIn` true, and the mock `/me` reports no
-plan, which is exactly the state in which `SettingsView.PlanActionRows` draws
-**Upgrade plan** (`RendpropProducts.isUpgradeable(planName: nil)`).
-
-## What it relies on in the app
-
-| Element | Where |
-|---|---|
-| Tab bar button **Settings** | `RootTabView`, `RendpropApp.swift` |
-| `settings.upgradePlan` / label **Upgrade plan** | `SettingsView.PlanActionRows` |
-| `paywall.root` / header **Turn any phone walkthrough…** / **Pick a plan. Cancel any time.** | `PaywallView` |
-| A label containing **/month** (or **/year** on the Yearly tab) | `PaywallView.priceText` = `Product.displayPrice` + `BillingPeriod.priceSuffix`; a missing product prints a bare dash with no suffix, so the suffix is proof a real price rendered |
-| Segmented picker buttons **Monthly** / **Yearly** | `PaywallView.periodPicker` (`BillingPeriod.pickerLabel`) |
-| **Plans aren't available right now** + button **Try again** | `PaywallView.unavailableCard` |
-| Link **Terms of Use**, button **Restore purchases**, button **Close** | `PaywallView.legalBlock`, `restoreButton`, toolbar |
-
-## Safety rules
-
-1. **No purchase button is ever tapped.** "Subscribe" / "Start 7-day free
-   trial" are photographed, never touched. The only controls pressed are the
-   Settings tab, "Upgrade plan", the Monthly/Yearly segments, the paywall's own
-   "Try again", and "Close".
-2. **No assertions.** `continueAfterFailure = true`, one activity per step, and
-   an unreachable step writes its reason into the bundle instead of failing.
-3. **Nothing empty reaches the repo.** The bridge script copies only
-   `p01-paywall-monthly.png`, only at exactly 1320 × 2868; an `EMPTY` capture
-   has a different name and cannot land in `docs/appstore/iap-review/`.
-
-## Run it on the Mac build bridge
-
-```bash
-bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-paywallshot.sh"
-```
-
-Same "Store 6.9" simulator (iPhone 17 Pro Max, 1320 × 2868) and the same 9:41
-status bar as `bridge-cmd-storeshots.sh`; no photos are seeded. PNGs land in
-`~/Rendprop AI/_bridge/out/paywallshot/`, and the monthly shot is copied to
-`~/Rendprop AI/repo/docs/appstore/iap-review/paywall.png` when it passes the
-size gate. The last line is always `PAYWALL_PNG=<path>` or `PAYWALL_PNG=MISSING`.
-
-## Run it by hand
-
-```bash
-cd apps/ios
-xcodegen generate        # adds Rendprop.storekit to the test bundle's resources
-xcrun simctl boot B4DAE2B9-B951-4808-AF5D-97D89D64CECC 2>/dev/null   # "Store 6.9"
-
-xcodebuild test \
-  -project Rendprop.xcodeproj \
-  -scheme Rendprop \
-  -destination 'platform=iOS Simulator,id=B4DAE2B9-B951-4808-AF5D-97D89D64CECC' \
-  -only-testing:RendpropUITests/PaywallShot \
-  -resultBundlePath /tmp/paywallshot.xcresult
-```
-
-The `STOREKIT:` note, the `Price rendered: …` proof and any skip reasons:
-
-```bash
-xcrun xcresulttool get test-results activities \
-  --path /tmp/paywallshot.xcresult --test-id 'PaywallShot/testPaywallShot()'
-```
-
----
-
-# IndustryWalk — every business type, every screen
-
-`IndustryWalk` is six tests in the same bundle — `testRealEstate` (the control),
-`testVenue`, `testRestaurant`, `testRetail`, `testFitness`, `testOther` — one per
-`SpaceType`. Each puts the app into that business type and walks every screen a
-user of that type can reach under `-uiTesting`, attaching `<type>-NN-<screen>`
-screenshots and writing one activity per expectation named `CHECK PASS …` or
-`CHECK FAIL …: <what the screen said>`. The expected strings come from the
-app's own `SpaceType` (Models/Listing.swift), the form, the studio's edit words
-and the card editor — nothing is invented — and every screen is also scanned
-for vocabulary that must not cross the line (no "listing / beds / baths / MLS /
-buyers / agent / Zillow / sold / staging / home" off real estate; no "venue /
-planners / guests / shoppers / members / archived" on it).
-
-| NN | Screen |
-|---|---|
-| 00 | The Home business-type menu (`-00-type-menu`) and Home after the switch |
-| 01–02 | Home dashboard (hero copy for the type), scrolled to the demo player |
-| 03 | The collection tab (Homes / Venues / Places / Stores / Studios / Spaces) |
-| 04–07 | The seeded sample's detail: player, toolbox (dimmed), LEADS, DETAILS rows |
-| 08 | New \<noun\> form with the optional details expanded (no beds/baths off real estate) |
-| 09 | AI Photo Studio via the "Take photos" gate (`-09a-name-gate` is the naming sheet) |
-| 10–11 | The walk's own project: detail + MANAGE (archive verb, Zillow only on real estate) |
-| 12 | Aerial intro sheet (form state) |
-| 13 | Floor plan (upload path — no LiDAR in the simulator) |
-| 14 | "Make a reel" entry (card disabled, no photos) |
-| 15 | Edit \<noun\> sheet (cancelled) |
-| 16 | Leads (empty, mock) |
-| 17–18 | Profile + the Agent / Business card editor |
-| 19 | Settings |
-| 20–21 | Settings › Business type + its preview (area tags, detail chips, tour button) |
-| 22–23 | Plan & usage + the paywall (opened, photographed, closed) |
-| 24 | Legal & support |
-| 25–26 | Delete account + its confirmation (**Cancel only**) |
-
-## How the type is selected
-
-`-key value` launch arguments sit in UserDefaults' argument domain, which wins
-over the persisted value on every read — so under `-space.type venue` the Home
-switcher would write "restaurant" and read "venue" straight back. Each test
-therefore launches **without** `-space.type` and drives the top-left
-business-type menu to its own industry (that is the switcher test; the hero
-headline changing is the proof). If the menu cannot be driven, the test
-relaunches pinned with `-space.type <raw>` and says so in the activity log.
-
-It launches with `-uiTesting`, `-hasOnboarded YES`, `-appearance light`,
-`-ai.thirdPartyProcessing.consent.v2 YES`, and brings up the same
-`SKTestSession` as PaywallShot so the plan cards render for the copy check.
-
-## Safety rules
-
-Same as the other walks: Delete account → the confirmation is photographed and
-**Cancel** is the only button pressed; no purchase button is tapped; no photo
-is added and no AI edit runs (the reel card stays disabled by design); no
-assertion — a step that cannot be reached writes `SKIPPED:` and moves on.
-
-## Run it on the Mac build bridge
-
-```bash
-bash "$HOME/Rendprop AI/repo/apps/ios/RendpropUITests/bridge-cmd-industrywalk.sh"
-```
-
-xcodegen → boot → **uninstall** (clean container, so each type creates exactly
-one project: "1 Walk Test Street", "Walk Test Venue", …) → status bar → test →
-export. Output in `~/Rendprop AI/_bridge/out/industrywalk/`: the PNGs,
-`checks.txt` (every CHECK line, prefixed with the test) and
-`activities-<test>.txt` (the full activity tree — skip reasons, the STOREKIT
-note, the switcher fallback). The script's last block prints every
-`CHECK FAIL` line. `KEEP_APP=1` skips the uninstall; `SIM_UDID=…` picks another
-simulator.
-
-## Run it by hand
-
-```bash
-cd apps/ios
-xcodegen generate
-xcrun simctl boot CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E 2>/dev/null
-xcrun simctl uninstall CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E com.rendprop.app   # clean container
-
-xcodebuild test \
-  -project Rendprop.xcodeproj \
-  -scheme Rendprop \
-  -destination 'platform=iOS Simulator,id=CC58F5C6-C811-4FEB-889A-EF10CE1E7A0E' \
-  -only-testing:RendpropUITests/IndustryWalk \
-  -resultBundlePath /tmp/industrywalk.xcresult
+  --path /tmp/your-run.xcresult \
+  --output-path /tmp/your-run-shots
 
 xcrun xcresulttool get test-results activities \
-  --path /tmp/industrywalk.xcresult --test-id 'IndustryWalk/testVenue()' | grep -E 'CHECK (PASS|FAIL)'
+  --path /tmp/your-run.xcresult \
+  --test-id 'ReviewerWalk/testReviewerWalk()'
 ```
 
-The static companion — what differs per industry in the code, and every leak
-the walk is expected to catch — is `docs/qa/industry-review.md`.
+Use the exported manifest to map filenames to attachment names. Screenshots
+have `.keepAlways` lifetime. Review failures, missing required captures,
+`SKIPPED`, `FALLBACK`, `CHECK FAIL` and `STOREKIT` notes. The bridge scripts also
+contain a legacy `xcresulttool ... --legacy` export fallback.
+
+## StoreKit screenshots and real-device checks
+
+`PaywallShot` loads [Rendprop.storekit](../Rendprop.storekit) through
+`SKTestSession` before launching, sets USA / en_US, clears synthetic
+transactions and disables purchase dialogs. The configuration is bundled in
+the test target only; the scheme's Run-action StoreKit configuration alone
+does not provide products to `xcodebuild test`.
+
+`p01-paywall-monthly` is the review deliverable; `p02-paywall-yearly` and
+`p03-paywall-legal` are supporting evidence. `p01-paywall-EMPTY` must never be
+uploaded. These are local product/eligibility fixtures, not a successful
+StoreKit sandbox purchase or proof of current App Store prices. See the
+[IAP review procedure](../../../docs/appstore/iap-review/README.md) and
+[store screenshot recipe](../../../docs/appstore/screenshots/README.md).
+
+The owner still needs the [real-phone agency checklist](../../../docs/studio/agency-production-workflow.md#acceptance-on-a-real-phone)
+for capture, interrupted uploads, phone/desktop sync and finished picture/audio.
