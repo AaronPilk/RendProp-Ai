@@ -13,6 +13,9 @@ struct CaptureControls {
     var exportEnabled: Bool { phase == .finished(exportable: true) }
     var isRecording: Bool { phase == .recording }
     var isClosed: Bool { phase == .closed }
+    var instructionsVisible: Bool {
+        switch phase { case .ready, .preparing, .recording: return true; default: return false }
+    }
 
     // Closing during permission/file preparation or recording must interrupt.
     // An already-requested save is allowed to drain; it is never deleted or
