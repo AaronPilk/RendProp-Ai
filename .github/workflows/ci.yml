@@ -80,6 +80,7 @@ jobs:
           STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
           TMPDIR: ${{ runner.temp }}
         run: |
+          node tests/export-resume-browser.mjs
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
       - name: Retain media export receipts and browser evidence
@@ -90,9 +91,12 @@ jobs:
           path: |
             ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
             ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
+            ${{ runner.temp }}/rendprop-cloud-editor-*/*.mp4
             ${{ runner.temp }}/rendprop-conversation-*/receipt.json
             ${{ runner.temp }}/rendprop-conversation-*/*.png
             ${{ runner.temp }}/rendprop-conversation-*/*.mp4
+            ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
+            ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
           retention-days: 7
           if-no-files-found: warn
 

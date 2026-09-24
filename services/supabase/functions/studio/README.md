@@ -1,4 +1,4 @@
-# Studio owner-media read bridge
+# Studio media and creation APIs
 
 Additive route: `GET /functions/v1/studio/media?org_id=<uuid>&listing_id=<uuid>&offset=0`.
 Deploy with JWT verification enabled. The handler also verifies the caller with
@@ -6,7 +6,7 @@ Supabase Auth, current membership, deletion state, and user-token RLS queries.
 The optional `X-Org-Id` must match `org_id`; it never grants authority.
 
 No migration or new secret is required. Existing private/render R2 credentials are
-used server-side. This function does not issue upload tickets, create generation
+used server-side. This media-read route does not issue upload tickets, create generation
 jobs, change billing, publish, or delete anything. Its rate-limit RPC is the only
 counter mutation.
 

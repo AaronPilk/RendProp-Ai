@@ -63,7 +63,7 @@ fidelity; the user reviews the proposal before sending.
 ## Verification
 
 - Studio: **376 unit tests**, TypeScript, build and asset checks passed. Final
-  JavaScript gzip total: **293,859 bytes / 300,000 ceiling**.
+  JavaScript gzip total: **293,826 bytes / 300,000 ceiling**.
 - Studio edge folder: **157 Deno tests passed**, one existing owned-Postgres
   integration test ignored outside its dedicated environment. The new endpoint
   subset contains **31 tests**. Entry-point typecheck passed. HTTP, identity,
@@ -100,6 +100,37 @@ truncates older turns, and drops oldest history until UTF-8 JSON fits 24 KiB.
 Cross-layer tests pass the actual browser builder into the actual backend parser.
 Capability availability is bound to the latest scope/activation so returning to
 a workspace cannot briefly inherit its earlier enabled state.
+
+### Export timing caught by CI
+
+The first GitHub run (`36050431489`) passed eleven jobs but failed the macOS media
+gate: its three-second narrated mixed-media edit exported as 3.4944 seconds.
+The original duration threshold was retained. A controlled reproduction delayed
+only delivery of each `resume` event by 250 ms; the old exporter then produced
+3.530933 seconds. It awaited the notification after capture had already resumed,
+recording idle time before starting the next clip's clock.
+
+The bounded fix calls `resume()` and requests a frame without awaiting that
+notification, matching the existing `start()` handling. It retains the pause
+barrier before disposing source media, original source spans, playback speed and
+audio path. The [MediaRecorder specification](https://www.w3.org/TR/mediastream-recording/#dom-mediarecorder-resume)
+sets recording state synchronously and queues the capture/event work.
+
+`tests/export-resume-browser.mjs` builds the actual fix and a test-only restoration
+of the old await. Both receive the same delayed notifications. It checks encoded
+duration, transition pixels, narration, photo-leading silence and a distinctive
+opening sound in the first 0.15 seconds of the video to catch clipped speech.
+Cloud export receipts now include native recorder/media/audio timing and full
+ffprobe details before assertions; CI retains actual synthetic MP4 artifacts.
+The browser exporter remains real-time and is not a frame-exact offline renderer.
+
+The four-check differential regression passed at
+`rendprop-export-resume-uiZnD6/receipt.json`: negative-control durations were
+3.5673/3.556733 seconds, corrected durations 3.066867/3.050767 seconds
+(narrated/original audio). The corrected opening window retained its distinct
+990 Hz tone with RMS 0.113; leading silence, later 440 Hz audio, 660 Hz narration
+and decoded dissolve/whip frames passed. The existing sixteen-check cloud export
+fixture also passed after the fix at `rendprop-cloud-editor-DW6k5q/receipt.json`.
 
 ## Delivery and remaining release work
 

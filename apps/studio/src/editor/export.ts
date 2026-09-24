@@ -242,9 +242,13 @@ export async function exportLocalVideo(options: {
           CanvasCaptureMediaStreamTrack | undefined;
         track?.requestFrame?.();
       } else {
-        const resumed = waitForEvent(recorder, "resume", renderSignal);
+        // resume() changes state synchronously and queues capture before its
+        // notification. Waiting for that event records an idle frame/audio gap
+        // before this segment's clock and source playback begin on busy devices.
         recorder.resume();
-        await resumed;
+        const track = stream.getVideoTracks()[0] as
+          CanvasCaptureMediaStreamTrack | undefined;
+        track?.requestFrame?.();
       }
       // Start recording before advancing the source, so startup cannot discard speech.
       if (video)

@@ -8,8 +8,62 @@ import { build } from "vite";
 import { execFileSync } from "node:child_process";
 import { chromium, expect } from "@playwright/test";
 const root = fileURLToPath(new URL("../", import.meta.url)), artifacts = await mkdtemp(join(tmpdir(), "rendprop-cloud-editor-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", checks: [], externalRequests: [], errors: [] };
+const receipt = { proof: "Real CloudEditor, VideoEditor, DocumentSync and CloudPlanner with isolated cloud/asset fixtures. No live account or paid provider use.", checks: [], externalRequests: [], errors: [], mediaTiming: [], exportProbes: [] };
 let browser, server, page;
+const timingDevices=[];
+// Test-only observation: every wrapper returns the original native result and
+// preserves thrown errors. No export timing, callback scheduling or assertions change.
+function installMediaTimingFixture() {
+  const events=[], recorderIds=new WeakMap(), mediaIds=new WeakMap(), audioIds=new WeakMap();
+  const mediaElements=[],audioContexts=[];
+  let recorderSequence=0,mediaSequence=0,audioSequence=0;
+  const milliseconds=value=>Math.round(value*1000)/1000;
+  const now=()=>milliseconds(performance.now());
+  const mediaState=media=>({id:mediaIds.get(media),tag:media.tagName,currentTime:media.currentTime,duration:Number.isFinite(media.duration)?media.duration:null,playbackRate:media.playbackRate,paused:media.paused,ended:media.ended,readyState:media.readyState,networkState:media.networkState});
+  const audioState=context=>({id:audioIds.get(context),currentTime:context.currentTime,state:context.state,sampleRate:context.sampleRate});
+  const record=(kind,detail={})=>{if(events.length<5000)events.push({atMs:now(),kind,visibility:document.visibilityState,...detail});};
+  function trackMedia(media) {
+    if(mediaIds.has(media))return mediaIds.get(media);
+    const id=++mediaSequence;mediaIds.set(media,id);mediaElements.push(media);
+    for(const name of ["playing","waiting","stalled","seeking","seeked","pause","ended"])media.addEventListener(name,event=>record(`media.event.${name}`,{eventTimeStamp:event.timeStamp,media:mediaState(media)}));
+    return id;
+  }
+  function trackAudio(context) {
+    if(!audioIds.has(context)){audioIds.set(context,++audioSequence);audioContexts.push(context);context.addEventListener("statechange",()=>record("audio.event.statechange",{audio:audioState(context)}));}
+    return audioIds.get(context);
+  }
+  function recorderState(recorder) {return {id:recorderIds.get(recorder),state:recorder.state,mimeType:recorder.mimeType,media:mediaElements.map(mediaState),audio:audioContexts.map(audioState)};}
+  function trackRecorder(recorder) {
+    if(recorderIds.has(recorder))return;
+    recorderIds.set(recorder,++recorderSequence);
+    for(const name of ["start","resume","pause","stop","dataavailable","error"])recorder.addEventListener(name,event=>record(`recorder.event.${name}`,{eventTimeStamp:event.timeStamp,...recorderState(recorder),...(name==="dataavailable"?{bytes:event.data.size,timecode:event.timecode}:{}),...(name==="error"?{error:String(event.error)}:{})}));
+  }
+  if(typeof MediaRecorder!=="undefined")for(const method of ["start","resume","pause","stop"]){
+    const original=MediaRecorder.prototype[method];
+    MediaRecorder.prototype[method]=function(...args){trackRecorder(this);record(`recorder.call.${method}`,{args,...recorderState(this)});try{const result=Reflect.apply(original,this,args);record(`recorder.return.${method}`,recorderState(this));return result;}catch(error){record(`recorder.throw.${method}`,{...recorderState(this),error:String(error)});throw error;}};
+  }
+  const originalPlay=HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play=function(...args){
+    trackMedia(this);const started=performance.now();record("media.call.play",{media:mediaState(this)});
+    try{const result=Reflect.apply(originalPlay,this,args);result.then(()=>record("media.resolve.play",{latencyMs:milliseconds(performance.now()-started),media:mediaState(this)}),error=>record("media.reject.play",{latencyMs:milliseconds(performance.now()-started),media:mediaState(this),error:String(error)}));return result;}
+    catch(error){record("media.throw.play",{latencyMs:milliseconds(performance.now()-started),media:mediaState(this),error:String(error)});throw error;}
+  };
+  const audioTypes=[...new Set([window.AudioContext,window.webkitAudioContext].filter(Boolean))];
+  for(const AudioType of audioTypes){const originalResume=AudioType.prototype.resume;AudioType.prototype.resume=function(...args){trackAudio(this);const started=performance.now();record("audio.call.resume",{audio:audioState(this)});try{const result=Reflect.apply(originalResume,this,args);result.then(()=>record("audio.resolve.resume",{latencyMs:milliseconds(performance.now()-started),audio:audioState(this)}),error=>record("audio.reject.resume",{latencyMs:milliseconds(performance.now()-started),audio:audioState(this),error:String(error)}));return result;}catch(error){record("audio.throw.resume",{audio:audioState(this),error:String(error)});throw error;}};}
+  document.addEventListener("visibilitychange",()=>record("document.visibilitychange"));
+  window.mediaTimingFixture={snapshot:()=>({timeOrigin:performance.timeOrigin,capturedAtMs:now(),userAgent:navigator.userAgent,truncated:events.length>=5000,events:structuredClone(events)})};
+}
+async function captureMediaTiming() {
+  for(const device of timingDevices){
+    if(device.tab.isClosed())continue;
+    try{device.trace=await device.tab.evaluate(()=>window.mediaTimingFixture.snapshot());}
+    catch(error){device.captureError=String(error);}
+  }
+  receipt.mediaTiming=timingDevices.map(({id,listing,trace,captureError})=>({id,listing,trace,captureError}));
+}
+async function closeDevice(tab){await captureMediaTiming();await tab.close();}
+async function saveExportDiagnostics(label,path,probe){await captureMediaTiming();receipt.exportProbes.push({label,path,ffprobe:probe});await writeFile(join(artifacts,"receipt.json"),JSON.stringify(receipt,null,2));}
+
 const pro=async tab=>{await expect(tab.getByRole("button",{name:"Pro view",exact:true})).toBeVisible();await tab.getByRole("button",{name:"Pro view",exact:true}).click();};
 const advancedTools=async tab=>{const details=tab.locator("details.creation-advanced").filter({has:tab.locator("summary",{hasText:"Capture plan & extra editing tools"})});if(!await details.evaluate(node=>node.open))await details.locator("summary").click();};
 try {
@@ -24,9 +78,10 @@ try {
   browser = await chromium.launch({ headless: true, executablePath: process.env.STUDIO_BROWSER_EXECUTABLE });
   async function device(seed, listing = "20000000-0000-4000-8000-000000000002") {
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, serviceWorkers: "block" });
+    await context.addInitScript(installMediaTimingFixture);
     if (seed) await context.addInitScript(value => localStorage.setItem("fixture-cloud", JSON.stringify(value)), seed);
     await context.route("**/*", route => { const url = new URL(route.request().url()); if(url.href === `https://${"a".repeat(32)}.r2.cloudflarestorage.com/fixture/narration.wav`) return route.fulfill({status:200,contentType:"audio/wav",body:voiceBytes}); if (url.origin === origin && route.request().method() === "GET" || url.protocol === "blob:") return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
-    const tab = await context.newPage(); tab.on("pageerror", error => receipt.errors.push(error.message)); tab.setDefaultTimeout(10000);
+    const tab = await context.newPage(); timingDevices.push({id:timingDevices.length+1,listing,tab}); tab.on("pageerror", error => receipt.errors.push(error.message)); tab.setDefaultTimeout(10000);
     await tab.goto(`${origin}/tests/cloud-editor-fixture.html?listing=${listing}`); await pro(tab); return tab;
   }
   page = await device();
@@ -112,12 +167,13 @@ try {
   await third.getByRole("button", {name:/Select clip 3:/}).click();
   await expect(third.getByLabel("Transition into this clip", {exact:true})).toHaveValue("whip");
   assert.equal((await third.evaluate(() => window.cloudFixture.snapshot())).tickets,advanced.tickets);
-  await third.close(); await second.bringToFront();
+  await closeDevice(third); await second.bringToFront();
   receipt.checks.push("Fresh device restores narration by trusted result ID, exact video bytes, speed, styled captions and both transition choices");
   await second.getByRole("button", { name: "Export MP4", exact: true }).click();
   await expect(second.getByRole("button", { name: "Save video to listing", exact: true })).toBeVisible({ timeout: 20000 });
   const download = second.waitForEvent("download"); await second.getByRole("link",{name:/Download MP4/}).click(); const exported = join(artifacts,"narrated-studio.mp4"); await (await download).saveAs(exported);
-  const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type:format=duration","-of","json",exported],{encoding:"utf8"}));
+  const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",exported],{encoding:"utf8"}));
+  await saveExportDiagnostics("narrated-studio",exported,probe);
   assert(probe.streams.some(s=>s.codec_name==="h264")); assert(probe.streams.some(s=>s.codec_name==="aac")); assert(Math.abs(Number(probe.format.duration)-3)<0.4,`Speed-adjusted edit duration ${probe.format.duration}`);
   const pcm=execFileSync("ffmpeg",["-v","error","-i",exported,"-ss","0.4","-t","1","-vn","-ac","1","-ar","48000","-f","s16le","pipe:1"]); let power=0,crossings=0;
   for(let i=0;i<pcm.length;i+=2){const v=pcm.readInt16LE(i)/32768;power+=v*v;if(i>=2&&pcm.readInt16LE(i-2)<0&&v>=0)crossings++;}
@@ -190,11 +246,11 @@ try {
   await expect(fourth.getByRole("button",{name:"Reselect cutaway photo",exact:true})).toHaveCount(0);
   await expect(fourth.getByRole("button",{name:"Export MP4",exact:true})).toBeEnabled();
   assert.equal((await fourth.evaluate(() => window.cloudFixture.snapshot())).tickets,agentSaved.tickets);
-  await fourth.close();await second.bringToFront();
+  await closeDevice(fourth);await second.bringToFront();
   await second.getByRole("button",{name:"Export MP4",exact:true}).click();
   await expect(second.getByRole("link",{name:/Download MP4/})).toBeVisible({timeout:20000});
   const agentDownload=second.waitForEvent("download");await second.getByRole("link",{name:/Download MP4/}).click();const agentExport=join(artifacts,"agent-continuous.mp4");await (await agentDownload).saveAs(agentExport);
-  const agentProbe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","format=duration","-of","json",agentExport],{encoding:"utf8"}));assert(Math.abs(Number(agentProbe.format.duration)-4)<.4);
+  const agentProbe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_streams","-show_format","-of","json",agentExport],{encoding:"utf8"}));await saveExportDiagnostics("agent-continuous",agentExport,agentProbe);assert(Math.abs(Number(agentProbe.format.duration)-4)<.4);
   const agentPixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",agentExport,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:300","-f","rawvideo","pipe:1"])];
   const beforeOverlay=agentPixel(.5),duringOverlay=agentPixel(1.5),afterOverlay=agentPixel(2.5);assert(beforeOverlay[1]>90&&beforeOverlay[0]<30);assert(duringOverlay[0]>200&&duringOverlay[1]<30);assert(afterOverlay[1]>90&&afterOverlay[0]<30);
   const agentPCM=execFileSync("ffmpeg",["-v","error","-i",agentExport,"-ss","0.5","-t","2","-vn","-ac","1","-ar","48000","-f","s16le","pipe:1"]);let weakest=1;
@@ -218,7 +274,7 @@ try {
   await expect(originalDevice.getByRole("button",{name:"Export MP4",exact:true})).toBeEnabled();
   await expect(originalDevice.getByLabel("Cutaway 1 starts (seconds)",{exact:true})).toHaveCount(0);
   assert.equal((await originalDevice.evaluate(() => window.cloudFixture.snapshot())).tickets,originalOnly.tickets);
-  await originalDevice.close(); await second.bringToFront();
+  await closeDevice(originalDevice); await second.bringToFront();
   receipt.checks.push("Presenter original-only handoff reuses the exact saved video and original audio, removes previous overlays, and restores on another browser without another upload");
   await second.getByRole("button",{name:"Chat",exact:true}).click();
   const conflictMessage='Set title "My local conflict title"';
@@ -242,4 +298,4 @@ try {
   await second.screenshot({ path: join(artifacts, "cloud-editor.png"), fullPage: true });
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); receipt.visibleText = await page?.locator("body").innerText().catch(()=>""); process.exitCode = 1; if (page) await page.screenshot({ path: join(artifacts, "failure.png"), fullPage: true }).catch(() => {}); }
-finally { await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
+finally { await captureMediaTiming(); await browser?.close(); if (server) await new Promise(done => server.close(done)); await writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2)); console.log(JSON.stringify({ ...receipt, artifacts }, null, 2)); }
