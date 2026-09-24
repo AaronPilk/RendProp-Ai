@@ -28,6 +28,7 @@ Existing permissions continue to apply. Marketing members can read submitted rev
 - Simple and professional controls work on the same draft. Trimming, splitting, playback speed, captions, photo motion, cutaways, original audio and saved narration use the existing renderer.
 - Recipes do not transcribe speech, choose semantically relevant cutaways, generate video, invent market facts, automatically beat-match music or reproduce a particular agency's signature style.
 - Music licensing and a music mixing track are not supplied by this change. Palmier and Runway are not installed or integrated by it.
+- MP4 export depends on the browser’s H.264/AAC recording support. Property delivery requires MP4; a browser offering only WebM can download a local draft but cannot save that file as a finished property video. The full export/audio regression runs in Chrome on macOS, while general Studio workflows also run in Linux Chromium.
 - Current browser limits still apply: 12 sequence clips, up to 12 photo cutaways, 128 MiB per source, 512 MiB of unique source media and a 3-minute timeline. Splitting a video does not count its bytes twice.
 - A captured 4K original may exceed the browser's memory/file limits. The phone preserves it; this change does not silently compress, discard or claim the browser can edit every phone recording.
 

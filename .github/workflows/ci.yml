@@ -51,6 +51,45 @@ jobs:
           "$production_test_dir/production-plan-tests"
       - name: Phone production autosync survives lost replies and relaunch
         run: bash apps/ios/tests/run-production-writer.sh
+      # Playwright's Linux Chromium lacks the H.264/AAC encoder combination
+      # required by this real MP4 export gate. Keep those assertions intact and
+      # run them in official Chrome on macOS, where the codecs are supported.
+      - name: Install locked Studio dependencies for the media export gate
+        working-directory: apps/studio
+        run: npm ci --ignore-scripts
+      - name: Verify official Chrome and synthetic media tools
+        working-directory: apps/studio
+        shell: bash
+        run: |
+          set -euo pipefail
+          chrome_path="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          if [ ! -x "$chrome_path" ]; then
+            npx playwright install chrome
+          fi
+          test -x "$chrome_path"
+          "$chrome_path" --version
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            brew install ffmpeg
+          fi
+          ffmpeg -version
+          ffprobe -version
+      - name: Studio MP4 export, AAC narration and continuous agent audio
+        working-directory: apps/studio
+        timeout-minutes: 10
+        env:
+          STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+          TMPDIR: ${{ runner.temp }}
+        run: node tests/cloud-editor-browser.mjs
+      - name: Retain media export receipts and browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: studio-macos-media-export-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/rendprop-cloud-editor-*/receipt.json
+            ${{ runner.temp }}/rendprop-cloud-editor-*/*.png
+          retention-days: 7
+          if-no-files-found: warn
 
   web-client-contracts:
     name: Web parity inventory and design-token contracts (offline)
@@ -123,7 +162,6 @@ jobs:
           node tests/property-reels-browser.mjs
           node tests/editor-recipes-browser.mjs
           node tests/production-browser.mjs
-          node tests/cloud-editor-browser.mjs
           node tests/listing-finish-browser.mjs
           node tests/listing-kit-browser.mjs
           node tests/browser-connected.mjs
@@ -140,8 +178,6 @@ jobs:
             /tmp/rendprop-guided-recipes-*/*.png
             /tmp/rendprop-production-*/receipt.json
             /tmp/rendprop-production-*/*.png
-            /tmp/rendprop-cloud-editor-*/receipt.json
-            /tmp/rendprop-cloud-editor-*/*.png
             /tmp/rendprop-listing-finish-*/receipt.json
             /tmp/rendprop-listing-finish-*/*.png
             /tmp/rendprop-listing-kit-*/receipt.json

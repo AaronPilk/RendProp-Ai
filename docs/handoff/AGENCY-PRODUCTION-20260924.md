@@ -73,6 +73,8 @@ bash apps/ios/tests/run-production-writer.sh
 node --test tests/phase1/*.test.mjs
 ```
 
+The first GitHub run exposed a test-environment mismatch: Linux Chromium offers WebM but not the MP4/AAC format required by the full property-delivery export test. That strong MP4/audio regression runs on macOS Chrome; general workflow tests remain on Linux. No codec assertion is weakened.
+
 The editor still has its documented browser limits (12 sequence clips, 128 MiB per file, 512 MiB unique sources, 3-minute timeline). Recipes are deterministic editable starting points. They do not supply music mixing, automatic speech/beat analysis or a verified replica of Four Horsemen Media's style. Palmier/Runway are not integrated by this change.
 
 Do not claim that simulator compilation, camera-free UI tests or synthetic MP4 tests prove real camera capture, real-property coverage or agency-level editorial quality. The user must test the actual phone/media workflow. The workflow and acceptance guide is `docs/studio/agency-production-workflow.md`.
