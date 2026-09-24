@@ -112,8 +112,8 @@ of this work.
 
 Offline checks on the final implementation:
 
-- Studio: **350 unit tests**, TypeScript/build and distribution checks passed.
-  JavaScript gzip total **282,168 bytes**, below the existing 300,000-byte ceiling.
+- Studio: **351 unit tests**, TypeScript/build and distribution checks passed.
+  JavaScript gzip total **282,251 bytes**, below the existing 300,000-byte ceiling.
 - Backend: **237 Deno tests passed**, one integration test intentionally skipped
   without its owned PostgreSQL environment (covered by the controller run below).
   All five changed/new function entrypoints typechecked. Network permission was
@@ -122,20 +122,20 @@ Offline checks on the final implementation:
   **3 official Auth SDK**, and **14 cloud-editor** grouped checks passed. The
   editor check used an actual synthetic H264/AAC export; it was not an AI sample.
   Prompt desktop/mobile screenshots were visually reviewed.
-- Real disposable PostgreSQL: **88 execution/controller**, **48 preparation**,
+- Real disposable PostgreSQL: **92 execution/controller**, **48 preparation**,
   **69 existing production-review**, and **9 prompt-library** checks passed.
   The execution run includes the actual TypeScript controller and native upload
   lifecycle. These local databases use synthetic identities, not live Supabase.
   All owned clusters stopped; production calls were zero.
 
-Local receipts: `build/pex-uxykcrak/receipt.json`,
-`build/pres-dbs1fy42/receipt.json`, `build/pr-6tkmmmry/receipt.json`, and
-`build/prm-_wao_jof/receipt.json`. Their migration hashes match the checked source.
+Local receipts: `build/pex-wxn9v56n/receipt.json`,
+`build/pres-j6_e5gsv/receipt.json`, `build/pr-iwqu5aqm/receipt.json`, and
+`build/prm-2zf307qm/receipt.json`. Their migration hashes match the checked source.
 The media-revocation migration SHA-256 is
-`1cb1be7246851b8fdc588946c78a0826f5f466afd015c10955d5ee7f0c5dd602`.
+`2f8db9cb11ca88765537a44cdf5ae9945db072c3ea7aed984705187f19a01638`.
 
 Browser evidence is in the system temporary directory under
-`rendprop-prompts-vIqii1`, `rendprop-presenter-B1fVfN`,
+`rendprop-prompts-e2aM5R`, `rendprop-presenter-B1fVfN`,
 `rendprop-presenter-app-0egkAG`, `rendprop-auth-sdk-8K6VXy`, and
 `rendprop-cloud-editor-W398w6`. Receipts live under ignored `build/` and temporary
 evidence directories; no customer media or secrets are checked into Git.

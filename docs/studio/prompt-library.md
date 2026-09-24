@@ -6,6 +6,11 @@ labels to the files you will attach. Review the prompt and the separate model
 settings before copying or exporting it. Opening, saving or copying a prompt does
 not upload media or start a paid generation.
 
+Photo-generation recipes use a whole-second clip length. Video recipes can use
+the measured source length, including fractions of a second. The experimental
+multicamera recipe explains the distinct video-edit settings and the provider's
+authorized portrait-reference requirements.
+
 The initial ten recipes cover room reveals, feature details, exteriors, original
 walkthrough edits, agent cutaways, listing teasers, approved presenter briefs,
 experimental multicamera performance, twilight concepts and staged-room concepts.

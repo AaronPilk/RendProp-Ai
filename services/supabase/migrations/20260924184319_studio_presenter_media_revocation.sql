@@ -134,7 +134,17 @@ returns boolean language plpgsql security definer set search_path='' as $$
 declare org uuid; item record;
 begin
  select l.org_id into org from public.listings l join public.orgs o on o.id=l.org_id where l.id=p_listing and l.deleted_at is null and o.deleted_at is null;
- if org is null or p_key is null or length(p_key)>1024 or not (p_key like 'uploads/'||org::text||'/'||p_listing::text||'/%' or p_key like 'renders/'||org::text||'/'||p_listing::text||'/%') then return false; end if;
+ if org is null or p_key is null or length(p_key)>1024 then return false; end if;
+ -- Historical media/provenance can predate canonical org/property keys. The
+ -- exact existing property record establishes audit identity for those keys;
+ -- an unknown legacy key or a foreign canonical scope is never authorized.
+ -- URL-producing handlers retain their independent bucket/key scope checks.
+ if not (p_key like 'uploads/'||org::text||'/'||p_listing::text||'/%' or p_key like 'renders/'||org::text||'/'||p_listing::text||'/%') then
+  if p_key !~ '^(uploads|renders)/' or p_key ~* '^(uploads|renders)/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/'
+   or not (exists(select 1 from public.capture_assets where listing_id=p_listing and storage_key=p_key)
+    or exists(select 1 from public.renders where listing_id=p_listing and video_key=p_key)
+    or exists(select 1 from public.media_provenance where listing_id=p_listing and (original_key=p_key or altered_key=p_key))) then return false; end if;
+ end if;
  if current_setting('role',true)='authenticated' and not exists(select 1 from public.memberships where org_id=org and user_id=auth.uid()) then return false; end if;
  for item in select id from public.capture_assets where listing_id=p_listing and storage_key=p_key loop
   if not public.studio_presenter_media_access_inner(item.id) then return false; end if;

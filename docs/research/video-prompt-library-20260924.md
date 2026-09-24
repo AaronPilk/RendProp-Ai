@@ -39,6 +39,14 @@ must be checked together. Prompt prose does not change an endpoint's parameters.
 [Create-task API](https://docs.byteplus.com/en/docs/ModelArk/1520757),
 [video editing](https://docs.byteplus.com/en/docs/ModelArk/2607688).
 
+For image/reference generation, `duration` is an integer from 4 to 30 seconds;
+fractional source lengths belong to video-edit preparation, not that numeric
+control. The photo recipes require whole-second clip lengths. BytePlus also
+requires a supported portrait-asset workflow for real-person faces; an ordinary
+face upload is not sufficient just because the person approved Rendprop use.
+These are provider input requirements, separate from prompt wording.
+[Task types and inputs](https://docs.byteplus.com/zh-CN/docs/modelark/1520757).
+
 Reference labels must map to the files actually uploaded in the relevant order.
 A literal `@Video1` in a copied prompt does not upload or attach anything. A
 character reference should have a separate role from performance, camera and

@@ -195,9 +195,21 @@ try:
  redacted=json.loads(late[-1]);ok('late reflection completion preserves accounting while withholding revoked output URL',redacted['output_url'] is None and redacted['output_key'] is None and redacted['cost_ledger_id'] is not None)
  legacy=query(revoke_prefix+f"select json_build_array(studio_presenter_media_access('{VIDEO}'),studio_presenter_key_access('{LIST}','uploads/{ORG}/{LIST}/{VIDEO}.mp4'));rollback;").splitlines()
  ok('ordinary original media preserves existing read behavior',json.loads(legacy[-1])==[True,True])
+ LEGACY_PROOF=uid(5350);LEGACY_KEY='renders/legacy-compliance/ordinary.jpg'
+ query(f"insert into media_provenance(id,org_id,listing_id,kind,disclosure,altered_key) values('{LEGACY_PROOF}','{ORG}','{LIST}','photo_edit','Ordinary historical AI photo disclosure.','{LEGACY_KEY}');")
  audit=json.loads(query(revoke_prefix+f"select compliance_audit('{ORG}','{B}',null,null);rollback;").splitlines()[-1])
  audit_edit=next(x for x in audit['rows'] if x['id']==EDIT_PROOF)
  ok('service brokerage audit retains disclosure but redacts revoked edited media keys',audit_edit['altered_key'] is None and audit_edit['disclosure'] is not None)
+ audit_legacy=next(x for x in audit['rows'] if x['id']==LEGACY_PROOF)
+ ok('legacy property audit media remains intact alongside revoked Presenter redaction',audit_legacy['altered_key']==LEGACY_KEY and audit_legacy['agent_id']==A and audit_legacy['disclosure']=='Ordinary historical AI photo disclosure.')
+ legacy_access=query(f"set role authenticated;set request.jwt.claim.sub='{B}';select json_build_array(studio_presenter_key_access('{LIST}','{LEGACY_KEY}'),studio_presenter_key_access('{L2}','{LEGACY_KEY}'),studio_presenter_key_access('{LIST}','renders/legacy-compliance/unknown.jpg'),(select count(*) from media_provenance where id='{LEGACY_PROOF}'));" )
+ ok('legacy key authority requires an exact property record and preserves audit RLS',json.loads(legacy_access)==[True,False,False,1])
+ foreign_key=f'renders/{OTHER}/{XL}/foreign.jpg'
+ foreign_legacy=query(f"begin;insert into media_provenance(org_id,listing_id,kind,disclosure,altered_key) values('{ORG}','{LIST}','photo_edit','Synthetic foreign-key negative control.','{foreign_key}');set role authenticated;set request.jwt.claim.sub='{B}';select studio_presenter_key_access('{LIST}','{foreign_key}');rollback;")
+ ok('recording a foreign canonical key never grants another property signing authority',foreign_legacy=='f')
+ legacy_label=json.loads(query(f"set role authenticated;set request.jwt.claim.sub='{B}';select to_jsonb(set_provenance_media('{LEGACY_PROOF}',null,null,'Legacy label'));"))
+ ok('ordinary recorded legacy media survives label-only audit edits',legacy_label['altered_key']==LEGACY_KEY)
+
  labeled=json.loads(query(revoke_prefix+f"set role authenticated;set request.jwt.claim.sub='{B}';select to_jsonb(set_provenance_media('{EDIT_PROOF}',null,null,'Updated label'));rollback;").splitlines()[-1])
  ok('label-only provenance edits cannot return revoked keys for new signed URLs',labeled['altered_key'] is None and labeled['label']=='Updated label')
  error(f"set role authenticated;set request.jwt.claim.sub='{X}';select studio_presenter_media_visibility('{LIST}',array['{ASSET}'::uuid]);",'RP404')
