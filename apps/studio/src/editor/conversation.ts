@@ -10,6 +10,9 @@ export type ConversationOperation =
   | { type: "photo-motion"; value: NonNullable<EditClip["motion"]> }
   | { type: "ratio"; value: Ratio }
   | { type: "audio"; value: EditDraft["audio"] }
+  | { type: "music-volume"; value: number }
+  | { type: "music-ducking"; value: "speech" | "original" | "none" }
+  | { type: "music-fades"; seconds: number }
   | { type: "highlight"; targetSeconds?: number };
 export type ConversationPlan = { draftId: string; expectedRevision: number; operations: ConversationOperation[] };
 export type ConversationResult = { draft: EditDraft; summary: string };
@@ -142,6 +145,22 @@ export function applyConversationPlan(input: EditDraft, value: unknown): Convers
         draft = validateDraft({ ...draft, audio: choice(operation.value, ["original", "muted"] as const, "audio mode") });
         summaries.push(`${draft.audio === "muted" ? "Muted the original clip audio." : "Kept the original clip audio."}${draft.narration ? " Your saved narration is unchanged." : ""}`); break;
       }
+      case "music-volume": case "music-ducking": case "music-fades": {
+        if (!draft.music) throw new Error("Add your licensed music in Sound & captions first.");
+        const operation = record(raw, header.type === "music-fades" ? ["type", "seconds"] : ["type", "value"], "music edit");
+        let music = {...draft.music};
+        if (header.type === "music-volume") {
+          if (typeof operation.value !== "number" || !Number.isFinite(operation.value) || operation.value < 0 || operation.value > 1) throw new Error("Choose music volume from 0 to 100 percent.");
+          music.volume = operation.value; summaries.push(`Set music volume to ${rounded(music.volume * 100)} percent.`);
+        } else if (header.type === "music-ducking") {
+          music.ducking = choice(operation.value, ["speech", "original", "none"], "music ducking");
+          summaries.push(music.ducking === "none" ? "Music keeps a steady level." : music.ducking === "speech" ? "Music lowers under reviewed speech and narration." : "Music lowers under original video sound and narration.");
+        } else {
+          if (typeof operation.seconds !== "number" || !Number.isFinite(operation.seconds) || operation.seconds < 0 || operation.seconds > Math.min(10, music.end - music.start)) throw new Error("Choose a music fade that fits this track, up to ten seconds.");
+          music.fadeIn = operation.seconds; music.fadeOut = operation.seconds; summaries.push(`Music fades in and out over ${operation.seconds} seconds.`);
+        }
+        draft = validateDraft({...draft, music}); break;
+      }
       case "highlight": {
         const operation = record(raw, ["type", "targetSeconds"], "highlight edit"); requireClips(draft);
         if (operation.targetSeconds !== undefined) draft = withDuration(draft, seconds(operation.targetSeconds));
@@ -205,10 +224,19 @@ export function interpretLocalEdit(message: string, input: EditDraft): LocalEdit
     if ((match = command.match(/^(?:use|add|set)(?: the)? (hard cuts|cuts|dissolves?|dissolve transitions|smooth transitions|whip transitions)$/i))) { operations.push({ type: "transition", value: /^whip/i.test(match[1]) ? "whip" : /^(dissolve|smooth)/i.test(match[1]) ? "dissolve" : "cut" }); continue; }
     if ((match = command.match(/^(?:add|use|set) (slow zooms?|gentle zooms?|push[- ]ins?|pull[- ]outs?|pan left|pan right|still photos)$/i))) { operations.push({ type: "photo-motion", value: /^pull/i.test(match[1]) ? "pull_out" : /^pan left$/i.test(match[1]) ? "pan_left" : /^pan right$/i.test(match[1]) ? "pan_right" : /^still/i.test(match[1]) ? "still" : "push_in" }); continue; }
     if ((match = command.match(/^(?:make (?:it|the (?:reel|video))|use|set(?: the)? (?:ratio|format) to) (vertical|portrait|landscape|horizontal|square|9:16|16:9|1:1)$/i))) { operations.push({ type: "ratio", value: /^(vertical|portrait|9:16)$/i.test(match[1]) ? "9:16" : /^(landscape|horizontal|16:9)$/i.test(match[1]) ? "16:9" : "1:1" }); continue; }
+    if ((match = command.match(/^(?:set|make)(?: the)? music volume(?: to)? (\d+(?:\.\d+)?)\s*(?:percent|%)$/i))) {operations.push({type: "music-volume", value: Number(match[1]) / 100}); continue;}
+    if (/^(?:make (?:the )?music quieter|lower (?:the )?music)$/i.test(command)) {
+      const previous = [...operations].reverse().find(operation => operation.type === "music-volume");
+      operations.push({type: "music-volume", value: (previous?.type === "music-volume" ? previous.value : draft.music?.volume ?? .3) / 2}); continue;
+    }
+    if (/^(?:duck|lower)(?: the)? music (?:under|beneath) (?:speech|speaking)$/i.test(command)) {operations.push({type: "music-ducking", value: "speech"}); continue;}
+    if (/^(?:duck|lower)(?: the)? music (?:under|beneath) original (?:audio|sound)$/i.test(command)) {operations.push({type: "music-ducking", value: "original"}); continue;}
+    if (/^keep (?:the )?music (?:at a )?steady level$/i.test(command)) {operations.push({type: "music-ducking", value: "none"}); continue;}
+    if ((match = command.match(/^fade (?:the )?music in and out(?: over (\d+(?:\.\d+)?) seconds?)?$/i))) {operations.push({type: "music-fades", seconds: match[1] ? Number(match[1]) : 1}); continue;}
     if (/^mute(?: it| the audio| audio| the original audio)?$/i.test(command)) { operations.push({ type: "audio", value: "muted" }); continue; }
     if (/^(?:keep|use|restore)(?: the)? original (?:audio|sound)$/i.test(command)) { operations.push({ type: "audio", value: "original" }); continue; }
     if (/\b(?:generate|avatar|clone|face|voice|music|song|kitchen|bedroom|bathroom|pool|drone|sky|staging|remove|transcrib|lip[ -]?sync|camera angle|best shot)\b/i.test(command))
-      return { kind: "unsupported", message: "That needs media understanding or a separate generation tool. I can edit timing, order, supplied text, photo motion, transitions, shape and original audio here. Your video is unchanged." };
+      return { kind: "unsupported", message: "Use Sound & captions to add licensed music, review beat cuts or caption the selected video. New scenes and camera angles need a separate generation tool. Your video is unchanged." };
     return { kind: "unsupported", message: "I haven’t changed the video. Try “make it 15 seconds,” “put clip 3 first,” or “add caption \"Open house Saturday\" to clip 1.”" };
   }
   const plan: ConversationPlan = { draftId: draft.id, expectedRevision: draft.revision, operations };

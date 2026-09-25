@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import VideoEditor from "../../editor/VideoEditor";
 import type { VideoEditorProps, EditorSettings } from "../../editor/VideoEditor";
-import { EDIT_LIMITS, draftMedia, validateDraft, validateFileBatch, type EditDraft } from "../../editor/model";
+import { EDIT_LIMITS, draftMedia, validateDraft, validateFileBatch, type EditDraft, type AudioSourceRef, type EditClip } from "../../editor/model";
 import type { LocalExport } from "../../editor/export";
 import { canonicalDocument, DocumentSync, type SyncState } from "../../data/documents";
 import type { StudioServices, Workspace, Listing } from "../../data";
@@ -23,6 +23,7 @@ import type {VersionChoice} from "../production/versions";
 import type {ProductionPlan} from "../production/model";
 import {decodeConversation,type ConversationState} from "../../editor/conversation-state";
 import {useEditingAssistant} from "./useEditingAssistant";
+import {requestSourceAnalysis, restorePropertyMusic, savePropertyMusic} from "./cloud-finishing";
 
 type Source = { sha256: string; assetId: string; listingId: string };
 export function activeSourceRefs(draft: EditDraft | undefined, sources: Source[], listingId: string): Source[] {
@@ -69,6 +70,8 @@ export default function CloudEditor(props: CloudEditorProps) {
   const listingId = props.listingId ?? "";
   const assistant=useEditingAssistant(services,workspace,props.active!==false,listingId);
   const [message, setMessage] = useState("");
+  const [musicSaving, setMusicSaving] = useState(false), [musicPending, setMusicPending] = useState(false);
+  const musicFile = useRef<{file: File; source: AudioSourceRef} | null>(null), savedMusic = useRef(""), musicFlight = useRef(false);
   const [sourceBusy, setSourceBusy] = useState(false), [relink, setRelink] = useState<VideoEditorProps["relinkRequest"]>();
   const [acceptedImport, setAcceptedImport] = useState<VideoEditorProps["importRequest"]>();
   const [nativeRecipe, setNativeRecipe] = useState<{listingId: string; recipe: NativeReel} | null>(null);
@@ -99,6 +102,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     catch { setMessage("Browser backup is unavailable. Keep this tab open until cloud saving finishes."); }
     session.current?.queue(payload);
   }, [localKey]);
+  const musicNeedsSave = useCallback(() => !!currentDraft.current?.music && currentDraft.current.music.source.sha256 !== savedMusic.current, []);
   const pendingFiles = useCallback((target: string) => {
     const hashes = new Set(currentDraft.current ? draftMedia(currentDraft.current).map(c => c.source.sha256) : []);
     return files.current.filter(source => hashes.has(source.sha256) && !sources.current.some(s => s.sha256 === source.sha256 && s.listingId === target));
@@ -111,7 +115,7 @@ export default function CloudEditor(props: CloudEditorProps) {
       // No editor is mounted yet, so leaving a pending read/recovery choice
       // simply cancels it. Nothing has been edited or reassigned.
       if (!ready && !currentDraft.current && !sourceBusy && !outputBusy) return;
-      if (!ready || sourceBusy || outputBusy || uploadFlight.current || restoring.current || outputFlight.current || pendingFiles(selected.current).length)
+      if (!ready || sourceBusy || outputBusy || musicFlight.current || musicNeedsSave() || uploadFlight.current || restoring.current || outputFlight.current || pendingFiles(selected.current).length)
         throw new Error("Finish opening or saving this reel's files before switching properties. Your work is kept here.");
       await session.current?.flush();
       if (!session.current || session.current.hasUnsavedWork || session.current.state !== "saved")
@@ -123,7 +127,7 @@ export default function CloudEditor(props: CloudEditorProps) {
     const sync = new DocumentSync(services, workspace.org.id, documentKey, value=>{setState(value);if(value==="saved")setSavedRevision(sync.confirmedRevision);}); session.current = sync;
     const abort = new AbortController(); controller.current = abort;
     const unload = (event: BeforeUnloadEvent) => {
-      if (sync.hasUnsavedWork || uploadFlight.current || outputFlight.current || pendingFiles(selected.current).length) { event.preventDefault(); event.returnValue = ""; }
+      if (sync.hasUnsavedWork || musicFlight.current || musicNeedsSave() || uploadFlight.current || outputFlight.current || pendingFiles(selected.current).length) { event.preventDefault(); event.returnValue = ""; }
     };
     const focus = () => { if (document.visibilityState === "visible") void sync.checkRemote(); };
     window.addEventListener("beforeunload", unload); window.addEventListener("focus", focus); document.addEventListener("visibilitychange", focus);
@@ -224,6 +228,30 @@ export default function CloudEditor(props: CloudEditorProps) {
     const raw = await services.api("/functions/v1/studio/sign-media", {method: "POST", orgId: workspace.org.id, body: {result_id: id}, signal}) as {result: unknown};
     return downloadNarration(raw.result,id,signal);
   }, [services, workspace.org.id]);
+  const resolveMusic = useCallback(async (source: AudioSourceRef, signal: AbortSignal): Promise<Blob> => {
+    const file = await restorePropertyMusic(services, workspace.org.id, listingId, source, signal);
+    if (!signal.aborted) { savedMusic.current = source.sha256; setMusicPending(musicNeedsSave()); }
+    return file;
+  }, [services, workspace.org.id, listingId, musicNeedsSave]);
+  const musicChanged = useCallback((next: {file: File; source: AudioSourceRef} | null) => {
+    musicFile.current = next; setMusicPending(musicNeedsSave());
+  }, [musicNeedsSave]);
+  async function syncMusic() {
+    const source = currentDraft.current?.music?.source, local = musicFile.current;
+    if (!source || !listingId || musicFlight.current) return;
+    if (!local || local.source.sha256 !== source.sha256) {setMessage("Reselect this edit's original music in Sound & captions before saving it."); return;}
+    musicFlight.current = true; setMusicSaving(true);
+    const signal = controller.current.signal;
+    try {
+      await savePropertyMusic(services, workspace.org.id, listingId, local.file, source, signal);
+      if (!signal.aborted) {savedMusic.current = source.sha256; setMusicPending(musicNeedsSave()); setMessage("Music is saved with this property and available in its shared review."); queue();}
+    } catch (error) {if (!signal.aborted) setMessage(error instanceof Error ? error.message : "Music could not be saved. Its local copy is preserved.");}
+    finally {musicFlight.current = false; if (!signal.aborted) setMusicSaving(false);}
+  }
+  const requestMediaAnalysis = useCallback(async (clip: EditClip, signal: AbortSignal) => {
+    const ref = sources.current.find(source => source.sha256 === clip.source.sha256 && source.listingId === listingId);
+    return requestSourceAnalysis(services, workspace.org.id, clip, ref, AbortSignal.any([signal, controller.current.signal]));
+  }, [services, workspace.org.id, listingId]);
   const readJournal = (key: string): UploadJournal | undefined => {
     const inMemory = journals.current.get(key); if (inMemory) return inMemory;
     try { const saved = localStorage.getItem(key); return saved ? JSON.parse(saved) : undefined; } catch { return undefined; }
@@ -432,6 +460,7 @@ export default function CloudEditor(props: CloudEditorProps) {
 
   function draftChanged(draft: EditDraft,chat?:ConversationState) {
     currentDraft.current = validateDraft(draft);
+    setMusicPending(musicNeedsSave());
     conversation.current=chat&&(chat.messages.length||conversation.current)?decodeConversation(chat,draft.id):undefined;
     const nextCount = { clips: draft.clips.length, bytes: [...new Map(draftMedia(draft).map(clip=>[clip.source.sha256,clip.source.size])).values()].reduce((total,size)=>total+size,0) };
     setMediaCount(old => old.clips === nextCount.clips && old.bytes === nextCount.bytes ? old : nextCount);
@@ -440,6 +469,7 @@ export default function CloudEditor(props: CloudEditorProps) {
   }
   async function saveOutput(output: LocalExport) {
     if (outputFlight.current) throw new Error("This video is already being saved.");
+    if (musicFlight.current || musicNeedsSave()) throw new Error("Save the selected music with this property before saving its finished video.");
     const target = selected.current;
     if (!target) throw new Error("Choose the property for this video first.");
     if (output.extension !== "mp4") throw new Error("Choose MP4 when exporting to save a video to your property. This browser’s WebM file can still be downloaded.");
@@ -454,7 +484,7 @@ export default function CloudEditor(props: CloudEditorProps) {
       if (pendingFiles(target).length) throw new Error("Finish saving the original files to this property before saving its finished video.");
       const uploaded = await uploadListingAsset(services, { orgId: workspace.org.id, listingId: target, file: new File([output.blob], `studio-edit-${output.revision}.mp4`, { type: "video/mp4" }), role: "render", metadata: { duration_s: output.duration }, signal, resume: readJournal(key), onJournal: journal => recordJournal(key, journal) });
       if (!signal.aborted) {
-        const finalized = await services.api("/functions/v1/studio/edit-output", {method: "POST", orgId: workspace.org.id, body: {listing_id: target, asset_id: uploaded.assetId, source_asset_ids: outputSources.map(source => source.assetId), ...(outputDraft.narration ? {narration_result_id: outputDraft.narration.resultId} : {})}, signal}) as {ok: boolean; asset_id: string};
+        const finalized = await services.api("/functions/v1/studio/edit-output", {method: "POST", orgId: workspace.org.id, body: {listing_id: target, asset_id: uploaded.assetId, source_asset_ids: outputSources.map(source => source.assetId), ...(outputDraft.narration ? {narration_result_id: outputDraft.narration.resultId} : {}), ...(outputDraft.music ? {music_sha256: outputDraft.music.source.sha256} : {})}, signal}) as {ok: boolean; asset_id: string};
         if (finalized.ok !== true || finalized.asset_id !== uploaded.assetId) throw new Error("The edited video’s disclosure could not be confirmed. Retry Save video to listing.");
         props.onChanged();
       }
@@ -479,6 +509,7 @@ export default function CloudEditor(props: CloudEditorProps) {
       <button disabled={!ready||sourceBusy||outputBusy||state==="conflict"} onClick={openPicker}>Choose property photos & video</button>
       <SyncStatus state={state} retry={() => { if (ready) void session.current?.retry(); else window.location.reload(); }} reload={() => window.location.reload()} />
       {message && <p role="status">{message}</p>}
+      {musicPending && <p>Save this music so it restores on your other devices and plays for property reviewers. <button disabled={musicSaving || sourceBusy || outputBusy || !ready || state === "conflict"} onClick={() => void syncMusic()}>{musicSaving ? "Saving music…" : "Save music with property"}</button></p>}
       {!listingId && <p>Choose a property to save original files and finished videos with your phone’s work.</p>}
       {sourceBusy ? <span role="status">Syncing media…</span> : pendingFiles(listingId).length > 0 && listingId ? <button onClick={() => void syncSources()}>Resume source upload</button> : null}
       {recovery && <p>A previous browser draft is preserved. <button onClick={() => {
@@ -489,14 +520,14 @@ export default function CloudEditor(props: CloudEditorProps) {
     {nativeRecipe && <section className="panel"><h3>Continue the reel from your phone</h3><p>Saved {new Date(nativeRecipe.recipe.updatedAt).toLocaleString()} · {nativeRecipe.recipe.photos.length} selected photos · {nativeRecipe.recipe.portrait ? "Portrait" : "Landscape"} · {nativeRecipe.recipe.transition} transitions.</p><p>Restoring the sequence uses each selected cloud photo at 3 seconds. Generated shot timings and motion are separate saved AI plans.</p>{nativeRecipe.recipe.photos.some(photo => !photo.sourcePhotoId) && <p>Some photos are still only on your phone. Upload them and save the setup again before restoring the full sequence.</p>}{nativeRecipe.recipe.localExtraClipCount > 0 && <p>{nativeRecipe.recipe.localExtraClipCount} extra clips need an upload from your phone before the complete sequence can be restored.</p>}{nativeRecipe.recipe.voiceMode !== "off" && !nativeRecipe.recipe.voiceResultId && <p>Phone narration has no saved cloud result. Applying this setup leaves narration off so you can choose a saved voice result.</p>}{nativeRecipe.recipe.script && <label>Phone script<textarea aria-label="Phone script" readOnly rows={4} value={nativeRecipe.recipe.script} /></label>}<button disabled={sourceBusy || outputBusy || state === "conflict"} onClick={() => void applyPhoneRecipe(true)}>Restore phone photos and settings</button><button disabled={sourceBusy || outputBusy || state === "conflict"} onClick={() => void applyPhoneRecipe(false)}>Apply settings to current sequence</button><button disabled={sourceBusy} onClick={() => setNativeRecipe(null)}>Keep current edit</button></section>}
     {props.importAgentPlan && !ignoredPlans.current.has(props.importAgentPlan.id) && <section className="panel"><h3>Apply your agent video plan</h3><p>Restore the original agent recording and {props.importAgentPlan.cutaways.length} timed photo cutaways. This replaces the current sequence after every source is checked. Your continuous original speech stays underneath the photos.</p><button disabled={!ready || sourceBusy || outputBusy || state === "conflict"} onClick={() => void applyAgentPlan()}>Replace edit with agent plan</button><button disabled={sourceBusy} onClick={() => {ignoredPlans.current.add(props.importAgentPlan!.id);setPlanVersion(value=>value+1);}}>Keep current edit</button></section>}
     {props.importPlan && !ignoredPlans.current.has(props.importPlan.id) && <section className="panel" key={`${props.importPlan.id}:${planVersion}`}><h3>Apply your saved shot plan</h3><p>{props.importPlan.shots.length} photos for {listings.find(listing => listing.id === props.importPlan!.listingId)?.address || "this property"}. This replaces the current sequence after every original photo is restored. The plan’s order, timing, captions, gentle photo motion, and selected narration are applied.</p><button disabled={!ready || sourceBusy || outputBusy || state === "conflict"} onClick={() => void applyShotPlan()}>Replace edit with this shot plan</button><button disabled={sourceBusy} onClick={() => {ignoredPlans.current.add(props.importPlan!.id);setPlanVersion(value => value + 1);}}>Keep current edit</button></section>}
-    <div ref={editorAnchor}>{ready ? <VideoEditor {...props} initialMode={props.initialMode??"conversation"} initialConversation={initialConversation} creationBlockedReason={state==="conflict"?"Review the saved version conflict before making another edit.":sourceBusy||outputBusy?"Finish syncing your media before changing this video.":undefined} editAssistAvailable={assistant.editAssistAvailable} requestEditPlan={requestEditPlan} promptEnhanceAvailable={assistant.promptEnhanceAvailable} requestPromptEnhancement={requestPromptEnhancement} onChooseLibrary={openPicker} recipeRequest={recipeRequest} seekRequest={seekRequest} onSwitchBlockChange={observeEditorBlock} settingsRequest={settingsRequest} onSettingsApplied={() => setMessage("Phone reel settings applied. Review the sequence before exporting.")} importRequest={acceptedImport} planRequest={planRequest} agentRequest={agentRequest} onPlanApplied={planApplied} onPlanFailed={message => {setMessage(message);setSourceBusy(false);applyingPlan.current=null;}} initialDraft={initial} onDraftChange={draftChanged} onSourcesChange={sourcesChanged} relinkRequest={relink} onSaveOutput={saveOutput} narrationChoices={narrationChoices} resolveNarration={resolveNarration} /> : <p role="status">Opening your saved edit…</p>}</div>
+    <div ref={editorAnchor}>{ready ? <VideoEditor {...props} initialMode={props.initialMode??"conversation"} initialConversation={initialConversation} creationBlockedReason={state==="conflict"?"Review the saved version conflict before making another edit.":sourceBusy||outputBusy?"Finish syncing your media before changing this video.":undefined} editAssistAvailable={assistant.editAssistAvailable} requestEditPlan={requestEditPlan} promptEnhanceAvailable={assistant.promptEnhanceAvailable} requestPromptEnhancement={requestPromptEnhancement} onChooseLibrary={openPicker} recipeRequest={recipeRequest} seekRequest={seekRequest} onSwitchBlockChange={observeEditorBlock} settingsRequest={settingsRequest} onSettingsApplied={() => setMessage("Phone reel settings applied. Review the sequence before exporting.")} importRequest={acceptedImport} planRequest={planRequest} agentRequest={agentRequest} onPlanApplied={planApplied} onPlanFailed={message => {setMessage(message);setSourceBusy(false);applyingPlan.current=null;}} initialDraft={initial} onDraftChange={draftChanged} onSourcesChange={sourcesChanged} relinkRequest={relink} onSaveOutput={saveOutput} narrationChoices={narrationChoices} resolveNarration={resolveNarration} resolveMusic={resolveMusic} onMusicSourceChange={musicChanged} requestMediaAnalysis={requestMediaAnalysis} /> : <p role="status">Opening your saved edit…</p>}</div>
     <details className="creation-advanced"><summary>Capture plan & extra editing tools</summary>
       {editProperty&&<CapturePlan key={`${workspace.user.id}:${workspace.org.id}:${editProperty.id}`} services={services} workspace={workspace} listing={editProperty} onPlan={setProductionPlan} onPrepareSwitch={registerPlanGuard}/>}
       <div className="creation-source-actions"><button disabled={!ready||sourceBusy||outputBusy} onClick={()=>void loadPhoneRecipe()}>Load phone reel setup</button>{props.onOpenCreative&&<><button disabled={!ready||sourceBusy||outputBusy} onClick={()=>props.onOpenCreative?.(listingId,"voiceover")}>Create a voiceover</button><button disabled={!ready||sourceBusy||outputBusy} onClick={()=>props.onOpenCreative?.(listingId,"shot-plans")}>Help plan my reel</button></>}{productionPlan&&<button disabled={!ready||sourceBusy||outputBusy||state==="conflict"||mediaCount.clips===0} onClick={()=>{setRecipeRequest({id:crypto.randomUUID(),recipe:productionPlan.recipe,options:{targetSeconds:productionPlan.targetSeconds}});editorAnchor.current?.scrollIntoView({behavior:"smooth",block:"start"});}}>Build a guided draft</button>}</div>
     </details>
     <details className="creation-advanced"><summary>Saved versions & team review</summary>
     {listingId&&props.onCopyVersion&&<VersionHistory services={services} workspace={workspace} listingId={listingId} onCopy={props.onCopyVersion}/>}
-    {listingId&&<ReviewPanel services={services} workspace={workspace} listingId={listingId} ready={ready&&state==="saved"&&!sourceBusy&&!outputBusy&&pendingFiles(listingId).length===0} savedRevision={savedRevision} prepare={async()=>{await preparePlan.current?.();await session.current?.flush();if(!session.current||session.current.hasUnsavedWork||session.current.state!=="saved"||pendingFiles(listingId).length)throw new Error("Finish saving this edit and its source files before reviewing it.");}} onSeek={time=>{setSeekRequest({id:crypto.randomUUID(),time});editorAnchor.current?.scrollIntoView({behavior:"smooth",block:"start"});}}/>}
+    {listingId&&<ReviewPanel services={services} workspace={workspace} listingId={listingId} ready={ready&&state==="saved"&&!sourceBusy&&!outputBusy&&!musicSaving&&!musicPending&&pendingFiles(listingId).length===0} savedRevision={savedRevision} prepare={async()=>{await preparePlan.current?.();await session.current?.flush();if(!session.current||session.current.hasUnsavedWork||session.current.state!=="saved"||musicNeedsSave()||musicFlight.current||pendingFiles(listingId).length)throw new Error("Finish saving this edit and its source files before reviewing it.");}} onSeek={time=>{setSeekRequest({id:crypto.randomUUID(),time});editorAnchor.current?.scrollIntoView({behavior:"smooth",block:"start"});}}/>}
     </details>
   </div>;
 }

@@ -48,6 +48,9 @@ def compute_bound_cents(options):
 
 
 def navigation_manifest(capture, room_label):
+    # Train-only seeds can retain an older coordinate than an excluded held-out
+    # update, so bounds may expand or shrink. Recompute/validate extent for every
+    # capture before provider allocation; this remains an estimate, not a mesh.
     positions = [[f["pose"][i][3] for i in range(3)] for f in capture["frames"]]
     points = [s["position"] for s in capture["seeds"]] + positions
     low = [min(p[i] for p in points) - 1 for i in range(3)]

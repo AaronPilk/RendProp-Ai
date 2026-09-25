@@ -174,7 +174,9 @@ struct SpatialTourView: View {
             Toggle("Upload on Wi-Fi only", isOn: $wifiOnly)
                 .font(.rpBody).tint(Theme.accent)
                 .accessibilityIdentifier("spatial.wifiOnly")
-            Text("Keep the phone steady and walk slowly. Keep some of the same furniture or doorway in view as you move, and revisit corners from different positions. Avoid people, mirrors and personal documents. Aim for 300–350 photos per room; the scan stops at 400 photos or 10 minutes.")
+            Text(SpatialCaptureViewController.captureInstructions)
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Text("Avoid people, mirrors and personal documents. Aim for 300–350 photos per room; the scan stops at 400 photos or 10 minutes.")
                 .font(.rpCaption).foregroundStyle(Theme.inkDim)
             Button {
                 message = nil

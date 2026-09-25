@@ -63,6 +63,16 @@ outside this service's deployment scope.
   no browser impersonation or firewall setting changes are used.
 - Input files use expiring exact-host private download URLs; redirects refused.
   20–400 JPEGs, 32 MiB/file, 2 GiB total; sidecars 1 MiB each, metadata 16 MiB total.
+- Before dataset export or provider entry, the adapter requires verifiable
+  consecutive-pose/exposure telemetry and the provisional rotational-smear
+  policy (median ≤4 px; at most 35% above 5 px). Missing, forged, invalid or
+  gapped measurements fail without allocating a GPU. Old archives remain
+  readable locally but cannot silently bypass this admission check.
+- Every original image/camera remains in the dataset; every eighth original
+  position is held out and excluded from seed colors and point observations.
+  No sharp-only filtering is admitted by the positional trainer. Navigation
+  bounds use training-only seeds plus all camera positions and are validated
+  again before allocation; excluding held-out point updates can expand bounds.
 - `max_seconds`: first-profile lifecycle is fixed at 7200 s maximum authority;
   the actual provider TTL uses remaining time minus 120 s. Shorter configuration
   profiles need measured bootstrap support and are not silently accepted.

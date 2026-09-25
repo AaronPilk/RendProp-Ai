@@ -1,8 +1,9 @@
 import {useCallback,useEffect,useRef,useState} from "react";
 import type {Listing,StudioServices,Workspace} from "../../data";
-import {EDIT_LIMITS,draftMedia,type EditDraft} from "../../editor/model";
+import {EDIT_LIMITS,draftMedia,type AudioSourceRef,type EditDraft} from "../../editor/model";
 import VideoEditor from "../../editor/VideoEditor";
 import {downloadNarration} from "../sync/narration";
+import {decodeSavedMedia,downloadSavedMedia} from "../projects/cloud-media";
 import {downloadSource} from "../sync/CloudEditor";
 import {resolvePhotoAliases,type ReadableMedia} from "../sync/media-aliases";
 import {reelPayload} from "../sync/property-reels";
@@ -76,7 +77,13 @@ function SharedReview({services,workspace,review,onChanged,onCopy}:{services:Stu
     const raw=await services.api("/functions/v1/studio/production-review/narration",{method:"POST",orgId:workspace.org.id,signal,body:{key:review.key,document_user_id:review.document_user_id,result_id:id,expected_document_revision:preview.revision}}) as {result:unknown};
     return downloadNarration(raw.result,id,signal);
   },[services,workspace.org.id,review.key,review.document_user_id,preview?.revision]);
-  return <><div className="production-actions"><button disabled={busy||!bundle?.document||bundle.review.status==="draft"} onClick={()=>void restore()}>{busy?"Restoring original media…":"Preview this saved version"}</button></div>{error&&<p role="alert">{error}</p>}{bundle&&!bundle.document&&<p>The author has changed this draft. Its new contents stay private until they submit it again.</p>}{preview&&<VideoEditor key={preview.revision} readOnly initialMode="simple" initialDraft={preview.draft} resolveNarration={resolveNarration} relinkRequest={{id:`review-${preview.revision}`,files:preview.files}} seekRequest={seek}/>}
+  const resolveMusic=useCallback(async(source:AudioSourceRef,signal:AbortSignal)=>{
+    if(!preview)throw new Error("Open the saved version before restoring music.");
+    const raw=await services.api("/functions/v1/studio/production-review/music",{method:"POST",orgId:workspace.org.id,signal,body:{listing_id:review.listing_id,sha256:source.sha256,key:review.key,document_user_id:review.document_user_id,expected_document_revision:preview.revision}});
+    const media=decodeSavedMedia(raw,source.sha256);if(!media||media.bytes!==source.size)throw new Error("The review's music source could not be verified.");
+    return downloadSavedMedia(media,signal);
+  },[services,workspace.org.id,review.key,review.listing_id,review.document_user_id,preview?.revision]);
+  return <><div className="production-actions"><button disabled={busy||!bundle?.document||bundle.review.status==="draft"} onClick={()=>void restore()}>{busy?"Restoring original media…":"Preview this saved version"}</button></div>{error&&<p role="alert">{error}</p>}{bundle&&!bundle.document&&<p>The author has changed this draft. Its new contents stay private until they submit it again.</p>}{preview&&<VideoEditor key={preview.revision} readOnly initialMode="simple" initialDraft={preview.draft} resolveNarration={resolveNarration} resolveMusic={resolveMusic} relinkRequest={{id:`review-${preview.revision}`,files:preview.files}} seekRequest={seek}/>}
     {onCopy&&<VersionHistory services={services} workspace={workspace} listingId={review.listing_id} authorId={review.document_user_id} onCopy={onCopy}/>}
     {bundle?.brief&&<ProductionBrief plan={bundle.brief}/>}
     {bundle?.document&&bundle.review.status!=="draft"&&onCopy&&canCopyVersion(workspace)&&<CopyVersion own={review.document_user_id===workspace.user.id} choice={{listingId:review.listing_id,authorId:review.document_user_id,revision:bundle.source_revision}} onCopy={onCopy}/>}

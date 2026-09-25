@@ -34,7 +34,7 @@ export class DocumentSync {
   private controller = new AbortController();
   state: SyncState = "loading";
   constructor(private services: StudioServices, readonly orgId: string, readonly key: string,
-    private changed: (state: SyncState) => void) {}
+    private changed: (state: SyncState) => void, private binding?:{listingId:string|null}) {}
   private status(state: SyncState) { this.state = state; if (!this.stopped) this.changed(state); }
   async read(): Promise<CloudDocument | null> {
     const raw = await this.services.api(`/functions/v1/studio/documents?key=${encodeURIComponent(this.key)}`, {orgId:this.orgId,signal:this.controller.signal});
@@ -70,7 +70,7 @@ export class DocumentSync {
       const kind = this.key.split(":")[0];
       const doc = decodeDocument(await this.services.api("/functions/v1/studio/documents", {
         orgId:this.orgId,method:"POST",signal:this.controller.signal,
-        body:{key:this.key,kind,...(this.key.includes(":") ? {listing_id:this.key.split(":")[1]} : {}),expected_revision:this.revision,payload},
+        body:{key:this.key,kind,...(this.binding ? {listing_id:this.binding.listingId} : this.key.includes(":") ? {listing_id:this.key.split(":")[1]} : {}),expected_revision:this.revision,payload},
       }),this.key);
       if (!doc) throw new Error("Save confirmation was missing.");
       if (doc.revision !== attempt.revision + 1 || canonicalDocument(doc.payload) !== attempt.payload) throw new Error("Save confirmation did not match this draft.");

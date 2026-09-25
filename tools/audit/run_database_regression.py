@@ -52,7 +52,7 @@ KEPT_RED = {
 INVARIANT_COUNT = 266
 
 # These already-shipped transactional Studio migrations intentionally create
-# their tables/policies once. Apply all eight on BOTH fresh database paths, but
+# their tables/policies once. Apply every listed file on BOTH fresh database paths, but
 # do not manufacture a second CREATE as an idempotency requirement. Keep this
 # list exact: an unknown/new migration still receives the historical replay rule.
 SINGLE_APPLICATION_MIGRATIONS = frozenset({
@@ -64,6 +64,9 @@ SINGLE_APPLICATION_MIGRATIONS = frozenset({
     "20260914175636_studio_account_cleanup_schedule.sql",
     "20260914180739_studio_voice_storage_reservations.sql",
     "20260914185000_studio_gallery_controls.sql",
+    "20260924232058_studio_named_projects.sql",
+    "20260924232510_studio_project_media.sql",
+    "20260924232803_studio_property_music.sql",
 })
 
 

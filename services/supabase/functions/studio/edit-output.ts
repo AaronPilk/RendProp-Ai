@@ -1,6 +1,7 @@
 import { HttpError, json, readJsonLimited } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 import { projectAssetQuality } from "./creative-quality.ts";
+import { hasMusicCopy, propertyMusicRow } from "./property-music.ts";
 
 type Row = Record<string, any>;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
@@ -25,6 +26,7 @@ export function editOutputInput(raw: Row) {
   if (sourceIds.includes(assetId)) {
     throw new HttpError(400, "An edited output cannot be its own source.");
   }
+  if (raw.music_sha256 !== undefined && (typeof raw.music_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(raw.music_sha256))) throw new HttpError(400, "Choose a saved music source.");
   return {
     listingId: id(raw.listing_id),
     assetId,
@@ -32,14 +34,16 @@ export function editOutputInput(raw: Row) {
     narrationId: raw.narration_result_id == null
       ? null
       : id(raw.narration_result_id),
+    ...(raw.music_sha256 ? { musicSha256: raw.music_sha256 as string } : {}),
   };
 }
-export function editDisclosure(visualAI: boolean, narration: boolean) {
+export function editDisclosure(visualAI: boolean, narration: boolean, music = false) {
   return "This video was edited in Rendprop Studio." +
     (visualAI
       ? " Its selected sources include AI-altered or generated visuals."
       : "") +
     (narration ? " AI-generated narration was selected for this edit." : "") +
+    (music ? " User-supplied music was selected; its usage permission is the uploader's declaration." : "") +
     " Review the finished video against the original property media; its final content has not been independently verified.";
 }
 function assetScope(asset: Row | undefined, orgId: string, listingId: string) {
@@ -102,6 +106,12 @@ export async function handleEditOutput(
   }
   if (!["owner", "admin", "agent"].includes(role.data)) {
     throw new HttpError(403, "Your role cannot save edited media.");
+  }
+  if (input.musicSha256) {
+    const music = await propertyMusicRow(context, input.listingId, input.musicSha256);
+    if (music.actor_id !== context.userId) {
+      if (!await hasMusicCopy(context, context.userId, input.listingId, input.musicSha256)) throw new HttpError(403, "This music has no authorized handoff to your edit.");
+    }
   }
   const [assetRead, photoRead] = await Promise.all([
     context.admin.from("capture_assets").select(
@@ -273,7 +283,7 @@ export async function handleEditOutput(
       sourceIds.includes(row.metadata?.asset_id) &&
       row.metadata?.has_narration === true
     );
-  const disclosure = editDisclosure(visualAI, hasNarration);
+  const disclosure = editDisclosure(visualAI, hasNarration, !!input.musicSha256);
   const history = dataRows(
     await context.admin.from("media_provenance").select("id")
       .eq("org_id", context.orgId).eq("listing_id", input.listingId).limit(501),
@@ -291,6 +301,7 @@ export async function handleEditOutput(
   const signature = JSON.stringify({
     sourceIds,
     narrationId: input.narrationId,
+    ...(input.musicSha256 ? { musicSha256: input.musicSha256 } : {}),
   });
   let result: Row | undefined = existing;
   if (!result) {
@@ -316,6 +327,7 @@ export async function handleEditOutput(
         duration_s: output!.duration_s ?? null,
         has_visual_ai: visualAI,
         has_narration: hasNarration,
+        ...(input.musicSha256 ? { music_source_sha256: input.musicSha256, has_uploaded_music: true, music_permission: "uploader_declared" } : {}),
         disclosure,
       },
     }).select("*").single();
