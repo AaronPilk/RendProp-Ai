@@ -8,8 +8,9 @@ are available under More tools.
 
 The [24 September production record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 is the latest deployment evidence. It supersedes the pre-release status in earlier
-handoffs and the September 14 screenshots. This README describes the source at
-that release; provider availability and native releases have separate gates.
+handoffs and the September 14 screenshots. This README also describes newer
+source for projects, sound, captions and editing copies. Those additions await a
+new production receipt; provider activation and native releases have separate gates.
 
 ## Create, refine and export
 
@@ -25,6 +26,12 @@ locally and checks equivalent edit results. Unsupported requests remain visible;
 it does not invent room recognition, speech understanding, arbitrary effects,
 new camera angles or completed generation.
 
+**Sound & captions** adds imported music with trim, offset, volume, fades and
+ducking; reviewed beat-cut proposals; timed subtitle import; and optional source-bound
+speech captions and speaking-passage suggestions. Chat can adjust the music mix.
+**Large video? Create an editing copy** prepares a local 720p H.264/AAC copy before
+an explicit preview/import. These tools do not replace the original on the device.
+
 The prompt library contains ten original recipes, scene/timeline adaptation,
 custom collections, source links and test feedback. Property workflows also
 include shared capture plans, saved versions, review/approval and native handoffs.
@@ -32,27 +39,41 @@ Setup and review controls are expandable below the editor.
 
 - [Conversational creation and enhancement](../../docs/studio/conversational-creation.md)
 - [Agency production workflow](../../docs/studio/agency-production-workflow.md)
+- [Named projects, finishing and editing copies](../../docs/studio/projects-and-finishing.md)
 - [Prompt library](../../docs/studio/prompt-library.md)
 - [AI Presenter and activation requirements](../../docs/studio/ai-presenter.md)
 
-**Optional model-powered edit planning and prompt enhancement remain disabled.**
-Their routes and activation configuration are absent in the recorded release.
-Higgsfield Presenter generation also remains disabled; its preparation, approval
+**The recorded production baseline has model-powered edit planning and prompt
+enhancement disabled.** Current source seeds bounded text routes and implements
+speech analysis; deployment and explicit activation remain separate steps. See
+[editing intelligence](../../docs/studio/editing-intelligence-activation.md) for
+the configuration and acceptance record. Higgsfield Presenter generation remains
+disabled; its preparation, approval
 and original-media workflows do not authorize a paid generation. Existing unrelated
 AI tools use their own routes and explicit generation controls.
 
 ## Local work and account sync
 
 The local editor and planner work without an account. Local source files stay in
-the browser; saved metadata is not a media backup. Originals must be reselected
-after reload and their full hashes must match. Undo/Redo retains up to 20 steps
+account/workspace-scoped browser storage, with file hashes checked on restoration.
+Browser storage can be evicted or cleared; retain the originals. Undo/Redo retains
+up to 20 steps
 within 64 KiB of metadata; undoing removal restores instructions, not a released
 file binding. Local chat is browser-scoped metadata.
 
 Sign in with the same Apple account and choose the same workspace to access cloud
 properties and uploaded media. Property-linked draft and recent conversation save
 in one revision-checked document, with conflict/recovery handling. This is one
-private edit per user/property, not an unlimited archive of named projects.
+private edit per user/property. Separately, **Save project to account** creates a
+named private general video project and explicitly uploads its originals. After
+that save, project changes and added originals sync to the same account/workspace.
+The status distinguishes saved instructions from completed media uploads. Named
+projects support cross-browser restoration, archive and explicit conflict recovery;
+they do not create a property or enter the property review queue.
+
+The project limit is 100 per account/workspace. Cloud originals share a 512 MiB
+workspace allowance, including unfinished reservations, with 128 MiB per file.
+Archive does not reclaim storage; individual cloud-file cleanup is not implemented.
 Synced documents also support content plans and custom prompt collections.
 Uploads, finished-video saves and publication remain explicit actions.
 
@@ -82,6 +103,8 @@ node tests/export-resume-browser.mjs
 node tests/prompts-browser.mjs
 node tests/browser-connected.mjs
 node tests/browser-connected-control.mjs
+node tests/projects-browser.mjs
+node tests/finishing-browser.mjs
 ```
 
 `verify` runs unit tests, typechecking, the Vite build and distribution checks.
@@ -104,14 +127,26 @@ The static Worker in [wrangler.jsonc](wrangler.jsonc) serves only Studio; the ap
 marketing site and hosted tours use a separate Worker. Release schema and all
 required read handlers before dependent website assets. The latest release record
 includes migration reconciliation, exact function versions/JWT settings, and
-source/hash verification. The older `scripts/deploy-backend.mjs` does **not** cover
-the combined Presenter/privacy release and forces a uniform JWT setting; do not
-use it unchanged for that release.
+source/hash verification. The updated [backend helper](scripts/deploy-backend.mjs)
+requires an explicit list of functions and stages their import closure offline by
+default. `--run` uses the existing Supabase CLI login/environment, verifies current
+live policy against [function-jwt-policy.json](../../services/supabase/function-jwt-policy.json),
+deploys only the selection, then downloads and hash-checks the deployed source.
+It never applies migrations, activates providers or discovers all affected
+entrypoints for you; include every consumer of changed shared code in the selection.
+
+```bash
+# Offline source staging and receipt; no deployment
+node scripts/deploy-backend.mjs --functions studio
+# After schema, tests and selection review, explicitly deploy that selection
+node scripts/deploy-backend.mjs --functions studio --run
+```
 
 After checking the intended public connection configuration and backend release:
 
 ```bash
 npm run verify
+node scripts/check-dist.mjs --require-connected
 npx wrangler deploy --dry-run
 npx wrangler deploy
 node scripts/verify-deployed.mjs
@@ -120,7 +155,12 @@ node scripts/verify-deployed.mjs
 The verifier compares the custom domain against the exact local build, checks
 headers and SPA fallback, and records the known managed robots prefix. At the
 24 September release, all 27 files matched; CI had passed all 12 jobs and the
-connected JavaScript gzip total was 293,933 bytes of the 300,000-byte ceiling.
+connected JavaScript gzip total was 293,933 bytes under that release's former
+300,000-byte total ceiling. Current source checks separate gzip budgets: 160,000
+bytes for initial assets, 260,000 for signed-in Create, and 350,000 across all
+workspaces/tools. The editing-copy encoder is loaded on demand. The connected
+check also requires the exact intended public configuration in the built bundle;
+the next release receipt must record its own measurements.
 
 `Cache-Control: no-store, no-transform` is intentional: it preserves the strict
 CSP and prevents Cloudflare JavaScript Detection from changing Studio HTML.
@@ -134,6 +174,8 @@ prefix means crawl blocking is not proven; noindex remains enabled.
   media import, preview and real-time browser export.
 - [`src/features/sync/`](src/features/sync/): property drafts, paired conversation
   saves, native setup and cloud source restoration.
+- [`src/features/projects/`](src/features/projects/): named projects, private
+  chunked originals, browser recovery and project speech-analysis requests.
 - [`src/features/prompts/`](src/features/prompts/), [`src/features/presenter/`](src/features/presenter/):
   prompt collections and gated Presenter workflow.
 - [`src/data/`](src/data/): wire contracts and bounded authenticated reads.

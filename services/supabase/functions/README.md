@@ -15,6 +15,12 @@ and Higgsfield Presenter generation remain disabled. That record, not old setup
 instructions or a function's presence in this directory, establishes deployment
 versions and activation state.
 
+Current source additionally implements named Studio projects, immutable private
+media chunks, property-music handoffs and source-verified speech analysis. It seeds
+bounded text routes while retaining separate endpoint enablement gates. These
+changes await a new deployment receipt. See [projects and finishing](../../../docs/studio/projects-and-finishing.md)
+and [activation/acceptance](../../../docs/studio/editing-intelligence-activation.md).
+
 ## Function map
 
 Supabase routes requests to `/functions/v1/<name>` and retains subpaths.
@@ -31,7 +37,7 @@ contract and must be preserved per function.
 | `adopt` | Authenticated anonymous-to-connected workspace recovery with verified source/target authority. |
 | `team` | Workspace members, seat limits, single/bulk invitations, atomic acceptance and management. |
 | `property` | Authenticated property-data lookup/import. |
-| `studio` | Authenticated media, revisioned documents, listing/creative actions, production review, prompt library and gated Presenter/text services. [Details](studio/README.md). |
+| `studio` | Authenticated media, revisioned property/named-project documents, private source chunks, music handoffs, source speech analysis, production review, prompt library and gated Presenter/text services. [Details](studio/README.md). |
 | `ai-photo` | Authenticated photo transformations and prompting helpers using configured routing. |
 | `ai-video` | Authenticated drone, declutter/reflection, aerial, reel and output-quality workflows; bound async status recovery. |
 | `ai-copy` | Authenticated scripts, shot plans and agent cutaway assistance. |
@@ -70,8 +76,10 @@ Newly issued media access also respects tracked Presenter revocation; previously
 issued capabilities/downloads cannot be recalled immediately.
 
 Provider, service-role, Apple and storage credentials stay server-side. Uploads
-use direct storage tickets; document/text APIs do not imply permission to upload
-customer media to a generation provider. Estimated ledger entries are not provider
+use direct storage tickets for property media; private project originals use
+bounded authenticated immutable chunk writes. Document/text APIs do not imply
+permission to send customer media to a generation provider. Speech analysis is a
+separate explicit action over an authorized saved original. Estimated ledger entries are not provider
 invoices. Metering, reservations and limits differ by route; do not assume one
 universal hard spend cap covers every AI path. Consult the relevant handler and
 [AI cost model](../../../docs/AI-COST-MODEL.md).
@@ -120,6 +128,16 @@ documents per-function JWT settings.
 4. Keep capability activation and paid-provider trials separate from deploying
    their disabled handlers. Record versions and verification limits in a handoff.
 
+The updated [Studio backend helper](../../../apps/studio/scripts/deploy-backend.mjs)
+implements selected-function staging, explicit deployment and source readback.
+From `apps/studio`, `node scripts/deploy-backend.mjs --functions studio` is an
+offline dry run. Adding `--run` uses the existing CLI login/environment, verifies
+the live selection against [function-jwt-policy.json](../function-jwt-policy.json),
+deploys only those functions and compares downloaded sources with the staged
+hashes. Import closure, policy and receipts are preserved in a temporary directory.
+The helper fails on live JWT drift and does not apply migrations, activate
+providers, deploy new unlisted functions or infer every affected entrypoint.
+
 The 24 September release preserved these settings:
 
 | Function | Version | `verify_jwt` |
@@ -137,9 +155,8 @@ unreviewed `db push --include-all` is not a safe reconciliation procedure.
 
 **Legacy helper limitations:** [deploy-functions.sh](../deploy-functions.sh)
 lists 17 functions, omits newer handlers, and would set `tours` JWT verification
-false. The older [Studio backend helper](../../../apps/studio/scripts/deploy-backend.mjs)
-also omits required functions and applies a uniform setting. Neither is an
-up-to-date whole-product release command. Earlier sections of
+false. It remains unsuitable as a whole-product release command. Use the updated
+explicit-selection helper above and choose all affected read handlers. Earlier sections of
 [DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work; use the latest
 release record for current production facts.
 
@@ -162,6 +179,8 @@ queued/skipped status is not evidence of delivery.
 Account-deletion/storage sweepers and `notify` need their existing authenticated
 operations schedule. Inspect current schedules before creating duplicates.
 `presenter-drain` is the exception documented above: it remains unscheduled and
-Presenter runtime remains disabled. Studio text routes also remain disabled and
-record estimated attempts only if later explicitly configured; see
-[conversational creation](../../../docs/studio/conversational-creation.md).
+Presenter runtime remains disabled. In the recorded production baseline the
+Studio text routes were also disabled; current source seeds eligible routes but
+still requires separate environment gates. Speech analysis shares existing
+Whisper routing with its own limits. See [editing intelligence activation](../../../docs/studio/editing-intelligence-activation.md)
+for exact configuration, estimated accounting and live acceptance requirements.

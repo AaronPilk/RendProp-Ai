@@ -111,7 +111,8 @@ export type StudioDependencies = {
 
 export type StudioRequestOptions = {
   orgId: string;
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PATCH" | "DELETE" | "PUT";
+  binary?: Blob;
   body?: unknown;
   signal?: AbortSignal;
   idempotencyKey?: string;
@@ -383,10 +384,11 @@ export function createStudioServices(
             if (orgId) headers["X-Org-Id"] = orgId;
             if (page) headers.Prefer = "count=exact";
             if (options?.body !== undefined) headers["Content-Type"] = "application/json";
+            if (options?.binary) headers["Content-Type"] = "application/octet-stream";
             if (options?.idempotencyKey) headers["Idempotency-Key"] = options.idempotencyKey;
             const response = await fetcher(`${config.supabaseUrl}${path}`, {
               method,
-              body: options?.body === undefined ? undefined : JSON.stringify(options.body),
+              body: options?.binary ?? (options?.body === undefined ? undefined : JSON.stringify(options.body)),
               headers,
               signal: controller.signal,
               cache: "no-store",
@@ -503,6 +505,8 @@ export function createStudioServices(
       if (!/^\/functions\/v1\/[a-z][a-z0-9-]*(?:[/?][^#\\]*)?$/.test(path) ||
         path.includes("..") || /%2e|%2f|%5c|[\u0000-\u0020]/i.test(path))
         throw new StudioError("request-path", "Choose a valid Rendprop action.");
+      if (options.binary && (options.body !== undefined || options.method !== "PUT" || !/^\/functions\/v1\/studio\/project-media\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(path) || options.binary.size < 1 || options.binary.size > 8*1024*1024))
+        throw new StudioError("request-size", "Choose a bounded project upload part.");
       const selected = uuid(options.orgId, "selected organization");
       const actor = await identity(options.signal);
       if (!memberships.some(m => m.orgId === selected))

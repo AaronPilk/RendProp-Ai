@@ -71,6 +71,12 @@ struct FrameRecord: Codable {
     let exposure_duration_seconds: Double
     let exposure_offset_ev: Double
     let world_mapping_status: String
+    // Additive live motion-blur telemetry (nil for captures made before it existed).
+    // The adapter ignores unknown sidecar keys; capture_blur.py recomputes both.
+    var angular_speed_deg_s: Double? = nil
+    var predicted_smear_px: Double? = nil
+    var motion_previous_timestamp: Double? = nil
+    var motion_previous_camera_to_world: [[Double]]? = nil
 
     func validate(expectedSession: String) throws {
         func require(_ value: Bool, _ message: String) throws {
@@ -101,7 +107,20 @@ struct FrameRecord: Codable {
         try require(intrinsics.count == 3 && intrinsics.allSatisfy { $0.count == 3 && $0.allSatisfy(\.isFinite) }, "Invalid intrinsics.")
         try require(intrinsics[0][0] > 0 && intrinsics[1][1] > 0 && intrinsics[2] == [0, 0, 1], "Invalid calibration matrix.")
         try CaptureRasterLimits.validate(image_resolution)
-        try require(exposure_duration_seconds.isFinite && exposure_offset_ev.isFinite, "Invalid exposure.")
+        try require(exposure_duration_seconds.isFinite && exposure_duration_seconds > 0 &&
+                    exposure_duration_seconds < 1 && exposure_offset_ev.isFinite, "Invalid exposure.")
+        for telemetry in [angular_speed_deg_s, predicted_smear_px] {
+            if let telemetry { try require(telemetry.isFinite && telemetry >= 0, "Invalid motion-blur telemetry.") }
+        }
+        if let previous = motion_previous_timestamp {
+            try require(previous.isFinite && previous >= 0 && timestamp > previous && timestamp - previous <= 0.1,
+                        "Motion sample timing is unavailable.")
+            try require(motion_previous_camera_to_world?.count == 4 &&
+                        motion_previous_camera_to_world?.allSatisfy({ $0.count == 4 && $0.allSatisfy(\.isFinite) }) == true,
+                        "Motion sample pose is unavailable.")
+        }
+        try require((motion_previous_timestamp == nil) == (motion_previous_camera_to_world == nil),
+                    "Incomplete motion sample provenance.")
         try require(raw_feature_points.count <= 50_000, "More than 50,000 feature points in one frame; capture stopped without truncation.")
         for point in raw_feature_points {
             try require(UInt64(point.id) != nil && point.position.count == 3 && point.position.allSatisfy(\.isFinite), "Invalid ARKit feature point.")
@@ -151,6 +170,9 @@ struct CaptureManifest: Codable {
     var low_texture_frames: Int? = nil
     var quality_policy: String? = nil
     var quality_thresholds: [String: Double]? = nil
+    // Frames refused by the pose-based motion-blur guard; never counted toward 400.
+    var skipped_motion_blur_frames: Int? = nil
+    var motion_blur_thresholds: [String: Double]? = nil
     var image_bytes: Int64 = 0
 
     init(sessionID: String, deviceModel: String, operatingSystem: String) {
@@ -164,9 +186,11 @@ struct CaptureManifest: Codable {
 
 struct FrameCadence {
     private var lastTimestamp: Double?
+    func isEligible(timestamp: Double, normalTracking: Bool) -> Bool {
+        normalTracking && timestamp.isFinite && (lastTimestamp.map({ timestamp - $0 >= 0.5 }) ?? true)
+    }
     mutating func accept(timestamp: Double, normalTracking: Bool) -> Bool {
-        guard normalTracking, timestamp.isFinite,
-              lastTimestamp.map({ timestamp - $0 >= 0.5 }) ?? true else { return false }
+        guard isEligible(timestamp: timestamp, normalTracking: normalTracking) else { return false }
         lastTimestamp = timestamp
         return true
     }

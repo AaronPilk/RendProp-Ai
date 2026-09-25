@@ -1,3 +1,5 @@
+import {validateMusic, validateSpeech, type MusicTrack, type SpeechTrack} from "./finishing";
+export type {AudioSourceRef, MusicTrack, SpeechTrack} from "./finishing";
 import {validateOverlays, type EditOverlay} from "./overlays";
 export type {EditOverlay} from "./overlays";
 /** Local edit intent. Media stays in browser memory; this is not a publish approval. */
@@ -53,6 +55,8 @@ export type EditDraft = {
   audio: "original" | "muted";
   clips: EditClip[];
   narration?: Narration;
+  music?: MusicTrack;
+  speech?: SpeechTrack[];
   overlays?: EditOverlay[];
 };
 export type TimelinePosition = {
@@ -189,14 +193,14 @@ export function validateFileBatch(
   // again. New selections remain conservatively counted until their hash is read.
   let total = [...new Map(existing.map(clip => [clip.source.sha256, clip.source])).values()].reduce((sum, source) => sum + source.size, 0);
   for (const file of files) {
-    mediaKind(file);
+    const kind = mediaKind(file);
     if (!Number.isSafeInteger(file.size) || file.size <= 0)
       throw new Error(
         `${file.name}: the file is empty or its size is invalid.`,
       );
     if (file.size > EDIT_LIMITS.fileBytes)
       throw new Error(
-        `${file.name}: ${Math.ceil(file.size / 1024 / 1024)} MiB exceeds the 128 MiB local per-file limit.`,
+        `${file.name}: ${Math.ceil(file.size / 1024 / 1024)} MiB exceeds the 128 MiB per-file limit. ${kind === "video" ? "For a video up to 2 GiB and three minutes, open “Large video? Create an editing copy” below the preview. Your original stays on your device." : "Export a smaller JPG, PNG or WebP copy first and keep your original."}`,
       );
     total += file.size;
   }
@@ -400,6 +404,8 @@ export function validateDraft(value: unknown): EditDraft {
     audio: draft.audio as EditDraft["audio"],
     clips,
     ...(overlays ? {overlays} : {}),
+    ...(draft.music != null ? {music: validateMusic(draft.music)} : {}),
+    ...(draft.speech != null ? {speech: validateSpeech(draft.speech).filter(track => clips.some(clip => clip.source.kind === "video" && clip.source.sha256 === track.sourceSha256 && Math.abs(clip.source.duration - track.sourceDuration) <= .1))} : {}),
     ...(draft.narration != null ? {narration: validateNarration(draft.narration)} : {}),
   };
   if (new TextEncoder().encode(JSON.stringify(validated)).byteLength > EDIT_LIMITS.draftBytes) throw new Error("The edit plan exceeds 64 KiB. Shorten its text or narration captions.");
@@ -407,7 +413,7 @@ export function validateDraft(value: unknown): EditDraft {
 }
 export function reviseDraft(
   draft: EditDraft,
-  patch: Partial<Pick<EditDraft, "clips" | "title" | "ratio" | "audio" | "narration" | "overlays">>,
+  patch: Partial<Pick<EditDraft, "clips" | "title" | "ratio" | "audio" | "narration" | "overlays" | "music" | "speech">>,
 ): EditDraft {
   return validateDraft({ ...draft, ...patch, revision: draft.revision + 1 });
 }

@@ -1,3 +1,5 @@
+import {decodeMusic} from "./music";
+import {musicGainAt} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
 import {
   EDIT_LIMITS,
@@ -34,6 +36,7 @@ export type LocalExport = {
   duration: number;
   audio: EditDraft["audio"];
   narration?: boolean;
+  music?: boolean;
 };
 
 export function exportFormats(): ExportFormat[] {
@@ -76,6 +79,7 @@ export async function exportLocalVideo(options: {
   draft: EditDraft;
   media: Map<string, LocalMedia>;
   narrationBlob?: Blob;
+  musicBlob?: Blob;
   format: ExportFormat;
   signal: AbortSignal;
   currentDraft: () => EditDraft;
@@ -95,8 +99,9 @@ export async function exportLocalVideo(options: {
   if (!exportFormats().some((candidate) => candidate.mime === format.mime))
     throw new Error("This export format is unavailable in this browser.");
   if (draft.narration && (!options.narrationBlob?.size || options.narrationBlob.size > EDIT_LIMITS.narrationBytes)) throw new Error("Restore the selected narration before exporting.");
+  if (draft.music && (!options.musicBlob?.size || options.musicBlob.size !== draft.music.source.size)) throw new Error("Restore the selected music before exporting.");
   const originalAudio = draft.audio === "original" && draft.clips.some(clip => clip.source.kind === "video");
-  const withAudio = originalAudio || !!draft.narration;
+  const withAudio = originalAudio || !!draft.narration || !!draft.music;
   if (withAudio && !supportsOriginalAudio())
     throw new Error(
       "Original audio export is unavailable in this browser. Choose Mute audio explicitly or use a browser with Web Audio support.",
@@ -141,6 +146,9 @@ export async function exportLocalVideo(options: {
   let voiceBuffer: AudioBuffer | undefined;
   let voiceSource: AudioBufferSourceNode | undefined;
   let voiceGain: GainNode | undefined;
+  let musicBuffer: AudioBuffer | undefined;
+  let musicSource: AudioBufferSourceNode | undefined;
+  let musicGain: GainNode | undefined;
   const previous = document.createElement("canvas"); Object.assign(previous, renderDimensions(draft.ratio));
   let hasPrevious = false;
   let decoded: DecodedMedia | undefined;
@@ -150,7 +158,7 @@ export async function exportLocalVideo(options: {
   try {
     // Construct and resume during the original button gesture, before decoding awaits.
     if (withAudio) {
-      audio = new AudioContext();
+      audio = new AudioContext({sampleRate: 48000});
       destination = audio.createMediaStreamDestination();
       // Keep the destination clock running through photos and decoder gaps.
       // Without a live source, Chromium omits leading silence and shifts the
@@ -169,6 +177,14 @@ export async function exportLocalVideo(options: {
       voiceBuffer = await awaitMediaOperation(audio.decodeAudioData(await options.narrationBlob.arrayBuffer()), renderSignal, "Decoding narration");
       if (!Number.isFinite(voiceBuffer.duration) || voiceBuffer.duration <= 0 || voiceBuffer.duration > 300 || voiceBuffer.numberOfChannels > 2 || voiceBuffer.sampleRate > 96000) throw new Error("The saved narration has an invalid duration.");
       voiceGain = audio.createGain(); voiceGain.gain.value = draft.narration.volume; voiceGain.connect(destination!);
+    }
+    if (draft.music && audio && options.musicBlob) {
+      const digest = await crypto.subtle.digest("SHA-256", await options.musicBlob.arrayBuffer());
+      const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+      if (hash !== draft.music.source.sha256) throw new Error("The music file does not match this saved edit.");
+      musicBuffer = await decodeMusic(options.musicBlob, audio, renderSignal);
+      if (Math.abs(musicBuffer.duration - draft.music.source.duration) > .05) throw new Error("The music duration changed.");
+      musicGain = audio.createGain(); musicGain.gain.value = 0; musicGain.connect(destination!);
     }
     throwIfAborted(renderSignal);
     stream = canvas.captureStream(30);
@@ -221,7 +237,7 @@ export async function exportLocalVideo(options: {
         video.playbackRate = clip.speed ?? 1;
         if (originalAudio && audio && destination) {
           audioSource = audio.createMediaElementSource(video);
-          originalGain = audio.createGain(); originalGain.gain.value = draft.narration ? 0.22 : 1;
+          originalGain = audio.createGain(); originalGain.gain.value = 1;
           audioSource.connect(originalGain); originalGain.connect(destination);
           // Sound goes only to the recording destination, avoiding an audible duplicate.
           video.muted = false;
@@ -260,6 +276,15 @@ export async function exportLocalVideo(options: {
           voiceSource.start(audio.currentTime + delay, offset);
         }
       }
+      if (draft.music && musicBuffer && audio && musicGain) {
+        const elapsed = Math.max(0, elapsedBefore - draft.music.offset), delay = Math.max(0, draft.music.offset - elapsedBefore);
+        const remaining = Math.min(draft.music.end - draft.music.start - elapsed, clipDuration(clip) - delay);
+        if (remaining > 0) {
+          musicSource = audio.createBufferSource(); musicSource.buffer = musicBuffer; musicSource.connect(musicGain);
+          musicGain.gain.setValueAtTime(musicGainAt(draft, clip, elapsedBefore + delay, delay, voiceBuffer?.duration), audio.currentTime + delay);
+          musicSource.start(audio.currentTime + delay, draft.music.start + elapsed, remaining);
+        }
+      }
       const start = performance.now();
       let lastVideoTime = video?.currentTime ?? 0;
       let lastVideoAdvance = start;
@@ -278,6 +303,14 @@ export async function exportLocalVideo(options: {
           throw new Error(
             "Video playback stalled during export. Try a smaller or differently encoded clip.",
           );
+        if (audio) {
+          const timelineTime = elapsedBefore + elapsed;
+          if (musicGain) musicGain.gain.setTargetAtTime(musicGainAt(draft, clip, timelineTime, elapsed, voiceBuffer?.duration), audio.currentTime, .025);
+          if (originalGain) {
+            const speaking = !!draft.narration && timelineTime >= draft.narration.offset && timelineTime < draft.narration.offset + (voiceBuffer?.duration ?? 0);
+            originalGain.gain.setTargetAtTime(speaking ? .22 : 1, audio.currentTime, .025);
+          }
+        }
         drawFrame(canvas, decoded, clip, draft, {time: elapsedBefore + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
         await overlays.paint(canvas, elapsedBefore + elapsed);
         if (now - lastProgressAt > 150) {
@@ -292,6 +325,7 @@ export async function exportLocalVideo(options: {
       await paused;
       video?.pause();
       voiceSource?.stop(); voiceSource?.disconnect(); voiceSource = undefined;
+      musicSource?.stop(); musicSource?.disconnect(); musicSource = undefined;
       originalGain?.disconnect(); originalGain = undefined;
       previous.getContext("2d")!.drawImage(canvas, 0, 0); hasPrevious = true;
       audioSource?.disconnect();
@@ -330,6 +364,7 @@ export async function exportLocalVideo(options: {
       duration: total,
       audio: draft.audio,
       ...(draft.narration ? {narration: true} : {}),
+      ...(draft.music ? {music: true} : {}),
     };
   } finally {
     overlays.dispose();
@@ -339,6 +374,7 @@ export async function exportLocalVideo(options: {
     decoded?.dispose();
     audioSource?.disconnect();
     originalGain?.disconnect(); voiceSource?.stop(); voiceSource?.disconnect(); voiceGain?.disconnect();
+    musicSource?.stop(); musicSource?.disconnect(); musicGain?.disconnect();
     previous.width = previous.height = 0;
     if (recorder && recorder.state !== "inactive") {
       recorder.stop();

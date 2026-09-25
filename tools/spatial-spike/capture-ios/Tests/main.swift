@@ -70,6 +70,80 @@ let rows = CaptureGeometry.rows(transform)
 check(rows[0][3] == 1.25 && rows[1][3] == -2.5 && rows[2][3] == 3.75, "c2w translation must be last column, never transposed")
 let k = simd_float3x3(columns: (SIMD3(1000, 0, 0), SIMD3(0, 1100, 0), SIMD3(950, 700, 1)))
 check(CaptureGeometry.rows(k) == [[1000, 0, 950], [0, 1100, 700], [0, 0, 1]], "K row serialization")
+// Pose-based motion-blur estimator: formula values and verdict boundaries.
+// fx 1332 px at 18.8 deg/s and 1/60 s is 1332 * radians(18.8 / 60) = 7.284 px,
+// a synthetic formula example, not a validated quality threshold.
+func yawTransform(_ degrees: Double, x: Float = 0) -> simd_float4x4 {
+    let r = Float(degrees * .pi / 180)
+    var m = matrix_identity_float4x4
+    m.columns.0 = SIMD4<Float>(cos(r), 0, -sin(r), 0)
+    m.columns.2 = SIMD4<Float>(sin(r), 0, cos(r), 0)
+    m.columns.3 = SIMD4<Float>(x, 0, 0, 1)
+    return m
+}
+let exampleSmear = CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 18.8, exposureDuration: 1.0 / 60, fx: 1332)!
+check(abs(exampleSmear - 1332 * (18.8 / 60) * .pi / 180) < 1e-9 && abs(exampleSmear - 7.284) < 0.001, "smear formula fx*radians(omega*t) gives 7.284 px")
+check(abs(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 42.5, exposureDuration: 1.0 / 60, fx: 1332)! - 16.467) < 0.001, "p90 pan of 42.5 deg/s smears 16.5 px at 1/60 s")
+check(abs(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 18.8, exposureDuration: 1.0 / 120, fx: 1332)! - 3.642) < 0.001, "halving exposure halves the smear")
+check(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 0, exposureDuration: 1.0 / 60, fx: 1332) == 0, "a still camera has zero smear")
+check(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: -1, exposureDuration: 0.01, fx: 1332) == nil, "negative angular speed rejected")
+check(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 1, exposureDuration: 0.01, fx: 0) == nil, "zero focal length rejected")
+check(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: .nan, exposureDuration: 0.01, fx: 1332) == nil, "non-finite angular speed rejected")
+check(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 1, exposureDuration: .infinity, fx: 1332) == nil, "non-finite exposure rejected")
+check(abs(CaptureBlurEstimator.rotationAngleDegrees(yawTransform(0), yawTransform(0))!) < 1e-6, "identical poses have zero angle")
+check(abs(CaptureBlurEstimator.rotationAngleDegrees(yawTransform(0), yawTransform(180))! - 180) < 1e-3, "half turn measures 180 degrees")
+check(abs(CaptureBlurEstimator.angularSpeedDegreesPerSecond(previous: yawTransform(0), current: yawTransform(4.5), previousTimestamp: 10, currentTimestamp: 10.05)! - 90) < 1e-3, "4.5 degree yaw over 50 ms is 90 deg/s")
+let framePan = CaptureBlurEstimator.angularSpeedDegreesPerSecond(previous: yawTransform(0, x: 1), current: yawTransform(18.8 / 60, x: 1.5), previousTimestamp: 100, currentTimestamp: 100 + 1.0 / 60)!
+check(abs(framePan - 18.8) < 0.05, "18.8 deg/s pan measured across one 1/60 s frame gap; translation ignored")
+let liveEstimate = CaptureBlurEstimator.estimate(previous: yawTransform(0), current: yawTransform(18.8 / 60), previousTimestamp: 0, currentTimestamp: 1.0 / 60, exposureDuration: 1.0 / 60, fx: 1332)!
+check(abs(liveEstimate.predictedSmearPixels - 7.284) < 0.02 && abs(liveEstimate.angularSpeedDegreesPerSecond - 18.8) < 0.05, "end-to-end estimate reproduces the room's median smear")
+check(CaptureBlurEstimator.estimate(previous: yawTransform(0), current: yawTransform(1), previousTimestamp: 1, currentTimestamp: 1, exposureDuration: 0.01, fx: 1332) == nil, "zero frame gap rejected")
+check(CaptureBlurEstimator.estimate(previous: yawTransform(0), current: yawTransform(1), previousTimestamp: 2, currentTimestamp: 1, exposureDuration: 0.01, fx: 1332) == nil, "backwards timestamps rejected")
+var scaledTransform = yawTransform(0)
+scaledTransform.columns.0 *= 2
+check(CaptureBlurEstimator.rotationAngleDegrees(scaledTransform, yawTransform(0)) == nil, "non-rigid transform rejected")
+var nonfiniteTransform = yawTransform(0)
+nonfiniteTransform.columns.1.y = .nan
+check(CaptureBlurEstimator.estimate(previous: nonfiniteTransform, current: yawTransform(1), previousTimestamp: 0, currentTimestamp: 1, exposureDuration: 0.01, fx: 1332) == nil, "non-finite transform rejected")
+var reflectedMotion = matrix_identity_float4x4
+reflectedMotion.columns.0.x = -1
+check(CaptureBlurEstimator.rotationAngleDegrees(reflectedMotion, reflectedMotion) == nil,
+      "a reflected previous pose cannot certify zero motion")
+func blurVerdict(_ pixels: Double, exposure: Double) -> CaptureBlurVerdict {
+    CaptureBlurEstimator.verdict(for: CaptureBlurEstimate(angularSpeedDegreesPerSecond: 0, predictedSmearPixels: pixels), exposureDuration: exposure)
+}
+check(blurVerdict(2.999, exposure: 1.0 / 60) == .ok && !blurVerdict(2.999, exposure: 1.0 / 60).skipsFrame, "under 3 px is fine even at 1/60 s")
+check(blurVerdict(3, exposure: 1.0 / 120) == .tooFast(skip: false), "3 px at a short exposure warns: slow down")
+check(blurVerdict(3, exposure: 1.0 / 60) == .tooDark(skip: false), "3 px at 1/60 s warns: more light")
+check(blurVerdict(3.999, exposure: 1.0 / 30) == .tooDark(skip: false) && !blurVerdict(3.999, exposure: 1.0 / 30).skipsFrame, "just under 4 px still records")
+check(blurVerdict(4, exposure: 1.0 / 120) == .tooFast(skip: true) && blurVerdict(4, exposure: 1.0 / 120).skipsFrame, "4 px at a short exposure skips the frame")
+check(blurVerdict(4, exposure: 1.0 / 60) == .tooDark(skip: true) && blurVerdict(4, exposure: 1.0 / 60).skipsFrame, "4 px at 1/60 s skips and asks for light")
+check(blurVerdict(7.284, exposure: Double(Float(1.0 / 60))) == .tooDark(skip: true), "a 7.284 px prediction at a Float32 1/60 s exposure is skipped for light")
+check(CaptureBlurVerdict.ok.hint == nil && CaptureBlurVerdict.tooFast(skip: false).hint!.hasPrefix("Slow down")
+      && CaptureBlurVerdict.tooDark(skip: true).hint!.hasPrefix("More light"), "hints name the corrective action")
+check(CaptureBlurEstimator.manifestThresholds == ["warn_smear_px": 3, "skip_smear_px": 4, "long_exposure_seconds": 1.0 / 60, "maximum_sample_interval_seconds": 0.1], "manifest records the live thresholds")
+
+// Review regression: a rejected boundary frame must leave the next sharp
+// candidate eligible, using the same cadence and verdict types as the recorder.
+var replayCadence = FrameCadence()
+var replayAccepted = 0
+for tick in 0..<600 {
+    let timestamp = Double(tick) / 60
+    guard replayCadence.isEligible(timestamp: timestamp, normalTracking: true) else { continue }
+    let verdict = blurVerdict(tick % 30 == 0 ? 9 : 1, exposure: 1.0 / 120)
+    if !verdict.skipsFrame && replayCadence.accept(timestamp: timestamp, normalTracking: true) { replayAccepted += 1 }
+}
+check(replayAccepted >= 19, "blurred cadence boundaries do not discard sharp alternatives")
+check(CaptureBlurEstimator.verdict(for: nil, exposureDuration: 0.01) == .unavailable,
+      "missing motion is unavailable, not accepted as sharp")
+for invalidExposure in [0.0, -0.01, 1.0, Double.nan] {
+    check(CaptureBlurEstimator.predictedSmearPixels(angularSpeedDegreesPerSecond: 0, exposureDuration: invalidExposure, fx: 1332) == nil,
+          "invalid exposure cannot produce a zero-smear pass")
+    check(blurVerdict(0, exposure: invalidExposure).skipsFrame, "unknown exposure never commits admission")
+}
+check(CaptureBlurEstimator.estimate(previous: yawTransform(0), current: yawTransform(0), previousTimestamp: 0,
+      currentTimestamp: 0.5, exposureDuration: 0.01, fx: 1332) == nil, "long sample gaps cannot certify low motion")
+
 let sid = UUID().uuidString
 let frame = FrameRecord(session_id: sid, image: "images/000001.jpg", camera_to_world: rows,
     intrinsics: CaptureGeometry.rows(k), image_resolution: ImageResolution(width: 1920, height: 1440),
@@ -98,6 +172,25 @@ do {
     check(json["camera_to_world"] != nil && json["cameraToWorld"] == nil, "exact snake_case schema")
     let decoded = try JSONDecoder().decode(FrameRecord.self, from: encoded)
     check(decoded.camera_to_world == rows, "pose JSON round trip")
+    check(json["predicted_smear_px"] == nil && json["angular_speed_deg_s"] == nil, "frames without motion telemetry omit the additive keys")
+    for exposure in [0.0, -0.01, 1.0] {
+        var invalidJSON = json
+        invalidJSON["exposure_duration_seconds"] = exposure
+        let invalid = try JSONDecoder().decode(FrameRecord.self, from: JSONSerialization.data(withJSONObject: invalidJSON))
+        check((try? invalid.validate(expectedSession: sid)) == nil, "invalid exposure cannot be persisted as a usable frame")
+    }
+    var telemetry = decoded
+    telemetry.angular_speed_deg_s = 18.8
+    telemetry.predicted_smear_px = 7.284
+    try telemetry.validate(expectedSession: sid)
+    let telemetryJSON = try JSONSerialization.jsonObject(with: JSONEncoder().encode(telemetry)) as! [String: Any]
+    check(telemetryJSON["predicted_smear_px"] as? Double == 7.284 && telemetryJSON["angular_speed_deg_s"] as? Double == 18.8, "additive motion-blur telemetry keys are written beside exposure")
+    let telemetryRoundTrip = try JSONDecoder().decode(FrameRecord.self, from: JSONEncoder().encode(telemetry))
+    check(telemetryRoundTrip.predicted_smear_px == 7.284 && telemetryRoundTrip.angular_speed_deg_s == 18.8, "telemetry round trip")
+    telemetry.predicted_smear_px = -1
+    check((try? telemetry.validate(expectedSession: sid)) == nil, "negative smear telemetry rejected")
+    telemetry.predicted_smear_px = .nan
+    check((try? telemetry.validate(expectedSession: sid)) == nil, "non-finite smear telemetry rejected")
     var malformed = decoded
     malformed.camera_to_world[3][0] = 1
     check((try? malformed.validate(expectedSession: sid)) == nil, "reject non-homogeneous transform")

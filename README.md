@@ -8,7 +8,7 @@ Real estate is the primary workflow; the app also supports other space types.
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Latest verified Studio deployment](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 
-## Current release — 24 September 2026
+## Verified production baseline — 24 September 2026
 
 | Area | Current state |
 | --- | --- |
@@ -25,6 +25,21 @@ and 75 deployed function source files, restored an existing signed-in workspace,
 and exercised prompt review without submitting an edit. This is not a fresh
 Apple sign-in, real-phone capture/sync or live AI-quality certification. Exact
 versions, migration history, remaining gates and evidence are in the release note.
+
+## Current source beyond that baseline
+
+Studio now includes named private video projects with uploaded originals and
+cross-browser restoration, imported music with mixing/fades/ducking, reviewed
+beat-cut proposals, source-timed speech captions and speaking-passage suggestions.
+An explicit local editing-copy tool prepares large recordings for the browser.
+General projects need no property; property reels retain their agency review and
+delivery workflow. See [projects and finishing](docs/studio/projects-and-finishing.md).
+
+These additions await a new production receipt. Text-route seeds and bounded
+speech analysis are implemented; their live activation is separate from source
+availability. [Editing intelligence activation](docs/studio/editing-intelligence-activation.md)
+records gates, pricing estimates and acceptance checks. Presenter generation stays
+disabled, and this work does not establish phone or spatial-quality acceptance.
 
 ## Start developing
 
@@ -73,6 +88,8 @@ tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 
 - [Create with chat and Improve prompt](docs/studio/conversational-creation.md)
 - [Agency production, capture plans and review](docs/studio/agency-production-workflow.md)
+- [Named video projects, music, captions and editing copies](docs/studio/projects-and-finishing.md)
+- [Editing intelligence activation and acceptance](docs/studio/editing-intelligence-activation.md)
 - [Prompt library](docs/studio/prompt-library.md)
 - [AI Presenter and activation requirements](docs/studio/ai-presenter.md)
 - [Brand assets](docs/brand/README.md)
@@ -86,6 +103,8 @@ Historical audit and release folders retain their original measurements.
 
 Use isolated branches when collaborating. Preserve migration history and existing
 function authentication settings; apply schema before dependent handlers and web
-assets. The latest Studio release note documents why older broad deployment
-helpers are unsuitable for that release. No disabled provider or spatial gate
+assets. The updated [backend deployment helper](apps/studio/scripts/deploy-backend.mjs)
+requires explicit function selection, stages offline by default and preserves
+the declared JWT policy. With `--run`, it checks live policy and verifies deployed
+source hashes. No disabled provider or spatial gate
 should be activated merely to complete a UI demonstration.

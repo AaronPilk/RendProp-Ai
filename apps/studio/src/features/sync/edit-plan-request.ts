@@ -9,6 +9,7 @@ export function buildEditPlanRequest(draft:EditDraft,message:string,history:Conv
     draft:{
       id:draft.id,revision:draft.revision,ratio:draft.ratio,audio:draft.audio,title:draft.title,
       hasNarration:!!draft.narration,hasOverlays:!!draft.overlays?.length,
+      hasMusic:!!draft.music,hasSpeech:!!draft.speech?.length,
       clips:draft.clips.map(clip=>({id:clip.id,kind:clip.source.kind,start:clip.start,end:clip.end,speed:clip.speed??1,caption:clip.caption,motion:clip.motion??"still",transition:clip.transition??"cut"})),
     },
     message,

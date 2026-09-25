@@ -1,6 +1,7 @@
 import ARKit
 import Foundation
 import CoreVideo
+import simd
 
 // Every mutable property except SessionFiles is owned by delegateQueue. SessionFiles
 // belongs to writerQueue. A nonblocking gate allows exactly one retained pixel buffer.
@@ -21,6 +22,8 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
     private var baselineSkips = 0
     private var qualitySkips = 0
     private var lowTextureFrames = 0
+    private var motionBlurSkips = 0
+    private var previousPose: (transform: simd_float4x4, timestamp: TimeInterval)?
     var onStatus: ((String) -> Void)?
     var onFinished: ((URL?, String, Bool, CaptureStopReason?) -> Void)?
 
@@ -52,6 +55,7 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
                     "low_texture_variance": CaptureQualitySelector.lowTextureVariance,
                     "minimum_translation_metres": CaptureQualitySelector.minimumTranslationMetres,
                     "minimum_rotation_degrees": CaptureQualitySelector.minimumRotationDegrees]
+                files.manifest.motion_blur_thresholds = CaptureBlurEstimator.manifestThresholds
                 try self.writeManifest(files)
                 self.active = files
                 self.cadence = FrameCadence()
@@ -65,6 +69,8 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
                 self.baselineSkips = 0
                 self.qualitySkips = 0
                 self.lowTextureFrames = 0
+                self.motionBlurSkips = 0
+                self.previousPose = nil
                 DispatchQueue.main.async { completion(.success(())) }
             } catch { DispatchQueue.main.async { completion(.failure(error)) } }
         }
@@ -81,6 +87,7 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
         let skippedBusy = busySkips
         let skippedBlur = blurSkips, skippedBaseline = baselineSkips
         let skippedQuality = qualitySkips, lowTexture = lowTextureFrames
+        let skippedMotionBlur = motionBlurSkips
         writerQueue.async {
             files.manifest.status = files.writeError == nil ? status : "failed"
             files.manifest.status_detail = files.writeError ?? detail
@@ -92,6 +99,7 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
             files.manifest.skipped_baseline_frames = skippedBaseline
             files.manifest.skipped_quality_frames = skippedQuality
             files.manifest.low_texture_frames = lowTexture
+            files.manifest.skipped_motion_blur_frames = skippedMotionBlur
             do {
                 try self.writeManifest(files)
                 var ready = false
@@ -128,10 +136,30 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
                 : "The 10-minute limit was reached. Check your coverage before using this scan.", stopReason: reason)
             return
         }
-        guard case .normal = frame.camera.trackingState else { trackingSkips += 1; return }
+        guard case .normal = frame.camera.trackingState else { trackingSkips += 1; previousPose = nil; return }
+        // Instantaneous angular speed over the previous normally tracked ARFrame
+        // (about 1/60 s apart), evaluated for every frame so a cadence-admitted
+        // frame is judged by the motion actually happening around its exposure.
+        let motionPreviousPose = previousPose
+        let blurEstimate = motionPreviousPose.flatMap {
+            CaptureBlurEstimator.estimate(previous: $0.transform, current: frame.camera.transform,
+                                          previousTimestamp: $0.timestamp, currentTimestamp: frame.timestamp,
+                                          exposureDuration: frame.camera.exposureDuration, fx: frame.camera.intrinsics[0][0])
+        }
+        previousPose = (frame.camera.transform, frame.timestamp)
         guard bufferGate.wait(timeout: .now()) == .success else { busySkips += 1; return }
-        guard cadence.accept(timestamp: frame.timestamp, normalTracking: true) else { bufferGate.signal(); return }
+        guard cadence.isEligible(timestamp: frame.timestamp, normalTracking: true) else { bufferGate.signal(); return }
         let camera = frame.camera
+        let blurVerdict = CaptureBlurEstimator.verdict(for: blurEstimate, exposureDuration: camera.exposureDuration)
+        if blurVerdict.skipsFrame {
+            // Not recorded and not counted toward the 400-photo cap.
+            motionBlurSkips += 1
+            bufferGate.signal()
+            if let hint = blurVerdict.hint {
+                DispatchQueue.main.async { self.onStatus?("\(hint) Waiting for a usable photo; you can stop any time.") }
+            }
+            return
+        }
         let size = ImageResolution(width: Int(camera.imageResolution.width), height: Int(camera.imageResolution.height))
         guard resolution == nil || resolution == size else {
             bufferGate.signal()
@@ -144,10 +172,10 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
         // Never retain ARFrame itself or query currentFrame later on the writer queue.
         let buffer = frame.capturedImage
         let measuredPose = CaptureGeometry.rows(camera.transform)
+        var quality = self.quality // Commit this copy only after all candidate checks pass.
         let selection = quality.evaluate(Self.qualityMeasurement(buffer), pose: measuredPose)
         switch selection {
-        case .keep(let lowTexture):
-            if lowTexture { lowTextureFrames += 1 }
+        case .keep: break
         case .skipBlur:
             blurSkips += 1
             bufferGate.signal()
@@ -179,9 +207,25 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
             camera_to_world: measuredPose, intrinsics: CaptureGeometry.rows(camera.intrinsics),
             image_resolution: size, timestamp: frame.timestamp, tracking_state: TrackingRecord(state: "normal", reason: nil),
             raw_feature_points: points, exposure_duration_seconds: camera.exposureDuration,
-            exposure_offset_ev: Double(camera.exposureOffset), world_mapping_status: mappingName(frame.worldMappingStatus))
+            exposure_offset_ev: Double(camera.exposureOffset), world_mapping_status: mappingName(frame.worldMappingStatus),
+            angular_speed_deg_s: blurEstimate?.angularSpeedDegreesPerSecond,
+            predicted_smear_px: blurEstimate?.predictedSmearPixels,
+            motion_previous_timestamp: motionPreviousPose?.timestamp,
+            motion_previous_camera_to_world: motionPreviousPose.map { CaptureGeometry.rows($0.transform) })
+        do { try record.validate(expectedSession: files.sessionID) }
+        catch {
+            qualitySkips += 1
+            bufferGate.signal()
+            DispatchQueue.main.async { self.onStatus?("Waiting for valid camera measurements. Your saved photos are safe.") }
+            return
+        }
+        // A rejected candidate never consumes cadence or the accepted viewpoint.
+        guard cadence.accept(timestamp: frame.timestamp, normalTracking: true) else { bufferGate.signal(); return }
+        self.quality = quality
+        if selection == .keep(lowTexture: true) { lowTextureFrames += 1 }
         nextIndex += 1
         let admittedLowTexture = selection == .keep(lowTexture: true)
+        let blurHint = blurVerdict.hint
         writerQueue.async {
             defer { self.bufferGate.signal() }
             autoreleasepool {
@@ -204,7 +248,9 @@ final class CaptureRecorder: NSObject, ARSessionDelegate {
                     try self.writeManifest(files)
                     let count = files.manifest.frames.count
                     DispatchQueue.main.async {
-                        self.onStatus?(admittedLowTexture
+                        self.onStatus?(blurHint != nil
+                            ? "\(count) photos saved. \(blurHint!)"
+                            : admittedLowTexture
                             ? "\(count) photos saved. Include furniture, corners or doorways as you move. Stop when the room is covered."
                             : count >= 300
                                 ? "\(count) photos saved. Check that you covered the room, then tap Stop and save. Capture ends at 400 photos."

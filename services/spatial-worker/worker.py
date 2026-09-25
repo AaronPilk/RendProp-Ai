@@ -434,7 +434,8 @@ def run_one(api, provider, allowed_input_hosts, *, scratch_parent=None):
             with lease:
                 download_capture(job, root / "capture", allowed_input_hosts, check=lease.check)
                 adapter = load_adapter()
-                capture = adapter.load_capture(root / "capture")
+                capture = adapter.load_capture(root / "capture",
+                                               blur_policy={"max_median_px": 4.0, "max_fraction_over_px": [5.0, 0.35]})
                 adapter.write_dataset(capture, root / "dataset")
                 lease.stage(0.15)
                 output, manifest = provider.reconstruct(job, root, capture, lease)

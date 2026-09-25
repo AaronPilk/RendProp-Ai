@@ -651,3 +651,30 @@
 .rp-editor-sr-only { position:absolute; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
 .rp-editor.is-readonly .rp-editor-workspace { grid-template-columns:minmax(0,1fr); }
 @media (max-width:600px) { .rp-editor-recipe-heading { align-items:flex-start; flex-direction:column; } .rp-editor-recipe-fields { grid-template-columns:minmax(0,1fr); gap:0; } }
+
+.rp-editor-sound {border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--surface);margin-top:16px;}
+.rp-editor-sound summary {cursor:pointer;font-weight:700;padding:4px 0;}
+.rp-editor-sound fieldset {border:0;padding:14px 0;margin:0;min-width:0;}
+.rp-editor-sound legend {font-weight:650;padding-top:12px;}
+.rp-editor-sound label {display:flex;flex-direction:column;gap:6px;margin:10px 0;}
+.rp-editor-sound label:has(input[type=checkbox]) {flex-direction:row;align-items:center;}
+.rp-editor-sound input:not([type=checkbox]),.rp-editor-sound select {width:100%;min-width:0;box-sizing:border-box;}
+.rp-editor-sound p {font-size:.88rem;color:var(--editor-muted);line-height:1.5;}
+.rp-editor-sound button {margin:5px 8px 5px 0;}
+.rp-editor-sound-grid {display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:0 14px;}
+.rp-editor-transcript {max-height:280px;overflow:auto;padding:4px 12px 4px 0;}
+.rp-editor-transcript label {display:grid;grid-template-columns:110px 1fr;align-items:center;font-size:.8rem;}
+
+.rp-editor-sound input[type=checkbox] {width:18px;height:18px;min-height:18px;flex:0 0 18px;margin:0;accent-color:var(--editor-accent);}
+.rp-editor-sound input[type=range] {accent-color:var(--editor-accent);}
+.rp-editor-sound details {margin-top:12px;}
+
+.rp-editor-proxy {border:1px solid var(--line);border-radius:14px;padding:16px;margin-top:16px;background:var(--surface);}
+.rp-editor-proxy summary {font-weight:650;cursor:pointer;}
+.rp-editor-proxy p {font-size:.85rem;line-height:1.5;color:var(--editor-muted);margin:12px 0;}
+.rp-editor-proxy label {display:block;font-size:.85rem;}
+.rp-editor-proxy input {display:block;max-width:100%;margin-top:6px;}
+.rp-editor-proxy button {margin:8px 8px 0 0;}
+.rp-editor-proxy progress {display:block;width:100%;accent-color:var(--editor-accent);}
+
+.rp-editor-proxy video {display:block;width:100%;max-height:320px;margin-top:12px;border-radius:10px;background:#080a0c;}

@@ -41,3 +41,6 @@ docs/appstore/screenshots/6.9-framed/
 
 # Supabase CLI scratch (deploy staging) — never source.
 /supabase/
+
+# Supabase CLI discovery cache when invoked from Studio; never source.
+/apps/studio/supabase/.temp/
