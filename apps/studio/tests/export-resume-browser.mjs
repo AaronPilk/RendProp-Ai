@@ -84,6 +84,8 @@ document.querySelector("#run").onclick=async()=>{
     return { rms: Math.sqrt(power / count), hz: crossings / (count / 48000), dominantHz, samples: count };
   };
   const pixel = (path, time, x = 100) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", String(time), "-i", path, "-frames:v", "1", "-vf", `format=rgb24,crop=1:1:${x}:400`, "-f", "rawvideo", "pipe:1"])];
+  const isWhip = ({ left, right }) => left[2] > 200 && left[0] < 30 && right[0] > 200 && right[2] < 30;
+  const whipPixels = (path, time) => ({ time, left: pixel(path, time, 100), right: pixel(path, time, 650) });
   for (const variant of ["baseline", "fixed"]) {
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
@@ -98,7 +100,17 @@ document.querySelector("#run").onclick=async()=>{
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
       const trace = await page.evaluate(() => window.fixture.trace), duration = Number(probe.format.duration);
       const audio = { opening: sample(output, .53, .09), middle: sample(output, 1, .7), leading: sample(output, .02, .08) };
-      const pixels = { dissolve: pixel(output, .64), whipLeft: pixel(output, 2.6, 100), whipRight: pixel(output, 2.6, 650) };
+      // MediaRecorder timestamps vary by a few encoded frames on busy macOS
+      // runners. The 180 ms whip starts at timeline 2.5 s; look for its actual
+      // spatial split in this bounded window, not one exact timestamp. A hard
+      // cut cannot satisfy the split, and the delayed-resume control must miss
+      // this window. Keep the independent duration and audio timing bounds.
+      const pixels = {
+        dissolve: pixel(output, .64),
+        beforeWhip: whipPixels(output, 2.4),
+        whip: [2.54, 2.58, 2.62, 2.66, 2.70, 2.74].map(time => whipPixels(output, time)),
+        afterWhip: whipPixels(output, 2.9),
+      };
       receipt.runs.push({ variant, narrated, plannedSeconds: 3, duration, trace, audio, pixels, output, probe }); await persist();
       assert(probe.streams.some(stream => stream.codec_name === "h264")); assert(probe.streams.some(stream => stream.codec_name === "aac"));
       assert.equal(trace.filter(event => event.event === "resume.return").length, 2);
@@ -106,11 +118,14 @@ document.querySelector("#run").onclick=async()=>{
       if (variant === "baseline") {
         assert(duration > 3.4, `Negative control must reproduce drift with the old await: ${duration}`);
         assert.equal(trace.filter(event => event.event === "resume.delivered").length, 2);
+        assert(!pixels.whip.some(isWhip), "Delayed-resume negative control must put the whip outside the fixed timeline window");
       } else {
         assert(Math.abs(duration - 3) < .4, `Fixed real MP4 must retain the existing duration tolerance: ${duration}`);
         assert.equal(trace.filter(event => event.event === "resume.delivered").length, 0);
         assert(pixels.dissolve[0] > 20 && pixels.dissolve[0] < 100 && pixels.dissolve[2] > 170 && pixels.dissolve[2] < 245, `Actual dissolve blend: ${pixels.dissolve}`);
-        assert(pixels.whipLeft[2] > 200 && pixels.whipLeft[0] < 30 && pixels.whipRight[0] > 200 && pixels.whipRight[2] < 30, "Actual whip must move blue and red across the frame");
+        assert(pixels.whip.some(isWhip), `Actual whip must move blue and red across the frame within the bounded timeline window: ${JSON.stringify(pixels.whip)}`);
+        assert(pixels.beforeWhip.left[2] > 200 && pixels.beforeWhip.right[2] > 200 && !isWhip(pixels.beforeWhip), "The preceding shot must still be blue before the whip");
+        assert(pixels.afterWhip.left[0] > 200 && pixels.afterWhip.right[0] > 200 && !isWhip(pixels.afterWhip), "The closing shot must be fully red after the whip");
         if (narrated) assert(audio.middle.rms > .02 && audio.middle.hz > 610 && audio.middle.hz < 710, `Narration stays at 660 Hz: ${JSON.stringify(audio.middle)}`);
         else {
           assert(audio.leading.rms < .005, "Leading photo stays silent; video speech does not shift to time zero");
