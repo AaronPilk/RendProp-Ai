@@ -1352,17 +1352,35 @@ where table_schema = 'public' and table_name = 'ai_routes'
 
 -- NULL means "whatever the adapter does by default", which is what makes 0030
 -- additive — so it must stay legal. 0030 seeds two Astra writing routes and
--- 0034 adds the agent-reel writing route. Only those three specific first-seat
--- rows carry params; three arbitrary rows or two copies of one task cannot pass.
+-- 0034 adds the agent-reel writing route. The two bounded Studio text tasks
+-- added by 20260924235553 also carry params. Require all five exact seats:
+-- arbitrary replacements, duplicate tasks or larger Studio budgets cannot pass.
+-- This inventory change does not alter the three Astra paid-plan/headroom rules.
 insert into _inv(name, pass, note)
-select 'only the three explicit 0030/0034 Astra writing seats carry params',
-       count(*) filter (where params is not null) = 3
+select 'only the three explicit Astra and two bounded Studio text seats carry params',
+       count(*) filter (where params is not null) = 5
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
                         and position = 1 and task = 'copy.shotlist') = 1
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
                         and position = 1 and task = 'copy.reel_script') = 1
    and count(*) filter (where params is not null and provider = 'openai' and model = 'gpt-6-astra'
-                        and position = 1 and task = 'copy.agent_reel') = 1,
+                        and position = 1 and task = 'copy.agent_reel') = 1
+   and count(*) filter (where provider = 'anthropic' and model = 'claude-sonnet-5'
+                        and position = 1 and task = 'copy.edit_plan'
+                        and unit = 'call' and unit_cents = 8 and max_latency_s = 30
+                        and min_plan = 'free' and privacy_tier = 'retained_30d'
+                        and enabled and retire_after is null
+                        and capabilities @> array['text','compliant']
+                        and capabilities <@ array['text','compliant']
+                        and params = '{"effort":"low","max_output_tokens":1600}'::jsonb) = 1
+   and count(*) filter (where provider = 'anthropic' and model = 'claude-sonnet-5'
+                        and position = 1 and task = 'copy.prompt_enhancement'
+                        and unit = 'call' and unit_cents = 8 and max_latency_s = 30
+                        and min_plan = 'free' and privacy_tier = 'retained_30d'
+                        and enabled and retire_after is null
+                        and capabilities @> array['text','compliant']
+                        and capabilities <@ array['text','compliant']
+                        and params = '{"effort":"low","max_output_tokens":1600}'::jsonb) = 1,
        format('%s row(s) with params: %s', count(*) filter (where params is not null),
               coalesce(string_agg(format('%s/%s', task, model), ', ')
                        filter (where params is not null), 'none'))
