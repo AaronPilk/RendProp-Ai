@@ -7,18 +7,20 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
-The latest Studio deployment is recorded in
-[CODEX-STUDIO-LIVE-20260924](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).
-It deployed the conversational Studio stack and four Presenter/prompt-library
-migrations. Guided chat and prompt enhancement are live; optional LLM enhancement
-and Higgsfield Presenter generation remain disabled. That record, not old setup
-instructions or a function's presence in this directory, establishes deployment
-versions and activation state.
+The [27 September release checkpoint](../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+records Studio API **v12 ACTIVE**, JWT verification enabled, and all **44 runtime
+source files** matching the release source. The four new project/media/music/text
+route migrations are applied. The new website also passed 30-file byte
+verification. Model-backed editing, enhancement and speech are activated with
+bounded estimated limits and passed a signed-in synthetic production smoke.
+Higgsfield Presenter generation remains disabled. Final CI passed 12/12 jobs, and
+PR #8 merged to main as `10e2b22`.
 
-Current source additionally implements named Studio projects, immutable private
-media chunks, property-music handoffs and source-verified speech analysis. It seeds
-bounded text routes while retaining separate endpoint enablement gates. These
-changes await a new deployment receipt. See [projects and finishing](../../../docs/studio/projects-and-finishing.md)
+Deployed backend additions include named Studio projects, immutable private media
+chunks, property-music handoffs and source-verified speech analysis. Bounded text
+route seeds retain separate endpoint enablement gates. The
+[24 September record](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md) documents
+the earlier conversational Studio/Presenter release and its other function versions. See [projects and finishing](../../../docs/studio/projects-and-finishing.md)
 and [activation/acceptance](../../../docs/studio/editing-intelligence-activation.md).
 
 ## Function map
@@ -153,10 +155,9 @@ reapplying its SQL. The four subsequent Presenter/prompt-library source versions
 were applied and matched. Older historical ledger differences remain; an
 unreviewed `db push --include-all` is not a safe reconciliation procedure.
 
-**Legacy helper limitations:** [deploy-functions.sh](../deploy-functions.sh)
-lists 17 functions, omits newer handlers, and would set `tours` JWT verification
-false. It remains unsuitable as a whole-product release command. Use the updated
-explicit-selection helper above and choose all affected read handlers. Earlier sections of
+The [deploy-functions.sh](../deploy-functions.sh) wrapper now delegates to that
+same explicit-selection helper. It no longer deploys an implicit list or forces
+uniform JWT settings. Choose every affected read handler deliberately. Earlier sections of
 [DEPLOYMENT.md](../DEPLOYMENT.md) document older rollout/setup work; use the latest
 release record for current production facts.
 

@@ -6,27 +6,30 @@ continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
-[Latest verified Studio deployment](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+[Current release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 
-## Verified production baseline — 24 September 2026
+## Production status — 27 September 2026
 
 | Area | Current state |
 | --- | --- |
-| Studio web | Live: Create is the main workspace, with chat editing, Simple/Pro controls, preview and browser MP4/WebM export. |
-| Prompt enhancement | Live guided suggestions, reviewed before use. Optional model-powered planning/enhancement endpoints are deployed but disabled. |
+| Studio web | Live: Create with chat editing, Simple/Pro controls, named projects, music mixing, captions, editing-copy preparation and browser MP4/WebM export. |
+| Prompt enhancement | Live guided and model-backed suggestions, reviewed before use; AI editing and reviewed speech captions are enabled with bounded costs. |
 | Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
-| Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Local videos remain browser-local. |
+| Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
 | iOS | Native capture, media, editing and connected workflows are implemented. A web release does not ship an iOS binary; phone capture testing and App Store Connect remain with the owner. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
-The Studio release passed all 12 CI jobs. Live verification matched 27 web files
-and 75 deployed function source files, restored an existing signed-in workspace,
-and exercised prompt review without submitting an edit. This is not a fresh
-Apple sign-in, real-phone capture/sync or live AI-quality certification. Exact
-versions, migration history, remaining gates and evidence are in the release note.
+The current website passed exact verification of **30 web files**; Studio API v12
+matched **44 runtime source files**. Signed-in synthetic production checks passed
+for source uploads, AI enhancement/editing, reviewed speech captions and a real
+MP4 export. A full-page reload restored the QA project, sources and conversation.
+Final CI passed **12/12 jobs**, and
+[PR #8](https://github.com/AaronPilk/RendProp-Ai/pull/8) merged to main as `10e2b22`. The
+[release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md) keeps these checks
+separate from physical-phone, fresh Apple sign-in and second-browser acceptance.
 
-## Current source beyond that baseline
+## New creation tools
 
 Studio now includes named private video projects with uploaded originals and
 cross-browser restoration, imported music with mixing/fades/ducking, reviewed
@@ -35,9 +38,11 @@ An explicit local editing-copy tool prepares large recordings for the browser.
 General projects need no property; property reels retain their agency review and
 delivery workflow. See [projects and finishing](docs/studio/projects-and-finishing.md).
 
-These additions await a new production receipt. Text-route seeds and bounded
-speech analysis are implemented; their live activation is separate from source
-availability. [Editing intelligence activation](docs/studio/editing-intelligence-activation.md)
+The [27 September release checkpoint](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+confirms the new website, four database migrations and Studio API v12 are deployed.
+Bounded AI editing, prompt enhancement and speech analysis are activated, with a
+successful signed-in synthetic upload-to-export-and-reload smoke. Four single-attempt
+provider calls totaled **$0.2415 in estimated ledger cost**, not an invoice charge. [Editing intelligence activation](docs/studio/editing-intelligence-activation.md)
 records gates, pricing estimates and acceptance checks. Presenter generation stays
 disabled, and this work does not establish phone or spatial-quality acceptance.
 
@@ -94,7 +99,8 @@ tests cannot validate physical camera, ARKit/LiDAR capture or thermal behavior.
 - [AI Presenter and activation requirements](docs/studio/ai-presenter.md)
 - [Brand assets](docs/brand/README.md)
 - [iOS test boundaries](apps/ios/RendpropUITests/README.md)
-- [Current Studio release record](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
+- [Current Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+- [24 September production baseline](docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 
 The [original master build prompt](docs/MASTER-BUILD-PROMPT.md) records product
 intent and planned work. Current source, tests and dated deployment receipts

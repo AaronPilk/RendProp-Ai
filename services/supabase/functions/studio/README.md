@@ -6,16 +6,20 @@ handlers also check Supabase Auth, account deletion, current membership, selecte
 workspace and listing access. Workspace selectors are requests, never authority.
 Non-media actions require a non-anonymous connected account.
 
-The [24 September release](../../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-deployed **studio v10**, including the production workflow, Presenter preparation,
-prompt library and optional text endpoints. Guided chat/enhancement run in the
-browser and are live. Optional LLM text routes and Higgsfield generation remain
-**disabled**. This API is no longer only the original read-only media bridge.
+The [27 September release checkpoint](../../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+verified **studio v12 ACTIVE**, JWT verification enabled and **44 runtime files**
+matching source. Its four new migrations are applied. Private named projects,
+media chunks, music handoffs, verified source speech and text-route seeds are
+deployed. The new website passed 30-file byte verification. Bounded model-backed
+editing, enhancement and speech are **activated** and passed a signed-in synthetic
+upload-to-export-and-reload smoke. Final CI passed all 12 jobs; PR #8 merged to
+main as `10e2b22`.
 
-Current source extends that baseline with private named projects and media chunks,
-music handoffs, verified source speech, and text-route seeds. These additions
-await their own deployment and activation receipt; the route inventory below
-describes source capability, not a claim that every route is already live.
+Guided chat/enhancement also remain available in the browser. The text allowance
+is 8 cents per call; speech has a 3-cent per-request ceiling in estimated costs.
+Higgsfield Presenter generation remains disabled independently. The
+[24 September release](../../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md) records
+the earlier production workflow, Presenter preparation and prompt-library rollout.
 
 ## Route map
 
@@ -126,5 +130,6 @@ JWT settings and include every affected privacy read handler (`studio`, `renders
 explicit `--functions` selection and is offline unless `--run` is supplied. It
 checks fresh live JWT policy, stages the parsed import closure, deploys the
 selection and verifies downloaded source hashes. It does not apply schema or
-activate providers. Record new versions and results separately from the existing
-[production baseline](../../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md).
+activate providers. Record completed deployments and acceptance in the
+[current release record](../../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md),
+keeping activation state and remaining physical-phone work explicit.

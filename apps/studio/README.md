@@ -6,11 +6,16 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
-The [24 September production record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-is the latest deployment evidence. It supersedes the pre-release status in earlier
-handoffs and the September 14 screenshots. This README also describes newer
-source for projects, sound, captions and editing copies. Those additions await a
-new production receipt; provider activation and native releases have separate gates.
+The [27 September release checkpoint](../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
+confirms the new website, database migrations and Studio API v12 are deployed.
+All 30 website files and 44 API runtime files match their release source. Bounded
+AI editing, enhancement and speech analysis are active. A signed-in synthetic
+upload-to-MP4 smoke and full-page project reload passed; final CI passed 12/12 jobs.
+PR #8 merged to main as `10e2b22`. This release includes projects, sound, captions
+and editing copies.
+Native delivery and physical-phone acceptance remain separate from the website.
+The [24 September record](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md) preserves
+the prior baseline.
 
 ## Create, refine and export
 
@@ -43,9 +48,10 @@ Setup and review controls are expandable below the editor.
 - [Prompt library](../../docs/studio/prompt-library.md)
 - [AI Presenter and activation requirements](../../docs/studio/ai-presenter.md)
 
-**The recorded production baseline has model-powered edit planning and prompt
-enhancement disabled.** Current source seeds bounded text routes and implements
-speech analysis; deployment and explicit activation remain separate steps. See
+**Model-powered edit planning, prompt enhancement and speech analysis are live.**
+Activation uses 8-cent text and 3-cent speech per-request estimated limits. The
+signed-in production smoke verified a reviewed enhancement, compound edit with
+Undo/Redo, reviewed transcription and downloaded MP4 using synthetic sources. See
 [editing intelligence](../../docs/studio/editing-intelligence-activation.md) for
 the configuration and acceptance record. Higgsfield Presenter generation remains
 disabled; its preparation, approval
@@ -80,8 +86,9 @@ Uploads, finished-video saves and publication remain explicit actions.
 Phone-only footage becomes available after upload. Native **Save setup** shares
 supported reel settings; it cannot reconstruct every local AVFoundation timeline,
 recording or LiDAR scan. Camera capture and physical phone acceptance remain
-on-device tests. The release verified a restored signed-in browser workspace and
-guided enhancement, not a new phone-to-browser acceptance run or live AI quality.
+on-device tests. The release verified the existing signed-in browser workspace
+and a synthetic saved-project AI/edit/export path. It did not perform a fresh
+Apple sign-in, second-browser production restoration or phone-to-browser run.
 
 ## Develop and verify
 
@@ -153,14 +160,14 @@ node scripts/verify-deployed.mjs
 ```
 
 The verifier compares the custom domain against the exact local build, checks
-headers and SPA fallback, and records the known managed robots prefix. At the
-24 September release, all 27 files matched; CI had passed all 12 jobs and the
-connected JavaScript gzip total was 293,933 bytes under that release's former
-300,000-byte total ceiling. Current source checks separate gzip budgets: 160,000
-bytes for initial assets, 260,000 for signed-in Create, and 350,000 across all
-workspaces/tools. The editing-copy encoder is loaded on demand. The connected
-check also requires the exact intended public configuration in the built bundle;
-the next release receipt must record its own measurements.
+headers and SPA fallback, and handles the known managed robots prefix explicitly.
+The 27 September release matched all **30 files** with no verifier warnings. Its
+connected gzip sizes were **135,649 B initial / 216,383 B Create / 318,219 B total**,
+within separate budgets of 160,000 / 260,000 / 350,000 bytes. The editing-copy
+encoder is loaded on demand. The connected check requires the exact intended
+public configuration in the built bundle. CI passed all 12 jobs for the preceding
+implementation and for the final test-fixture correction (`e5632ff`, run
+`36325429637`).
 
 `Cache-Control: no-store, no-transform` is intentional: it preserves the strict
 CSP and prevents Cloudflare JavaScript Detection from changing Studio HTML.
