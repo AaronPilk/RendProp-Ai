@@ -59,7 +59,7 @@ function travel(history: EditHistory, direction: "undo" | "redo"): EditHistory {
   if (target.id !== history.present.id) throw new Error("Edit history belongs to another plan.");
   // Restoring old content is a new revision, never a return to an old export identity.
   const present = reviseDraft(history.present, {
-    clips: target.clips, title: target.title, ratio: target.ratio, audio: target.audio, narration: target.narration, overlays: target.overlays,
+    clips: target.clips, title: target.title, ratio: target.ratio, audio: target.audio, narration: target.narration, overlays: target.overlays, music: target.music, speech: target.speech,
   });
   const reverse = snapshot(history.present, entry.label);
   return direction === "undo"

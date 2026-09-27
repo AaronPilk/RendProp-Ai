@@ -136,3 +136,19 @@ Deno.test("production gate requires explicit enablement plus a finite bounded es
     Deno.env.set(keys[1], "3"); assertEquals(production.enabled(), true);
   } finally { keys.forEach((key, index) => previous[index] === undefined ? Deno.env.delete(key) : Deno.env.set(key, previous[index]!)); }
 });
+Deno.test("optional music and speech metadata survive planning without exposing private audio or transcript contents", () => {
+  const input = editPlanInput({ ...body, draft: { ...draft, hasMusic: true, hasSpeech: true } });
+  assertEquals(input.draft.hasMusic, true); assertEquals(input.draft.hasSpeech, true);
+  assertEquals(editPlanOutput(output([{ type: "duration", seconds: 8 }]), input, null).status, "plan");
+  assertThrows(() => editPlanInput({ ...body, draft: { ...draft, hasSpeech: "true" } }), HttpError);
+  assertThrows(() => editPlanInput({ ...body, draft: { ...draft, speech: [{ words: [] }] } }), HttpError);
+});
+Deno.test("planner honors cancellation before dispatch and passes request signal to the single paid call", async () => {
+  const early = new AbortController(); early.abort(); const first = setup();
+  await assertRejects(() => handleEditPlan(new Request(request(), { signal: early.signal }), first.context, first.deps));
+  assert(!first.calls.includes("generate")); assert(!first.calls.includes("reserve"));
+  const controller = new AbortController();
+  const second = setup({ generate: async (_step, _system, _turn, signal) => { assert(signal); controller.abort(); signal.throwIfAborted(); return ""; } });
+  await assertRejects(() => handleEditPlan(new Request(request(), { signal: controller.signal }), second.context, second.deps));
+  assert(second.calls.includes("record:uncertain"));
+});

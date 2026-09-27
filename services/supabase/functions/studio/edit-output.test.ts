@@ -41,6 +41,11 @@ function fixture() {
     photos: [],
     media_provenance: [],
     studio_creative_results: [],
+    studio_property_music: [],
+    studio_project_media: [],
+    studio_property_music_copies: [],
+    studio_production_versions: [],
+    deletion_requests: [],
   };
   let role = "agent", proofFailures = 0, writes = 0, presenterApproved = true;
   const qualityCalls: any[] = [];
@@ -99,6 +104,10 @@ function fixture() {
         select: () => chain,
         eq: (field: string, wanted: any) => {
           filters.push((row) => value(row, field) === wanted);
+          return chain;
+        },
+        neq: (field: string, wanted: any) => {
+          filters.push((row) => value(row, field) !== wanted);
           return chain;
         },
         in: (field: string, wanted: any[]) => {
@@ -371,4 +380,41 @@ Deno.test("accepted presenter sources retain AI disclosure in edits and revoked 
       assertEquals(f.tables.studio_creative_results[0].metadata.source_asset_ids, [source]);
     }
   }
+});
+
+function attachMusic(f: ReturnType<typeof fixture>, actor = user) {
+  const sha = "a".repeat(64), id = "88888888-8888-4888-8888-888888888888";
+  f.tables.studio_property_music.push({ org_id: org, listing_id: listing, sha256: sha, media_id: id });
+  f.tables.studio_project_media.push({ id, actor_id: actor, org_id: org, sha256: sha, bytes: 8, mime: "audio/mpeg", parts: 1, receipts: { "0": { sha256: sha, bytes: 8, state: "complete" } } });
+  return sha;
+}
+Deno.test("uploaded music finalization keeps the declared music provenance and rejects relabeling", async () => {
+  const f = fixture(), sha = attachMusic(f);
+  const result = await (await f.call({ music_sha256: sha })).json();
+  assertStringIncludes(result.disclosure, "User-supplied music");
+  const metadata = f.tables.studio_creative_results[0].metadata;
+  assertEquals(metadata.music_source_sha256, sha);
+  assertEquals(metadata.has_uploaded_music, true);
+  assertEquals(metadata.music_permission, "uploader_declared");
+  assertEquals(metadata.final_content_verified, false);
+  await assertRejects(() => f.call(), HttpError, "different source record");
+});
+Deno.test("music cannot be finalized by guessed hash, incomplete upload, deleted owner or unrelated copy grant", async () => {
+  const other = "99999999-9999-4999-8999-999999999999";
+  for (const change of [
+    (f: ReturnType<typeof fixture>) => { f.tables.studio_property_music.length = 0; },
+    (f: ReturnType<typeof fixture>) => { f.tables.studio_project_media[0].receipts["0"].state = "claimed"; },
+    (f: ReturnType<typeof fixture>) => { f.tables.deletion_requests.push({ user_id: other, status: "pending" }); },
+    (f: ReturnType<typeof fixture>) => { f.tables.studio_property_music_copies.push({ actor_id: user, org_id: org, listing_id: listing, sha256: "a".repeat(64), source_version_id: voice }); f.tables.studio_production_versions.push({ id: voice, org_id: org, listing_id: listing, payload: { draft: { music: { licensed: true, source: { sha256: "b".repeat(64) } } } } }); },
+  ]) {
+    const f = fixture(), sha = attachMusic(f, other); change(f);
+    await assertRejects(() => f.call({ music_sha256: sha }), HttpError);
+    assertEquals(f.writes, 0);
+  }
+  const f = fixture(), sha = attachMusic(f, other);
+  await assertRejects(() => f.call({ music_sha256: sha }), HttpError, "authorized handoff");
+  assertEquals(f.writes, 0);
+  f.tables.studio_property_music_copies.push({ actor_id: user, org_id: org, listing_id: listing, sha256: sha, source_version_id: voice });
+  f.tables.studio_production_versions.push({ id: voice, org_id: org, listing_id: listing, payload: { draft: { music: { licensed: true, source: { sha256: sha } } } } });
+  assertEquals((await f.call({ music_sha256: sha })).status, 200);
 });

@@ -46,6 +46,9 @@ const fetcher: typeof fetch = async (input, options) => {
   const org = new Headers(options?.headers).get("X-Org-Id") ?? ORG;
   const actor = user;
   calls.push({ path: url.pathname, org, method: options?.method ?? "GET" });
+  if (url.pathname === "/functions/v1/studio/projects") return Response.json({projects:[]});
+  if (url.pathname === "/functions/v1/studio/project-media" && options?.method !== "POST") return Response.json({media:null});
+  if (url.pathname === "/functions/v1/studio/media-analysis" && options?.method !== "POST") return Response.json({available:false});
   if ((url.pathname === "/functions/v1/studio/edit-plan" || url.pathname === "/functions/v1/studio/prompt-enhancement") && options?.method !== "POST") return Response.json({available:false,reason:"disabled",supportedOperations:[]});
   if (url.pathname === "/functions/v1/spatial/capability") return Response.json({enabled:false});
   if (url.pathname === "/functions/v1/studio/creative-results") return Response.json({results:[],next_offset:null});

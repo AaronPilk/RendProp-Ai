@@ -55,6 +55,13 @@ class ProviderFixture(unittest.TestCase):
 
 
 class ProviderTests(ProviderFixture):
+    def test_oversized_training_seed_navigation_bounds_fail_before_allocation(self):
+        self.capture["seeds"].append({"position": [0, 0, -250]})
+        with self.assertRaisesRegex(JobFailure, "invalid_navigation_bounds"):
+            self.provider.reconstruct(job(), self.root, self.capture, self.lease)
+        self.modal.Sandbox.create.assert_not_called()
+        self.api.job_call.assert_not_called()
+
     def test_runtime_ttl_no_secrets_network_denial_and_termination(self):
         order = []
         self.sb._experimental_set_outbound_network_policy.side_effect = lambda **k: order.append(("network", k))

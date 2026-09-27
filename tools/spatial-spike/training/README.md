@@ -61,7 +61,7 @@ registration has not been trained. Confidence-filtered scene-depth unprojection
 and matched-image triangulation with fixed poses are not implemented by this
 adapter.
 
-For each point ID, the latest estimate that projects inside its own frame is
+For each point ID, the latest training-frame estimate that projects inside its own frame is
 paired with color sampled from that same JPEG. Coincident locations are merged
 at 1 μm rounding precision to avoid degenerate nearest-neighbor scales. Counts
 before and after this reduction are reported. These projected samples are not
@@ -70,13 +70,29 @@ measured feature correspondences: `images.bin` has zero 2D observations,
 placeholder. **This adapter measures no reprojection accuracy.** The trainer's depth
 loss stays disabled because these files contain no measured tracks.
 
-**Evaluation limitation of the integrated adapter:** it currently builds seeds
-from all supplied frames, before the trainer's train/evaluation split. The frozen
-400-frame benchmark used separate train-only seed preparation and 50 fixed
-held-out IDs. The reviewed train-only adapter work is not integrated here; do
-not label a default adapter run equivalent to that benchmark or claim strictly
-held-out seed construction. Any future frame filtering must preserve the
-original evaluation membership and exclude those views from seeds.
+**Evaluation provenance:** the bounded 20–400-frame adapter keeps every original
+image and camera record. Original capture-order positions 0, 8, 16, … are held
+out; all other frames supply both seed geometry and seed colors. The report
+records the exact training/evaluation names, metadata hashes and adapter hash.
+ARKit VIO is shared across capture, so these are image-loss-heldout views, not
+independently measured camera truth. Historical all-frame-seeded metrics are
+not directly comparable. Quality gating must not rename or filter the cohort.
+The `sharp_only_max_px` option is explicitly refused: the pinned trainer splits
+by sorted position, and a filtered export needs a separately validated explicit-ID
+loader before it can preserve original held-out membership.
+
+The worker calls `load_capture(..., blur_policy=...)` before dataset export or
+provider entry. Admission requires positive exposure under one second and complete
+consecutive-pose telemetry (`motion_previous_timestamp`,
+`motion_previous_camera_to_world`, `angular_speed_deg_s`, `predicted_smear_px`).
+It recomputes the prediction, checks the recorded values, and rejects sample gaps
+over 0.1 seconds. Sparse historical saved poses cannot certify exposure motion.
+The provisional policy is median rotational smear at most 4 px and at most 35%
+over 5 px. This is an input guard, not proof of sharpness, coverage or a shippable
+reconstruction. The local adapter remains able to validate old archives without
+requesting this admission policy; that does not make them eligible for rental.
+Diagnostic angular estimates use maximum adjacent motion so reversals do not
+cancel. Translation blur and rolling shutter remain unmodelled.
 
 ## Pose and image contract
 

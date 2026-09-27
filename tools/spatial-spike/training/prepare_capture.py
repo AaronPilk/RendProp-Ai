@@ -11,14 +11,18 @@ import hashlib
 import io
 import json
 import math
+import os
 from pathlib import Path, PurePosixPath
 import struct
 import sys
+import tempfile
 import uuid
 
 
 GSPLAT_COMMIT = "937e29912570c372bed6747a5c9bf85fed877bae"
 PYCOLMAP_COMMIT = "cc7ea4b7301720ac29287dbe450952511b32125e"
+ADAPTER_PROFILE = "capture-training-holdout-v1"
+EVALUATION_EVERY = 8  # Pinned gsplat parser default, applied to sorted output names.
 CONVENTIONS = {
     "schema_version": 1,
     "format": "rendprop-arkit-capture",
@@ -54,13 +58,21 @@ def unique_object(pairs):
     return result
 
 
-def read_json(path):
+def read_bytes(path):
+    """Read exact source bytes; provenance hashes bind to what was parsed."""
+    try:
+        return Path(path).read_bytes()
+    except OSError as exc:
+        raise CaptureError(f"cannot read {path}: {exc}") from exc
+
+
+def read_json(path, *, content=None):
     def reject_constant(value):
         raise CaptureError(f"non-finite JSON value: {value}")
     try:
-        result = json.loads(path.read_text(), object_pairs_hook=unique_object,
+        result = json.loads(read_bytes(path) if content is None else content, object_pairs_hook=unique_object,
                             parse_constant=reject_constant)
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except (UnicodeError, json.JSONDecodeError) as exc:
         raise CaptureError(f"cannot read JSON {path}: {exc}") from exc
     require(isinstance(result, dict), f"{path}: expected JSON object")
     return result
@@ -155,10 +167,18 @@ def jpeg_pixels(path, width, height):
     return rgb, hashlib.sha256(content).hexdigest()
 
 
-def load_capture(root, min_frames=20, min_points=100):
-    require(min_frames >= 2 and min_points >= 4, "minimums must be at least 2 frames and 4 points")
+def load_capture(root, min_frames=20, min_points=100, *, blur_policy=None, sharp_only_max_px=None):
+    # The pinned trainer splits by sorted output position. Filtering then
+    # renumbering would leak original held-out views into training. Keep the
+    # original cohort until an explicit-ID training loader is separately tested.
+    require(sharp_only_max_px is None,
+            "sharp-only export disabled: preserving original evaluation IDs requires an explicit-ID trainer loader")
+    require(type(min_frames) is int and 20 <= min_frames <= 400 and
+            type(min_points) is int and min_points >= 4,
+            "minimums must be 20–400 frames and at least 4 points")
     root = Path(root).resolve()
-    manifest = read_json(root / "manifest.json")
+    manifest_bytes = read_bytes(root / "manifest.json")
+    manifest = read_json(root / "manifest.json", content=manifest_bytes)
     for key, expected in CONVENTIONS.items():
         require(type(manifest.get(key)) is type(expected) and manifest.get(key) == expected,
                 f"manifest {key} must equal {expected!r}")
@@ -174,12 +194,16 @@ def load_capture(root, min_frames=20, min_points=100):
     require(all(isinstance(p, str) for p in sidecars) and len(set(sidecars)) == len(sidecars),
             "duplicate or invalid frame sidecars")
     frames, seeds, used_images, seen_sidecars = [], {}, set(), set()
-    previous_time, raster_size, observed = -1.0, None, 0
-    for sidecar in sidecars:
+    previous_time, raster_size, observed, seed_observations = -1.0, None, 0, 0
+    metadata_hashes = {}
+    motion_entries = []
+    for frame_index, sidecar in enumerate(sidecars):
         path = capture_file(root, sidecar, ".json")
         require(path not in seen_sidecars, "duplicate resolved sidecar path")
         seen_sidecars.add(path)
-        metadata = read_json(path)
+        metadata_bytes = read_bytes(path)
+        metadata = read_json(path, content=metadata_bytes)
+        metadata_hashes[sidecar] = hashlib.sha256(metadata_bytes).hexdigest()
         require(type(metadata.get("schema_version")) is int and metadata["schema_version"] == 1,
                 "sidecar schema_version must be 1")
         require(metadata.get("session_id") == session_id, "mixed ARSession coordinate epochs")
@@ -209,6 +233,9 @@ def load_capture(root, min_frames=20, min_points=100):
         points = metadata.get("raw_feature_points")
         require(isinstance(points, list), "raw_feature_points array required (poses alone provide no seeds)")
         require(len(points) <= 50000, "more than 50,000 feature points in one frame; refusing without truncation")
+        training_frame = frame_index % EVALUATION_EVERY != 0
+        if training_frame:
+            seed_observations += len(points)
         ids_in_frame = set()
         for point in points:
             require(isinstance(point, dict), "invalid feature point")
@@ -222,6 +249,10 @@ def load_capture(root, min_frames=20, min_points=100):
             require(isinstance(position, list) and len(position) == 3, "feature point position must have 3 values")
             position = [finite_number(value, "feature point") for value in position]
             observed += 1
+            # Held-out frames still undergo every validation above. Their
+            # pixels and point observations must never initialize training.
+            if not training_frame:
+                continue
             uv = project(position, pose, k)
             if uv is not None and 0 <= uv[0] < width and 0 <= uv[1] < height:
                 # Latest visible estimate and its same-frame pixel remain paired.
@@ -229,6 +260,11 @@ def load_capture(root, min_frames=20, min_points=100):
                 seeds[identifier] = {"position": position, "rgb": rgb.getpixel((int(uv[0]), int(uv[1])))}
         frames.append({"pose": pose, "intrinsics": k, "width": width, "height": height,
                        "source": image_path, "sha256": image_hash, "timestamp": timestamp})
+        if blur_policy is not None:
+            motion_entries.append({"pose": pose, "timestamp": timestamp, "fx": k[0][0],
+                                   "exposure_duration_seconds": metadata.get("exposure_duration_seconds"),
+                                   **{key: metadata.get(key) for key in ("motion_previous_timestamp",
+                                       "motion_previous_camera_to_world", "angular_speed_deg_s", "predicted_smear_px")}})
     require(type(manifest.get("feature_point_observations")) is int
             and manifest["feature_point_observations"] == observed,
             "manifest feature_point_observations does not match sidecars")
@@ -240,24 +276,66 @@ def load_capture(root, min_frames=20, min_points=100):
         cell = tuple(round(v, 6) for v in seed["position"])
         distinct.setdefault(cell, {"source_id": identifier, **seed})
     require(len(distinct) >= min_points,
-            f"only {len(distinct)} distinct visible ARKit seeds; need {min_points}; poses alone are insufficient")
+            f"only {len(distinct)} distinct visible training-only ARKit seeds; need {min_points}; poses alone are insufficient")
     locations = [[frame["pose"][axis][3] for axis in range(3)] for frame in frames]
     center = [sum(p[i] for p in locations) / len(locations) for i in range(3)]
     radius = max(math.dist(p, center) for p in locations)
     require(radius >= 0.05, "camera translation radius below 5 cm; pure rotation cannot initialize scene scale")
-    return {"root": root, "session_id": session_id, "frames": frames,
+    capture = {"root": root, "session_id": session_id, "frames": frames,
             "seeds": list(distinct.values()), "camera_radius_m": radius,
-            "point_observations": observed, "visible_point_ids": len(seeds)}
+            "point_observations": observed, "visible_point_ids": len(seeds),
+            "seed_observations": seed_observations,
+            "capture_manifest_sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+            "capture_metadata_sha256": metadata_hashes}
+    verify_source_metadata(capture)
+    if blur_policy is not None:
+        import capture_blur
+        rows = capture_blur.blur_rows(motion_entries)
+        require(all(row["motion_source"] == "validated_consecutive_pose_telemetry" for row in rows),
+                "capture quality unavailable: recapture with current motion/exposure guidance")
+        quality_summary = capture_blur.evaluate_policy(rows, blur_policy)
+        capture["capture_quality"] = {"status": "passed", "scope": "rotational-motion capture admission, not reconstruction acceptance",
+                                      "policy": capture_blur.validate_policy(blur_policy), "summary": quality_summary}
+    return capture
+
+
+def verify_source_metadata(capture):
+    """Bind provenance to parsed bytes; never silently re-read changed poses/seeds."""
+    require(hashlib.sha256(read_bytes(capture["root"] / "manifest.json")).hexdigest() ==
+            capture["capture_manifest_sha256"], "manifest changed after validation")
+    for name, digest in capture["capture_metadata_sha256"].items():
+        path = capture_file(capture["root"], name, ".json")
+        require(hashlib.sha256(read_bytes(path)).hexdigest() == digest,
+                "frame metadata changed after validation")
 
 
 def summary(capture):
-    return {"session_id": capture["session_id"], "frames": len(capture["frames"]),
+    result = {"session_id": capture["session_id"], "frames": len(capture["frames"]),
             "initial_points": len(capture["seeds"]), "camera_radius_m": capture["camera_radius_m"],
             "point_observations": capture["point_observations"],
             "visible_point_ids": capture["visible_point_ids"], "gpu_training_performed": False}
+    if "capture_quality" in capture:
+        result["capture_quality"] = capture["capture_quality"]
+    return result
 
 
 def write_dataset(capture, output):
+    """Publish the dataset only after complete split/source provenance is bound."""
+    output = Path(output).resolve()
+    require(not output.exists(), "output already exists; choose a new directory")
+    require(not output.is_relative_to(capture["root"]), "output must be outside the capture directory")
+    verify_source_metadata(capture)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}-preparing-", dir=output.parent) as temporary_root:
+        staged = Path(temporary_root) / "dataset"
+        report = _write_dataset(capture, staged)
+        verify_source_metadata(capture)
+        require(not output.exists(), "output appeared during preparation")
+        staged.rename(output)
+    return report
+
+
+def _write_dataset(capture, output):
     output = Path(output).resolve()
     require(not output.exists(), "output already exists; choose a new directory")
     require(not output.is_relative_to(capture["root"]), "output must be outside the capture directory")
@@ -299,10 +377,26 @@ def write_dataset(capture, output):
               "image_sha256": {f"{i:06d}.jpg": f["sha256"] for i, f in enumerate(frames, start=1)},
               "model_sha256": {name: hashlib.sha256((sparse_dir / name).read_bytes()).hexdigest()
                                for name in ("cameras.bin", "images.bin", "points3D.bin")}}
+    training = [f"{i+1:06d}.jpg" for i in range(len(frames)) if i % EVALUATION_EVERY != 0]
+    evaluation = [f"{i+1:06d}.jpg" for i in range(len(frames)) if i % EVALUATION_EVERY == 0]
+    report.update(
+        adapter_profile=ADAPTER_PROFILE,
+        training_images=training, evaluation_images=evaluation, seed_image_names=training,
+        seed_colors_from_training_only=True, seed_geometry_from_training_observations_only=True,
+        capture_point_observations=capture["point_observations"], seed_observations=capture["seed_observations"],
+        capture_manifest_sha256=capture["capture_manifest_sha256"],
+        capture_metadata_sha256=capture["capture_metadata_sha256"],
+        adapter_helper_sha256=hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        evaluation_note=f"{len(evaluation)} image-loss-heldout views; seed pixels and point observations use only "
+                        f"the {len(training)} training frames. ARKit VIO is shared, and heldout poses are not "
+                        "independently measured ground truth. Old-room PSNR/SSIM is not directly comparable.",
+    )
     # Last file is the completion marker; a partial export never has one.
     with (output / "adapter-report.json").open("x") as stream:
         json.dump(report, stream, indent=2, allow_nan=False)
         stream.write("\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     return report
 
 

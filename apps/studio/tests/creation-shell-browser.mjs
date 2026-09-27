@@ -19,7 +19,7 @@ try {
   await context.route("**/*",route=>{if(new URL(route.request().url()).origin===origin&&route.request().method()==="GET")return route.continue();receipt.externalRequests.push(route.request().url());return route.abort();});
   page=await context.newPage();page.setDefaultTimeout(12000);page.on("pageerror",e=>receipt.errors.push(e.message));
   const nav=name=>page.getByRole("navigation",{name:"Studio navigation"}).getByRole("button",{name,exact:true});
-  const local=()=>page.getByRole("region",{name:"Local video workspace",exact:true});
+  const local=()=>page.getByRole("region",{name:"Video projects workspace",exact:true});
   const prompt=()=>local().getByLabel("Describe your video or edit",{exact:true});
   const clip=()=>local().getByRole("button",{name:/Select clip 1:/});
   await page.goto(`${origin}/tests/fixtures/connected.html?noProperties`);

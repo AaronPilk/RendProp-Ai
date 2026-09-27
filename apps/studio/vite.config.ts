@@ -18,7 +18,7 @@ export default defineConfig(({ mode }) => {
   if (Object.keys(browserEnv).length)
     readStudioConfig(browserEnv, "https://studio.rendprop.com");
   return {
-    build: { sourcemap: false },
+    build: { sourcemap: false, manifest:true },
     server: { host: "127.0.0.1" },
     preview: { host: "127.0.0.1" },
   };

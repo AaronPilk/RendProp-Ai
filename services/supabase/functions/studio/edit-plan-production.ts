@@ -13,7 +13,7 @@ const MAX_PROVIDER_BYTES = 64 * 1024;
  * a smaller hard ceiling. The generic adapter buffers the entire response, so
  * this endpoint reads its tiny text-only response through a bounded reader.
  * No SDK retries, chain failover, model tools, media blocks or arbitrary URLs. */
-export async function generateEditPlanText(step: RouteStep, system: string, turn: string, fetcher: typeof fetch = fetch): Promise<string> {
+export async function generateEditPlanText(step: RouteStep, system: string, turn: string, fetcher: typeof fetch = fetch, signal?: AbortSignal): Promise<string> {
   const params = { ...paramsOf(step), max_output_tokens: EDIT_PLAN_LIMITS.tokens };
   let url: string, headers: Record<string, string>, body: Record<string, unknown>;
   if (step.provider === "anthropic") {
@@ -35,7 +35,8 @@ export async function generateEditPlanText(step: RouteStep, system: string, turn
       input: [{ role: "developer", content: [{ type: "input_text", text: system }] }, { role: "user", content: [{ type: "input_text", text: turn }] }] };
   }
   let response: Response;
-  try { response = await fetcher(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(30_000) }); }
+  signal?.throwIfAborted();
+  try { response = await fetcher(url, { method: "POST", headers, body: JSON.stringify(body), redirect: "error", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000) }); }
   catch { throw new HttpError(502, "The editing request did not finish. No automatic retry was started."); }
   if (!response.ok) { await response.body?.cancel(); throw new HttpError(502, "The editing service could not return an edit. No automatic retry was started."); }
   if (Number(response.headers.get("content-length")) > MAX_PROVIDER_BYTES) { await response.body?.cancel(); throw new HttpError(502, "The editing service returned too much data."); }
@@ -109,14 +110,15 @@ export function editPlanProduction(context: StudioContext, task: "copy.edit_plan
       assert(await bump(`edit-plan:user:${userId}`, 12, 300), 429, "Please wait before asking for another AI edit.");
       assert(await bump(`edit-plan:day:${userId}`, 60, 86400), 429, "Today's AI editing request limit has been reached.");
       assert(await bump(`edit-plan:org:${orgId}`, 60, 300), 429, "This workspace has several edits in progress. Please wait.");
+      assert(await bump("edit-plan:global:day", 100, 86400), 429, "Today's AI editing allowance has been reached. Local editing commands still work.");
       // Retry suppression, not replayable-result storage: an uncertain POST is
       // never replayed or failed over. UUIDs are scoped to both actor and org.
       assert(await bump(`edit-plan:request:${orgId}:${userId}:${requestId}`, 1, 86400), 409, "This request was already submitted. Your current edit is preserved; send a new message only if you want a separate attempt.");
     },
-    async generate(step, system, turn) {
+    async generate(step, system, turn, signal) {
       const started = Date.now();
       try {
-        const result = await generateEditPlanText(step, system, turn);
+        const result = await generateEditPlanText(step, system, turn, fetch, signal);
         await reportOutcome(step, { ok: true, latency_ms: Date.now() - started });
         return result;
       } catch (error) {

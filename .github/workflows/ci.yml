@@ -83,6 +83,7 @@ jobs:
           node tests/export-resume-browser.mjs
           node tests/cloud-editor-browser.mjs
           node tests/conversation-browser.mjs
+          node tests/finishing-browser.mjs
       - name: Retain media export receipts and browser evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -97,6 +98,9 @@ jobs:
             ${{ runner.temp }}/rendprop-conversation-*/*.mp4
             ${{ runner.temp }}/rendprop-export-resume-*/receipt.json
             ${{ runner.temp }}/rendprop-export-resume-*/*.mp4
+            ${{ runner.temp }}/rendprop-finishing-*/receipt.json
+            ${{ runner.temp }}/rendprop-finishing-*/*.png
+            ${{ runner.temp }}/rendprop-finishing-*/*.mp4
           retention-days: 7
           if-no-files-found: warn
 
@@ -180,6 +184,7 @@ jobs:
           node tests/presenter-app-browser.mjs
           node tests/presenter-browser.mjs
           node tests/prompts-browser.mjs
+          node tests/projects-browser.mjs
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -203,6 +208,8 @@ jobs:
             /tmp/rendprop-presenter-*/*.json
             /tmp/rendprop-presenter-*/*.png
             /tmp/rendprop-auth-sdk-*/*.json
+            /tmp/rendprop-projects-*/receipt.json
+            /tmp/rendprop-projects-*/*.png
             /tmp/rendprop-auth-sdk-*/*.png
             /tmp/rendprop-prompts-*/*.json
             /tmp/rendprop-prompts-*/*.png
@@ -567,6 +574,7 @@ jobs:
           python3 services/supabase/tests/presenter_workspace.py
           python3 services/supabase/tests/presenter_execution.py --controller
           python3 services/supabase/tests/prompt_library.py
+          python3 tools/audit/run_studio_private_media.py
       # A real red invariant suite still runs positive/negative publication
       # fixtures before exiting nonzero. Preserve its evidence, not a green
       # override. Preflight can fail before the runner creates any evidence.

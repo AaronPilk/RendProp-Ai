@@ -32,6 +32,7 @@ SOURCE_FILES = (
     "services/spatial-worker/provider_journal.py", "services/spatial-worker/setup_service.sh",
     "tools/spatial-spike/training/modal_room.py", "tools/spatial-spike/training/run_training.py",
     "tools/spatial-spike/training/prepare_capture.py", "tools/spatial-spike/training/modal_setup.sh",
+    "tools/spatial-spike/training/capture_blur.py",
     "tools/spatial-spike/viewer/package.json", "tools/spatial-spike/viewer/package-lock.json",
 )
 

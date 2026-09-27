@@ -14,6 +14,10 @@ import { presignGet } from "../_shared/providers/common.ts";
 import { R2_BUCKET_RENDERS, R2_BUCKET_UPLOADS } from "../_shared/r2.ts";
 
 import { handleOptions } from "../_shared/cors.ts";
+import { handleProjectMedia } from "./project-media.ts";
+import { handleMediaAnalysis } from "./media-analysis.ts";
+import { mediaAnalysisProduction } from "./media-analysis-production.ts";
+import { handleProjectIndex } from "./projects.ts";
 import { handleDocuments } from "./documents.ts";
 import { handleProductionReview } from "./production-review.ts";
 import { handlePresenter } from "./presenter.ts";
@@ -25,12 +29,17 @@ import { handleCreative } from "./creative.ts";
 import { handleEditPlan } from "./edit-plan.ts";
 import { editPlanProduction } from "./edit-plan-production.ts";
 import { handlePromptEnhancement } from "./prompt-enhancement.ts";
+import { handlePropertyMusic } from "./property-music.ts";
 import type { StudioContext } from "./context.ts";
 
 // Keep request-local RLS client ownership explicit: no global current-user client.
 export async function handleStudio(req: Request): Promise<Response> {
   const seg = pathSegments(req, "studio");
-  if (req.method === "OPTIONS") return handleOptions();
+  if (req.method === "OPTIONS") {
+    const response = handleOptions();
+    response.headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+    return response;
+  }
   if (seg.length === 1 && seg[0] === "media") return await createStudioHandler({
     ...createStudioRepository(req, {
       getUser,
@@ -81,9 +90,13 @@ export async function handleStudio(req: Request): Promise<Response> {
     const rate = await admin.rpc("bump_rate", { p_key: `studio-work:${user.id}`, p_window_seconds: 60, p_max: 120, p_cost: 1 });
     assert(!rate.error, 503, "Workspace actions are temporarily unavailable.");
     assert(rate.data === true, 429, "Please wait a moment before refreshing again.");
+    if (seg[0] === "project-media") return await handleProjectMedia(req, context);
+    if (seg.length === 1 && seg[0] === "media-analysis") return await handleMediaAnalysis(req, context, mediaAnalysisProduction(context));
+    if (seg.length === 1 && seg[0] === "projects") return await handleProjectIndex(req, context);
     if (seg.length === 1 && seg[0] === "documents") return await handleDocuments(req, context);
     if (seg.length === 1 && seg[0] === "edit-plan") return await handleEditPlan(req, context, editPlanProduction(context));
     if (seg.length === 1 && seg[0] === "prompt-enhancement") return await handlePromptEnhancement(req, context, editPlanProduction(context, "copy.prompt_enhancement"));
+    if (seg.length === 1 && seg[0] === "property-music" || seg.length === 2 && seg[0] === "production-review" && seg[1] === "music") return await handlePropertyMusic(req, context);
     if (seg.length === 2 && seg[0] === "presenter" && seg[1] === "jobs") {
       const jobs = await presenterJobsRequest(req, presenterProduction(req, context), context.authorizeListing);
       if (jobs) return jobs;

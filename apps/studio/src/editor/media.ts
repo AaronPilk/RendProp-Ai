@@ -1,3 +1,4 @@
+import {speechCaption} from "./finishing";
 import {
   EDIT_LIMITS,
   coverCrop,
@@ -342,8 +343,8 @@ export function drawFrame(
   canvas: HTMLCanvasElement,
   media: DecodedMedia,
   clip: EditClip,
-  draft: Pick<EditDraft, "title" | "narration">,
-  options: {time?: number; localTime?: number; previous?: HTMLCanvasElement} = {},
+  draft: Pick<EditDraft, "title" | "narration" | "speech">,
+  options: {time?: number; localTime?: number; previous?: HTMLCanvasElement; spokenCaption?: string} = {},
 ): void {
   const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) throw new Error("Canvas rendering is unavailable in this browser.");
@@ -377,7 +378,7 @@ export function drawFrame(
     height,
   );
   paintText(ctx, draft.title, height * 0.055, "top", width, height);
-  const spokenCaption = narrationCaption(draft.narration, options.time ?? 0);
+  const spokenCaption = narrationCaption(draft.narration, options.time ?? 0) || options.spokenCaption || speechCaption(draft, clip, options.localTime ?? 0);
   paintText(ctx, clip.caption, height * (spokenCaption ? 0.76 : 0.91), "bottom", width, height, clip.captionStyle ?? "clean");
   if (spokenCaption) paintText(ctx, spokenCaption, height * 0.94, "bottom", width, height, "highlight");
   const seconds = transitionSeconds(clip), progress = seconds ? Math.min(1, Math.max(0, (options.localTime ?? seconds) / seconds)) : 1;

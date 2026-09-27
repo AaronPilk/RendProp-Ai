@@ -19,12 +19,19 @@ deployed the website, database and edge functions, with **no iOS release or App
 Store Connect action**. New phone capture planning and multi-video library code
 is in this repository; it still needs a matching phone build and the
 [real-device agency checklist](../../docs/studio/agency-production-workflow.md#acceptance-on-a-real-phone).
+On 24 September, the combined source passed two **unsigned Release builds for
+`generic/platform=iOS`**: normal `Rendprop` and the explicit
+`RendpropSpatialTestFlight` overlay. Both used `CODE_SIGNING_ALLOWED=NO`; no
+simulator, camera, archive, upload or App Store Connect operation was involved.
+The [native build handoff](../../docs/handoff/CODEX-NATIVE-BUILD-20260924.md)
+records source registration, exact receipt/log hashes and the remaining owner
+steps. This proves compilation of the recorded source, not delivery to a phone.
 Current public App Store status has not been rechecked for this documentation
 refresh. App Store Connect and phone acceptance remain owner-operated.
 
 ## Build locally
 
-Use a Mac with Xcode, its installed iOS SDK/simulator runtime, and XcodeGen.
+Use a Mac with Xcode, its installed iOS SDK, and XcodeGen.
 Run from an isolated checkout when another developer is working in the repo:
 
 ```bash
@@ -36,7 +43,11 @@ open Rendprop.xcodeproj
 `project.yml` is the source of truth for targets, source membership, signing,
 version settings and the shared scheme. Regenerate after adding Swift files;
 review the generated project diff before committing it. The generated project
-includes the shared spatial capture sources from `tools/spatial-spike/capture-ios`.
+includes the shared spatial capture sources from `tools/spatial-spike/capture-ios`,
+including `CaptureBlur.swift`. The separate `project-spatial-testflight.yml`
+inherits that registration and adds only the explicit `SPATIAL_CAPTURE_LAB`
+compilation condition. Keep both generated projects current; neither replaces
+the existing production-plan and video-library source references.
 Do not change the production bundle identity (`com.rendprop.app`) to bypass a
 signing error: Apple sign-in, entitlements and purchases depend on it.
 

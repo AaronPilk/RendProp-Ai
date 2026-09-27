@@ -1174,3 +1174,14 @@ test("upload sends only media content to exact capability gateway and fences ses
   await assert.rejects(services.upload('https://other.invalid'+path,new Blob(['photo']),{orgId:ORG}));
   assert.deepEqual(await services.upload('https://uploads.rendprop.com'+path,new Blob(['photo']),{orgId:ORG}),{etag:'confirmed'});assert.equal(puts,1);services.dispose();
 });
+
+test("private project binary gateway is bounded, scoped and never automatically replays PUT",async()=>{
+  const auth=mockAuth();let puts=0;const file=new Blob(["test"]);
+  const services=createStudioServices(config,{auth:auth.auth,fetch:fakeFetch((url,options)=>{
+    if(options.method==="PUT"){puts++;assert.equal(new Headers(options.headers).get("Content-Type"),"application/octet-stream");assert.equal(new Headers(options.headers).get("X-Org-Id"),ORG);assert.equal(options.body,file);assert.equal(options.redirect,"error");return json({},401);}return fixtureResponse(url);
+  })});
+  await services.loadWorkspace();const path="/functions/v1/studio/project-media/"+LISTING+"/0";
+  for(const bad of [{method:"POST",binary:file},{method:"GET",binary:file},{method:"PUT",binary:new Blob([])},{method:"PUT",binary:new Blob([new Uint8Array(8388609)])},{method:"PUT",binary:file,body:{}}])await assert.rejects(services.api(path,{orgId:ORG,...bad} as any));
+  await assert.rejects(services.api(path.replace("/project-media/","/documents/"),{orgId:ORG,method:"PUT",binary:file}));assert.equal(puts,0);
+  await assert.rejects(services.api(path,{orgId:ORG,method:"PUT",binary:file}));assert.equal(puts,1);assert.equal(auth.refreshCalls(),0);services.dispose();
+});

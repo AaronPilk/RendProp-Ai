@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 import tempfile
+import shutil
 import threading
 import unittest
 from unittest.mock import Mock, patch
@@ -166,6 +167,66 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(len(proof), 1)
         self.assertEqual(proof[0].kwargs["action"], "not_created")
         self.assertEqual(proof[0].kwargs["data"]["proof"], "create_not_invoked")
+
+    def test_actual_capture_quality_failure_prevents_dataset_and_provider_allocation(self):
+        adapter = w.load_adapter()
+        from test_capture_blur import blur_capture
+        for mode in ("blurred", "missing", "zero_exposure", "forged", "sample_gap"):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                capture_path = Path(temporary) / "source"
+                capture_path.mkdir()
+                blur_capture(capture_path, omega_deg_s=18.8 if mode == "blurred" else 3)
+                if mode != "blurred":
+                    path = capture_path / "frames/000001.json"
+                    frame = json.loads(path.read_text())
+                    if mode == "missing":
+                        frame.pop("motion_previous_camera_to_world")
+                    elif mode == "zero_exposure":
+                        frame["exposure_duration_seconds"] = 0
+                    elif mode == "forged":
+                        frame["predicted_smear_px"] = 0
+                    else:
+                        frame["motion_previous_timestamp"] = frame["timestamp"] - .5
+                    path.write_text(json.dumps(frame))
+                api, provider = Mock(), Mock()
+                api.claim.return_value = job()
+                def copy_capture(value, destination, hosts, **kwargs):
+                    shutil.copytree(capture_path, destination)
+                with patch.object(w, "download_capture", side_effect=copy_capture), \
+                        patch.object(adapter, "write_dataset", wraps=adapter.write_dataset) as writer:
+                    with self.assertRaises(w.JobFailure):
+                        w.run_one(api, provider, {"storage.example"})
+                writer.assert_not_called()
+                provider.reconstruct.assert_not_called()
+                api.claim.assert_called_once()
+                proof = [c for c in api.job_call.call_args_list if c.args[1] == "provider-attempt"]
+                self.assertEqual(len(proof), 1)
+                self.assertEqual(proof[0].kwargs["action"], "not_created")
+
+    def test_actual_good_capture_reaches_provider_with_fixed_holdout_and_quality_provenance(self):
+        adapter = w.load_adapter()
+        from test_capture_blur import blur_capture
+        from capture_blur import DEFAULT_BLUR_POLICY
+        with tempfile.TemporaryDirectory() as temporary:
+            capture_path = Path(temporary) / "source"
+            capture_path.mkdir()
+            blur_capture(capture_path, omega_deg_s=3)
+            api, provider = Mock(), Mock()
+            api.claim.return_value = job()
+            def inspect_only(value, root, capture, lease):
+                self.assertEqual(capture["capture_quality"]["policy"], DEFAULT_BLUR_POLICY)
+                report = json.loads((root / "dataset/adapter-report.json").read_text())
+                self.assertEqual(report["evaluation_images"], ["000001.jpg", "000009.jpg", "000017.jpg"])
+                self.assertEqual(report["seed_image_names"], report["training_images"])
+                self.assertEqual(report["capture_quality"]["summary"]["unknown_motion_frames"], 0)
+                raise w.JobFailure("test_stops_before_any_provider_creation")
+            provider.reconstruct.side_effect = inspect_only
+            def copy_capture(value, destination, hosts, **kwargs):
+                shutil.copytree(capture_path, destination)
+            with patch.object(w, "download_capture", side_effect=copy_capture):
+                with self.assertRaisesRegex(w.JobFailure, "test_stops_before_any_provider_creation"):
+                    w.run_one(api, provider, {"storage.example"})
+            provider.reconstruct.assert_called_once()
 
     def test_failure_reports_provider_stop_proof_not_failure_alone(self):
         for terminal_proved in (False, True):
@@ -436,6 +497,59 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(manifest["initial_camera"]["position"], [0, 1.6, 0])
         self.assertEqual(manifest["initial_camera"]["target"], [0, 1.6, -1])
         self.assertEqual(manifest["rooms"][0]["label"], "Living room")
+
+    def test_navigation_bounds_use_training_only_seeds_and_every_camera_position(self):
+        # The adapter now seeds from training frames only (sorted index % 8 != 0),
+        # so a point seen solely in a held-out frame no longer widens the bounds,
+        # while every camera position, held-out ones included, still does.
+        adapter = w.load_adapter()
+        from test_prepare_capture import synthetic_capture  # noqa: E402 (TRAINING_ROOT on sys.path)
+        with tempfile.TemporaryDirectory(prefix="spatial-nav-test-") as tmp:
+            root = Path(tmp) / "capture"
+            root.mkdir()
+            synthetic_capture(root)
+            def add_point(index, identifier, position):
+                path = root / f"frames/{index + 1:06d}.json"
+                frame = json.loads(path.read_text())
+                frame["raw_feature_points"].append({"id": identifier, "position": position})
+                path.write_text(json.dumps(frame))
+            add_point(8, "7000001", [0.16, 0.0, -30.0])   # held-out frame only
+            add_point(9, "7000002", [0.18, 0.0, -12.0])   # training frame
+            far = root / "frames/000017.json"               # index 16: held-out camera
+            frame = json.loads(far.read_text())
+            frame["camera_to_world"][0][3] = 5.0
+            far.write_text(json.dumps(frame))
+            manifest_path = root / "manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            manifest["feature_point_observations"] += 2
+            manifest_path.write_text(json.dumps(manifest))
+            capture = adapter.load_capture(root)
+        bounds = navigation_manifest(capture, "Living room")["bounds"]
+        self.assertAlmostEqual(bounds["min"][2], -13.0)  # training seed -12 minus 1 m; not -31
+        self.assertAlmostEqual(bounds["max"][0], 6.0)    # held-out camera at x=5 plus 1 m
+        positions = [f["pose"][0][3] for f in capture["frames"]]
+        self.assertEqual(max(positions), 5.0)
+        self.assertNotIn(-30.0, [s["position"][2] for s in capture["seeds"]])
+
+
+    def test_excluding_heldout_coordinate_update_can_expand_bounds(self):
+        adapter = w.load_adapter()
+        from test_prepare_capture import synthetic_capture
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            synthetic_capture(root)
+            for index, z in ((7, -30), (8, -3)):
+                path = root / f"frames/{index + 1:06d}.json"
+                frame = json.loads(path.read_text())
+                frame["raw_feature_points"].append({"id": "7000009", "position": [.14, 0, z]})
+                path.write_text(json.dumps(frame))
+            path = root / "manifest.json"
+            manifest = json.loads(path.read_text())
+            manifest["feature_point_observations"] += 2
+            path.write_text(json.dumps(manifest))
+            capture = adapter.load_capture(root)
+        self.assertIn(-30, [point["position"][2] for point in capture["seeds"]])
+        self.assertEqual(navigation_manifest(capture, "Room")["bounds"]["min"][2], -31)
 
 
 if __name__ == "__main__":

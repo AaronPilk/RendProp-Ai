@@ -10,7 +10,7 @@ type ObjectValue = Record<string, unknown>;
 export type EditPlanClip = { id: string; kind: "image" | "video"; start: number; end: number; speed: number; caption: string; motion: string; transition: string };
 export type EditPlanInput = {
   listing_id?: string;
-  draft: { id: string; revision: number; ratio: string; audio: string; title: string; hasNarration: boolean; hasOverlays: boolean; clips: EditPlanClip[] };
+  draft: { id: string; revision: number; ratio: string; audio: string; title: string; hasNarration: boolean; hasOverlays: boolean; hasMusic?: boolean; hasSpeech?: boolean; clips: EditPlanClip[] };
   message: string;
   history: { role: "user" | "assistant"; content: string }[];
 };
@@ -49,10 +49,11 @@ function choice<T extends string>(value: unknown, allowed: readonly T[]): T {
 export function editPlanInput(raw: unknown, allowEmptyClips = false): EditPlanInput {
   const value = object(raw); keys(value, ["listing_id", "draft", "message", "history"]);
   const draft = object(value.draft);
-  keys(draft, ["id", "revision", "ratio", "audio", "title", "hasNarration", "hasOverlays", "clips"]);
+  keys(draft, ["id", "revision", "ratio", "audio", "title", "hasNarration", "hasOverlays", "hasMusic", "hasSpeech", "clips"]);
   const id = text(draft.id, 100), revision = number(draft.revision, 0, Number.MAX_SAFE_INTEGER - 1);
   assert(Number.isSafeInteger(revision), 400, "The edit revision is invalid.");
   assert(typeof draft.hasNarration === "boolean" && typeof draft.hasOverlays === "boolean", 400, "The edit tracks are invalid.");
+  assert((draft.hasMusic === undefined || typeof draft.hasMusic === "boolean") && (draft.hasSpeech === undefined || typeof draft.hasSpeech === "boolean"), 400, "The edit finishing tracks are invalid.");
   assert(Array.isArray(draft.clips) && draft.clips.length >= (allowEmptyClips ? 0 : 1) && draft.clips.length <= 12, 400, "Add between 1 and 12 photos or clips first.");
   const ids = new Set<string>();
   const clips = draft.clips.map((item): EditPlanClip => {
@@ -71,6 +72,8 @@ export function editPlanInput(raw: unknown, allowEmptyClips = false): EditPlanIn
     const turn = object(item); keys(turn, ["role", "content"]);
     return { role: choice(turn.role, ["user", "assistant"]), content: text(turn.content, 1200) };
   }) };
+  if (typeof draft.hasMusic === "boolean") result.draft.hasMusic = draft.hasMusic;
+  if (typeof draft.hasSpeech === "boolean") result.draft.hasSpeech = draft.hasSpeech;
   if (value.listing_id !== undefined && value.listing_id !== null) {
     assert(typeof value.listing_id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.listing_id), 400, "Choose a saved property.");
     result.listing_id = value.listing_id;
@@ -125,6 +128,7 @@ export const EDIT_PLAN_INSTRUCTION = `You prepare a typed edit of existing media
 Return JSON only: {"status":"plan"|"clarification"|"unsupported","reply":"short explanation or one question","operations":[...]}. A non-plan must have no operations. If any essential part of the current request cannot be done, return unsupported or clarification rather than performing only an easy fragment and claiming success. Never claim anything is exported, saved, published or generated.
 Supported operations (exact fields): {type:"duration",seconds:.5..180}; {type:"pace",value:"faster"|"slower"}; {type:"reorder",clipIds:[all current clip IDs exactly once]}; {type:"caption",clipId,text:max120}; {type:"title",text:max80}; {type:"transition",value:"cut"|"dissolve"|"whip"}; {type:"photo-motion",value:"still"|"push_in"|"pull_out"|"pan_left"|"pan_right"}; {type:"ratio",value:"9:16"|"16:9"|"1:1"}; {type:"audio",value:"original"|"muted"}; {type:"highlight",targetSeconds?:.5..180}. One to twelve operations. Captions/titles support at most four lines and must use supplied facts, never invent listing features, prices, claims or statistics. Housing copy describes property only, never desired occupants or protected traits.
 Timing/pace/highlight/reorder are unavailable while narration or cutaways exist. Duration and pace change shot hold lengths; videos may only become shorter within current trims, never longer. Longer timelines extend photos up to30s each. No implicit playback speed change. Original speech could be clipped by shortening; do not promise speech-aware cuts. Highlight arranges a simple shorter sequence using current order and actual footage. Photo motion is a 2D pan/zoom, never generated new camera angles.
+hasMusic and hasSpeech only signal existing tracks, not access to their contents. Existing source-timed speech captions follow trims and reordering; imported music keeps its timeline offset and is clipped to the resulting edit length. These tracks must remain intact. Audio original/muted changes only original clip audio, never imported music or narration. Music mixing and speech caption creation/review happen in the detailed editor; do not claim you performed those tasks with an unrelated operation.
 No music generation, new footage, AI visual transformations, voice/face replacement, automatic transcription, silence removal, arbitrary split/trim, color grading, external tools, links, downloads or publication. Unsupported features must be stated honestly. Never output source URLs, names, hashes, asset identities, provider settings or any operation outside the list.`;
 
 export type EditPlanDependencies = {
@@ -132,7 +136,7 @@ export type EditPlanDependencies = {
   writable(): Promise<boolean>;
   route(): Promise<RouteStep | null>;
   reserve(requestId: string): Promise<void>;
-  generate(step: RouteStep, system: string, turn: string): Promise<string>;
+  generate(step: RouteStep, system: string, turn: string, signal?: AbortSignal): Promise<string>;
   record(step: RouteStep, outcome: "returned" | "uncertain"): Promise<void>;
   spaceType(listingId?: string): Promise<string | null>;
 };
@@ -146,12 +150,14 @@ export async function handleEditAssistant<Input extends { listing_id?: string; m
   if (req.method === "GET") return json({ available: reason === null, reason, ...codec.capability }, 200, { "Cache-Control": "private, no-store" });
   assert(writable, 403, "Your role can view videos but cannot change them.");
   assert(enabled && route, 503, "AI editing is not enabled. The available local editing commands still work.");
+  req.signal.throwIfAborted();
   const input = codec.input(await readJsonLimited(req, EDIT_PLAN_LIMITS.requestBytes));
   if (input.listing_id) await context.authorizeListing(input.listing_id);
   const space = await deps.spaceType(input.listing_id);
   assertMarketingCopy(input.message, "This edit request", space);
   const requestId = req.headers.get("Idempotency-Key") ?? "";
   assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(requestId), 400, "This edit request needs a new request identifier.");
+  req.signal.throwIfAborted();
   await deps.reserve(requestId);
   // Re-read the gate after asynchronous authorization/reservation; no fallback.
   assert(deps.enabled(), 503, "AI editing was disabled before this request started.");
@@ -159,10 +165,12 @@ export async function handleEditAssistant<Input extends { listing_id?: string; m
   const finalRoute = await deps.route();
   assert(finalRoute && finalRoute.route_id === route.route_id && finalRoute.model === route.model && finalRoute.provider === route.provider && finalRoute.unit_cents === route.unit_cents, 503, "The editing service changed. Submit a fresh request when available.");
   const { listing_id: _listingId, ...plainEdit } = input;
+  req.signal.throwIfAborted();
   let returned = false;
   try {
-    const raw = await deps.generate(finalRoute, codec.instruction, JSON.stringify(plainEdit));
+    const raw = await deps.generate(finalRoute, codec.instruction, JSON.stringify(plainEdit), req.signal);
     returned = true;
+    req.signal.throwIfAborted();
     return json(codec.output(raw, input, space), 200, { "Cache-Control": "private, no-store" });
   } finally {
     // Record the one dispatched request even when its answer is invalid/unknown.

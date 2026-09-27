@@ -1,6 +1,7 @@
 import {locateOverlay} from "./overlays";
 import {decodeMedia, drawFrame, throwIfAborted, type DecodedMedia, type LocalMedia} from "./media";
-import type {EditDraft} from "./model";
+import {locateTime, type EditDraft} from "./model";
+import {speechCaption} from "./finishing";
 /** One decoded cutaway at a time. The base video and its audio never pause. */
 export class OverlayPainter {
   private current: {id: string; media: DecodedMedia} | null = null;
@@ -17,7 +18,9 @@ export class OverlayPainter {
       if (this.signal.aborted) {decoded.dispose();throwIfAborted(this.signal);}
       this.current = {id: overlay.id, media: decoded};
     }
-    drawFrame(canvas, this.current.media, {...overlay, start:0, end:overlay.end-overlay.start, captionStyle:"clean"}, this.draft, {time, localTime:time-overlay.start});
+    const base = locateTime(this.draft.clips, time);
+    const spokenCaption = base ? speechCaption(this.draft, base.clip, base.localTime) : "";
+    drawFrame(canvas, this.current.media, {...overlay, start:0, end:overlay.end-overlay.start, captionStyle:"clean"}, this.draft, {time, localTime:time-overlay.start, spokenCaption});
   }
   dispose() {this.current?.media.dispose();this.current=null;}
 }

@@ -197,19 +197,23 @@ class HandoffTests(unittest.TestCase):
 
     def test_dataset_is_owner_only_before_first_write_under_permissive_umask(self):
         # tempfile may use /var while the actual writer resolves /private/var.
-        # Match the writer's real path so its FIRST JPEG open is observed.
+        # Match the writer's real path so its FIRST JPEG open is observed. The
+        # adapter stages every file under output.parent/.<name>-preparing-*/
+        # before one rename, so the probe follows the writer: it watches every
+        # write-mode open under output.parent, staging tree included.
         output = (self.base / "dataset").resolve()
+        parent = output.parent
         original_open = Path.open
         writes = []
         def checking_open(path, mode="r", *args, **kwargs):
             stream = original_open(path, mode, *args, **kwargs)
-            if any(flag in mode for flag in ("w", "x", "a")) and path.is_relative_to(output):
+            if any(flag in mode for flag in ("w", "x", "a")) and path.is_relative_to(parent):
                 try:
                     self.assertEqual(path.stat().st_mode & 0o777, 0o600, str(path))
-                    parent = path.parent
-                    while parent.is_relative_to(output):
-                        self.assertEqual(parent.stat().st_mode & 0o777, 0o700, str(parent))
-                        parent = parent.parent
+                    ancestor = path.parent
+                    while ancestor != parent:
+                        self.assertEqual(ancestor.stat().st_mode & 0o777, 0o700, str(ancestor))
+                        ancestor = ancestor.parent
                     writes.append(path)
                 except BaseException:
                     stream.close()
@@ -224,6 +228,43 @@ class HandoffTests(unittest.TestCase):
             self.assertEqual(observed, 0o022, "caller umask was not restored")
         finally:
             os.umask(saved)
+        staging = [p.relative_to(parent).parts[0] for p in writes if not p.is_relative_to(output)]
+        self.assertTrue(staging and all(name.startswith(".dataset-preparing-") for name in staging), staging)
+        self.assertEqual(len(set(staging)), 1, "one staging directory per publication")
+        self.assertEqual(sum(p.is_relative_to(output) for p in writes), 1)  # capture-provenance.json
+        self.assertEqual(output.stat().st_mode & 0o777, 0o700)
+        for path in output.rglob("*"):
+            self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600, str(path))
+        self.assertEqual([p.name for p in parent.iterdir() if p.name.startswith(".dataset-preparing-")], [])
+        self.assertTrue((output / "adapter-report.json").is_file())
+        self.assertTrue((output / "capture-provenance.json").is_file())
+
+    def test_interrupted_staged_write_leaves_no_staging_directory_or_output(self):
+        output = (self.base / "dataset").resolve()
+        parent = output.parent
+        staged_paths = []
+        def interrupted_stage(capture, staged):
+            staged_paths.append(staged)
+            staged.mkdir(parents=True)
+            (staged / "partial.bin").write_bytes(b"synthetic only")
+            self.assertEqual(staged.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((staged / "partial.bin").stat().st_mode & 0o777, 0o600)
+            raise KeyboardInterrupt("injected after partial staged write")
+        saved = os.umask(0o022)
+        try:
+            with patch.object(adapter, "_write_dataset", side_effect=interrupted_stage):
+                with self.assertRaises(KeyboardInterrupt):
+                    handoff.inspect_capture(self.root, output)
+            observed = os.umask(0o022)
+            self.assertEqual(observed, 0o022, "caller umask was not restored on interruption")
+        finally:
+            os.umask(saved)
+        self.assertEqual(len(staged_paths), 1)
+        self.assertEqual(staged_paths[0].parent.parent, parent)
+        self.assertTrue(staged_paths[0].parent.name.startswith(".dataset-preparing-"))
+        self.assertFalse(staged_paths[0].parent.exists())
+        self.assertFalse(output.exists())
+        self.assertEqual([p.name for p in parent.iterdir() if p.name.startswith(".dataset-preparing-")], [])
 
     def test_dataset_failure_restores_umask_and_keeps_partial_files_private(self):
         output = self.base / "dataset"

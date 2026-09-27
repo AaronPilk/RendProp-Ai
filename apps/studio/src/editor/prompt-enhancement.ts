@@ -40,6 +40,9 @@ function commandsFor(operation: ConversationOperation, orderedIds: string[]): st
     case "photo-motion": return [{ still: "Use still photos", push_in: "Use push-ins", pull_out: "Use pull-outs", pan_left: "Use pan left", pan_right: "Use pan right" }[operation.value]];
     case "ratio": return [`Set the ratio to ${operation.value}`];
     case "audio": return [operation.value === "original" ? "Keep original audio" : "Mute the original audio"];
+    case "music-volume": return [`Set music volume to ${operation.value * 100} percent`];
+    case "music-ducking": return [operation.value === "none" ? "Keep music at a steady level" : operation.value === "speech" ? "Lower music under speech" : "Lower music under original audio"];
+    case "music-fades": return [`Fade music in and out over ${operation.seconds} seconds`];
     case "highlight": return [operation.targetSeconds === undefined ? "Create a listing highlight" : `Make a ${operation.targetSeconds}-second reel`];
     case "reorder": {
       const commands: string[] = [];

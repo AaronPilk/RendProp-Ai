@@ -8,7 +8,11 @@ import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Only resume-notification delivery is delayed 250 ms. Negative control restores the former await; fixed build uses unchanged production source. No external requests or provider use.", checks: [], runs: [], errors: [], externalRequests: [], status: "running" };
+// Two 400 ms notifications create a regression larger than the existing 400 ms
+// export tolerance even with cold MediaRecorder encoder startup variation.
+// The fixed exporter never registers this listener, so it receives no delay.
+const resumeNotificationDelayMs = 400;
+const receipt = { proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Only resume-notification delivery is delayed ${resumeNotificationDelayMs} ms. Negative control restores the former await; fixed build uses unchanged production source. No external requests or provider use.`, checks: [], runs: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -29,7 +33,7 @@ window.MediaRecorder=class extends NativeRecorder {
   pause(...args){log("pause.call",{state:this.state});return super.pause(...args);}
   stop(...args){log("stop.call",{state:this.state});return super.stop(...args);}
   addEventListener(event,callback,options){
-    if(event==="resume"&&typeof callback==="function")return super.addEventListener(event,eventObject=>setTimeout(()=>{log("resume.delivered");callback.call(this,eventObject);},250),options);
+    if(event==="resume"&&typeof callback==="function")return super.addEventListener(event,eventObject=>setTimeout(()=>{log("resume.delivered");callback.call(this,eventObject);},${resumeNotificationDelayMs}),options);
     return super.addEventListener(event,callback,options);
   }
 };
@@ -84,6 +88,8 @@ document.querySelector("#run").onclick=async()=>{
     return { rms: Math.sqrt(power / count), hz: crossings / (count / 48000), dominantHz, samples: count };
   };
   const pixel = (path, time, x = 100) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", String(time), "-i", path, "-frames:v", "1", "-vf", `format=rgb24,crop=1:1:${x}:400`, "-f", "rawvideo", "pipe:1"])];
+  const isWhip = ({ left, right }) => left[2] > 200 && left[0] < 30 && right[0] > 200 && right[2] < 30;
+  const whipPixels = (path, time) => ({ time, left: pixel(path, time, 100), right: pixel(path, time, 650) });
   for (const variant of ["baseline", "fixed"]) {
     const context = await browser.newContext({ serviceWorkers: "block", acceptDownloads: true });
     await context.route("**/*", route => { const url = new URL(route.request().url()); if (url.origin === origin || ["blob:", "data:"].includes(url.protocol)) return route.continue(); receipt.externalRequests.push(url.href); return route.abort(); });
@@ -98,19 +104,36 @@ document.querySelector("#run").onclick=async()=>{
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
       const trace = await page.evaluate(() => window.fixture.trace), duration = Number(probe.format.duration);
       const audio = { opening: sample(output, .53, .09), middle: sample(output, 1, .7), leading: sample(output, .02, .08) };
-      const pixels = { dissolve: pixel(output, .64), whipLeft: pixel(output, 2.6, 100), whipRight: pixel(output, 2.6, 650) };
+      // MediaRecorder timestamps vary by a few encoded frames on busy macOS
+      // runners. The 180 ms whip starts at timeline 2.5 s; look for its actual
+      // spatial split in this bounded window, not one exact timestamp. A hard
+      // cut cannot satisfy the split, and the delayed-resume control must miss
+      // this window. Keep the independent duration and audio timing bounds.
+      const pixels = {
+        dissolve: pixel(output, .64),
+        beforeWhip: whipPixels(output, 2.4),
+        whip: [2.54, 2.58, 2.62, 2.66, 2.70, 2.74].map(time => whipPixels(output, time)),
+        afterWhip: whipPixels(output, 2.9),
+      };
       receipt.runs.push({ variant, narrated, plannedSeconds: 3, duration, trace, audio, pixels, output, probe }); await persist();
       assert(probe.streams.some(stream => stream.codec_name === "h264")); assert(probe.streams.some(stream => stream.codec_name === "aac"));
       assert.equal(trace.filter(event => event.event === "resume.return").length, 2);
       assert(trace.filter(event => event.event === "resume.return").every(event => event.state === "recording"));
       if (variant === "baseline") {
         assert(duration > 3.4, `Negative control must reproduce drift with the old await: ${duration}`);
-        assert.equal(trace.filter(event => event.event === "resume.delivered").length, 2);
+        const resumed = trace.filter(event => event.event === "resume.return");
+        const delivered = trace.filter(event => event.event === "resume.delivered");
+        assert.equal(delivered.length, 2);
+        assert(delivered.every((event, index) => event.at - resumed[index].at >= resumeNotificationDelayMs - 1), "Both negative-control resumptions must include the injected notification delay");
+        assert(trace.find(event => event.event === "play.call").at >= delivered[0].at, "The old await must stall original playback until the delayed notification arrives");
+        assert(!pixels.whip.some(isWhip), "Delayed-resume negative control must put the whip outside the fixed timeline window");
       } else {
         assert(Math.abs(duration - 3) < .4, `Fixed real MP4 must retain the existing duration tolerance: ${duration}`);
         assert.equal(trace.filter(event => event.event === "resume.delivered").length, 0);
         assert(pixels.dissolve[0] > 20 && pixels.dissolve[0] < 100 && pixels.dissolve[2] > 170 && pixels.dissolve[2] < 245, `Actual dissolve blend: ${pixels.dissolve}`);
-        assert(pixels.whipLeft[2] > 200 && pixels.whipLeft[0] < 30 && pixels.whipRight[0] > 200 && pixels.whipRight[2] < 30, "Actual whip must move blue and red across the frame");
+        assert(pixels.whip.some(isWhip), `Actual whip must move blue and red across the frame within the bounded timeline window: ${JSON.stringify(pixels.whip)}`);
+        assert(pixels.beforeWhip.left[2] > 200 && pixels.beforeWhip.right[2] > 200 && !isWhip(pixels.beforeWhip), "The preceding shot must still be blue before the whip");
+        assert(pixels.afterWhip.left[0] > 200 && pixels.afterWhip.right[0] > 200 && !isWhip(pixels.afterWhip), "The closing shot must be fully red after the whip");
         if (narrated) assert(audio.middle.rms > .02 && audio.middle.hz > 610 && audio.middle.hz < 710, `Narration stays at 660 Hz: ${JSON.stringify(audio.middle)}`);
         else {
           assert(audio.leading.rms < .005, "Leading photo stays silent; video speech does not shift to time zero");

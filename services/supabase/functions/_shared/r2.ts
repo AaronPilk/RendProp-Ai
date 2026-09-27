@@ -73,6 +73,24 @@ function encodeKey(key: string): string {
   return key.split("/").map(encodeURIComponent).join("/");
 }
 
+/** Immutable bounded Studio originals. Caller must reserve/claim this exact
+ * key before dispatch. No SDK retry and no client-visible write capability. */
+export async function writeStudioChunk(key:string,bytes:Uint8Array<ArrayBuffer>,sha256:string):Promise<void>{
+  if(!/^studio-project\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(key)||bytes.byteLength<1||bytes.byteLength>8388608||!/^[a-f0-9]{64}$/.test(sha256))throw new HttpError(400,"Invalid project upload part.");
+  const response=await uploadDispatch(`${endpoint()}/${R2_BUCKET_UPLOADS}/${encodeKey(key)}`,{method:"PUT",headers:{"content-type":"application/octet-stream","if-none-match":"*","x-amz-meta-sha256":sha256},body:bytes,aws:{allHeaders:true}},60_000);
+  void response.body?.cancel().catch(()=>{});
+  if(!response.ok&&response.status!==412)throw new HttpError(503,"This upload part could not be confirmed. Retry saving your project.");
+  const check=await inspectStudioChunk(key);
+  if(!check||check.bytes!==bytes.byteLength||check.sha256!==sha256)throw new HttpError(409,"Stored media does not match this upload part.");
+}
+export async function inspectStudioChunk(key:string):Promise<{bytes:number;sha256:string}|null>{
+  if(!/^studio-project\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/[a-f0-9-]{36}\/(?:[0-9]|1[0-5])$/.test(key))throw new HttpError(400,"Invalid project media key.");
+  const response=await uploadDispatch(`${endpoint()}/${R2_BUCKET_UPLOADS}/${encodeKey(key)}`,{method:"HEAD"},10_000);
+  if(response.status===404)return null;
+  if(!response.ok)throw new HttpError(503,"Stored media could not be checked.");
+  return {bytes:Number(response.headers.get("content-length")),sha256:response.headers.get("x-amz-meta-sha256")??""};
+}
+
 export interface PresignArgs {
   bucket: string;
   key: string;

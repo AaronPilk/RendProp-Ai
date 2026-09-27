@@ -1,12 +1,14 @@
 import { assert, HttpError, json, readJsonLimited } from "../_shared/http.ts";
 import type { StudioContext } from "./context.ts";
 import { authorizeProductionPlan, productionPlanInput } from "./production-plan.ts";
+import { projectPayload } from "./projects.ts";
 import { promptLibraryInput } from "./prompt-library.ts";
+import { assertFinishingPayload } from "./finishing-payload.ts";
 export const DOCUMENT_LIMIT = 2 * 1024 * 1024;
 const fields = "key,kind,listing_id,revision,payload,updated_at";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function documentKey(value: unknown): string {
-  assert(typeof value === "string" && /^(edit|planner|prompts|(?:edit|creative|native|production):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value), 400, "Choose a valid document.");
+  assert(typeof value === "string" && /^(edit|planner|prompts|(?:edit|creative|native|production|project):[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/.test(value), 400, "Choose a valid document.");
   return value;
 }
 export function documentInput(body: Record<string, unknown>) {
@@ -16,14 +18,15 @@ export function documentInput(body: Record<string, unknown>) {
   const listing = body.listing_id ?? null;
   assert(kind !== "prompts" || listing === null, 400, "Saved prompts belong to your workspace, not a property.");
   assert(listing === null || (typeof listing === "string" && UUID.test(listing)), 400, "Choose a valid listing.");
-  assert(!key.includes(":") || key.split(":")[1] === listing, 400, "Document does not match this listing.");
+  assert(kind === "project" || !key.includes(":") || key.split(":")[1] === listing, 400, "Document does not match this listing.");
   assert(Number.isSafeInteger(body.expected_revision) && Number(body.expected_revision) >= 0 && Number(body.expected_revision) < 2147483647, 400, "Document revision is invalid.");
   assert(body.payload && typeof body.payload === "object" && !Array.isArray(body.payload), 400, "Document content must be an object.");
   if (key.startsWith("edit:")) {
     assert((body.payload as Record<string, unknown>).listingId === listing, 400, "This edit belongs to a different listing.");
   }
+  if (kind === "edit") assertFinishingPayload((body.payload as Record<string, unknown>).draft ?? body.payload);
   assert(new TextEncoder().encode(JSON.stringify(body.payload)).byteLength <= DOCUMENT_LIMIT - 1024, 413, "This draft is too large to sync.");
-  const payload = kind === "production" ? productionPlanInput(body.payload, listing as string) : kind === "prompts" ? promptLibraryInput(body.payload) : body.payload;
+  const payload = kind === "project" ? projectPayload(body.payload, listing as string|null) : kind === "production" ? productionPlanInput(body.payload, listing as string) : kind === "prompts" ? promptLibraryInput(body.payload) : body.payload;
   return { key, kind, listing_id: listing as string | null, expected: Number(body.expected_revision), payload };
 }
 export async function handleDocuments(req: Request, context: StudioContext): Promise<Response> {
@@ -39,6 +42,15 @@ export async function handleDocuments(req: Request, context: StudioContext): Pro
   const input = documentInput(await readJsonLimited(req, DOCUMENT_LIMIT));
   if (input.listing_id) await context.authorizeListing(input.listing_id);
   if (input.kind === "production") await authorizeProductionPlan(productionPlanInput(input.payload, input.listing_id!), context, req.signal);
+  if (input.kind === "project") {
+    const result = await admin.rpc("studio_save_project", {p_actor:userId,p_org_id:orgId,p_key:input.key,p_listing_id:input.listing_id,p_expected:input.expected,p_payload:input.payload}).abortSignal(req.signal);
+    if (result.error) {
+      const match = /^RP(400|403|409): ([^\r\n]{1,240})$/.exec(result.error.message ?? "");
+      throw new HttpError(match ? Number(match[1]) : 503, match ? match[2] : "This project could not be saved. Your local copy is preserved.");
+    }
+    assert(result.data,503,"Project save confirmation is missing.");
+    return json({document:result.data},200,{"Cache-Control":"private, no-store"});
+  }
   const row = { user_id: userId, org_id: orgId, key: input.key, kind: input.kind,
     listing_id: input.listing_id, revision: input.expected + 1, payload: input.payload, updated_at: new Date().toISOString() };
   const result = input.expected === 0

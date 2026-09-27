@@ -17,7 +17,7 @@ These local verification scripts do not sign for distribution or upload anything
 `apps/ios/project-spatial-testflight.yml` owns the opted-in overlay and inherits
 its explicit shared source list from `apps/ios/project.yml`:
 `Sources/SpatialCaptureViewController.swift`, `Sources/CaptureControls.swift`,
-`Sources/CaptureQuality.swift`, `Sources/CaptureModel.swift`,
+`Sources/CaptureQuality.swift`, `Sources/CaptureBlur.swift`, `Sources/CaptureModel.swift`,
 `Sources/CaptureRecorder.swift`, `Sources/CaptureArchive.swift` and
 `Sources/RasterWriter.swift` from this directory. Never include `Sources/App.swift`:
 its standalone `@main AppDelegate` would collide with Rendprop's existing app entry point. Do not add this whole
@@ -133,13 +133,26 @@ Re-audit this declaration whenever storage or timing code changes.
 
 ## One-room operator run
 
-The current source uses a provisional thumbnail-luma/baseline selector. It has
-no integrated full-rate exposure/rotation smear guard; passing its checks is
-not proof that frames are sharp enough for reconstruction. The September 24
-review found substantial motion blur in the supplied room. Favor bright,
-even daylight, slow turns and short pauses while retaining overlapping views.
-New blur-guard/guidance work on separate branches still needs review and phone
-validation before it can be described as delivered.
+The current source combines the provisional thumbnail-luma/baseline selector
+with consecutive-ARFrame rotational-smear guidance. Exposure must be positive;
+missing poses, invalid exposure and gaps over 0.1 seconds display an unavailable
+message and wait for a usable candidate. Rejected candidates do not consume the
+0.5-second cadence or move the accepted-viewpoint baseline. The first candidate
+that passes all checks is saved; no sharpest-of-window claim is made.
+
+Slow-turn, brief-pause and upper-corner instructions stay separate from current
+status. Current status appears first; text can scroll at larger Dynamic Type
+sizes while Stop remains outside the text area. Advice is hidden while saving
+or after completion. All capture-count, interruption, privacy and export guards
+remain in place. The new source is not proof of real camera performance.
+
+Owner-phone acceptance remains required: confirm warnings recover when motion
+slows or lighting improves, sharp alternatives can save after a rejected frame,
+Stop/Done preserve existing photos during warnings, a tracking interruption
+returns to a clear unknown state, and saved/exported captures retain their exact
+JPEGs and calibration. Inspect coverage near windows and upper corners and inspect
+actual JPEG sharpness. Neither thresholds nor a successful build establish
+reconstruction quality. No new reconstruction is authorized by these checks.
 
 1. Clear moving people from the room, turn on adequate light, and keep the phone
    steady while tracking initializes. Tap **Start new room**.

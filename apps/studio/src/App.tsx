@@ -34,8 +34,8 @@ const CreativeWorkspace = lazy(() => import("./features/creative/CreativeWorkspa
 const BusinessWorkspace = lazy(() => import("./features/business/BusinessWorkspace"));
 const CloudEditor = lazy(() => import("./features/sync/PropertyReels"));
 const CloudPlanner = lazy(() => import("./features/sync/CloudPlanner"));
-const EditorImpl = lazy(() => import("./editor/VideoEditor"));
-function VideoEditor(props: VideoEditorProps) {
+const EditorImpl = lazy(() => import("./features/projects/Projects"));
+function VideoEditor(props: VideoEditorProps & {services?: ReturnType<typeof createStudioServices>; workspace?: Workspace | null; storageScope: string}) {
   return (
     <Suspense fallback={<p role="status">Loading the video editor…</p>}>
       <EditorImpl {...props} />
@@ -238,8 +238,8 @@ export default function App({ servicesFactory }: {
     if (saved.scope === editScope && saved.blockReason) { setNotice(saved.blockReason); return false; }
     const local = localCreationState.current;
     if (local.scope === editScope) {
-      if (local.blockReason) { setNotice(`Local video: ${local.blockReason} Return to Local video in Create to finish it.`); return false; }
-      if (local.hasSources && !window.confirm("Switch accounts or workspaces? Your local video draft stays in this browser, but you will need to choose its original files again when you return.")) return false;
+      if (local.blockReason) { setNotice(`Video projects: ${local.blockReason} Return to Video projects in Create to finish it.`); return false; }
+      if (local.hasSources && !window.confirm("Switch accounts or workspaces? Video projects remain separate for each account and workspace. Projects saved only in this browser stay on this device.")) return false;
     }
     return canReplacePresenter();
   }
@@ -994,9 +994,10 @@ export default function App({ servicesFactory }: {
               aria-label="Video editing workspace"
             >
               {workspace && services ? <Suspense fallback={<p role="status">Opening your saved edit…</p>}>
-                <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing} onSwitchBlockChange={savedBlockChanged} localCreationHasWork={!!draft?.clips.length} renderLocalCreation={(active, observeBlock) => workspaceDraftReady ? <VideoEditor {...localAssistant} key={`${editScope}:${restoreAttempt}`} active={active} initialMode="conversation" conversationStorageKey={`${key}:conversation`} initialDraft={draft} onDraftChange={saveDraft} onSourcesChange={localSourcesChanged} onSwitchBlockChange={reason => {localBlockChanged(reason); observeBlock(reason);}} importRequest={importRequest?.listingId ? undefined : importRequest} /> : <p role="status">Opening your local video…</p>} />
+                <CloudEditor entryRequest={entry?.reel} onOpenCreative={openCreative} key={editScope} services={services} workspace={workspace} listings={listings} listingId={selected?.id} active={page === "editor"} importRequest={importRequest} importPlan={importPlan} importAgentPlan={importAgentPlan} onChanged={()=>setRefresh(v=>v+1)} onSelectListing={selectListing} onSwitchBlockChange={savedBlockChanged} localCreationHasWork={!!draft?.clips.length} renderLocalCreation={(active, observeBlock) => workspaceDraftReady ? <VideoEditor services={services} workspace={workspace} storageScope={key} {...localAssistant} key={`${editScope}:${restoreAttempt}`} active={active} initialMode="conversation" conversationStorageKey={`${key}:conversation`} initialDraft={draft} onDraftChange={saveDraft} onSourcesChange={localSourcesChanged} onSwitchBlockChange={reason => {localBlockChanged(reason); observeBlock(reason);}} importRequest={importRequest?.listingId ? undefined : importRequest} /> : <p role="status">Opening your video projects…</p>} />
               </Suspense> : workspaceDraftReady ? (
                 <VideoEditor
+                  services={services??undefined} workspace={workspace} storageScope={key}
                   key={`${editScope}:${restoreAttempt}`}
                   active={page === "editor"}
                   initialMode="conversation"

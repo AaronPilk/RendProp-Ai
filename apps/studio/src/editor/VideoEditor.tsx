@@ -1,3 +1,7 @@
+import ProxyPanel from "./LazyProxyPanel";
+import SoundPanel from "./SoundPanel";
+import {inspectMusic, type LocalMusic} from "./music";
+import {musicGainAt, type AudioSourceRef} from "./finishing";
 import {OverlayPainter} from "./overlay-renderer";
 import { RecipePanel, type RecipeRequest } from "./RecipePanel";
 import { RECIPE_CATALOG, type RecipeResult } from "./recipes";
@@ -87,6 +91,9 @@ export type VideoEditorProps = {
   relinkRequest?: { id: string; files: File[] };
   onSourcesChange?: (sources: { file: File; sha256: string }[]) => void;
   onSaveOutput?: (output: LocalExport) => Promise<void>;
+  resolveMusic?: (source: AudioSourceRef, signal: AbortSignal) => Promise<Blob>;
+  onMusicSourceChange?: (source: {file: File; source: AudioSourceRef} | null) => void;
+  requestMediaAnalysis?: (clip: EditClip, signal: AbortSignal) => Promise<unknown>;
   narrationChoices?: {id: string; label: string; words: Narration["words"]}[];
   resolveNarration?: (id: string, signal: AbortSignal) => Promise<Blob>;
   planRequest?: {id: string; files: File[]; clips: {seconds: number; caption: string; motion: EditClip["motion"]}[]; narration?: Narration; settings?: EditorSettings};
@@ -145,6 +152,9 @@ export function VideoEditor({
   onSourcesChange,
   onSaveOutput,
   narrationChoices,
+  resolveMusic,
+  onMusicSourceChange,
+  requestMediaAnalysis,
   resolveNarration,
   planRequest,
   agentRequest,
@@ -193,6 +203,9 @@ export function VideoEditor({
   const media = useRef(new Map<string, LocalMedia>());
   const [mediaVersion, setMediaVersion] = useState(0);
   const [voice, setVoice] = useState<{id: string; blob: Blob; url: string} | null>(null);
+  const [localMusic, setLocalMusic] = useState<LocalMusic | null>(null), musicRef = useRef<LocalMusic | null>(null);
+  const [musicIssue, setMusicIssue] = useState(""), [musicBusy, setMusicBusy] = useState(false), [soundBusy, setSoundBusy] = useState(false), [proxyBusy, setProxyBusy] = useState(false);
+  const musicAbort = useRef<AbortController | null>(null);
   const [voiceIssue, setVoiceIssue] = useState(""), [voiceRetry, setVoiceRetry] = useState(0);
   const [selectedId, setSelectedId] = useState(draft.clips[0]?.id ?? "");
   const [message, setMessage] = useState(initial.issue||conversationInitial.error);
@@ -226,14 +239,15 @@ export function VideoEditor({
   const [formatMime, setFormatMime] = useState(formats[0]?.mime ?? "");
   const total = timelineDuration(draft.clips);
   useEffect(() => {
-    onSwitchBlockChange?.(importing || exporting || savingOutput || chatBusy || enhancing ? "Finish or stop the current creation task before switching." : prompt.trim() ? "Send or clear your unsent editing request before switching." : pendingBrief ? "Add media to finish your request, or clear the request before switching." : output && !outputKept ? "Download or save this finished video before switching properties. Your export is kept here." : null);
-  }, [importing, exporting, savingOutput, chatBusy,enhancing,prompt,pendingBrief,output, outputKept, onSwitchBlockChange]);
+    onSwitchBlockChange?.(importing || exporting || savingOutput || chatBusy || enhancing || musicBusy || soundBusy || proxyBusy ? "Finish or stop the current creation task before switching." : prompt.trim() ? "Send or clear your unsent editing request before switching." : pendingBrief ? "Add media to finish your request, or clear the request before switching." : output && !outputKept ? "Download or save this finished video before switching properties. Your export is kept here." : null);
+  }, [importing, exporting, savingOutput, chatBusy,enhancing,musicBusy,soundBusy,proxyBusy,prompt,pendingBrief,output, outputKept, onSwitchBlockChange]);
   const selected =
     draft.clips.find((clip) => clip.id === selectedId) ?? draft.clips[0];
   const selectedIndex = selected ? draft.clips.indexOf(selected) : -1;
   const missing = draftMedia(draft).filter((clip) => !media.current.has(clip.id));
-  const needsAudio = !!draft.narration || draft.audio === "original" && draft.clips.some((clip) => clip.source.kind === "video");
+  const needsAudio = !!draft.narration || !!draft.music || draft.audio === "original" && draft.clips.some((clip) => clip.source.kind === "video");
   const voiceReady = !draft.narration || voice?.id === draft.narration.resultId;
+  const musicReady = !draft.music || localMusic?.source.sha256 === draft.music.source.sha256;
   const audioUnavailable = needsAudio && !supportsOriginalAudio();
   const dimensions = renderDimensions(draft.ratio);
 
@@ -317,8 +331,8 @@ export function VideoEditor({
     if (result.draft.id !== draftRef.current.id || result.draft.revision !== draftRef.current.revision) {
       notice("The edit changed. Review the guided draft again before applying it."); return;
     }
-    const { clips, overlays, narration, audio, ratio, title } = result.draft;
-    if (update({ clips, overlays, narration, audio, ratio, title }, `apply ${result.recipe}`)) {
+    const { clips, overlays, narration, audio, ratio, title, music, speech } = result.draft;
+    if (update({ clips, overlays, narration, audio, ratio, title, music, speech }, `apply ${result.recipe}`)) {
       const applied = { ...result, draft: draftRef.current };
       onRecipeApplied?.(applied);
       timeRef.current = 0; setTime(0); setScrubVersion(value => value + 1);
@@ -419,7 +433,7 @@ export function VideoEditor({
       if(interaction.current.readOnly||interaction.current.importing||interaction.current.exporting||interaction.current.savingOutput||interaction.current.creationBlockedReason)throw new Error("The workspace is busy or its editing access changed. Send your request again after it is ready.");
       assertCurrentRevision(snapshot,draftRef.current,controller.signal);
       const result=applyConversationPlan(draftRef.current,plan),{clips,overlays,narration,audio,ratio,title}=result.draft;
-      const changed=update({clips,overlays,narration,audio,ratio,title},"conversation edit");
+      const changed=update({clips,overlays,narration,audio,ratio,title,music:result.draft.music,speech:result.draft.speech},"conversation edit");
       if(changed){timeRef.current=0;setTime(0);setScrubVersion(value=>value+1);}
       chatMessage("assistant",changed?result.summary:"That setting is already applied. Your video is unchanged.",draftRef.current.revision);
     }catch(error){if(mounted.current)chatMessage("assistant",controller.signal.aborted?"Stopped. This request was not applied to your video.":`${errorText(error)} Your existing edit is preserved.`);}
@@ -440,11 +454,12 @@ export function VideoEditor({
   }, [draft, conversation,readOnly,conversationStorageKey,conversationInitial.error]);
   useEffect(() => { onPlayheadChange?.(time); }, [time, onPlayheadChange]);
   useEffect(() => {
-    if (readOnly) { exportAbort.current?.abort(); importAbort.current?.abort(); }
+    if (readOnly) { exportAbort.current?.abort(); importAbort.current?.abort(); musicAbort.current?.abort(); }
   }, [readOnly]);
   useEffect(() => {
     if (!active) {
       setPlaying(false);
+      musicAbort.current?.abort();
       exportAbort.current?.abort(inactiveExportError());
     }
   }, [active]);
@@ -452,6 +467,8 @@ export function VideoEditor({
     () => () => {
       exportAbort.current?.abort();
       importAbort.current?.abort();
+      musicAbort.current?.abort();
+      if (musicRef.current) URL.revokeObjectURL(musicRef.current.url);
       for (const local of media.current.values())
         URL.revokeObjectURL(local.url);
       media.current.clear();
@@ -628,6 +645,48 @@ export function VideoEditor({
     if (!readOnly) onSourcesChange?.([...new Map([...media.current.values()].map(local => [local.source.sha256, {file:local.file,sha256:local.source.sha256}])).values()]);
   }, [mediaVersion, onSourcesChange, readOnly]);
 
+  async function importMusic(file: File) {
+    if (readOnly || !activeRef.current || importing || exporting || savingOutput || musicAbort.current) return;
+    const snapshot = draftRef.current, controller = new AbortController(); musicAbort.current = controller; setMusicBusy(true); setMusicIssue("");
+    let local: LocalMusic | undefined;
+    try {
+      local = await inspectMusic(file, controller.signal);
+      assertCurrentRevision(snapshot, draftRef.current, controller.signal);
+      if (!activeRef.current || !mounted.current) return;
+      const same = snapshot.music?.source.sha256 === local.source.sha256;
+      if (same && snapshot.music) {
+        if (snapshot.music.source.size !== local.source.size || Math.abs(snapshot.music.source.duration - local.source.duration) > .05) throw new Error("The original music metadata does not match the saved edit.");
+        local.source = snapshot.music.source;
+      }
+      if (!same && !update({music: {source: local.source, start: 0, end: local.source.duration, offset: 0, volume: .3, fadeIn: Math.min(.5, local.source.duration), fadeOut: Math.min(1, local.source.duration), ducking: "original", licensed: true}}, "add licensed music")) return;
+      if (musicRef.current) URL.revokeObjectURL(musicRef.current.url);
+      musicRef.current = local; setLocalMusic(local); local = undefined;
+      notice("Music is ready. Preview the mix and adjust its level before exporting.");
+    } catch (error) {if (!controller.signal.aborted && mounted.current) setMusicIssue(errorText(error));}
+    finally {if (local) URL.revokeObjectURL(local.url); if (musicAbort.current === controller) {musicAbort.current = null; if (mounted.current) setMusicBusy(false);}}
+  }
+  useEffect(() => {
+    const source = draft.music?.source;
+    if (musicRef.current?.source.sha256 === source?.sha256) return;
+    if (musicRef.current) URL.revokeObjectURL(musicRef.current.url);
+    musicRef.current = null; setLocalMusic(null); setMusicIssue("");
+    if (!source) return;
+    if (!resolveMusic) {setMusicIssue("Reselect the original music in Sound & captions before previewing or exporting."); return;}
+    const controller = new AbortController();
+    void resolveMusic(source, controller.signal).then(async blob => {
+      if (controller.signal.aborted) return;
+      const file = new File([blob], source.name, {type: source.mime, lastModified: source.lastModified});
+      const restored = await inspectMusic(file, controller.signal, source);
+      if (controller.signal.aborted || draftRef.current.music?.source.sha256 !== source.sha256) {URL.revokeObjectURL(restored.url); return;}
+      if (musicRef.current) URL.revokeObjectURL(musicRef.current.url);
+      musicRef.current = restored; setLocalMusic(restored);
+    }).catch(error => {if (!controller.signal.aborted) setMusicIssue(errorText(error));});
+    return () => controller.abort();
+  }, [draft.music?.source.sha256, resolveMusic]);
+  useEffect(() => {
+    if (!readOnly) onMusicSourceChange?.(localMusic && localMusic.source.sha256 === draft.music?.source.sha256 ? {file: localMusic.file, source: localMusic.source} : null);
+  }, [localMusic, draft.music?.source.sha256, onMusicSourceChange, readOnly]);
+
   useEffect(() => {
     const id = draft.narration?.resultId;
     setVoice(null); setVoiceIssue("");
@@ -653,6 +712,7 @@ export function VideoEditor({
     const overlayPainter = new OverlayPainter(draft, media.current, signal);
     const narration = draft.narration && voice?.id === draft.narration.resultId ? new Audio(voice.url) : undefined;
     if (narration && draft.narration) narration.volume = draft.narration.volume;
+    const soundtrack = draft.music && localMusic?.source.sha256 === draft.music.source.sha256 ? new Audio(localMusic.url) : undefined;
     setPreviewError("");
     const paint = async () => {
       const position = locateTime(draft.clips, timeRef.current);
@@ -694,7 +754,7 @@ export function VideoEditor({
           await awaitMediaOperation(video.play(), signal, "Starting preview");
         throwIfAborted(signal);
         const start = performance.now();
-        let narrationStarted = false;
+        let narrationStarted = false, musicStarted = false;
         while (true) {
           const now = await nextFrame(signal);
           const elapsed = video
@@ -704,6 +764,16 @@ export function VideoEditor({
             narration.currentTime = Math.max(0, before + elapsed - draft.narration.offset);
             await awaitMediaOperation(narration.play(), signal, "Playing narration"); narrationStarted = true;
           }
+          if (soundtrack && draft.music) {
+            const musicTime = before + elapsed - draft.music.offset;
+            soundtrack.volume = musicGainAt(draft, clip, before + elapsed, elapsed, narration?.duration || 0);
+            if (!musicStarted && musicTime >= 0 && musicTime < draft.music.end - draft.music.start) {
+              soundtrack.currentTime = draft.music.start + musicTime;
+              await awaitMediaOperation(soundtrack.play(), signal, "Playing music"); musicStarted = true;
+            }
+            if (musicTime >= draft.music.end - draft.music.start) soundtrack.pause();
+          }
+          if (video) video.volume = draft.narration && narration && before + elapsed >= draft.narration.offset && before + elapsed < draft.narration.offset + (narration.duration || 0) ? .22 : 1;
           drawFrame(canvas, decoded, clip, draft, {time: before + elapsed, localTime: elapsed, previous: hasPrevious ? previous : undefined});
           await overlayPainter.paint(canvas, before + elapsed);
           timeRef.current = Math.min(
@@ -713,7 +783,7 @@ export function VideoEditor({
           setTime(timeRef.current);
           if (elapsed >= clipDuration(clip) || video?.ended) break;
         }
-        narration?.pause(); previous.getContext("2d")!.drawImage(canvas, 0, 0); hasPrevious = true;
+        narration?.pause(); soundtrack?.pause(); previous.getContext("2d")!.drawImage(canvas, 0, 0); hasPrevious = true;
         decoded.dispose();
         decoded = undefined;
       }
@@ -726,13 +796,14 @@ export function VideoEditor({
           setPlaying(false);
         }
       })
-      .finally(() => { decoded?.dispose(); narration?.pause(); overlayPainter.dispose(); });
+      .finally(() => { decoded?.dispose(); narration?.pause(); soundtrack?.pause(); overlayPainter.dispose(); });
     return () => {
       controller.abort();
       decoded?.dispose(); overlayPainter.dispose(); narration?.pause(); if (narration) { narration.removeAttribute("src"); narration.load(); }
+      soundtrack?.pause(); if (soundtrack) {soundtrack.removeAttribute("src"); soundtrack.load();}
       previous.width = previous.height = 0;
     };
-  }, [active, draft, mediaVersion, playing, scrubVersion, total, voice]);
+  }, [active, draft, mediaVersion, playing, scrubVersion, total, voice, localMusic]);
 
   const scrubTo = (seconds: number) => {
     if (!Number.isFinite(seconds)) return;
@@ -854,7 +925,7 @@ export function VideoEditor({
     }
   };
   const startExport = async () => {
-    if (readOnly) return;
+    if (readOnly || musicBusy || soundBusy || proxyBusy || !musicReady || !voiceReady) return;
     const format = formats.find((item) => item.mime === formatMime);
     if (!activeRef.current || !format || exportAbort.current) return;
     invalidateExport();
@@ -867,6 +938,7 @@ export function VideoEditor({
       const result = await exportLocalVideo({
         draft: draftRef.current,
         media: new Map(media.current),
+        musicBlob: localMusic && localMusic.source.sha256 === draftRef.current.music?.source.sha256 ? localMusic.file : undefined,
         narrationBlob: voice?.id === draftRef.current.narration?.resultId ? voice?.blob : undefined,
         format,
         signal: controller.signal,
@@ -887,7 +959,7 @@ export function VideoEditor({
       setOutput({ ...result, url });
       setOutputKept(false);
       notice(
-        `Your local ${result.extension.toUpperCase()} is ready to download. ${result.narration ? "Saved narration is included." : result.audio === "muted" ? "Audio is muted." : "Original clip audio is included where the source has audio."}`,
+        `Your local ${result.extension.toUpperCase()} is ready to download. ${result.music ? "Your music mix is included. " : ""}${result.narration ? "Saved narration is included." : result.audio === "muted" ? "Audio is muted." : "Original clip audio is included where the source has audio."}`,
       );
     } catch (error) {
       notice(errorText(error));
@@ -978,7 +1050,7 @@ export function VideoEditor({
                   missing.length > 0 ||
                   !formats.length ||
                   audioUnavailable ||
-                  !voiceReady ||
+                  !voiceReady || !musicReady || musicBusy || soundBusy || proxyBusy ||
                   importing
                 }
                 onClick={() => void startExport()}
@@ -1116,6 +1188,8 @@ export function VideoEditor({
         </div>
       )}
       {readOnly && draft.narration && (voiceIssue || !voiceReady) && <p className="rp-editor-missing" role="status">{voiceIssue || "Restoring saved narration for this review…"}{voiceIssue && <button type="button" onClick={() => setVoiceRetry(value => value + 1)}>Retry narration</button>}</p>}
+      {musicBusy && <p role="status">Checking music… <button type="button" onClick={() => musicAbort.current?.abort()}>Cancel music import</button></p>}
+      {!musicReady && <p className="rp-editor-missing" role="status">{musicIssue || "Restoring the saved music…"}</p>}
       {readOnly && audioUnavailable && <p className="rp-editor-missing" role="status">This browser cannot preview the saved audio. Use a browser with audio playback support before approving the sound.</p>}
       <div className="rp-editor-workspace">
         {!readOnly&&<div hidden={editorMode!=="conversation"}><ConversationPanel conversation={conversation} prompt={prompt} onPrompt={changePrompt} busy={chatBusy||enhancing||importing||exporting||savingOutput||!!creationBlockedReason} cancellable={chatBusy||enhancing} blockedReason={creationBlockedReason} hasMedia={!!draft.clips.length} assistAvailable={editAssistAvailable} onSubmit={()=>void sendEdit()} onAdd={()=>filesInput.current?.click()} onLibrary={onChooseLibrary} onCancel={cancelChat} waitingForMedia={!!pendingBrief} enhancement={enhancement} enhancing={enhancing} onEnhance={()=>void improvePrompt()} onUseEnhancement={useEnhancedPrompt} onDismissEnhancement={()=>setEnhancement(null)}/></div>}
@@ -1124,7 +1198,7 @@ export function VideoEditor({
             <div className="rp-editor-panel-bar">
               <span>Video preview</span>
               <span className="rp-editor-audio-badge">
-                {draft.narration ? "Narration" : draft.audio === "muted" ? "Audio muted" : "Original audio"}
+                {draft.music ? "Music mix" : draft.narration ? "Narration" : draft.audio === "muted" ? "Audio muted" : "Original audio"}
               </span>
             </div>
             <div
@@ -1168,7 +1242,7 @@ export function VideoEditor({
                 type="button"
                 disabled={
                   !draft.clips.length ||
-                  missing.length > 0 ||
+                  missing.length > 0 || !musicReady || !voiceReady || musicBusy || soundBusy || proxyBusy ||
                   exporting ||
                   importing
                 }
@@ -1196,6 +1270,8 @@ export function VideoEditor({
               </output>
             </div>
           </div>
+          {!readOnly && <ProxyPanel active={active} blocked={importing || exporting || savingOutput || musicBusy || soundBusy || !!creationBlockedReason} onImport={importFiles} onBusyChange={setProxyBusy} />}
+          {!readOnly && <SoundPanel draft={draft} selected={selected} music={localMusic} musicIssue={musicIssue} busy={importing || exporting || savingOutput || musicBusy || proxyBusy || !!creationBlockedReason} active={active} onChange={update} onImportMusic={importMusic} requestMediaAnalysis={requestMediaAnalysis} onBusyChange={setSoundBusy} />}
           <div
             className="rp-editor-timeline"
             onDragOver={(event) => event.preventDefault()}
