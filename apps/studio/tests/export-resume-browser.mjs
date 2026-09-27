@@ -8,7 +8,11 @@ import { build } from "vite";
 import { chromium, expect } from "@playwright/test";
 
 const root = resolve(import.meta.dirname, ".."), artifacts = await mkdtemp(join(tmpdir(), "rendprop-export-resume-")), dist = join(artifacts, "dist");
-const receipt = { proof: "Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Only resume-notification delivery is delayed 250 ms. Negative control restores the former await; fixed build uses unchanged production source. No external requests or provider use.", checks: [], runs: [], errors: [], externalRequests: [], status: "running" };
+// Two 400 ms notifications create a regression larger than the existing 400 ms
+// export tolerance even with cold MediaRecorder encoder startup variation.
+// The fixed exporter never registers this listener, so it receives no delay.
+const resumeNotificationDelayMs = 400;
+const receipt = { proof: `Real exportLocalVideo, decoded synthetic originals and actual MP4/AAC. Only resume-notification delivery is delayed ${resumeNotificationDelayMs} ms. Negative control restores the former await; fixed build uses unchanged production source. No external requests or provider use.`, checks: [], runs: [], errors: [], externalRequests: [], status: "running" };
 let browser, server;
 const persist = () => writeFile(join(artifacts, "receipt.json"), JSON.stringify(receipt, null, 2) + "\n");
 try {
@@ -29,7 +33,7 @@ window.MediaRecorder=class extends NativeRecorder {
   pause(...args){log("pause.call",{state:this.state});return super.pause(...args);}
   stop(...args){log("stop.call",{state:this.state});return super.stop(...args);}
   addEventListener(event,callback,options){
-    if(event==="resume"&&typeof callback==="function")return super.addEventListener(event,eventObject=>setTimeout(()=>{log("resume.delivered");callback.call(this,eventObject);},250),options);
+    if(event==="resume"&&typeof callback==="function")return super.addEventListener(event,eventObject=>setTimeout(()=>{log("resume.delivered");callback.call(this,eventObject);},${resumeNotificationDelayMs}),options);
     return super.addEventListener(event,callback,options);
   }
 };
@@ -117,7 +121,11 @@ document.querySelector("#run").onclick=async()=>{
       assert(trace.filter(event => event.event === "resume.return").every(event => event.state === "recording"));
       if (variant === "baseline") {
         assert(duration > 3.4, `Negative control must reproduce drift with the old await: ${duration}`);
-        assert.equal(trace.filter(event => event.event === "resume.delivered").length, 2);
+        const resumed = trace.filter(event => event.event === "resume.return");
+        const delivered = trace.filter(event => event.event === "resume.delivered");
+        assert.equal(delivered.length, 2);
+        assert(delivered.every((event, index) => event.at - resumed[index].at >= resumeNotificationDelayMs - 1), "Both negative-control resumptions must include the injected notification delay");
+        assert(trace.find(event => event.event === "play.call").at >= delivered[0].at, "The old await must stall original playback until the delayed notification arrives");
         assert(!pixels.whip.some(isWhip), "Delayed-resume negative control must put the whip outside the fixed timeline window");
       } else {
         assert(Math.abs(duration - 3) < .4, `Fixed real MP4 must retain the existing duration tolerance: ${duration}`);
