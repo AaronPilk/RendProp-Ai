@@ -9,17 +9,20 @@ The ongoing fixed-cohort spatial experiments remain separately recorded in
 ## What Matterport documents
 
 The official smartphone guide, updated June 3, 2026, describes holding the camera
-at a stable position and rotating around it while following on-screen targets.
-Simple scanning uses one rotation; Complete scanning adds middle, upper and lower
-coverage. The images are stitched at each position. The operator then moves to
-another position, captures again, and checks alignment on the map. Compatible
-phones can additionally use LiDAR. This supports the owner's proposed capture
-interaction. One fixed position alone is not their whole-room capture protocol.
+at a stable position and moving around it while following on-screen targets.
+The camera rotates at that position rather than swinging around the operator's
+body. Simple scanning uses one rotation; Complete uses three for middle, upper
+and lower coverage. Simple can still blur ceilings/floors because coverage is
+limited. Images are stitched at each position; then the operator moves, captures
+again and checks alignment. Compatible phones can additionally use LiDAR. This
+supports the owner's proposed interaction, with multiple positions per room.
 [Smartphone guide](https://support.matterport.com/s/article/Getting-Started-Matterport-for-iPhone?language=en_US)
 
 The scan-path guide, updated June 9, 2026, calls for overlapping positions with
-clear line of sight, normally 5–8 feet apart, with closer scans around doorways.
-It recommends at least two positions even in a small room. Missing areas and
+clear line of sight and a maximum spacing guideline of 5–8 feet. This is not a
+required distance: scan closer where needed, including 1–2 feet before and after
+doorway thresholds. Pro3 has separate guidance for large open spaces. The guide
+recommends at least two positions even in a small room. Missing areas and
 misalignment should be checked before leaving. Exact distances are their
 guidance, not yet validated Rendprop thresholds.
 [Scan-path guide](https://support.matterport.com/s/article/How-to-Determine-the-Scan-Path?language=en_US)
@@ -59,6 +62,12 @@ The integrated iOS source was reviewed at
   that reconstruction affect the room view itself. There is no implemented
   station-based panorama layer in the spatial capture path inspected here.
 
+This failed reconstruction does not establish an inherent Gaussian-rendering
+quality limit. The original method demonstrates high-quality novel views; adding
+panoramas changes the viewing strategy rather than proving Gaussian splatting
+cannot work.
+[Original 3D Gaussian Splatting research](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/)
+
 These are source observations. They do not establish hardware behavior on a
 phone, and simulator testing cannot validate the camera, depth or capture UX.
 
@@ -88,7 +97,34 @@ existing walking datasets. The current scan and controlled SfM work remain usefu
 for identifying pose/alignment problems, but cannot by themselves validate this
 new capture protocol. Do not enable production based on this research alone.
 
+Stationary rotation is not a drop-in fix for the existing image-only SfM pipeline.
+COLMAP's guidance calls for translated viewpoints and overlapping images. Multiple
+scan positions, useful connections between them, and validated depth/geometry
+registration remain necessary; one sweep in the middle cannot observe surfaces
+hidden behind furniture.
+[COLMAP capture guidance](https://colmap.github.io/tutorial.html)
+
 Blender is optional for later manual authoring or export. It is not a required
 component of this proposed capture, alignment, panoramic viewing and geometry
 workflow. The owner should be able to finish a property tour in Rendprop without
 operating a separate 3D editor.
+
+## Smallest useful validation sequence
+
+Before broad implementation, prove one complete station can produce a clear
+spherical panorama from saved original frames. Inspect nearby furniture seams,
+exposure changes, ceiling/floor coverage and moving-object artifacts. Keep the
+originals and explicit missing-coverage information; do not fill property details
+with invented content. Determine the needed targets and lens orientation through
+physical-phone testing rather than hard-coding Matterport's ring count.
+
+Then connect multiple stations across one room and a doorway. Validate depth or
+geometry registration, recovery after tracking loss, and navigation between
+physically connected positions. Existing RoomPlan output may contribute geometry,
+but sharing a coordinate frame and timestamps must be demonstrated, not assumed.
+
+Only after those work, join the result to the existing account, upload/recovery,
+listing and hosted-viewer flows. Verify scale separately before making measurement
+claims. The owner performs physical camera tests; local replay and UI tests cover
+the software that can be verified without camera access. This sequence describes
+future work and does not authorize additional paid computation.
