@@ -203,6 +203,12 @@ within 1.74 / 1.78 cm and 0.68 / 0.75 degrees of ARKit. That comparison is
 diagnostic evidence, not a permitted replacement initialization or held-out
 quality result.
 
+Metric clarification: the initial private decision receipt's
+`mean_observed_point_error_px` field actually averaged stored track-level
+`Point3D.error` values. Its immutable values were not rewritten.
+`reprojection-metric-clarification.json` records the correction; the figures
+above are the independently recomputed image-specific projection errors.
+
 Independent review also found a collapsed region: training-camera centers
 122–128 have maximum pairwise separation **3.9314e-7 m** after metric alignment.
 Held-out image 129 passes the original PnP gate with 715 inliers, but **all 715
@@ -316,7 +322,8 @@ receipts and local diagnostic scripts remain outside Git under
 - `sfm-training-candidate/plan.json` and `independent/sfm-candidate-review/`
 - `sfm-training-expanded-candidate/plan.json`, `results.json`,
   `pose-diagnostics-readonly.json`, `use-decision.json`,
-  `bounded-completion.json` and `independent/sfm-expanded-review/`
+  `bounded-completion.json`, `reprojection-metric-clarification.json`
+  and `independent/sfm-expanded-review/`
 - `r01/root-visual-review.json`, `r01/conversion-local-metal.json`
 - `r01/billing-completion-inputs.json` and final `billing-readback.json`
 
