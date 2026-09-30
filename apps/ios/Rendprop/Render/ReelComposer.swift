@@ -84,12 +84,16 @@ enum ReelComposer {
         /// cased and word-capped by the renderer, so pass it as written.
         /// `nil` or blank = no caption on this shot.
         var caption: String?
+        /// Real camera takes opt in; generated clips keep their existing silent behavior.
+        var keepOriginalAudio: Bool
 
-        init(url: URL, seconds: Double? = nil, speed: Double? = nil, caption: String? = nil) {
+        init(url: URL, seconds: Double? = nil, speed: Double? = nil, caption: String? = nil,
+             keepOriginalAudio: Bool = false) {
             self.url = url
             self.seconds = seconds
             self.speed = speed
             self.caption = caption
+            self.keepOriginalAudio = keepOriginalAudio
         }
     }
 
@@ -162,16 +166,19 @@ enum ReelComposer {
         var shotCaptionStyle: ShotCaptionStyle = .off
         /// Defaults to `.cut`, and should usually stay there.
         var transition: Transition = .cut
+        /// A camera edit must never quietly omit a selected take or narration.
+        var requireAllShots = false
 
         init(titleCard: ReelTitleCard? = nil, voiceover: Voiceover? = nil,
              captionStyle: CaptionStyle = .off,
              shotCaptionStyle: ShotCaptionStyle = .off,
-             transition: Transition = .cut) {
+             transition: Transition = .cut, requireAllShots: Bool = false) {
             self.titleCard = titleCard
             self.voiceover = voiceover
             self.captionStyle = captionStyle
             self.shotCaptionStyle = shotCaptionStyle
             self.transition = transition
+            self.requireAllShots = requireAllShots
         }
     }
 
@@ -184,6 +191,8 @@ enum ReelComposer {
         case noClips
         case noExporter
         case exportFailed
+        case unreadableShot
+        case unreadableAudio
 
         var errorDescription: String? {
             switch self {
@@ -192,6 +201,8 @@ enum ReelComposer {
             case .noClips:       return "No usable clips to stitch."
             case .noExporter:    return "Couldn't create the video exporter."
             case .exportFailed:  return "Couldn't export the stitched reel."
+            case .unreadableShot: return "A selected video couldn't be read. Your originals are safe. Review the selected clips and try again."
+            case .unreadableAudio: return "The selected audio couldn't be included. Your originals are safe; no silent replacement was exported."
             }
         }
     }
@@ -252,7 +263,9 @@ enum ReelComposer {
             throw ComposeError.badRenderSize
         }
 
-        let prepared = await prepare(shots, renderSize: renderSize)
+        try Task.checkCancellation()
+        let prepared = try await prepare(shots, renderSize: renderSize,
+                                         requireAllShots: options.requireAllShots)
         // AVAssetTrack.asset is weak. The asynchronous prepare pass must keep
         // every source asset alive through insertion AND export; retaining the
         // track alone leaves a valid downloaded clip with no readable owner.
@@ -271,7 +284,7 @@ enum ReelComposer {
         }
         if attempt == nil {
             composition = AVMutableComposition()
-            attempt = layoutCuts(prepared, into: composition)
+            attempt = layoutCuts(prepared, into: composition, requireAllShots: options.requireAllShots)
         }
         guard let laidOut = attempt, laidOut.videoDuration > .zero, !laidOut.segments.isEmpty else {
             throw ComposeError.noClips
@@ -284,6 +297,11 @@ enum ReelComposer {
         // be read must NOT sink the reel — it just exports silent, exactly as if
         // none had been chosen.
         let audio = await mixVoiceover(options.voiceover, into: composition)
+        if options.requireAllShots, options.voiceover != nil, !audio.inserted {
+            throw ComposeError.unreadableAudio
+        }
+        let audioMix = try mixOriginalAudio(layout.sourceAudio, into: composition,
+                                            narration: audio.inserted)
 
         // ---- Video length wins ----
         if audio.inserted, audio.duration > layout.videoDuration {
@@ -323,7 +341,9 @@ enum ReelComposer {
                 additionalLayer: overlay, asTrackID: overlayTrackID)
         }
 
-        try await export(composition: composition, videoComposition: videoComposition, to: output)
+        try Task.checkCancellation()
+        try await export(composition: composition, videoComposition: videoComposition,
+                         audioMix: audioMix, to: output)
     }
 
     // MARK: - Pass 1: read every clip, resolve its length and its rate
@@ -340,11 +360,15 @@ enum ReelComposer {
         let speed: Double
         let transform: CGAffineTransform
         let caption: String?
+        let audioTrack: AVAssetTrack?
+        let audioRange: CMTimeRange?
     }
 
-    private static func prepare(_ shots: [Shot], renderSize: CGSize) async -> [Prepared] {
+    private static func prepare(_ shots: [Shot], renderSize: CGSize,
+                                requireAllShots: Bool) async throws -> [Prepared] {
         var out: [Prepared] = []
         for shot in shots {
+            try Task.checkCancellation()
             do {
                 let asset = AVURLAsset(url: shot.url)
                 guard let src = try await asset.loadTracks(withMediaType: .video).first else { continue }
@@ -384,6 +408,18 @@ enum ReelComposer {
                 guard onScreen > .zero else { continue }
 
                 let caption = shot.caption?.trimmingCharacters(in: .whitespacesAndNewlines)
+                var audioTrack: AVAssetTrack?
+                var audioRange: CMTimeRange?
+                if shot.keepOriginalAudio {
+                    audioTrack = try await asset.loadTracks(withMediaType: .audio).first
+                    if let audioTrack {
+                        let range = try await audioTrack.load(.timeRange)
+                        guard range.isValid, range.duration.seconds.isFinite else {
+                            throw ComposeError.unreadableAudio
+                        }
+                        audioRange = range
+                    }
+                }
                 out.append(Prepared(asset: asset, track: src,
                                     srcRange: CMTimeRange(start: full.start, duration: srcDuration),
                                     onScreen: onScreen,
@@ -391,11 +427,14 @@ enum ReelComposer {
                                     transform: fillTransform(naturalSize: naturalSize,
                                                              preferredTransform: preferredTransform,
                                                              renderSize: renderSize),
-                                    caption: (caption?.isEmpty == false) ? caption : nil))
+                                    caption: (caption?.isEmpty == false) ? caption : nil,
+                                    audioTrack: audioTrack, audioRange: audioRange))
             } catch {
+                if requireAllShots { throw error }
                 continue   // unreadable clip — skip it; the reel uses the rest
             }
         }
+        if requireAllShots, out.count != shots.count { throw ComposeError.unreadableShot }
         return out
     }
 
@@ -427,6 +466,7 @@ enum ReelComposer {
         var videoDuration: CMTime = .zero
         var segments: [Segment] = []
         var captions: [ShotCaption] = []
+        var sourceAudio: [SourceAudio] = []
         /// The composition track the reel ENDS on, and the source slice of its
         /// final shot — everything the freeze-frame hold needs.
         var tailTrack: AVMutableCompositionTrack?
@@ -441,7 +481,8 @@ enum ReelComposer {
     /// separate from the A/B path on purpose: the default output must not
     /// inherit the risk of a layout it never uses.
     private static func layoutCuts(_ prepared: [Prepared],
-                                   into composition: AVMutableComposition) -> Layout? {
+                                   into composition: AVMutableComposition,
+                                   requireAllShots: Bool) -> Layout? {
         guard let videoTrack = composition.addMutableTrack(
             withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid) else { return nil }
         let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: videoTrack)
@@ -453,6 +494,7 @@ enum ReelComposer {
             do {
                 try videoTrack.insertTimeRange(p.srcRange, of: p.track, at: cursor)
             } catch {
+                if requireAllShots { return nil }
                 continue   // unreadable clip — skip it; the reel uses the rest
             }
             // Only ever called when a rate was actually asked for, so the
@@ -462,6 +504,7 @@ enum ReelComposer {
                                           toDuration: p.onScreen)
             }
             layerInstruction.setTransform(p.transform, at: cursor)
+            layout.sourceAudio.append(SourceAudio(shot: p, start: cursor))
             if let caption = p.caption {
                 layout.captions.append(ShotCaption(text: caption, start: cursor.seconds,
                                                    duration: p.onScreen.seconds))
@@ -539,6 +582,8 @@ enum ReelComposer {
             let track = tracks[i % 2]
             let incomingOverlap = i > 0 ? overlaps[i - 1] : .zero
             let outgoingOverlap = i < overlaps.count ? overlaps[i] : .zero
+            layout.sourceAudio.append(SourceAudio(shot: p, start: starts[i],
+                                                  fadeIn: incomingOverlap, fadeOut: outgoingOverlap))
             let bodyStart = CMTimeAdd(starts[i], incomingOverlap)
             let bodyEnd = CMTimeSubtract(CMTimeAdd(starts[i], p.onScreen), outgoingOverlap)
 
@@ -597,6 +642,59 @@ enum ReelComposer {
     }
 
     // MARK: - Voiceover
+
+    private struct SourceAudio {
+        let shot: Prepared
+        let start: CMTime
+        var fadeIn: CMTime = .zero
+        var fadeOut: CMTime = .zero
+    }
+
+    /// Use the same source slice, rate and timeline start as the picture. Each
+    /// take has its own audio track so overlapping video never shifts speech.
+    private static func mixOriginalAudio(_ placements: [SourceAudio],
+                                         into composition: AVMutableComposition,
+                                         narration: Bool) throws -> AVAudioMix? {
+        var parameters: [AVAudioMixInputParameters] = []
+        for placement in placements {
+            let p = placement.shot
+            guard let source = p.audioTrack, let available = p.audioRange else { continue }
+            let range = CMTimeRangeGetIntersection(p.srcRange, otherRange: available)
+            guard range.isValid, range.duration > .zero else { continue }
+            guard let target = composition.addMutableTrack(withMediaType: .audio,
+                    preferredTrackID: kCMPersistentTrackID_Invalid) else { throw ComposeError.unreadableAudio }
+            let offset = CMTime(seconds: CMTimeSubtract(range.start, p.srcRange.start).seconds / p.speed,
+                                preferredTimescale: timescale)
+            let start = CMTimeAdd(placement.start, offset)
+            let duration = CMTime(seconds: range.duration.seconds / p.speed, preferredTimescale: timescale)
+            do { try target.insertTimeRange(range, of: source, at: start) }
+            catch { throw ComposeError.unreadableAudio }
+            if p.speed != 1 {
+                target.scaleTimeRange(CMTimeRange(start: start, duration: range.duration), toDuration: duration)
+            }
+            let mix = AVMutableAudioMixInputParameters(track: target)
+            mix.audioTimePitchAlgorithm = .timeDomain
+            let level: Float = narration ? 0.22 : 1
+            mix.setVolume(level, at: start)
+            let end = CMTimeAdd(start, duration)
+            let fadeInEnd = CMTimeMinimum(end, CMTimeAdd(placement.start, placement.fadeIn))
+            if fadeInEnd > start {
+                mix.setVolumeRamp(fromStartVolume: 0, toEndVolume: level,
+                                  timeRange: CMTimeRange(start: start, end: fadeInEnd))
+            }
+            let shotEnd = CMTimeAdd(placement.start, p.onScreen)
+            let fadeOutStart = CMTimeMaximum(start, CMTimeSubtract(shotEnd, placement.fadeOut))
+            if placement.fadeOut > .zero, end > fadeOutStart {
+                mix.setVolumeRamp(fromStartVolume: level, toEndVolume: 0,
+                                  timeRange: CMTimeRange(start: fadeOutStart, end: end))
+            }
+            parameters.append(mix)
+        }
+        guard !parameters.isEmpty else { return nil }
+        let mix = AVMutableAudioMix()
+        mix.inputParameters = parameters
+        return mix
+    }
 
     private struct MixedAudio {
         var inserted = false
@@ -1006,6 +1104,7 @@ enum ReelComposer {
 
     private static func export(composition: AVMutableComposition,
                                videoComposition: AVMutableVideoComposition,
+                               audioMix: AVAudioMix?,
                                to output: URL) async throws {
         guard let export = AVAssetExportSession(asset: composition,
                                                 presetName: AVAssetExportPresetHighestQuality) else {
@@ -1015,11 +1114,18 @@ enum ReelComposer {
         export.outputURL = output
         export.outputFileType = .mp4
         export.videoComposition = videoComposition
+        export.audioMix = audioMix
         export.shouldOptimizeForNetworkUse = true
-        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
-            export.exportAsynchronously { cont.resume() }
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+                export.exportAsynchronously { cont.resume() }
+            }
+        } onCancel: {
+            export.cancelExport()
         }
         guard export.status == .completed else {
+            try? FileManager.default.removeItem(at: output)
+            try Task.checkCancellation()
             throw export.error ?? ComposeError.exportFailed
         }
     }

@@ -7148,6 +7148,7 @@ struct ReelStudioView: View {
     @State private var idleHeld = false
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
+    @ObservedObject private var videoLibrary = ProductionVideoLibrary.shared
     @Environment(\.dismiss) private var dismiss
     let listing: Listing
     let photos: [EnhancedPhoto]
@@ -7189,6 +7190,16 @@ struct ReelStudioView: View {
     typealias ReelCaptions = ReelTitleCard
 
     @State private var phase: Phase = .setup
+    @State private var useLocalVideos = true
+    @State private var selectedVideoIDs: [String] = []
+    @State private var keepOriginalAudio = true
+    @State private var loadedVideoOwner: String?
+    @State private var showVideoPicker = false
+    @State private var importingVideos = false
+    @State private var localVideoError: String?
+    @State private var previewTake: LocalTake?
+    @State private var consentTask: Task<Void, Never>?
+    @State private var requestingConsent = false
     @State private var selected: [String] = []      // photo ids in tap order = clip order
     @State private var selectedExtras: [URL] = []   // extra clips still switched on
     @State private var seededExtras = false
@@ -7266,6 +7277,43 @@ struct ReelStudioView: View {
     @State private var nativeSetupError: String?
 
     private var space: SpaceType { listing.isSample ? SpaceType.current : listing.spaceType }
+    private struct LocalTake: Identifiable {
+        let id: String
+        let name: String
+        let url: URL
+        let duration: Double
+    }
+    private struct LocalSelection: Codable, Equatable {
+        let ids: [String]
+        let originalAudio: Bool
+        let portrait: Bool
+        let titleCard: Bool
+        let transition: String
+    }
+    private var videoOwner: String { auth.userID ?? "device-only" }
+    private var videoContext: ProductionVideoLibrary.Context { .init(owner: videoOwner, listingID: listing.id) }
+    private var localSelectionKey: String { "reel.local.\(DirectUploader.sha256Hex(videoOwner)).\(listing.id.uuidString)" }
+    private var localSelection: LocalSelection {
+        .init(ids: selectedVideoIDs, originalAudio: keepOriginalAudio, portrait: portrait,
+              titleCard: captionsOn, transition: reelTransition.rawValue)
+    }
+    private var localTakes: [LocalTake] {
+        var result: [LocalTake] = []
+        if let asset = model.assets[listing.id], FileManager.default.fileExists(atPath: asset.localURL.path) {
+            result.append(.init(id: "walkthrough-\(asset.id.uuidString)", name: "Your walkthrough",
+                                url: asset.localURL, duration: asset.durationS))
+        }
+        result += videoLibrary.entries(videoContext).map {
+            .init(id: "production-\($0.id.uuidString)", name: $0.name,
+                  url: videoLibrary.file($0, context: videoContext), duration: $0.duration)
+        }
+        return result
+    }
+    private var selectedTakes: [LocalTake] { selectedVideoIDs.compactMap { id in localTakes.first { $0.id == id } } }
+    private var canExportLocal: Bool {
+        !selectedVideoIDs.isEmpty && selectedVideoIDs.count <= 9 && selectedTakes.count == selectedVideoIDs.count
+            && !importingVideos && loadedVideoOwner == videoOwner
+    }
     /// The screen photos are added on — same words as its title bar.
     private var photosScreenName: String { "AI Photo Studio" }
     private var totalSelected: Int { selectedExtras.count + selected.count }
@@ -7313,7 +7361,7 @@ struct ReelStudioView: View {
                 }
                 .padding()
             }
-            .disabled(connection.isWaiting || nativeSetupBusy)
+            .disabled(connection.isWaiting || nativeSetupBusy || requestingConsent)
             .background(Theme.bg)
             .navigationTitle("Reel Studio")
             .navigationBarTitleDisplayMode(.inline)
@@ -7368,11 +7416,15 @@ struct ReelStudioView: View {
             if mode != .myVoice, recorder.isRecording { recorder.cancel() }
             if mode == .aiVoice {
                 if aiScript.isEmpty, let t = voiceover?.transcript, !t.isEmpty { aiScript = t }
-                loadVoices()
+                if !useLocalVideos { loadVoices() }
             }
+        }
+        .onChange(of: useLocalVideos) { local in
+            if !local, voiceMode == .aiVoice { loadVoices() }
         }
         .onDisappear {
             connection.cancel()
+            consentTask?.cancel()
             workTask?.cancel()
             player?.pause()
             voPlayer?.pause()
@@ -7387,7 +7439,9 @@ struct ReelStudioView: View {
             }
             Button("Keep waiting", role: .cancel) {}
         } message: {
-            Text("Every clip you've already paid for is kept on this phone. Reopen Reel Studio and finish the reel from them — you won't be charged for the same clips twice.")
+            Text(useLocalVideos
+                 ? "Your original videos and selections stay on this iPhone. Reopen Reel Studio to export again."
+                 : "Every clip you've already paid for is kept on this phone. Reopen Reel Studio and finish the reel from them — you won't be charged for the same clips twice.")
         }
         .confirmationDialog("Discard these clips?", isPresented: $showDiscardParkedConfirm,
                             titleVisibility: .visible) {
@@ -7407,13 +7461,22 @@ struct ReelStudioView: View {
         } message: {
             Text("There are already words in the script box. Writing a new one replaces every one of them — including anything carried over from a recording you made.")
         }
-        // Guideline 5.1.2(i) — each selected photo is animated by a
-        // third-party video model. Agreed once per device; declining closes
-        // the studio.
-        .aiConsentGate()
-        .task {
-            if await AIConsent.shared.ensureGranted() == false { dismiss() }
+        .task(id: videoOwner) { loadLocalSelection() }
+        .onChange(of: localSelection) { value in
+            guard loadedVideoOwner == videoOwner, useLocalVideos,
+                  let data = try? JSONEncoder().encode(value) else { return }
+            UserDefaults.standard.set(data, forKey: localSelectionKey)
         }
+        .sheet(isPresented: $showVideoPicker) { localVideoPicker }
+        .sheet(item: $previewTake) { take in
+            NavigationStack {
+                VideoPlayer(player: AVPlayer(url: take.url))
+                    .navigationTitle(take.name).navigationBarTitleDisplayMode(.inline)
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { previewTake = nil } } }
+            }
+        }
+        // Ask only when an AI action sends data. Editing existing footage is local.
+        .aiConsentGate()
     }
 
     // MARK: Sections
@@ -7423,6 +7486,15 @@ struct ReelStudioView: View {
     // this file has hit the type-checker's expression budget before, so
     // `setupSection` stays a short list of identifiers and nothing else.
     @ViewBuilder private var setupSection: some View {
+        Picker("Start with", selection: $useLocalVideos) {
+            Text("My videos").tag(true)
+            Text("Animate photos").tag(false)
+        }.pickerStyle(.segmented).accessibilityIdentifier("reel.sourceMode")
+        if useLocalVideos {
+            localVideosCard
+            lastReelCard
+            localFinishCard
+        } else {
         if space == .realEstate && !listing.isSample {
             NavigationLink { ProductionPlanView(listing: listing) } label: {
                 Label("Plan your shots and collect video takes", systemImage: "checklist")
@@ -7450,6 +7522,171 @@ struct ReelStudioView: View {
         stepPhotosCard
         stepVoiceCard
         stepMakeCard
+        }
+    }
+
+    private var localVideosCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("1 · Choose your videos", systemImage: "video").font(.rpHeadline)
+            Text("Use clips you filmed, drone footage or your walkthrough. Tap them in the order you want; each original stays safe.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button { showVideoPicker = true } label: {
+                Label(importingVideos ? "Importing videos…" : "Add videos from Photos", systemImage: "plus.circle")
+            }.buttonStyle(.bordered).disabled(importingVideos || listing.isSample)
+                .accessibilityIdentifier("reel.importVideos")
+            if importingVideos { ProgressView("Copying originals one at a time…") }
+            ForEach(localTakes) { take in localTakeRow(take) }
+            if localTakes.isEmpty {
+                Text("Add one or more videos to start. No AI generation or upload is needed.")
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }
+            if selectedTakes.count != selectedVideoIDs.count {
+                Text("A selected clip is missing. Choose your clips again before exporting.")
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                Button("Clear missing selections") { selectedVideoIDs = selectedTakes.map(\.id) }
+            }
+            if !selectedTakes.isEmpty {
+                Text("YOUR ORDER · \(selectedTakes.count)/9").font(.rpKicker).foregroundStyle(Theme.accent)
+                VStack(spacing: 8) {
+                    ForEach(Array(selectedTakes.enumerated()), id: \.element.id) { index, take in
+                        HStack {
+                            Text("\(index + 1). \(take.name)").font(.rpCaption).lineLimit(2)
+                            Spacer()
+                            Button { moveTake(take.id, by: -1) } label: { Image(systemName: "arrow.up") }
+                                .disabled(index == 0).accessibilityLabel("Move \(take.name) earlier")
+                            Button { moveTake(take.id, by: 1) } label: { Image(systemName: "arrow.down") }
+                                .disabled(index == selectedTakes.count - 1).accessibilityLabel("Move \(take.name) later")
+                        }
+                    }
+                }.accessibilityIdentifier("reel.localSelection")
+            }
+            if let localVideoError { Text(localVideoError).font(.rpCaption).foregroundStyle(Theme.warn) }
+        }.frame(maxWidth: .infinity, alignment: .leading).card()
+    }
+
+    private func localTakeRow(_ take: LocalTake) -> some View {
+        HStack(spacing: 10) {
+            Button { previewTake = take } label: { Image(systemName: "play.circle.fill").font(.title2) }
+                .accessibilityLabel("Review \(take.name)")
+            Button {
+                if let index = selectedVideoIDs.firstIndex(of: take.id) { selectedVideoIDs.remove(at: index) }
+                else if selectedVideoIDs.count < 9 { selectedVideoIDs.append(take.id) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(take.name).font(.rpBody.weight(.semibold)).lineLimit(2)
+                        Text("\(Int(take.duration.rounded())) seconds · original footage")
+                            .font(.caption2).foregroundStyle(Theme.inkDim)
+                    }
+                    Spacer()
+                    Image(systemName: selectedVideoIDs.contains(take.id) ? "checkmark.circle.fill" : "circle")
+                }.foregroundStyle(Theme.ink)
+            }.accessibilityIdentifier("reel.localClip.\(take.id)")
+        }.padding(10).background(Theme.fillSubtle, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var localFinishCard: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("2 · Make your video", systemImage: "film.stack").font(.rpHeadline)
+            formatRow
+            titleCardToggle
+            transitionRow
+            Toggle("Keep the sound from my videos", isOn: $keepOriginalAudio)
+                .tint(Theme.accent).accessibilityIdentifier("reel.keepOriginalAudio")
+            Text("Uses each full clip. Tall video crops the sides of wide footage. Review your finished video before posting.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            Button { exportLocalVideos() } label: {
+                Label("Make my video", systemImage: "film.stack")
+                    .font(.rpBody.weight(.semibold)).frame(maxWidth: .infinity).padding(.vertical, 12)
+            }.buttonStyle(.borderedProminent).tint(Theme.accent).disabled(!canExportLocal)
+                .accessibilityIdentifier("reel.localExport")
+            Text("Made on this iPhone. No AI credits, sign-in or upload required. Your selections are saved here automatically.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            if space == .realEstate {
+                NavigationLink { ProductionPlanView(listing: listing) } label: {
+                    Label("Plan shots and upload originals to Studio", systemImage: "icloud.and.arrow.up")
+                }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).card()
+    }
+
+    private var localVideoPicker: some View {
+        let expectedOwner = videoOwner
+        let context = videoContext
+        return ProductionVideoPicker(onStart: { importingVideos = true }, onFile: { url, name in
+            guard videoOwner == expectedOwner, model.listings.contains(where: { $0.id == listing.id }) else { return }
+            do { try await videoLibrary.importFile(url, name: name, context: context) }
+            catch { localVideoError = error.localizedDescription }
+        }, onFinish: { importingVideos = false }, onError: { localVideoError = $0 })
+    }
+
+    private func loadLocalSelection() {
+        guard loadedVideoOwner != videoOwner else { return }
+        if loadedVideoOwner != nil {
+            workTask?.cancel(); player?.pause(); phase = .setup; reelURL = nil
+        }
+        selectedVideoIDs = []; keepOriginalAudio = true
+        do { try videoLibrary.load(videoContext) }
+        catch { localVideoError = "Your clip library couldn't be opened. Your original videos are still on this iPhone." }
+        if let data = UserDefaults.standard.data(forKey: localSelectionKey), data.count <= 16_384,
+           let saved = try? JSONDecoder().decode(LocalSelection.self, from: data),
+           saved.ids.count <= 9, Set(saved.ids).count == saved.ids.count,
+           saved.ids.allSatisfy({ $0.count <= 100 }),
+           let transition = ReelComposer.Transition(rawValue: saved.transition) {
+            selectedVideoIDs = saved.ids; keepOriginalAudio = saved.originalAudio
+            portrait = saved.portrait; captionsOn = saved.titleCard; reelTransition = transition
+        }
+        useLocalVideos = !localTakes.isEmpty || photos.isEmpty
+        loadedVideoOwner = videoOwner
+    }
+
+    private func moveTake(_ id: String, by distance: Int) {
+        guard let index = selectedVideoIDs.firstIndex(of: id), selectedVideoIDs.indices.contains(index + distance) else { return }
+        selectedVideoIDs.swapAt(index, index + distance)
+    }
+
+    private func exportLocalVideos() {
+        guard phase == .setup, canExportLocal else { return }
+        let takes = selectedTakes
+        guard takes.allSatisfy({ FileManager.default.fileExists(atPath: $0.url.path) }) else {
+            localVideoError = "A selected video is missing. Review your clips and select it again."; return
+        }
+        let shots = takes.map { ReelComposer.Shot(url: $0.url, keepOriginalAudio: keepOriginalAudio) }
+        let renderSize = portrait ? CGSize(width: 1080, height: 1920) : CGSize(width: 1920, height: 1080)
+        let options = ReelComposer.Options(titleCard: captionsOn ? Self.reelCaptions(for: listing) : nil,
+                                           transition: reelTransition, requireAllShots: true)
+        let owner = videoOwner
+        let listingID = listing.id
+        let output = FileStore.documents.appendingPathComponent("reels", isDirectory: true)
+            .appendingPathComponent("\(listingID.uuidString)-\(UUID().uuidString).mp4")
+        localVideoError = nil; failure = nil; failedClips = 0; savedToPhotos = false; saveError = nil
+        phase = .stitching
+        workTask = Task {
+            do {
+                try FileManager.default.createDirectory(at: output.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try await ReelComposer.compose(shots: shots, renderSize: renderSize, options: options, output: output)
+                try Task.checkCancellation()
+                guard owner == videoOwner else { return }
+                reelURL = output; player = AVPlayer(url: output); lastReel = output; phase = .done
+                Haptics.success()
+            } catch {
+                try? FileManager.default.removeItem(at: output)
+                guard !Task.isCancelled, owner == videoOwner else { return }
+                phase = .setup
+                localVideoError = error.localizedDescription
+            }
+        }
+    }
+
+    private func runWithAIConsent(_ action: @escaping @MainActor () -> Void) {
+        guard !requestingConsent else { return }
+        requestingConsent = true
+        consentTask = Task {
+            let granted = await AIConsent.shared.ensureGranted()
+            requestingConsent = false
+            guard granted, !Task.isCancelled else { return }
+            connection.run(action)
+        }
     }
 
     @ViewBuilder private var nativeSetupCard: some View {
@@ -7831,7 +8068,8 @@ struct ReelStudioView: View {
                                 in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .buttonStyle(ScalePressStyle())
-                Text("Making a new reel generates fresh AI clips. Your last few reels stay on this phone.")
+                Text(useLocalVideos ? "Your finished videos are also in this property's Files section."
+                     : "Making a new reel generates fresh AI clips. Your last few reels stay on this phone.")
                     .font(.rpCaption).foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -7960,6 +8198,7 @@ struct ReelStudioView: View {
                     .frame(height: portrait ? 460 : 230)
                     .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                     .onAppear { player.play() }
+                    .accessibilityIdentifier("reel.finishedVideo")
             }
             if let reelURL {
                 Button { saveToPhotos(reelURL) } label: {
@@ -7971,6 +8210,7 @@ struct ReelStudioView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
                 .disabled(savedToPhotos || isSaving)
+                .accessibilityIdentifier("reel.saveToPhotos")
 
                 ShareLink(item: reelURL) {
                     Label("Share reel", systemImage: "square.and.arrow.up")
@@ -7979,6 +8219,7 @@ struct ReelStudioView: View {
                         .background(Theme.accentSoft).foregroundStyle(Theme.accent)
                         .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
                 }
+                .accessibilityIdentifier("reel.share")
             }
             if let saveError {
                 Text(saveError)
@@ -8597,7 +8838,7 @@ struct ReelStudioView: View {
     /// point is that the agent fixes the two words the model got wrong.
     private func runScriptWriter() {
         guard !scriptInFlight else { return }
-        connection.run { runScriptWriterWithSession() }
+        runWithAIConsent { runScriptWriterWithSession() }
     }
 
     private func runScriptWriterWithSession() {
@@ -8790,7 +9031,7 @@ struct ReelStudioView: View {
     /// would fail identically, so the server's message is shown to re-word.
     private func generateAIVoice() {
         guard !ttsInFlight else { return }
-        connection.run { generateAIVoiceWithSession() }
+        runWithAIConsent { generateAIVoiceWithSession() }
     }
 
     private func generateAIVoiceWithSession() {
@@ -9102,7 +9343,7 @@ struct ReelStudioView: View {
 
     private func generate() {
         guard phase == .setup, canGenerate else { return }
-        connection.run { generateWithSession() }
+        runWithAIConsent { generateWithSession() }
     }
 
     private func generateWithSession() {
