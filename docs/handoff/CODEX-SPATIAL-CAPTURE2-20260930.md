@@ -174,14 +174,60 @@ first compares all 46 original baseline views against official metrics and saved
 render images, retaining the three worst comparison canvases. This is prepared
 instrumentation, **not an executed r02 experiment or quality pass**.
 
-One additional free, separately preregistered candidate expands only the matching
+One additional free, separately preregistered candidate expanded only the matching
 pair graph: 67 late training images (IDs >=285) are compared with every training
 image, adding 17,907 previously absent pairs to the existing 4,118. It retains
 fixed calibration, features, matching settings, unknown-pose mapper settings,
 seed, complete 315/46 cohort and admission requirements. CPU-only preparation
 started after independent review, with 900-second matching, 900-second mapping,
-300-second downstream and 2,100-second total bounds. This candidate is pending;
-it does not amend or erase the earlier failure.
+300-second downstream and 2,100-second total bounds. It does not amend or erase
+the earlier failure.
+
+Expanded matching completed in **702.989127458 seconds**, adding 4,410 nonempty
+verified pairs and 621,829 verified correspondences. Mapping took
+**430.364367750 seconds** and registered **all 315 training images in one
+component**, including the three images absent from every earlier component.
+The model contains 195,815 points and 1,226,325 observations, with mean point
+reprojection error **0.967226252 px**. All 46 held-out localization checks passed;
+the minimum final inlier count was 23. Total preparation was about 19 minutes
+16 seconds, with approximately 1.54 GiB peak RSS. It used no GPU or cloud compute.
+
+**This candidate is nevertheless NO-GO for paid training.** Training images
+`000021.jpg` and `000022.jpg` disagree with the ARKit trajectory by **3.535 m /
+3.528 m** and **179.31 / 179.33 degrees**. They retain 606 / 550 sparse point
+observations and independently recomputed **0.977 / 1.066 px** mean image-specific
+reprojection errors. Low
+residuals and complete registration therefore did not detect a material camera
+placement problem. The previous all-image diagnostic placed those same cameras
+within 1.74 / 1.78 cm and 0.68 / 0.75 degrees of ARKit. That comparison is
+diagnostic evidence, not a permitted replacement initialization or held-out
+quality result.
+
+Independent review also found a collapsed region: training-camera centers
+122–128 have maximum pairwise separation **3.9314e-7 m** after metric alignment.
+Held-out image 129 passes the original PnP gate with 715 inliers, but **all 715
+landmarks are less than 1 mm in front of the localized camera**; median depth is
+**6.0612e-6 m**. Those are not plausible room surfaces. Finite positive depth
+alone is therefore also insufficient as a geometric admission test. No threshold
+was silently changed to rewrite this attempt's result.
+
+The independent final audit passed the provenance/export controls, replayed all
+46 final localization masks, and verified training-only geometry and unchanged
+original images, calibration and primary held-out poses. Every recorded database
+row payload matches the pre-mapping inventory. The whole SQLite file hash changed;
+the precise physical-byte cause was not established, and no claim is made that
+the file remained byte-identical. The final audit independently rejects geometric
+use despite those successful data-contract checks.
+
+The original generated structural admission/result is preserved, but it must
+not be mistaken for approval. A separate `use-decision.json` explicitly rejects
+paid training and production use. The prepared r02 controller still has no admitted
+candidate hashes and cannot launch. No cameras were dropped, substituted,
+re-registered or repaired; no paid r02 was run and no r02 PSNR/SSIM/LPIPS exists.
+Future admission needs checks for implausible camera discontinuities as well as
+correspondence counts and reprojection error. Any revised method would be a new
+preregistered attempt. ARKit remains useful as a continuity/plausibility signal;
+its current unrefined poses are still insufficient for this rendering recipe.
 
 A separate offline replay of the exact cached trainer loader checked all 361
 images: each frame retains its own calibration, all rasters remain 1920 × 1440,
@@ -206,7 +252,9 @@ There are no accepted `spatial_runtime` values to deploy. Preserve the existing
 quality gate and do not activate global generation just to expose a finished
 screen. The current ARKit-based recipe is not viable at shipping quality on this
 capture. Whether a coherent SfM pipeline supplies sufficient improvement remains
-unresolved until the controlled reconstruction and visual comparison finish.
+unresolved: the expanded training-only candidate failed camera-plausibility
+review before any new rendering run. A structurally complete model is not proof
+of a correct reconstruction.
 
 ## Capture UX and Blender
 
@@ -266,6 +314,9 @@ receipts and local diagnostic scripts remain outside Git under
   `completion-audit.json`
 - `independent/sfm-comparison-review.json`
 - `sfm-training-candidate/plan.json` and `independent/sfm-candidate-review/`
+- `sfm-training-expanded-candidate/plan.json`, `results.json`,
+  `pose-diagnostics-readonly.json`, `use-decision.json`,
+  `bounded-completion.json` and `independent/sfm-expanded-review/`
 - `r01/root-visual-review.json`, `r01/conversion-local-metal.json`
 - `r01/billing-completion-inputs.json` and final `billing-readback.json`
 
@@ -274,3 +325,6 @@ Provider receipt SHA-256: `72e711af9f04fc67652e5aca95e5a58fd0d572eb73e3558459bba
 PLY SHA-256: `8c8e276b18f620728058dfd48e24b1dac7b32cfb05bafc900a19ce5247c0867c`.
 SOG SHA-256: `3720a303b4f2f212b26c37645adf6a2b109c1ead2f706bf709e3b4d059850a9f`.
 Final billing SHA-256: `bc73f8d7175c0dbaff903ab4495fead025bd9bce86bbd71a7103112b1988dd81`.
+Expanded-candidate completion SHA-256: `954e5b744d24ad635ec5bfdc264bdeac4991b65d7ed86ba79fde64894999b126`.
+Expanded-candidate use decision SHA-256: `5bb536fe965f30bef5b79ce28ca9116b614745c53015b9b467485b076ad46069`.
+Independent expanded-candidate final review SHA-256: `723c80dba49a3a582a01547c06e18f32c56c187354a10d0c7186462c6e6e0fc3`.
