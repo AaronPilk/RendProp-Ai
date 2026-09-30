@@ -29,6 +29,14 @@ steps. This proves compilation of the recorded source, not delivery to a phone.
 Current public App Store status has not been rechecked for this documentation
 refresh. App Store Connect and phone acceptance remain owner-operated.
 
+On **30 September**, the current spatial overlay built successfully as a
+development-signed **1.0.3 (32)** for direct local installation. Signature and
+identity checks passed. It includes the motion-blur guard that the earlier
+delivered phone source lacked. Installation is pending owner confirmation and
+an unlocked phone; this is not a TestFlight delivery. The
+[signed build record](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
+binds source, artifact and test evidence. Production reconstruction remains off.
+
 ## Build locally
 
 Use a Mac with Xcode, its installed iOS SDK, and XcodeGen.
