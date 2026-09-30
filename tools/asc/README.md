@@ -22,12 +22,13 @@ The native source currently declares 1.0.3 (31). Reconcile version selection and
 the exact intended build before using any write command for a newer release.
 Do not run the broad apply bridge as routine maintenance of an already shipped app.
 
-The latest committed [phone delivery receipt](../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md)
-records internal TestFlight 1.0.3 (31) on 22 September. The
-[24 September Studio release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-did not touch iOS or App Store Connect. This README refresh performed no store
-reads, uploads, metadata changes or submissions. Historical API observations
-below describe the launch run and do not establish current store state.
+The latest [phone delivery receipt](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
+records internal TestFlight **1.0.3 (32)** available on 30 September. The owner
+explicitly authorized this upload; the spatial scheme used a build-32 override
+and the internal-only export options. Apple availability and this build's test
+notes were read back. No App Store version attachment or review submission
+occurred. Historical API observations below describe the launch run and do not
+establish current store state or authorize the broad apply bridge.
 
 Offline inspection that does not load credentials or call Apple:
 

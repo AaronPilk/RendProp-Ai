@@ -47,6 +47,9 @@ final class AuthStore: ObservableObject {
     @Published private(set) var sessionConnectionState: SessionConnection.State = .idle
     /// Every asynchronous session commit must still belong to this generation.
     @MainActor private var sessionEpoch: UInt64 = 0
+    /// Cloud work belongs to an account session, not to one short-lived JWT.
+    /// Ordinary token rotation must not discard an accepted upload/plan receipt.
+    @MainActor private var syncIdentityEpoch: UInt64 = 0
     @MainActor private lazy var connection = SessionConnection(
         attempt: { [weak self] in await self?.establishSession() ?? false },
         stateChanged: { [weak self] in self?.sessionConnectionState = $0 }
@@ -325,11 +328,15 @@ final class AuthStore: ObservableObject {
 
     /// Read-only fence for a multi-request cloud sync. Includes sign-out and
     /// same-account reauthentication, so A → B → A cannot apply A's old response.
-    @MainActor var syncSessionRevision: UInt64 { sessionEpoch }
+    @MainActor var syncSessionRevision: UInt64 { syncIdentityEpoch }
 
     @MainActor
-    private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?) {
+    private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?, preservingSyncIdentity: Bool = false) {
         sessionEpoch &+= 1
+        let sameIdentityRefresh = preservingSyncIdentity && isSignedIn &&
+            userID != nil && Self.jwtSubject(accessToken) == userID &&
+            Self.tokenIsIdentified(accessToken) == isIdentified
+        if !sameIdentityRefresh { syncIdentityEpoch &+= 1 }
         // Account-switch detection BEFORE persisting: the JWT `sub` identifies
         // the Supabase user. A different `sub` than the last one on this device
         // means the cached serverID/shareSlug/shareURL on listings belong to a
@@ -372,6 +379,7 @@ final class AuthStore: ObservableObject {
         // after sign-out would call applySession and re-persist tokens, silently
         // signing the user back in (audit 2026-08-26).
         sessionEpoch &+= 1
+        syncIdentityEpoch &+= 1
         anonymousBootstrap?.cancel()
         anonymousBootstrap = nil
         connection.cancelAll()
@@ -510,7 +518,8 @@ final class AuthStore: ObservableObject {
                let session = try? JSONDecoder().decode(SupabaseSession.self, from: data) {
                 applySession(accessToken: session.accessToken,
                                    refreshToken: session.refreshToken ?? refreshToken,
-                                   expiresAt: session.expiryDate)
+                                   expiresAt: session.expiryDate,
+                                   preservingSyncIdentity: true)
                 return true
             }
             if [400, 401, 403].contains(http.statusCode) {
@@ -646,6 +655,7 @@ final class AuthStore: ObservableObject {
     func exchangeAppleIdentityToken(idToken: String, nonce: String? = nil) async throws {
         // A late anonymous/refresh response cannot replace the chosen identity.
         sessionEpoch &+= 1
+        syncIdentityEpoch &+= 1
         let epoch = sessionEpoch
         anonymousBootstrap?.cancel()
         anonymousBootstrap = nil

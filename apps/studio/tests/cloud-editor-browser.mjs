@@ -180,7 +180,16 @@ try {
   const rms=Math.sqrt(power/(pcm.length/2)); assert(rms>0.02); assert(crossings>600&&crossings<720,`Narration frequency ${crossings}`);
   const pixel=(time,x=100)=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",exported,"-frames:v","1","-vf",`format=rgb24,crop=1:1:${x}:400`,"-f","rawvideo","pipe:1"])];
   const dissolve=pixel(.64);assert(dissolve[0]>20&&dissolve[0]<100&&dissolve[2]>170&&dissolve[2]<245,`Dissolve mixed outgoing purple and incoming blue: ${dissolve}`);
-  const whipLeft=pixel(2.6,100),whipRight=pixel(2.6,650);assert(whipLeft[2]>200&&whipLeft[0]<30&&whipRight[0]>200&&whipRight[2]<30,"Whip frame must contain outgoing blue and incoming red at different horizontal positions");
+  const isWhip=({left,right})=>left[2]>200&&left[0]<30&&right[0]>200&&right[2]<30;
+  const whipPixels=time=>({time,left:pixel(time,100),right:pixel(time,650)});
+  // Match the export-resume gate: MediaRecorder can shift the 180 ms whip by
+  // a few encoded frames. Require the spatial split inside a bounded window,
+  // plus the intact preceding/following shots; a hard cut cannot pass.
+  const transitionPixels={dissolve,beforeWhip:whipPixels(2.4),whip:[2.54,2.58,2.62,2.66,2.70,2.74].map(whipPixels),afterWhip:whipPixels(2.9)};
+  receipt.exportProbes.at(-1).transitionPixels=transitionPixels;
+  assert(transitionPixels.whip.some(isWhip),`Whip frames must contain outgoing blue and incoming red at different horizontal positions within the bounded timeline window: ${JSON.stringify(transitionPixels.whip)}`);
+  assert(transitionPixels.beforeWhip.left[2]>200&&transitionPixels.beforeWhip.right[2]>200&&!isWhip(transitionPixels.beforeWhip),"The preceding shot must still be blue before the whip");
+  assert(transitionPixels.afterWhip.left[0]>200&&transitionPixels.afterWhip.right[0]>200&&!isWhip(transitionPixels.afterWhip),"The closing shot must be fully red after the whip");
   receipt.checks.push("Decoded exported frames prove actual dissolve blending and horizontal whip movement");
   receipt.checks.push(`Actual exported MP4 is H264/AAC, 2x speed gives ${Number(probe.format.duration).toFixed(2)}s edit, and decoded narration has 660Hz tone (RMS ${rms.toFixed(3)})`);
   await second.evaluate(() => window.cloudFixture.loseComplete());

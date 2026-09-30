@@ -2,15 +2,16 @@
 
 This directory contains the listing copy, review notes and screenshot recipes.
 Its launch material began on 5 September 2026; README guidance was reconciled
-with repository source on 24 September. These files are inputs to an owner-run
+with delivery evidence on 30 September. These files are inputs to an owner-run
 release, not proof of what App Store Connect currently displays.
 
-The latest committed phone delivery receipt records
-[internal TestFlight 1.0.3 (31) on 22 September](../handoff/CLAUDE-LIVE-DELIVERY-20260922.md).
-The [24 September production release](../handoff/CODEX-STUDIO-LIVE-20260924.md)
-updated Studio/backend only. App Store Connect was not accessed during this
-README refresh, and new phone capture-plan/multi-video features must not be
-advertised as delivered solely because their backend is live.
+The latest phone delivery receipt records
+[internal TestFlight 1.0.3 (32), available on 30 September](../handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md).
+The owner authorized that upload and its build-specific testing notes. Apple
+confirmed availability to the existing internal group. This did not attach a
+build to an App Store version or submit an App Review. Physical-phone capture
+and reconstruction quality remain unverified; TestFlight availability is not
+evidence that every feature is ready for public release.
 
 | Path | Purpose |
 | --- | --- |

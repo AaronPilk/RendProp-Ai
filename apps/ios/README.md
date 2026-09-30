@@ -8,26 +8,29 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
-[project.yml](project.yml) currently declares **1.0.3 (31)**. The last committed
-phone delivery receipt is [22 September 2026](../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md):
-internal TestFlight 1.0.3 (31), archived from `337991a`, available to the existing
-Rendprop team. These source version numbers alone do not prove that later code
-has reached a phone.
+[Internal TestFlight 1.0.3 (32)](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
+is available to the existing Rendprop team, verified **30 September 2026 at
+18:32 UTC**. Apple reports `VALID`, `INTERNAL_ONLY` and `IN_BETA_TESTING`.
+The archive is from `79ee683` and includes the motion-blur guard, capture planning,
+multi-video library and native sync/recovery fixes. Physical-phone acceptance is
+still pending. [project.yml](project.yml) declares **1.0.3 (31)**; this archive
+explicitly used build 32. The previous delivered build was
+[31 on 22 September](../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md).
 
 The [24 September Studio release](../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-deployed the website, database and edge functions, with **no iOS release or App
-Store Connect action**. New phone capture planning and multi-video library code
-is in this repository; it still needs a matching phone build and the
+deployed the website, database and edge functions without an iOS release. The
+[native build handoff](../../docs/handoff/CODEX-NATIVE-BUILD-20260924.md) records
+that day's unsigned compilation checks. Capture-plan and multi-video library
+code is now included in build 32 and still needs the
 [real-device agency checklist](../../docs/studio/agency-production-workflow.md#acceptance-on-a-real-phone).
-On 24 September, the combined source passed two **unsigned Release builds for
-`generic/platform=iOS`**: normal `Rendprop` and the explicit
-`RendpropSpatialTestFlight` overlay. Both used `CODE_SIGNING_ALLOWED=NO`; no
-simulator, camera, archive, upload or App Store Connect operation was involved.
-The [native build handoff](../../docs/handoff/CODEX-NATIVE-BUILD-20260924.md)
-records source registration, exact receipt/log hashes and the remaining owner
-steps. This proves compilation of the recorded source, not delivery to a phone.
-Current public App Store status has not been rechecked for this documentation
-refresh. App Store Connect and phone acceptance remain owner-operated.
+
+On 30 September the owner explicitly authorized the TestFlight upload. One
+upload succeeded and build availability was read back from Apple; no App Store
+version attachment or review submission occurred. The earlier local development
+candidate was not installed directly. The
+[delivery receipt](../../docs/releases/TESTFLIGHT-32-20260930.json) binds source,
+artifact and test evidence. Production reconstruction remains off; use
+**Settings → TestFlight lab → Spatial capture (TestFlight)** for the new room test.
 
 ## Build locally
 
