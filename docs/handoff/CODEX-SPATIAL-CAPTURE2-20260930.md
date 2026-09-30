@@ -52,6 +52,7 @@ every eighth image. Training timeout is 4,200 seconds.
 | PLY size | 118,001,477 bytes |
 | Local SOG size | 8,707,587 bytes |
 | Quality decision | **NO-GO** |
+| Actual gross provider charge | **$2.13716009** |
 
 All 52 downloaded artifacts match their recorded hashes. All 46 left-side
 reference panels match the frozen JPEG decodes exactly. Trainer/dependency
@@ -97,9 +98,11 @@ successfully and the sandbox was terminated at **20:04:34.926123 UTC**, with exi
 code 137. An independent provider read confirmed termination and zero active
 sandboxes/tasks.
 
-Final r01 billing is pending the provider's closed-hour readback at or after
-**21:02 UTC**. Until the final readback exists, the full reservation stays in the
-ledger. No further paid experiment is authorized by this report. The current
+Final r01 billing reconciled after **21:02 UTC**, using two identical closed-hour
+readbacks and fresh terminal/zero-active-resource evidence. The actual gross
+charge is **$2.13716009**: CPU $0.56837641, L4 $0.80039984 and memory $0.76838384.
+Cumulative actual spend is **$22.11834445**, with **$2.88165555 remaining** and
+zero pending holds. No further paid experiment is authorized by this report. The current
 sandbox compute ceiling is approximately $2.4555/hour; the older $1.24/hour
 estimate used a different compute product's rates and is not the safe bound for
 this allocation.
@@ -171,6 +174,15 @@ first compares all 46 original baseline views against official metrics and saved
 render images, retaining the three worst comparison canvases. This is prepared
 instrumentation, **not an executed r02 experiment or quality pass**.
 
+One additional free, separately preregistered candidate expands only the matching
+pair graph: 67 late training images (IDs >=285) are compared with every training
+image, adding 17,907 previously absent pairs to the existing 4,118. It retains
+fixed calibration, features, matching settings, unknown-pose mapper settings,
+seed, complete 315/46 cohort and admission requirements. CPU-only preparation
+started after independent review, with 900-second matching, 900-second mapping,
+300-second downstream and 2,100-second total bounds. This candidate is pending;
+it does not amend or erase the earlier failure.
+
 A separate offline replay of the exact cached trainer loader checked all 361
 images: each frame retains its own calibration, all rasters remain 1920 × 1440,
 and the split, seeds and colors match. Independent synthetic projection checks
@@ -226,6 +238,17 @@ Their camera and human-behavior effects require the owner's physical phone.
 path. It can be an optional later authoring/export tool. Adding it cannot repair
 the current reconstruction by itself.
 
+Following the owner's research request, Matterport's current official smartphone
+guide confirms stationary camera-centered sweeps at multiple scan positions.
+Its documented Inside View uses aligned photographic panoramas, distinct from
+the geometry used for Dollhouse/Floorplan views. The earlier advice about
+translation applies to our current multiview reconstruction, not a claim that
+stationary panoramic sweeps are an invalid overall capture strategy. See
+`MATTERPORT-CAPTURE-RESEARCH-20260930.md` for the sourced recommendation to use
+guided scan positions, panoramic viewing and aligned geometry. That architecture
+is not implemented or accepted by this experiment. No additional paid allocation
+was made while evaluating this product direction.
+
 ## Evidence retained privately
 
 Raw photographs, metadata, geometry, source/render comparisons, provider
@@ -244,9 +267,10 @@ receipts and local diagnostic scripts remain outside Git under
 - `independent/sfm-comparison-review.json`
 - `sfm-training-candidate/plan.json` and `independent/sfm-candidate-review/`
 - `r01/root-visual-review.json`, `r01/conversion-local-metal.json`
-- `r01/billing-completion-inputs.json` and pending `billing-readback.json`
+- `r01/billing-completion-inputs.json` and final `billing-readback.json`
 
 Plan SHA-256: `d9141d4d065afa42ffe6a927b5cf01990d63a3f6d3f51a3e69f6348e30b6152a`.
 Provider receipt SHA-256: `72e711af9f04fc67652e5aca95e5a58fd0d572eb73e3558459bba878599cfcab`.
 PLY SHA-256: `8c8e276b18f620728058dfd48e24b1dac7b32cfb05bafc900a19ce5247c0867c`.
 SOG SHA-256: `3720a303b4f2f212b26c37645adf6a2b109c1ead2f706bf709e3b4d059850a9f`.
+Final billing SHA-256: `bc73f8d7175c0dbaff903ab4495fead025bd9bce86bbd71a7103112b1988dd81`.
