@@ -62,6 +62,12 @@ renting a GPU. Keep the evaluation set fixed within each controlled experiment.
   joins rebuild without overwriting originals.
 - This release was built for a generic physical iOS device and signed locally.
   No camera, AR tracking, phone installation or real-room quality is claimed.
+- The PR's initial CI run passed the native gates but exposed a brittle Studio
+  export test: its whip appeared two frames later than one exact sample time.
+  The fixture now requires the actual spatial transition within the existing
+  bounded timing window and intact shots before/after. All 16 local browser
+  checks pass, and a no-whip renderer negative control fails as intended. This
+  changes test code only; the signed native artifact remains unchanged.
 
 The original standalone proof logs and receipts remain outside Git. The signed
 build receipt binds the source files and build log. The broader native adoption
