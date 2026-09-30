@@ -5,11 +5,11 @@ A passing screenshot walk can still contain skipped steps. Read its activity
 notes and inspect the actual attachments before accepting a screen. No
 simulator test validates a camera, LiDAR, AR tracking or real-house coverage.
 
-The [22 September phone receipt](../../../docs/handoff/CLAUDE-LIVE-DELIVERY-20260922.md)
-records internal TestFlight 1.0.3 (31). The
-[24 September Studio deployment](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
-did not ship another iOS binary. Tests in source are not evidence that the owner
-has received those changes.
+The [30 September phone receipt](../../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
+records internal TestFlight **1.0.3 (32)** available to the existing Rendprop team.
+Archive and Apple availability checks passed; no new physical-camera or UI-test
+acceptance is claimed. Tests in source alone do not establish that the owner has
+installed or tested a build.
 
 ## Choose the right case
 

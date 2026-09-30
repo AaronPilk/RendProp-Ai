@@ -1,0 +1,91 @@
+{
+  "kind": "Internal TestFlight delivery receipt",
+  "verifiedAt": "2026-09-30T18:32:11.106104+00:00",
+  "source": {
+    "commit": "79ee6834ae680424e831879cd5330ad861cd3f2e",
+    "branch": "release/ios-spatial-phone-20260930",
+    "nativeSourcesMatch": "3f29adf5f5976856ddbce17c178ecc013814f8fc",
+    "verifiedSourceFileCount": 115,
+    "scheme": "RendpropSpatialTestFlight",
+    "committedBuildSetting": "31",
+    "explicitArchiveBuildOverride": "32",
+    "ciPassedJobs": 12,
+    "ciSourceCommit": "79ee6834ae680424e831879cd5330ad861cd3f2e"
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "32",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "signatureVerified": true,
+    "captureLabFlagVerified": true,
+    "blurSourceCompiled": true,
+    "excludedUnwantedFiles": true,
+    "executableSHA256": "5e56bc4c79246109b9f5d92a99bb28c74d98cf591ab0651d0937506a7df6297f",
+    "archiveInfoSHA256": "6b33ad715c0438985741fd7ffe850474ab0078f3909bf3700079a18942770876",
+    "archiveLogSHA256": "72a7d087c32361cca24d93e943debf844f20f6c3cfbff1b65b2bd166a6f592a6"
+  },
+  "export": {
+    "method": "app-store-connect",
+    "destination": "upload",
+    "testFlightInternalTestingOnly": true,
+    "manageAppVersionAndBuildNumber": false,
+    "optionsSHA256": "172ea6fcb6b3e50cc48598c12ebfc5d9d57c2c4689a8003ca7b7b0745019b0fc",
+    "attempts": 1,
+    "startedAt": "2026-09-30T18:27:55.136074+00:00",
+    "finishedAt": "2026-09-30T18:29:03.507531+00:00",
+    "exitCode": 0
+  },
+  "apple": {
+    "id": "e51f5e2e-102f-4a5b-9a12-c8db59b0b350",
+    "marketingVersion": "1.0.3",
+    "build": "32",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-09-30T11:30:01-07:00",
+    "usesNonExemptEncryption": false,
+    "minOsVersion": "16.0",
+    "betaDetails": {
+      "autoNotifyEnabled": true,
+      "internalBuildState": "IN_BETA_TESTING",
+      "externalBuildState": "NOT_APPLICABLE"
+    },
+    "group": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    }
+  },
+  "testNotes": {
+    "locale": "en-US",
+    "verifiedAt": "2026-09-30T18:32:00.497138+00:00",
+    "readbackVerified": true
+  },
+  "operations": {
+    "newTesterInvitations": false,
+    "testerOrGroupMembershipWrites": false,
+    "appStoreVersionAttachment": false,
+    "appReviewSubmission": false,
+    "productionSpatialFlagsChanged": false,
+    "gpuAllocation": false
+  },
+  "privateEvidenceDirectory": "/Users/pilksclaes/LocalRendpropAudits/ios-spatial-phone-20260930/testflight",
+  "evidenceSHA256": {
+    "source-manifest.json": "ac25bfad0856d233e53ac37528a7f0b65a6aa99e5f0e0366fde5eca726b6d21d",
+    "archive-receipt.json": "d4fc109f0ad230eb80631d5d64f92352b26cb7fcb61d3da12629a224760285dc",
+    "upload-result.json": "4e7fd725910ec2a378d818602dd84f85377ea390b251838d1c1b9961808f3192",
+    "export-sanitized.log": "8471308e9caff481a4b870b7f60fa66ee541d66945dd43bb4cbf2f80a8ce06fc",
+    "testflight-ready.json": "d78fa880f07f63459f8ad58bdf101f9299d024aedbf1514cca208cc17b883536",
+    "test-notes-receipt.json": "3ff84e346f47047445f713cb4b22136a52b5503b21a2b82cb042d994cfb83fc1"
+  },
+  "limitations": [
+    "Apple availability does not certify installation or camera behavior on a physical phone.",
+    "This build exposes local room capture; production reconstruction remains disabled.",
+    "No room reconstruction has passed shipping-quality acceptance.",
+    "The uploaded source excludes the separate deferred native-reel patch.",
+    "Apple state does not attest the local archive hash; local archive and upload receipts bind the attempted artifact."
+  ]
+}

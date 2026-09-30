@@ -5,35 +5,44 @@ product goal. Further Home redesign and reel expansion are paused. The immediate
 next test is a new room capture using the motion-blur guard already integrated
 into main; the earlier delivered phone build did not contain that guard.
 
-## Signed build ready
+## Available in TestFlight
 
-Rendprop **1.0.3 (32)** built successfully in Release using the explicit
-`RendpropSpatialTestFlight` scheme and the existing local Apple Development
-certificate/profile. Code-signature validation passed, and the bundle identity
-remains `com.rendprop.app` with the existing team and Apple sign-in entitlement.
-The command-line build number is 32; the repository's source specs remain 31.
-This is a development-signed local-install candidate, not a TestFlight upload or
-an App Store submission. No App Store Connect operation or provisioning update
-was requested. Device installation is pending owner confirmation and unlock.
+Rendprop **1.0.3 (32)** is available in the existing internal **Rendprop team**
+TestFlight group, verified at **2026-09-30 18:32:11 UTC**. Apple reports `VALID`,
+`INTERNAL_ONLY`, `IN_BETA_TESTING`, not expired, and confirms that exact build in
+the group's relationship. Build ID: `e51f5e2e-102f-4a5b-9a12-c8db59b0b350`.
 
-Source commit: `3f29adf5f5976856ddbce17c178ecc013814f8fc`.
-Branch: `release/ios-spatial-phone-20260930`.
-Build completed and signed receipt recorded at `2026-09-30T16:15:07Z`.
-Executable SHA-256:
-`2c831e47ec4b97452db17dac5034da8b7eff5ea260610104c11948bad1e5662d`.
+The owner explicitly requested this TestFlight upload, superseding the earlier
+App Store Connect restriction for this operation. One upload succeeded at
+18:29:03 UTC. Apple records uploadedDate as 18:30:01 UTC. Testing notes for this
+build were updated and read back. No new tester invitation, group-membership
+write, App Store version attachment or App Review submission occurred.
 
-Private local artifact and source-hash receipt:
+The Release archive uses the explicit `RendpropSpatialTestFlight` scheme from
+`79ee6834ae680424e831879cd5330ad861cd3f2e` on
+`release/ios-spatial-phone-20260930`. Its 115 source-file hashes match the earlier
+signed native source `3f29adf`. The archive explicitly overrides the build number
+to 32; committed source specs remain 31. Export enforces internal testing only
+and disables automatic build renumbering. Existing bundle/team identity and
+Apple sign-in entitlement were verified, as were the strict code signature,
+capture-lab compilation flag, blur-source inclusion and resource exclusions.
 
-- `/Users/pilksclaes/LocalRendpropAudits/ios-spatial-phone-20260930/DerivedData/Build/Products/Release-iphoneos/Rendprop.app`
-- `/Users/pilksclaes/LocalRendpropAudits/ios-spatial-phone-20260930/signed-build-receipt.json`
+Archive executable SHA-256:
+`5e56bc4c79246109b9f5d92a99bb28c74d98cf591ab0651d0937506a7df6297f`.
+The [delivery receipt](../releases/TESTFLIGHT-32-20260930.json) records Apple state,
+artifact hashes and evidence limits. Private archive, source manifest, sanitized
+upload log and Apple readbacks are retained under
+`/Users/pilksclaes/LocalRendpropAudits/ios-spatial-phone-20260930/testflight/`.
 
-A paired iPhone 15 Pro was visible. The read-only app-version query failed because
-the phone was locked. No installation or camera operation has occurred.
+The earlier 16:15 UTC development-signed local candidate and its
+`signed-build-receipt.json` remain historical evidence in the parent directory.
+No direct phone installation occurred. Actual installation and camera acceptance
+remain unverified; the owner can now update through TestFlight.
 
 ## Phone test
 
-Open **Settings → TestFlight lab → Spatial capture (TestFlight)**. The existing
-entry label also appears in this local development build. The lab works while
+Update to **1.0.3 (32)** in TestFlight, then open
+**Settings → TestFlight lab → Spatial capture (TestFlight)**. The lab works while
 the production runtime is off, saves photos and measured camera poses locally,
 and makes no automatic upload or GPU call.
 
@@ -49,6 +58,7 @@ renting a GPU. Keep the evaluation set fixed within each controlled experiment.
 
 ## Verification and accompanying repairs
 
+- All 12 CI jobs passed for the archived source `79ee683`.
 - All 22 Phase 1 source/executable-Swift gates passed with no skips.
 - Spatial portable checks passed: 161 capture/schema/JPEG assertions, 3,076 pose
   assertions, seven adversarial cases and eight JPEG resource cases. Quality

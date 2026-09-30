@@ -5,13 +5,13 @@ and collects a sharper room capture for reconstruction. It runs locally inside
 the existing **Rendprop** app. It does not upload images, generate a 3D room,
 publish a tour, or enable the production 3D service.
 
-The current delivery candidate is the explicit spatial overlay: **1.0.3 (32)**,
-successfully built and development-signed on September 30 for local installation.
-Signature and bundle identity checks passed; installation is awaiting the owner's
-confirmation and an unlocked phone. See the [build record](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md).
-Confirm the installed version before testing. No TestFlight upload or App Store Connect operation is
-part of this delivery; the Settings entry still uses its existing “TestFlight”
-label. An older build is not evidence for the current blur guard.
+The explicit spatial overlay **1.0.3 (32)** is available in the existing internal
+**Rendprop team** TestFlight group, verified September 30 at 18:32 UTC. Open
+**TestFlight → Rendprop → Update**, then confirm the installed build before
+testing. See the [delivery record](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md).
+Apple processing and availability are verified; installation and real-room
+capture still need the physical phone. An older build does not contain the
+current blur guard.
 
 The integrated app requires **iOS 16+** and an iPhone supporting ARKit world
 tracking. **LiDAR is not required.** Use the owner's iPhone 15 Pro first;
