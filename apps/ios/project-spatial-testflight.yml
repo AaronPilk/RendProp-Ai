@@ -6,11 +6,18 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Build 30 shipped the capture repairs. This release also restores Studio
-    # continuity. Recheck Apple inventory before upload; never auto-renumber.
-    CURRENT_PROJECT_VERSION: "31"
+    # Guided scan positions and local panoramic previews. Recheck Apple build
+    # inventory before upload; never automatically renumber an upload retry.
+    CURRENT_PROJECT_VERSION: "33"
 targets:
   Rendprop:
+    sources:
+      - path: ../../tools/spatial-spike/capture-ios/Sources/StationCaptureModels.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/StationCapturePolicy.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/StationCaptureRecorder.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaProjection.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaRenderer.swift
+      - path: ../../tools/spatial-spike/capture-ios/Sources/PanoramaPreviewViewController.swift
     settings:
       base:
         SWIFT_ACTIVE_COMPILATION_CONDITIONS: "$(inherited) SPATIAL_CAPTURE_LAB"

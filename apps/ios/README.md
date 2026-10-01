@@ -8,6 +8,13 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+The [1 October guided room-tour build](../../docs/handoff/GUIDED-PANORAMA-TESTFLIGHT-20261001.md)
+adds stationary scan positions, optional native LiDAR depth, local 4K panorama
+previews and saved-tour export. The explicit TestFlight overlay selects **1.0.3
+(33)**; availability must be confirmed by its Apple release receipt. Open
+**Home → Guided room tour**. This prototype saves on the phone and does not yet
+publish or synchronize panoramic tours, provide a dollhouse, or certify dimensions.
+
 [Internal TestFlight 1.0.3 (32)](../../docs/handoff/CODEX-IOS-SPATIAL-PHONE-20260930.md)
 is available to the existing Rendprop team, verified **30 September 2026 at
 18:32 UTC**. Apple reports `VALID`, `INTERNAL_ONLY` and `IN_BETA_TESTING`.
@@ -48,8 +55,8 @@ version settings and the shared scheme. Regenerate after adding Swift files;
 review the generated project diff before committing it. The generated project
 includes the shared spatial capture sources from `tools/spatial-spike/capture-ios`,
 including `CaptureBlur.swift`. The separate `project-spatial-testflight.yml`
-inherits that registration and adds only the explicit `SPATIAL_CAPTURE_LAB`
-compilation condition. Keep both generated projects current; neither replaces
+inherits that registration and adds the explicit `SPATIAL_CAPTURE_LAB`
+compilation condition plus the station/panorama sources. Keep both generated projects current; neither replaces
 the existing production-plan and video-library source references.
 Do not change the production bundle identity (`com.rendprop.app`) to bypass a
 signing error: Apple sign-in, entitlements and purchases depend on it.

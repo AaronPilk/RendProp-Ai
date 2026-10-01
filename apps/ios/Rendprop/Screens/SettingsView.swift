@@ -116,6 +116,12 @@ struct SettingsView: View {
         Form {
 #if SPATIAL_CAPTURE_LAB
             Section {
+                NavigationLink {
+                    GuidedPanoramaLabView()
+                } label: {
+                    Label("Guided room tour", systemImage: "pano")
+                }
+                .accessibilityIdentifier("settings.guidedRoomTour")
                 Button {
                     showSpatialCaptureLab = true
                 } label: {
@@ -125,7 +131,7 @@ struct SettingsView: View {
             } header: {
                 Text("TestFlight lab")
             } footer: {
-                Text("Experimental one-room capture. Images and camera poses stay on this iPhone until you export them. This does not publish a tour.")
+                Text("Guided room tours and walking capture are local tests. Photos stay on this iPhone until you export them. These tests do not publish a tour.")
             }
 #endif
             Section {
