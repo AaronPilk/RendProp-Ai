@@ -3583,6 +3583,7 @@ struct PhotoStudioView: View {
     @State private var showLibrary = false
     @State private var showCamera = false
     @State private var isProcessing = false
+    @State private var photoSaveError: String?
     @State private var processingText = "Working on your photo…"
     @State private var compare: EnhancedPhoto?
     @State private var aiFailure: AIFailure?
@@ -3727,8 +3728,16 @@ struct PhotoStudioView: View {
             HStack(spacing: 10) {
                 addButton("Add photos", "photo.stack", filled: true) { showLibrary = true }
                 addButton("Take a photo", "camera", filled: false) {
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                    showCamera = true
                 }
+                .accessibilityIdentifier("photos.takePhoto")
+            }
+            .disabled(isProcessing)
+
+            if let photoSaveError {
+                Text(photoSaveError)
+                    .font(.rpCaption).foregroundStyle(Theme.warn)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             if photos.isEmpty && !isProcessing {
@@ -3946,8 +3955,15 @@ struct PhotoStudioView: View {
         .sheet(isPresented: $showLibrary) {
             LibraryImagePicker { imgs in ingest(imgs) }.ignoresSafeArea()
         }
-        .sheet(isPresented: $showCamera) {
-            CameraPicker { img in ingest([img]) }.ignoresSafeArea()
+        .fullScreenCover(isPresented: $showCamera) {
+            GuidedPhotoCamera(purpose: .interior, onPicked: { img in
+                let error = await withCheckedContinuation { continuation in
+                    ingest([img]) { continuation.resume(returning: $0) }
+                }
+                if error == nil { showCamera = false }
+                return error
+            }, onCancel: { showCamera = false })
+            .ignoresSafeArea()
         }
         .fullScreenCover(item: $compare) { p in
             PhotoCompareView(photo: p, disclosure: editDisclosures[p.id])
@@ -5352,19 +5368,29 @@ struct PhotoStudioView: View {
         ingest(images)
     }
 
-    private func ingest(_ images: [UIImage]) {
+    private func ingest(_ images: [UIImage], completion: ((String?) -> Void)? = nil) {
         // An empty callback means the picker was cancelled (PHPicker still calls
         // back with no results). Drop any chip's pending edit rather than firing
         // it at the next photo the agent adds for some other reason.
         guard !images.isEmpty else {
             pendingShowcaseEdit = nil
             pendingShowcaseStyle = nil
+            completion?(nil)
+            return
+        }
+        guard !isProcessing else {
+            completion?("Another photo is still saving. Please wait, then try again.")
             return
         }
         isProcessing = true
+        photoSaveError = nil
         processingText = "Working on your photo…"
         let targetDir = dir
+        let owner = AuthStore.shared.userID
+        let revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
         DispatchQueue.global(qos: .userInitiated).async {
+            var failed = 0
             for img in images {
                 // One pool PER PHOTO: the CIContext render and the two JPEG
                 // encodes each leave large autoreleased buffers behind, and
@@ -5372,23 +5398,47 @@ struct PhotoStudioView: View {
                 // worst memory spike (F-A-19).
                 autoreleasepool {
                     let id = String(format: "%015d", Int(Date().timeIntervalSince1970 * 1000))
-                        + "-" + String(UUID().uuidString.prefix(4))
+                        + "-" + UUID().uuidString
                     let enhanced = PhotoEnhancer.enhance(img)
-                    if let od = img.jpegData(compressionQuality: 0.95) {
-                        try? od.write(to: targetDir.appendingPathComponent("orig-\(id).jpg"))
+                    guard let od = img.jpegData(compressionQuality: 0.95),
+                          let ed = enhanced.jpegData(compressionQuality: 0.95) else {
+                        failed += 1
+                        return
                     }
-                    if let ed = enhanced.jpegData(compressionQuality: 0.95) {
-                        try? ed.write(to: targetDir.appendingPathComponent("enh-\(id).jpg"))
+                    do {
+                        try PhotoCaptureStorage.writePair(original: od, enhanced: ed, id: id, directory: targetDir)
+                    } catch {
+                        failed += 1
                     }
                 }
             }
+            let failureCount = failed
             DispatchQueue.main.async {
+                isProcessing = false
+                guard AuthStore.shared.userID == owner,
+                      AuthStore.shared.syncSessionRevision == revision,
+                      WorkspaceContext.selectedOrgID == workspace else {
+                    // Durable bytes remain with the original local listing.
+                    // A late callback must not publish them in another account.
+                    completion?("Your account or workspace changed. Reopen this home's Photos to find any saved photos.")
+                    return
+                }
                 loadExisting()
                 // First photos added become the card's cover image automatically.
                 if mainRelPath == nil, let first = photos.first { setMain(first) }
-                isProcessing = false
+                if failureCount > 0 {
+                    let message = images.count == 1
+                        ? "Couldn't save this photo. Free some space and try again."
+                        : "\(failureCount) of \(images.count) photos couldn't be saved. Free some space and add those photos again."
+                    photoSaveError = message
+                    pendingShowcaseEdit = nil
+                    pendingShowcaseStyle = nil
+                    completion?(message)
+                    return
+                }
                 // An empty-state chip may have been waiting on this photo.
                 runPendingShowcaseEdit()
+                completion?(nil)
             }
         }
     }
@@ -6378,8 +6428,13 @@ struct AerialIntroSheet: View {
             }
             .ignoresSafeArea()
         }
-        .sheet(isPresented: $showCamera) {
-            CameraPicker { img in saveExterior(img) }.ignoresSafeArea()
+        .fullScreenCover(isPresented: $showCamera) {
+            GuidedPhotoCamera(purpose: .exterior, onPicked: { img in
+                let error = await saveExteriorPhoto(img)
+                if error == nil { showCamera = false }
+                return error
+            }, onCancel: { showCamera = false })
+            .ignoresSafeArea()
         }
         .fullScreenCover(isPresented: $showReelStudio) {
             ReelStudioView(listing: listing,
@@ -6508,10 +6563,11 @@ struct AerialIntroSheet: View {
                             Label("Choose photo", systemImage: "photo")
                         }
                         Button {
-                            if UIImagePickerController.isSourceTypeAvailable(.camera) { showCamera = true }
+                            showCamera = true
                         } label: {
                             Label("Take photo", systemImage: "camera")
                         }
+                        .accessibilityIdentifier("aerial.takePhoto")
                     }
                     .font(.rpCaption.weight(.semibold))
                     .foregroundStyle(Theme.accent)
@@ -6803,26 +6859,35 @@ struct AerialIntroSheet: View {
     /// Save a chosen/taken exterior photo to Photos/<listingID>/exterior.jpg and
     /// point the listing at it. Encoding runs off the main actor.
     private func saveExterior(_ image: UIImage) {
-        guard !isSavingPhoto else { return }
+        Task { _ = await saveExteriorPhoto(image) }
+    }
+
+    @MainActor
+    private func saveExteriorPhoto(_ image: UIImage) async -> String? {
+        guard !isSavingPhoto else { return "Another photo is still saving. Please wait, then try again." }
         isSavingPhoto = true
         photoError = nil
         let listingID = listing.id
+        let owner = AuthStore.shared.userID
+        let revision = AuthStore.shared.syncSessionRevision
+        let workspace = WorkspaceContext.selectedOrgID
         let dest = EnhancedPhoto.directory(for: listingID).appendingPathComponent("exterior.jpg")
-        Task {
-            let ok = await AIImagePrep.writeJPEG(image, to: dest, maxDimension: 2560, quality: 0.9)
-            await MainActor.run {
-                isSavingPhoto = false
-                guard ok else {
-                    photoError = "Couldn't save that photo. Try another one."
-                    return
-                }
-                ImageThumbnails.invalidate(dest)
-                model.setExteriorPhoto(FileStore.relativePath(for: dest), for: listingID)
-                exteriorURL = dest
-                exteriorVersion = UUID()
-                Haptics.success()
-            }
+        let ok = await AIImagePrep.writeJPEG(image, to: dest, maxDimension: 2560, quality: 0.9)
+        isSavingPhoto = false
+        guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == workspace else {
+            return "Your account or workspace changed. Reopen this home's aerial intro before saving again."
         }
+        guard ok else {
+            photoError = "Couldn't save this photo. Free some space and try again."
+            return photoError
+        }
+        ImageThumbnails.invalidate(dest)
+        model.setExteriorPhoto(FileStore.relativePath(for: dest), for: listingID)
+        exteriorURL = dest
+        exteriorVersion = UUID()
+        Haptics.success()
+        return nil
     }
 
     // MARK: - Generate (submit → poll → download; fal URLs expire, so download now)
@@ -9713,37 +9778,6 @@ struct LibraryImagePicker: UIViewControllerRepresentable {
                 }
             }
             group.notify(queue: .main) { self.onPicked(images) }
-        }
-    }
-}
-
-/// Single-shot camera capture.
-struct CameraPicker: UIViewControllerRepresentable {
-    let onPicked: (UIImage) -> Void
-
-    func makeUIViewController(context: Context) -> UIImagePickerController {
-        let picker = UIImagePickerController()
-        picker.sourceType = .camera
-        picker.delegate = context.coordinator
-        return picker
-    }
-
-    func updateUIViewController(_ uiViewController: UIImagePickerController, context: Context) {}
-
-    func makeCoordinator() -> Coordinator { Coordinator(onPicked: onPicked) }
-
-    final class Coordinator: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
-        let onPicked: (UIImage) -> Void
-        init(onPicked: @escaping (UIImage) -> Void) { self.onPicked = onPicked }
-
-        func imagePickerController(_ picker: UIImagePickerController,
-                                   didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
-            picker.dismiss(animated: true)
-            if let img = info[.originalImage] as? UIImage { onPicked(img) }
-        }
-
-        func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
-            picker.dismiss(animated: true)
         }
     }
 }

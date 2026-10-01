@@ -8,6 +8,15 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+The [guided photo-camera fix](../../docs/handoff/GUIDED-PHOTO-CAPTURE-20261001.md)
+adds explicit physical 0.5×/1× lenses, level/grid, landscape guidance and full-frame
+review/retake to Photos and exterior capture. It also makes save failures visible
+and keeps a failed camera save available to retry. Software verification and an
+internal build 35 are in progress; TestFlight 34 does not contain this camera.
+
+Run its pure policy and file-retention checks with
+`bash apps/ios/tests/run-photo-capture.sh` from the repository root.
+
 Internal **TestFlight 1.0.3 (34)** is available to the existing Rendprop team,
 verified **1 October 2026 at 15:30:20 UTC**. It adds subscription-confirmed trials,
 **Settings → Plan & usage** controls, explicit personal/team workspace selection,
