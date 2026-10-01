@@ -1,9 +1,14 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
-The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
-deployed the subscription-confirmation wording. Worker version
-`04672590-71c3-49dd-b79e-580b482d2ffb` serves the verified home, pricing and legal
-pages; routes, bindings and compatibility date are unchanged.
+The [1 October listing-first release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
+is live at 100% traffic on Worker version
+`8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`. Final production
+readback passed 153 assertions on branded/unbranded listings, with photos/details
+first and opt-in playback. All 12 CI jobs passed on that exact web source.
+Home, pricing, legal and health pages retained their verified normalized bodies
+and stable security headers, including the [core release](../../../docs/handoff/CORE-READINESS-20261001.md)'s
+subscription-confirmation wording. Routes, bindings and compatibility date are
+unchanged. See the [delivery receipt](../../../docs/releases/TESTFLIGHT-37-20261001.json).
 
 
 Serves Rendprop's public marketing, tour and portfolio pages, plus the spatial

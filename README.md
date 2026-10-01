@@ -12,7 +12,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[iPhone and Studio delivery receipt](docs/releases/TESTFLIGHT-36-20261001.json)
+[Latest iPhone and public-page delivery receipt](docs/releases/TESTFLIGHT-37-20261001.json)
 
 The [room-guidance and photo-delivery update](docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 adds floor-based standing suggestions, clear automatic 38-photo viewpoint capture,
@@ -24,11 +24,14 @@ Photo version history is local to iPhone; shared durable history and published-g
 supersession remain separate work. Physical room/camera quality still needs phone testing.
 
 The [listing-first fly-through update](docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
-is the next release candidate, **1.0.3 (37)**. Public pages separate details/photos
-from opt-in video playback; new native renders retain up to a 1920-pixel long
-edge at a 24 Mbps target and move MP4 metadata to the front. The re-render action
-uses the original local recording and clearly creates a new sharing link. Build
-36 remains the latest verified delivery until build37's Apple receipt is recorded.
+is live on public listing pages, with internal **TestFlight 1.0.3 (37)** available
+to the existing Rendprop team. Photos and details load first; Watch fly-through
+opens video separately and closing restores the listing position. New native
+renders retain up to a 1920-pixel long edge at a 24 Mbps target, without upscaling,
+and put MP4 metadata first. Re-render from the original local recording and
+publish a **new sharing link** for higher quality; old links keep their earlier
+video. Both exact runtime sources passed all 12 CI jobs; final live page checks
+passed 153 assertions. Physical iPhone/Safari and real-footage acceptance remain.
 
 ## Production status — 1 October 2026
 
@@ -39,7 +42,8 @@ uses the original local recording and clearly creates a new sharing link. Build
 | Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
-| iOS | Internal TestFlight **1.0.3 (36)** is available to the existing Rendprop team. Adds guided room standing suggestions and automatic 38-photo coverage, saved-view navigation, retained photo versions and MLS/web/social exports. Preserves guided 0.5×/1× still photos and the account/workspace/subscription fixes. Real-phone camera/room quality, purchase/restore and phone-to-Studio acceptance remain pending. |
+| Published listing pages | Live: photos/details first, independent navigation and opt-in fly-through with native controls. Close stops video and restores the listing position. Existing low-resolution files need a fresh original-source render and new link. |
+| iOS | Internal TestFlight **1.0.3 (37)** is available to the existing Rendprop team. Adds HD fly-through rendering and an original-source re-render action; retains build36's guided room standing suggestions, automatic 38-photo coverage, saved-view navigation, photo versions and MLS/web/social exports, guided 0.5×/1× still photos and account/workspace/subscription fixes. Real-phone camera/room quality, render/playback, purchase/restore and phone-to-Studio acceptance remain pending. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the

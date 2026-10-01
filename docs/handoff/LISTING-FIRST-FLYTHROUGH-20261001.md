@@ -4,7 +4,7 @@ This release addresses the owner's report that opening a property link forces
 visitors into the fly-through, details navigation jumps past a long video, and
 returning to the top repeatedly buffers a compressed file.
 
-## Result in source
+## Deployed result
 
 Normal branded `/f/:slug` and unbranded `/u/:slug` pages open with the property
 address, price and overview. Photos/rooms, floor plan and contact have ordinary
@@ -26,7 +26,7 @@ Back to listing; it does not trap visitors behind the video.
 
 ## Why a page change is insufficient for old video quality
 
-A range-only inspection of public tour `jvxpqw2dtu` found a **720 × 1280**,
+A range-only inspection of an existing public tour found a **720 × 1280**,
 132.233-second, 60 fps master, **159,039,685 bytes** (approximately 9.62 Mbps).
 Its MP4 metadata was at the end, offset 158,997,299, so loading needs an extra
 end-of-file request. The inspection read **42,426 bytes**, not the entire customer
@@ -79,13 +79,57 @@ H.264/AAC, byte ranges, mobile/desktop layout, native controls, delivered frames
 failure/retry, focus/scroll restoration and slow-transfer cancellation. Deliberate
 eager loading, retained media and queued-close regressions must be rejected.
 
-The final committed source still needs the complete 12-job CI readback, signed
-build37 archive binding, one internal-only TestFlight upload/Apple availability,
-and tour-host deploy/live verification. Build36 remains the latest verified
-phone delivery until the build37 receipt is recorded. The existing CI worker HDR
-regression is required: this machine's FFmpeg lacks zscale, so the local HDR
-runner cannot prove HDR conversion. No new paid provider/GPU run or spatial
-activation is part of this release.
+Internal **TestFlight 1.0.3 (37)** is available to the existing **Rendprop team**.
+Apple readback at **20:50:00 UTC** confirmed `VALID`, `INTERNAL_ONLY`,
+`IN_BETA_TESTING` and membership in that existing group. The English testing
+instructions were updated and read back at **20:54:55 UTC**. The signed archive
+binds **197 native inputs**, **133 tracked Swift inputs** and one generated Swift
+input to source `512fb8b710625615259d6ece9323220312288e29`. Its executable and
+both surviving dSYMs have the same arm64 UUID; archive/DerivedData dSYM bytes
+match. Xcode moved the separate DerivedData app product during archiving, so
+there is no claim of an independently surviving executable byte comparison.
+One internal-only upload succeeded; no duplicate upload, App Store review,
+public-version attachment, subscription-price or tester/group change occurred.
+
+All **12 CI jobs passed** on the archived native source:
+[run 36921783108](https://github.com/AaronPilk/RendProp-Ai/actions/runs/36921783108).
+The positive HDR tone-map regression passed there. Local FFmpeg lacks zscale;
+its local prerequisite failure remains recorded rather than counted as a pass.
+
+Public tour-host is live at **100% traffic**, Worker version
+`8268c7a9-aad9-43a7-89ac-f1769e75896b`, deployed from web source
+`a87834cd44c39e37178cfc8fe91684aa623ccde3`. This follow-up changes only the
+existing contact-verification widget's size from flexible to compact; its
+300-pixel minimum previously overflowed the actual 320-pixel page. The deployed
+150 × 140 widget fits the available panel. No challenge configuration, secret
+or validation endpoint changed; see [Cloudflare's widget sizes](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/widget-configurations/).
+All **12 CI jobs also passed** on this exact web source:
+[run 36924574346](https://github.com/AaronPilk/RendProp-Ai/actions/runs/36924574346).
+
+Final live verification at **20:53:48 UTC** passed **153 assertions** on an
+actual branded and unbranded listing. Both matched the local inline renderer,
+decoded the existing R2 master only after explicit opening, and emptied the
+decoder/source while restoring focus and scroll on close. There were no layout
+failures or application exceptions. Home, pricing, terms, privacy and health
+retained their normalized bodies and stable security headers; raw marketing
+HTML varies through Cloudflare's injected challenge script. The verification
+read 10,584,458 bounded media bytes and saved no complete customer video.
+Every attempted browser write was blocked, including infrastructure challenges
+and post-play view beacons, so this check does not establish lead delivery,
+analytics receipt or challenge-token validation. Bounded ranges alter transfer
+behavior; this is not a full-bandwidth benchmark. Actual HLS streaming and
+physical iPhone/Safari acceptance remain separate checks.
+
+The [delivery receipt](../releases/TESTFLIGHT-37-20261001.json) records the final
+source, CI, archive, upload, Apple availability and production readback, with
+hashes of the preserved private evidence. Earlier preflight/deployment receipts
+retain their original pending fields; later evidence completes those gates.
+Source remains on isolated `fix/listing-first-tour-20261001`, with stacked draft
+[PR #14](https://github.com/AaronPilk/RendProp-Ai/pull/14) against
+`fix/room-tour-photo-delivery-20261001`. Shared main was not advanced or
+force-pushed. Documentation commits are separate from both runtime sources.
+No backend function, migration, server-worker fleet deployment, paid provider/GPU
+run or spatial activation is part of this release.
 
 ## Owner acceptance on a real phone
 
@@ -93,7 +137,7 @@ activation is part of this release.
    Details and Top without opening video; the page should remain responsive.
 2. Open Watch fly-through, pause, seek a room and close. Return to the same listing
    position. Repeat on mobile Safari, including a slower cellular connection.
-3. Install build37 once Apple shows it available. Open a listing with its original
+3. Install **TestFlight 1.0.3 (37)**. Open a listing with its original
    recording on the phone, choose Re-render fly-through, review settings and render.
 4. Publish, copy the **new** link and compare actual detail on phone and desktop.
    The old link intentionally keeps its earlier render. Smaller originals remain

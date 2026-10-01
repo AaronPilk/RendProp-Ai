@@ -9,11 +9,21 @@ backend; this is no longer an offline-only prototype.
 ## Release status
 
 The [listing-first fly-through update](../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
-is the next release candidate, **1.0.3 (37)**. Public pages separate details/photos
-from opt-in video playback; new native renders retain up to a 1920-pixel long
-edge at a 24 Mbps target and move MP4 metadata to the front. The re-render action
-uses the original local recording and clearly creates a new sharing link. Build
-36 remains the latest verified delivery until build37's Apple receipt is recorded.
+is available as internal **TestFlight 1.0.3 (37)** to the existing Rendprop team.
+Apple availability was verified on **1 October 2026 at 20:50:00 UTC**: `VALID`,
+`INTERNAL_ONLY`, `IN_BETA_TESTING`. All 12 CI jobs passed on archived source
+`512fb8b`; [the delivery receipt](../../docs/releases/TESTFLIGHT-37-20261001.json)
+binds source, signed archive, one upload and Apple readback. English testing notes
+were read back at 20:54:55 UTC. Public listing pages are also live, with final
+readback of the web-only follow-up `a87834c` passing 153 assertions.
+
+New native renders retain up to a **1920-pixel long edge** at a **24 Mbps target**,
+without upscaling, and move MP4 metadata to the front. Open the Fly-through detail
+screen and choose **Re-render fly-through** using the original local recording.
+Publishing creates a **new sharing link**; old links keep their earlier video.
+Real footage, phone render/storage/upload costs and mobile Safari playback still
+need owner acceptance. Build37 retains the guided room/photo, workspace and
+subscription changes below.
 
 The [room-guidance and photo-delivery release](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 is available as internal **TestFlight 1.0.3 (36)** to the existing Rendprop team.
