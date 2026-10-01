@@ -21,6 +21,7 @@ export function canonicalPhotoKey(asset: Row, orgId: string, listingId: string):
   const key = asset.storage_key;
   assert(typeof key === "string" && key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) &&
     key.length < 1024 && !key.includes("..") && !/[?#\\]/.test(key), 400, "Photo does not belong to this property.");
+  assert(!key.includes("/contact-"), 400, "Client headshots cannot be added to property media.");
   return key;
 }
 export function photoRow(asset: Row, orgId: string, listingId: string, caption: string, provenance?: Row | null): Row {
@@ -119,6 +120,7 @@ export async function handleListingActions(req: Request, context: ListingActionC
   if (assetError) throw new HttpError(503, "Uploaded photo could not be checked.");
   assert(asset, 404, "Uploaded photo not found.");
   const key = canonicalPhotoKey(asset, context.orgId, listingId);
+  assert(!/\/contact-[^/]+$/.test(key),400,"Client headshots cannot be attached as property photos or floor plans.");
   if (segments[0] === "floorplan") {
     assert(asset.bucket === "renders" && ["image/jpeg", "image/png", "image/webp"].includes(asset.content_type),
       400, "Upload the floor plan as JPG, PNG, or WebP.");

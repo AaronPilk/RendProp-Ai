@@ -9,6 +9,7 @@ struct HomeListingsView: View {
     // stop updating on type switch. (Samples themselves are re-derived by
     // RootTabView on the same change.)
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     @State private var isLoading = true
     @State private var search = ""
     @State private var pendingDelete: Listing?

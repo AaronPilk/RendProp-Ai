@@ -5,6 +5,7 @@ adoption_test_dir="$(mktemp -d)"
 trap 'rm -rf "$adoption_test_dir"' EXIT
 xcrun swiftc -parse-as-library \
   "$adoption_test_root/apps/ios/Rendprop/Models/Listing.swift" \
+  "$adoption_test_root/apps/ios/Rendprop/Models/ListingClientContact.swift" \
   "$adoption_test_root/apps/ios/Rendprop/Models/Money.swift" \
   "$adoption_test_root/apps/ios/Rendprop/Models/ProductionGuidance.swift" \
   "$adoption_test_root/apps/ios/Rendprop/Networking/ProductionPlan.swift" \

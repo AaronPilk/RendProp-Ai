@@ -27,11 +27,17 @@
 // Errors carry { error, code } (see _shared/http.ts).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, clientIp, json, pathSegments, readJson, respondError, throwRpc } from "../_shared/http.ts";
+import { HttpError, assert, clientIp, json, pathSegments, readJson, readJsonLimited, respondError, throwRpc } from "../_shared/http.ts";
 import { ghlOrgTag } from "../_shared/ghl.ts";
 import { durableRateLimit } from "../_shared/ratelimit.ts";
-import { adminClient, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { adminClient, getUser, userClient } from "../_shared/supabase.ts";
 import { verifyTurnstile } from "./turnstile.ts";
+import { deliverySummaries, resendClientLead } from "./client-delivery.ts";
+import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
+
+async function authenticatedOrg(req:Request,user:string):Promise<string> {
+  return (await workspaceDirectory(adminClient(),user,requestedWorkspace(req))).active_org_id;
+}
 
 interface LeadBody {
   slug: string;
@@ -127,11 +133,17 @@ Deno.serve(async (req) => {
   try {
     const seg = pathSegments(req, "leads");
 
+    if(req.method === "POST" && seg.length === 2 && seg[1] === "send-to-client") {
+      const user=await getUser(req);
+      const org=await authenticatedOrg(req,user.id);
+      return json(await resendClientLead(adminClient(),user.id,org,seg[0],await readJsonLimited(req,1024)));
+    }
+
     // ---- GET /leads (owner) ----
     if (req.method === "GET") {
       const user = await getUser(req);
       const db = userClient(req); // RLS: "org leads" select policy (member)
-      const orgId = await orgForUser(user.id, preferredOrg(req));
+      const orgId = await authenticatedOrg(req,user.id);
       const params = new URL(req.url).searchParams;
 
       const listingId = params.get("listing_id");
@@ -160,15 +172,20 @@ Deno.serve(async (req) => {
 
       const { data, error } = await q;
       if (error) throw new HttpError(400, `Leads lookup failed: ${error.message}`);
-      return json({ leads: (data ?? []).map((r) => shapeLead(r as Record<string, unknown>)) });
+      const summaries=await deliverySummaries(adminClient(),user.id,orgId,(data??[]).map(r=>r.id));
+      return json({ leads: (data ?? []).map((r) => ({...shapeLead(r as Record<string, unknown>),client_delivery:summaries[r.id]??null})) });
     }
 
     // ---- PATCH /leads/:id (owner) ----
     if (req.method === "PATCH" && seg.length === 1) {
-      await getUser(req);
+      const user=await getUser(req);
       const db = userClient(req);
       const leadId = seg[0];
       assert(UUID_RE.test(leadId), 400, "lead id must be a UUID");
+      const org=await authenticatedOrg(req,user.id);
+      const {data: scoped,error: scopeError}=await db.from("leads").select("id,org_id").eq("id",leadId).eq("org_id",org).maybeSingle();
+      if(scopeError)throw new HttpError(503,"The inquiry could not be verified.");
+      if(!scoped)throw new HttpError(404,"Inquiry not found in this workspace.");
       const body = await readJson<{ status?: string }>(req);
       const status = String(body.status ?? "").trim().toLowerCase();
       assert(LEAD_STATUSES.includes(status), 400, `status must be one of ${LEAD_STATUSES.join(", ")}`);
@@ -183,10 +200,13 @@ Deno.serve(async (req) => {
         .select("id, listing_id, render_id, name, phone, email, extra, source, status, synced_crm, created_at, listings(address, space_type)")
         .eq("id", leadId)
         .maybeSingle();
-      return json({ ok: true, lead: shapeLead((row ?? updated ?? {}) as Record<string, unknown>) });
+      const shaped=shapeLead((row ?? updated ?? {}) as Record<string, unknown>);
+      const summaries=await deliverySummaries(adminClient(),user.id,org,[leadId]);
+      return json({ ok: true, lead: {...shaped,client_delivery:summaries[leadId]??null} });
     }
 
     if (req.method !== "POST") throw new HttpError(405, "Only POST (public capture), GET and PATCH are supported");
+    assert(seg.length === 0,404,"Lead route not found.");
 
     // ---- POST /leads (public) ----
 

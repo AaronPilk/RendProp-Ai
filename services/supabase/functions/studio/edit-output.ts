@@ -52,7 +52,7 @@ function assetScope(asset: Row | undefined, orgId: string, listingId: string) {
     ["uploads", "renders"].includes(asset.bucket) &&
     typeof asset.storage_key === "string" &&
     asset.storage_key.startsWith(`${asset.bucket}/${orgId}/${listingId}/`) &&
-    !asset.storage_key.includes("..") && asset.storage_key.length <= 1024;
+    !asset.storage_key.includes("..") && !asset.storage_key.includes("/contact-") && asset.storage_key.length <= 1024;
 }
 /** Source selection is a declaration. Only the source records, scope, and existing QC are verified here. */
 export function resolveEditSources(

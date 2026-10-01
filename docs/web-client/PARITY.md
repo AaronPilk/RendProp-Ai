@@ -6,11 +6,16 @@ and its linked feature receipts. The foundation checker below deliberately remai
 an inventory checker; its zero browser-proof count does not describe the newer
 release's separately executed browser suites.
 
-Source baseline: `f14081d`. This is an inventory, **not verified parity**.
+Original planning baseline: `f14081d`. The machine-readable API inventory was
+refreshed against `17f42b7` on October 1, including the photographer/client flow.
+This remains an inventory, **not verified parity**.
 Machine-readable truth: `packages/client-contracts/capabilities.json`. Its verifier
 compares every `APIClient` protocol method against the actual Swift file, detects missing,
 extra and duplicate mappings, and checks paths for capabilities outside that protocol.
-There are 41 distinct method names / 42 declarations (two `completeUpload` overloads).
+The current protocol has 62 distinct method names / 63 declarations (two
+`completeUpload` overloads), grouped into 17 capabilities, plus 24 capabilities
+outside that protocol. The foundation gate verifies this current source inventory
+and brand token policy; live and browser receipts remain separate.
 UI discovery remains a manual review obligation: a method inventory cannot prove every
 interactive behavior, accessibility path, business rule or hidden direct call is covered.
 
@@ -24,6 +29,8 @@ interactive behavior, accessibility path, business rule or hidden direct call is
 | Script/shotlist/agent reel | Shared server EDL with editable client timeline | Native agentreel method and phrase-timed offline-only integration missing; existing SpeechTranscriber permits server fallback |
 | Drone/aerial/reel/drift | Existing approved AI jobs, placement in editor | No disabled routes, no unapproved media sharing; live spend/cap fixtures |
 | Voices/TTS/chapters/coach | Same route-backed tools | Exact decoding, fairness, transient failure and replay fixtures |
+| Photographer role and per-listing client | Shared nullable professional preference, revision-checked client card, separate private recipient and uploaded headshot | Preference never elevates permissions; headshot is excluded from property sources; actual phone and cross-device acceptance remain separate |
+| Client inquiry forwarding | Shared inbox with automatic client email and explicit first-send/resend using saved recipient | Writer roles, current recipient confirmation, immutable attempt history, bounded retries/rates and cancellation; provider acceptance does not prove inbox delivery |
 | Usage/brand/leads/lookup | Team dashboard, card, lead inbox, property form | Current org selected independently of user identity; server authority |
 | Admin read/write | Separate operations tooling | Admin ≠ brokerage owner. Provider activation restricted, not a product convenience |
 | Anonymous onboarding/session | No registration wall, recoverable anonymous workspace | Actual refresh race/adoption failure tests; same identity semantics as iOS |

@@ -8,6 +8,18 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+[Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
+adds a real estate role choice, per-property client contact/photo editing,
+independent offline contact drafts and current server-state verification before
+either publish entry, with dirty contact edits saved first. Client lead status
+and deliberate resends remain tied to the
+selected account and workspace. Internal **TestFlight 1.0.3 (39)** is available,
+verified at **23:41:47 UTC on 1 October 2026**, with all 12 exact-source CI jobs
+passing. [The receipt](../../docs/releases/TESTFLIGHT-39-20261001.json) and
+[handoff](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) bind the
+signed source, single upload, production readbacks and testing notes. Actual
+phone-to-Studio contact sync and client inbox delivery require controlled acceptance.
+
 The [handheld room-tour update](../../docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
 is available as internal **TestFlight 1.0.3 (38)** to the existing Rendprop team,
 verified **1 October 2026 at 22:17:40 UTC**. All 12 CI jobs passed on archived

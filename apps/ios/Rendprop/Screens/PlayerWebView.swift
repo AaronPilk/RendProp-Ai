@@ -358,6 +358,7 @@ private enum PlayerPage {
     /// `demo.mp4` is not in the build, the page still renders (type-adapted)
     /// with an explicit "Sample video unavailable" stage.
     static func demoHTML(listing: Listing?, agent: AgentCard = .current) -> PreparedPage? {
+        let agent = AgentCard.forListing(listing, fallback: agent)
         let fm = FileManager.default
         let dir = fm.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("player-demo", isDirectory: true)
@@ -381,7 +382,7 @@ private enum PlayerPage {
                       chapters: chapters.map { "\($0.t)|\($0.label)" },
                       listing: listing,
                       agentFields: agent.brandFields,
-                      headshotStamp: stamp(AgentCard.headshotURL),
+                      headshotStamp: agent.resolvedHeadshotURL.map(stamp) ?? (agent.publicAvatarURL ?? "no-client-photo"),
                       type: type,
                       identityIsSample: listing?.isSample ?? true,
                       staged: false,
@@ -440,6 +441,7 @@ private enum PlayerPage {
     /// render runs — off the main actor, from the already-read template.
     static func localPreviewHTML(videoURL: URL, roomTags: [RoomTag], listing: Listing?,
                                  agent: AgentCard = .current, staged: Bool = false) -> PreparedPage? {
+        let agent = AgentCard.forListing(listing, fallback: agent)
         let fm = FileManager.default
         let type = SpaceType.current
         // Stat'd once and used for both the key and `videoRef`. Build 9 asked
@@ -456,7 +458,7 @@ private enum PlayerPage {
                       chapters: tags.map { "\($0.tMs)|\($0.name)" },
                       listing: listing,
                       agentFields: agent.brandFields,
-                      headshotStamp: stamp(AgentCard.headshotURL),
+                      headshotStamp: agent.resolvedHeadshotURL.map(stamp) ?? (agent.publicAvatarURL ?? "no-client-photo"),
                       type: type,
                       identityIsSample: listing?.isSample ?? false,
                       staged: staged,
@@ -817,6 +819,10 @@ private enum PlayerPage {
                 html = html.replacingOccurrences(
                     of: "<div class=\"avatar\">SM</div>",
                     with: "<div class=\"avatar\" style=\"background-image:url('data:image/jpeg;base64,\(b64)');background-size:cover;background-position:center\"></div>")
+            } else if let raw = agent.publicAvatarURL, let photo = URL(string: raw), photo.scheme == "https",
+                      photo.host != nil, photo.user == nil, photo.password == nil {
+                html = html.replacingOccurrences(of: "<div class=\"avatar\">SM</div>",
+                    with: "<div class=\"avatar\"><img src=\"\(htmlEscape(photo.absoluteString))\" alt=\"\" style=\"width:100%;height:100%;object-fit:cover;border-radius:50%\"></div>")
             } else {
                 html = html.replacingOccurrences(of: ">SM<", with: ">\(htmlEscape(agent.initials))<")
             }
@@ -867,6 +873,9 @@ private enum PlayerPage {
         }
         html = html.replacingOccurrences(of: "<!--CTA-->", with: "")
 
+        if ctx.listing?.clientContact?.enabled == true, ctx.listing?.clientContact?.hideRendpropBranding == true {
+            html = html.replacingOccurrences(of: "<a class=\"chrome\" id=\"wm\" href=\"https://rendprop.com\" target=\"_blank\" rel=\"noopener\">Made with <b>Rendprop</b></a>", with: "")
+        }
         return html
     }
 

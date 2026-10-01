@@ -186,7 +186,12 @@ struct AdoptionLocalBindingsTests {
         check(PersistentStore.load().listings[0].cloudDraftOrgID == org, "Older draft remains pinned to outgoing workspace across restart")
         ProductionVideoLibrary.shared.busy = true
         check(!switchDrafts.prepareWorkspaceSwitch(), "Workspace switch waits for active media import")
-        ProductionVideoLibrary.shared.busy = false; WorkspaceContext.selectedOrgID = nil
+        ProductionVideoLibrary.shared.busy = false
+        switchDrafts.clientContactSyncInFlight = [original.id]
+        check(!switchDrafts.prepareWorkspaceSwitch(), "Workspace switch waits for a client-contact save or photo upload")
+        switchDrafts.clientContactSyncInFlight = []
+        check(switchDrafts.prepareWorkspaceSwitch(), "Workspace switch resumes after client-contact work settles")
+        WorkspaceContext.selectedOrgID = nil
 
         let empty = try await fresh()
         empty.listings = []

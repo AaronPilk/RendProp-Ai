@@ -5,6 +5,8 @@ const org = "10000000-0000-4000-8000-000000000001", listing = "20000000-0000-400
 const renderId = "30000000-0000-4000-8000-000000000003", asset = "40000000-0000-4000-8000-000000000004";
 const user = "50000000-0000-4000-8000-000000000005", jobId = "60000000-0000-4000-8000-000000000006";
 const galleryId = "70000000-0000-4000-8000-000000000007", resultId = "80000000-0000-4000-8000-000000000008";
+const contactId="90000000-0000-4000-8000-000000000009";
+const contactKey=`renders/${org}/${listing}/contact-${contactId}.jpg`;
 const prefix = `renders/${org}/${listing}`, key = `${prefix}/finished.mp4`, altered = `${prefix}/altered.mp4`, galleryKey = `${prefix}/gallery-test.jpg`;
 for (const [name, value] of Object.entries({ SUPABASE_URL: "https://media-privacy-fixture.invalid", SUPABASE_ANON_KEY: "synthetic-public", SUPABASE_SERVICE_ROLE_KEY: "synthetic-service", CLOUDFLARE_ACCOUNT_ID: "media-fixture", R2_ACCESS_KEY_ID: "synthetic-access", R2_SECRET_ACCESS_KEY: "synthetic-secret", R2_PUBLIC_BASE_URL: "https://media-fixture.invalid" })) Deno.env.set(name, value);
 let captured!: (req: Request) => Promise<Response>;
@@ -16,9 +18,9 @@ finally { Object.defineProperty(Deno, "serve", descriptor); }
 const { handleCreative } = await import("../studio/creative.ts");
 const { adminClient } = await import("./supabase.ts");
 const response = (value: unknown) => new Response(JSON.stringify(value), { headers: { "content-type": "application/json" } });
-type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean };
+type Options = { denyRender?: boolean; denyOptional?: boolean; revokeAfterFirst?: boolean; rpcFailure?: boolean; revokeAfterTwo?: boolean; missingVisibility?: boolean; invalidVisibility?: boolean; revokeDuringProfile?: boolean; clientContact?: boolean; changeContact?: boolean; denyContactPhoto?: boolean };
 async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "history" | "portfolio", opts: Options = {}) {
-  const previous = globalThis.fetch; let checks = 0, profileRead = false; const seen: Record<string, unknown>[] = [];
+  const previous = globalThis.fetch; let checks = 0, profileRead = false, contactReads=0; const seen: Record<string, unknown>[] = [];
   globalThis.fetch = async (input, init) => {
     const req = new Request(input, init), url = new URL(req.url);
     assertEquals(url.hostname, "media-privacy-fixture.invalid");
@@ -30,7 +32,7 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
       if (opts.missingVisibility) return response({ assets: {}, renders: {}, keys: {} });
       if (opts.invalidVisibility) return response({ assets: {}, renders: { [renderId]: "true" }, keys: {} });
       return response(Object.fromEntries(["assets", "renders", "keys"].map(kind => [kind, Object.fromEntries(args[`p_${kind}`].map((v: string) => [v,
-        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v))]))])));
+        !(opts.revokeDuringProfile && profileRead) && !(opts.revokeAfterFirst && checks > 1) && !(opts.revokeAfterTwo && checks > 2) && !(opts.denyRender && (v === renderId || v === asset || v === key)) && !(opts.denyOptional && [galleryId, galleryKey, altered].includes(v)) && !(opts.denyContactPhoto && [contactId,contactKey].includes(v))]))])));
     }
     if (url.pathname === "/rest/v1/rpc/publish_render") return response({ id: renderId, listing_id: listing, slug: "fixture-tour", video_key: key });
     if (url.pathname === "/rest/v1/rpc/assert_studio_edit_quality") return response(null);
@@ -38,9 +40,14 @@ async function invoke(handler: "tour" | "renders" | "publish" | "creative" | "hi
     if (table === "renders") { const row = { id: renderId, job_id: jobId, listing_id: listing, slug: "fixture-tour", video_key: key, poster_key: `${prefix}/poster.jpg`, published_at: "2026-09-24T00:00:00Z", duration_s: 5 }; return response(handler === "portfolio" ? [row] : row); }
     if (table === "listings") { const row = { id: listing, org_id: org, agent_id: user, deleted_at: null, details: {}, address: "Synthetic listing" }; return response(handler === "portfolio" ? [row] : row); }
     if (table === "orgs") return response({ id: org, handle: "fixture", brand_kit: {} });
+    if (table === "listing_client_contacts") {
+      contactReads++;
+      assert(!String(url.searchParams.get("select")).includes("recipient_email"), "private lead email must never be requested by public tour");
+      return response(!opts.clientContact?null:{listing_id:listing,org_id:org,enabled:true,public_card:{name:"Client Realtor",title:"Listing Agent",email:"published@fixture.invalid"},hide_rendprop_branding:true,photo_asset_id:contactId,revision:opts.changeContact&&contactReads>1?2:1});
+    }
     if (table === "profiles") { profileRead = true; return response({ name: "Fixture Agent" }); }
     if (table === "render_jobs") return response({ id: jobId, listing_id: listing, capture_asset_id: null, status: "completed" });
-    if (table === "capture_assets") return response([{ id: galleryId, storage_key: galleryKey }]);
+    if (table === "capture_assets") return response(url.searchParams.get("id")===`eq.${contactId}`?{id:contactId,listing_id:listing,kind:"photo",bucket:"renders",uploaded:true,storage_key:contactKey}:[{ id: galleryId, storage_key: galleryKey }]);
     if (table === "media_provenance") return response([{ kind: "video.edit", disclosure: "Edited video", original_key: key, altered_key: altered }]);
     if (table === "studio_creative_results") { const row = { id: resultId, listing_id: listing, org_id: org, user_id: user, kind: "video", bucket: "renders", storage_key: key,
       metadata: { state: "completed", video_kind: "edit", asset_id: asset, source_asset_ids: [asset] } }; return response(handler === "history" ? [row] : row); }
@@ -107,4 +114,24 @@ Deno.test("actual service portfolio fails closed on unavailable or malformed vis
   for (const opts of [{ rpcFailure: true }, { missingVisibility: true }, { invalidVisibility: true }]) {
     const r = await invoke("portfolio", opts); assertEquals(r.status, 503); assert(!JSON.stringify(r.body).includes("fixture-tour"));
   }
+});
+
+Deno.test("actual public client tour shows only client identity and authoritative headshot", async () => {
+  const r=await invoke("tour",{clientContact:true});assertEquals(r.status,200);
+  assertEquals(r.body.agent_card,{name:"Client Realtor",title:"Listing Agent",email:"published@fixture.invalid",avatar_url:`https://media-fixture.invalid/${contactKey}`,handle:null});
+  assertEquals(r.body.client_mode,true);assertEquals(r.body.hide_rendprop_branding,true);
+  assert(!JSON.stringify(r.body).includes("Fixture Agent"));
+  assert(!JSON.stringify(r.body.gallery).includes("contact-"));
+  assert(r.seen.some(call=>(call.p_assets as string[]).includes(contactId)));
+});
+Deno.test("actual client tour discards mixed revisions and revoked headshot without photographer fallback",async()=>{
+  const changed=await invoke("tour",{clientContact:true,changeContact:true});assertEquals(changed.status,503);
+  assert(!JSON.stringify(changed.body).includes("Client Realtor"));
+  const revoked=await invoke("tour",{clientContact:true,denyContactPhoto:true});assertEquals(revoked.status,200);
+  assertEquals(revoked.body.agent_card.name,"Client Realtor");assertEquals(revoked.body.agent_card.avatar_url,undefined);
+  assert(!JSON.stringify(revoked.body).includes(contactKey));
+});
+Deno.test("ordinary actual tour retains the agent mode when no client is assigned",async()=>{
+ const r=await invoke("tour");assertEquals(r.status,200);assertEquals(r.body.agent_card.name,"Fixture Agent");
+ assertEquals(r.body.client_mode,false);assertEquals(r.body.hide_rendprop_branding,false);
 });

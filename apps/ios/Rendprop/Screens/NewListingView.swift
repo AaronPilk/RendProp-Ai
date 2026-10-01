@@ -18,8 +18,13 @@ struct ListingFormData: Equatable {
     var tagline = ""
     var details: [String: String] = [:]
     var spaceType: SpaceType = SpaceType.current
+    var clientContact: ListingClientContact? = nil
 
-    init() {}
+    init() {
+        if spaceType == .realEstate && RealEstateRoleStore.current.isProducer {
+            clientContact = .init(listingID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!, enabled: true, publicCard: .init(), recipientEmail: "")
+        }
+    }
 
     init(listing: Listing) {
         address = listing.address
@@ -30,6 +35,7 @@ struct ListingFormData: Equatable {
         tagline = listing.tagline ?? ""
         details = listing.details ?? [:]
         spaceType = listing.spaceType
+        clientContact = listing.clientContact
     }
 
     var isRealEstate: Bool { spaceType.showsPropertyDetails }
@@ -61,6 +67,12 @@ struct ListingFormData: Equatable {
         l.price = .dollars(isRealEstate ? (Money.parseDollars(priceDollars) ?? 0) : 0)
         l.tagline = isRealEstate ? nil : trimmedTagline
         l.details = isRealEstate ? nil : cleanedDetails
+        if clientContact != l.clientContact {
+            var contact = clientContact
+            contact?.listingID = l.serverID ?? l.id
+            l.clientContact = contact
+            l.clientContactDirty = true
+        }
     }
 
     /// A brand-new listing from the form (create path).
@@ -133,6 +145,7 @@ struct ListingFieldsForm<Middle: View>: View {
             // friction; "4 beds" is not.
             if space.showsPropertyDetails { listingLinkCard }
             addressCard
+            if space.showsPropertyDetails, form.clientContact != nil { clientContactCard }
             middle()
             if space.showsPropertyDetails {
                 propertyDetailsCard
@@ -141,6 +154,17 @@ struct ListingFieldsForm<Middle: View>: View {
                 businessDetailsCard
             }
         }
+    }
+
+    private var clientContactCard: some View {
+        DisclosureGroup("Client contact · add now or before publishing") {
+            ClientContactFields(contact: Binding(get: {
+                form.clientContact ?? .init(listingID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!, enabled: true, publicCard: .init(), recipientEmail: "")
+            }, set: { form.clientContact = $0 }))
+            .padding(.top, 12)
+            Text("Add a client photo from Listing contact once this listing is created.")
+                .font(.rpCaption).foregroundStyle(Theme.inkDim).padding(.top, 8)
+        }.font(.rpHeadline).foregroundStyle(Theme.ink).card()
     }
 
     /// Paste a Zillow / Redfin / Realtor.com link and the address fills itself.

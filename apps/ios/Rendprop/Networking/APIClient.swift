@@ -677,6 +677,7 @@ struct Lead: Identifiable, Codable, Hashable {
     var source: String? = nil
     var listingAddress: String? = nil
     var status: String? = nil
+    var clientDelivery: ClientLeadDelivery? = nil
 }
 
 /// One tap-to-jump chapter sent with a publish (`{label, t_ms, sort}` on the
@@ -879,6 +880,11 @@ protocol APIClient: Sendable {
     /// functions allow-list exactly these fields). Empty-string values clear
     /// the field server-side. Best-effort: callers fire-and-forget.
     func updateBrand(_ fields: [String: String]) async throws
+    func realEstateRole() async throws -> RealEstateRole
+    func updateRealEstateRole(_ role: RealEstateRole) async throws
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact?
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery
 
     /// POST /ai-photo — single-image AI edit. `request.edit` = "twilight" |
     /// "sky" | "lawn" | "declutter" | "stage" | "custom"; `style` applies to

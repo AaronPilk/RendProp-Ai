@@ -140,12 +140,30 @@ class FoundationTests(unittest.TestCase):
 
     def test_complete_inventory(self):
         result = validate_capabilities(self.cap, SWIFT)
-        # 53/54 after spatial + renew; the four reflection quote/job/cancel/apply
-        # methods are inventoried as planned, without claiming browser parity.
-        self.assertEqual(result["apiMethods"], 57)
-        self.assertEqual(result["apiDeclarations"], 58)
+        # Includes the four reflection and five photographer/client methods.
+        # Inventory coverage does not establish browser, phone or live parity.
+        self.assertEqual(result["apiMethods"], 62)
+        self.assertEqual(result["apiDeclarations"], 63)
+        self.assertEqual(result["capabilityGroups"], 17)
         self.assertEqual(result["outsideProtocol"], 24)
         self.assertEqual(result["browserVerified"], 0)
+
+    def test_photographer_methods_have_explicit_product_mappings(self):
+        groups = {row["id"]: set(row["methods"]) for row in self.cap["api"]}
+        self.assertEqual(groups["listing-client-contact"], {"clientContact", "saveClientContact"})
+        self.assertTrue({"realEstateRole", "updateRealEstateRole"} <= groups["account"])
+        self.assertIn("sendLeadToClient", groups["leads"])
+
+    def test_each_missing_photographer_method_fails(self):
+        for method in ["clientContact", "saveClientContact", "realEstateRole",
+                       "updateRealEstateRole", "sendLeadToClient"]:
+            with self.subTest(method=method):
+                incomplete = copy.deepcopy(self.cap)
+                for row in incomplete["api"]:
+                    if method in row["methods"]:
+                        row["methods"].remove(method)
+                with self.assertRaises(ContractError):
+                    validate_capabilities(incomplete, SWIFT)
 
     def test_token_positive(self):
         self.assertEqual(len(validate_tokens(self.tokens)), 6)
@@ -155,7 +173,7 @@ class FoundationTests(unittest.TestCase):
         self.assertEqual(contrast("#161820", "#161820"), 1)
 
     def test_missing_upload_fails(self):
-        self.cap["api"][1]["methods"].remove("completeUpload")
+        next(row for row in self.cap["api"] if row["id"] == "uploads")["methods"].remove("completeUpload")
         with self.assertRaises(ContractError):
             validate_capabilities(self.cap, SWIFT)
 
@@ -221,7 +239,7 @@ def main():
     TOKENS = json.loads((CONTRACTS / "design-tokens.json").read_text())
     SWIFT = (ROOT / "apps/ios/Rendprop/Networking/APIClient.swift").read_text()
     if args.inject_fault == "missing-upload":
-        CAP["api"][1]["methods"].remove("completeUpload")
+        next(row for row in CAP["api"] if row["id"] == "uploads")["methods"].remove("completeUpload")
     elif args.inject_fault == "low-contrast":
         TOKENS["color"]["muted"] = TOKENS["color"]["surface"]
     inventory = validate_capabilities(CAP, SWIFT)
@@ -230,7 +248,7 @@ def main():
         # Prove the rejection tests detect an implementation that stops validating.
         globals()["validate_capabilities"] = lambda *_args, **_kwargs: inventory
     result = unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(FoundationTests))
-    require(result.testsRun == 14 and not result.skipped, "missing/skipped tests")
+    require(result.testsRun == 16 and not result.skipped, "missing/skipped tests")
     require(result.wasSuccessful(), "foundation tests failed")
     print(json.dumps({"inventory": inventory, "contrast": ratios, "tests": result.testsRun,
                       "skips": len(result.skipped), "browserTests": 0, "liveTests": 0}, indent=2))

@@ -114,7 +114,8 @@ struct CloudListingState: Decodable {
 
     func checked(listingID: UUID, orgID: UUID, offset: Int) throws -> Self {
         guard listing_id == listingID, org_id == orgID, renders.count <= 100, photos.count <= 100,
-              renders.allSatisfy({ $0.listing_id == listingID }), photos.allSatisfy({ $0.listing_id == listingID }),
+              renders.allSatisfy({ $0.listing_id == listingID }), photos.allSatisfy({ $0.listing_id == listingID &&
+                  !CloudListingMerge.isContactPhotoKey($0.original_key) && !CloudListingMerge.isContactPhotoKey($0.enhanced_key) }),
               next_offset == nil || (next_offset == offset + 100 && offset < 10000)
         else { throw CloudSyncError.invalidResponse }
         return self
@@ -186,6 +187,10 @@ enum CloudSyncError: LocalizedError {
 }
 
 enum CloudListingMerge {
+    static func isContactPhotoKey(_ key: String?) -> Bool {
+        guard let key else { return false }
+        return key.split(separator: "/").last.map { $0.lowercased().hasPrefix("contact-") } ?? false
+    }
     /// The remote input must be the COMPLETE, identity-checked set from the RLS
     /// read. Never call with one page or with a failed/empty fallback response.
     static func merge(local: [Listing], remote: [Listing], protected: Set<UUID>, ownerID: UUID? = nil) throws -> [Listing] {
@@ -255,6 +260,7 @@ enum CloudListingMerge {
               let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { throw CloudSyncError.invalidResponse }
         let pieces = components.percentEncodedPath.split(separator: "/").compactMap { String($0).removingPercentEncoding }
         guard pieces.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." && $0.rangeOfCharacter(from: CharacterSet(charactersIn: "\\/%?#").union(.controlCharacters)) == nil }) else { throw CloudSyncError.invalidResponse }
+        guard !(pieces.last.map({ $0.lowercased().hasPrefix("contact-") }) ?? false) else { throw CloudSyncError.invalidResponse }
         if voice {
             // Voice objects use the native ai-voice/<org>/<uuid>.mp3 contract.
             // Their listing binding is checked on the trusted result envelope.

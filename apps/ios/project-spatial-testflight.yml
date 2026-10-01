@@ -8,7 +8,7 @@ settings:
   base:
     # Handheld room capture and ergonomic pole shots plus existing local scan tests. Recheck Apple build
     # inventory before upload; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "38"
+    CURRENT_PROJECT_VERSION: "39"
 targets:
   Rendprop:
     sources:

@@ -146,6 +146,8 @@ final class AppModel: ObservableObject {
     private var syncInFlight: Set<UUID> = []
     private var publishInFlight: Set<UUID> = []
     private var serverCreationInFlight: Set<UUID> = []
+    var clientContactSyncInFlight: Set<UUID> = []
+    var realEstateRoleSyncOwners: Set<String> = []
     private var identityOwnerUserID: UUID?
     private var adoptionBindings: AdoptionLocalBindings?
     private var adoptionBindingsUnreadable = false
@@ -754,6 +756,7 @@ final class AppModel: ObservableObject {
     /// this phone while retaining filenames, captures and unfinished edits.
     func refreshCloudWorkspace() async {
         guard hasLoaded, Config.useLiveBackend else { return }
+        await syncRealEstateRole()
         guard AuthStore.shared.isIdentified, let cloud = api as? WorkspaceSyncAPI else {
             await syncDirtyListings()
             return
@@ -784,6 +787,10 @@ final class AppModel: ObservableObject {
                 self.identityOwnerUserID = actor.flatMap(UUID.init(uuidString:))
                 self.lastCloudSyncAt = Date()
                 self.persist()
+                for listing in self.listings where !listing.isSample && self.isInSelectedWorkspace(listing) && listing.serverID != nil {
+                    try? await self.refreshClientContact(for: listing.id)
+                    guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+                }
                 await self.syncDirtyListings()
                 // Brand reads are independent of media and use the same account
                 // fence. A transient brand error must not roll back listing sync.
@@ -805,7 +812,7 @@ final class AppModel: ObservableObject {
     }
 
     var workspaceSwitchIsBusy: Bool {
-        !syncInFlight.isEmpty || !publishInFlight.isEmpty || !serverCreationInFlight.isEmpty ||
+        !syncInFlight.isEmpty || !publishInFlight.isEmpty || !serverCreationInFlight.isEmpty || !clientContactSyncInFlight.isEmpty ||
         ProductionVideoLibrary.shared.isBusy(owner: AuthStore.shared.userID?.lowercased() ?? "") ||
         listings.contains { $0.status == .processing || $0.status == .uploading }
     }
@@ -1076,6 +1083,7 @@ final class AppModel: ObservableObject {
         do {
             // 1. Adopt (or create) the server listing identity.
             let serverID = try await ensureServerListing(listing)
+            try await syncClientContactBeforePublish(id, requireClient: listing.spaceType == .realEstate && RealEstateRoleStore.current.isProducer)
 
             // 1b. The publish screen's answer to "List this tour on Google",
             //     on its way to the page that will carry it. A listing created
@@ -2504,6 +2512,9 @@ struct RendpropApp: App {
         // @AppStorage defaults are display-only; the upload engine reads the
         // key directly, so register the real default (F-C-07).
         UserDefaults.standard.register(defaults: ["wifiOnlyUploads": true, "maxQualityCapture": false])
+        if Config.isUITesting, ProcessInfo.processInfo.arguments.contains("-ui.onboardingReset") {
+            UserDefaults.standard.set(false, forKey: "hasOnboarded")
+        }
     }
 
     var body: some Scene {
@@ -2721,6 +2732,7 @@ struct RootTabView: View {
         .id("\(workspaceAuth.userID ?? "guest"):\(workspace.selected?.id.uuidString ?? "unselected")")
         .task {
             await model.load()        // idempotent
+            await model.syncRealEstateRole()
             model.reseedSamples()     // the intro may have changed the type before this mounted
             model.syncSpaceTypeIfNeeded()   // …and the server has not heard about it yet
         }
@@ -2766,6 +2778,7 @@ struct HomeDashboardView: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject private var auth = AuthStore.shared
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var goToListings: () -> Void = {}
 

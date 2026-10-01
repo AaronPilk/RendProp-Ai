@@ -1516,6 +1516,48 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
 
     // MARK: - Account / usage / leads
 
+    func realEstateRole() async throws -> RealEstateRole {
+        let data = try await execute(makeRequest(url: url(["me"])))
+        guard let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let user = root["user"] as? [String: Any] else { throw APIError.decoding }
+        return RealEstateRole(rawValue: user["real_estate_role"] as? String ?? "agent") ?? .agent
+    }
+
+    func updateRealEstateRole(_ role: RealEstateRole) async throws {
+        _ = try await execute(makeRequest(url: url(["me", "profile"]), method: "PATCH",
+            json: ["real_estate_role": role.rawValue]))
+    }
+
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? {
+        var request = makeRequest(url: url(["listings", listingID.uuidString.lowercased(), "client-contact"]))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let contact: ListingClientContact? }
+        let envelope: Envelope = try decodeExact(try await execute(request))
+        return try envelope.contact?.checked(listingID: listingID)
+    }
+
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact {
+        try ClientContactPolicy.validate(contact)
+        var request = makeRequest(url: url(["listings", listingID.uuidString.lowercased(), "client-contact"]),
+            method: "PUT", json: contact.writeBody)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let contact: ListingClientContact }
+        let envelope: Envelope = try decodeExact(try await execute(request))
+        return try envelope.contact.checked(listingID: listingID)
+    }
+
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
+        guard ClientContactPolicy.isEmail(recipient) else { throw ClientContactError.invalidEmail }
+        var request = makeRequest(url: url(["leads", leadID.uuidString.lowercased(), "send-to-client"]),
+            method: "POST", json: ["request_id": requestID.uuidString.lowercased(), "expected_recipient_email": recipient],
+            idempotency: .key("client-lead:\(requestID.uuidString.lowercased())"))
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        struct Envelope: Decodable { let ok: Bool; let delivery: ClientLeadDelivery }
+        let result: Envelope = try decodeExact(try await execute(request))
+        guard result.ok else { throw ClientContactError.invalidResponse }
+        return result.delivery
+    }
+
     func updateBrand(_ fields: [String: String]) async throws {
         // PATCH /me/brand — the org brand kit is what the PUBLIC tour/portfolio
         // pages render as the agent card, so this is what puts the agent's
@@ -1636,12 +1678,14 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     func leads(listingServerID: UUID?) async throws -> [Lead] {
         var query: [URLQueryItem] = []
         if let listingServerID { query.append(URLQueryItem(name: "listing_id", value: listingServerID.uuidString)) }
-        let data = try await execute(makeRequest(url: url(["leads"], query: query)))
+        var request = makeRequest(url: url(["leads"], query: query))
+        if let org = WorkspaceContext.selectedOrgID { request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
+        let data = try await execute(request)
         // `{ leads: [...] }` per contract; tolerate a bare array too.
         let dtos: [LeadDTO]
-        if let wrapped: LeadsDTO = try? decode(data), let list = wrapped.leads {
+        if let wrapped: LeadsDTO = try? decodeExact(data), let list = wrapped.leads {
             dtos = list
-        } else if let bare: [LeadDTO] = try? decode(data) {
+        } else if let bare: [LeadDTO] = try? decodeExact(data) {
             dtos = bare
         } else {
             throw APIError.decoding
@@ -1860,7 +1904,7 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             extra: dto.extra?.value,
             createdAt: Self.parseDate(dto.createdAt) ?? Date(),
             source: clean(dto.source),
-            listingAddress: clean(dto.listingAddress), status: clean(dto.status))
+            listingAddress: clean(dto.listingAddress), status: clean(dto.status), clientDelivery: dto.clientDelivery)
     }
 
     /// Tolerant `[String: String]` decoder for jsonb maps: numbers/bools are
@@ -2215,5 +2259,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         let source: String?
         let listingAddress: String?
         let status: String?
+        let clientDelivery: ClientLeadDelivery?
+        enum CodingKeys: String, CodingKey {
+            case id, listingId = "listing_id", name, phone, email, message, extra
+            case createdAt = "created_at", source, listingAddress = "listing_address", status
+            case clientDelivery = "client_delivery"
+        }
     }
 }

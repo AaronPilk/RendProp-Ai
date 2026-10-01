@@ -547,6 +547,14 @@ for (
       bytes: 4,
     },
     {
+      name: "separate client headshot",
+      key: "renders/org/listing/contact-asset.jpg",
+      bucket: "renders",
+      kind: "photo",
+      type: "image/jpeg",
+      bytes: 4,
+    },
+    {
       name: "app-rendered video",
       key: "renders/org/listing/asset.mp4",
       bucket: "renders",
@@ -625,3 +633,17 @@ Deno.test("batch photo ticket also completes to a DB-selected immutable key", ()
     assertEquals(row.id, assets[0].asset_id);
     assertEquals(f.charges.length, 1);
   }));
+
+Deno.test("contact photo ticket creates only a bounded separate public headshot",()=>fixture(async f=>{
+  f.asset=null;
+  const response=await f.request("ticket",{listing_id:"fixture-listing",role:"contact_photo",kind:"photo",filename:"headshot.jpg",content_type:"image/jpeg",bytes:4});
+  assertEquals(response.status,201,await response.clone().text());
+  const ticket=await response.json();assert(String(ticket.storage_key).includes("/contact-"));
+  assertEquals(f.asset!.kind,"photo");assertEquals(f.asset!.bucket,"renders");
+}));
+Deno.test("contact photo tickets reject video kind and poster oversize before reservation",()=>fixture(async f=>{
+  for(const patch of [{kind:"video",bytes:4},{kind:"photo",bytes:11*1024**2}]){
+    const r=await f.request("ticket",{listing_id:"fixture-listing",role:"contact_photo",filename:"headshot.jpg",content_type:"image/jpeg",...patch});
+    assertEquals(r.status,400);assertEquals(f.charges.length,0);
+  }
+}));

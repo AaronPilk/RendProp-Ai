@@ -64,6 +64,7 @@ const fetcher: typeof fetch = async (input, options) => {
     const row = {id:crypto.randomUUID(),org_id:org,agent_id:actor,space_type:"real_estate",address:"",tagline:null,details:{},status:"draft",created_at:new Date().toISOString(),deleted_at:null,main_photo_key:null,beds:null,baths:null,sqft:null,price_cents:null,...body};
     listingRows.push(row);return Response.json(row,{status:201});
   }
+  if (url.pathname.endsWith("/client-contact")) return Response.json({contact:null});
   if (url.pathname === "/functions/v1/studio/listing-state") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),assets:[],photos:[],jobs:[],renders:[],chapters:[],next_offset:null});
   if (url.pathname === "/functions/v1/studio/media") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),photos:[],videos:[],next_offset:null,unavailable_count:0});
   if (url.pathname === "/functions/v1/studio/documents") {

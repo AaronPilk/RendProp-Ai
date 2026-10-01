@@ -133,6 +133,10 @@ export interface Tour {
   speed_factor: number | null;
   chapters: Chapter[];
   agent_card: AgentCard;
+  /** Listing-specific client identity. Never derived from a query parameter. */
+  client_mode?: boolean;
+  /** Hide service promotions while retaining the client's card and lead form. */
+  hide_rendprop_branding?: boolean;
   cta: Cta;
   staged: boolean;
   staged_disclosure: string | null;

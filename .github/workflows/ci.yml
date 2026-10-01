@@ -59,6 +59,8 @@ jobs:
         run: bash apps/ios/tests/run-photo-capture.sh
       - name: Photo versions, retained originals and destination export geometry
         run: bash apps/ios/tests/run-photo-delivery.sh
+      - name: Photographer preference, client drafts and confirmed contact transactions
+        run: bash apps/ios/tests/run-client-contact.sh
       - name: Guided scan storage, pose epochs and native depth packing
         run: bash tools/spatial-spike/capture-ios/verify-station.sh
       - name: Panorama projection, coverage and cancellation on synthetic images
@@ -228,6 +230,7 @@ jobs:
           node tests/projects-browser.mjs
           node tests/creative-browser.mjs
           node tests/photo-delivery-browser.mjs
+          node tests/photographer-browser.mjs
       - name: Retain browser failure evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -261,6 +264,8 @@ jobs:
             /tmp/rendprop-photo-delivery-browser-*/receipt.json
             /tmp/rendprop-photo-delivery-browser-*/*.png
             /tmp/rendprop-photo-delivery-browser-*/*.zip
+            /tmp/rendprop-photographer-*/receipt.json
+            /tmp/rendprop-photographer-*/*.png
           if-no-files-found: warn
 
   worker-edge:
@@ -616,6 +621,7 @@ jobs:
           python3 tools/audit/run_team_readiness.py
           python3 tools/audit/run_subscription_trial_regression.py
           python3 tools/audit/run_workspace_selection.py
+          python3 tools/audit/run_photographer_client_delivery.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py
           python3 tools/audit/run_deletion_handler_regression.py
@@ -638,6 +644,7 @@ jobs:
           path: |
             /tmp/rendprop-*/receipt.json
             /tmp/rendprop-*/*.log
+            /tmp/rendprop-photographer-client-*/*.json
             build/pr-*/receipt.json
             build/pr-*/server.log
             build/pres-*/receipt.json

@@ -32,6 +32,7 @@ type Page = "overview" | "properties" | "creative" | "editor" | "library" | "pla
 const ListingWorkflow = lazy(() => import("./features/listings/ListingWorkflow"));
 const CreativeWorkspace = lazy(() => import("./features/creative/CreativeWorkspace"));
 const BusinessWorkspace = lazy(() => import("./features/business/BusinessWorkspace"));
+const RealEstateRolePicker = lazy(() => import("./features/business/RealEstateRolePicker"));
 const CloudEditor = lazy(() => import("./features/sync/PropertyReels"));
 const CloudPlanner = lazy(() => import("./features/sync/CloudPlanner"));
 const EditorImpl = lazy(() => import("./features/projects/Projects"));
@@ -980,6 +981,7 @@ export default function App({ servicesFactory }: {
               </p>
             </div>
           </div>}
+          {workspace && services && workspace.org.spaceType === "real_estate" && !workspace.user.realEstateRole && <Suspense fallback={<p role="status">Loading your work preference…</p>}><RealEstateRolePicker key={editScope} workspace={workspace} services={services} onboarding onSaved={() => setRefresh(v => v + 1)} /></Suspense>}
           {page === "overview" && <Dashboard workspace={workspace} listings={listings} selectedId={selected?.id} busy={busy} spatialAvailable={spatialFlag?.scope===editScope&&spatialFlag.enabled} onSelect={selectListing} onFeature={openFeature} onCreate={createProperty} onStartCreating={()=>navigate("editor")} onProperties={()=>navigate("properties")} onLeads={()=>openBusiness("leads")} onPlanner={()=>navigate("planner")} onConnect={()=>setShowLogin(true)} onLibrary={()=>navigate("library")}/>}
           {entry?.gate && workspace && <FeatureGate feature={entry.gate} listings={listings} spaceType={workspace.org.spaceType} onChoose={id=>openFeature(entry.gate!,id)} onCancel={()=>setFeatureEntry(undefined)} onCreate={createProperty}/>}
           {(page === "properties" || propertiesOpened) && <section hidden={page !== "properties"} aria-label="Your property workspace">{workspace && services ? <Suspense fallback={<p role="status">Opening your properties…</p>}>

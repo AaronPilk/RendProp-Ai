@@ -6,14 +6,27 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+[Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
+adds **My homes → Create & publish / Details → Listing contact**. Choose **My
+client**, upload a separate contact photo and review the private inquiry email
+before saving and publishing. **Business → Leads** keeps the inquiry and its email
+status, with recipient confirmation before resend. The real estate work
+preference is changeable in **Business → Account & plan**. Conflicting or unsaved
+contacts block publication. This release is live on Worker
+`1cc57a97-e685-4c7c-aae1-641901a0087d`: all **31 served application files** match
+the connected release build, with 28 bundles totaling **330,202 B gzip** against
+350,000 B. All 12 exact-source CI jobs pass. See the
+[release handoff](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md) for
+backend/readback evidence and controlled cross-device/inbox acceptance still needed.
+
 The [photo-delivery update](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 adds **Download photo/photos** in AI Photo Studio, with clean MLS JPEGs, labelled
 web/social JPEGs, unchanged verified originals and disclosure captions in a ZIP.
 Default export keeps source framing/full available output; optional crops have
 a preview. Declutter → stage → restyle uses the correct current/pre-staging image.
 Pre-staging history lasts during the open Studio session; it is not yet a shared
-native/desktop version-history contract. This release is live on worker version
-`70d092cd-0a7b-41d3-bc3f-16743907a4c5`; all 30 application assets match source
+native/desktop version-history contract. Its historical deployment used Worker
+`70d092cd-0a7b-41d3-bc3f-16743907a4c5`; all 30 application assets matched source
 `0e7c78c`, which passed all 12 CI jobs. See the
 [delivery receipt](../../docs/releases/TESTFLIGHT-36-20261001.json).
 
@@ -165,7 +178,8 @@ passing distribution checks alone does not prove a connected production build.
 
 The static Worker in [wrangler.jsonc](wrangler.jsonc) serves only Studio; the apex
 marketing site and hosted tours use a separate Worker. Release schema and all
-required read handlers before dependent website assets. The latest release record
+required read handlers before dependent website assets. The
+[latest release record](../../docs/handoff/PHOTOGRAPHER-CLIENT-DELIVERY-20261001.md)
 includes migration reconciliation, exact function versions/JWT settings, and
 source/hash verification. The updated [backend helper](scripts/deploy-backend.mjs)
 requires an explicit list of functions and stages their import closure offline by

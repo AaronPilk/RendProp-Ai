@@ -531,7 +531,7 @@ function renderAgentCard(a: AgentModel, tour: Tour): string {
   //
   // Branded pages only by construction: this card is rendered inside the end
   // card, and the end card is not built at all on /u/.
-  const more = a.handle
+  const more = tour.client_mode !== true && a.handle
     ? `<a class="more" href="/a/${encodeURIComponent(a.handle)}">See all their homes</a>`
     : "";
 
@@ -562,13 +562,17 @@ interface HeaderModel {
   entityName: string;
 }
 
+function hidesVendorBranding(tour: Tour): boolean {
+  return tour.client_mode === true && tour.hide_rendprop_branding === true;
+}
+
 function buildHeader(tour: Tour, unbranded = false): HeaderModel {
   const l = tour.listing;
   const sold = isSoldOrArchived(tour);
   const pill = sold ? `<div class="soldpill">${escapeHtml(archiveLabel(tour))}</div>` : "";
   // The <title> is a branding surface: "… — Rendprop" is a vendor wordmark and
   // must not appear on the MLS-safe page.
-  const suffix = unbranded ? "" : " — Rendprop";
+  const suffix = unbranded || hidesVendorBranding(tour) ? "" : " — Rendprop";
 
   if (isRealEstate(tour)) {
     const bits: string[] = [];
@@ -784,7 +788,7 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = "", opts: LeadFormOpts = 
       ${turnstile}
       <div id="leadmsg" class="formmsg" role="alert" aria-live="polite"></div>
       <button class="cta" type="submit">${escapeHtml(copy.button)}</button>
-      <p class="privacy">By sending, you agree that your details are shared with the ${isRealEstate(tour) ? "agent" : "business"} and stored by Rendprop and its CRM provider. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
+      <p class="privacy">By sending, you agree that your details are shared with the ${isRealEstate(tour) ? "agent" : "business"}${tour.client_mode === true ? " and the photographer or video producer managing this listing" : ""} and stored by Rendprop and its CRM provider. <a href="/privacy" target="_blank" rel="noopener">Privacy</a></p>
     </form>
     ${renderSecondary(cta.secondary)}
     <div id="leadok">
@@ -2046,24 +2050,24 @@ const ENGINE_SHARE_JS = `
  * duplication the embed exists to avoid. Dropping it keeps the emitted script
  * and the emitted markup in agreement, which is what the CI gate asserts.
  */
-function engineJs(unbranded: boolean, embed = false): string {
+function engineJs(unbranded: boolean, embed = false, hideVendor = false): string {
   // ENGINE_CORE_JS opens with `(function(){` and the tail closes it, so the
   // lead-form block is spliced in at the marker inside the same IIFE.
   return unbranded
     ? ENGINE_CORE_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS).replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
         .replace(SHARE_SLOT, "").replace(SKIP_SLOT, "")
     : ENGINE_CORE_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS).replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
-        .replace(APPLINK_SLOT, ENGINE_APPLINK_JS)
+        .replace(APPLINK_SLOT, hideVendor ? "" : ENGINE_APPLINK_JS)
         .replace(SHARE_SLOT, embed ? "" : ENGINE_SHARE_JS)
         // The end card is not rendered on an embed either, so neither is the
         // control that points at it.
         .replace(SKIP_SLOT, embed ? "" : ENGINE_SKIP_JS);
 }
 
-function listingEngineJs(unbranded: boolean): string {
+function listingEngineJs(unbranded: boolean, hideVendor = false): string {
   return LISTING_PLAYER_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS)
     .replace(LEADFORM_SLOT, unbranded ? "" : ENGINE_LEADFORM_JS)
-    .replace(APPLINK_SLOT, unbranded ? "" : ENGINE_APPLINK_JS)
+    .replace(APPLINK_SLOT, unbranded || hideVendor ? "" : ENGINE_APPLINK_JS)
     .replace(SHARE_SLOT, unbranded ? "" : ENGINE_SHARE_JS);
 }
 
@@ -2175,10 +2179,11 @@ function promoPrefs(tour: Tour): PromoPrefs {
   const lenderName = prefStr(tour, "lender_name", "lenderName");
   const lenderUrl = safeUrl(prefStr(tour, "lender_url", "lenderUrl"));
   const ownLender = !!(lenderName && lenderUrl);
+  const hideVendor = hidesVendorBranding(tour);
   return {
     // Opting in is explicit; supplying your OWN lender is opting in.
-    financing: prefFlag(tour, "show_financing", "showFinancing") ?? ownLender,
-    partners: prefFlag(tour, "show_partners", "showPartners") ?? true,
+    financing: (!hideVendor || ownLender) && (prefFlag(tour, "show_financing", "showFinancing") ?? ownLender),
+    partners: !hideVendor && (prefFlag(tour, "show_partners", "showPartners") ?? true),
     lenderName: ownLender ? lenderName : PROMO.mortgage.name,
     lenderUrl: ownLender ? lenderUrl : PROMO.mortgage.url,
     ownLender,
@@ -2669,24 +2674,24 @@ function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): 
 }
 
 /**
- * Footer: the "Made with Rendprop" attribution (always) plus the house partner
+ * Footer: the service attribution plus the house partner
  * strip (Pilk.ai · Wholesale Mortgage · Tract). The strip is Rendprop's own
  * advertising on someone else's listing page, so it is labelled as ours and the
  * owner can switch it off — `details.show_partners` / `brand_kit.show_partners`
- * (audit F-H-17).
+ * (audit F-H-17). Client delivery can suppress both while retaining legal links.
  */
-function renderFooter(prefs: PromoPrefs): string {
+function renderFooter(prefs: PromoPrefs, hideVendor = false): string {
   const cards = [PROMO.agency, PROMO.mortgage, PROMO.partner]
     .map((x) => `<a class="lp-partner" href="${escapeAttr(x.url)}" target="_blank" rel="noopener nofollow"><span class="nm">${escapeHtml(x.name)}</span><span class="tg">${escapeHtml(x.tagline)}</span></a>`)
     .join("");
-  const strip = prefs.partners
+  const strip = prefs.partners && !hideVendor
     ? `<div class="lp-eyebrow">Promoted by Rendprop</div>
     <div class="lp-partners">${cards}</div>
     <p class="lp-fine">Paid placements from Rendprop, the software behind this page. They are not endorsements by the owner of this listing.</p>`
     : "";
   return `<footer class="lp-foot"><div class="lp-wrap">
     ${strip}
-    <div class="lp-madeby"><a href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>
+    ${hideVendor ? "" : `<div class="lp-madeby"><a href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a> · A <a href="${escapeAttr(PROMO.agency.url)}" target="_blank" rel="noopener">Pilk.ai</a> company</div>`}
     <div class="lp-legal"><a href="/terms">Terms</a> · <a href="/privacy">Privacy</a></div>
   </div></footer>`;
 }
@@ -2986,7 +2991,8 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // STEP 1 — strip at the data level, before a single byte of HTML exists.
   const tour = unbranded ? sanitizeTourForUnbranded(input) : input;
 
-  const agent = extractAgent(tour.agent_card || {});
+  const hideVendor = hidesVendorBranding(tour);
+  const agent = extractAgent(tour.client_mode === true ? { ...tour.agent_card, handle: null } : tour.agent_card || {});
   const header = buildHeader(tour, unbranded);
   const poster = safeUrl(tour.poster || "");
   const staged = !!tour.staged;
@@ -3137,12 +3143,12 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // Footer = "Made with Rendprop" + the (opt-out) house partner strip +
   // Terms/Privacy. All of it is branding or an external link, so `/u/` gets no
   // footer at all.
-  const footerHtml = embed || unbranded ? "" : renderFooter(promoPrefs(tour));
+  const footerHtml = embed || unbranded ? "" : renderFooter(promoPrefs(tour), hideVendor);
 
   // "Get the app" — see renderGetAppSection() for the placement argument.
   // `embed` is excluded as well as `unbranded`: the in-app preview is already
   // inside the app it would be advertising.
-  const getAppHtml = embed || unbranded
+  const getAppHtml = embed || unbranded || hideVendor
     ? ""
     : renderGetAppSection({
         surface: "tour",
@@ -3152,7 +3158,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
   // iOS Safari's smart banner. Same two guards, same reason. This is the half
   // of the CTA that lands ABOVE the fold, for free, on the exact device the
   // download targets — which is why the visible band can afford to sit low.
-  const appBanner = embed || unbranded ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
+  const appBanner = embed || unbranded || hideVendor ? "" : `<meta name="apple-itunes-app" content="app-id=${APP_STORE_ID}">`;
 
   // STRUCTURED DATA — see src/jsonld.ts for the three rules that gate it.
   // `indexable` is already `!embed && !unbranded && allowsIndexing(tour)`, so
@@ -3189,7 +3195,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 
   const isRE = isRealEstate(tour);
   const unavailHtml = `<div id="unavail" role="status">
-      ${unbranded ? "" : `<div class="mark">RENDPROP</div>`}
+      ${unbranded || hideVendor ? "" : `<div class="mark">RENDPROP</div>`}
       <h2>This tour's video isn't available right now</h2>
       <p>${embed || unbranded ? "Please try again in a few minutes." : `The ${isRE ? "agent" : "owner"} may be re-publishing it. Try again in a few minutes${isRE ? " — or reach out below" : ""}.`}</p>
       <button type="button" id="unavail-retry" class="cta cta-sm">Try again</button>
@@ -3206,7 +3212,7 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 ${embed || unbranded ? `<meta name="robots" content="noindex">` : indexable ? "" : `<meta name="robots" content="noindex, nofollow">`}
 ${appBanner}
 ${unbranded ? "" : `${shareUrl ? `<link rel="canonical" href="${escapeAttr(shareUrl)}">` : ""}
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+${hideVendor ? "" : `<link rel="icon" href="/favicon.svg" type="image/svg+xml">`}
 <meta property="og:title" content="${escapeAttr(header.ogTitle)}">
 <meta property="og:description" content="${escapeAttr(header.ogDesc)}">
 <meta property="og:type" content="website">
@@ -3235,7 +3241,7 @@ ${endcardHtml ? `
     </button>` : ""}
 
     <div id="loader">
-      ${unbranded ? "" : `<div class="mark">RENDPROP</div>`}
+      ${unbranded || hideVendor ? "" : `<div class="mark">RENDPROP</div>`}
       <div class="pct">0%</div>
       <div class="bar"><i></i></div>
     </div>
@@ -3244,7 +3250,7 @@ ${endcardHtml ? `
 
     <div id="progress"><i></i></div>
 
-    ${unbranded ? "" : `<div class="chrome" id="brand">RENDPROP</div>`}
+    ${unbranded || hideVendor ? "" : `<div class="chrome" id="brand">RENDPROP</div>`}
 
     ${shareHtml}
 
@@ -3264,7 +3270,7 @@ ${endcardHtml ? `
          every progress event); "Still loading" is the part worth hearing. -->
     <div class="chrome" id="bufwait" role="status">Still loading<span aria-hidden="true"> · <span class="n">0%</span></span></div>
 
-    ${unbranded ? "" : `<a class="chrome" id="wm" href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
+    ${unbranded || hideVendor ? "" : `<a class="chrome" id="wm" href="${escapeAttr(siteUrl("tour"))}" target="_blank" rel="noopener">Made with <b>Rendprop</b></a>`}
 
     ${stagedHtml}
 
@@ -3306,7 +3312,7 @@ ${footerHtml}
 `}
 
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
-<script>${embed ? engineJs(unbranded, true) : listingEngineJs(unbranded)}</script>
+<script>${embed ? engineJs(unbranded, true, hideVendor) : listingEngineJs(unbranded, hideVendor)}</script>
 </body>
 </html>`;
 }

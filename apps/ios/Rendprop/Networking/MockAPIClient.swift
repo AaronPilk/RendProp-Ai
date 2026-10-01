@@ -5,6 +5,22 @@ import Foundation
 /// returns a plausible value; the AI video features report honestly that they
 /// need the live backend instead of handing back a fake file.
 actor MockAPIClient: APIClient {
+    private var mockRealEstateRole: RealEstateRole = .agent
+    private var mockClientContacts: [UUID: ListingClientContact] = [:]
+    func realEstateRole() async throws -> RealEstateRole { mockRealEstateRole }
+    func updateRealEstateRole(_ role: RealEstateRole) async throws { mockRealEstateRole = role }
+    func clientContact(listingID: UUID, orgID: UUID) async throws -> ListingClientContact? { mockClientContacts[listingID] }
+    func saveClientContact(_ contact: ListingClientContact, listingID: UUID, orgID: UUID) async throws -> ListingClientContact {
+        try ClientContactPolicy.validate(contact)
+        guard contact.revision == (mockClientContacts[listingID]?.revision ?? 0) else { throw APIError.server(status: 409, code: "contact_revision_conflict", message: "Client details changed. Reload them before saving.") }
+        var saved = contact; saved.listingID = listingID; saved.revision += 1
+        saved.updatedAt = ISO8601DateFormatter().string(from: Date()); mockClientContacts[listingID] = saved
+        return saved
+    }
+    func sendLeadToClient(leadID: UUID, recipient: String, requestID: UUID, orgID: UUID) async throws -> ClientLeadDelivery {
+        ClientLeadDelivery(state: "email_sent", recipientEmail: recipient, clientName: nil,
+            lastAttemptAt: ISO8601DateFormatter().string(from: Date()), sentAt: ISO8601DateFormatter().string(from: Date()), canResend: true, reason: nil)
+    }
     // Screenshot walks can open the real empty/error UI without pretending that
     // an offline capture produced a model or a publicly shareable room.
     func spatialJobs(listingID: UUID) async throws -> [SpatialJob] { [] }

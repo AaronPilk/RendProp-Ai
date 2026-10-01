@@ -29,6 +29,7 @@ export interface OutboxRow {
   user_id: string | null;
   /** Set only on rows addressed to someone with no profile to look up. */
   to_email?: string | null;
+  client_delivery_id?: string | null;
   category: string;
   channel: "push" | "email";
   dedupe_key: string;
@@ -139,6 +140,7 @@ export async function deliverEmail(
   address: string | null,
   base: string,
   fetchImpl: typeof fetch = fetch,
+  clientMessage?: email.EmailMessage,
 ): Promise<Outcome> {
   if (!email.configured()) {
     return { state: "skipped", reason: email.missingReason(), providerId: null, deadTokens: [] };
@@ -152,9 +154,13 @@ export async function deliverEmail(
     };
   }
 
+  if(row.category === "client_lead_received" && (!clientMessage || clientMessage.to !== address)) {
+    return {state:"skipped",reason:"Client forwarding was not authorized.",providerId:null,deadTokens:[]};
+  }
+
   const message = render(row.category, row.payload);
   const link = absoluteLink(row.payload, base);
-  const result = await email.sendEmail({
+  const result = await email.sendEmail(clientMessage ?? {
     to: address,
     subject: message.title,
     text: emailText(message, link, row.category),
