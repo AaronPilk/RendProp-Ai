@@ -73,6 +73,16 @@ Private evidence lives under
 `bash apps/ios/tests/run-photo-capture.sh` runs the pure/file checks; CI includes
 them in its macOS offline audit job.
 
+The first CI run passed 11 of 12 jobs and exposed an overly narrow opening-audio
+sample in the existing browser export regression. Replaying its immutable MP4s
+showed that the fixed export retained the 990 Hz opening tone, shifted by AAC
+startup, while the old-await control missed the opening window. The check now
+requires two adjacent 90ms samples within 0.53–0.74s; the old control must have
+none. Amplitude, pitch, duration, leading silence, middle audio, transitions and
+playback trace checks remain enforced. Production video-export code is unchanged.
+The corrected browser regression passed locally with real synthetic MP4/AAC
+exports and its old-await negative control. Final CI verification is pending.
+
 ## Phone acceptance
 
 Install the delivered build once Apple readback is recorded, then:
