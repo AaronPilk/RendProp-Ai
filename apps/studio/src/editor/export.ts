@@ -16,7 +16,6 @@ import {
   awaitMediaOperation,
   decodeMedia,
   drawFrame,
-  nextFrame,
   seekMedia,
   throwIfAborted,
   waitForEvent,
@@ -73,6 +72,28 @@ export function exportFormats(): ExportFormat[] {
 
 export function supportsOriginalAudio(): boolean {
   return typeof AudioContext !== "undefined";
+}
+
+// Animation callbacks can arrive after a segment's deadline, and their supplied
+// timestamp can precede delivery. Bound the wait by the segment deadline and
+// the existing 30 fps capture interval; use the current clock at delivery.
+export function nextExportFrame(signal: AbortSignal, remainingMs: number): Promise<number> {
+  throwIfAborted(signal);
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+      signal.removeEventListener("abort", aborted);
+    };
+    const done = () => { cleanup(); resolve(performance.now()); };
+    const aborted = () => {
+      cleanup();
+      reject(signal.reason instanceof Error ? signal.reason : new DOMException("Operation cancelled.", "AbortError"));
+    };
+    const frame = requestAnimationFrame(done);
+    const timer = setTimeout(done, Math.max(1, Math.min(remainingMs, 1000 / 30)));
+    signal.addEventListener("abort", aborted, { once: true });
+  });
 }
 
 /** A real-time local draft export; its bytes are not the canonical server artifact. */
@@ -327,7 +348,10 @@ export async function exportLocalVideo(options: {
       const duration = clipDuration(clip);
       while (true) {
         assertCurrentRevision(draft, currentDraft(), renderSignal);
-        const now = await nextFrame(renderSignal);
+        const elapsedAtWait = video
+          ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
+          : (performance.now() - start) / 1000;
+        const now = await nextExportFrame(renderSignal, (duration - elapsedAtWait) * 1000);
         const elapsed = video
           ? Math.max(0, video.currentTime - clip.start) / (clip.speed ?? 1)
           : (now - start) / 1000;
