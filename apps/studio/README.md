@@ -6,6 +6,15 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+[Photographer client delivery](../../docs/studio/photographer-client-delivery.md)
+adds **My homes → Create & publish / Details → Listing contact**. Choose **My
+client**, upload a separate contact photo and review the private inquiry email
+before saving and publishing. **Business → Leads** keeps the inquiry and its email
+status, with recipient confirmation before resend. The real estate work
+preference is changeable in **Business → Account & plan**. Conflicting or unsaved
+contacts block publication. Release verification is in progress; see the release
+handoff before treating these new controls as deployed.
+
 The [photo-delivery update](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
 adds **Download photo/photos** in AI Photo Studio, with clean MLS JPEGs, labelled
 web/social JPEGs, unchanged verified originals and disclosure captions in a ZIP.

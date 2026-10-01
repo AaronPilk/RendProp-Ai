@@ -50,13 +50,14 @@ export async function authorizeProductionPlan(plan: ReturnType<typeof production
   // assets (including photos without a gallery row), and completed renders.
   const queries = await Promise.all([
     photoIds.length ? context.db.from("photos").select("id").eq("listing_id", plan.listingId).in("id", photoIds).abortSignal(signal) : Promise.resolve({data: [], error: null}),
-    context.db.from("capture_assets").select("id,kind").eq("listing_id", plan.listingId).eq("uploaded", true).in("id", all).abortSignal(signal),
+    context.db.from("capture_assets").select("id,kind,storage_key").eq("listing_id", plan.listingId).eq("uploaded", true).in("id", all).abortSignal(signal),
     videoIds.length ? context.db.from("renders").select("id").eq("listing_id", plan.listingId).not("video_key", "is", null).in("id", videoIds).abortSignal(signal) : Promise.resolve({data: [], error: null}),
   ]);
   if (queries.some(result => result.error)) throw new HttpError(503, "Saved capture files could not be checked. Retry before saving.");
   const photos = new Set((queries[0].data ?? []).map((row: {id: string}) => row.id));
   const videos = new Set((queries[2].data ?? []).map((row: {id: string}) => row.id));
   for (const asset of queries[1].data ?? []) {
+    if (typeof asset.storage_key === "string" && asset.storage_key.includes("/contact-")) continue;
     if (asset.kind === "photo") photos.add(asset.id);
     if (asset.kind === "video") videos.add(asset.id);
   }

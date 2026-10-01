@@ -12,6 +12,7 @@ struct SettingsView: View {
     @AppStorage("maxQualityCapture") private var maxQualityCapture = false
     @AppStorage("hasOnboarded") private var hasOnboarded = true
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
+    @AppStorage(RealEstateRoleStore.uiRevisionKey) private var realEstateRoleRevision = 0
     // Drives .preferredColorScheme at the app root (RendpropApp reads the same key).
     @AppStorage("appearance") private var appearanceRaw = Appearance.system.rawValue
     @EnvironmentObject var uploads: UploadManager
@@ -151,6 +152,14 @@ struct SettingsView: View {
                 Text("Business type")
             } footer: {
                 Text("Switch any time — the whole app re-themes instantly: samples, fields, area tags and your tour's call-to-action.")
+            }
+
+            if SpaceType.current == .realEstate {
+                Section {
+                    NavigationLink { RealEstateRoleSettingsView() } label: {
+                        LabeledContent("Real estate workflow", value: RealEstateRoleStore.current.label)
+                    }.accessibilityIdentifier("settings.realEstateRole")
+                }
             }
 
             Section {
@@ -1480,10 +1489,10 @@ struct LeadsView: View {
         isLoading = true
         defer { isLoading = false }
         _ = await AuthStore.validAccessToken()
-        let actor = auth.userID, revision = auth.syncSessionRevision
+        let actor = auth.userID, revision = auth.syncSessionRevision, org = WorkspaceContext.selectedOrgID
         do {
             let fetched = try await model.api.leads(listingServerID: listing?.serverID)
-            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            guard auth.isSignedIn, auth.userID == actor, auth.syncSessionRevision == revision, WorkspaceContext.selectedOrgID == org else { return }
             leads = fetched.sorted { $0.createdAt > $1.createdAt }
             errorMessage = nil
             hasLoaded = true
@@ -1500,6 +1509,18 @@ struct LeadsView: View {
 struct LeadRow: View {
     let lead: Lead
     var showListing = true
+    @EnvironmentObject private var model: AppModel
+    @State private var latestDelivery: ClientLeadDelivery?
+    @State private var showSendConfirmation = false
+    @State private var isSending = false
+    @State private var sendError: String?
+    @State private var requestID: UUID?
+    @State private var requestRecipient: String?
+    @State private var confirmedRecipient: String?
+    @State private var confirmedOwner: String?
+    @State private var confirmedRevision: UInt64?
+    @State private var confirmedOrg: UUID?
+    private var delivery: ClientLeadDelivery? { latestDelivery ?? lead.clientDelivery }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -1588,6 +1609,27 @@ struct LeadRow: View {
                     .font(.caption2)
                     .foregroundStyle(Theme.inkDim)
             }
+            if let delivery {
+                Divider()
+                Label(delivery.label, systemImage: delivery.state == "email_sent" ? "envelope.badge.fill" : "envelope")
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(delivery.state == "failed" ? Theme.warn : Theme.inkDim)
+                if let email = delivery.recipientEmail { Text(email).font(.rpCaption).foregroundStyle(Theme.inkDim) }
+                if let raw = delivery.sentAt ?? delivery.lastAttemptAt, let date = CloudListingMerge.date(raw) {
+                    Text(date.formatted(date: .abbreviated, time: .shortened)).font(.rpCaption).foregroundStyle(Theme.inkDim)
+                }
+                if delivery.canResend, let recipient = delivery.currentRecipientEmail ?? delivery.recipientEmail, ClientContactPolicy.isEmail(recipient) {
+                    Button {
+                        confirmedRecipient = recipient
+                        confirmedOwner = AuthStore.shared.userID
+                        confirmedRevision = AuthStore.shared.syncSessionRevision
+                        confirmedOrg = WorkspaceContext.selectedOrgID
+                        showSendConfirmation = true
+                    } label: {
+                        Label(isSending ? "Sending…" : (requestID == nil ? (delivery.lastAttemptAt == nil ? "Send to client" : "Send to client again") : "Retry sending to client"), systemImage: "paperplane")
+                    }.buttonStyle(.borderless).disabled(isSending).accessibilityIdentifier("lead.sendToClient")
+                }
+                if let sendError { Text(sendError).font(.rpCaption).foregroundStyle(Theme.warn) }
+            }
         }
         .padding(.vertical, 4)
         // NOT `.accessibilityElement(children: .combine)`. That merged the whole
@@ -1596,6 +1638,32 @@ struct LeadRow: View {
         // tap on the phone number resolved to the mail link. `.contain` keeps
         // the card grouped while leaving the two actions separately addressable.
         .accessibilityElement(children: .contain)
+        .onChange(of: lead.clientDelivery) { _ in latestDelivery = nil }
+        .confirmationDialog("Email this inquiry to your client?", isPresented: $showSendConfirmation, titleVisibility: .visible) {
+            Button("Send email") { Task { await sendToClient() } }
+        } message: {
+            Text("The inquiry and buyer's contact details will be sent to \(confirmedRecipient ?? "your client's saved email").")
+        }
+    }
+
+    @MainActor private func sendToClient() async {
+        guard !isSending, let recipient = confirmedRecipient, let org = confirmedOrg,
+              AuthStore.shared.userID == confirmedOwner, AuthStore.shared.syncSessionRevision == confirmedRevision,
+              WorkspaceContext.selectedOrgID == org else {
+            sendError = "Your account or workspace changed. Reopen Leads before sending."; return
+        }
+        isSending = true; defer { isSending = false }
+        let operation = requestRecipient == recipient ? (requestID ?? UUID()) : UUID()
+        requestID = operation; requestRecipient = recipient
+        do {
+            let result = try await model.api.sendLeadToClient(leadID: lead.id, recipient: recipient, requestID: operation, orgID: org)
+            guard AuthStore.shared.userID == confirmedOwner, AuthStore.shared.syncSessionRevision == confirmedRevision,
+                  WorkspaceContext.selectedOrgID == org else { return }
+            latestDelivery = result; requestID = nil; sendError = nil
+        } catch {
+            guard AuthStore.shared.userID == confirmedOwner, AuthStore.shared.syncSessionRevision == confirmedRevision else { return }
+            sendError = UserFacingError.message(error, fallback: "The email couldn't be confirmed. Retry uses this same send request.")
+        }
     }
 
     /// "eventDate" → "Event date"; "party_size" → "Party size".
@@ -1655,6 +1723,9 @@ struct AgentCard {
     var instagram: String = ""
     var linkedin: String = ""
     var tiktok: String = ""
+    var customHeadshotRelPath: String? = nil
+    var usesOwnHeadshot = true
+    var publicAvatarURL: String? = nil
 
     static let fieldNames = ["name", "brokerage", "phone", "email", "website", "instagram", "linkedin", "tiktok"]
 
@@ -1847,10 +1918,22 @@ struct AgentCard {
     }
     static var headshotURL: URL { headshotURL(for: SpaceType.current) }
 
-    var hasHeadshot: Bool { FileManager.default.fileExists(atPath: Self.headshotURL.path) }
+    var resolvedHeadshotURL: URL? {
+        if let path = customHeadshotRelPath { return FileStore.url(fromRelativePath: path) }
+        return usesOwnHeadshot ? Self.headshotURL : nil
+    }
+    var hasHeadshot: Bool { resolvedHeadshotURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false }
     var headshotBase64: String? {
-        guard let data = try? Data(contentsOf: Self.headshotURL) else { return nil }
+        guard let url = resolvedHeadshotURL, let data = try? Data(contentsOf: url) else { return nil }
         return data.base64EncodedString()
+    }
+
+    static func forListing(_ listing: Listing?, fallback: AgentCard = .current) -> AgentCard {
+        guard let listing, let contact = listing.clientContact, ClientContactPolicy.useClientCard(contact) else { return fallback }
+        let card = contact.publicCard
+        return AgentCard(name: card.name, brokerage: [card.title, card.brokerage].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "), phone: card.phone ?? "",
+            email: card.email ?? "", website: card.website ?? "", instagram: card.instagram ?? "",
+            linkedin: card.linkedin ?? "", customHeadshotRelPath: listing.clientPhotoRelPath, usesOwnHeadshot: false, publicAvatarURL: card.avatarURL)
     }
 
     static func saveHeadshot(_ image: UIImage) {

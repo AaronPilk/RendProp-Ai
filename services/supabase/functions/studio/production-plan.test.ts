@@ -31,3 +31,9 @@ Deno.test('capture plan checks current property, completed upload and media type
  const missing=fake('agent');await assertRejects(()=>authorizeProductionPlan(linked,missing.ctx,new AbortController().signal),HttpError,'property');
  const broken=fake('agent',{},true);await assertRejects(()=>authorizeProductionPlan(linked,broken.ctx,new AbortController().signal),HttpError,'could not be checked');
 });
+
+Deno.test('capture plan rejects manually supplied client headshot IDs as property sources',async()=>{
+ const linked=productionPlanInput({...plan,shots:[{...shot,sourcePhotoIds:[photo]}]},listing);
+ const f=fake('agent',{capture_assets:[{id:photo,kind:'photo',storage_key:`renders/${org}/${listing}/contact-${photo}.jpg`}]});
+ await assertRejects(()=>authorizeProductionPlan(linked,f.ctx,new AbortController().signal),HttpError,'property');
+});

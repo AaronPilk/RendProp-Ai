@@ -5,6 +5,8 @@ struct OnboardingView: View {
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var page = 0
     @State private var choosingType = false
+    @State private var choosingRole = false
+    @State private var selectedRole: RealEstateRole = .agent
 
     // Feature-first: each page is one headline feature wearing its signature
     // gradient (the same one it wears on Home's showroom).
@@ -26,7 +28,9 @@ struct OnboardingView: View {
     var body: some View {
         ZStack {
             Theme.bg.ignoresSafeArea()
-            if choosingType {
+            if choosingRole {
+                rolePicker
+            } else if choosingType {
                 typePicker
             } else {
                 cardsView
@@ -166,17 +170,40 @@ struct OnboardingView: View {
             .padding(.top, 14)
             .padding(.bottom, 12)
 
-            PrimaryButton(title: "See plans", systemImage: "arrow.right") {
-                hasOnboarded = true
-                PaywallRouter.shared.present(reason: .upgrade)
+            PrimaryButton(title: spaceTypeRaw == SpaceType.realEstate.rawValue ? "Continue" : "See plans", systemImage: "arrow.right") {
+                if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
+                else { finish(showPlans: true) }
             }
             .accessibilityIdentifier("onboarding.choosePlan")
             .padding(.horizontal, 24)
             .padding(.bottom, 8)
-            Button("Explore the app first") { hasOnboarded = true }
+            Button("Explore the app first") {
+                if spaceTypeRaw == SpaceType.realEstate.rawValue { withAnimation { choosingRole = true } }
+                else { finish(showPlans: false) }
+            }
                 .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
                 .accessibilityIdentifier("onboarding.explore")
                 .padding(.bottom, 24)
         }
+    }
+
+    private var rolePicker: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text("How do you work?").font(.rpLargeTitle).foregroundStyle(Theme.ink)
+            Text("We'll tailor your real estate workflow.").font(.rpBody).foregroundStyle(Theme.inkDim)
+            RealEstateRoleChoice(selected: $selectedRole)
+            Spacer()
+            PrimaryButton(title: "See plans", systemImage: "arrow.right") { finish(showPlans: true) }
+                .accessibilityIdentifier("onboarding.role.choosePlan")
+            Button("Explore the app first") { finish(showPlans: false) }
+                .font(.rpBody.weight(.semibold)).foregroundStyle(Theme.accent)
+                .accessibilityIdentifier("onboarding.role.explore")
+            Button("Back") { choosingRole = false }.font(.rpCaption).foregroundStyle(Theme.inkDim)
+        }.padding(24)
+    }
+    private func finish(showPlans: Bool) {
+        if spaceTypeRaw == SpaceType.realEstate.rawValue { RealEstateRoleStore.choose(selectedRole, owner: AuthStore.shared.userID) }
+        hasOnboarded = true
+        if showPlans { PaywallRouter.shared.present(reason: .upgrade) }
     }
 }

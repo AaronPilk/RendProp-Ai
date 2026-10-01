@@ -7,6 +7,7 @@ export type Chapter = { label: string; t_ms: number; sort: number; asset_id?: st
 export type GalleryPhoto = { id: string; listing_id: string; original_key: string | null; enhanced_key: string | null; caption: string | null; is_staged: boolean; is_main: boolean; sort: number; created_at: string };
 export type ListingState = { assets: Asset[]; jobs: Job[]; renders: Published[]; photos: GalleryPhoto[]; chapters: Chapter[]; nextOffset: number | null };
 export const EMPTY_STATE: ListingState = { assets: [], jobs: [], renders: [], photos: [], chapters: [], nextOffset: null };
+export function isContactPhotoKey(value: unknown): boolean { return typeof value === "string" && value.split("/").at(-1)?.startsWith("contact-") === true; }
 export function orderedGallery(photos: GalleryPhoto[]): GalleryPhoto[] { return [...photos].sort((a, b) => a.sort - b.sort || a.id.localeCompare(b.id)); }
 export function canPublishAsset(asset: Asset): boolean { return asset.qc_required !== true || asset.qc_publishable === true; }
 export function safeHTTPS(value: unknown): string | null {
@@ -41,7 +42,7 @@ export function decodeListingState(raw: unknown, orgId: string, listingId: strin
     if (typeof c.label !== "string" || c.label.length > 80 || !Number.isInteger(c.t_ms) || Number(c.t_ms) < 0 || Number(c.t_ms) > 86_400_000) throw new Error("Saved chapters could not be read.");
     return { label: c.label, t_ms: Number(c.t_ms), sort: Number(c.sort) || 0, asset_id: typeof c.asset_id === "string" ? uuid(c.asset_id) : undefined };
   }) : [];
-  return { assets, jobs: rows<Job>("jobs"), renders: rows<Published>("renders"), photos, chapters, nextOffset: nextOffset as number | null };
+  return { assets: assets.filter(asset => !isContactPhotoKey(asset.storage_key)), jobs: rows<Job>("jobs"), renders: rows<Published>("renders"), photos: photos.filter(photo => !isContactPhotoKey(photo.original_key) && !isContactPhotoKey(photo.enhanced_key)), chapters, nextOffset: nextOffset as number | null };
 }
 export function listingPayload(values: FormData, existing?: Listing): Record<string, unknown> {
   const text = (key: string, max = 500) => String(values.get(key) ?? "").trim().slice(0, max) || null;

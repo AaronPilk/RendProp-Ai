@@ -44,6 +44,7 @@ import { assertMediaVisible, mediaVisibility, type MediaSourceRefs } from "../_s
 import { bucketForKey } from "../studio/handler.ts";
 import { publicR2Url, streamHlsUrl } from "../_shared/r2.ts";
 import { buildAgentCard } from "../_shared/agentcard.ts";
+import { resolveContactPhoto } from "../listings/client-contact.ts";
 import { buildCta } from "./cta.ts";
 import { bindSpatialChapters, type SpatialChapter } from "../spatial/chapters.ts";
 
@@ -400,7 +401,12 @@ Deno.serve(async (req) => {
 
     // 4. Assemble the safe agent card from the org's brand kit (allow-listed
     //    fields; name never falls back to the org name — see _shared/agentcard.ts).
-    const agent_card = buildAgentCard(org?.brand_kit, {
+    const { data: clientRow, error: clientError }=await admin.from("listing_client_contacts")
+      .select("listing_id,org_id,enabled,public_card,hide_rendprop_branding,photo_asset_id,revision").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
+    if(clientError)throw new HttpError(503,"The listing contact could not be verified. Please retry.");
+    const clientMode=clientRow?.enabled===true;
+    const client=clientMode?await resolveContactPhoto(admin,clientRow,visibleRefs):null;
+    const agent_card = clientMode ? {...(client?.public_card??{}),handle:null} : buildAgentCard(org?.brand_kit, {
       profileName: agentProfile?.name,
       orgHandle: org?.handle ?? null,
     });
@@ -421,6 +427,10 @@ Deno.serve(async (req) => {
     // These service-role reads bypass RLS; recheck every exposed lineage after
     // assembling the response, so revocation during optional reads cannot leak.
     await assertMediaVisible(admin, listing.id, visibleRefs);
+    const {data: currentClient,error: currentClientError}=await admin.from("listing_client_contacts")
+      .select("revision,enabled").eq("listing_id",listing.id).eq("org_id",listing.org_id).maybeSingle();
+    if(currentClientError || (currentClient?.revision??null)!==(clientRow?.revision??null) || (currentClient?.enabled??false)!==clientMode)
+      throw new HttpError(503,"The listing contact changed. Please refresh.");
     return json({
       slug: render.slug,
       share_url: brandedUrl(render.slug as string),
@@ -454,6 +464,8 @@ Deno.serve(async (req) => {
       published_at: render.published_at,
       chapters,
       agent_card,
+      client_mode:clientMode,
+      hide_rendprop_branding:clientMode && clientRow?.hide_rendprop_branding===true,
       cta: buildCta(listing),
       // Floor plan, promoted out of details so the host can render it above the
       // gallery on BOTH pages (it is property information, not branding).

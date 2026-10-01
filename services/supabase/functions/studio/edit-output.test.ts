@@ -418,3 +418,10 @@ Deno.test("music cannot be finalized by guessed hash, incomplete upload, deleted
   f.tables.studio_production_versions.push({ id: voice, org_id: org, listing_id: listing, payload: { draft: { music: { licensed: true, source: { sha256: sha } } } } });
   assertEquals((await f.call({ music_sha256: sha })).status, 200);
 });
+
+Deno.test("property video finalization rejects a manually supplied client headshot before writes", async () => {
+  const f = fixture();
+  f.tables.capture_assets[1].storage_key = key(`contact-${source}.jpg`);
+  await assertRejects(() => f.call(), HttpError, "source file");
+  assertEquals(f.writes, 0);
+});

@@ -75,7 +75,7 @@ export async function attachGeneratedVideoProof(
       source.listing_id !== result.listing_id || source.uploaded !== true ||
       source.bucket !== "renders" ||
       !String(source.storage_key).startsWith(prefix) ||
-      String(source.storage_key).includes(".."))
+      String(source.storage_key).includes("..") || String(source.storage_key).includes("/contact-"))
   ) {
     throw new HttpError(
       409,

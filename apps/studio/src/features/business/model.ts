@@ -9,7 +9,8 @@ export const notificationLabels = {
 } as const;
 export type NotificationKey = keyof typeof notificationLabels;
 export type Notifications = Record<NotificationKey, boolean> & { muted_until: string | null };
-export type Lead = { id: string; listingId: string | null; name: string; email: string; phone: string; message: string; address: string; source: string; status: LeadStatus; synced: boolean; createdAt: string };
+export type ClientDelivery = { state: "queued" | "sending" | "email_sent" | "failed" | "skipped"; recipient_email: string | null; client_name: string | null; current_recipient_email?: string | null; current_client_name?: string | null; last_attempt_at: string | null; sent_at: string | null; can_resend: boolean; reason: string | null };
+export type Lead = { id: string; listingId: string | null; name: string; email: string; phone: string; message: string; address: string; source: string; status: LeadStatus; synced: boolean; createdAt: string; clientDelivery?: ClientDelivery | null };
 export type TeamMember = { id: string; name: string; email: string; role: Role; isYou: boolean };
 export type TeamInvite = { id: string; email: string; role: Role; expiresAt: string };
 export type Team = { canManage: boolean; used: number; allowed: number; members: TeamMember[]; invites: TeamInvite[] };
@@ -67,12 +68,19 @@ export function decodeLead(value: unknown): Lead {
   const r = record(value);
   const status = text(r.status);
   if (!(leadStatuses as readonly string[]).includes(status)) throw new Error("Rendprop returned an unknown lead status.");
-  return { id: uuid(r.id), listingId: nullableId(r.listing_id), name: text(r.name, "New inquiry"), email: text(r.email), phone: text(r.phone), message: text(r.message), address: text(r.listing_address, "General inquiry"), source: text(r.source, "tour"), status: status as LeadStatus, synced: boolean(r.synced_crm), createdAt: date(r.created_at) };
+  return { id: uuid(r.id), listingId: nullableId(r.listing_id), name: text(r.name, "New inquiry"), email: text(r.email), phone: text(r.phone), message: text(r.message), address: text(r.listing_address, "General inquiry"), source: text(r.source, "tour"), status: status as LeadStatus, synced: boolean(r.synced_crm), createdAt: date(r.created_at), clientDelivery: r.client_delivery == null ? null : decodeClientDelivery(r.client_delivery) };
+}
+export function decodeClientDelivery(value: unknown): ClientDelivery {
+  const r = record(value), state = text(r.state), recipient_email = r.recipient_email === null ? null : text(r.recipient_email);
+  if (!["queued", "sending", "email_sent", "failed", "skipped"].includes(state) || (recipient_email === null ? state !== "skipped" || r.last_attempt_at != null || r.sent_at != null : recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(recipient_email))) throw new Error("The client email delivery could not be verified. Refresh your leads.");
+  const current_recipient_email = r.current_recipient_email == null ? null : text(r.current_recipient_email);
+  if (current_recipient_email && (current_recipient_email.length > 200 || !/^[^\s@?&#]+@[^\s@?&#]+\.[^\s@?&#]+$/.test(current_recipient_email))) throw new Error("The current client recipient could not be verified.");
+  return { state: state as ClientDelivery["state"], recipient_email, client_name: r.client_name === null ? null : text(r.client_name), ...(r.current_recipient_email === undefined ? {} : {current_recipient_email}), ...(r.current_client_name === undefined ? {} : {current_client_name: r.current_client_name === null ? null : text(r.current_client_name)}), last_attempt_at: r.last_attempt_at == null ? null : date(r.last_attempt_at), sent_at: r.sent_at == null ? null : date(r.sent_at), can_resend: boolean(r.can_resend), reason: r.reason == null ? null : text(r.reason) };
 }
 export function decodeLeads(value: unknown): Lead[] { return unique(rows(record(value).leads, 500).map(decodeLead)); }
 export function filterLeads(leads: Lead[], query: string): Lead[] {
   const q = query.trim().toLocaleLowerCase();
-  return q ? leads.filter((l) => [l.name, l.email, l.phone, l.address, l.message].some((v) => v.toLocaleLowerCase().includes(q))) : leads;
+  return q ? leads.filter((l) => [l.name, l.email, l.phone, l.address, l.message, l.clientDelivery?.client_name ?? "", l.clientDelivery?.recipient_email ?? "", l.clientDelivery?.current_client_name ?? "", l.clientDelivery?.current_recipient_email ?? ""].some((v) => v.toLocaleLowerCase().includes(q))) : leads;
 }
 export function decodeTeam(value: unknown, orgId: string): Team {
   const r = record(value), seats = record(r.seats);

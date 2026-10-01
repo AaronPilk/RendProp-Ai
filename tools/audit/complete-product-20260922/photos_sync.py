@@ -38,7 +38,7 @@ def main():
     modify = lifecycle.block(app, "    func modify(_ id: UUID,")
     dirty = lifecycle.block(app, "    func markDirty(_ id: UUID)")
     sources = [ROOT / ("apps/ios/Rendprop/" + name) for name in [
-        "Models/Listing.swift", "Models/Money.swift", "Networking/WorkspaceSync.swift",
+        "Models/Listing.swift", "Models/ListingClientContact.swift", "Models/Money.swift", "Networking/WorkspaceSync.swift",
         "Networking/NativeReelDraft.swift", "Push/NotificationPrefs.swift", "Voice/VoiceTypes.swift",
     ]]
     swift = r'''

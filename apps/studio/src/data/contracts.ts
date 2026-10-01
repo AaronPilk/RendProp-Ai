@@ -1,6 +1,12 @@
 import { StudioError } from "./config";
 
 export type Role = "owner" | "admin" | "agent" | "marketing";
+export type RealEstateRole = "agent" | "photographer_videographer";
+export function decodeRealEstateRole(value: unknown): RealEstateRole | null {
+  if (value === undefined || value === null) return null;
+  if (value !== "agent" && value !== "photographer_videographer") throw new Error("Your real estate work preference could not be read. Refresh your account.");
+  return value;
+}
 export type Membership = {
   orgId: string;
   role: Role;
@@ -13,6 +19,7 @@ export type Workspace = {
     email: string | null;
     name: string | null;
     avatarUrl: string | null;
+    realEstateRole?: RealEstateRole | null;
   };
   org: { id: string; name: string; handle: string | null; spaceType: string };
   plan: string;
@@ -82,6 +89,7 @@ export type MeDTO = {
     email?: string | null;
     name?: string | null;
     avatar_url?: string | null;
+    real_estate_role?: RealEstateRole | null;
   };
   org: { id: string; name: string; handle: string | null; space_type: string };
   plan: string;
@@ -276,6 +284,7 @@ export function decodeWorkspace(
       email: nullableString(user.email, "user email", true),
       name: nullableString(user.name, "user name", true),
       avatarUrl: nullableString(user.avatar_url, "user avatar_url", true),
+      realEstateRole: decodeRealEstateRole(user.real_estate_role),
     },
     org: {
       id: orgId,
@@ -535,5 +544,8 @@ export function decodeMedia(
   });
   unique(photos, "duplicate photo");
   unique(videos, "duplicate video");
-  return { orgId, listingId, photos, videos, nextOffset, unavailableCount };
+  const propertyPhotos = photos.filter(photo => {
+    try { return !decodeURIComponent(new URL(photo.url).pathname).split("/").at(-1)?.startsWith("contact-"); } catch { return false; }
+  });
+  return { orgId, listingId, photos: propertyPhotos, videos, nextOffset, unavailableCount };
 }

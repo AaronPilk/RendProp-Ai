@@ -87,6 +87,7 @@ struct ReviewSubmitView: View {
                 reflectionSection
                 roomTags
                 tierPicker
+                ListingClientContactSummary(listing: model.listings.first(where: { $0.id == listing.id }) ?? listing)
                 if let submitError {
                     Label(submitError, systemImage: "exclamationmark.triangle.fill")
                         .font(.rpCaption).foregroundStyle(Theme.warn)

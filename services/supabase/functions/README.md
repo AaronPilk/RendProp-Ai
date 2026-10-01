@@ -7,6 +7,15 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+[Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
+adds a nullable, explicit real estate work preference, service-only per-listing
+client contacts, verified contact-photo uploads and transactional client inquiry
+emails. Recipients and delivery history remain private; public tours expose only
+the client card and display flags. The migration must precede the selected
+`me`, `listings`, `uploads`, `leads`, `notify`, `studio`, `tours` and adoption
+handlers. The new release is being verified; older release versions below remain
+historical receipts rather than evidence that this feature is live.
+
 The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
 deployed **team v16, me v42, coach v19 and listings v36**, all ACTIVE with JWT
 verification on. The three trial/invitation/workspace migrations are applied;

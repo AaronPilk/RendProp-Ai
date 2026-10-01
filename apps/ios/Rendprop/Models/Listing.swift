@@ -35,6 +35,12 @@ struct Listing: Identifiable, Codable, Hashable {
     /// Industry-specific fields keyed by DetailField.key (e.g. cuisineType,
     /// membershipPrice, weeklySpecial). Optional/Codable-safe.
     var details: [String: String]? = nil
+    /// Per-listing client identity. Never changes the account owner's brand kit.
+    var clientContact: ListingClientContact? = nil
+    var clientContactDirty: Bool? = nil
+    var clientContactLoaded: Bool? = nil
+    var clientPhotoRelPath: String? = nil
+    var clientPhotoDirty: Bool? = nil
 
     // MARK: - Cloud sync (local-first + cloud-publish, contract §4)
     // All optional so listings saved before these fields existed still decode.
@@ -311,7 +317,8 @@ extension Listing {
              tagline, details, serverID, serverOrgID, cloudDraftOrgID, cloudImported, cloudUnavailable, cloudSyncOwnerID, cloudDetachedServerID, cloudCreateFingerprint, cloudCreateReplayed, shareSlug, shareURL,
              exteriorPhotoRelPath, regionLabel, aerialRelPath, aerialGeneratedAt,
              lastError, needsServerSync, publishedRenderID,
-             unbrandedShareURL, stateCode, allowSearchIndexing
+             unbrandedShareURL, stateCode, allowSearchIndexing,
+             clientContact, clientContactDirty, clientContactLoaded, clientPhotoRelPath, clientPhotoDirty
     }
 
     init(from decoder: Decoder) throws {
@@ -336,6 +343,11 @@ extension Listing {
         longitude        = try c.decodeIfPresent(Double.self, forKey: .longitude)
         tagline          = try c.decodeIfPresent(String.self, forKey: .tagline)
         details          = try c.decodeIfPresent([String: String].self, forKey: .details)
+        clientContact = try c.decodeIfPresent(ListingClientContact.self, forKey: .clientContact)
+        clientContactDirty = try c.decodeIfPresent(Bool.self, forKey: .clientContactDirty)
+        clientContactLoaded = try c.decodeIfPresent(Bool.self, forKey: .clientContactLoaded)
+        clientPhotoRelPath = try c.decodeIfPresent(String.self, forKey: .clientPhotoRelPath)
+        clientPhotoDirty = try c.decodeIfPresent(Bool.self, forKey: .clientPhotoDirty)
         serverID         = try c.decodeIfPresent(UUID.self,   forKey: .serverID)
         serverOrgID      = try c.decodeIfPresent(UUID.self,   forKey: .serverOrgID)
         cloudDraftOrgID  = try c.decodeIfPresent(UUID.self, forKey: .cloudDraftOrgID)
@@ -482,7 +494,7 @@ enum SpaceType: String, CaseIterable, Identifiable {
 
     var collectionTitle: String {
         switch self {
-        case .realEstate: return "My Homes"
+        case .realEstate: return RealEstateRoleStore.current.isProducer ? "Client listings" : "My Homes"
         case .venue:      return "My Venues"
         case .restaurant: return "My Places"
         case .retail:     return "My Stores"
@@ -606,10 +618,10 @@ enum SpaceType: String, CaseIterable, Identifiable {
     /// Profile identity flips per type: real estate profiles the AGENT
     /// (person + brokerage); every other type profiles the BUSINESS
     /// (business name + owner). Same storage, different meaning.
-    var profileCardName: String { self == .realEstate ? "Agent card" : "Business card" }
-    var profileNameLabel: String { self == .realEstate ? "Full name" : "Business name" }
-    var profileOrgLabel: String { self == .realEstate ? "Brokerage" : "Owner or manager (optional)" }
-    var profilePhotoLabel: String { self == .realEstate ? "Headshot" : "Logo or photo" }
+    var profileCardName: String { self == .realEstate ? (RealEstateRoleStore.current.isProducer ? "Your business card" : "Agent card") : "Business card" }
+    var profileNameLabel: String { self == .realEstate && !RealEstateRoleStore.current.isProducer ? "Full name" : "Business name" }
+    var profileOrgLabel: String { self == .realEstate ? (RealEstateRoleStore.current.isProducer ? "Your name (optional)" : "Brokerage") : "Owner or manager (optional)" }
+    var profilePhotoLabel: String { self == .realEstate && !RealEstateRoleStore.current.isProducer ? "Headshot" : "Logo or photo" }
 
     /// Who watches this type's tours — used everywhere the copy says "buyers".
     var customerNoun: String {
@@ -629,7 +641,7 @@ enum SpaceType: String, CaseIterable, Identifiable {
     /// Fair-housing safe: never people, neighborhoods or demographics.
     var heroHeadline: String {
         switch self {
-        case .realEstate: return "Win the listing.\nSkip the film crew."
+        case .realEstate: return RealEstateRoleStore.current.isProducer ? "Create for your clients.\nDeliver more from every shoot." : "Win the listing.\nSkip the film crew."
         case .venue:      return "Book the date before\nthey ever visit."
         case .restaurant: return "Fill the room before\nthey see the menu."
         case .retail:     return "Get them in the door\nfrom their couch."
@@ -642,7 +654,9 @@ enum SpaceType: String, CaseIterable, Identifiable {
     var heroSubline: String {
         switch self {
         case .realEstate:
-            return "One walkthrough becomes a cinematic tour, polished photos and a link buyers can't stop scrolling — in minutes, from your phone."
+            return RealEstateRoleStore.current.isProducer
+                ? "Capture, edit and deliver listing media. Each client's page shows their contact details, and their inquiries stay organized in your account."
+                : "One walkthrough becomes a cinematic tour, polished photos and a link buyers can't stop scrolling — in minutes, from your phone."
         case .venue:
             return "Walk the room once. Get a cinematic tour, polished photos and a link planners share before they've booked a visit."
         case .restaurant:

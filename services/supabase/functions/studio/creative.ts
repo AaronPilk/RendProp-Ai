@@ -792,7 +792,7 @@ export async function handleCreative(
           "id",
           creativeId(body.asset_id),
         ).eq("listing_id", listingId).eq("uploaded", true).maybeSingle();
-      if (error || !source) {
+      if (error || !source || String(source.storage_key).includes("/contact-")) {
         throw new HttpError(
           400,
           "Choose a completed source from this listing.",

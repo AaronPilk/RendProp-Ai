@@ -71,6 +71,7 @@
 // that echoes the error text.
 
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
+import { saveProfileRole } from "./profile.ts";
 import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
 import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
 import { handleOptions } from "../_shared/cors.ts";
@@ -159,6 +160,7 @@ Deno.serve(async (req) => {
 
     if (req.method === "GET") return await handleGet(req, user.id, user.email ?? null);
     if (req.method === "PATCH") {
+      if (seg.length === 1 && seg[0] === "profile") return json(await saveProfileRole(adminClient(), user.id, await readJsonLimited(req, 1024)));
       if (seg[0] === "brand") return await handleBrandPatch(req, user.id);
       if (seg[0] === "notifications") return await handleNotificationsPatch(req, user.id);
       throw new HttpError(404, "Unknown route — PATCH /me/brand, /me/notifications or /me/compliance/:id");
@@ -228,7 +230,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     entitlement,
     membershipRes,
   ] = await Promise.all([
-      db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
+      db.from("profiles").select("id, email, name, avatar_url, phone, real_estate_role").eq("id", userId).maybeSingle(),
       db.from("orgs").select(
         "id, name, handle, space_type, plan, trial_ends_at, brand_kit, plan_source, plan_expires_at, apple_product_id",
       ).eq("id", orgId).maybeSingle(),
@@ -308,7 +310,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
   const portfolioUrl = org.handle ? `${TOUR_BASE}/a/${org.handle}` : null;
 
   return json({
-    user: profileRes.data ?? { id: userId, email: userEmail },
+    user: { ...(profileRes.data ?? { id: userId, email: userEmail }), real_estate_role: profileRes.data?.real_estate_role ?? null },
     workspaces: directory.workspaces,
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)

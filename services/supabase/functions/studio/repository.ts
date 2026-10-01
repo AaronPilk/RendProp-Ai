@@ -67,6 +67,7 @@ export function createStudioRepository(
             "id,listing_id,storage_key,kind,bucket,uploaded,duration_s,created_at",
           )
           .eq("listing_id", scope.listingId).eq("uploaded", true)
+          .not("storage_key", "like", "%/contact-%")
           .order("id", { ascending: true }).range(offset, offset + PAGE_SIZE)
           .abortSignal(req.signal),
         db().from("renders")

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { Workspace } from "../src/data/contracts";
 import type { StudioServices } from "../src/data/services";
 import { businessApi } from "../src/features/business/api";
-import { brandPayload, canEditLeads, canRemoveMember, contactLink, csv, decodeAccount, decodeCompliance, decodeInviteResults, decodeLeads, decodeNotifications, decodeTeam, filterLeads, inviteEmails, safeHTTPS, type Brand } from "../src/features/business/model";
+import { brandPayload, canEditLeads, canRemoveMember, contactLink, csv, decodeAccount, decodeClientDelivery, decodeCompliance, decodeInviteResults, decodeLeads, decodeNotifications, decodeTeam, filterLeads, inviteEmails, safeHTTPS, type Brand } from "../src/features/business/model";
 
 const user = "11111111-1111-4111-8111-111111111111", org = "22222222-2222-4222-8222-222222222222", listing = "33333333-3333-4333-8333-333333333333", id = "44444444-4444-4444-8444-444444444444";
 const workspace: Workspace = { user: { id: user, email: "agent@example.invalid", name: "Agent", avatarUrl: null }, org: { id: org, name: "Office", handle: "office", spaceType: "real_estate" }, memberships: [{ orgId: org, orgName: "Office", role: "owner", spaceType: "real_estate" }], plan: "team", planRaw: "team", planDegraded: false, planExpiresAt: null, trialEndsAt: null, usage: { listings: 1, leads: 1, leadsNew: 1, renders: 1 } };
@@ -129,4 +129,38 @@ test("failed invitations and deletion cannot be silently retried", async () => {
   await assert.rejects(api.deleteAccount("DELETE"), /Type DELETE/); assert.equal(calls, 1);
   await assert.rejects(api.deleteAccount("DELETE MY ACCOUNT"), /Connection lost/); assert.equal(calls, 2);
   await assert.rejects(api.invite("", "owner"), /role/); assert.equal(calls, 2);
+});
+
+const clientDelivery = { state: "email_sent", recipient_email: "client@example.invalid", client_name: "Client Agent", last_attempt_at: "2026-10-01T12:00:00Z", sent_at: "2026-10-01T12:00:01Z", can_resend: true, reason: null };
+test("lead delivery decodes recipient, searchable client identity and provider status without claiming inbox placement", () => {
+  const leads = decodeLeads({ leads: [{ ...wireLead, client_delivery: clientDelivery }] });
+  assert.equal(leads[0].clientDelivery?.state, "email_sent");
+  assert.equal(filterLeads(leads, "Client Agent").length, 1); assert.equal(filterLeads(leads, "client@example.invalid").length, 1);
+  for (const invalid of [{ ...clientDelivery, state: "delivered" }, { ...clientDelivery, recipient_email: "bad?bcc=x" }, { ...clientDelivery, can_resend: "true" }, { ...clientDelivery, sent_at: "invalid" }]) assert.throws(() => decodeClientDelivery(invalid));
+});
+test("an older inquiry uses current saved routing without inventing historical email delivery", () => {
+  const unsent = { state: "skipped", recipient_email: null, client_name: null, current_recipient_email: "new-client@example.invalid", current_client_name: "New Client", last_attempt_at: null, sent_at: null, can_resend: true, reason: "This inquiry was recorded before client forwarding was enabled." };
+  const leads = decodeLeads({ leads: [{ ...wireLead, client_delivery: unsent }] });
+  assert.equal(leads[0].clientDelivery?.recipient_email, null);
+  assert.equal(leads[0].clientDelivery?.current_recipient_email, "new-client@example.invalid");
+  assert.equal(filterLeads(leads, "New Client").length, 1);
+  assert.equal(filterLeads(leads, "new-client@example.invalid").length, 1);
+  for (const invalid of [{ ...unsent, state: "email_sent" }, { ...unsent, sent_at: "2026-10-01T12:00:00Z" }, { ...unsent, last_attempt_at: "2026-10-01T12:00:00Z" }, { ...unsent, current_recipient_email: "bad?bcc=x" }]) assert.throws(() => decodeClientDelivery(invalid));
+});
+test("client resend binds recipient and stable caller intention; profile updates remain independent of workspace permission", async () => {
+  const calls: { path: string; options: Record<string, unknown> }[] = [];
+  const services = { api: async (path: string, options: Record<string, unknown>) => { calls.push({ path, options }); return path.endsWith("profile") ? { user: { id: user, real_estate_role: "photographer_videographer" } } : { ok: true, delivery: { ...clientDelivery, state: "queued", can_resend: false } }; } } as unknown as StudioServices;
+  const api = businessApi(services, workspace), request = "55555555-5555-4555-8555-555555555555";
+  await api.sendLeadToClient(id, request, clientDelivery.recipient_email); await api.sendLeadToClient(id, request, clientDelivery.recipient_email);
+  assert.deepEqual(calls[0].options.body, calls[1].options.body); assert.deepEqual(calls[0].options.body, { request_id: request, expected_recipient_email: clientDelivery.recipient_email });
+  assert.equal(calls[0].options.orgId, org); assert.equal(calls[0].path, `/functions/v1/leads/${id}/send-to-client`);
+  await api.saveWorkRole("photographer_videographer"); assert.deepEqual(calls[2].options.body, { real_estate_role: "photographer_videographer" });
+  assert.equal(workspace.memberships[0].role, "owner");
+});
+test("resend and profile response identity mismatches fail without automatic mutation retry", async () => {
+  let count = 0;
+  const services = { api: async () => { count++; return { ok: true, delivery: { ...clientDelivery, recipient_email: "other@example.invalid" }, user: { id: listing, real_estate_role: "agent" } }; } } as unknown as StudioServices;
+  const api = businessApi(services, workspace);
+  await assert.rejects(api.sendLeadToClient(id, id, clientDelivery.recipient_email), /recipient changed/);
+  await assert.rejects(api.saveWorkRole("agent"), /preference/); assert.equal(count, 2);
 });

@@ -14,11 +14,12 @@
 // Errors carry { error, code } (see _shared/http.ts).
 
 import { handleOptions } from "../_shared/cors.ts";
-import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
+import { HttpError, assert, json, pathSegments, readJson, readJsonLimited, respondError } from "../_shared/http.ts";
 import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
 import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
 import { createListingRow } from "./create.ts";
+import { clientContact, saveClientContact } from "./client-contact.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
 // server-controlled and never taken from the body. Must stay in sync with the
@@ -132,6 +133,7 @@ function validate(patch: Record<string, unknown>, orgId: string, listingId: stri
       : key.startsWith(`uploads/${orgId}/`) || key.startsWith(`renders/${orgId}/`);
     assert(prefixOk && key.length <= MAX_TEXT, 400,
       "main_photo_key must be an uploads/ or renders/ key belonging to this listing");
+    assert(!/\/contact-[^/]+$/.test(key),400,"Client headshots cannot be used as property cover photos.");
   }
 }
 
@@ -148,6 +150,14 @@ Deno.serve(async (req) => {
     const requested = requestedWorkspace(req);
     const explicitOrg = requested === undefined ? undefined :
       (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id;
+
+    if (seg.length === 2 && seg[1] === "client-contact") {
+      assert(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id), 400, "Choose a valid listing.");
+      const org = explicitOrg ?? await orgForUser(user.id, preferredOrg(req));
+      if (req.method === "GET") return json({ contact: await clientContact(adminClient(), user.id, org, id) });
+      if (req.method === "PUT") { await assertNotDeleting(user.id); return json({ contact: await saveClientContact(adminClient(), user.id, org, id, await readJsonLimited(req, 6000)) }); }
+      throw new HttpError(405, "Use GET or PUT for the client contact.");
+    }
 
     // ---- POST /listings ----
     if (req.method === "POST" && !id) {

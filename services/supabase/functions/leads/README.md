@@ -8,6 +8,15 @@ org read/manage its own leads (JWT + RLS).
 | `POST /leads` | **public** | `{slug, name?, phone?, email?, extra?, _hp?, turnstile_token?}` → `201 {ok, id}` · `403` bot check failed · `429` rate limited |
 | `GET /leads?listing_id=&since=&status=&limit=` | owner (JWT) | `{leads: [...]}`, RLS-scoped to the caller's org |
 | `PATCH /leads/:id {status}` | owner (JWT) | `{ok, lead}` — `status` one of `new\|contacted\|won\|lost` |
+| `POST /leads/:id/send-to-client` | verified workspace owner/admin/agent | `{request_id: UUID, expected_recipient_email}` → `{ok, delivery}`; destination comes from the saved listing client. |
+
+Per-listing client routing retains inquiries in the photographer's account and
+queues an external email through the existing service-only notification sender.
+`GET /leads` includes private `client_delivery` status and the current recipient
+for explicit resend confirmation. Provider acceptance is labelled **Email sent**;
+it does not certify inbox delivery. See
+[photographer client delivery](../../../../docs/studio/photographer-client-delivery.md)
+for revision, privacy, retry and recipient-change behavior.
 
 ---
 

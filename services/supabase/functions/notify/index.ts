@@ -44,6 +44,7 @@ import { adminClient, isServiceRole } from "../_shared/supabase.ts";
 import * as apns from "./apns.ts";
 import * as email from "./email.ts";
 import { deliverEmail, deliverPush, type DeviceRow, type OutboxRow } from "./deliver.ts";
+import { prepareClientMessage } from "./client-delivery.ts";
 
 /** Same default as functions/me: the routed domain, never rendprop.app. */
 const TOUR_BASE = (Deno.env.get("TOUR_PUBLIC_BASE_URL") ?? "https://rendprop.com").replace(/\/+$/, "");
@@ -170,13 +171,16 @@ async function handleDrain(limit: number): Promise<Response> {
 
   for (const row of rows) {
     try {
+      const clientMessage=row.category==="client_lead_received" && email.configured() ? await prepareClientMessage(admin,row) : undefined;
+      // null means SQL already canceled/expired this claim. Do not revive it.
+      if(clientMessage===null){skipped++;continue;}
       const outcome = row.channel === "push"
         ? await deliverPush(row, (row.user_id ? devicesByUser.get(row.user_id) : undefined) ?? [], TOUR_BASE)
         // to_email wins. An invitee has no profile to look an address up
         // from — that is precisely what is being invited — so the row carries
         // the destination itself (migration 0053). Ordinary rows leave it null
         // and fall through to the profile lookup exactly as before.
-        : await deliverEmail(row, row.to_email ?? (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE);
+        : await deliverEmail(row, row.to_email ?? (row.user_id ? emailByUser.get(row.user_id) ?? null : null), TOUR_BASE,fetch,clientMessage);
       disabledTokens.push(...outcome.deadTokens);
 
       await mark(row.id, outcome.state, outcome.reason, outcome.providerId);

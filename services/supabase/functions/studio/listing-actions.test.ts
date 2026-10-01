@@ -118,3 +118,13 @@ Deno.test("floor-plan concurrent phone edit produces conflict instead of success
   ]);
   await assertRejects(() => handleListingActions(request("floorplan", { listing_id: listing, asset_id: id }), f.context), Error, "changed on another device");
 });
+
+Deno.test("direct gallery and floor plan attachment reject an uploaded client headshot before property writes",async()=>{
+ const headshot={...asset,storage_key:`renders/${org}/${listing}/contact-${id}.jpg`};
+ assertThrows(()=>photoRow(headshot,org,listing,"Client portrait"),Error,"headshots");
+ for(const action of ["photos","floorplan"]){
+   const f=fixture([{table:"memberships",result:{data:{role:"agent"}}},{table:"capture_assets",result:{data:headshot}}]);
+   await assertRejects(()=>handleListingActions(request(action,{listing_id:listing,asset_id:id}),f.context),Error,"headshots");
+   assertEquals(f.calls.some(call=>["update","insert"].includes(call.op)),false);
+ }
+});

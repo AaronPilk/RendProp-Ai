@@ -33,7 +33,8 @@ export type NotificationCategory =
   | "free_week_ending"
   | "allowance_low"
   | "first_tour_nudge"
-  | "team_invite";
+  | "team_invite"
+  | "client_lead_received";
 
 export interface RenderedMessage {
   /** Push alert title; e-mail subject. */

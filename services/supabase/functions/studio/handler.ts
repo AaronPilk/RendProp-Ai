@@ -221,6 +221,7 @@ export function createStudioHandler(deps: StudioDependencies) {
         }
       }
       for (const asset of pageAssets) {
+        if (/\/contact-[^/]+$/.test(asset.storage_key)) continue;
         if (access.assets[asset.id] !== true) { unavailable++; continue; }
         if (!asset.uploaded || !["photo", "video"].includes(asset.kind)) {
           continue;

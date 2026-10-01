@@ -53,7 +53,7 @@ const waitUntil = async (predicate, message, timeout = 5000) => {
   assert.fail(message);
 };
 const svg = (label) => `<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720"><rect width="1280" height="720" fill="#5b2bbd"/><text x="40" y="120" fill="white" font-size="52">SYNTHETIC ${label}</text></svg>`;
-function fixture({ slow = false, missing = false, failed = false, spatial = false } = {}) {
+function fixture({ slow = false, missing = false, failed = false, spatial = false, client = null } = {}) {
   const tour = buildDemoTour();
   tour.slug = slow ? "synthetic-slow" : missing ? "synthetic-no-video" : failed ? "synthetic-failed" : spatial ? "synthetic-spatial" : "synthetic-listing";
   tour.share_url = "http://127.0.0.1/f/" + tour.slug;
@@ -70,6 +70,13 @@ function fixture({ slow = false, missing = false, failed = false, spatial = fals
   tour.agent_card = { name: "Synthetic Branded Agent", phone: "(555) 010-2020", email: "synthetic-agent@example.test", brokerage: "Synthetic Brokerage" };
   tour.cta = { label: "Book a showing", mode: "lead_form", url: null, secondary: [], lead_fields: ["name", "email", "message"] };
   tour.altered_media = [{ label: "Synthetic gallery photo", kind: "declutter", disclosure: "Objects were removed digitally.", original_url: "/synthetic-original.svg", altered_url: "/synthetic-gallery.svg" }];
+  if (client) {
+    tour.slug = "synthetic-client-" + client;
+    tour.client_mode = true;
+    tour.hide_rendprop_branding = true;
+    tour.agent_card = { name: "Synthetic Client " + client, phone: "555-010-2020", email: client + "@example.invalid", brokerage: "Client Brokerage " + client, avatar_url: "/synthetic-client-" + client + ".svg", handle: "photographer-private-portfolio" };
+    tour.listing.details = { ...tour.listing.details, show_partners: true, show_app_cta: true, show_financing: true };
+  }
   return tour;
 }
 
@@ -106,10 +113,14 @@ try {
       req.on("end", () => { try { record.payload = JSON.parse(body); } catch { record.payload = null; } send(200, "{}", { "Content-Type": "application/json" }); });
       return;
     }
-    if (url.pathname === "/api/leads") return send(200, JSON.stringify({ ok: true, id: "11111111-1111-4111-8111-111111111111" }), { "Content-Type": "application/json" });
+    if (url.pathname === "/api/leads") {
+      let body = ""; req.on("data", (chunk) => { body += chunk; });
+      req.on("end", () => { record.payload = JSON.parse(body); send(201, JSON.stringify({ ok: true, id: "11111111-1111-4111-8111-111111111111" }), { "Content-Type": "application/json" }); });
+      return;
+    }
     if (url.pathname.startsWith("/f/") || url.pathname.startsWith("/u/")) {
       const unbranded = url.pathname.startsWith("/u/");
-      const tour = fixture({ slow: url.pathname.includes("slow"), missing: url.pathname.includes("no-video"), failed: url.pathname.includes("failed"), spatial: url.pathname.includes("spatial") });
+      const tour = fixture({ slow: url.pathname.includes("slow"), missing: url.pathname.includes("no-video"), failed: url.pathname.includes("failed"), spatial: url.pathname.includes("spatial"), client: url.pathname.includes("client-alpha") ? "alpha" : url.pathname.includes("client-beta") ? "beta" : null });
       let html = renderTourPage(tour, "http://127.0.0.1:" + server.address().port + "/api", "", "", { unbranded, origin: "http://127.0.0.1:" + server.address().port });
       if (unbranded) assert.deepEqual(unbrandedSelfCheck(html, tour), [], "Actual unbranded renderer must pass its unchanged security gate");
       if (fault === "eager-media") html = html.replace("</body>", '<script>document.getElementById("flythrough-video").src="/synthetic-video.mp4";document.getElementById("flythrough-video").load();</script></body>');
@@ -327,6 +338,30 @@ try {
   const switchedCount = mediaRequests().length; await exitSpatial(); await page.waitForTimeout(350);
   check(mediaRequests().length === switchedCount && (await snapshot()).src === null && (await snapshot()).network === 0, "Returning from spatial does not restart the previously open flythrough");
   check(await page.evaluate(() => document.activeElement?.id === "open-flythrough"), "Returning from a former video chapter focuses a visible listing watch action");
+
+  const clientMediaStart = mediaRequests().length;
+  for (const client of ["alpha", "beta"]) {
+    await page.goto(base + "/f/synthetic-client-" + client);
+    await page.locator('#listing-nav a[href="#endcard"]').click();
+    await page.waitForFunction(() => { const img = document.querySelector("#endcard .avatar img"); return img?.complete && img.naturalWidth > 0; });
+    check(await page.locator("#endcard .nm").innerText() === "Synthetic Client " + client, "Client " + client + " listing displays its own contact name");
+    check(await page.locator("#endcard .avatar img").evaluate((img) => img.complete && img.naturalWidth > 0 && img.getAttribute("src").includes("client-")), "Client " + client + " headshot loads as real browser image");
+    check(await page.locator("#endcard a[href^='mailto:']").getAttribute("href") === "mailto:" + client + "@example.invalid", "Client " + client + " email opens its own contact address");
+    check(await page.locator("#getapp,#brand,#wm,.lp-partner,.lp-madeby,meta[name='apple-itunes-app'],link[href='/favicon.svg'],a[href^='/a/']").count() === 0, "Client page removes vendor promotions and photographer portfolio without stripping contact");
+    check(await page.locator("#leadform .privacy").innerText().then((text) => text.includes("photographer or video producer") && text.includes("Rendprop")), "Client enquiry transparently discloses who stores and receives buyer details");
+    check(await page.locator("#disclosure").count() === 1 && await page.locator(".lp-legal a[href='/privacy']").count() === 1, "Client page retains alteration disclosure and privacy access");
+    check(mediaRequests().length === clientMediaStart, "Client details and contact require no hidden flythrough load");
+  }
+  await page.locator('#leadform input[name="name"]').fill("Synthetic Buyer");
+  await page.locator('#leadform input[name="phone"]').fill("555-010-3030");
+  await page.locator('#leadform input[name="email"]').fill("buyer@example.invalid");
+  await page.locator('#leadform textarea[name="message"]').fill("Synthetic request only. No external email.");
+  await page.locator('#leadform button[type="submit"]').click();
+  await page.locator("#leadok").waitFor({ state: "visible" });
+  const clientLead = requests.filter((r) => r.path === "/api/leads");
+  check(clientLead.length === 1 && clientLead[0].payload.slug === "synthetic-client-beta", "Actual client form sends only the current listing's slug to the lead API");
+  check(clientLead[0].payload.name === "Synthetic Buyer" && !Object.hasOwn(clientLead[0].payload, "recipient_email"), "Public form records buyer details without trusting a browser-selected client recipient");
+  await page.screenshot({ path: join(evidence, "client-contact-mobile.png") });
 
   const unbrandedStart = mediaRequests().length;
   await page.goto(base + "/u/synthetic-listing"); await page.waitForTimeout(300);

@@ -5,6 +5,14 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+[Photographer client delivery](docs/studio/photographer-client-delivery.md) adds
+an Agent / Photographer onboarding choice, a separate client contact and photo
+per listing, private lead email routing, retained inquiry history and confirmed
+resends. Client pages can hide service promotions while retaining the contact
+form and privacy disclosure. Implementation and release verification are in
+progress on the isolated photographer branch; the workflow guide is not a
+production or TestFlight availability receipt.
+
 Apple subscription plans are selected, upgraded and changed in the iPhone app
 under **Settings → Plan & usage**. A seven-day trial starts only after confirming
 an eligible Apple subscription offer; installing the app or signing in does not

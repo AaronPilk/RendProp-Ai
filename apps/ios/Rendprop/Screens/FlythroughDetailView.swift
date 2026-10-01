@@ -361,6 +361,7 @@ struct FlythroughDetailView: View {
                     .accessibilityIdentifier("listing.productionPlan")
                 }
                 tourSection
+                if !currentListing.isSample { ListingClientContactSummary(listing: currentListing) }
                 if let shareURL {
                     shareSection(shareURL)
                 } else {
@@ -391,6 +392,7 @@ struct FlythroughDetailView: View {
         .navigationTitle(currentListing.address)
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.listing)
+        .task { if !currentListing.isSample { try? await model.refreshClientContact(for: listing.id) } }
         .disabled(isDeleting || connection.isWaiting)
         .sessionConnectionNotice(isActive: connection.isWaiting, onCancel: { connection.cancel() })
         .onDisappear { connection.cancel() }
@@ -981,11 +983,12 @@ struct FlythroughDetailView: View {
                 .buttonStyle(ScalePressStyle())
                 .disabled(sample)
 
-                NavigationLink { AgentCardEditorView() } label: {
-                    toolCard(space.profileCardName, "On every link you share",
+                NavigationLink { ListingClientContactEditor(listing: currentListing) } label: {
+                    toolCard("Listing contact", "Your client or your own account card",
                              "person.text.rectangle.fill", RPGradient.agent)
                 }
                 .buttonStyle(ScalePressStyle())
+                .disabled(sample)
             }
         }
     }

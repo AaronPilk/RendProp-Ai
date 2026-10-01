@@ -2347,6 +2347,7 @@ async function resolvePublicAsset(db: any, assetId: string, req: Request): Promi
   if (error) throw new HttpError(400, `Asset lookup failed: ${error.message}`);
   if (!data) throw new HttpError(404, "Asset not found");
   assert(data.uploaded === true, 409, "Asset upload is not complete");
+  assert(!String(data.storage_key).includes("/contact-"), 400, "Choose property media for this video.");
   const listing = (Array.isArray(data.listings) ? data.listings[0] : data.listings) as
     | { org_id: string; space_type: string | null; deleted_at: string | null }
     | undefined;

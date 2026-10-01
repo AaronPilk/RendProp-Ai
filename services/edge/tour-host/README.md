@@ -1,5 +1,13 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+[Photographer client delivery](../../../docs/studio/photographer-client-delivery.md)
+adds explicit `client_mode` and `hide_rendprop_branding` payload flags. Only two
+boolean `true` values suppress vendor attribution, promotions, app banners,
+favicon and player wordmarks. Client cards and lead forms remain; client pages
+never link to the photographer's portfolio. Required property alterations,
+original-photo access and privacy links remain. `/u/` retains its existing
+contact-free MLS behavior. The new renderer's release verification is in progress.
+
 The [1 October listing-first release](../../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
 is live at 100% traffic on Worker version
 `8268c7a9-aad9-43a7-89ac-f1769e75896b`, from source `a87834c`. Final production

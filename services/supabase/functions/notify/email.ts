@@ -26,6 +26,9 @@ export interface EmailMessage {
   to: string;
   subject: string;
   text: string;
+  /** Frozen sender and key for transactional client forwarding only. */
+  from?: string;
+  idempotencyKey?: string;
 }
 
 export interface EmailResult {
@@ -67,9 +70,10 @@ async function sendViaResend(
       headers: {
         Authorization: `Bearer ${env("RESEND_API_KEY")}`,
         "Content-Type": "application/json",
+        ...(message.idempotencyKey ? { "Idempotency-Key": message.idempotencyKey } : {}),
       },
       body: JSON.stringify({
-        from: env("NOTIFY_FROM_EMAIL"),
+        from: message.from ?? env("NOTIFY_FROM_EMAIL"),
         to: [message.to],
         subject: message.subject,
         text: message.text,
@@ -99,7 +103,8 @@ async function sendViaResend(
   const detail = typeof body.message === "string" ? body.message : `resend ${res.status}`;
   // 422 is Resend's "this address/payload is not acceptable" — retrying it
   // forever is how a queue silts up. 4xx other than 429 is the same judgement.
-  const dead = res.status === 422 || (res.status >= 400 && res.status < 500 && res.status !== 429);
+  const concurrent = res.status === 409 && body.name === "concurrent_idempotent_requests";
+  const dead = res.status === 422 || (res.status >= 400 && res.status < 500 && res.status !== 429 && !concurrent);
   return { ok: false, id: null, reason: detail.slice(0, 300), dead };
 }
 
