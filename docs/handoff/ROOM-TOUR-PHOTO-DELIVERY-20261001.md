@@ -84,7 +84,8 @@ edits remain available as versions but may not carry into a restyle.
 - Share/save to Files or Save to Photos. Files receives individual numbered
   JPEGs, paired verified originals and matching disclosure text files. This
   native export is not a ZIP. Save to Photos saves image files; the user must
-  separately copy captions into the listing.
+  separately copy captions into the listing. Each paired original is added before
+  the edited version, so the current edit is added last.
 - Clean unbranded MLS images with disclosure captions. Web/social can include
   recorded alteration labels, including virtual staging and decluttering.
 
@@ -159,7 +160,7 @@ made for this photo/capture update.
 ## Software evidence and phone acceptance
 
 Current software evidence includes 222 station-policy checks, 70 room-planning
-and saved-view checks, 292 local photo-history/file/geometry checks, 24 real UIKit
+and saved-view checks, 292 local photo-history/file/geometry checks, 28 real UIKit
 photo-render/export checks, 62 checks executing the actual edit orchestration,
 and 29 actual ingress/exterior-save checks. Regression mutants reject the
 old direction, wrong original input, original drift, lost disclosures and removed
@@ -185,6 +186,13 @@ The first CI run found that the offline preview-store test's value-only viewer
 stub lacked the new completion field. The stub now matches the real value type,
 with assertions that both rendering and cache reuse preserve partial status.
 Production preview/capture code was unchanged by this test repair.
+The next CI run passed the new photo/room and Studio workflow checks, but caught
+an existing video test sampling a dissolve before blending began. Inspection of
+the immutable MP4 confirmed progressing blended frames and a valid duration.
+The test now requires progression within a fixed sample window plus intact
+before/after shots, retaining its original color/audio/whip/duration bounds.
+The complete 16-check video suite and actual hard-cut/frozen-blend negative
+controls passed. Production video-export code was unchanged.
 Release availability, exact-source CI and deployment readback will be recorded
 here and in a separate build-36 receipt after delivery.
 

@@ -77,7 +77,9 @@ enum PhotoExportRenderer {
                 }
                 urls.append(url); deliveryFiles.append(url)
             }
-            return Prepared(directory: directory, images: urls.sorted { $0.lastPathComponent < $1.lastPathComponent },
+            // Photos receives each retained original before its edited version,
+            // so the current edit is added last. Files keeps predictable names.
+            return Prepared(directory: directory, images: urls,
                             files: deliveryFiles.sorted { $0.lastPathComponent < $1.lastPathComponent })
         } catch {
             try? FileManager.default.removeItem(at: directory)
