@@ -2,10 +2,17 @@
 
 ## Status
 
-Implemented on isolated branch `fix/guided-photo-capture-20261001`, based on
-the delivered internal TestFlight 34 source. Build 35 is reserved after GET-only
-Apple inventory; archive, upload and availability are pending. This document
-will record the actual delivery after Apple confirms it.
+Delivered as internal **TestFlight 1.0.3 (35)** to the existing Rendprop team,
+verified **1 October 2026 at 17:06:20 UTC**. Apple reports `VALID`,
+`INTERNAL_ONLY`, nonexpired, included in the existing group and
+`IN_BETA_TESTING`. One upload succeeded at 17:03:40 UTC.
+
+Archive source is `7636c537449b993b1853f5bdbd2bdabe8168dd59` on isolated branch
+`fix/guided-photo-capture-20261001`, based on the delivered TestFlight 34 source.
+All **12/12 CI jobs passed** on that exact source. The
+[delivery receipt](../releases/TESTFLIGHT-35-20261001.json) binds source, signed
+archive, upload, Apple readback and testing instructions. Physical camera
+acceptance is pending; shared main was not advanced.
 
 The owner confirmed that the Lakeview Drive listing photos were taken inside
 Rendprop. The previous `CameraPicker` was a basic `UIImagePickerController`;
@@ -44,8 +51,12 @@ not available.
 The camera keeps the captured UIImage in memory during review/retry; closing or
 killing the app before a successful save discards that unsaved image. Original
 and enhanced JPEG files remain in the existing listing directory after a
-successful save. Existing card thumbnails still visually crop to fill; the
-full-photo view preserves the complete saved frame.
+successful save. The pre-enhancement original is re-encoded from UIImage at
+0.95 JPEG quality; it is not a RAW file or a byte-identical camera JPEG/EXIF
+package. Exterior capture retains the existing reference-photo path, with a
+maximum 2560-pixel edge at 0.9 JPEG quality. The two-file write is not a
+crash-atomic transaction. Existing card thumbnails still visually crop to fill;
+the full-photo view preserves the complete saved frame.
 
 ## Software verification
 
@@ -92,12 +103,15 @@ The complete corrected browser suite passed all 11 checks locally; private
 production variants without ducking, fade-out or fade-in each failed the
 intended unchanged/strengthened gate. Production video-export code is unchanged.
 The separate Studio job timed out downloading Ubuntu packages after its 416
-unit tests passed, before its browser workflows ran. Final CI verification is
-pending.
+unit tests passed, before its browser workflows ran. The final
+[exact-source CI run](https://github.com/AaronPilk/RendProp-Ai/actions/runs/36895250913)
+passed **12/12 jobs**, including the full Studio browser workflows and all four
+macOS media suites. Earlier failure artifacts and all negative controls remain
+preserved. Native inputs were byte-identical across the test-only CI corrections.
 
 ## Phone acceptance
 
-Install the delivered build once Apple readback is recorded, then:
+Install **TestFlight 1.0.3 (35)**, then record the iPhone model and iOS version:
 
 1. Open a test home's **Photos → Take a photo**. Confirm 0.5× is selected on a
    phone with a back ultra-wide camera. From a corner, keep the phone upright
@@ -108,14 +122,18 @@ Install the delivered build once Apple readback is recorded, then:
 3. Tilt down or sideways: the level must warn. Hold upright: it may turn green.
    Point at the floor: it must not claim a level room shot.
 4. **Retake**, then **Use photo**. Reopen Photos and the full before/after view;
-   confirm sharp details, full framing and both saved files. Card thumbnails may
-   crop visually. Check an exterior via **Aerial intro → Take photo** starts 1×.
+   relaunch the app and confirm sharp details, full framing and both saved files.
+   Compare lettering, dark corners and bright windows at both lenses. Card
+   thumbnails may crop visually. Check an exterior via **Aerial intro → Take
+   photo** starts 1× and saves its existing downscaled reference photo.
 5. Deny Camera permission and check recovery through Settings. Test a call,
    background/foreground and rapid lens changes; a pending capture must finish
    into review or display an error that allows retry/close.
 6. Complete the existing phone/Studio sync and account/team acceptance checklist
    in [CORE-READINESS-20261001.md](CORE-READINESS-20261001.md). This native fix does
-   not replace those release gates.
+   not replace those release gates. After the normal upload/publication step,
+   confirm the same full photo in the intended Studio account and workspace;
+   a local capture alone is not proof of synchronization.
 
 Actual sensor field of view, preview-to-JPEG matching, lens selection, focus,
 lighting quality and real interruptions remain physical-phone acceptance.

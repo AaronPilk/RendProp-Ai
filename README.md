@@ -12,7 +12,7 @@ activate a trial. Studio uses the same account/workspace subscription.
 
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Core readiness release](docs/handoff/CORE-READINESS-20261001.md) ·
-[iPhone delivery receipt](docs/releases/TESTFLIGHT-34-20261001.json)
+[iPhone delivery receipt](docs/releases/TESTFLIGHT-35-20261001.json)
 
 ## Production status — 1 October 2026
 
@@ -23,14 +23,17 @@ activate a trial. Studio uses the same account/workspace subscription.
 | Prompt library | Ten original recipes, adaptation, saved personal collections and result notes. Copying a prompt does not generate media. |
 | Property workflow | Account-scoped media, one private edit per user/property, saved conversation, capture plans, versions and team review. Save project to account explicitly uploads general-project originals. |
 | AI Presenter | Preparation, approvals and execution controls deployed; Higgsfield generation remains disabled. |
-| iOS | Internal TestFlight **1.0.3 (34)** is available to the existing Rendprop team. Adds confirmed-subscription trials, visible plan management, personal/team workspace selection and account/draft recovery fixes. The guided room-tour lab remains available; its panoramas stay local. Phone purchase/restore and capture acceptance remain pending. |
+| iOS | Internal TestFlight **1.0.3 (35)** is available to the existing Rendprop team. Adds guided still photos with supported physical 0.5×/1× lenses, grid/level, landscape guidance and full-photo review/retake. Save errors retain the photo for retry. Includes build 34's account, workspace and subscription fixes. Real-phone camera quality, purchase/restore and phone-to-Studio acceptance remain pending. |
 | 3D walkthrough | Capture/upload/viewer and worker controls exist. Reconstruction quality has not passed acceptance; see the [spatial status](services/spatial-worker/README.md). |
 
 The [1 October core release](docs/handoff/CORE-READINESS-20261001.md) deployed the
 subscription/team backend fixes and Studio project-recovery fixes. All 12 CI jobs
 passed on the archived source; all 30 live Studio files and 45 deployed backend
-source copies were verified. Internal TestFlight 34 is available. Broad rollout
-still requires the documented phone purchase, restore, invitation and sync checks.
+source copies were verified. That release delivered internal TestFlight 34. The
+[guided-photo update](docs/handoff/GUIDED-PHOTO-CAPTURE-20261001.md) is now available
+as [TestFlight 35](docs/releases/TESTFLIGHT-35-20261001.json), with all 12 CI jobs
+passing on its archived source. Broad rollout still requires the documented phone
+camera, purchase, restore, invitation and sync checks.
 
 The earlier 27 September website release passed exact verification of **30 web files**; Studio API v12
 matched **44 runtime source files**. Signed-in synthetic production checks passed

@@ -8,17 +8,20 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
-The [guided photo-camera fix](../../docs/handoff/GUIDED-PHOTO-CAPTURE-20261001.md)
-adds explicit physical 0.5×/1× lenses, level/grid, landscape guidance and full-frame
-review/retake to Photos and exterior capture. It also makes save failures visible
-and keeps a failed camera save available to retry. Software verification and an
-internal build 35 are in progress; TestFlight 34 does not contain this camera.
+The [guided photo-camera update](../../docs/handoff/GUIDED-PHOTO-CAPTURE-20261001.md)
+is available as internal **TestFlight 1.0.3 (35)** to the existing Rendprop team,
+verified **1 October 2026 at 17:06:20 UTC**. It adds supported physical 0.5×/1×
+lenses, grid/level, landscape guidance and full-photo review/retake to Photos and
+exterior capture. Save failures keep the captured image available to retry.
+Apple reports `VALID`, `INTERNAL_ONLY` and `IN_BETA_TESTING`; all 12 source CI
+jobs passed. See the [delivery receipt](../../docs/releases/TESTFLIGHT-35-20261001.json).
+Physical camera quality and preview-to-photo framing still need phone acceptance.
 
 Run its pure policy and file-retention checks with
 `bash apps/ios/tests/run-photo-capture.sh` from the repository root.
 
-Internal **TestFlight 1.0.3 (34)** is available to the existing Rendprop team,
-verified **1 October 2026 at 15:30:20 UTC**. It adds subscription-confirmed trials,
+The preceding core release, **TestFlight 1.0.3 (34)**, was verified available to
+the existing Rendprop team on **1 October 2026 at 15:30:20 UTC**. It adds subscription-confirmed trials,
 **Settings → Plan & usage** controls, explicit personal/team workspace selection,
 and account/draft/branding recovery fixes. Apple reports `VALID`, `INTERNAL_ONLY`
 and `IN_BETA_TESTING`; all 12 source CI jobs passed. See the
@@ -93,7 +96,7 @@ the selected team and device.
 
 | Area | Repository implementation and boundary |
 | --- | --- |
-| Capture | Video recording, room tags, motion sidecars, pause/resume, saved-take recovery and media import. Camera quality, interruptions, lenses and thermal behavior require a real phone. |
+| Capture | Guided still photos with physical lens selection, grid/level, review/retake and acknowledged saves; video recording, room tags, motion sidecars, pause/resume, saved-take recovery and media import. Camera quality, preview-to-photo framing, interruptions, lenses and thermal behavior require a real phone. |
 | Uploads | Live uploads choose the server's single/multipart path, with persistent recovery and a cellular warning. Local originals must finish uploading before another device can use them. There is no current Settings picker for simulate/direct/tus. |
 | Authentication | Sign in with Apple through Supabase; tokens in Keychain. Local capture and editing remain usable offline. Anonymous sessions support eligible server actions; use the same named account and workspace for phone/desktop continuity. |
 | Sync | Property data, uploaded media, supported native reel setup and property documents use the shared backend. This does not mean the native and desktop editors have identical timelines or features. |
@@ -120,6 +123,9 @@ Money is represented as integer cents.
   tests, synthetic saved-take recovery and loopback session tests. Some cases
   require fixtures; running the entire bundle blindly is not a release check.
 - [Native tests](tests/) contain focused Swift regression fixtures.
+- [Guided photo camera](../../docs/handoff/GUIDED-PHOTO-CAPTURE-20261001.md#phone-acceptance)
+  covers both lenses, orientation, framing, saving and real-phone interruptions.
+  Its executable checks verify software policy and file retention, not camera hardware.
 - [Agency workflow](../../docs/studio/agency-production-workflow.md) covers the
   phone → upload → desktop edit → review path and its current limits.
 - [Studio creation](../../docs/studio/conversational-creation.md) documents chat
