@@ -88,6 +88,7 @@ document.querySelector("#run").onclick=async()=>{
     return { rms: Math.sqrt(power / count), hz: crossings / (count / 48000), dominantHz, samples: count };
   };
   const pixel = (path, time, x = 100) => [...execFileSync("ffmpeg", ["-v", "error", "-ss", String(time), "-i", path, "-frames:v", "1", "-vf", `format=rgb24,crop=1:1:${x}:400`, "-f", "rawvideo", "pipe:1"])];
+  const isOpeningTone = value => value.rms > .04 && value.dominantHz > 900 && value.dominantHz < 1100;
   const isWhip = ({ left, right }) => left[2] > 200 && left[0] < 30 && right[0] > 200 && right[2] < 30;
   const whipPixels = (path, time) => ({ time, left: pixel(path, time, 100), right: pixel(path, time, 650) });
   for (const variant of ["baseline", "fixed"]) {
@@ -103,7 +104,11 @@ document.querySelector("#run").onclick=async()=>{
       const download = page.waitForEvent("download"); await page.locator("#download").click(); const output = join(artifacts, `${variant}-${narrated ? "narrated" : "original"}.mp4`); await (await download).saveAs(output);
       const probe = JSON.parse(execFileSync("ffprobe", ["-v", "error", "-show_streams", "-show_format", "-of", "json", output], { encoding: "utf8" }));
       const trace = await page.evaluate(() => window.fixture.trace), duration = Number(probe.format.duration);
-      const audio = { opening: sample(output, .53, .09), middle: sample(output, 1, .7), leading: sample(output, .02, .08) };
+      // AAC startup can shift the .15s opening tone by a few encoded frames.
+      // Require it in two adjacent 90ms samples between .53s and .74s, well
+      // before the injected old-await delay. Amplitude, pitch, total duration,
+      // leading silence and the independent playback trace remain enforced.
+      const audio = { opening: [.53, .57, .61, .65].map(start => ({ start, ...sample(output, start, .09) })), middle: sample(output, 1, .7), leading: sample(output, .02, .08) };
       // MediaRecorder timestamps vary by a few encoded frames on busy macOS
       // runners. The 180 ms whip starts at timeline 2.5 s; look for its actual
       // spatial split in this bounded window, not one exact timestamp. A hard
@@ -127,6 +132,7 @@ document.querySelector("#run").onclick=async()=>{
         assert(delivered.every((event, index) => event.at - resumed[index].at >= resumeNotificationDelayMs - 1), "Both negative-control resumptions must include the injected notification delay");
         assert(trace.find(event => event.event === "play.call").at >= delivered[0].at, "The old await must stall original playback until the delayed notification arrives");
         assert(!pixels.whip.some(isWhip), "Delayed-resume negative control must put the whip outside the fixed timeline window");
+        if (!narrated) assert(!audio.opening.some(isOpeningTone), "The old-await control must put the original opening tone outside the bounded audio window");
       } else {
         assert(Math.abs(duration - 3) < .4, `Fixed real MP4 must retain the existing duration tolerance: ${duration}`);
         assert.equal(trace.filter(event => event.event === "resume.delivered").length, 0);
@@ -137,7 +143,7 @@ document.querySelector("#run").onclick=async()=>{
         if (narrated) assert(audio.middle.rms > .02 && audio.middle.hz > 610 && audio.middle.hz < 710, `Narration stays at 660 Hz: ${JSON.stringify(audio.middle)}`);
         else {
           assert(audio.leading.rms < .005, "Leading photo stays silent; video speech does not shift to time zero");
-          assert(audio.opening.rms > .04 && audio.opening.dominantHz > 900 && audio.opening.dominantHz < 1100, `The distinct first .15 seconds of original audio must survive resume: ${JSON.stringify(audio.opening)}`);
+          assert(audio.opening.some((value, index) => index > 0 && isOpeningTone(value) && isOpeningTone(audio.opening[index - 1])), `The distinct first .15 seconds of original audio must survive resume in adjacent bounded samples: ${JSON.stringify(audio.opening)}`);
           assert(audio.middle.rms > .04 && audio.middle.hz > 400 && audio.middle.hz < 480, `The rest of the original recording stays continuous at 440 Hz: ${JSON.stringify(audio.middle)}`);
         }
       }
@@ -147,7 +153,7 @@ document.querySelector("#run").onclick=async()=>{
   receipt.checks.push("Negative control reproduces >400 ms accumulated timing error by delaying only two resume notifications; source playback and decoding are unchanged");
   receipt.checks.push("Fixed exports keep the existing 400 ms duration tolerance without cutting source spans or changing playback speed");
   receipt.checks.push("Decoded MP4 frames retain the real dissolve and whip at their intended timeline positions");
-  receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound immediately after resume, and continuous 440 Hz original audio");
+  receipt.checks.push("AAC retains 660 Hz narration, leading photo silence, the distinctive 990 Hz opening sound in adjacent bounded samples after resume, and continuous 440 Hz original audio; the old-await control misses that opening window");
   assert.deepEqual(receipt.errors, []); assert.deepEqual(receipt.externalRequests, []); receipt.status = "passed";
 } catch (error) { receipt.status = "failed"; receipt.failure = error.stack ?? String(error); throw error; }
 finally { await persist(); await browser?.close(); await new Promise(done => server ? server.close(done) : done()); console.log(JSON.stringify({ artifacts, ...receipt }, null, 2)); }
