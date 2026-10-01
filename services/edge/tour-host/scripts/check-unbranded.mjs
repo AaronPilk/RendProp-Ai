@@ -342,13 +342,13 @@ async function main() {
   // required property content survives
   mustContain(reUn, "real_estate /u/", "address", "1180 Crestline Ridge");
   mustContain(reUn, "real_estate /u/", "price", "$4,250,000");
-  mustContain(reUn, "real_estate /u/", "player video element", 'id="scrub"');
-  mustContain(reUn, "real_estate /u/", "chapter rail", 'id="rail"');
+  mustContain(reUn, "real_estate /u/", "optional player video element", 'id="flythrough-video"');
+  mustContain(reUn, "real_estate /u/", "chapter controls", 'id="flythrough-chapters"');
   mustContain(reUn, "real_estate /u/", "chapter label", "Chef&#39;s kitchen");
   mustContain(reUn, "real_estate /u/", "gallery", "https://cdn.example.com/g1.jpg");
   // A2 — disclosure block
   mustContain(reUn, "real_estate /u/", "disclosure section", 'id="disclosure"');
-  mustContain(reUn, "real_estate /u/", "disclosure chip", 'id="staged"');
+  mustContain(reUn, "real_estate /u/", "video disclosure", '<p class="video-disclosure">');
   mustContain(reUn, "real_estate /u/", "staging sentence", "virtually staged or digitally decluttered");
   mustContain(reUn, "real_estate /u/", "per-asset label", "Living room — virtually staged");
   mustContain(reUn, "real_estate /u/", "model family (image)", "AI image edit");
@@ -383,8 +383,9 @@ async function main() {
     // surface AND the slug, so a download can be traced to the page that
     // produced it. `pt` is absent on purpose — the owner has to supply it.
     ["App Store campaign token", "?ct=tour-sentinelqx7&amp;mt=8"],
-    // Outbound attribution on the two "Made with Rendprop" links.
-    ["watermark ref param", '<a class="chrome" id="wm" href="https://rendprop.com/?ref=tour"'],
+    // Optional video no longer has an overlaid watermark. The listing's
+    // attribution remains in its visible footer and retains the campaign ref.
+    ["listing attribution ref param", '<div class="lp-madeby"><a href="https://rendprop.com/?ref=tour"'],
     ["footer ref param", '<a href="https://rendprop.com/?ref=tour"'],
     // Share affordance.
     ["share control", '<button type="button" class="chrome" id="share"'],
@@ -607,7 +608,7 @@ async function main() {
   const lgBr = player.renderTourPage(legacyTour(), FN, "anon", "site-key", { origin: "https://rendprop.com" });
   auditUnbranded(lgUn, "legacy /u/", lg, player);
   mustContain(lgUn, "legacy /u/", "address still renders", "1180 Crestline Ridge");
-  mustContain(lgUn, "legacy /u/", "player still renders", 'id="scrub"');
+  mustContain(lgUn, "legacy /u/", "optional player still renders", 'id="flythrough-video"');
   checks++;
   if (lgUn.includes('id="disclosure"')) fail("[legacy /u/] disclosure section must not render with nothing to disclose");
   checks++;

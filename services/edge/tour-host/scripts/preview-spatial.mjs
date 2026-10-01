@@ -36,7 +36,10 @@ const server=createServer(async(req,res)=>{
       tour.scrub_url=video?'/synthetic-video.mp4':null; tour.hls_url=null; tour.video_url=null; tour.poster=null;
       tour.duration_s=8; tour.chapters=[{label:'Synthetic test',sort:0,t_ms:0,spatial_anchor:{scene_id:id,room_id:'synthetic'}},{label:'Second test segment',sort:1,t_ms:4000}];
       tour.floorplan_url=null; tour.listing.details={}; tour.gallery=[];
-      result=new Response(renderTourPage(tour,'https://spatial-preview.invalid/functions/v1','','',{unbranded:true}),{headers:{'Content-Type':'text/html'}});
+      // This fixture intentionally exercises the legacy in-app/embed scrub
+      // engine. Public listings now open ordinary playback on explicit click;
+      // scripts/check-listing-browser.mjs verifies that separate entry path.
+      result=new Response(renderTourPage(tour,'https://spatial-preview.invalid/functions/v1','','',{unbranded:true,embed:true}),{headers:{'Content-Type':'text/html'}});
     } else result=await worker.fetch(new Request('http://127.0.0.1:8794'+req.url,{headers:req.headers}),{SUPABASE_FUNCTIONS_URL:'https://spatial-preview.invalid/functions/v1'},{waitUntil(){}});
     if(path==='/spatial-viewer.js') result=new Response((await result.text()).replace('https://cdn.jsdelivr.net/npm/playcanvas@2.22.1/build/playcanvas.min.js','/vendor/playcanvas.min.js'),result);
     res.writeHead(result.status,Object.fromEntries(result.headers));res.end(Buffer.from(await result.arrayBuffer()));

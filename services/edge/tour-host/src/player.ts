@@ -1,22 +1,19 @@
 // player.ts — renders a published tour (the JSON from GET /tours/:slug) into a
-// full, self-contained scroll-scrub player page.
+// listing-first page with an explicit, independently controlled fly-through.
 //
-// CANONICAL ENGINE: the scroll-scrub engine in ENGINE_JS below (rAF lerp,
-// buffer gate, chapter rail, room strip, room label, decaying jank watchdog +
-// autoplay fallback, explicit "video unavailable" state) is the production
-// engine. The iOS in-app preview (apps/ios/Rendprop/Resources/player/index.html)
-// carries a copy of the same tick()/watchdog logic AND of the rail/strip
-// chapter UI; apps/web/player is an archived prototype. When the engine
-// changes, change it HERE first and port to iOS.
+// Normal /f/ and /u/ pages use listing-player.ts: no video source is attached
+// until a visitor opens the player. ?embed=1 retains the legacy scroll-scrub
+// engine below for existing embeds. The native in-app preview still uses its
+// bundled scroll engine; apps/web/player is an archived prototype.
 //
 // VIDEO SOURCE CONTRACT (must match services/supabase/functions/tours/index.ts):
 // `scrub_url` — the all-intra R2 mp4 over HTTP byte-range — is the PRIMARY
-// source: every frame is a keyframe, so currentTime seeks are frame-accurate
-// and the scroll-scrub stays buttery. `hls_url` (Cloudflare Stream) is a
-// FALLBACK ONLY — Stream re-encodes away the all-intra GOP and snaps seeks to
-// keyframes, which kills the scrub feel. So: hls.js (lazy, cdnjs) or native
+// source. Every frame is a keyframe; seeking still depends on browser buffering
+// and decoding. `hls_url` (Cloudflare Stream) is a FALLBACK ONLY; Stream
+// re-encodes the source. hls.js (lazy, cdnjs) or native
 // Safari HLS is attached only when there is no scrub_url, or if the mp4 errors
-// out before playback starts. Both origins are zero-egress.
+// out. Existing low-resolution files require a new owner-published render;
+// the browser does not upscale or label them HD.
 //
 // If neither source can deliver metadata (missing R2 object, expired link) the
 // page shows an explicit "This tour's video isn't available right now" state —
@@ -43,6 +40,7 @@
 // HTML and the Worker fails CLOSED (neutral 503) if anything got through.
 
 import type { AlteredMedium, Cta, SecondaryLink, Tour, TourListing } from "./types";
+import { LISTING_PLAYER_CSS, LISTING_PLAYER_JS } from "./listing-player";
 import { spatialAnchor } from "./spatial-manifest";
 import { APP_STORE_ID, appStoreUrl, siteUrl } from "./attribution";
 import { tourJsonLd } from "./jsonld";
@@ -589,7 +587,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
     if (price && l.address) lines.push(l.address);
 
     const titleText = l.address || "Property tour";
-    const ogDesc = (sold ? "Sold. " : "") + "Scroll to fly through this home." +
+    const ogDesc = (sold ? "Sold. " : "") + "Explore this home’s photos, details and fly-through." +
       (bits.length ? " " + bits.join(" · ") : "") +
       (price ? " · " + price : "");
     return {
@@ -606,7 +604,7 @@ function buildHeader(tour: Tour, unbranded = false): HeaderModel {
   const title = l.address || l.tagline || spaceLabel(tour.space_type);
   const lines: string[] = [];
   if (l.tagline && l.address) lines.push(l.tagline);
-  const ogDesc = l.tagline || `Take a cinematic scroll-through tour of this ${spaceLabel(tour.space_type).toLowerCase()}.`;
+  const ogDesc = l.tagline || `Explore photos, details and a cinematic fly-through of this ${spaceLabel(tour.space_type).toLowerCase()}.`;
   return {
     pageTitle: `${title}${suffix}`,
     ogTitle: title,
@@ -759,7 +757,7 @@ function renderLeadForm(tour: Tour, turnstileSiteKey = "", opts: LeadFormOpts = 
   // submit handler forwards to /leads as `turnstile_token`.
   const turnstile = turnstileSiteKey
     ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-theme="auto" data-size="flexible"></div>`
+       <div class="cf-turnstile" data-sitekey="${escapeAttr(turnstileSiteKey)}" data-theme="auto" data-size="compact"></div>`
     : "";
 
   const base = emailOnly
@@ -1110,6 +1108,78 @@ const PLAYER_CSS = `${TOKENS_CSS}
 // regex escapes below are written doubled (\\d, \\s) on purpose.
 // ---------------------------------------------------------------------------
 
+const EDITORIAL_INTERACTIONS_JS = `
+  /* ---- AI disclosure: full text is always IN the page (no-JS included);
+     mobile just starts it collapsed behind the one-line summary. ---- */
+  var discEl = document.getElementById('disc');
+  if (discEl && window.matchMedia && matchMedia('(max-width: 719px)').matches){
+    discEl.removeAttribute('open');
+  }
+
+  /* ---- Before/after drag. Upgrades the side-by-side pair in place; if this
+     never runs, the pair is still there and still compliant. Built on a div
+     with role=slider rather than a range form control ON PURPOSE: the opening
+     tag of one is a forbidden token on the unbranded twin, and this section
+     renders on both pages. ---- */
+  var baEls = document.querySelectorAll('[data-ba]');
+  for (var bi = 0; bi < baEls.length; bi++) initBeforeAfter(baEls[bi]);
+  function initBeforeAfter(el){
+    var pos = 50, dragging = false;
+    el.classList.add('on');
+    el.setAttribute('role', 'slider');
+    el.setAttribute('tabindex', '0');
+    el.setAttribute('aria-label', 'Compare photos: amount of original shown');
+    el.setAttribute('aria-valuemin', '0');
+    el.setAttribute('aria-valuemax', '100');
+    // Both complete photos share the original's frame. Contain an edited
+    // image with a different ratio; never crop away a property's edge details.
+    var beforeImg = el.querySelector('.disc-f-b img');
+    var afterImg = el.querySelector('.disc-f-a img');
+    function fitFrame(){
+      var image = beforeImg && beforeImg.naturalWidth > 0 ? beforeImg : afterImg;
+      if (image && image.naturalWidth > 0 && image.naturalHeight > 0) {
+        el.style.aspectRatio = image.naturalWidth + ' / ' + image.naturalHeight;
+      }
+    }
+    if (beforeImg) beforeImg.addEventListener('load', fitFrame);
+    if (afterImg) afterImg.addEventListener('load', fitFrame);
+    fitFrame();
+    function setPos(v){
+      pos = v < 0 ? 0 : (v > 100 ? 100 : v);
+      el.style.setProperty('--p', pos + '%');
+      var r = Math.round(pos);
+      el.setAttribute('aria-valuenow', String(r));
+      el.setAttribute('aria-valuetext', r + '% original, ' + (100 - r) + '% edited');
+    }
+    function fromX(x){
+      var r = el.getBoundingClientRect();
+      if (r.width <= 0) return;
+      setPos(((x - r.left) / r.width) * 100);
+    }
+    el.addEventListener('pointerdown', function(e){
+      dragging = true;
+      if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch(err){} }
+      fromX(e.clientX);
+    });
+    el.addEventListener('pointermove', function(e){ if (dragging) fromX(e.clientX); });
+    el.addEventListener('pointerup', function(){ dragging = false; });
+    el.addEventListener('pointercancel', function(){ dragging = false; });
+    el.addEventListener('keydown', function(e){
+      var step = e.shiftKey ? 10 : 2, k = e.key;
+      if (k === 'ArrowLeft' || k === 'ArrowDown') setPos(pos - step);
+      else if (k === 'ArrowRight' || k === 'ArrowUp') setPos(pos + step);
+      else if (k === 'Home') setPos(0);
+      else if (k === 'End') setPos(100);
+      else return;
+      e.preventDefault();
+    });
+    setPos(50);
+  }
+
+`;
+
+const EDITORIAL_SLOT = "/*__EDITORIAL__*/";
+
 const ENGINE_CORE_JS = `
 (function(){
   'use strict';
@@ -1268,72 +1338,7 @@ const ENGINE_CORE_JS = `
     catch (e) { stripScroll.scrollLeft = to; }
   }
 
-  /* ---- AI disclosure: full text is always IN the page (no-JS included);
-     mobile just starts it collapsed behind the one-line summary. ---- */
-  var discEl = document.getElementById('disc');
-  if (discEl && window.matchMedia && matchMedia('(max-width: 719px)').matches){
-    discEl.removeAttribute('open');
-  }
-
-  /* ---- Before/after drag. Upgrades the side-by-side pair in place; if this
-     never runs, the pair is still there and still compliant. Built on a div
-     with role=slider rather than a range form control ON PURPOSE: the opening
-     tag of one is a forbidden token on the unbranded twin, and this section
-     renders on both pages. ---- */
-  var baEls = document.querySelectorAll('[data-ba]');
-  for (var bi = 0; bi < baEls.length; bi++) initBeforeAfter(baEls[bi]);
-  function initBeforeAfter(el){
-    var pos = 50, dragging = false;
-    el.classList.add('on');
-    el.setAttribute('role', 'slider');
-    el.setAttribute('tabindex', '0');
-    el.setAttribute('aria-label', 'Compare photos: amount of original shown');
-    el.setAttribute('aria-valuemin', '0');
-    el.setAttribute('aria-valuemax', '100');
-    // Both complete photos share the original's frame. Contain an edited
-    // image with a different ratio; never crop away a property's edge details.
-    var beforeImg = el.querySelector('.disc-f-b img');
-    var afterImg = el.querySelector('.disc-f-a img');
-    function fitFrame(){
-      var image = beforeImg && beforeImg.naturalWidth > 0 ? beforeImg : afterImg;
-      if (image && image.naturalWidth > 0 && image.naturalHeight > 0) {
-        el.style.aspectRatio = image.naturalWidth + ' / ' + image.naturalHeight;
-      }
-    }
-    if (beforeImg) beforeImg.addEventListener('load', fitFrame);
-    if (afterImg) afterImg.addEventListener('load', fitFrame);
-    fitFrame();
-    function setPos(v){
-      pos = v < 0 ? 0 : (v > 100 ? 100 : v);
-      el.style.setProperty('--p', pos + '%');
-      var r = Math.round(pos);
-      el.setAttribute('aria-valuenow', String(r));
-      el.setAttribute('aria-valuetext', r + '% original, ' + (100 - r) + '% edited');
-    }
-    function fromX(x){
-      var r = el.getBoundingClientRect();
-      if (r.width <= 0) return;
-      setPos(((x - r.left) / r.width) * 100);
-    }
-    el.addEventListener('pointerdown', function(e){
-      dragging = true;
-      if (el.setPointerCapture) { try { el.setPointerCapture(e.pointerId); } catch(err){} }
-      fromX(e.clientX);
-    });
-    el.addEventListener('pointermove', function(e){ if (dragging) fromX(e.clientX); });
-    el.addEventListener('pointerup', function(){ dragging = false; });
-    el.addEventListener('pointercancel', function(){ dragging = false; });
-    el.addEventListener('keydown', function(e){
-      var step = e.shiftKey ? 10 : 2, k = e.key;
-      if (k === 'ArrowLeft' || k === 'ArrowDown') setPos(pos - step);
-      else if (k === 'ArrowRight' || k === 'ArrowUp') setPos(pos + step);
-      else if (k === 'Home') setPos(0);
-      else if (k === 'End') setPos(100);
-      else return;
-      e.preventDefault();
-    });
-    setPos(50);
-  }
+  /*__EDITORIAL__*/
 
   /* ---- Overlays ---- */
   function updateOverlays(p){
@@ -2045,14 +2050,21 @@ function engineJs(unbranded: boolean, embed = false): string {
   // ENGINE_CORE_JS opens with `(function(){` and the tail closes it, so the
   // lead-form block is spliced in at the marker inside the same IIFE.
   return unbranded
-    ? ENGINE_CORE_JS.replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
+    ? ENGINE_CORE_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS).replace(LEADFORM_SLOT, "").replace(APPLINK_SLOT, "")
         .replace(SHARE_SLOT, "").replace(SKIP_SLOT, "")
-    : ENGINE_CORE_JS.replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
+    : ENGINE_CORE_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS).replace(LEADFORM_SLOT, ENGINE_LEADFORM_JS)
         .replace(APPLINK_SLOT, ENGINE_APPLINK_JS)
         .replace(SHARE_SLOT, embed ? "" : ENGINE_SHARE_JS)
         // The end card is not rendered on an embed either, so neither is the
         // control that points at it.
         .replace(SKIP_SLOT, embed ? "" : ENGINE_SKIP_JS);
+}
+
+function listingEngineJs(unbranded: boolean): string {
+  return LISTING_PLAYER_JS.replace(EDITORIAL_SLOT, EDITORIAL_INTERACTIONS_JS)
+    .replace(LEADFORM_SLOT, unbranded ? "" : ENGINE_LEADFORM_JS)
+    .replace(APPLINK_SLOT, unbranded ? "" : ENGINE_APPLINK_JS)
+    .replace(SHARE_SLOT, unbranded ? "" : ENGINE_SHARE_JS);
 }
 
 // ===========================================================================
@@ -2543,7 +2555,7 @@ function mediaDateNote(tour: Tour): string {
   return `<p class="lp-fine lp-mediadate"><time datetime="${escapeAttr(when.toISOString().slice(0, 10))}">This tour was published on ${escapeHtml(text)}.</time> Ask the agent before assuming anything shown here is still current.</p>`;
 }
 
-function renderListingSections(tour: Tour, unbranded = false): string {
+function renderListingSections(tour: Tour, unbranded = false, mediaCover = ""): string {
   const l = tour.listing;
   const isRE = isRealEstate(tour);
   const sold = isSoldOrArchived(tour);
@@ -2560,12 +2572,14 @@ function renderListingSections(tour: Tour, unbranded = false): string {
     : "";
   out.push(`<section class="lp-sec lp-lead" id="overview"><div class="lp-wrap">
     <div class="lp-eyebrow">${escapeHtml(isRE ? "The residence" : spaceLabel(tour.space_type))}${sold ? `<span class="lp-soldtag">${escapeHtml(archiveLabel(tour))}</span>` : ""}</div>
-    <h2 class="lp-h">${escapeHtml(headingRaw)}</h2>
+    <h1 class="lp-h">${escapeHtml(headingRaw)}</h1>
     ${priceBig}
     ${tagline}
     ${soldNote}
     ${tiles.length ? `<div class="lp-stats">${tiles.map((t) => `<div class="lp-stat"><span class="v">${escapeHtml(t.v)}</span><span class="k">${escapeHtml(t.k)}</span></div>`).join("")}</div>` : ""}
   </div></section>`);
+
+  if (mediaCover) out.push(mediaCover);
 
   // Per-industry details (venue / restaurant / retail / fitness / other).
   if (!isRE) out.push(renderIndustrySection(tour, unbranded));
@@ -2587,7 +2601,7 @@ function renderListingSections(tour: Tour, unbranded = false): string {
     out.push(sec("gallery", "Gallery", "A closer look",
       `<div class="lp-gal">${imgs.map((g) => `<figure class="lp-gcell"><img src="${escapeAttr(g.url)}" alt="${escapeAttr(g.label || headingRaw)}" loading="lazy" decoding="async">${g.label ? `<figcaption>${escapeHtml(g.label)}</figcaption>` : ""}</figure>`).join("")}${mediaDateNote(tour)}</div>`));
   } else if (Array.isArray(tour.chapters) && tour.chapters.length) {
-    out.push(sec("gallery", "Inside the tour", isRE ? "Every room, one scroll" : "Every area, one scroll",
+    out.push(sec("gallery", "Inside the tour", isRE ? "Explore the rooms" : "Explore the space",
       `<div class="lp-chips">${tour.chapters.map((c) => `<span class="lp-chip">${escapeHtml(c.label)}</span>${spatialButton(c)}`).join("")}</div>${mediaDateNote(tour)}`));
   }
 
@@ -2737,7 +2751,7 @@ export function renderGetAppSection(opts: GetAppOpts): string {
     : "Every tour here was filmed on a phone.";
   const lede = tourSurface
     ? `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
-    Rendprop renders the flythrough you just scrolled — plus the photos, the floor plan and this link —
+    Rendprop creates the flythrough, photos and this listing link —
     the same day. If you list property, that is your next shoot done before lunch.`
     : `No crew, no drone, no editor. One steady walkthrough on an iPhone goes in, and
     Rendprop renders the flythrough — plus the photos, the floor plan and the link —
@@ -3102,7 +3116,16 @@ export function renderTourPage(input: Tour, functionsBase: string, anonKey: stri
 
   // Embed mode (?embed=1): render ONLY the flythrough hero — for the in-app
   // "See it in action" card. Otherwise render the full listing microsite.
-  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded);
+  const coverImage = poster || galleryItems(tour)[0]?.url || "";
+  const hasVideo = !!(scrubUrl || hlsUrl);
+  const coverHtml = `<section class="listing-cover" aria-label="Property media">
+    ${coverImage ? `<img src="${escapeAttr(coverImage)}" alt="${escapeAttr(header.entityName)}" fetchpriority="high" decoding="async">` : `<div class="listing-cover-empty">${escapeHtml(header.entityName)}</div>`}
+    <div class="listing-cover-actions">
+      ${hasVideo ? `<button type="button" id="open-flythrough" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button><p>Open the video when you want to explore.</p>` : `<p>Photos and property details are available below.</p>`}
+    </div>
+    ${staged || hasAltered ? `<span class="listing-media-label">${escapeHtml(chipLabel)}${hasDisclosureSection ? ` · <a href="#disclosure">See disclosures and originals</a>` : ""}</span>` : ""}
+  </section>`;
+  const sectionsHtml = embed ? "" : renderListingSections(tour, unbranded, coverHtml);
   // The end card IS the branding: agent card + CTA/lead form. `/u/` has none.
   const endcardHtml = embed || unbranded ? "" : `<section id="endcard">
   <div class="panel">
@@ -3192,12 +3215,12 @@ ${shareUrl ? `<meta property="og:url" content="${escapeAttr(shareUrl)}">` : ""}
 ${ogImage}
 ${jsonLdHtml}`}
 <style>${PLAYER_CSS}${unbranded ? "" : FORM_CSS}
-${EDITORIAL_CSS}</style>
+${EDITORIAL_CSS}${embed ? "" : LISTING_PLAYER_CSS}${embed || unbranded ? "" : "#endcard {min-height:0;padding-top:48px;background:var(--bg);scroll-margin-top:var(--listing-nav-offset,88px);}"}</style>
 ${accentOverride}
 </head>
 <body>
 
-<div id="track">
+${embed ? `<div id="track">
   <div id="stage"${hasStrip ? ` class="hasstrip"` : ""}>
     <video id="scrub" muted playsinline webkit-playsinline preload="auto"
            disablepictureinpicture disableremoteplayback${poster ? ` poster="${escapeAttr(poster)}"` : ""}></video>
@@ -3254,8 +3277,36 @@ ${endcardHtml}
 ${getAppHtml}
 ${footerHtml}
 
+` : `<div id="listing-top"></div>
+<nav id="listing-nav" aria-label="Listing navigation"><div class="listing-nav-inner">
+  <a href="#overview">Details</a>
+  ${galleryItems(tour).length || chapters.length ? `<a href="#gallery">Photos & rooms</a>` : ""}
+  ${safeUrl(tour.floorplan_url || "") ? `<a href="#plan">Floor plan</a>` : ""}
+  ${!unbranded ? `<a href="#endcard">Contact</a>` : ""}
+  ${hasVideo ? `<button type="button" class="watch-button" data-open-flythrough aria-haspopup="dialog">Watch fly-through</button>` : ""}
+  ${shareHtml}
+  <a href="#listing-top" class="listing-backtop">Top ↑</a>
+</div></nav>
+${sectionsHtml}
+${endcardHtml}
+${getAppHtml}
+${footerHtml}
+<dialog id="flythrough-modal" aria-labelledby="flythrough-title" aria-modal="true">
+  <div class="video-head"><h2 id="flythrough-title">Fly-through</h2><button type="button" id="flythrough-close">Back to listing ×</button></div>
+  <video id="flythrough-video" controls playsinline webkit-playsinline preload="none"${poster ? ` poster="${escapeAttr(poster)}"` : ""}></video>
+  <div class="video-foot">
+    <p id="flythrough-status" role="status" aria-live="polite">Choose Watch fly-through to load the video.</p>
+    <span id="flythrough-quality"></span>
+    <button type="button" class="video-action" id="flythrough-play" hidden>Play fly-through</button>
+    <button type="button" class="video-action" id="flythrough-retry" hidden>Retry video</button>
+  </div>
+  ${chapters.length ? `<div id="flythrough-chapters" role="group" aria-label="Jump to a room">${chapters.map(c => `<button type="button" class="video-action" data-video-seek="${(Number(c.t_ms) || 0) / 1000}">${escapeHtml(c.label)}</button>${spatialButton(c)}`).join("")}</div>` : ""}
+  ${staged || hasAltered ? `<p class="video-disclosure">${escapeHtml(chipLabel)}${chipBody ? ` — ${escapeHtml(chipBody)}` : ""}</p>` : ""}
+</dialog>
+`}
+
 <script>window.__CFG__=${jsonForScript(cfg)};</script>
-<script>${engineJs(unbranded, embed)}</script>
+<script>${embed ? engineJs(unbranded, true) : listingEngineJs(unbranded)}</script>
 </body>
 </html>`;
 }

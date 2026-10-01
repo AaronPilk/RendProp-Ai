@@ -14,7 +14,7 @@ import Vision
 ///   • RETIME    — handheld walks glide at 2×; drone clips a gentle 1.25×.
 ///                 Very short clips are sped less so they don't feel frantic.
 ///   • 60 FPS    — output frame cadence for a fluid scroll-scrub.
-///   • SCRUB     — ≤720p H.264, ALL-INTRA (every frame a keyframe) → the player
+///   • HD MASTER — ≤1920 long edge H.264, ALL-INTRA (every frame a keyframe) → the player
 ///                 seeks any position instantly.
 ///   • COLOR     — both compositions RENDER into Rec.709 SDR and the writer tags
 ///                 the result the same way, so an HDR (HLG / Dolby Vision)
@@ -105,7 +105,7 @@ enum RenderEngine {
 
     // Tuning
     private static let outputFPS: Int32 = 60
-    private static let encodeLongEdge: CGFloat = 1280
+    private static let encodeLongEdge: CGFloat = 1920
     private static let analyzeLongEdge: CGFloat = 384      // registration runs here — fast
     private static let maxRegistrationFailRatio = 0.4      // above this → skip stabilization
 
@@ -542,6 +542,9 @@ enum RenderEngine {
         reader.add(readerOutput)
 
         let writer = try AVAssetWriter(outputURL: outURL, fileType: .mp4)
+        // Put MP4 metadata before the video bytes so opening a published tour
+        // does not first require a range request to the end of a large file.
+        writer.shouldOptimizeForNetworkUse = true
         let writerInput = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: Int(geo.renderSize.width),
@@ -556,18 +559,14 @@ enum RenderEngine {
                 // exactly and instantly → buttery, drone-smooth scrubbing (no
                 // stepping between sparse keyframes). Costs more bitrate/size, worth
                 // it for the scroll-scrub feel. Higher bitrate keeps it crisp.
-                // 9 Mbps, down from 14. ALL-INTRA at a 1280 long edge and 60 fps is
-                // visually near-identical at the two, because every frame is a
-                // keyframe and 720p intra is past diminishing returns well before 9 —
-                // but 14 made a 2-minute tour ~210 MB, which on LTE means the viewer
-                // downloads at about the speed they scroll. That is what "it lowers
-                // the quality and keeps loading" on the shared link actually was: a
-                // stalled mp4 falls back to adaptive HLS, which IS lower quality.
-                // The file drops ~36% and the start gate, the scroll-ahead margin,
-                // the storage bill and the upload off the phone all drop with it.
-                // Resolution, frame rate and the all-intra GOP are untouched — the
-                // thing that makes the scrub feel right was never the expensive part.
-                AVVideoAverageBitRateKey: 9_000_000,
+                // The published link uses this reviewed/stabilized master, not
+                // the camera original. Preserve up to a 1920 long edge rather
+                // than discarding detail at 1280; geometry never upscales.
+                // 24 Mbps supplies the larger all-intra frames at the same
+                // 60 fps. Target size is ~180 MB/output minute (actual rate
+                // varies). Keep every-frame seeking for existing embedded
+                // previews while the public page loads video only on request.
+                AVVideoAverageBitRateKey: 24_000_000,
                 AVVideoMaxKeyFrameIntervalKey: 1,          // keyframe every frame (all-intra)
                 AVVideoAllowFrameReorderingKey: false,     // no B-frames → every frame independent
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,

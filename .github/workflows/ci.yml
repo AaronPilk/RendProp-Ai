@@ -89,6 +89,21 @@ jobs:
           fi
           ffmpeg -version
           ffprobe -version
+      - name: Published listing navigation and opt-in video delivery
+        timeout-minutes: 5
+        env:
+          STUDIO_BROWSER_EXECUTABLE: /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          npm ci --ignore-scripts --prefix services/edge/tour-host
+          node services/edge/tour-host/scripts/check-listing-browser.mjs
+      - name: Actual native and worker HD master encoding
+        timeout-minutes: 10
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: |
+          python3 tools/audit/run_render_quality.py
+          python3 tools/audit/run_render_review_fences.py
       - name: Studio MP4 export, AAC narration and continuous agent audio
         working-directory: apps/studio
         timeout-minutes: 10
@@ -117,6 +132,14 @@ jobs:
             ${{ runner.temp }}/rendprop-finishing-*/receipt.json
             ${{ runner.temp }}/rendprop-finishing-*/*.png
             ${{ runner.temp }}/rendprop-finishing-*/*.mp4
+            ${{ runner.temp }}/rendprop-listing-browser-*/receipt.json
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.png
+            ${{ runner.temp }}/rendprop-listing-browser-*/*.mp4
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/*.log
+            ${{ runner.temp }}/rendprop-render-concurrency-hd-*/**/*.json
+            ${{ runner.temp }}/rendprop-render-review-fences-*/receipt.json
+            ${{ runner.temp }}/rendprop-render-review-fences-*/*.log
           retention-days: 7
           if-no-files-found: warn
 

@@ -26,6 +26,27 @@ struct ReviewSubmitView: View {
     @State private var entitlementTask: Task<Void, Never>?
     @State private var reflection: ReflectionRemoval?
     @State private var showReflectionRemoval = false
+    @State private var reviewContext: ReviewContext?
+    @State private var submitError: String?
+
+    /// A confirmation queued before an account/workspace change cannot submit
+    /// footage from the earlier review screen into the new context.
+    private struct ReviewContext: Equatable {
+        let owner: String?
+        let revision: UInt64
+        let org: UUID?
+    }
+
+    private var currentReviewContext: ReviewContext {
+        ReviewContext(owner: auth.userID, revision: auth.syncSessionRevision, org: WorkspaceContext.selectedOrgID)
+    }
+
+    private var reviewContextIsCurrent: Bool {
+        guard reviewContext == currentReviewContext,
+              let live = model.listings.first(where: { $0.id == listing.id }),
+              model.isInSelectedWorkspace(live), live.cloudUnavailable != true else { return false }
+        return true
+    }
 
     /// Explicit footage type (decision A8). Prefilled by a metadata heuristic,
     /// always correctable — it decides stabilization + the retime factor.
@@ -66,6 +87,12 @@ struct ReviewSubmitView: View {
                 reflectionSection
                 roomTags
                 tierPicker
+                if let submitError {
+                    Label(submitError, systemImage: "exclamationmark.triangle.fill")
+                        .font(.rpCaption).foregroundStyle(Theme.warn)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityIdentifier("review.submitError")
+                }
                 submitSection
             }
             .padding()
@@ -93,12 +120,13 @@ struct ReviewSubmitView: View {
             Button("Render again") { start() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This replaces the current tour with a new render using these settings. A published link keeps working until the new tour is published.")
+            Text("This replaces the tour on this phone after the new render succeeds. Publishing creates a new sharing link. Previously shared links keep the earlier video.")
         }
         .task { await loadEntitlements() }
         .onDisappear { entitlementTask?.cancel(); entitlementTask = nil }
         .sessionConnectionNotice()
         .onAppear {
+            if reviewContext == nil { reviewContext = currentReviewContext }
             detectSourceIfNeeded()
             reflection = ReflectionRemoval.controller(listingID: listing.id, asset: asset)
         }
@@ -364,14 +392,19 @@ struct ReviewSubmitView: View {
 
     private func loadEntitlements() async {
         guard Config.useLiveBackend else { return }
+        if reviewContext == nil { reviewContext = currentReviewContext }
+        let context = currentReviewContext
         entitlementsChecked = false
-        guard await auth.ensureSession(), !Task.isCancelled else {
+        let connected = await auth.ensureSession()
+        guard !Task.isCancelled, context == currentReviewContext, reviewContextIsCurrent else { return }
+        guard connected else {
             entitlements = nil
             entitlementsChecked = true
             if tier != .smooth { tier = .smooth }
             return
         }
         let summary = try? await model.api.me()
+        guard !Task.isCancelled, context == currentReviewContext, reviewContextIsCurrent else { return }
         entitlements = summary?.entitlements
         entitlementsChecked = true
         if aiTiersLocked && tier != .smooth { tier = .smooth }
@@ -398,6 +431,19 @@ struct ReviewSubmitView: View {
     /// settings, and hand the work to the coordinator — it owns the task, so
     /// navigation can't cancel or restart it. Then show progress.
     private func start() {
+        guard reviewContextIsCurrent else {
+            submitError = "Your account or workspace changed. Return to the listing and open the render settings again. Your current tour is saved."
+            return
+        }
+        guard !isRendering else {
+            submitError = "This tour is already rendering. Open its progress to continue."
+            return
+        }
+        guard asset.localURL.isFileURL, FileManager.default.fileExists(atPath: asset.localURL.path) else {
+            submitError = "The source video is missing from this phone. Download it from Cloud files or add it again. Your current tour is saved."
+            return
+        }
+        submitError = nil
         var a = asset
         a.isDrone = (sourceKind == .drone)
         asset = a
