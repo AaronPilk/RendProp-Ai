@@ -2,9 +2,14 @@
 
 ## Release status
 
-Release prepared on isolated branch `audit/core-readiness-20261001`, based on
-`f3c1f7ba4c1d1c40a1fa379c7ff9a16c5570795c` (delivered TestFlight 33).
-This report is a source/test record until deployment receipts are added below.
+Production backend, Studio and the public website are deployed. Internal
+**TestFlight 1.0.3 (34)** is available to the existing Rendprop team, verified
+**1 October 2026 at 15:30:20 UTC**: `VALID`, `INTERNAL_ONLY`, `IN_BETA_TESTING`.
+The signed archive is bound to `5a1406392a8fecef6131667de56521a35c4d285a` on
+`audit/core-readiness-20261001`, based on delivered TestFlight 33.
+[PR #11](https://github.com/AaronPilk/RendProp-Ai/pull/11) is stacked on #10;
+shared `main` has not been advanced by this release.
+[Delivery receipt](../releases/TESTFLIGHT-34-20261001.json).
 Claude's checkout and shared branches have not been overwritten or force-pushed.
 
 The owner asked for a full core debugging pass before introducing independent
@@ -92,17 +97,44 @@ Private logs, simulator results, source-bound receipts and synthetic media:
 Do not commit owner account data, credentials, Apple signing material, room media,
 or the complete private evidence directory to the public repository.
 
-## Deployment sequence
+## Deployed layers and readback
 
-1. Apply migrations `20261001142823_team_invite_delivery_confirmation`,
+| Layer | Verified result |
+| --- | --- |
+| Supabase functions | `team` v16, `me` v42, `coach` v19, `listings` v36: ACTIVE, JWT verification on; 45/45 API-listed source copies match the reviewed source. |
+| Database | Three migrations applied once; SQL payload hashes match source, service-only RPC grants verified, existing access unchanged. |
+| Studio | Worker `a3b46f8a-7ce9-4cda-a5bc-42b3e97e19ed`; all 30 deployed files and SPA fallback verified. Saved synthetic QA sources/history restored after reload and playback advanced; browser warning/error log empty. |
+| Public website | Worker `04672590-71c3-49dd-b79e-580b482d2ffb`; home, pricing, llms, terms and privacy match source after accounting for the exact known Cloudflare detection-script injection. Studio redirect and demo-video availability verified. |
+| iOS | Internal TestFlight 1.0.3 (34), signed archive/source checks, one successful upload and Apple availability readback. Existing guided capture lab retained. |
+| GitHub CI | All 12 jobs passed on the exact archive source, [run 36883862194](https://github.com/AaronPilk/RendProp-Ai/actions/runs/36883862194). |
+
+The migration tool allocated deployment timestamps. These are already applied;
+do not reapply a source file because its filename differs from the live ledger.
+
+| Source filename version | Live ledger version | Name |
+| --- | --- | --- |
+| `20261001142823` | `20261001152110` | team_invite_delivery_confirmation |
+| `20261001143615` | `20261001152146` | subscription_confirmed_trial_start |
+| `20261001145730` | `20261001152213` | workspace_selection |
+
+Eight missing/invalid-JWT probes returned 401. Existing grants and data counts
+were unchanged; no real invitations or purchases were created. Security advisors
+remain at the prior baseline: zero ERROR, 26 WARN entries and 40 intentional
+deny-all RLS INFO entries. Existing warnings are not represented as a clean audit.
+Cloudflare domains, bindings, secret names and compatibility dates were preserved.
+No App Store review submission or pricing/offer change was made.
+
+## Deployment order used
+
+1. Applied migrations `20261001142823_team_invite_delivery_confirmation`,
    `20261001143615_subscription_confirmed_trial_start`, and
    `20261001145730_workspace_selection`.
-2. Deploy `team`, `me`, `coach`, and `listings` with existing JWT verification.
+2. Deployed `team`, `me`, `coach`, and `listings` with existing JWT verification.
    Include new `me/billing.ts` and `_shared/workspaces.ts` dependencies.
-3. Publish the connected Studio and existing tour-host Worker; preserve their
+3. Published the connected Studio and existing tour-host Worker; preserve their
    current domains, bindings, secrets, and security headers. Read back deployed
    source/assets and the migrated schema.
-4. Deliver a new internal TestFlight build. Build 33 does not include this audit.
+4. Delivered internal TestFlight build 34. Build 33 does not include this audit.
    Keep the existing guided capture lab available for the owner's separate test.
    No App Store review submission is part of this release.
 
@@ -112,8 +144,11 @@ as a server-only upgrade for clients that cannot send their original intent.
 
 ## Owner acceptance before a broad rollout
 
-Use two real test accounts (an independent agent and a team manager/member) on
-the new build. Confirm trial purchase, price/renewal disclosure, cancellation,
+Install **1.0.3 (34)** from TestFlight. Use two test accounts (an independent
+agent and a team manager/member). Check **Settings → Plan & usage** for
+view/change plans, manage/cancel with Apple and restore. With an eligible personal
+account, cancel the purchase sheet first and confirm no trial begins. Then
+confirm a sandbox trial purchase, price/renewal disclosure, cancellation,
 restore after relaunch and Apple sign-in, and plan changes in TestFlight's sandbox.
 Confirm personal/team switching preserves the expected property owner, agent
 card and plan on both phone and Studio. Check one invitation's actual inbox

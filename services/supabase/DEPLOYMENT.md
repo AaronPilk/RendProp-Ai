@@ -5,11 +5,16 @@ and the latest release receipt for current function versions, explicit deploymen
 selection, and verified production status. Do not rerun old rollout instructions
 as a blanket production migration.
 
-As of the 1 October source update, new workspaces start free without an automatic
+As of the deployed 1 October release, new workspaces start free without an automatic
 trial. An eligible 7-day introductory offer requires confirming a subscription
 with Apple. Migration `20261001143615_subscription_confirmed_trial_start.sql`
 changes only future signup provisioning/defaults and preserves all existing
 grants. Never bulk-convert free workspaces into trials.
+
+The [1 October verified deployment](../../docs/handoff/CORE-READINESS-20261001.md)
+records current function versions and the three source-to-live migration mappings.
+The migrations are already applied; inspect that record and the ledger before
+any future migration command. The setup recipes below are historical.
 
 ## ✅ Already provisioned (done for you)
 

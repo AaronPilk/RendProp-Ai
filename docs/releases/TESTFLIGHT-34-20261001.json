@@ -1,0 +1,169 @@
+{
+  "kind": "Internal TestFlight delivery receipt",
+  "verifiedAt": "2026-10-01T15:30:20.727932+00:00",
+  "source": {
+    "commit": "5a1406392a8fecef6131667de56521a35c4d285a",
+    "branch": "audit/core-readiness-20261001",
+    "verifiedSourceFileCount": 185,
+    "scheme": "RendpropSpatialTestFlight",
+    "committedTestFlightBuildSetting": "34",
+    "explicitArchiveBuildOverride": "34",
+    "ciPassedJobs": 12,
+    "ciSourceCommit": "5a1406392a8fecef6131667de56521a35c4d285a",
+    "ciRunURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36883862194",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/11"
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "34",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "signatureVerified": true,
+    "captureLabFlagVerified": true,
+    "requiredGuidedSourcesCompiled": [
+      "StationCaptureModels.swift",
+      "StationCapturePolicy.swift",
+      "StationCaptureRecorder.swift",
+      "PanoramaProjection.swift",
+      "PanoramaRenderer.swift",
+      "PanoramaPreviewViewController.swift",
+      "GuidedPanoramaCaptureController.swift",
+      "GuidedPanoramaLabView.swift",
+      "GuidedPanoramaPreviewStore.swift",
+      "WorkspaceContext.swift",
+      "WorkspaceStore.swift",
+      "WorkspacePickerView.swift",
+      "SubscriptionBillingContext.swift",
+      "SubscriptionOfferPolicy.swift",
+      "PurchaseManager.swift",
+      "PurchasesAPI.swift",
+      "AuthStore.swift",
+      "WorkspaceSync.swift",
+      "LiveAPIClient.swift"
+    ],
+    "generatedSourceHashes": {
+      "Build/Intermediates.noindex/ArchiveIntermediates/RendpropSpatialTestFlight/IntermediateBuildFilesPath/RendpropSpatialTestFlight.build/Release-iphoneos/Rendprop.build/DerivedSources/GeneratedAssetSymbols.swift": "1e83960d05f0c3e518fd0704d5f5c0ea8497423567cfadc2970cab52314dd2a0"
+    },
+    "executableSHA256": "1dd2efd5012366872518699447d06c8b67c62d6b4467e501bf0360484ae4b4b2",
+    "archiveInfoSHA256": "6bb881834f3c20637f9e049ae7c3f207390d5038e98efec2e216be40e7e5026e",
+    "archiveLogSHA256": "2f1db6a623b6d3ca9777f15599c928eb410803e5dcf1546a6ce08cc1e46635ec",
+    "compileListSHA256": "932004dbb3df32e7c0a7739dbe76acc32cd4bcab3e7bd960ef6a60763c53aac8"
+  },
+  "export": {
+    "method": "app-store-connect",
+    "destination": "upload",
+    "testFlightInternalTestingOnly": true,
+    "manageAppVersionAndBuildNumber": false,
+    "optionsSHA256": "172ea6fcb6b3e50cc48598c12ebfc5d9d57c2c4689a8003ca7b7b0745019b0fc",
+    "attempts": 1,
+    "startedAt": "2026-10-01T15:27:20.466003+00:00",
+    "finishedAt": "2026-10-01T15:28:30.858558+00:00",
+    "exitCode": 0
+  },
+  "apple": {
+    "id": "cb0eb796-6418-48bd-bcaa-7bfb247f9dd9",
+    "marketingVersion": "1.0.3",
+    "build": "34",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-01T08:29:14-07:00",
+    "usesNonExemptEncryption": false,
+    "minOsVersion": "16.0",
+    "betaDetails": {
+      "autoNotifyEnabled": true,
+      "internalBuildState": "IN_BETA_TESTING",
+      "externalBuildState": "NOT_APPLICABLE"
+    },
+    "group": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    }
+  },
+  "testNotes": {
+    "locale": "en-US",
+    "verifiedAt": "2026-10-01T15:30:50.733296+00:00",
+    "readbackVerified": true
+  },
+  "softwareVerification": {
+    "phase1Tests": 27,
+    "adoptionFilesystemChecks": 16,
+    "subscriptionPolicyChecks": 312,
+    "productionWriterChecks": 11,
+    "navigationUITests": 2,
+    "navigationFailures": 0,
+    "studioUnitTests": 416,
+    "studioBrowserSuites": 25,
+    "backendPassedTests": 1127,
+    "backendFailedTests": 0,
+    "backendPreviouslyIgnoredTests": 1,
+    "backendTypecheckedEntrypoints": 25,
+    "fullDatabasePassed": 265,
+    "fullDatabaseAssertions": 266,
+    "knownDatabaseException": "Previously retained Astra agent-reel token-headroom assertion155; unchanged",
+    "localStoreKitTransactionTestsPassed": false,
+    "normalReleaseDeviceBuildPassed": true,
+    "independentReview": "No unresolved software blocker for owner-operated internal TestFlight"
+  },
+  "deployedBackend": {
+    "sourceCommit": "0346caecaf48ba22047f2f615a5b2ca135e82d9d",
+    "functionVersions": {
+      "team": 16,
+      "me": 42,
+      "coach": 19,
+      "listings": 36
+    },
+    "verifyJWT": true,
+    "matchingSourceFileCopies": 45,
+    "existingGrantsUnchanged": true,
+    "migrationVersions": {
+      "20261001142823": "20261001152110",
+      "20261001143615": "20261001152146",
+      "20261001145730": "20261001152213"
+    }
+  },
+  "deployedWeb": {
+    "studioVersion": "a3b46f8a-7ce9-4cda-a5bc-42b3e97e19ed",
+    "verifiedStudioFiles": 30,
+    "tourHostVersion": "04672590-71c3-49dd-b79e-580b482d2ffb",
+    "savedSyntheticProjectRestored": true,
+    "syntheticPlaybackVerified": true
+  },
+  "operations": {
+    "newTesterInvitations": false,
+    "testerOrGroupMembershipWrites": false,
+    "buildSpecificTestNotesUpdated": true,
+    "appStoreVersionAttachment": false,
+    "appReviewSubmission": false,
+    "applePriceOrOfferChanges": false,
+    "realPurchases": false,
+    "productionSpatialFlagsChanged": false,
+    "gpuAllocation": false,
+    "paidGenerationCostUSD": 0
+  },
+  "evidenceSHA256": {
+    "testflight/source-manifest.json": "fbaa6c45c4f793ff266bc55935f31cbee42c496aa0fa0cdee8360e54f278eb07",
+    "testflight/archive-preflight.json": "fb48bb381031d4a1ccf6513da9d8dc078a2a6a05f7464c7d4191ee615ad10a11",
+    "testflight/upload-result.json": "883d0453081f37ff81e3c803d57175d6d2541e7a875bd80f73ccf4bca682924f",
+    "testflight/export-sanitized.log": "2cae622cf72f93679a5f73fa8d33e569a29cd46b9830ed2e12ecbc96d2849e62",
+    "testflight/testflight-ready.json": "f54386adb0a5562826efb85dfbf4027a400b935f43271a37bb149c8bf1e95c62",
+    "testflight/test-notes-receipt.json": "30aea4491ff0de087ff61b98bdecd82b1621d043740d1887aa205d635393b9a5",
+    "github-ci-final.json": "c49ed239a1d2a5bba286a3fd3e87fa9b3252ec79729224f9e9d5ae78ce089088",
+    "studio-deployed-bytes-final.json": "6a39fd8021e6120439fc6af11f9064ff9253e3b0fd43fdbf26dde2f7bd39c3c9",
+    "tour-host-live-verification.json": "fd655753fb6b45d43e60177c73b4b5141bea9ea4b9a30ca3366f31b157800f05",
+    "live-studio-postdeploy.json": "9a31e8b1102af13410e895382ef0800795785560136824742685bf7a71e09e1a",
+    "backend/deploy/SUMMARY.json": "1ff77e52195fc89787f0c3d9e95cd6b986335aaba341b186affc5c0886a3253b",
+    "ios/source-receipt.json": "e3a25010ddbf1ea081a732de183470442253c9139fd1b2de2bfeff76983eef90"
+  },
+  "limitations": [
+    "Real TestFlight sandbox purchase, canceled purchase sheet, restore, plan change and renewal cancellation require phone acceptance.",
+    "Local StoreKitTest configuration failed in the installed iOS26.4.1 simulator; transaction tests are not passing evidence.",
+    "Actual invitation inbox delivery and representative two-account phone-to-Studio workflows still need owner acceptance.",
+    "Physical capture, interruptions and guided panoramic quality remain phone tests; spatial reconstruction remains disabled.",
+    "Apple readback does not attest a local archive hash; local source/archive/upload receipts bind the attempted artifact.",
+    "Source is on the isolated release branch and stacked PR11; shared main was not advanced."
+  ]
+}

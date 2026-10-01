@@ -7,6 +7,13 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
+deployed **team v16, me v42, coach v19 and listings v36**, all ACTIVE with JWT
+verification on. The three trial/invitation/workspace migrations are applied;
+45/45 runtime source copies and migration payload hashes match the reviewed
+source. Existing grants are preserved. The report maps source filenames to
+live migration timestamps; do not apply these migrations twice.
+
 The [27 September release checkpoint](../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 records Studio API **v12 ACTIVE**, JWT verification enabled, and all **44 runtime
 source files** matching the release source. The four new project/media/music/text
@@ -92,7 +99,7 @@ Typical codes include `validation`, `unauthorized`, `forbidden`, `not_found`,
 `internal`. RPC `RPnnn:` errors are mapped in `_shared/http.ts`; unknown server
 errors should not expose credentials or internal records.
 
-## Subscription and team readiness (1 October source update)
+## Subscription and team readiness (deployed 1 October)
 
 New workspaces start on `free`, with no trial expiry or trial source. An eligible
 7-day App Store introductory trial begins after the customer confirms a
@@ -153,8 +160,8 @@ These create socket-only disposable PostgreSQL, test the old failure before the
 fix and its replay, and run network-denied handler tests. They never send real
 invites, call Apple or make purchases. The subscription suite preserves the
 known owner-retained Astra ceiling invariant failure separately from its passing
-policy checks. Deployment status must come from a release receipt, not this
-source update.
+policy checks. Deployment status and live timestamp mappings are recorded in
+the [release receipt](../../../docs/handoff/CORE-READINESS-20261001.md).
 
 ## Develop and verify
 

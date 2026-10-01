@@ -1,5 +1,11 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
+deployed the subscription-confirmation wording. Worker version
+`04672590-71c3-49dd-b79e-580b482d2ffb` serves the verified home, pricing and legal
+pages; routes, bindings and compatibility date are unchanged.
+
+
 Serves Rendprop's public marketing, tour and portfolio pages, plus the spatial
 viewer shell and permission-checked artifact proxy. This is separate from the
 [Studio static Worker](../../../apps/studio/README.md). Studio's

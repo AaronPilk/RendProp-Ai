@@ -6,6 +6,13 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+The [1 October core release](../../docs/handoff/CORE-READINESS-20261001.md) is
+live: rejected project creation/copy keeps the current edit, empty drafts no
+longer create phantom recovery prompts, and billing copy explains subscription
+activation. All 30 deployed files match the tested build; live saved-project
+restoration and playback passed. iPhone 1.0.3 (34) carries the related workspace
+and billing changes; real-phone acceptance remains separate.
+
 The [27 September release checkpoint](../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 confirms the new website, database migrations and Studio API v12 are deployed.
 All 30 website files and 44 API runtime files match their release source. Bounded
