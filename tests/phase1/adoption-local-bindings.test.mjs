@@ -91,6 +91,7 @@ enum FileStore {
  var uploadedRenderAssets:[UUID:UploadedRenderAsset]=[:]; var pendingPublish:[UUID]=[]
  var publishedOriginalAssets:[String:String]=[:]; var publishedGalleryAssets:[String:String]=[:]
  var hasLoaded=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
+ var clientContactSyncInFlight:Set<UUID>=[]
  var cloudRefreshTask:Task<Void,Never>?; var cloudRefreshOperation:UUID?
  var cloudSyncError:String?; var lastCloudSyncAt:Date?
  var serverCreationInFlight:Set<UUID>=[]; var identityOwnerUserID:UUID?
@@ -107,7 +108,7 @@ ${store}
 `;
   const generated = join(out, 'ActualAppModelMetadata.swift');
   writeFileSync(generated, scaffold, { flag: 'wx' });
-  const files = ['Listing', 'Money', 'RoomTag', 'CaptureAsset', 'Render'].map(n => root + `apps/ios/Rendprop/Models/${n}.swift`);
+  const files = ['Listing', 'ListingClientContact', 'Money', 'RoomTag', 'CaptureAsset', 'Render'].map(n => root + `apps/ios/Rendprop/Models/${n}.swift`);
   files.push(root + 'apps/ios/Rendprop/Auth/AnonymousAdoptionRecovery.swift', root + 'apps/ios/Rendprop/Auth/AdoptionLocalBindings.swift',
     root + 'apps/ios/Rendprop/Auth/AdoptionProductionLibrary.swift',
     root + 'apps/ios/Rendprop/Models/ProductionGuidance.swift', root + 'apps/ios/Rendprop/Networking/ProductionPlan.swift',

@@ -1,14 +1,15 @@
 {
   "schema": 1,
-  "baseline": "f14081d49d5fb40b1dde59562176692ddb2664c6",
+  "baseline": "17f42b79aed0170bddc5e2cffae99071781e1247",
   "claim": "inventory-only; no browser parity is verified",
   "api": [
     {"id":"listings","methods":["listings","createListing","updateListing","deleteListing"],"web":"Bulk listing workspace; same routes, no production deletion tests","status":"planned"},
+    {"id":"listing-client-contact","methods":["clientContact","saveClientContact"],"web":"Listing client editor uses the shared GET/PUT /listings/:id/client-contact routes, selected workspace and expected_revision; public client card is separate from private inquiry recipient, uploaded contact_photo is excluded from property media, and client mode can suppress Rendprop branding; this inventory does not verify browser/device sync or email delivery","status":"planned"},
     {"id":"uploads","methods":["requestUpload","fetchPartURLs","completeUpload","abortUpload","renewUpload","requestPhotoBatch"],"web":"Resumable chunked uploader; completion overloads share one server asset identity; renewal re-signs only the existing reservation","status":"planned"},
     {"id":"spatial","methods":["spatialCapability","spatialJobs","spatialJob","createSpatialJob","attachSpatialInputs","startSpatialJob","reviewSpatialJob","publishSpatialJob","retrySpatialJob","cancelSpatialJob","resumeSpatialJob"],"web":"Inventory only: 3D room job lifecycle (create, attach inputs, start, review, publish, retry, cancel, resume) against the same /spatial routes; spatialCapability is the server capability read, no browser capture or viewer parity is verified","status":"planned"},
     {"id":"render","methods":["createRender","renderStatus","publishApp","updateChapters"],"web":"Timeline, fenced canonical export, shared immutable artifact and chapter editor","status":"planned"},
-    {"id":"account","methods":["me","updateBrand"],"web":"Same entitlement summary and agent card; server brand precedence pending","status":"planned"},
-    {"id":"leads","methods":["leads"],"web":"Org/listing lead inbox with roles enforced in DB","status":"planned"},
+    {"id":"account","methods":["me","updateBrand","realEstateRole","updateRealEstateRole"],"web":"Same entitlement summary and agent card; GET /me returns the nullable real_estate_role preference and PATCH /me/profile records agent or photographer_videographer, without changing membership permissions or existing listing publication settings","status":"planned"},
+    {"id":"leads","methods":["leads","sendLeadToClient"],"web":"Selected-workspace inquiry inbox reads client_delivery history from GET /leads and requests POST /leads/:id/send-to-client using a durable request_id plus expected_recipient_email; saved recipient, writer roles, cooldown and actor/workspace rate limits remain server authority; provider acceptance is not inbox delivery","status":"planned"},
     {"id":"lookup","methods":["propertyLookup"],"web":"Same address lookup; manual property entry always available","status":"planned"},
     {"id":"photo","methods":["aiPhotoEdit","aiPhotoSuggest","aiImprovePrompt"],"web":"Photo studio, comparison, bulk edits with individual receipts and caps","status":"planned"},
     {"id":"provenance","methods":["provenance","complianceCSV","attachProvenanceMedia"],"web":"Evidence panel and export; immutable originals and server verified disclosure","status":"planned"},
