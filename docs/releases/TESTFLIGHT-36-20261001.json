@@ -299,5 +299,12 @@
     "studio/verify-final-deployed.json": "32697052908f5502617e694a6f37c60ba6d221550d539913168184b7b2a016ca",
     "studio/independent-deployment-review.json": "5355a21c6732a77edff49cda0f23aa163f86149e5bc0660292c16cb865f5f963",
     "testflight-final/independent-final-review.json": "126094e3773f21b0054787eb84c78a8da166bbe4e0162fae27bcd5595a8c4fc0"
-  }
+  },
+  "evidenceNotes": [
+    {
+      "receipt": "final-software-receipt.json",
+      "field": "receipts.studioConnectedBuild.sha256",
+      "note": "This nested reference records an earlier connected-build checkpoint at the same private path. The canonical final connected-build evidence for deployed source 0e7c78c is the direct studio/final-connected-check.json hash in evidenceSHA256, cross-checked by studio/final-build-manifest.json and the production application-byte readback. Frozen historical receipts have not been rewritten."
+    }
+  ]
 }
