@@ -86,6 +86,8 @@ struct TeamInviteCreated: Decodable, Sendable {
     let role: String
     let code: String
     let expiresAt: String?
+    /// Queue acceptance is not email delivery; absent on older deployments.
+    let emailQueued: Bool?
 }
 
 struct TeamJoined: Decodable, Sendable {
@@ -123,7 +125,10 @@ enum TeamAPI {
         return ISO8601DateFormatter().date(from: raw)
     }
 
-    private static func request(_ path: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+    @MainActor private static func request(_ path: String, method: String, body: [String: Any]? = nil) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let org = WorkspaceContext.selectedOrgID
+        guard org != nil || path == "accept" else { throw CloudSyncError.identityChanged }
         guard let base = Config.apiBaseURL else {
             throw Failure(status: 0, code: nil, message: "Rendprop isn't configured for the network yet.")
         }
@@ -131,6 +136,7 @@ enum TeamAPI {
             throw Failure(status: 401, code: "unauthorized",
                           message: "This iPhone hasn't reached Rendprop yet. Check your connection and try again.")
         }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         var url = base.appendingPathComponent("team")
         for part in path.split(separator: "/") where !part.isEmpty {
             url.appendPathComponent(String(part))
@@ -141,6 +147,7 @@ enum TeamAPI {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        if let org { req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id") }
         if let body { req.httpBody = try? JSONSerialization.data(withJSONObject: body) }
 
         let data: Data, resp: URLResponse
@@ -150,6 +157,7 @@ enum TeamAPI {
             throw Failure(status: 0, code: nil,
                           message: "Couldn't reach Rendprop. Check your connection and try again.")
         }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         let status = (resp as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
             struct ErrDTO: Decodable { let error: String?; let code: String? }
@@ -176,11 +184,11 @@ enum TeamAPI {
         }
     }
 
-    static func summary() async throws -> TeamSummary {
+    @MainActor static func summary() async throws -> TeamSummary {
         try decode(try await request("", method: "GET"))
     }
 
-    static func invite(email: String?, role: String = "agent") async throws -> TeamInviteCreated {
+    @MainActor static func invite(email: String?, role: String = "agent") async throws -> TeamInviteCreated {
         var body: [String: Any] = ["role": role]
         if let email, !email.trimmingCharacters(in: .whitespaces).isEmpty {
             body["email"] = email.trimmingCharacters(in: .whitespaces)
@@ -191,15 +199,15 @@ enum TeamAPI {
         return try decode(try await request("invites", method: "POST", body: body))
     }
 
-    static func revoke(inviteId: String) async throws {
+    @MainActor static func revoke(inviteId: String) async throws {
         _ = try await request("invites/\(inviteId)", method: "DELETE")
     }
 
-    static func remove(userId: String) async throws {
+    @MainActor static func remove(userId: String) async throws {
         _ = try await request("members/\(userId)", method: "DELETE")
     }
 
-    static func join(code: String) async throws -> TeamJoined {
+    @MainActor static func join(code: String) async throws -> TeamJoined {
         try decode(try await request("accept", method: "POST", body: ["code": code]))
     }
 }

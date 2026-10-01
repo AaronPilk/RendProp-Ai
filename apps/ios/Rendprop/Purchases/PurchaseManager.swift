@@ -41,6 +41,7 @@ final class PurchaseManager: ObservableObject {
     /// The product id behind `activePlan`, so the paywall can mark the exact
     /// row (monthly vs yearly) as "Your plan".
     @Published private(set) var activeProductID: String?
+    @Published private(set) var activeOriginalTransactionID: String?
 
     /// End of the current paid period, when the server told us.
     @Published private(set) var activeExpiresAt: Date?
@@ -75,6 +76,8 @@ final class PurchaseManager: ObservableObject {
     /// Number of verified transactions we could not get the server to accept.
     /// Shown nowhere; drives the "still syncing" line and the foreground retry.
     @Published private(set) var unsyncedCount = 0
+    @Published private(set) var billingContext: SubscriptionBillingContext?
+    @Published private(set) var billingError: String?
 
     // MARK: Dependencies
 
@@ -98,12 +101,14 @@ final class PurchaseManager: ObservableObject {
     /// the launch/foreground sweep from re-POSTing the same entitlement every
     /// time the app comes forward. A purchase and anything from
     /// `Transaction.updates` always syncs, sweep or no sweep.
-    private var syncedThisSession: Set<UInt64> = []
+    private var syncedThisSession: Set<String> = []
+    private var activeBillingOwner: UUID?
 
     private struct PendingSync {
         let transaction: Transaction
         let signedTransaction: String
         let signedRenewalInfo: String?
+        let expectedOrgID: UUID?
     }
 
     private init() {
@@ -144,6 +149,7 @@ final class PurchaseManager: ObservableObject {
             if self.products.isEmpty { await self.loadProducts() }
             await self.retryUnsynced()
             await self.refreshEntitlements()
+            await self.refreshIntroEligibility()
             self.refreshTask = nil
         }
     }
@@ -199,19 +205,90 @@ final class PurchaseManager: ObservableObject {
     /// product: the customer is eligible AND the product really carries an
     /// introductory offer.
     func showsIntroOffer(for product: Product) -> Bool {
-        guard introOfferEligible[product.id] == true else { return false }
-        return product.subscription?.introductoryOffer != nil
+        guard let offer = product.subscription?.introductoryOffer else { return false }
+        let unit: SubscriptionOfferPolicy.PeriodUnit
+        switch offer.period.unit {
+        case .day: unit = .day
+        case .week: unit = .week
+        case .month: unit = .month
+        case .year: unit = .year
+        @unknown default: unit = .unknown
+        }
+        return SubscriptionOfferPolicy.isSevenDayFreeTrial(eligible: introOfferEligible[product.id] == true,
+            free: offer.paymentMode == .freeTrial, value: offer.period.value, unit: unit, count: offer.periodCount)
+    }
+
+    func refreshBillingContext() async {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        do {
+            guard let api else { throw APIError.notConfigured }
+            let value = try await api.billingContext()
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            billingContext = value; billingError = nil
+        } catch {
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            billingContext = nil
+            billingError = "We couldn’t confirm this workspace’s billing permissions. Refresh before subscribing. Restore and Apple subscription management remain available."
+        }
     }
 
     // MARK: - Buying
 
-    func purchase(_ product: Product) async {
+    func purchase(_ product: Product, expectedOrgID: UUID?) async {
         guard !isPurchasing else { return }
+        let operationActor = AuthStore.shared.userID, operationRevision = AuthStore.shared.syncSessionRevision
         isPurchasing = true
         lastError = nil
         notice = nil
         defer { isPurchasing = false }
 
+        // A live purchase must have a current workspace identity before Apple
+        // confirms it. A stale ID after sign-out must never bind a new purchase.
+        if Config.useLiveBackend && !Config.isUITesting {
+            guard await AuthStore.validAccessToken() != nil, AuthStore.shared.isSignedIn,
+                  AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) != nil else {
+                lastError = "Connect to Rendprop before subscribing so the plan is linked to your workspace. Nothing has been purchased."
+                return
+            }
+        }
+        guard AuthStore.shared.userID == operationActor, AuthStore.shared.syncSessionRevision == operationRevision else { return }
+        // Await discovery even if the products rendered before StoreKit finished
+        // its launch sweep. An existing subscription must be checked first.
+        let existingConfirmed = await refreshEntitlements()
+        guard AuthStore.shared.userID == operationActor, AuthStore.shared.syncSessionRevision == operationRevision else { return }
+        if activeProductID != nil, !existingConfirmed, Config.useLiveBackend && !Config.isUITesting {
+            lastError = "Your existing Apple subscription must be restored to its original Rendprop account and workspace before changing plans. Nothing has been purchased."
+            return
+        }
+        let actor = operationActor, identityRevision = operationRevision
+        var preparedBinding: PurchaseWorkspaceBindingStore.Binding?
+        var createdBinding = false
+        if Config.useLiveBackend && !Config.isUITesting {
+            guard let owner = actor.flatMap(UUID.init(uuidString:)), let api else { return }
+            do {
+                let context = try await api.billingContext()
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision,
+                      let expectedOrgID, context.orgID == expectedOrgID else {
+                    lastError = "Your workspace changed. Refresh the plan screen before subscribing. Nothing has been purchased."
+                    return
+                }
+                guard context.canManageSubscription else { lastError = context.unavailableMessage; return }
+                if let activeProductID {
+                    let previous = try PurchaseWorkspaceBindingStore.resolve(tokenOwner: activeBillingOwner, currentOwner: owner, productID: activeProductID)
+                    let serverMatches = activeOriginalTransactionID.map { context.originalTransactionIDs?.contains($0) == true } == true
+                    guard previous?.orgID == context.orgID || (previous == nil && serverMatches) else {
+                        lastError = "Your Apple subscription belongs to another workspace. Return to that workspace before changing its plan, or use Manage subscription below. Nothing has been purchased."
+                        return
+                    }
+                }
+                createdBinding = try PurchaseWorkspaceBindingStore.prepare(owner: owner, productID: product.id, orgID: context.orgID)
+                preparedBinding = .init(owner: owner, productID: product.id, orgID: context.orgID)
+            } catch {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision else { return }
+                lastError = "This subscription’s workspace couldn’t be confirmed. Refresh this screen, or manage your existing Apple subscription below. Nothing has been purchased."
+                return
+            }
+        }
         PaywallEvents.track("purchase_started", product: product)
 
         let result: Product.PurchaseResult
@@ -219,17 +296,27 @@ final class PurchaseManager: ObservableObject {
             result = try await product.purchase(options: Self.accountBinding())
         } catch {
             // `.userCancelled` can also arrive as a thrown StoreKitError.
-            if Self.isCancellation(error) { return }
+            if Self.isCancellation(error) {
+                if createdBinding, let binding = preparedBinding {
+                    PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
+                }
+                return
+            }
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision else { return }
             let message = Self.message(for: error, fallback: "That purchase didn't go through. Please try again.")
             lastError = message
             PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "storekit"])
             return
         }
 
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision else { return }
         switch result {
         case .success(let verification):
             let ok = await handle(verification, event: "purchase")
             if ok {
+                await refreshIntroEligibility()
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == identityRevision else { return }
+                notice = "Your plan is active. Manage or cancel it in Settings → Plan & usage."
                 PaywallEvents.track("purchase_completed", product: product)
             } else {
                 PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "sync"])
@@ -241,7 +328,9 @@ final class PurchaseManager: ObservableObject {
             notice = "Your request was sent for approval. Your plan turns on as soon as it's approved — you can close this."
             PaywallEvents.track("purchase_failed", product: product, extra: ["reason": "pending"])
         case .userCancelled:
-            // Silent, by design. Nothing went wrong.
+            if createdBinding, let binding = preparedBinding {
+                PurchaseWorkspaceBindingStore.discardUnpurchased(owner: binding.owner, productID: binding.productID, orgID: binding.orgID)
+            }
             break
         @unknown default:
             lastError = "That purchase didn't finish. Please try again."
@@ -254,6 +343,7 @@ final class PurchaseManager: ObservableObject {
     /// password, so it belongs on an explicit "Restore purchases" tap only.
     func restore() async {
         guard !isRestoring else { return }
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         isRestoring = true
         lastError = nil
         notice = nil
@@ -265,25 +355,37 @@ final class PurchaseManager: ObservableObject {
             try await AppStore.sync()
         } catch {
             if Self.isCancellation(error) { return }
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
             lastError = Self.message(for: error, fallback: "We couldn't reach the App Store. Please try again.")
             return
         }
-        await refreshEntitlements()
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+        let confirmed = await refreshEntitlements()
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
         if activePlan == nil {
             notice = "No subscription found on this Apple ID."
+        } else if confirmed && unsyncedCount == 0 {
+            notice = "Your subscription is restored."
         }
+        await refreshIntroEligibility()
     }
 
     /// Apple's own subscription-management sheet — the only correct place to
     /// cancel or switch plans (3.1.2 / the App Store's rules on cancellation).
     func manageSubscriptions() async {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         guard let scene = Self.activeWindowScene() else {
             lastError = "We couldn't open the App Store subscription settings. Open Settings → Apple ID → Subscriptions."
             return
         }
         do {
             try await AppStore.showManageSubscriptions(in: scene)
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            await refreshEntitlements()
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
+            await refreshIntroEligibility()
         } catch {
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return }
             if Self.isCancellation(error) { return }
             lastError = "We couldn't open the App Store subscription settings. Open Settings → Apple ID → Subscriptions."
         }
@@ -306,7 +408,8 @@ final class PurchaseManager: ObservableObject {
 
     /// Walk `Transaction.currentEntitlements` and sync anything that is ours.
     /// Runs at launch, on foreground, and after a restore.
-    func refreshEntitlements() async {
+    @discardableResult func refreshEntitlements() async -> Bool {
+        let identity = "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
         var found: [VerificationResult<Transaction>] = []
         for await entitlement in Transaction.currentEntitlements {
             guard case .verified(let transaction) = entitlement else { continue }
@@ -316,13 +419,15 @@ final class PurchaseManager: ObservableObject {
             found.append(entitlement)
         }
 
+        guard identity == "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)" else { return false }
         guard !found.isEmpty else {
             // Nothing active on this Apple ID. Do NOT write "free" anywhere —
             // the org's plan may be a manual/comped one the server owns.
             activePlan = nil
             activeProductID = nil
+            activeOriginalTransactionID = nil
             activeExpiresAt = nil
-            return
+            return false
         }
 
         // Show the local answer straight away (highest tier wins if there is
@@ -330,12 +435,14 @@ final class PurchaseManager: ObservableObject {
         // without waiting on a round trip. Still display only.
         applyLocalPlan(from: found)
 
+        var confirmed = true
         for entitlement in found {
             guard case .verified(let transaction) = entitlement else { continue }
-            // Already accepted this run and nothing outstanding → nothing to say.
-            if syncedThisSession.contains(transaction.id), unsynced[transaction.id] == nil { continue }
-            _ = await handle(entitlement, event: "entitlement")
+            // A different app account or session must reconfirm with the server.
+            if syncedThisSession.contains("\(identity):\(transaction.id)"), unsynced[transaction.id] == nil { continue }
+            if !(await handle(entitlement, event: "entitlement")) { confirmed = false }
         }
+        return confirmed && identity == "\(AuthStore.shared.userID ?? "none"):\(AuthStore.shared.syncSessionRevision)"
     }
 
     /// Best local guess at the plan from StoreKit alone. Never a gate.
@@ -349,7 +456,9 @@ final class PurchaseManager: ObservableObject {
         }
         guard let best else { return }
         activePlan = best.plan.rawValue
+        activeBillingOwner = best.transaction.appAccountToken
         activeProductID = best.transaction.productID
+        activeOriginalTransactionID = String(best.transaction.originalID)
         activeExpiresAt = best.transaction.expirationDate
     }
 
@@ -373,12 +482,34 @@ final class PurchaseManager: ObservableObject {
         }
         // 3. Revoked/refunded: let the server hear about it too — it is what
         //    turns the plan back to free — then finish.
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         let signedTransaction = verification.jwsRepresentation
         let signedRenewalInfo = await renewalInfoJWS(forProductID: transaction.productID)
 
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+        let bindingOwner = transaction.appAccountToken
+        var expectedOrgID: UUID?
+        do {
+            expectedOrgID = try PurchaseWorkspaceBindingStore.resolve(tokenOwner: bindingOwner,
+                currentOwner: actor.flatMap(UUID.init(uuidString:)), productID: transaction.productID)?.orgID
+            if expectedOrgID == nil, Config.useLiveBackend && !Config.isUITesting {
+                guard let api else { throw APIError.notConfigured }
+                let context = try await api.billingContext()
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+                guard context.originalTransactionIDs?.contains(String(transaction.originalID)) == true else {
+                    lastError = "This Apple subscription is not linked to the selected workspace. Choose its original workspace and restore. If the purchase is still pending on your other device, open Rendprop there first."
+                    return false
+                }
+                expectedOrgID = context.orgID
+            }
+        } catch {
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+            lastError = "Your purchase’s saved workspace needs recovery. It has not been discarded. Contact support before changing accounts."
+            return false
+        }
         let pending = PendingSync(transaction: transaction,
                                   signedTransaction: signedTransaction,
-                                  signedRenewalInfo: signedRenewalInfo)
+                                  signedRenewalInfo: signedRenewalInfo, expectedOrgID: expectedOrgID)
         return await sync(pending, event: event)
     }
 
@@ -399,23 +530,33 @@ final class PurchaseManager: ObservableObject {
             activeProductID = pending.transaction.productID
         }
 
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         do {
             let result = try await api.syncEntitlement(signedTransaction: pending.signedTransaction,
-                                                       signedRenewalInfo: pending.signedRenewalInfo)
+                                                       signedRenewalInfo: pending.signedRenewalInfo,
+                                                       expectedOrgID: pending.expectedOrgID)
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else {
+                remember(pending)
+                return false
+            }
             applyServerPlan(result, productID: pending.transaction.productID)
             // ONLY now. Before this line, a crash or a dead network leaves the
             // transaction with StoreKit, which is exactly what we want.
             await pending.transaction.finish()
-            syncedThisSession.insert(pending.transaction.id)
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
+            syncedThisSession.insert("\(actor ?? "none"):\(revision):\(pending.transaction.id)")
             forget(pending.transaction.id)
             lastError = nil
             NotificationCenter.default.post(name: .rendpropPlanChanged, object: nil)
             return true
         } catch {
             remember(pending)
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { return false }
             let apiError = error as? APIError
             if apiError?.isUnauthorized == true {
                 lastError = "Sign in to finish turning on your plan. Your purchase is safe — nothing is lost."
+            } else if let apiError, case .server(let status, _, _) = apiError, status == 409 || status == 403 {
+                lastError = "Your Apple purchase is saved, but this workspace cannot activate it. Return to the workspace you selected when subscribing, then tap Restore purchases. Manage or cancel the subscription with Apple if needed."
             } else {
                 lastError = "Your purchase went through. We couldn't reach Rendprop to switch your plan on yet — it retries by itself, or pull down to refresh in Settings."
             }

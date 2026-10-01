@@ -55,6 +55,7 @@ const fetcher: typeof fetch = async (input, options) => {
   if (url.pathname === "/functions/v1/studio/listing-state") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),assets:[],photos:mediaRows(url.searchParams.get("listing_id")!).map(p=>({id:p.id,listing_id:p.listing_id,caption:p.caption,is_staged:false,is_main:p.sort===0,sort:p.sort,original_key:`renders/${org}/${p.listing_id}/${p.id}.png`,enhanced_key:null,created_at:"2026-09-14T12:00:00Z"})),jobs:[],renders:[],chapters:[],next_offset:null});
   if (url.pathname === "/functions/v1/studio/media") return Response.json({org_id:org,listing_id:url.searchParams.get("listing_id"),photos:mediaRows(url.searchParams.get("listing_id")!),videos:[],next_offset:null,unavailable_count:0});
   if(url.pathname==="/functions/v1/studio/creative-results")return Response.json({results:[],next_offset:null});
+  if(url.pathname==="/functions/v1/studio/projects" && (options?.method??"GET")==="GET")return Response.json({projects:[]});
   if(url.pathname==="/functions/v1/ai-voice/voices")return Response.json({voices:[]});
   if(url.pathname==="/functions/v1/leads")return Response.json({leads:[]});
   if(url.pathname==="/functions/v1/spatial")return Response.json({jobs:[]});

@@ -10,6 +10,9 @@
 //                                  (audit F-supabase-16 / F-E-15; decision B4),
 //                                  notifications = the EFFECTIVE notification switches, so the
 //                                  settings screen renders without a second call (0047)
+//   GET    /me/workspaces      -> { active_org_id, workspaces: [{id,name,role}] }
+//   POST   /me/workspace       -> { ok, org_id, org_name, role }; body {org_id}
+//                                  Selects a live membership; never moves existing work.
 //   POST   /me/devices          -> { ok, device: { id, environment, bundle_id, last_seen_at } }
 //                                  { device_token, environment?, bundle_id?, locale?, app_version? }
 //                                  Registers this phone's APNs token for the CALLER (0047).
@@ -68,6 +71,8 @@
 // that echoes the error text.
 
 import { deleteAccount, sweepAccounts } from "./deletion.ts";
+import { requestedWorkspace, selectWorkspace, workspaceDirectory, workspaceID } from "../_shared/workspaces.ts";
+import { assertExpectedSubscriptionWorkspace, assertVerifiedPurchaseOwner } from "./billing.ts";
 import { handleOptions } from "../_shared/cors.ts";
 import {
   HttpError,
@@ -136,6 +141,14 @@ Deno.serve(async (req) => {
 
     const user = await getUser(req);
 
+    if (req.method === "GET" && seg[0] === "workspaces" && seg.length === 1) {
+      return json(await workspaceDirectory(adminClient(), user.id, requestedWorkspace(req)));
+    }
+    if (req.method === "POST" && seg[0] === "workspace" && seg.length === 1) {
+      const body = await readJsonLimited<{org_id?:unknown}>(req, 1024);
+      return json(await selectWorkspace(adminClient(), user.id, workspaceID(body.org_id)));
+    }
+
     // The broker's AI audit log (compliance wave, W2-B3).
     if (req.method === "GET" && seg[0] === "compliance") {
       return await handleCompliance(req, user.id);
@@ -163,7 +176,7 @@ Deno.serve(async (req) => {
 
     throw new HttpError(
       405,
-      "Only GET, GET /me/compliance, PATCH /me/brand, PATCH /me/notifications, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/devices, POST /me/entitlement, and DELETE are supported",
+      "Only GET, GET /me/workspaces, POST /me/workspace, GET /me/compliance, PATCH /me/brand, PATCH /me/notifications, PATCH /me/compliance/:id, POST /me/apple-code, POST /me/devices, POST /me/entitlement, and DELETE are supported",
     );
   } catch (err) {
     return respondError(err);
@@ -194,7 +207,8 @@ const METERS: Record<string, string> = {
 async function handleGet(req: Request, userId: string, userEmail: string | null): Promise<Response> {
   const db = userClient(req);
   const admin = adminClient();
-  const orgId = await orgForUser(userId, preferredOrg(req));
+  const directory = await workspaceDirectory(admin, userId, requestedWorkspace(req));
+  const orgId = directory.active_org_id;
 
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
@@ -212,6 +226,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     metersRes,
     prefsRes,
     entitlement,
+    membershipRes,
   ] = await Promise.all([
       db.from("profiles").select("id, email, name, avatar_url, phone").eq("id", userId).maybeSingle(),
       db.from("orgs").select(
@@ -237,11 +252,25 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
       // is on. The app must render the same answer the enqueuer acts on.
       admin.rpc("notification_preferences_for", { p_user: userId }),
       entitlementFor(orgId),
+      admin.from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle(),
     ]);
 
   if (orgRes.error) throw new HttpError(500, `Org lookup failed: ${orgRes.error.message}`);
   if (!orgRes.data) throw new HttpError(404, "Org not found");
+  if (membershipRes.error || !membershipRes.data) throw new HttpError(503, "Workspace billing permissions could not be verified. Please retry.");
   const org = orgRes.data;
+  const canManageSubscription = ENTITLEMENT_ROLES.has(String(membershipRes.data.role)) &&
+    !entitlement.degraded && entitlement.plan !== "brokerage" && org.plan_source !== "manual";
+  // A new phone has no cached purchase/workspace intent. Let an authorized
+  // purchaser compare its verified StoreKit original ID with this workspace's
+  // existing bindings before Apple shows an upgrade or another purchase sheet.
+  let originalTransactionIDs: string[] = [];
+  if (canManageSubscription && org.plan_source === "apple" && entitlement.plan !== "free") {
+    const { data: subscriptions, error: subscriptionsError } = await admin.from("apple_subscriptions")
+      .select("original_transaction_id").eq("org_id", orgId).in("status", ["active", "grace"]);
+    if (subscriptionsError) throw new HttpError(503, "Subscription workspace could not be verified. Please retry.", "upstream");
+    originalTransactionIDs = (subscriptions ?? []).map((row) => String(row.original_transaction_id));
+  }
 
   const costCents = round4(
     (ledgerRes.data ?? []).reduce((s, r) => s + Number(r.total_cents ?? 0), 0),
@@ -280,6 +309,7 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
 
   return json({
     user: profileRes.data ?? { id: userId, email: userEmail },
+    workspaces: directory.workspaces,
     org: { id: org.id, name: org.name, handle: org.handle, space_type: org.space_type, plan: org.plan, brand_kit: org.brand_kit },
     plan: entitlement.plan,          // EFFECTIVE (expired trial → free)
     plan_raw: org.plan ?? null,
@@ -289,6 +319,17 @@ async function handleGet(req: Request, userId: string, userEmail: string | null)
     plan_source: org.plan_source ?? null,          // 'apple' | 'manual' | 'trial' | null
     plan_expires_at: org.plan_expires_at ?? null,  // end of the paid/grace window
     apple_product_id: org.apple_product_id ?? null,
+    // Bind purchase UI to the exact workspace the entitlement endpoint resolves.
+    // Contract/manual access is managed separately and should not prompt the
+    // user to buy an Apple subscription that cannot replace that entitlement.
+    billing: {
+      org_id: orgId,
+      org_name: org.name,
+      role: membershipRes.data.role,
+      can_manage_subscription: canManageSubscription,
+      original_transaction_ids: originalTransactionIDs,
+      source: entitlement.plan === "brokerage" ? "brokerage" : org.plan_source ?? null,
+    },
     entitlement: {
       plan: entitlement.plan,
       renders_per_month: entitlement.renders_per_month,
@@ -1030,7 +1071,7 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   // Capped before it is buffered: two JWS blobs are at most ~128 KB of JSON and
   // req.json() would read whatever the caller sent into memory first.
   const body = await readJsonLimited<
-    { signed_transaction?: unknown; signed_renewal_info?: unknown }
+    { signed_transaction?: unknown; signed_renewal_info?: unknown; expected_org_id?: unknown }
   >(req, MAX_ENTITLEMENT_BODY_BYTES);
   const signedTransaction = body.signed_transaction;
   assert(
@@ -1076,19 +1117,10 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
   // transaction and every notification for that subscription forever. Set it to
   // the signed-in user's own id and a stolen JWS is worthless to anyone else.
   //
-  // SOFT, deliberately: the shipped build calls `product.purchase()` with no
-  // options, so a real customer's transaction carries no token at all and must
-  // still work. A token that is PRESENT and names someone else is refused —
-  // that is the replay — while an absent one is accepted and the review report
-  // carries the exact iOS change that makes it present. Once a build that sets
-  // it has fully rolled out, this can be tightened to require the token.
-  if (tx.appAccountToken !== null && tx.appAccountToken.toLowerCase() !== userId.toLowerCase()) {
-    throw new HttpError(
-      403,
-      "That purchase belongs to a different Rendprop account. Sign in with the account that bought it, or use Restore Purchases there.",
-      "forbidden",
-    );
-  }
+  // Old purchases without a token remain supported. A present token must
+  // match this account, except for an exact, still-authorized guest adoption
+  // receipt. Apple retains the original guest token after account connection.
+  // Verify that receipt after resolving the target workspace below.
 
   // Renewal info is optional and only trusted for THIS subscription.
   let renewal: AppleRenewalInfo | null = null;
@@ -1106,6 +1138,8 @@ async function handleEntitlement(req: Request, userId: string): Promise<Response
 
   const admin = adminClient();
   const orgId = await orgForUser(userId, preferredOrg(req));
+  assertExpectedSubscriptionWorkspace(body.expected_org_id, orgId);
+  await assertVerifiedPurchaseOwner(tx.appAccountToken, userId, orgId, admin);
 
   const { data: membership, error: mErr } = await admin
     .from("memberships").select("role").eq("user_id", userId).eq("org_id", orgId).maybeSingle();

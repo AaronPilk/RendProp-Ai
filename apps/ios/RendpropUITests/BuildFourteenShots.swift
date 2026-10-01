@@ -90,7 +90,7 @@ final class BuildFourteenShots: XCTestCase {
             }
             _ = app.staticTexts["What do you showcase?"].waitForExistence(timeout: screenTimeout)
             shoot("b01-onboarding-free-week")
-            let line = app.staticTexts["Your first week is on us"]
+            let line = app.staticTexts["Choose a plan. Confirm with Apple."]
             note("free-week line on the picker: \(line.waitForExistence(timeout: shortTimeout))")
         }
     }
@@ -99,7 +99,7 @@ final class BuildFourteenShots: XCTestCase {
 
     private func step02HomePlanBanner() {
         XCTContext.runActivity(named: "b02 home") { _ in
-            let start = app.buttons["Get started"]
+            let start = app.buttons["onboarding.explore"]
             if start.waitForExistence(timeout: shortTimeout), start.isHittable { start.tap() }
             // Home takes a moment: it seeds the sample listings on first launch.
             _ = app.tabBars.buttons.firstMatch.waitForExistence(timeout: screenTimeout)

@@ -5,6 +5,11 @@ marketing into one workspace. Capture photos and walkthrough footage on iPhone,
 continue a property edit in Studio, and prepare reels and hosted property pages.
 Real estate is the primary workflow; the app also supports other space types.
 
+Apple subscription plans are selected, upgraded and changed in the iPhone app
+under **Settings → Plan & usage**. A seven-day trial starts only after confirming
+an eligible Apple subscription offer; installing the app or signing in does not
+activate a trial. Studio uses the same account/workspace subscription.
+
 [Open Studio](https://studio.rendprop.com/) · [Website](https://rendprop.com/) ·
 [Studio release record](docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md) ·
 [iPhone delivery record](docs/handoff/GUIDED-PANORAMA-TESTFLIGHT-20261001.md)

@@ -22,6 +22,7 @@ struct PaywallView: View {
 
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var purchases = PurchaseManager.shared
+    @ObservedObject private var auth = AuthStore.shared
 
     @State private var period: BillingPeriod = .monthly
     @State private var selectedPlan: RendpropPlan = .pro
@@ -31,6 +32,7 @@ struct PaywallView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     header
+                    billingWorkspace
                     content
                     legalBlock
                 }
@@ -48,8 +50,9 @@ struct PaywallView: View {
                 }
             }
         }
-        .task {
+        .task(id: "\(auth.userID ?? "none"):\(auth.syncSessionRevision)") {
             PurchaseManager.shared.start()
+            await purchases.refreshBillingContext()
             // `source`, not `reason`: the server's per-event props whitelist
             // (services/supabase/functions/events/schema.ts) allows only
             // `source` and `plan` on paywall_viewed, and drops anything else.
@@ -61,7 +64,7 @@ struct PaywallView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Turn any phone walkthrough into a cinematic tour")
+            Text(purchases.activePlan == nil ? "Choose your Rendprop plan" : "Change your Rendprop plan")
                 .font(.rpTitle)
                 .foregroundStyle(Theme.ink)
                 .fixedSize(horizontal: false, vertical: true)
@@ -71,12 +74,27 @@ struct PaywallView: View {
                     .foregroundStyle(Theme.inkDim)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Pick a plan. Cancel any time.")
+                Text("Choose a plan, then confirm with Apple. A free trial starts only after that confirmation, if you’re eligible.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private var billingWorkspace: some View {
+        if let context = purchases.billingContext {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(context.name, systemImage: "person.2.fill").font(.rpHeadline)
+                Text(context.canManageSubscription ? "New subscriptions apply to this workspace. Apple manages payment and cancellation. An existing Apple subscription stays with the workspace that owns it." : context.unavailableMessage)
+                    .font(.rpCaption).foregroundStyle(Theme.inkDim)
+            }.frame(maxWidth: .infinity, alignment: .leading).card()
+        } else if let error = purchases.billingError {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(error).font(.rpCaption).foregroundStyle(Theme.warn)
+                Button("Refresh billing access") { Task { await purchases.refreshBillingContext() } }
+            }.card()
+        } else { ProgressView("Checking workspace billing…") }
     }
 
     // MARK: Body states
@@ -90,8 +108,8 @@ struct PaywallView: View {
         } else {
             periodPicker
             planCards
-            messageBlock
         }
+        messageBlock
     }
 
     private var loadingCard: some View {
@@ -170,7 +188,7 @@ struct PaywallView: View {
                          priceText: Self.priceText(offer.product, period: offer.period),
                          note: offer.note,
                          isSelected: selectedPlan == plan,
-                         isCurrent: isCurrentPlan(plan))
+                         isCurrent: purchases.activeProductID == offer.product?.id)
         }
         .buttonStyle(.plain)
         .disabled(offer.product == nil)
@@ -245,14 +263,15 @@ struct PaywallView: View {
 
     @ViewBuilder
     private var buyBar: some View {
-        if !purchases.products.isEmpty {
-            buyBarContent(planOffer(for: selectedPlan))
-        }
+        buyBarContent(planOffer(for: selectedPlan))
     }
 
     private func buyBarContent(_ offer: PlanOffer) -> some View {
         VStack(spacing: 10) {
             if let product = offer.product {
+                Text("Selected: \(selectedPlan.displayName) · \(offer.period.pickerLabel)")
+                    .font(.rpCaption.weight(.semibold))
+                    .foregroundStyle(Theme.ink)
                 buyButton(product)
                 // `offer.period`, not the picker: the button buys what the card
                 // shows, so the billing sentence has to match the card too.
@@ -270,7 +289,12 @@ struct PaywallView: View {
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            restoreButton
+            HStack(spacing: 20) {
+                restoreButton
+                Button("Manage subscription") { Task { await purchases.manageSubscriptions() } }
+                    .font(.rpCaption.weight(.semibold)).foregroundStyle(Theme.accent)
+                    .accessibilityIdentifier("paywall.manage")
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.horizontal, 20)
@@ -281,8 +305,12 @@ struct PaywallView: View {
 
     private func buyButton(_ product: Product) -> some View {
         PrimaryButton(title: buyTitle(for: product),
-                      isDisabled: purchases.isPurchasing) {
-            Task { await PurchaseManager.shared.purchase(product) }
+                      isDisabled: purchases.isPurchasing || purchases.isRestoring ||
+                        (purchases.activeProductID != product.id && Config.useLiveBackend && purchases.billingContext?.canManageSubscription != true)) {
+            Task {
+                if purchases.activeProductID == product.id { await purchases.manageSubscriptions() }
+                else { await purchases.purchase(product, expectedOrgID: purchases.billingContext?.orgID) }
+            }
         }
         .overlay(alignment: .trailing) {
             if purchases.isPurchasing {
@@ -305,21 +333,23 @@ struct PaywallView: View {
                     .font(.rpCaption.weight(.semibold))
             }
         }
-        .disabled(purchases.isRestoring)
+        .disabled(purchases.isRestoring || purchases.isPurchasing)
+        .accessibilityIdentifier("paywall.restore")
         .foregroundStyle(Theme.accent)
     }
 
     /// "Start 7-day free trial" ONLY when the customer is eligible AND the
     /// product actually carries an introductory offer. Otherwise "Subscribe".
     private func buyTitle(for product: Product) -> String {
-        purchases.showsIntroOffer(for: product) ? "Start 7-day free trial" : "Subscribe"
+        if purchases.activeProductID == product.id { return "Manage current subscription" }
+        if purchases.activePlan != nil { return "Confirm plan change with Apple" }
+        return purchases.showsIntroOffer(for: product) ? "Start 7-day free trial" : "Subscribe with Apple"
     }
 
     private func disclosure(for product: Product, period: BillingPeriod) -> String {
-        if purchases.showsIntroOffer(for: product) {
-            return PaywallLegal.trialDisclosure + " " + PaywallLegal.autoRenewDisclosure
-        }
-        return period.billingNote + " " + PaywallLegal.autoRenewDisclosure
+        if purchases.activeProductID == product.id { return "This is the subscription on this Apple ID. Apple shows its renewal date and cancellation options; its original workspace keeps the plan." }
+        return SubscriptionOfferPolicy.disclosure(sevenDayTrial: purchases.showsIntroOffer(for: product),
+            price: product.displayPrice, period: period.priceSuffix)
     }
 
     // MARK: Legal (App Review 3.1.2)
@@ -413,7 +443,7 @@ private struct PlanCardBody: View {
                 .font(.rpHeadline)
                 .foregroundStyle(Theme.ink)
             if isCurrent {
-                badge("Your plan", tint: Theme.good)
+                badge("On this Apple ID", tint: Theme.good)
             } else if plan.isMostPopular {
                 badge("Most popular", tint: Theme.accent)
             }

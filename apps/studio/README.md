@@ -90,6 +90,13 @@ on-device tests. The release verified the existing signed-in browser workspace
 and a synthetic saved-project AI/edit/export path. It did not perform a fresh
 Apple sign-in, second-browser production restoration or phone-to-browser run.
 
+Start, upgrade or change an Apple plan in Rendprop for iPhone under **Settings →
+Plan & usage**. The seven-day introductory trial starts only after the customer
+confirms an eligible Apple subscription offer; downloading or signing in does not
+activate a trial. Apple determines eligibility and displays the renewal price.
+Studio uses that same account/workspace subscription and offers a link to Apple's
+subscription management; it does not run a separate web checkout.
+
 ## Develop and verify
 
 Run from this directory (`apps/studio`). Use Node **22.12+** and the committed

@@ -97,16 +97,22 @@ struct EntitlementSync: Codable, Hashable, Sendable {
 /// The one call the purchase flow makes. `PurchaseManager` holds the client as
 /// this protocol so the offline (Mock) build walks the whole paywall.
 protocol PurchasesAPI {
+    func billingContext() async throws -> SubscriptionBillingContext
     /// POST /me/entitlement — hand Apple's signed transaction to the server and
     /// get back the plan it wrote. Throws `APIError` on a non-2xx.
-    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?) async throws -> EntitlementSync
+    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync
 }
 
 // MARK: - Live
 
 extension LiveAPIClient: PurchasesAPI {
-    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?) async throws -> EntitlementSync {
+    func billingContext() async throws -> SubscriptionBillingContext {
+        struct Response: Decodable { let billing: SubscriptionBillingContext }
+        return try JSONDecoder().decode(Response.self, from: await PurchasesRequest.getBilling()).billing
+    }
+    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
         var body: [String: Any] = ["signed_transaction": signedTransaction]
+        if let expectedOrgID { body["expected_org_id"] = expectedOrgID.uuidString.lowercased() }
         if let signedRenewalInfo, !signedRenewalInfo.isEmpty {
             body["signed_renewal_info"] = signedRenewalInfo
         }
@@ -129,13 +135,30 @@ extension LiveAPIClient: PurchasesAPI {
 /// mapping (via `LiveAPIClient.serverError`, which is internal) — and nothing
 /// else. If `Networking/APIClient.swift` ever gains `syncEntitlement` on the
 /// `APIClient` protocol, delete this and the body above becomes one line.
-private enum PurchasesRequest {
+@MainActor private enum PurchasesRequest {
+    static func getBilling() async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        guard let base = Config.apiBaseURL, let token = await AuthStore.validAccessToken() else { throw APIError.notConfigured }
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        var request = URLRequest(url: base.appendingPathComponent("me"))
+        request.timeoutInterval = 20
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.badResponse(-1) }
+        guard (200..<300).contains(http.statusCode) else { throw LiveAPIClient.serverError(status: http.statusCode, data: data) }
+        return data
+    }
     static func post(path: [String], json: [String: Any]) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         guard var url = Config.apiBaseURL else { throw APIError.notConfigured }
         for segment in path { url.appendPathComponent(segment) }
 
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
+        if let org = json["expected_org_id"] as? String { req.setValue(org, forHTTPHeaderField: "X-Org-Id") }
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
@@ -159,6 +182,7 @@ private enum PurchasesRequest {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         let (data, resp) = try await URLSession.shared.data(for: req)
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
@@ -171,8 +195,10 @@ private enum PurchasesRequest {
         // body alone, so the retry replays server-side rather than risking a
         // second entitlement write.
         if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             let refreshed = await AuthStore.shared.forceRefresh()
             if refreshed, let fresh = AuthStore.storedAccessToken() {
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
                 req.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 let (data2, resp2) = try await URLSession.shared.data(for: req)
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
@@ -187,11 +213,15 @@ private enum PurchasesRequest {
 // MARK: - Mock (offline dev + the UI walk)
 
 extension MockAPIClient: PurchasesAPI {
+    func billingContext() async throws -> SubscriptionBillingContext {
+        .init(orgID: UUID(uuidString: "00000000-0000-0000-0000-000000000001")!, orgName: "Preview workspace",
+              role: "owner", canManageSubscription: true, source: nil)
+    }
     /// Offline: trust the product id in the JWS payload the caller built. There
     /// is no server to verify anything, and the mock's job is to make every
     /// screen exercisable — never to imply a real entitlement.
-    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?) async throws -> EntitlementSync {
-        _ = signedRenewalInfo
+    func syncEntitlement(signedTransaction: String, signedRenewalInfo: String?, expectedOrgID: UUID?) async throws -> EntitlementSync {
+        _ = signedRenewalInfo; _ = expectedOrgID
         try? await Task.sleep(nanoseconds: 300_000_000)
         let productID = MockAPIClient.productID(inJWS: signedTransaction)
         let plan = productID.flatMap(RendpropProducts.planName(for:)) ?? "pro"

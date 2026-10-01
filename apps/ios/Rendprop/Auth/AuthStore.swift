@@ -330,6 +330,9 @@ final class AuthStore: ObservableObject {
     /// same-account reauthentication, so A → B → A cannot apply A's old response.
     @MainActor var syncSessionRevision: UInt64 { syncIdentityEpoch }
 
+    /// A different workspace invalidates active-context responses without replacing the login.
+    @MainActor func workspaceDidChange() { syncIdentityEpoch &+= 1 }
+
     @MainActor
     private func applySession(accessToken: String, refreshToken: String?, expiresAt: Date?, preservingSyncIdentity: Bool = false) {
         sessionEpoch &+= 1
@@ -404,8 +407,13 @@ final class AuthStore: ObservableObject {
         if displayName != trimmed { displayName = trimmed }
         if userName != trimmed { userName = trimmed }
         UserDefaults.standard.set(trimmed, forKey: Keys.userName)
-        guard Config.useLiveBackend, Config.enableAuth else { return }
-        Task.detached(priority: .utility) { await Self.seedBrandNameIfUnset(trimmed) }
+        guard Config.useLiveBackend, Config.enableAuth,
+              let owner = userID, let org = WorkspaceContext.selectedOrgID else { return }
+        Task(priority: .utility) { @MainActor in
+            guard self.userID == owner, WorkspaceContext.selectedOrgID == org,
+                  self.displayName == trimmed else { return }
+            await Self.seedBrandNameIfUnset(trimmed, owner: owner, orgID: org, revision: self.syncSessionRevision)
+        }
     }
 
     /// Server identity from `GET /me` (profile name / org name). Fills gaps
@@ -428,14 +436,17 @@ final class AuthStore: ObservableObject {
 
     /// PATCH `/me/brand {name}` when neither the local card nor the server brand
     /// kit has a name. The card editor's own sync always wins later.
-    private static func seedBrandNameIfUnset(_ name: String) async {
-        let cardIsSet = await MainActor.run { AgentCard.current.isSet }
-        guard !cardIsSet else { return }
-        let api = Config.makeAPIClient()
-        guard let me = try? await api.me() else { return }
-        let existing = me.brandName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    @MainActor private static func seedBrandNameIfUnset(_ name: String, owner: String, orgID: UUID, revision: UInt64) async {
+        guard shared.isSignedIn, shared.userID == owner, shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID, !AgentCard.current.isSet,
+              let api = Config.makeAPIClient() as? LiveAPIClient else { return }
+        guard let brand = try? await api.cloudBrand() else { return }
+        guard shared.isSignedIn, shared.userID == owner, shared.syncSessionRevision == revision,
+              WorkspaceContext.selectedOrgID == orgID, !AgentCard.current.isSet,
+              brand.userID == UUID(uuidString: owner), brand.orgID == orgID else { return }
+        let existing = brand.fields["name"]?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         guard existing.isEmpty else { return }
-        try? await api.updateBrand(["name": name])
+        try? await api.updateBrand(["name": name], orgID: orgID)
     }
 
     // MARK: - Token refresh (Supabase access tokens expire ~1 h)
@@ -911,6 +922,10 @@ final class AuthStore: ObservableObject {
     }
 
     @MainActor
+    func reportProductionRecoveryProblem() {
+        adoptionRecoveryMessage = "Your original video plan or imported clips need recovery before they can appear in this account. Both copies have been preserved. Please get recovery help."
+    }
+
     func reportUnreadableAdoptionBindings() {
         adoptionRecoveryMessage = "Workspace recovery metadata could not be read. Your saved data was preserved. Please get recovery help before retrying cloud publishing."
     }

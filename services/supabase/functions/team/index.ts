@@ -203,10 +203,10 @@ async function queueInviteEmail(
   code: string,
   role: string,
   actorId: string,
-): Promise<void> {
-  if (!address || typeof inviteId !== "string") return;
+): Promise<boolean> {
+  if (!address || typeof inviteId !== "string") return false;
   try {
-    const { error } = await adminClient().rpc("notification_enqueue_invite", {
+    const { data, error } = await adminClient().rpc("notification_enqueue_invite", {
       p_org: orgId,
       p_invite: inviteId,
       p_email: address,
@@ -214,9 +214,17 @@ async function queueInviteEmail(
       p_role: role,
       p_inviter: actorId,
     });
-    if (error) console.error("invite mail not queued:", error.message);
-  } catch (e) {
-    console.error("invite mail not queued:", e instanceof Error ? e.message : String(e));
+    // The SQL helper deliberately returns ok:false instead of throwing when
+    // enqueue fails. Neither an HTTP 200 nor an address proves that mail was
+    // queued, and queue acceptance is not evidence of delivery to an inbox.
+    const queued = !error && data?.ok === true &&
+      (data.queued === true || data.reason === "already_queued");
+    if (!queued) console.error("invite mail not queued");
+    return queued;
+  } catch {
+    // Do not echo database/provider errors that may contain the invite code.
+    console.error("invite mail not queued");
+    return false;
   }
 }
 
@@ -278,27 +286,31 @@ Deno.serve(async (req) => {
     // ── GET /team ────────────────────────────────────────────────────────────
     if (req.method === "GET" && seg.length === 0) {
       const seats = await seatCounts(admin, orgId);
-      const { data: rows } = await admin
+      const { data: rows, error: membersError } = await admin
         .from("memberships").select("user_id, role").eq("org_id", orgId);
+      if (membersError) throw new HttpError(503, "The team could not be loaded. Please retry.");
       const ids = (rows ?? []).map((r) => r.user_id as string);
-      const { data: people } = ids.length
+      const { data: people, error: peopleError } = ids.length
         ? await admin.from("profiles").select("id, name, email").in("id", ids)
-        : { data: [] as { id: string; name: string | null; email: string | null }[] };
+        : { data: [] as { id: string; name: string | null; email: string | null }[], error: null };
+      if (peopleError) throw new HttpError(503, "The team could not be loaded. Please retry.");
       const byId = new Map((people ?? []).map((p) => [p.id, p]));
 
       // Pending invites are visible to MANAGERS ONLY, and never with the code:
       // the plaintext existed once, in the response that created it. An agent
       // on the team has no business reading who else is mid-invite.
-      const { data: invites } = canManage
+      const { data: invites, error: invitesError } = canManage
         ? await admin.from("org_invites")
             .select("id, email, role, created_at, expires_at")
             .eq("org_id", orgId).is("accepted_at", null).is("revoked_at", null)
             .gt("expires_at", new Date().toISOString())
             .order("created_at", { ascending: false })
-        : { data: [] as unknown[] };
+        : { data: [] as unknown[], error: null };
+      if (invitesError) throw new HttpError(503, "Pending invitations could not be loaded. Please retry.");
 
-      const { data: org } = await admin
+      const { data: org, error: orgError } = await admin
         .from("orgs").select("name, plan").eq("id", orgId).maybeSingle();
+      if (orgError || !org) throw new HttpError(503, "The workspace could not be loaded. Please retry.");
 
       return json({
         org_id: orgId,
@@ -395,8 +407,10 @@ Deno.serve(async (req) => {
       // `token_hash`, which is a credential and never leaves the database. The
       // plaintext code exists here and nowhere else, ever.
       const created = (data ?? {}) as Record<string, unknown>;
-      await queueInviteEmail(orgId, created.id, email, code, role, user.id);
-      return json({ ...created, code, emailed: Boolean(email) }, 201);
+      const emailQueued = await queueInviteEmail(orgId, created.id, email, code, role, user.id);
+      // `emailed` is retained for older clients; both fields report queue
+      // acceptance only. The valid code remains available if email failed.
+      return json({ ...created, code, emailed: emailQueued, email_queued: emailQueued }, 201);
     }
 
     // ── POST /team/invites/bulk ──────────────────────────────────────────────
@@ -459,8 +473,7 @@ Deno.serve(async (req) => {
         const addr = typeof r.email === "string" ? r.email : null;
         const codeOut = typeof r.code === "string" ? r.code : null;
         if (!addr || !codeOut) continue;
-        await queueInviteEmail(orgId, r.id, addr, codeOut, role, user.id);
-        queued++;
+        if (await queueInviteEmail(orgId, r.id, addr, codeOut, role, user.id)) queued++;
       }
       return json({ ...report, emails_queued: queued }, Number(report.issued ?? 0) > 0 ? 201 : 200);
     }

@@ -1,5 +1,16 @@
 # Rendprop — Deployment status + remaining steps
 
+This file retains historical setup notes. Use [functions/README.md](functions/README.md)
+and the latest release receipt for current function versions, explicit deployment
+selection, and verified production status. Do not rerun old rollout instructions
+as a blanket production migration.
+
+As of the 1 October source update, new workspaces start free without an automatic
+trial. An eligible 7-day introductory offer requires confirming a subscription
+with Apple. Migration `20261001143615_subscription_confirmed_trial_start.sql`
+changes only future signup provisioning/defaults and preserves all existing
+grants. Never bulk-convert free workspaces into trials.
+
 ## ✅ Already provisioned (done for you)
 
 - **Supabase project:** dedicated **RendProp** project `ymgqpbnjpztwjsyvceld` (`https://ymgqpbnjpztwjsyvceld.supabase.co`, us-west-2, **Pro plan**). Its own project — NOT shared with anything. Schema is the standard `public` schema. Full schema + RLS + auto-provision-on-signup trigger applied.
@@ -30,9 +41,9 @@ re-applied). To ship a new migration:
    `portfolio`, `ai-video`, `ai-photo` all changed; the script deploys everything.
 3. Verify: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/invariants.sql` against a
    **branch/copy** (the fixture creates and deletes two throwaway auth users).
-4. Schedule the deletion sweeper (§9) and, if the two early-access orgs should keep
-   publishing AI features, move them off `free`: `update orgs set plan='trial',
-   trial_ends_at=now()+interval '7 days' where plan='free';` (or `'solo'`).
+4. Inspect and maintain the deletion sweeper (§9). The old early-access bulk
+   trial-grant recipe is superseded: new access requires the confirmed Apple
+   subscription flow, or a separately authorized, explicitly targeted manual grant.
 
 **Plan rework + industry-aware trial (2026-09-12, `0044_plan_rework_and_industry_trial.sql`):**
 1. Apply the migration first. It re-sizes the paid rows in place (prices unchanged),

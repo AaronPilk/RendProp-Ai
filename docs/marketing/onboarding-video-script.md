@@ -167,10 +167,11 @@ Caption: Publish → share link (+ MLS-safe link) · leads land in the app
 On screen: Settings → Plan & usage → "Upgrade plan". The plans and their prices,
 Monthly / Yearly. Close.
 
-Say: Rendprop is free to download and try. Plans start at $49 a month, and every
-plan begins with a 7-day free trial.
+Say: Rendprop is free to download. Plans start at $49 a month. Eligible customers
+can start a 7-day trial by choosing a plan and confirming Apple's subscription
+offer. Apple shows the renewal price before you confirm.
 
-Caption: Free to try · plans from $49 a month · 7-day free trial
+Caption: Plans from $49 a month · eligible 7-day trial · Apple subscription required
 
 ## 13 · 2:18–2:25 · The honest line
 

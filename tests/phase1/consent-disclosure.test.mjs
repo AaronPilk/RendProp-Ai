@@ -55,14 +55,14 @@ test('all current UI launch overrides target v2; historical receipts are not rew
     const source = readFileSync(new URL(name, directory), 'utf8');
     assert.doesNotMatch(source, /ai\.thirdPartyProcessing\.consent\.v1/, name);
     if (source.includes('-ai.thirdPartyProcessing.consent.v2')) configured.push(name);
-    if (name === 'CaptureRecoveryTests.swift') {
+    if (['CaptureRecoveryTests.swift', 'SubscriptionFlowTests.swift'].includes(name)) {
       assert.match(source, /"-ai\.thirdPartyProcessing\.consent\.v2", "NO"/,
-        'offline capture recovery fixtures keep cloud AI consent declined');
+        'offline recovery and billing fixtures keep cloud AI consent declined');
     }
   }
   assert.deepEqual(configured.sort(), [
     'CaptureRecoveryTests.swift', 'CoachShot.swift', 'GuideShot.swift', 'IndustryWalk.swift',
-    'OnboardingTour.swift', 'PaywallShot.swift', 'RendpropUITests.swift', 'ReviewerWalk.swift', 'StoreShots.swift',
+    'OnboardingTour.swift', 'PaywallShot.swift', 'RendpropUITests.swift', 'ReviewerWalk.swift', 'StoreShots.swift', 'SubscriptionFlowTests.swift',
   ], 'review every current consent launch fixture explicitly');
 });
 

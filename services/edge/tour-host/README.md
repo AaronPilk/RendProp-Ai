@@ -7,6 +7,12 @@ viewer shell and permission-checked artifact proxy. This is separate from the
 updated its website and Supabase read handlers; it does not establish a new
 tour-host deployment version.
 
+Current pricing, structured data and terms describe a seven-day introductory
+trial only after confirmation of an eligible Apple subscription in the iPhone
+app. Downloading or signing in does not activate a trial. Prices and plan
+allowances are unchanged. Source-copy updates require a new Worker/static-asset
+deployment; this README alone does not establish that the live site changed.
+
 Routes implemented in the current source:
 
 | Route | Renders | Source |

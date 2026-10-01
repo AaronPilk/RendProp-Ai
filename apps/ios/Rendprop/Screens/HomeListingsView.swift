@@ -16,20 +16,20 @@ struct HomeListingsView: View {
     /// Only listings for the CURRENT business type (a gym never sees houses),
     /// active (not sold), plus search.
     private var filtered: [Listing] {
-        let active = model.listings.filter { $0.belongsToCurrentType && !$0.isSold }
+        let active = model.listings.filter { $0.belongsToCurrentType && !$0.isSold && model.isInSelectedWorkspace($0) }
         guard !search.isEmpty else { return active }
         return active.filter { $0.address.localizedCaseInsensitiveContains(search) }
     }
 
     /// True once the user has a listing of their own for this industry.
     private var hasRealListing: Bool {
-        model.listings.contains { !$0.isSample && $0.belongsToCurrentType }
+        model.listings.contains { !$0.isSample && $0.belongsToCurrentType && model.isInSelectedWorkspace($0) }
     }
 
     /// Archived count for THIS industry only — real-estate sold houses don't
     /// show up in the Food or Gym archive.
     private var soldCount: Int {
-        model.listings.filter { $0.belongsToCurrentType && $0.isSold }.count
+        model.listings.filter { $0.belongsToCurrentType && $0.isSold && model.isInSelectedWorkspace($0) }.count
     }
 
     private var noun: String { SpaceType.current.spaceNoun }
@@ -101,6 +101,7 @@ struct HomeListingsView: View {
     /// card keeps its own design.
     private var listBody: some View {
         List {
+            WorkspaceEntry()
             if let error = model.cloudSyncError {
                 Label(error, systemImage: "icloud.slash")
                     .font(.footnote).foregroundStyle(Theme.inkDim)
@@ -298,7 +299,7 @@ struct SoldListingsView: View {
     @State private var pendingDelete: Listing?
 
     private var sold: [Listing] {
-        model.listings.filter { $0.belongsToCurrentType && $0.isSold }
+        model.listings.filter { $0.belongsToCurrentType && $0.isSold && model.isInSelectedWorkspace($0) }
             .sorted { ($0.soldAt ?? .distantPast) > ($1.soldAt ?? .distantPast) }
     }
 

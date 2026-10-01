@@ -17,6 +17,7 @@ import { handleOptions } from "../_shared/cors.ts";
 import { HttpError, assert, json, pathSegments, readJson, respondError } from "../_shared/http.ts";
 import { SPACE_TYPES } from "../_shared/spacetypes.ts";
 import { adminClient, assertNotDeleting, getUser, orgForUser, preferredOrg, userClient } from "../_shared/supabase.ts";
+import { requestedWorkspace, workspaceDirectory } from "../_shared/workspaces.ts";
 import { createListingRow } from "./create.ts";
 
 // Columns a client is allowed to set/patch. agent_id/org_id/id/created_at are
@@ -142,12 +143,17 @@ Deno.serve(async (req) => {
     const db = userClient(req);
     const seg = pathSegments(req, "listings");
     const id = seg[0];
+    // No header keeps the complete cross-workspace snapshot older native sync
+    // merges depend on. Explicit selection is validated and never falls back.
+    const requested = requestedWorkspace(req);
+    const explicitOrg = requested === undefined ? undefined :
+      (await workspaceDirectory(adminClient(), user.id, requested)).active_org_id;
 
     // ---- POST /listings ----
     if (req.method === "POST" && !id) {
       const body = await readJson<Record<string, unknown>>(req);
       await assertNotDeleting(user.id); // no new listings once deletion starts
-      const org_id = await orgForUser(user.id, preferredOrg(req));
+      const org_id = explicitOrg ?? await orgForUser(user.id, preferredOrg(req));
       const patch = pick(body);
       validate(patch, org_id, null);
       const result = await createListingRow(db, patch, user.id, org_id, req.headers.get("Idempotency-Key"));
@@ -158,6 +164,7 @@ Deno.serve(async (req) => {
     if (req.method === "GET" && !id) {
       const url = new URL(req.url);
       let q = db.from("listings").select("*").is("deleted_at", null);
+      if (explicitOrg) q = q.eq("org_id", explicitOrg);
       const status = url.searchParams.get("status");
       const spaceType = url.searchParams.get("space_type");
       if (status) q = q.eq("status", status);
@@ -177,7 +184,7 @@ Deno.serve(async (req) => {
       const { data: existing, error: eErr } = await db
         .from("listings").select("id, org_id").eq("id", id).is("deleted_at", null).maybeSingle();
       if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
-      if (!existing) throw new HttpError(404, "Listing not found");
+      if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
       validate(patch, existing.org_id as string, id);
 
       const { data, error } = await db
@@ -197,9 +204,9 @@ Deno.serve(async (req) => {
     // ---- DELETE /listings/:id (soft) ----
     if (req.method === "DELETE" && id) {
       const { data: existing, error: eErr } = await db
-        .from("listings").select("id").eq("id", id).is("deleted_at", null).maybeSingle();
+        .from("listings").select("id, org_id").eq("id", id).is("deleted_at", null).maybeSingle();
       if (eErr) throw new HttpError(400, `Listing lookup failed: ${eErr.message}`);
-      if (!existing) throw new HttpError(404, "Listing not found");
+      if (!existing || (explicitOrg && existing.org_id !== explicitOrg)) throw new HttpError(404, "Listing not found in this workspace");
 
       const { data, error } = await db
         .from("listings")

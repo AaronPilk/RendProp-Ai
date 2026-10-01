@@ -180,10 +180,13 @@ or yearly, and Team, billed monthly. <b>The app is the source of truth</b>: the 
 allowances, billing periods, and prices you see there come from the App Store in your own currency,
 and they are what you are charged.</p>
 <ul>
-  <li><b>Free trial.</b> Each plan starts with a 7-day free trial. Apple grants that trial
-  <b>once per Apple ID</b> across all Rendprop plans, so changing plans does not start a second
-  one. Cancel at least 24 hours before it ends and you pay nothing.</li>
-  <li><b>Auto-renewal.</b> Payment is charged to your Apple ID at confirmation of purchase. The
+  <li><b>Free trial.</b> Eligible subscribers can start a <b>7-day introductory trial by confirming
+  an Apple subscription</b> in Rendprop. Downloading or signing in does not activate a trial.
+  Apple determines eligibility and shows the offer and renewal price before confirmation.
+  You may redeem one introductory offer per subscription group; changing plans does not create another
+  trial. Cancel at least 24 hours before the trial ends to avoid renewal charges.</li>
+  <li><b>Auto-renewal.</b> Apple charges the price and billing schedule shown when you confirm,
+  with the first charge after any applicable free trial. The
   subscription <b>renews automatically for the same period unless you cancel at least 24 hours
   before the current period ends</b>, and Apple charges the renewal within the 24 hours before
   that period ends.</li>

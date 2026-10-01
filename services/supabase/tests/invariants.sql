@@ -579,7 +579,7 @@ begin
   insert into _inv(name, pass, note)
     values ('signup without a name uses My business, never the email', v_name = 'My business', v_name);
   insert into _inv(name, pass, note)
-    select 'signup starts a 7-day trial', plan = 'trial' and trial_ends_at > now() + interval '6 days', plan
+    select 'signup stays free until a subscription is confirmed', plan = 'free' and trial_ends_at is null and plan_source is null, plan
       from orgs where id = v_org;
 
   -- Act as the first user.
@@ -591,7 +591,10 @@ begin
   insert into capture_assets (listing_id, kind, bucket, storage_key, bytes, uploaded)
     values (v_listing, 'photo', 'renders', 'renders/_inv/p.jpg', 100, true) returning id into v_poster;
 
-  -- App publishes do not consume the 0032 signup-trial cloud-render quota.
+  -- Preserve the legacy allowance fixture independently of today's signup policy.
+  update orgs set plan='trial',plan_source='trial',trial_ends_at=now()+interval '7 days' where id=v_org;
+
+  -- App publishes do not consume the grandfathered trial cloud-render quota.
   v_job  := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000001', 'app');
   v_job2 := create_render_job(v_listing, v_asset, 'smooth', '{}', '_inv-app-000002', 'app');
   insert into _inv(name, pass, note)
@@ -2057,7 +2060,8 @@ begin
   insert into auth.users (id, email, raw_user_meta_data)
     values (u4, 'inv-fixture4@example.com', '{"full_name":"Gym Fixture"}');
   select m.org_id into v_org from memberships m where m.user_id = u4;
-  update orgs set space_type = 'fitness' where id = v_org;
+  -- This tests a grandfathered industry trial, not a new signup grant.
+  update orgs set space_type = 'fitness', plan='trial', plan_source='trial', trial_ends_at=now()+interval '7 days' where id = v_org;
   perform set_config('request.jwt.claims', json_build_object('sub', u4, 'role', 'authenticated')::text, true);
 
   insert into listings (org_id, agent_id, address) values (v_org, u4, '1 Gym Way') returning id into v_listing;

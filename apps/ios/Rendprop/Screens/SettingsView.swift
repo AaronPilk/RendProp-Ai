@@ -114,6 +114,7 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
+            Section { WorkspaceEntry() }
 #if SPATIAL_CAPTURE_LAB
             Section {
                 NavigationLink {
@@ -468,6 +469,10 @@ struct SettingsView: View {
         .task { await loadNotificationPrefs() }
         .onChange(of: scenePhase) { phase in
             if phase == .active { Task { await loadUsage(); if !isSavingNotificationPrefs { await loadNotificationPrefs() } } }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+            usage = nil; usageError = nil
+            Task { await loadUsage() }
         }
         .refreshable {
             await loadUsage()
@@ -845,21 +850,24 @@ struct SettingsView: View {
 
         var body: some View {
             Group {
-                if RendpropProducts.isUpgradeable(planName: planName) {
-                    Button {
-                        PaywallRouter.shared.present(reason: .upgrade)
-                    } label: {
-                        Label("Upgrade plan", systemImage: "arrow.up.circle.fill")
-                    }
-                    .accessibilityIdentifier("settings.upgradePlan")
+                Button {
+                    PaywallRouter.shared.present(reason: .upgrade)
+                } label: {
+                    Label(RendpropProducts.plan(fromPlanName: planName) == nil ? "View plans" : "Change plan",
+                          systemImage: "arrow.up.circle.fill")
                 }
-                if purchases.activePlan != nil {
-                    Button {
-                        Task { await PurchaseManager.shared.manageSubscriptions() }
-                    } label: {
-                        Label("Manage subscription", systemImage: "creditcard")
-                    }
+                .accessibilityIdentifier("settings.upgradePlan")
+                Button { Task { await purchases.manageSubscriptions() } } label: {
+                    Label("Manage or cancel Apple subscription", systemImage: "creditcard")
                 }
+                .accessibilityIdentifier("settings.manageSubscription")
+                Button { Task { await purchases.restore() } } label: {
+                    Label(purchases.isRestoring ? "Restoring…" : "Restore purchases", systemImage: "arrow.clockwise")
+                }
+                .disabled(purchases.isRestoring || purchases.isPurchasing)
+                .accessibilityIdentifier("settings.restorePurchases")
+                if let error = purchases.lastError { Text(error).font(.rpCaption).foregroundStyle(Theme.warn) }
+                if let notice = purchases.notice { Text(notice).font(.rpCaption).foregroundStyle(Theme.inkDim) }
             }
             // The server just wrote a new plan — the rows above are stale.
             .onReceive(NotificationCenter.default.publisher(for: .rendpropPlanChanged)) { _ in
@@ -872,11 +880,11 @@ struct SettingsView: View {
     private func usageRows(_ usage: UsageSummary) -> some View {
         if let e = usage.entitlements {
             LabeledContent("Plan", value: Self.planLabel(e))
-            if let ends = e.trialEndsAt, ends > Date() {
+            if e.plan.lowercased() == "trial", let ends = e.trialEndsAt, ends > Date() {
                 // "Free week", never "trial": the paywall's StoreKit
                 // introductory offer is the "7-day free trial", and the server
                 // week must not share its name (see OnboardingView).
-                LabeledContent("Free week ends", value: ends.formatted(date: .abbreviated, time: .omitted))
+                LabeledContent("Existing trial access ends", value: ends.formatted(date: .abbreviated, time: .omitted))
             }
             usageRow("Tour renders", used: e.used["renders"], cap: e.rendersPerMonth)
             usageRow("Photo edits", used: e.used["photo_edits"], cap: e.photoEditsPerMonth)
@@ -916,7 +924,7 @@ struct SettingsView: View {
         let name = e.plan.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty else { return "—" }
         // The server calls the week `trial`; the person is told "free week".
-        if name.lowercased() == "trial" { return "Free week" }
+        if name.lowercased() == "trial" { return "Existing trial access" }
         return name.replacingOccurrences(of: "_", with: " ").capitalized
     }
 
@@ -1651,17 +1659,22 @@ struct AgentCard {
     static let fieldNames = ["name", "brokerage", "phone", "email", "website", "instagram", "linkedin", "tiktok"]
 
     /// UserDefaults key of the business type whose card mirrors to the hosted brand kit.
-    static let primaryTypeKey = "brand.primaryType"
+    static var primaryTypeKey: String { WorkspaceContext.storagePrefix + "brand.primaryType" }
     /// Snapshot of the last payload pushed to PATCH /me/brand (skip identical pushes).
-    static let lastPushedKey = "brand.lastPushed"
-    static let cloudOwnerKey = "brand.cloudOwner"
+    static var lastPushedKey: String { WorkspaceContext.storagePrefix + "brand.lastPushed" }
+    static var cloudOwnerKey: String { WorkspaceContext.storagePrefix + "brand.cloudOwner" }
 
     /// Pull a shared card only when it cannot erase an edit waiting to upload.
     /// A previous account's card is archived locally before replacing it.
     @MainActor static func acceptCloud(_ brand: CloudBrand) {
         guard AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == brand.userID,
+              WorkspaceContext.selectedOrgID == brand.orgID,
               let type = SpaceType(rawValue: brand.spaceType) else { return }
+        migrateLegacyIfNeeded(owner: brand.userID, org: brand.orgID)
         let defaults = UserDefaults.standard
+        defaults.set(true, forKey: WorkspaceContext.storagePrefix + "brand.initialized")
+        defaults.set(type.rawValue, forKey: WorkspaceContext.storagePrefix + "space.type.synced")
+        defaults.set(type.rawValue, forKey: "space.type")
         let owner = "\(brand.userID.uuidString):\(brand.orgID.uuidString)"
         let previousOwner = defaults.string(forKey: cloudOwnerKey)
         let current = card(for: type).brandFields
@@ -1679,12 +1692,41 @@ struct AgentCard {
         NotificationCenter.default.post(name: .rendpropCloudBrandUpdated, object: nil)
     }
 
+    /// Preserve the pre-selector card once, in its proven original workspace.
+    /// A different workspace never inherits or auto-publishes those fields.
+    @MainActor static func migrateLegacyIfNeeded(owner: UUID, org: UUID) {
+        let d = UserDefaults.standard
+        let migrationKey = "brand.legacy.workspace." + owner.uuidString.lowercased()
+        guard d.string(forKey: migrationKey) == nil else { return }
+        let oldOwner = d.string(forKey: "brand.cloudOwner")
+        let destination = "\(owner.uuidString):\(org.uuidString)"
+        guard oldOwner == nil || oldOwner?.lowercased() == destination.lowercased() else { return }
+        if oldOwner == nil {
+            let claim = d.string(forKey: "brand.legacy.unattributedOwner")
+            guard claim == nil || claim == owner.uuidString.lowercased() else { return }
+            d.set(owner.uuidString.lowercased(), forKey: "brand.legacy.unattributedOwner")
+        }
+        for type in SpaceType.allCases {
+            for field in fieldNames {
+                let old = type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)"
+                if let value = d.string(forKey: old), d.object(forKey: key(field, for: type)) == nil { d.set(value, forKey: key(field, for: type)) }
+            }
+            let oldFile = type == .realEstate ? "agent-headshot.jpg" : "agent-headshot-\(type.rawValue).jpg"
+            let source = FileStore.documents.appendingPathComponent(oldFile), target = headshotURL(for: type)
+            if FileManager.default.fileExists(atPath: source.path), !FileManager.default.fileExists(atPath: target.path) { try? FileManager.default.copyItem(at: source, to: target) }
+        }
+        for suffix in ["brand.primaryType", "brand.lastPushed", "brand.cloudOwner"] {
+            if let value = d.string(forKey: suffix) { d.set(value, forKey: WorkspaceContext.storagePrefix + suffix) }
+        }
+        d.set(org.uuidString.lowercased(), forKey: migrationKey)
+    }
+
     /// Storage key NAMESPACED by business type, so each industry keeps its own
     /// card — a restaurant's card is separate from a real-estate agent's.
     /// Real estate uses the original un-namespaced keys so any card set up
     /// before this change is preserved.
     static func key(_ field: String, for type: SpaceType) -> String {
-        type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)"
+        WorkspaceContext.storagePrefix + (type == .realEstate ? "agent.\(field)" : "agent.\(type.rawValue).\(field)")
     }
 
     static func key(_ field: String) -> String { key(field, for: SpaceType.current) }
@@ -1736,7 +1778,10 @@ struct AgentCard {
     /// and the next edit retries.
     @MainActor
     static func syncToBrandKit(for type: SpaceType, api: APIClient, force: Bool = false) {
-        guard Config.useLiveBackend, AuthStore.currentAccessToken != nil else { return }
+        guard Config.useLiveBackend, AuthStore.currentAccessToken != nil,
+              let org = WorkspaceContext.selectedOrgID else { return }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let pushedKey = lastPushedKey
         let card = Self.card(for: type)
         guard card.isSet else { return }
         if let primary = primaryBrandType {
@@ -1747,10 +1792,13 @@ struct AgentCard {
         let fields = card.brandFields
         let signature = fieldNames.map { fields[$0] ?? "" }.joined(separator: "\u{1F}")
         if !force, UserDefaults.standard.string(forKey: lastPushedKey) == signature { return }
-        Task.detached {
+        Task { @MainActor in
             do {
-                try await api.updateBrand(fields)
-                UserDefaults.standard.set(signature, forKey: lastPushedKey)
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
+                if let live = api as? LiveAPIClient { try await live.updateBrand(fields, orgID: org) }
+                else { try await api.updateBrand(fields) }
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
+                UserDefaults.standard.set(signature, forKey: pushedKey)
             } catch {
                 // Keep the local card; the next edit or launch retries.
             }
@@ -1795,7 +1843,7 @@ struct AgentCard {
         let file = type == .realEstate
             ? "agent-headshot.jpg"
             : "agent-headshot-\(type.rawValue).jpg"
-        return FileStore.documents.appendingPathComponent(file)
+        return FileStore.documents.appendingPathComponent(WorkspaceContext.storagePrefix + file)
     }
     static var headshotURL: URL { headshotURL(for: SpaceType.current) }
 
@@ -1854,6 +1902,7 @@ struct AgentCard {
 }
 
 struct AgentCardEditorView: View {
+    private let editingWorkspace = WorkspaceContext.storagePrefix
     // Keys namespaced by the current business type (AgentCard.key) so editing
     // the restaurant card never touches the real-estate card. The editor is
     // pushed fresh each time, so these resolve to the active industry.
@@ -1975,6 +2024,12 @@ struct AgentCardEditorView: View {
                      : "Hosted pages show your \(primaryType?.displayName ?? "primary") card.")
             }
         }
+        .disabled(Config.useLiveBackend && (WorkspaceContext.selectedOrgID == nil || editingWorkspace != WorkspaceContext.storagePrefix))
+        .overlay(alignment: .top) {
+            if Config.useLiveBackend && WorkspaceContext.selectedOrgID == nil {
+                Text("Choose a workspace in Settings before editing its brand card.").font(.callout).padding().background(.regularMaterial)
+            }
+        }
         .navigationTitle(editingType.profileCardName)
         .navigationBarTitleDisplayMode(.inline)
         .askAI(.agentCard)
@@ -1985,14 +2040,18 @@ struct AgentCardEditorView: View {
             // (2026-08-26 audit P0-1). Only when the card is SET and only for
             // the org's primary business type (audit F-C-05: an empty editor
             // dismissed on a second business type used to erase the hosted card).
+            guard editingWorkspace == WorkspaceContext.storagePrefix else { return }
             AgentCard.syncToBrandKit(for: editingType, api: model.api)
         }
         .onChange(of: pickerItem) { newItem in
             guard let newItem else { return }
-            let type = editingType
-            Task {
+            let type = editingType, workspace = editingWorkspace
+            let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+            Task { @MainActor in
                 if let data = try? await newItem.loadTransferable(type: Data.self),
                    let img = UIImage(data: data) {
+                    guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision,
+                          WorkspaceContext.storagePrefix == workspace else { return }
                     AgentCard.saveHeadshot(img)
                     await MainActor.run { headshot = UIImage(contentsOfFile: AgentCard.headshotURL(for: type).path) }
                 }
@@ -2064,10 +2123,14 @@ struct ProfileView: View {
 
     /// Exactly the listings the exporter will include — the button count and
     /// the export can never disagree again (audit F-C-13).
-    private var shareable: [Listing] { PortfolioExporter.eligible(model.listings) }
+    private var workspaceListings: [Listing] {
+        guard !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else { return [] }
+        return model.listings.filter { model.isInSelectedWorkspace($0) }
+    }
+    private var shareable: [Listing] { PortfolioExporter.eligible(workspaceListings) }
     /// Real listings of this type that are NOT shareable (unpublished or sold).
     private var realCount: Int {
-        model.listings.filter { !$0.isSample && $0.belongsToCurrentType }.count
+        workspaceListings.filter { !$0.isSample && $0.belongsToCurrentType }.count
     }
 
     var body: some View {
@@ -2178,13 +2241,16 @@ struct ProfileView: View {
         guard !isBuildingPortfolio else { return }
         isBuildingPortfolio = true
         portfolioNote = nil
-        let listings = model.listings
+        let listings = workspaceListings
         let agent = AgentCard.current
+        let headshotBase64 = agent.headshotBase64
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         Task {
             let url = await Task.detached(priority: .userInitiated) {
-                PortfolioExporter.build(listings: listings, agent: agent)
+                PortfolioExporter.build(listings: listings, agent: agent, headshotBase64: headshotBase64)
             }.value
             await MainActor.run {
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
                 isBuildingPortfolio = false
                 if let url {
                     portfolioURL = url
@@ -2244,7 +2310,7 @@ enum PortfolioExporter {
         }
     }
 
-    static func build(listings: [Listing], agent: AgentCard) -> URL? {
+    static func build(listings: [Listing], agent: AgentCard, headshotBase64: String?) -> URL? {
         let active = eligible(listings)
         guard !active.isEmpty else { return nil }
 
@@ -2263,7 +2329,7 @@ enum PortfolioExporter {
         }.joined(separator: "\n")
 
         var avatar = ""
-        if let b64 = agent.headshotBase64 {
+        if let b64 = headshotBase64 {
             avatar = "<div class=\"avatar\" style=\"background-image:url('data:image/jpeg;base64,\(b64)')\"></div>"
         } else if agent.isSet {
             avatar = "<div class=\"avatar\">\(esc(agent.initials))</div>"
@@ -2301,7 +2367,9 @@ enum PortfolioExporter {
         </body></html>
         """
 
-        let out = FileStore.documents.appendingPathComponent("rendprop-portfolio.html")
+        // A discarded export from a prior workspace must never overwrite the
+        // file a later workspace's share sheet is displaying.
+        let out = FileStore.documents.appendingPathComponent("rendprop-portfolio-\(UUID().uuidString.lowercased()).html")
         do {
             try html.write(to: out, atomically: true, encoding: .utf8)
             return out

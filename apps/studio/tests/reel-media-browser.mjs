@@ -15,7 +15,8 @@ try {
   browser=await chromium.launch({headless:true,executablePath:process.env.STUDIO_BROWSER_EXECUTABLE});const context=await browser.newContext({viewport:{width:1440,height:1000},serviceWorkers:"block"});
   await context.route("**/*",route=>{const url=new URL(route.request().url());if(url.origin===origin||url.protocol==="blob:")return route.continue();receipt.externalRequests.push(url.href);return route.abort();});
   const page=await context.newPage();page.on("pageerror",error=>receipt.errors.push(error.message));page.setDefaultTimeout(12000);
-  await page.goto(`${origin}/tests/cloud-editor-fixture.html?listing=20000000-0000-4000-8000-000000000003`);await expect(page.getByLabel("Title overlay",{exact:true})).toBeVisible();
+  const openPro=async()=>{await page.getByRole("button",{name:"Pro view",exact:true}).click();await expect(page.getByLabel("Title overlay",{exact:true})).toBeVisible();};
+  await page.goto(`${origin}/tests/cloud-editor-fixture.html?listing=20000000-0000-4000-8000-000000000003`);await openPro();
   await page.evaluate(async()=>{
     const org="10000000-0000-4000-8000-000000000001",a="20000000-0000-4000-8000-000000000002",b="20000000-0000-4000-8000-000000000003";
     const canvas=document.createElement("canvas");canvas.width=640;canvas.height=360;canvas.getContext("2d").fillStyle="#7c3aed";canvas.getContext("2d").fillRect(0,0,640,360);
@@ -26,12 +27,13 @@ try {
     const edit={key:`edit:${b}`,kind:"edit",listing_id:b,revision:1,updated_at:new Date().toISOString(),payload:{draft,listingId:b,sources:[{sha256,assetId:assets[51].id,listingId:b}]}};
     localStorage.clear();localStorage.setItem("fixture-cloud",JSON.stringify({assets,documents:{[`edit:${b}`]:edit},tickets:0,puts:0,writes:0}));
   });
-  await page.reload();await expect(page.getByLabel("Title overlay",{exact:true})).toHaveValue("Office saved story");await expect(page.getByRole("button",{name:/Select clip 1:/})).toBeVisible();
+  await page.reload();await openPro();await expect(page.getByLabel("Title overlay",{exact:true})).toHaveValue("Office saved story");await expect(page.getByRole("button",{name:/Select clip 1:/})).toBeVisible();
   await expect(page.getByRole("button",{name:"Reselect original file",exact:true})).toHaveCount(0);
   const before=await page.evaluate(()=>window.cloudFixture.snapshot());
   await page.evaluate(()=>window.cloudFixture.requestReelEntry("home-card-request","20000000-0000-4000-8000-000000000002"));
   const picker=page.getByRole("region",{name:"Choose property photos and video",exact:true});
   await expect(picker).toBeVisible();await expect(picker.getByRole("checkbox")).toHaveCount(50);
+  await openPro();
   await expect(page.getByLabel("Title overlay",{exact:true})).toHaveValue("");
   await expect(page.getByLabel("Property reel",{exact:true})).toHaveValue("20000000-0000-4000-8000-000000000002");
   assert.deepEqual((await page.evaluate(()=>window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000003"],before.documents["edit:20000000-0000-4000-8000-000000000003"]);
@@ -53,6 +55,7 @@ try {
   await expect.poll(async()=>(await page.evaluate(()=>window.cloudFixture.snapshot())).documents["edit:20000000-0000-4000-8000-000000000003"].payload.draft.clips.length).toBe(2);
   const after=await page.evaluate(()=>window.cloudFixture.snapshot());assert.equal(after.tickets,before.tickets);assert.equal(after.puts,before.puts);assert.equal(after.documents["edit:20000000-0000-4000-8000-000000000003"].payload.listingId,before.documents["edit:20000000-0000-4000-8000-000000000003"].payload.listingId);assert.equal(after.documents["edit:20000000-0000-4000-8000-000000000003"].payload.draft.title,"Office saved story");assert.equal(after.documents["edit:20000000-0000-4000-8000-000000000003"].payload.sources[0].assetId,before.documents["edit:20000000-0000-4000-8000-000000000003"].payload.sources[0].assetId);
   receipt.checks.push("Same-property phone source appends to the saved sequence with its actual asset identity; no new upload ticket, bytes or generated media");
+  await page.getByText("Capture plan & extra editing tools",{exact:true}).click();
   await page.getByRole("button",{name:"Create a voiceover",exact:true}).click();await expect(page.getByText("Open voiceover for 20000000-0000-4000-8000-000000000003",{exact:true})).toBeVisible();
   await page.getByRole("button",{name:"Help plan my reel",exact:true}).click();await expect(page.getByText("Open shot-plans for 20000000-0000-4000-8000-000000000003",{exact:true})).toBeVisible();
   receipt.checks.push("Three-step guide sends voiceover and shot-plan actions to the existing edit’s actual property");
