@@ -8,8 +8,12 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
-The [room-guidance and photo-delivery candidate](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
-targets internal TestFlight **1.0.3 (36)**; availability is pending Apple readback.
+The [room-guidance and photo-delivery release](../../docs/handoff/ROOM-TOUR-PHOTO-DELIVERY-20261001.md)
+is available as internal **TestFlight 1.0.3 (36)** to the existing Rendprop team.
+Apple availability was verified on **1 October 2026 at 19:42:18 UTC**: `VALID`,
+`INTERNAL_ONLY`, `IN_BETA_TESTING`. All 12 CI jobs passed on the archived source
+`0e7c78c`; [the delivery receipt](../../docs/releases/TESTFLIGHT-36-20261001.json)
+binds source, signed archive, single upload and Apple readback.
 Guided room tour now starts with floor-based spot suggestions or a manual fallback,
 then shows automatic 38-photo viewpoint progress. Photos keeps local immutable
 versions/originals and adds single/batch export to Files or Photos, destination

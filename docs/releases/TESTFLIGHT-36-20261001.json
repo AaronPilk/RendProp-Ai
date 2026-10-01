@@ -1,0 +1,303 @@
+{
+  "kind": "Internal TestFlight and Studio delivery receipt",
+  "verifiedAt": "2026-10-01T19:42:18.662500+00:00",
+  "source": {
+    "commit": "0e7c78cd8a455e276de4e36a87962594596deb5d",
+    "branch": "fix/room-tour-photo-delivery-20261001",
+    "verifiedNativeSourceFileCount": 197,
+    "verifiedStudioSourceFileCount": 242,
+    "scheme": "RendpropSpatialTestFlight",
+    "explicitArchiveBuildOverride": "36",
+    "ciPassedJobs": 12,
+    "ciSourceCommit": "0e7c78cd8a455e276de4e36a87962594596deb5d",
+    "ciRunURL": "https://github.com/AaronPilk/RendProp-Ai/actions/runs/36913850275",
+    "pullRequest": "https://github.com/AaronPilk/RendProp-Ai/pull/13",
+    "pullRequestBase": "fix/guided-photo-capture-20261001",
+    "pullRequestDraftAtDelivery": true,
+    "note": "The following documentation commit is separate from the archived and deployed runtime source."
+  },
+  "app": {
+    "bundleID": "com.rendprop.app",
+    "version": "1.0.3",
+    "build": "36",
+    "minimumOS": "16.0"
+  },
+  "archive": {
+    "signatureVerified": true,
+    "captureLabFlagVerified": true,
+    "requiredRoomPhotoSourcesCompiled": [
+      "apps/ios/Rendprop/Capture/GuidedPhotoCamera.swift",
+      "apps/ios/Rendprop/Capture/PhotoCapturePolicy.swift",
+      "apps/ios/Rendprop/Capture/PhotoCaptureStorage.swift",
+      "apps/ios/Rendprop/Screens/FlythroughDetailView.swift",
+      "apps/ios/Rendprop/Photos/PhotoExport.swift",
+      "apps/ios/Rendprop/Photos/PhotoVersionHistory.swift",
+      "tools/spatial-spike/capture-ios/Sources/RoomScanPlanner.swift",
+      "tools/spatial-spike/capture-ios/Sources/PanoramaNavigationPolicy.swift",
+      "tools/spatial-spike/capture-ios/Sources/PanoramaPreviewViewController.swift",
+      "apps/ios/Rendprop/Capture/GuidedPanoramaCaptureController.swift",
+      "tools/spatial-spike/capture-ios/Sources/StationCapturePolicy.swift"
+    ],
+    "preservedCaptureWorkspaceBillingSourcesCompiled": [
+      "StationCaptureModels.swift",
+      "StationCapturePolicy.swift",
+      "StationCaptureRecorder.swift",
+      "PanoramaProjection.swift",
+      "PanoramaRenderer.swift",
+      "PanoramaPreviewViewController.swift",
+      "GuidedPanoramaCaptureController.swift",
+      "GuidedPanoramaLabView.swift",
+      "GuidedPanoramaPreviewStore.swift",
+      "WorkspaceContext.swift",
+      "WorkspaceStore.swift",
+      "WorkspacePickerView.swift",
+      "SubscriptionBillingContext.swift",
+      "SubscriptionOfferPolicy.swift",
+      "PurchaseManager.swift",
+      "PurchasesAPI.swift",
+      "AuthStore.swift",
+      "WorkspaceSync.swift",
+      "LiveAPIClient.swift",
+      "CameraManager.swift",
+      "CaptureView.swift",
+      "PhotoCapturePolicy.swift",
+      "PhotoCaptureStorage.swift",
+      "RoomScanPlanner.swift",
+      "PanoramaNavigationPolicy.swift",
+      "PhotoVersionHistory.swift",
+      "PhotoExport.swift"
+    ],
+    "compiledTrackedSwiftInputCount": 133,
+    "compiledGeneratedSwiftInputCount": 1,
+    "generatedSourceHashes": {
+      "Build/Intermediates.noindex/ArchiveIntermediates/RendpropSpatialTestFlight/IntermediateBuildFilesPath/RendpropSpatialTestFlight.build/Release-iphoneos/Rendprop.build/DerivedSources/GeneratedAssetSymbols.swift": "1e83960d05f0c3e518fd0704d5f5c0ea8497423567cfadc2970cab52314dd2a0"
+    },
+    "archiveLogSHA256": "3dc284df26ddacafa04602f2d09d32dda9124dab77e2f0c45339227ab7ef70d0",
+    "compileListSHA256": "125879bbee0927891f66bb97ca774e2ccee863ce7e63d76e766f998600785989",
+    "archiveInfoSHA256": "123f3e7046924336be5aea814a6fcf9cc2a5395e5f086a615442334d401ab390",
+    "executableSHA256": "6633ab1e39949019c071a49010020e437a45ed6e083ef63bd557af84331f7040",
+    "createdAt": "2026-10-01T19:25:28+00:00",
+    "sourceManifestCapturedAt": "2026-10-01T19:24:01.056896+00:00",
+    "sourceBinding": {
+      "sourceHashesMatchCommittedBlobs": true,
+      "machOUUIDs": [
+        [
+          "arm64",
+          "458C34FD-ABBC-393B-94D3-06757391362B"
+        ]
+      ],
+      "archiveExecutableAndBothDSYMUUIDsMatch": true,
+      "derivedDataAndArchiveDSYMBytesMatch": true,
+      "separateDerivedDataExecutableAvailable": false,
+      "separateDerivedDataExecutableByteComparison": null,
+      "note": "Xcode removed the separate InstallationBuildProductsLocation. Binding uses logged compiler/linker paths, matching Mach-O UUIDs and byte-identical archive/DerivedData dSYMs; no separate executable byte comparison is claimed."
+    }
+  },
+  "export": {
+    "method": "app-store-connect",
+    "destination": "upload",
+    "signingStyle": "automatic",
+    "teamID": "5F5C5G25Y6",
+    "testFlightInternalTestingOnly": true,
+    "manageAppVersionAndBuildNumber": false,
+    "uploadSymbols": true,
+    "optionsSHA256": "172ea6fcb6b3e50cc48598c12ebfc5d9d57c2c4689a8003ca7b7b0745019b0fc",
+    "attempts": 1,
+    "startedAt": "2026-10-01T19:36:53.893720+00:00",
+    "finishedAt": "2026-10-01T19:38:37.464592+00:00",
+    "exitCode": 0
+  },
+  "apple": {
+    "id": "6f8cd786-8350-4df8-af3d-6b7223e3adeb",
+    "marketingVersion": "1.0.3",
+    "build": "36",
+    "processingState": "VALID",
+    "buildAudienceType": "INTERNAL_ONLY",
+    "expired": false,
+    "uploadedDate": "2026-10-01T12:39:16-07:00",
+    "usesNonExemptEncryption": false,
+    "minOsVersion": "16.0",
+    "betaDetails": {
+      "autoNotifyEnabled": true,
+      "internalBuildState": "IN_BETA_TESTING",
+      "externalBuildState": "NOT_APPLICABLE"
+    },
+    "group": {
+      "id": "0a3a7b89-c5d0-40e6-8c2d-9b8c6c6767d2",
+      "name": "Rendprop team",
+      "buildIncluded": true
+    }
+  },
+  "testNotes": {
+    "locale": "en-US",
+    "verifiedAt": "2026-10-01T19:42:37.825121+00:00",
+    "readbackVerified": true
+  },
+  "studio": {
+    "origin": "https://studio.rendprop.com",
+    "worker": "rendprop-studio",
+    "workerVersion": "70d092cd-0a7b-41d3-bc3f-16743907a4c5",
+    "deploymentID": "3dd912a9-de18-4454-8427-2c55b8de2fdf",
+    "deployedAt": "2026-10-01T19:37:05.045928Z",
+    "trafficPercentage": 100,
+    "sourceCommit": "0e7c78cd8a455e276de4e36a87962594596deb5d",
+    "physicalDistFilesBound": 32,
+    "applicationAssetsVerified": 30,
+    "readAt": "2026-10-01T19:37:50.718Z",
+    "spaFallback": true,
+    "accountLoginVerifiedThisIncrement": false,
+    "robotsCrawlBlockingVerified": false,
+    "gzipBytes": 323682,
+    "workflowGzip": {
+      "initial": 135725,
+      "create": 216998,
+      "withLargeVideo": 223183
+    },
+    "note": "The application readback covers index, robots, brand mark and 27 JS/CSS assets; this is not an assertion that exactly 30 URLs are serveable. No signed-in production smoke is claimed for this increment."
+  },
+  "softwareVerification": {
+    "checks": {
+      "stationPolicy": 222,
+      "roomPlannerNavigation": 70,
+      "nativePhotoHistoryGeometry": 292,
+      "actualUIKitPhotoExports": 28,
+      "actualNativeEditOrchestration": 62,
+      "actualNativeIngressExterior": 29,
+      "actualUIKitSceneKitViewer": 37,
+      "nativeNavigationUITests": 5,
+      "studioUnitTests": 428,
+      "studioPhotoBrowserWorkflows": 7,
+      "previewCache": 26
+    },
+    "nativePhotoAssertions": 411,
+    "mediaBrowserChecks": 50,
+    "actualTimingMatrixMP4AACOutputs": 12,
+    "timingFailureCleanupCases": 4,
+    "physicalCameraTested": false,
+    "normalAndLabDebugAppBuildsPassed": true,
+    "signedTestFlightReleaseArchivePassed": true,
+    "finalSourceCI": {
+      "jobsPassed": 12,
+      "conclusion": "success",
+      "jobs": [
+        {
+          "name": "Cloudflare Worker (tour-host)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Supabase edge functions (deno check + tests)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Offline reel-style preservation and blind-evaluation contracts",
+          "conclusion": "success"
+        },
+        {
+          "name": "Studio contracts, build and property workflows (offline)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Secret scan",
+          "conclusion": "success"
+        },
+        {
+          "name": "Cloudflare Worker (upload-gateway, deno check + tests)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Web parity inventory and design-token contracts (offline)",
+          "conclusion": "success"
+        },
+        {
+          "name": "Python workers (render, spatial, training adapter)",
+          "conclusion": "success"
+        },
+        {
+          "name": "iOS static gates",
+          "conclusion": "success"
+        },
+        {
+          "name": "Offline audit evidence, consent and adoption source gates",
+          "conclusion": "success"
+        },
+        {
+          "name": "Disposable PostgreSQL publication, invariant and deletion regression",
+          "conclusion": "success"
+        },
+        {
+          "name": "Supabase migrations (fresh replay + invariants)",
+          "conclusion": "success"
+        }
+      ]
+    },
+    "mediaAcceptanceBoundsWidened": false,
+    "delayedCallbackExperiment": {
+      "animationCallbackDelayMS": 120,
+      "finalDurationSeconds": [
+        3.0285,
+        3.0302
+      ],
+      "actualFrames": [
+        86,
+        83
+      ],
+      "progressingBlendFramesPerRun": 5,
+      "fullSourceSecondsConsumed": 4.0
+    },
+    "independentReview": "No unresolved software-level release blocker; source/archive and source/dist/live-byte bindings independently checked. Optical, floor-tracking and real-room acceptance require the phone."
+  },
+  "inheritedCoreRelease": {
+    "receipt": "TESTFLIGHT-34-20261001.json",
+    "guidedPhotoReceipt": "TESTFLIGHT-35-20261001.json",
+    "newBackendDeploymentForThisIncrement": false,
+    "newMigrationForThisIncrement": false
+  },
+  "operations": {
+    "newTesterInvitations": false,
+    "testerOrGroupMembershipWrites": false,
+    "buildSpecificTestNotesUpdated": true,
+    "appStoreVersionAttachment": false,
+    "appReviewSubmission": false,
+    "applePriceOrOfferChanges": false,
+    "productionSpatialFlagsChanged": false,
+    "gpuAllocation": false,
+    "paidGenerationCostUSD": 0,
+    "sourceExportsModified": false
+  },
+  "limitations": [
+    "Real floor detection, standing-spot alignment, camera optics, stitching/seams and interruption behavior remain real-phone acceptance tests.",
+    "Guided room tours remain local photographic panoramas; no published 3D mesh, dollhouse or validated measurements.",
+    "Native photo version history is durable locally. Studio pre-staging history is session-local. A shared typed version-selection contract is not implemented.",
+    "Existing uploaded galleries remain append-only; local supersession or hiding does not unpublish predecessor photos.",
+    "Originals preserve retained file bytes; captured originals are pre-enhancement JPEGs, not RAW. Imported/legacy sources may already have edits. AI output may have fewer pixels.",
+    "Export captions must be added to listing fields. Downloads do not automatically publish public-original URLs or certify individual MLS/advertising rules.",
+    "Timer fallback handles delayed animation callbacks while the browser event loop runs; a fully blocked JavaScript thread cannot be recovered.",
+    "Existing camera, StoreKit purchase/restore, invitation and representative two-account sync checks remain pending on physical phones.",
+    "Apple readback does not attest a local archive hash; source/archive/upload receipts bind the attempted artifact.",
+    "Source remains on an isolated branch and stacked draft PR13. Shared main was not advanced or force-pushed."
+  ],
+  "evidenceSHA256": {
+    "ci-success.json": "8304684a69a9b7e7db45da042b485366b735a260028ea80c3a02c581ccb16737",
+    "final-software-receipt.json": "5a9b0e61d93ccca222eec510cee61aec7ff2fe7de38f69781a1a0af38f58bd24",
+    "clock-release-source-binding.json": "f4133dcbe0066004bb48a5792f21b606fb1fc5ab30152988b886300bc1f1c7a0",
+    "clock-validation/verification-final.json": "e7571db504dcbf7f251f24fa123288eb24081fd9ccd1c5e42c79241dcba905ea",
+    "clock-validation/cadence-timing-proof.json": "39068fe36353a5eb3bc15ce092e0de2b8657ddd6311da893b5c404794e5f70f5",
+    "testflight-final/source-manifest.json": "42fa20520f148e0ea399f5736ac9dcc8dd0619bb032a3ce29698d3db434ba4c9",
+    "testflight-final/archive-preflight.json": "b2e06dae7fc6cbef8f56a3fbf3e424742a6370e759822b3dbd66d5cdf6d254ab",
+    "testflight-final/archive-independent-preflight.json": "24f5c4c4ecd07eab368bbbc8cf9ba4ba8a6b3861c7e4803bd08f50513bbdcf22",
+    "testflight-final/archive-source-binding.json": "5af7208f1e764660bbf146d97f996fec6dc7b125b57fb1007f8ae399bd99106b",
+    "testflight-final/owner-release-gate.json": "4bd69362fd21f18fc44381e54cb3d670775ccf4e33a9344cd668869154a6e387",
+    "testflight-final/upload-attempt.json": "4eb8ed1b03c5c99d7ffa4f63040645e439720ae5ea209a9b028150f832a3d85b",
+    "testflight-final/upload-result.json": "aae108907a3f1dd5f1e076c8f1e88b76b9956e1793bff95da7e9c7883cf55454",
+    "testflight-final/export-sanitized.log": "504374f7d5952ad841095d68ec267ad1af8480a39f9cfdfb9cdd4dd841dc6767",
+    "testflight-final/testflight-ready.json": "0d629292f316bbc6352f017e519fc630df5ac4c3f6c629be68e66ad816793fa6",
+    "testflight-final/test-notes-receipt.json": "48c0517d749422ba7bd50a44c96d4bbdb88f8948922fc662233c001902fe96f8",
+    "studio/final-build-manifest.json": "58fe55512b96b4d06d78a9fb2cc5d70f8e4d678f8c81634c2d5d766ac61d5050",
+    "studio/final-connected-check.json": "9a03bb69982901760a361b6fdf6142349491c1d96aa5bfb7cb595464ce66e733",
+    "studio/deploy.log": "278ab8a6302a64f6d08c5f4626b830cba71fd08e6394fef82368df5a1ba65ddf",
+    "studio/deployments-after.json": "f2e3a7434e7cf710c946c4d4bfbdf6e6c9a46934e877853b67685dbc8f160227",
+    "studio/verify-final-deployed.json": "32697052908f5502617e694a6f37c60ba6d221550d539913168184b7b2a016ca",
+    "studio/independent-deployment-review.json": "5355a21c6732a77edff49cda0f23aa163f86149e5bc0660292c16cb865f5f963",
+    "testflight-final/independent-final-review.json": "126094e3773f21b0054787eb84c78a8da166bbe4e0162fae27bcd5595a8c4fc0"
+  }
+}

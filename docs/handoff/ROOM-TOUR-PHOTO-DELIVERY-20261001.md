@@ -4,10 +4,15 @@
 
 Isolated branch `fix/room-tour-photo-delivery-20261001`, based on the delivered
 TestFlight 35 source/documentation (`d4830fe`). This update improves the local
-guided room-tour experiment and photo delivery in iOS and Studio. Build 36 is
-the proposed internal TestFlight artifact; build 35 remains the verified available
-artifact until the new Apple readback is recorded. No database migration or edge
-function change is required. Production reconstruction remains disabled.
+guided room-tour experiment, photo delivery and browser video-export timing.
+Internal **TestFlight 1.0.3 (36)** is available to the existing Rendprop team,
+verified **1 October 2026 at 19:42:18 UTC**. Apple reports `VALID`, `INTERNAL_ONLY` and
+`IN_BETA_TESTING`. Studio is live on worker version `70d092cd-0a7b-41d3-bc3f-16743907a4c5`,
+with all 30 application assets verified against the tested build. All 12 CI jobs
+passed on archived/deployed source `0e7c78cd8a455e276de4e36a87962594596deb5d` in run
+[36913850275](https://github.com/AaronPilk/RendProp-Ai/actions/runs/36913850275).
+See [the delivery receipt](../releases/TESTFLIGHT-36-20261001.json). No database
+migration or edge function change is required. Production reconstruction remains disabled.
 
 ## What the supplied files establish
 
@@ -164,7 +169,8 @@ and saved-view checks, 292 local photo-history/file/geometry checks, 28 real UIK
 photo-render/export checks, 62 checks executing the actual edit orchestration,
 and 29 actual ingress/exterior-save checks. Regression mutants reject the
 old direction, wrong original input, original drift, lost disclosures and removed
-identity fences. Studio's 423 unit tests/build and seven actual browser workflows
+identity fences. The four native photo suites total 411 assertions. Studio's
+428 unit tests/build and seven actual photo-browser workflows
 pass with real JPEG/ZIP inspection, including restyling after an intervening edit.
 Both normal and lab Debug app variants compiled. All five selected navigation
 tests passed; normal and largest-text screenshots were inspected. Independent
@@ -192,9 +198,39 @@ the immutable MP4 confirmed progressing blended frames and a valid duration.
 The test now requires progression within a fixed sample window plus intact
 before/after shots, retaining its original color/audio/whip/duration bounds.
 The complete 16-check video suite and actual hard-cut/frozen-blend negative
-controls passed. Production video-export code was unchanged.
-Release availability, exact-source CI and deployment readback will be recorded
-here and in a separate build-36 receipt after delivery.
+controls passed at that checkpoint. A resume negative control was then strengthened
+with a deterministic notification delay; its original duration bound remained unchanged.
+Later cold CI exposed actual boundary-loading and animation-clock timing failures.
+Those failures led to the isolated runtime corrections recorded below.
+
+### Video timing correction and measured ablations
+
+| Isolated experiment | Measured output | Result |
+| --- | --- | --- |
+| Former boundary decoding, with two 600 ms asynchronous delays | Warm local MP4s can remain valid (3.0663 / 3.0471 s) | Violates preparation-before-handoff; not claimed to cause universal MP4 drift. |
+| One-ahead preparation, fifth cold CI run | 3.1620 s; first whip split at 2.741267 s | Decoder gaps removed, but frame-clock overrun still misses the unchanged 2.74 s sample limit. |
+| Old clock, photo animation callbacks delayed 120 ms | 3.4933 s | Fails existing 3 ± 0.4 s duration bound. |
+| Deadline/delivery-time clock only, same photo delay | 3.0012 / 3.0260 s | Timing, transitions and audio pass. |
+| Deadline-only clock, all animation callbacks delayed 120 ms | 3.0320 s; one qualifying dissolve blend | Timing passes; unchanged progression criterion rejects sparse frames. |
+| Add only the 30 fps maximum wait, same all-callback delay | 3.0285 / 3.0302 s; 86 / 83 frames, five bounded dissolve blends each | All timing, held-frame transition and audio checks pass; full 4.0 s sources consumed. |
+
+These are actual browser-encoded synthetic-media experiments. Rejected outputs and source hashes remain in the private audit. A timer fallback handles late animation callbacks while the JavaScript event loop still runs; it cannot recover a completely blocked browser thread. Native floor detection, optical capture, seams and real-room navigation still require the owner's phone.
+
+The final source passes all 12 CI jobs, 428 Studio unit tests and 50 actual
+media-browser checks, in addition to the seven photo-browser workflows. The
+12-output timing matrix consumes each full 4.0-second source and includes four
+failure/cleanup scenarios. Sources are prepared one ahead; unready handoffs reject
+clearly and pending work is canceled on abort or revision change. Frame waits use
+the actual delivery clock, remaining segment deadline and the existing 30 fps
+capture interval. Existing duration, color, transition and audio bounds were not
+widened. Native capture geometry/admission thresholds also remain unchanged.
+
+The single internal-only TestFlight upload succeeded, Apple availability and
+English build-specific test instructions were read back, and Studio
+version `70d092cd-0a7b-41d3-bc3f-16743907a4c5` receives 100% traffic.
+No new tester invitations, App Store review or pricing/offer changes occurred.
+The deployment readback verifies application bytes and SPA fallback; no signed-in
+production workflow smoke is claimed for this photo/video increment.
 
 On the real phone, check:
 
