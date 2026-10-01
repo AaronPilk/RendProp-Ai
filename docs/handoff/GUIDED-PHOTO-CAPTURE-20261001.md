@@ -81,7 +81,19 @@ requires two adjacent 90ms samples within 0.53–0.74s; the old control must hav
 none. Amplitude, pitch, duration, leading silence, middle audio, transitions and
 playback trace checks remain enforced. Production video-export code is unchanged.
 The corrected browser regression passed locally with real synthetic MP4/AAC
-exports and its old-await negative control. Final CI verification is pending.
+exports and its old-await negative control, then passed in CI. That second CI
+run exposed another existing fixed-timestamp sample across a picture transition
+in the music/captions regression. Its audio checks now follow an independently
+decoded blue-to-red frame transition, bounded to the original 4s ± 0.5s timing
+allowance; the fade-out follows the measured output end. Existing amplitude,
+ducking, duration and caption gates remain. An additional simultaneous
+music/original ratio verifies the audible fade-in rather than encoder silence.
+The complete corrected browser suite passed all 11 checks locally; private
+production variants without ducking, fade-out or fade-in each failed the
+intended unchanged/strengthened gate. Production video-export code is unchanged.
+The separate Studio job timed out downloading Ubuntu packages after its 416
+unit tests passed, before its browser workflows ran. Final CI verification is
+pending.
 
 ## Phone acceptance
 

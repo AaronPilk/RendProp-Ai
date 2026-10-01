@@ -81,18 +81,38 @@ try {
   const download = page.waitForEvent("download"); await page.getByRole("link", {name:/Download MP4/}).click();
   const output=join(artifacts,"music-captions-mix.mp4"); await (await download).saveAs(output);
   const probe=JSON.parse(execFileSync("ffprobe",["-v","error","-show_entries","stream=codec_name,codec_type:format=duration","-of","json",output],{encoding:"utf8"}));
-  assert(probe.streams.some(stream=>stream.codec_name==="aac"));assert(probe.streams.some(stream=>stream.codec_name==="h264"));assert(Math.abs(Number(probe.format.duration)-8)<.5);
+  const outputDuration=Number(probe.format.duration);
+  assert(probe.streams.some(stream=>stream.codec_name==="aac"));assert(probe.streams.some(stream=>stream.codec_name==="h264"));assert(Math.abs(outputDuration-8)<.5);
+  const pixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",output,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:1140","-f","rawvideo","pipe:1"])];
+  // Anchor second-shot audio to its independently decoded blue-to-red cut.
+  // Recorder overhead may shift that boundary within the existing .5s timing
+  // allowance. Never select a sample by searching for a favorable audio level.
+  const cutFrames=Array.from({length:21},(_,index)=>{const time=3.5+index*.05;return{time,pixel:pixel(time)};});
+  const firstRed=cutFrames.findIndex(frame=>frame.pixel[0]>200&&frame.pixel[1]<40&&frame.pixel[2]<40);
+  assert(firstRed>0,"The bounded photo transition must have a preceding frame");
+  const beforePhoto=cutFrames[firstRed-1],photoBoundary=cutFrames[firstRed].time;
+  assert(beforePhoto.pixel[2]>200&&beforePhoto.pixel[0]<40&&beforePhoto.pixel[1]<40,"The frame before the photo must still be blue");
+  assert(Math.abs(photoBoundary-4)<=.5,"The photo transition must remain within the existing timing allowance");
+  receipt.outputTiming={duration:outputDuration,photoBoundary,beforePhoto,firstPhoto:cutFrames[firstRed]};
+  receipt.outputSHA256=createHash("sha256").update(await readFile(output)).digest("hex");
   function amplitude(time, frequency) {
     const bytes=execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",output,"-t","0.15","-vn","-ac","1","-ar","48000","-f","f32le","pipe:1"]);
     const data=new Float32Array(bytes.buffer,bytes.byteOffset,bytes.byteLength/4);let real=0,imaginary=0;
     for(let i=0;i<data.length;i++){real+=data[i]*Math.cos(2*Math.PI*frequency*i/48000);imaginary+=data[i]*Math.sin(2*Math.PI*frequency*i/48000);}
     return 2*Math.hypot(real,imaginary)/data.length;
   }
-  const levels={musicUnderOriginal:amplitude(2,440),musicOnPhoto:amplitude(4.4,440),musicUnderVoice:amplitude(5.3,440),musicAfterVoice:amplitude(6.4,440),musicFadeIn:amplitude(.03,440),musicFadeOut:amplitude(7.8,440),original:amplitude(2,660),voice:amplitude(5.3,880)};
+  const levels={musicUnderOriginal:amplitude(2,440),musicOnPhoto:amplitude(photoBoundary+.4,440),musicUnderVoice:amplitude(photoBoundary+1.3,440),musicAfterVoice:amplitude(photoBoundary+2.4,440),musicFadeIn:amplitude(.03,440),musicFadeOut:amplitude(outputDuration-.2,440),original:amplitude(2,660),voice:amplitude(photoBoundary+1.3,880)};
+  receipt.levels=levels;
+  // AAC priming silence cannot prove a fade. The original tone must already
+  // be present; compare the simultaneous music/original ratio during the ramp
+  // with that same ratio after the fade has finished.
+  const audibleFadeIn={music:amplitude(.3,440),original:amplitude(.3,660)};
+  receipt.audibleFadeIn=audibleFadeIn;
+  assert(audibleFadeIn.original>.05,"The fade-in probe must contain the original audio, not encoder silence");
+  assert(audibleFadeIn.music/audibleFadeIn.original<(levels.musicUnderOriginal/levels.original)*.5,`Audible fade-in ratio: ${JSON.stringify({audibleFadeIn,levels})}`);
   assert(levels.musicOnPhoto>levels.musicUnderOriginal*3,JSON.stringify(levels));assert(levels.musicAfterVoice>levels.musicUnderVoice*3,JSON.stringify(levels));assert(levels.original>.05&&levels.voice>.05,JSON.stringify(levels));assert(levels.musicFadeOut<levels.musicAfterVoice*.5,JSON.stringify(levels));assert(levels.musicFadeIn<levels.musicUnderOriginal*.5,JSON.stringify(levels));
-  const pixel=time=>[...execFileSync("ffmpeg",["-v","error","-ss",String(time),"-i",output,"-frames:v","1","-vf","format=rgb24,crop=1:1:100:1140","-f","rawvideo","pipe:1"])];
   const caption=pixel(.7),clear=pixel(2.3);assert(caption[0]>180&&caption[1]>180&&caption[2]<150,`${caption}`);assert(clear[2]>180&&clear[0]<50,`${clear}`);
-  receipt.levels=levels;receipt.checks.push("Decoded H.264/AAC output proves timed caption pixels, original sound, music continuity, fades, original-audio ducking, narration ducking and recovery after speech");
+  receipt.checks.push("Decoded H.264/AAC output proves timed caption pixels, original sound, music continuity, fades, original-audio ducking, narration ducking and recovery after speech");
   await page.getByLabel("Title overlay", {exact:true}).fill("Cancel test");
   await page.getByRole("button", {name:"Export MP4", exact:true}).click();
   await page.getByRole("button", {name:"Cancel export", exact:true}).click();
