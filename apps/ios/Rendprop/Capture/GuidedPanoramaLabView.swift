@@ -48,10 +48,10 @@ struct GuidedPanoramaLabView: View {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("TESTFLIGHT ROOM TOUR").font(.caption.weight(.bold)).foregroundStyle(Theme.accent)
                     Text("Capture a room.\nStep inside your photos.").font(.title2.bold()).foregroundStyle(Theme.ink)
-                    Text("Look around one well-lit room first. The app can suggest a few standing spots, then capture 38 photos automatically from your chosen spot.")
+                    Text("Stand comfortably in one well-lit room. Start where you have a clear view, then turn in place while the phone takes the photos.")
                         .foregroundStyle(Theme.inkDim)
-                    instructionRow("1", "Look around, then choose a spot", "Point toward the floor and around the room. Purple numbers suggest places to stand when enough floor is detected. Check that a spot and your way there are clear; you can choose your own clear center spot instead.")
-                    instructionRow("2", "Let the phone take all 38 photos", "Follow the arrow and pause. Keep the lens over the same spot as you turn: walls, upper walls, lower walls, ceiling and floor. You do not tap for each photo.")
+                    instructionRow("1", "Look around, then choose a spot", "Stand in a clear place near the middle. Purple numbers on the floor are optional suggestions. Exact positioning is not needed: choose This spot is clear — start here.")
+                    instructionRow("2", "Let the phone take all 38 photos", "Stay where you are. Turn toward the yellow camera target and pause; do not walk to it. Keep your elbows tucked in. For high and low shots, tilt the phone and keep your back upright. A short tap means the photo saved.")
                     instructionRow("3", "Preview before moving", "You can finish after one viewpoint. Add another only for an area hidden from the first spot. Check door frames and furniture for gaps or doubled edges.")
                     Button { notice = ""; showCapture = true } label: {
                         Label("Start a room tour", systemImage: "viewfinder").frame(maxWidth: .infinity).padding(.vertical, 7)

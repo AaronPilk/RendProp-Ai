@@ -109,6 +109,22 @@ enum RoomScanPlanner {
     static func distance(_ a: [Double], _ b: [Double]) -> Double {
         hypot(a[0] - b[0], a[2] - b[2])
     }
+    /// A previously displayed suggestion must remain inside the fresh floor
+    /// outline. Keeping its number must never silently move its world position.
+    static func hasStandingClearance(_ point: [Double], boundary: [[Double]]) -> Bool {
+        guard point.count == 3, point.allSatisfy(\.isFinite), (3...64).contains(boundary.count),
+              boundary.allSatisfy({ $0.count == 3 && $0.allSatisfy(\.isFinite) }) else { return false }
+        var polygon = boundary
+        if polygon.first == polygon.last { polygon.removeLast() }
+        guard polygon.count >= 3, contains(point, polygon: polygon),
+              polygon.allSatisfy({ abs($0[1] - point[1]) <= 0.06 }) else { return false }
+        for i in polygon.indices {
+            let next = polygon[(i + 1) % polygon.count]
+            guard distance(polygon[i], next) > 0.001,
+                  segmentDistance(point, polygon[i], next) >= minimumClearanceMetres else { return false }
+        }
+        return true
+    }
     private static func segmentDistance(_ p: [Double], _ a: [Double], _ b: [Double]) -> Double {
         let dx = b[0] - a[0], dz = b[2] - a[2]
         let t = max(0, min(1, ((p[0] - a[0]) * dx + (p[2] - a[2]) * dz) / (dx * dx + dz * dz)))
@@ -135,23 +151,27 @@ struct RoomScanSurveyStability {
     private var planeID: String?
     private var stableSince: Double?
     private var lastTimestamp: Double?
-    private var lastArea: Double?
-    private var lastCentre: [Double]?
+    private var startingPlan: RoomScanPlan?
     private var observations = 0
 
     mutating func reset() { self = Self() }
     mutating func observe(planeID id: String, boundary: [[Double]], cameraPosition: [Double], timestamp: Double) -> RoomScanPlan? {
         guard timestamp.isFinite, timestamp >= 0, let plan = RoomScanPlanner.plan(boundary: boundary, cameraPosition: cameraPosition),
-              let centre = plan.positions.first?.position else { reset(); return nil }
+              !plan.positions.isEmpty else { reset(); return nil }
         if planeID == id && timestamp == lastTimestamp { return nil }
         let changed = planeID != id || lastTimestamp.map { timestamp < $0 } == true
             || lastTimestamp.map { timestamp - $0 > 3 } == true
-            || lastArea.map { abs(plan.floorAreaSquareMetres - $0) > $0 * 0.2 } == true
-            || lastCentre.map { RoomScanPlanner.distance(centre, $0) > 0.35 } == true
-        if changed || stableSince == nil { stableSince = timestamp; observations = 0 }
-        planeID = id; lastTimestamp = timestamp; lastArea = plan.floorAreaSquareMetres; lastCentre = centre
+            || startingPlan.map { abs(plan.floorAreaSquareMetres - $0.floorAreaSquareMetres) > $0.floorAreaSquareMetres * 0.2 } == true
+            || startingPlan.map { original in
+                RoomScanPlanner.distance(original.positions[0].position, plan.positions[0].position) > 0.35
+                    || original.positions.contains { !RoomScanPlanner.hasStandingClearance($0.position, boundary: boundary) }
+            } == true
+        if changed || stableSince == nil { stableSince = timestamp; observations = 0; startingPlan = plan }
+        planeID = id; lastTimestamp = timestamp
         observations += 1
         guard observations >= 3, timestamp - (stableSince ?? timestamp) >= 2 else { return nil }
-        return plan
+        // Compare against the first observation, not the previous one, and keep
+        // every displayed number at its original world location while valid.
+        return startingPlan
     }
 }

@@ -6,9 +6,9 @@ include:
 name: RendpropSpatialTestFlight
 settings:
   base:
-    # Room survey/guidance and photo delivery plus existing local scan tests. Recheck Apple build
+    # Handheld room capture and ergonomic pole shots plus existing local scan tests. Recheck Apple build
     # inventory before upload; never automatically renumber an upload retry.
-    CURRENT_PROJECT_VERSION: "37"
+    CURRENT_PROJECT_VERSION: "38"
 targets:
   Rendprop:
     sources:

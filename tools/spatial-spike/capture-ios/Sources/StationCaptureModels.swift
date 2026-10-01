@@ -13,6 +13,21 @@ enum StationCaptureLimits {
 
 enum StationCaptureStatus: String, Codable { case capturing, complete, partial, interrupted, failed }
 
+/// Supported capture geometry is explicit in the archive. The handheld profile
+/// permits more movement from the first photo without increasing v1's maximum
+/// possible separation between any two accepted camera positions.
+enum StationCaptureGeometryProfile: String, Codable {
+    case legacyPivotV1 = "station-pivot-10cm-v1"
+    case handheldV2 = "station-handheld-20cm-span-v2-provisional"
+
+    var maximumPivotDriftMetres: Double { self == .legacyPivotV1 ? 0.10 : 0.20 }
+    var maximumCameraSpanMetres: Double { 0.20 }
+    var targetPlan: String {
+        self == .legacyPivotV1 ? "station-spherical-38-v1-provisional" : "station-spherical-38-v2-handheld-provisional"
+    }
+    var targets: [StationCaptureTarget] { self == .legacyPivotV1 ? StationCaptureTarget.standard : StationCaptureTarget.handheld }
+}
+
 struct StationCaptureTarget: Codable, Equatable {
     let id: String
     let index: Int
@@ -47,6 +62,15 @@ struct StationCaptureTarget: Codable, Equatable {
         return targets
     }()
 
+    /// Same 38 photographic directions and order; ordinary phone optics include
+    /// the exact poles without requiring the lens to face completely vertical.
+    /// Actual pole coverage still has to pass the native calibrated image test.
+    static let handheld: [StationCaptureTarget] = standard.map { target in
+        guard target.id == "ceiling" || target.id == "floor" else { return target }
+        return .init(id: target.id, index: target.index, yaw_degrees: target.yaw_degrees,
+                     pitch_degrees: target.id == "ceiling" ? 80 : -80, instruction: target.instruction)
+    }
+
     func direction(referenceYawDegrees: Double) -> [Double] {
         let yaw = (referenceYawDegrees + yaw_degrees) * .pi / 180
         let pitch = pitch_degrees * .pi / 180
@@ -80,8 +104,8 @@ struct StationCaptureFrame: Codable {
 struct StationCaptureStation: Codable {
     let id: String
     let index: Int
-    let origin: [Double]
-    let reference_yaw_degrees: Double
+    var origin: [Double]
+    var reference_yaw_degrees: Double
     let started_timestamp: Double
     var targets = StationCaptureTarget.standard
     var frames: [String] = []
@@ -106,6 +130,9 @@ struct StationCaptureManifest: Codable {
     var target_plan = "station-spherical-38-v1-provisional"
     var geometry_note = "Measured ARKit camera poses and optional scene depth. Stations are not a verified mesh, floor plan or measurement product."
     var maximum_pivot_drift_metres = StationCaptureLimits.maximumPivotDriftMeters
+    var capture_policy: String?
+    var maximum_camera_span_metres: Double?
+    private var containsNewGeometryFields = false
     var status: StationCaptureStatus = .capturing
     var status_detail = "Capture in progress."
     var finished_at: String?
@@ -113,12 +140,61 @@ struct StationCaptureManifest: Codable {
     var stored_bytes: Int64 = 0
     var frameCount: Int { stations.reduce(0) { $0 + $1.frames.count } }
 
-    init(sessionID: String, deviceModel: String, operatingSystem: String, depthSupported: Bool) {
+    var geometryProfile: StationCaptureGeometryProfile? {
+        if schema_version == 1, maximum_pivot_drift_metres == 0.10,
+           !containsNewGeometryFields, capture_policy == nil, maximum_camera_span_metres == nil { return .legacyPivotV1 }
+        if schema_version == 2, capture_policy == StationCaptureGeometryProfile.handheldV2.rawValue,
+           maximum_pivot_drift_metres == 0.20, maximum_camera_span_metres == 0.20 { return .handheldV2 }
+        return nil
+    }
+
+    init(sessionID: String, deviceModel: String, operatingSystem: String, depthSupported: Bool,
+         profile: StationCaptureGeometryProfile = .legacyPivotV1) {
         session_id = sessionID
         started_at = ISO8601DateFormatter().string(from: Date())
         device_model = deviceModel
         operating_system = operatingSystem
         depth_supported = depthSupported
+        target_plan = profile.targetPlan
+        if profile == .handheldV2 {
+            schema_version = 2
+            capture_policy = profile.rawValue
+            maximum_pivot_drift_metres = profile.maximumPivotDriftMetres
+            maximum_camera_span_metres = profile.maximumCameraSpanMetres
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case schema_version, format, session_id, started_at, device_model, operating_system, depth_supported
+        case coordinate_system, image_orientation, matrix_layout, units, target_plan, geometry_note
+        case maximum_pivot_drift_metres, capture_policy, maximum_camera_span_metres
+        case status, status_detail, finished_at, stations, stored_bytes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        schema_version = try c.decode(Int.self, forKey: .schema_version)
+        format = try c.decode(String.self, forKey: .format)
+        session_id = try c.decode(String.self, forKey: .session_id)
+        started_at = try c.decode(String.self, forKey: .started_at)
+        device_model = try c.decode(String.self, forKey: .device_model)
+        operating_system = try c.decode(String.self, forKey: .operating_system)
+        depth_supported = try c.decode(Bool.self, forKey: .depth_supported)
+        coordinate_system = try c.decode(String.self, forKey: .coordinate_system)
+        image_orientation = try c.decode(String.self, forKey: .image_orientation)
+        matrix_layout = try c.decode(String.self, forKey: .matrix_layout)
+        units = try c.decode(String.self, forKey: .units)
+        target_plan = try c.decode(String.self, forKey: .target_plan)
+        geometry_note = try c.decode(String.self, forKey: .geometry_note)
+        maximum_pivot_drift_metres = try c.decode(Double.self, forKey: .maximum_pivot_drift_metres)
+        containsNewGeometryFields = c.contains(.capture_policy) || c.contains(.maximum_camera_span_metres)
+        capture_policy = try c.decodeIfPresent(String.self, forKey: .capture_policy)
+        maximum_camera_span_metres = try c.decodeIfPresent(Double.self, forKey: .maximum_camera_span_metres)
+        status = try c.decode(StationCaptureStatus.self, forKey: .status)
+        status_detail = try c.decode(String.self, forKey: .status_detail)
+        finished_at = try c.decodeIfPresent(String.self, forKey: .finished_at)
+        stations = try c.decode([StationCaptureStation].self, forKey: .stations)
+        stored_bytes = try c.decode(Int64.self, forKey: .stored_bytes)
     }
 }
 
@@ -265,12 +341,11 @@ enum StationCaptureArchive {
     }
 
     static func validateManifest(_ value: StationCaptureManifest, directoryID: String) throws {
-        guard value.schema_version == 1, value.format == "rendprop-station-capture",
+        guard let profile = value.geometryProfile, value.format == "rendprop-station-capture",
               value.session_id.caseInsensitiveCompare(directoryID) == .orderedSame,
               value.coordinate_system == "arkit-right-handed-y-up-camera-minus-z-forward",
               value.image_orientation == "sensor-native-exif-1", value.matrix_layout == "row-major", value.units == "metres",
-              value.target_plan == "station-spherical-38-v1-provisional",
-              value.maximum_pivot_drift_metres == StationCaptureLimits.maximumPivotDriftMeters,
+              value.target_plan == profile.targetPlan,
               ISO8601DateFormatter().date(from: value.started_at) != nil,
               value.stations.count <= StationCaptureLimits.maximumStations,
               value.stored_bytes >= 0, value.stored_bytes <= StationCaptureLimits.maximumTourBytes else {
@@ -282,7 +357,7 @@ enum StationCaptureArchive {
             guard UUID(uuidString: station.id) != nil, ids.insert(station.id).inserted, station.index == index,
                   station.origin.count == 3, station.origin.allSatisfy(\.isFinite), station.reference_yaw_degrees.isFinite,
                   station.started_timestamp.isFinite, station.started_timestamp >= 0,
-                  station.targets == StationCaptureTarget.standard,
+                  station.targets == profile.targets,
                   station.frames.count <= station.targets.count,
                   station.status != .complete || station.frames.count == station.targets.count else {
                 throw CaptureError.invalid("Saved position metadata is invalid.")
@@ -303,6 +378,7 @@ enum StationCaptureArchive {
 
     private static func loadFrames(at root: URL, manifest: StationCaptureManifest, station: StationCaptureStation) throws -> [StationCaptureFrame] {
         for directory in ["images", "frames", "depth"] { try requireDirectory(root.appendingPathComponent(directory)) }
+        guard let profile = manifest.geometryProfile else { throw CaptureError.invalid("Saved tour capture policy is unsupported.") }
         var result: [StationCaptureFrame] = []
         var lastTimestamp = -Double.infinity
         for (index, path) in station.frames.enumerated() {
@@ -313,13 +389,35 @@ enum StationCaptureArchive {
                 guard record.schema_version == 1, record.station_id == station.id, record.target_id == station.targets[index].id,
                       record.frame.image == "images/\(number).jpg", record.frame.timestamp > lastTimestamp,
                       record.frame.timestamp >= station.started_timestamp,
-                      record.pivot_drift_metres.isFinite, (0...StationCaptureLimits.maximumPivotDriftMeters).contains(record.pivot_drift_metres),
+                      record.pivot_drift_metres.isFinite, (0...profile.maximumPivotDriftMetres).contains(record.pivot_drift_metres),
                       record.angular_error_degrees.isFinite, (0...StationCapturePolicy.targetToleranceDegrees).contains(record.angular_error_degrees) else {
                     throw CaptureError.invalid("Saved photo does not match its position and target.")
                 }
                 let actualDrift = sqrt((0..<3).reduce(0.0) { $0 + pow(record.frame.camera_to_world[$1][3] - station.origin[$1], 2) })
                 guard abs(actualDrift - record.pivot_drift_metres) < 0.000_001 else { throw CaptureError.invalid("Saved photo position disagrees with its pivot measurement.") }
                 guard let pose = StationCapturePolicy.pose(record.frame.camera_to_world) else { throw CaptureError.invalid("Saved camera pose is invalid.") }
+                if profile == .handheldV2 {
+                    guard actualDrift <= profile.maximumPivotDriftMetres else {
+                        throw CaptureError.invalid("Saved handheld photo exceeds its measured viewpoint radius.")
+                    }
+                    guard StationCapturePolicy.poleIsPhotographed(target: station.targets[index], cameraToWorld: record.frame.camera_to_world,
+                                                                 intrinsics: record.frame.intrinsics, resolution: record.frame.image_resolution) else {
+                        throw CaptureError.invalid("Saved handheld pole photo does not include the ceiling or floor within its calibrated image.")
+                    }
+                    if index == 0 {
+                        let yaw = atan2(pose.forward[0], -pose.forward[2]) * 180 / .pi
+                        let yawDifference = (yaw - station.reference_yaw_degrees) * .pi / 180
+                        guard actualDrift < 0.000_001, abs(atan2(sin(yawDifference), cos(yawDifference))) < 0.000_001 else {
+                            throw CaptureError.invalid("Saved handheld viewpoint does not match its first photo.")
+                        }
+                    }
+                    for previous in result {
+                        let distance = sqrt((0..<3).reduce(0.0) { $0 + pow(record.frame.camera_to_world[$1][3] - previous.frame.camera_to_world[$1][3], 2) })
+                        guard distance <= profile.maximumCameraSpanMetres else {
+                            throw CaptureError.invalid("Saved handheld photos exceed their camera-position span.")
+                        }
+                    }
+                }
                 let direction = station.targets[index].direction(referenceYawDegrees: station.reference_yaw_degrees)
                 let cosine = zip(pose.forward, direction).reduce(0.0) { $0 + $1.0 * $1.1 }
                 let actualAngle = acos(min(1, max(-1, cosine))) * 180 / .pi

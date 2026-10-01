@@ -8,6 +8,18 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+The [handheld room-tour update](../../docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
+is available as internal **TestFlight 1.0.3 (38)** to the existing Rendprop team,
+verified **1 October 2026 at 22:17:40 UTC**. All 12 CI jobs passed on archived
+source `ba5c52c`; [the delivery receipt](../../docs/releases/TESTFLIGHT-38-20261001.json)
+binds the source, signed archive, one upload, Apple availability and testing notes.
+It sets the viewpoint from
+the first admitted still photo, makes floor markers optional, distinguishes the
+yellow photo target, permits natural adjustment within explicit geometry bounds,
+and uses gentler ceiling/floor angles with saved-photo haptics. Both iPhone targets
+compile and three navigation-only UI checks pass. Existing v1 exports remain
+compatible; real-phone usability and stitching acceptance are pending.
+
 The [listing-first fly-through update](../../docs/handoff/LISTING-FIRST-FLYTHROUGH-20261001.md)
 is available as internal **TestFlight 1.0.3 (37)** to the existing Rendprop team.
 Apple availability was verified on **1 October 2026 at 20:50:00 UTC**: `VALID`,

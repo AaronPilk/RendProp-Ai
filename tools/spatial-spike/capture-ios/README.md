@@ -10,8 +10,19 @@ and `verify-panorama.sh` for their synthetic software checks. The
 adds `RoomScanPlanner.swift` and `PanoramaNavigationPolicy.swift` to the explicit
 TestFlight overlay: observed-floor standing suggestions, clearer automatic
 38-photo progress and photographed saved-view markers. Run
-`bash verify-room-guidance.sh` for its 70 geometry/stability/navigation checks.
+`bash verify-room-guidance.sh` for its 78 geometry/stability/navigation checks.
 Suggestions are not measured room boundaries or furniture-aware routes.
+
+The [handheld room-tour update](../../../docs/handoff/ROOM-TOUR-HANDHELD-20261001.md)
+adds a versioned v2 archive/profile, first-admitted-photo anchoring, a 20 cm
+origin radius with a 20 cm pairwise camera-span cap, positional dwell checks,
+and calibrated ±80° ceiling/floor aims. V1 archives keep their exact definitions.
+Internal TestFlight **1.0.3 (38)** is available to the existing Rendprop team,
+verified 1 October 2026 at 22:17:40 UTC; all 12 source CI jobs passed. See
+[the delivery receipt](../../../docs/releases/TESTFLIGHT-38-20261001.json).
+The current synthetic station, native panorama and preview-store suites pass
+422, 63 and 71 assertions respectively. Room4's actual native render remains
+partial with visible seams; software success is not camera or stitching acceptance.
 
 This local capture implementation supplies the input for the one-room spatial
 spike. The owner chose delivery inside the existing Rendprop TestFlight app

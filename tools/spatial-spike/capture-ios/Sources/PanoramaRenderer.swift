@@ -15,12 +15,14 @@ struct PanoramaRenderRequest {
     let frames: [PanoramaFrameInput]
     let origin: [Double]
     var referenceYawRadians: Double = 0
+    var geometryProfile: StationCaptureGeometryProfile = .legacyPivotV1
     var maximumCameraDisplacementMetres: Double = 0.10
+    var maximumCameraSpanMetres: Double = 0.20
     var width: Int = 4096
 }
 
 struct PanoramaRenderReport: Codable {
-    var schema_version = 1
+    var schema_version = 2
     var projection = "equirectangular-top-left-y-up-minus-z-centre"
     var method = "measured-rotation-most-central-source-v1"
     let width: Int
@@ -30,6 +32,10 @@ struct PanoramaRenderReport: Codable {
     let pixel_coverage_fraction: Double
     let spherical_coverage_fraction: Double
     let maximum_camera_displacement_metres: Double
+    let maximum_camera_span_metres: Double
+    let geometry_profile: StationCaptureGeometryProfile
+    let camera_displacement_limit_metres: Double
+    let camera_span_limit_metres: Double
     let reference_yaw_radians: Double
     let elapsed_seconds: Double
     var unknown_pixels = "alpha-zero; no inpainting or invented content"
@@ -37,6 +43,7 @@ struct PanoramaRenderReport: Codable {
     var solidAngleCoverage: Double { spherical_coverage_fraction }
     var pixelCoverage: Double { pixel_coverage_fraction }
     var maximumDisplacementMetres: Double { maximum_camera_displacement_metres }
+    var maximumCameraSpanMetres: Double { maximum_camera_span_metres }
 }
 
 /// Called on a serial worker queue, never the main thread. Each source is
@@ -58,12 +65,18 @@ enum PanoramaRenderer {
             if clock.now >= deadline { throw CaptureError.invalid("Panorama preview reached its 90-second limit. Original photos are preserved.") }
         }
         try checkActive()
+        let profile = request.geometryProfile
+        let supportedDisplacement = request.maximumCameraDisplacementMetres.isFinite
+            && request.maximumCameraDisplacementMetres > 0
+            && (profile == .legacyPivotV1
+                ? request.maximumCameraDisplacementMetres <= profile.maximumPivotDriftMetres
+                : request.maximumCameraDisplacementMetres == profile.maximumPivotDriftMetres)
         guard !request.frames.isEmpty, request.frames.count <= maximumFrames,
               request.width >= 64, request.width <= maximumWidth, request.width % 2 == 0,
               request.origin.count == 3, request.origin.allSatisfy(\.isFinite),
               request.referenceYawRadians.isFinite, abs(request.referenceYawRadians) <= 2 * .pi,
-              request.maximumCameraDisplacementMetres.isFinite,
-              request.maximumCameraDisplacementMetres > 0, request.maximumCameraDisplacementMetres <= 0.10,
+              supportedDisplacement,
+              request.maximumCameraSpanMetres == profile.maximumCameraSpanMetres,
               destination.isFileURL, destination.pathExtension.lowercased() == "png" else {
             throw CaptureError.invalid("Panorama request exceeds the bounded station-preview format.")
         }
@@ -85,6 +98,17 @@ enum PanoramaRenderer {
             }
             maximumDisplacement = max(maximumDisplacement, displacement)
             return camera
+        }
+        var maximumSpan = 0.0
+        for index in cameras.indices {
+            for previous in cameras[..<index] {
+                maximumSpan = max(maximumSpan, simd_distance(cameras[index].position, previous.position))
+            }
+        }
+        // The old format retains its established radius acceptance. Only the
+        // explicitly versioned handheld format introduces a pairwise bound.
+        if profile == .handheldV2, maximumSpan > request.maximumCameraSpanMetres + 1e-6 {
+            throw CaptureError.invalid("These photos moved too far apart for this rotation-only preview. Original photos are preserved.")
         }
         let width = request.width, height = width / 2, count = width * height
         var output = [UInt8](repeating: 0, count: count * 4)
@@ -168,6 +192,10 @@ enum PanoramaRenderer {
                                     covered_pixels: covered, pixel_coverage_fraction: Double(covered) / Double(count),
                                     spherical_coverage_fraction: coveredSolidAngle / totalSolidAngle,
                                     maximum_camera_displacement_metres: maximumDisplacement,
+                                    maximum_camera_span_metres: maximumSpan,
+                                    geometry_profile: profile,
+                                    camera_displacement_limit_metres: request.maximumCameraDisplacementMetres,
+                                    camera_span_limit_metres: request.maximumCameraSpanMetres,
                                     reference_yaw_radians: request.referenceYawRadians,
                                     elapsed_seconds: Double(duration.seconds) + Double(duration.attoseconds) / 1e18)
     }

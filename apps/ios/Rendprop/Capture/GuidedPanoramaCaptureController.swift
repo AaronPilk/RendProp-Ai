@@ -20,6 +20,7 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
     private let finish = UIButton(type: .system)
     private let chooseSpot = UIButton(type: .system)
     private let useCurrentSpot = UIButton(type: .system)
+    private let recoverSpot = UIButton(type: .system)
     private let target = UIView()
     private let reticle = UIView()
     private let controlScroll = UIScrollView()
@@ -43,6 +44,9 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
     private var lastSurveyPlaneID: String?
     private var manualSpotChosen = false
     private var presentedSurveyPlan: RoomScanPlan?
+    private var recoverySince: Double?
+    private var lastSavedFrameCount = 0
+    private let photoFeedback = UIImpactFeedbackGenerator(style: .light)
     private static let suggestionArrivalMetres = 0.45
 
     override func viewDidLoad() {
@@ -77,26 +81,29 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         instruction.font = .preferredFont(forTextStyle: .body)
         direction.font = .preferredFont(forTextStyle: .subheadline)
         heading.text = "Room tour · starting camera"
-        instruction.text = "Start near the center of one room. Keep the lens over one spot while you turn."
-        direction.text = "One viewpoint needs 38 automatic photos. You do not need eight viewpoints."
+        instruction.text = "Stand in a clear place near the middle of the room. Hold the phone comfortably in front of you."
+        direction.text = "Start here, then turn in place. The phone takes the photos for you."
         progress.progressTintColor = UIColor(Theme.accent)
         scan.accessibilityIdentifier = "panorama.capture.scan"
         preview.accessibilityIdentifier = "panorama.capture.preview"
         finish.accessibilityIdentifier = "panorama.capture.finish"
         chooseSpot.accessibilityIdentifier = "panorama.capture.chooseSpot"
         useCurrentSpot.accessibilityIdentifier = "panorama.capture.useCurrentSpot"
+        recoverSpot.accessibilityIdentifier = "panorama.capture.recoverSpot"
         scan.addTarget(self, action: #selector(scanTapped), for: .touchUpInside)
         preview.addTarget(self, action: #selector(previewTapped), for: .touchUpInside)
         finish.addTarget(self, action: #selector(finishTapped), for: .touchUpInside)
         chooseSpot.addTarget(self, action: #selector(chooseSpotTapped), for: .touchUpInside)
         useCurrentSpot.addTarget(self, action: #selector(useCurrentSpotTapped), for: .touchUpInside)
+        recoverSpot.addTarget(self, action: #selector(recoverSpotTapped), for: .touchUpInside)
         setButton(scan, title: "Starting camera…", enabled: false, primary: true)
         setButton(preview, title: "Preview this position", enabled: false)
         setButton(finish, title: "Close room capture", enabled: true)
         setButton(chooseSpot, title: "Choose a suggested spot", enabled: false)
         setButton(useCurrentSpot, title: "Use my current clear spot instead", enabled: false)
-        chooseSpot.isHidden = true; useCurrentSpot.isHidden = true
-        let buttons = UIStackView(arrangedSubviews: [scan, chooseSpot, useCurrentSpot, preview, finish])
+        setButton(recoverSpot, title: "Help me start this view again", enabled: false)
+        chooseSpot.isHidden = true; useCurrentSpot.isHidden = true; recoverSpot.isHidden = true
+        let buttons = UIStackView(arrangedSubviews: [scan, chooseSpot, useCurrentSpot, recoverSpot, preview, finish])
         buttons.axis = .vertical; buttons.spacing = 8
         let content = UIStackView(arrangedSubviews: [heading, progress, instruction, direction, buttons])
         content.axis = .vertical; content.spacing = 10
@@ -122,7 +129,9 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
             content.widthAnchor.constraint(equalTo: controlScroll.frameLayoutGuide.widthAnchor),
             cameraView.bottomAnchor.constraint(equalTo: controlScroll.topAnchor, constant: -8)
         ])
-        for (indicator, diameter, color) in [(reticle, CGFloat(52), UIColor.white), (target, CGFloat(34), UIColor(Theme.accent))] {
+        // Numbered purple floor markers suggest where to stand. A yellow camera
+        // target means turn toward a photograph, never walk to another spot.
+        for (indicator, diameter, color) in [(reticle, CGFloat(52), UIColor.white), (target, CGFloat(48), UIColor.systemYellow)] {
             indicator.bounds = CGRect(x: 0, y: 0, width: diameter, height: diameter)
             indicator.layer.cornerRadius = diameter / 2
             indicator.layer.borderWidth = 3
@@ -131,6 +140,12 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
             indicator.isUserInteractionEnabled = false
             view.insertSubview(indicator, belowSubview: controlScroll)
         }
+        let cameraIcon = UIImageView(image: UIImage(systemName: "camera.fill"))
+        cameraIcon.tintColor = .systemYellow
+        cameraIcon.contentMode = .scaleAspectFit
+        cameraIcon.frame = CGRect(x: 12, y: 12, width: 24, height: 24)
+        target.addSubview(cameraIcon)
+        target.accessibilityLabel = "Next photo direction. Turn the phone; stay where you are."
         target.isHidden = true
     }
 
@@ -204,6 +219,18 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
 
     private func apply(_ update: StationCaptureUpdate) {
         self.update = update
+        let frameCount = recorder.manifest?.frameCount ?? 0
+        if frameCount > lastSavedFrameCount, sessionRunning, !closing,
+           UIApplication.shared.applicationState == .active {
+            // Feedback follows the completed disk write, never just alignment.
+            // High/low photos can therefore finish without watching the screen.
+            photoFeedback.impactOccurred()
+            photoFeedback.prepare()
+            if UIAccessibility.isVoiceOverRunning {
+                UIAccessibility.post(notification: .announcement, argument: "Photo saved. \(update.target?.phaseTitle ?? "Room view")")
+            }
+        }
+        lastSavedFrameCount = frameCount
         if update.state == .ready, choosingViewpoint {
             updateSurveyPresentation(frame: cameraView.session.currentFrame)
             refreshButtons()
@@ -216,16 +243,16 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         let stationNumber = recorder.currentStationID == nil ? max(1, recorder.manifest?.stations.count ?? 0) : (recorder.manifest?.stations.count ?? 1)
         let savedTargets = update.state == .ready ? (recorder.manifest?.stations.last?.frames.count ?? 0) : update.savedTargets
         let phase = update.target?.progressTitle ?? "Viewpoint saved"
-        heading.text = update.state == .capturing || update.state == .saving
-            ? "Viewpoint \(stationNumber) · \(savedTargets)/\(update.totalTargets) saved\n\(phase)"
+        heading.text = update.state == .capturing || (update.state == .saving && recorder.currentStationID != nil)
+            ? "Stay here · \(savedTargets) of \(update.totalTargets) photos saved\n\(phase)"
             : (recorder.manifest?.stations.isEmpty == false ? "Viewpoint \(stationNumber) · \(savedTargets)/\(update.totalTargets) saved" : "Start with one viewpoint")
         progress.progress = Float(savedTargets) / Float(max(1, update.totalTargets))
-        target.isHidden = update.state != .capturing || update.guidanceMode == .returnToPivot || update.guidanceMode == .waiting
+        target.isHidden = update.state != .capturing || update.guidanceMode == .waiting
         reticle.layer.borderColor = (update.guidanceMode == .steady ? UIColor.systemGreen : UIColor.white).cgColor
         if update.state == .ready {
             direction.text = (recorder.manifest?.frameCount ?? 0) > 0
                 ? "Preview this viewpoint first. Add another only for an area hidden from this spot."
-                : "Walls → upper walls → lower walls → ceiling → floor. Stay in this spot until all 38 save."
+                : "Stay here for one full room view. Turn toward the yellow camera target; do not walk to it."
         } else if update.state == .saving {
             direction.text = "Saving automatically. Stay in this spot."
         }
@@ -241,27 +268,27 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         let ready = recorder.state == .ready && !closing && !busyPreview
         let active = (recorder.state == .capturing || recorder.state == .saving) && recorder.currentStationID != nil && !closing
         let full = (recorder.manifest?.stations.count ?? 0) >= StationCaptureLimits.maximumStations
-        let selected = selectedSuggestion
         let upright = cameraView.session.currentFrame.map { StationCapturePolicy.canBeginFacingStraightAhead(forwardY: Double(-$0.camera.transform.columns.2.y)) } ?? false
-        let nearSuggested = selected.flatMap { point in
-            cameraView.session.currentFrame.map { RoomScanPlanner.distance(point.position, cameraPosition($0)) <= Self.suggestionArrivalMetres }
-        } ?? true
         let title: String
         if active { title = "Capturing automatically…" }
         else if full { title = "Viewpoint limit reached" }
         else if !choosingViewpoint { title = "Add another viewpoint (optional)" }
-        else if let selected, !nearSuggested { title = "Move near spot \(selected.number) to start" }
         else if !upright { title = "Point straight ahead to start" }
-        else if let selected { title = "Spot \(selected.number) is clear — start 38 photos" }
-        else { title = "Use this clear spot — start 38 photos" }
-        setButton(scan, title: title, enabled: ready && sessionRunning && trackingReady && !full && (!choosingViewpoint || (nearSuggested && upright)), primary: true)
+        else { title = "This spot is clear — start here" }
+        // Suggestions help choose a place, but exact arrival never blocks a
+        // person's own clear spot. Camera tracking and a level start still do.
+        setButton(scan, title: title, enabled: ready && sessionRunning && trackingReady && !full && (!choosingViewpoint || upright), primary: true)
+        scan.isHidden = active
         chooseSpot.isHidden = !ready || !choosingViewpoint || (surveyPlan?.positions.count ?? 0) < 2
         useCurrentSpot.isHidden = !ready || !choosingViewpoint || surveyPlan == nil || manualSpotChosen
         setButton(chooseSpot, title: "Choose a suggested spot", enabled: ready && trackingReady)
         setButton(useCurrentSpot, title: "Use my current clear spot instead", enabled: ready && trackingReady && !full)
         setButton(preview, title: busyPreview ? "Cancel preview" : "Preview this position",
                   enabled: !closing && (busyPreview || (ready && recorder.manifest?.stations.last?.frames.isEmpty == false)))
-        preview.isHidden = recorder.manifest?.stations.last?.frames.isEmpty != false && !busyPreview
+        preview.isHidden = active || (recorder.manifest?.stations.last?.frames.isEmpty != false && !busyPreview)
+        let stalled = recoverySince.flatMap { since in cameraView.session.currentFrame.map { $0.timestamp - since >= 3 } } ?? false
+        recoverSpot.isHidden = !active || !stalled
+        setButton(recoverSpot, title: full ? "Viewpoint limit reached — save this tour" : "Help me start this view again", enabled: active && !full && !confirmingEarlyFinish)
         setButton(finish, title: closing ? "Saving your tour…" : active ? "Finish early…" : "Done — save room tour", enabled: !closing)
     }
 
@@ -279,7 +306,6 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
             selectedSuggestedNumber = surveyPlan?.positions.first { point in previous.allSatisfy { RoomScanPlanner.distance($0, point.position) > 0.75 } }?.number
             updateSurveyPresentation(frame: frame); refreshButtons(); return
         }
-        if let selected = selectedSuggestion, RoomScanPlanner.distance(selected.position, cameraPosition(frame)) > Self.suggestionArrivalMetres { return }
         beginFromCurrentSpot(frame)
     }
 
@@ -288,6 +314,8 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
               case .normal = frame.camera.trackingState else { return }
         do {
             try recorder.beginStation(frame: frame)
+            recoverySince = nil
+            photoFeedback.prepare()
             surveyFrozen = true; choosingViewpoint = false
             hideFloorMarkers()
             refreshButtons()
@@ -299,6 +327,24 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         selectedSuggestedNumber = nil; manualSpotChosen = true
         if StationCapturePolicy.canBeginFacingStraightAhead(forwardY: Double(-frame.camera.transform.columns.2.y)) { beginFromCurrentSpot(frame) }
         else { updateSurveyPresentation(frame: frame); refreshButtons() }
+    }
+
+    @objc private func recoverSpotTapped() {
+        guard !closing, !confirmingEarlyFinish, recorder.state == .capturing,
+              recorder.currentStationID != nil,
+              (recorder.manifest?.stations.count ?? 0) < StationCaptureLimits.maximumStations else { return }
+        confirmingEarlyFinish = true
+        let alert = UIAlertController(title: "Start this view again?",
+            message: "Your saved photos will stay as an incomplete view. For the next try, keep your feet in place, tuck your elbows in and turn the phone toward each yellow camera target. For the ceiling, tilt the phone up and keep your back upright.", preferredStyle: .alert)
+        alert.addAction(UIAlertAction(title: "Keep this view going", style: .cancel) { [weak self] _ in self?.confirmingEarlyFinish = false })
+        alert.addAction(UIAlertAction(title: "Save partial view and choose a spot", style: .default) { [weak self] _ in
+            guard let self, !self.closing else { return }
+            self.confirmingEarlyFinish = false
+            self.choosingViewpoint = true; self.manualSpotChosen = true; self.selectedSuggestedNumber = nil
+            self.recoverySince = nil
+            self.recorder.finishStation()
+        })
+        present(alert, animated: true)
     }
 
     @objc private func chooseSpotTapped() {
@@ -385,25 +431,25 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         target.isHidden = true; reticle.isHidden = true; progress.isHidden = true
         if manualSpotChosen {
             heading.text = "Use your current clear spot"
-            instruction.text = "Keep the lens over this spot for all 38 automatic photos. Turn around the phone, rather than swinging it around your body."
-            direction.text = "Hold the phone upright at chest height and point straight ahead, then tap Start."
+            instruction.text = "Stand comfortably with a clear view of the room. Keep your feet here while taking the photos."
+            direction.text = "Hold the phone at chest height, tuck your elbows in and point straight ahead. No exact floor-marker alignment is needed."
         } else if let plan = surveyPlan {
             heading.text = "Choose a clear spot · \(plan.positions.count) suggested"
-            instruction.text = "Purple numbers mark suggested standing spots. Check for furniture and a clear way there before moving. One complete viewpoint may be enough."
+            instruction.text = "Purple floor numbers suggest where to stand. Choose somewhere clear with a good view of the room. You can also start right where you are."
             if let selected = selectedSuggestion, let frame {
                 let distance = RoomScanPlanner.distance(selected.position, cameraPosition(frame))
                 direction.text = distance <= Self.suggestionArrivalMetres
-                    ? "Near spot \(selected.number). Hold the phone upright, point straight ahead and start when the spot is clear."
-                    : "Spot \(selected.number) · about \(String(format: "%.1f", distance)) m away. Point toward the floor to find its marker."
+                    ? "Near suggested spot \(selected.number). Exact positioning is not needed. Point straight ahead and start when comfortable."
+                    : "Suggested spot \(selected.number) is ahead. Look toward the floor to find it, or start from your current clear spot."
             } else {
                 direction.text = "Choose another suggested spot, or use your current clear spot."
             }
         } else {
-            heading.text = surveyFrozen ? "Choose another clear spot" : "Look around the room"
+            heading.text = surveyFrozen ? "Choose another clear spot" : "Find a clear place to stand"
             instruction.text = surveyFrozen
                 ? "Move to a clear spot that shows an area hidden from your first viewpoint. Keep some of the same room in view."
-                : "Slowly look toward the floor and around the room. The app can suggest standing spots when it recognizes a steady floor outline."
-            direction.text = "No reliable floor suggestions yet. You can choose a clear spot near the center and start there."
+                : "Start near the middle where you can see most of the room. Looking toward the floor can show optional standing suggestions."
+            direction.text = "You do not need to wait for floor markers. Point straight ahead and start here when the spot is clear."
         }
         if let frame { updateFloorMarkers(frame) }
         else { hideFloorMarkers() }
@@ -572,20 +618,17 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
             return
         }
         guard recorder.state == .capturing, let vector = update?.targetDirection, vector.count == 3,
-              let station = recorder.manifest?.stations.last else { target.isHidden = true; return }
+              recorder.currentStationID != nil else { target.isHidden = true; return }
         let orientation = view.window?.windowScene?.interfaceOrientation ?? .portrait
         let viewMatrix = frame.camera.viewMatrix(for: orientation)
         let origin = frame.camera.transform.columns.3
-        if update?.guidanceMode == .returnToPivot {
-            target.isHidden = true
-            let offset = SIMD4<Float>(Float(station.origin[0]) - origin.x, Float(station.origin[1]) - origin.y, Float(station.origin[2]) - origin.z, 0)
-            let localOffset = viewMatrix * offset
-            direction.text = StationCapturePolicy.returnInstruction(viewOffset: [Double(localOffset.x), Double(localOffset.y), Double(localOffset.z)]) ?? "Bring the lens back to its starting spot"
-            return
-        }
-        guard update?.guidanceMode == .aim || update?.guidanceMode == .steady else { target.isHidden = true; direction.text = "Hold still while camera tracking settles"; return }
+        let returning = update?.guidanceMode == .returnToPivot
+        if returning { if recoverySince == nil { recoverySince = frame.timestamp } }
+        else { recoverySince = nil }
+        refreshButtons()
+        guard update?.guidanceMode == .aim || update?.guidanceMode == .steady || returning else { target.isHidden = true; direction.text = "Hold the phone comfortably and let it settle"; return }
         // Admission tests the orientation-only ray. Project that same ray from
-        // the current camera, so the purple target and acceptance cannot disagree
+        // the current camera, so the yellow target and acceptance cannot disagree
         // because of camera translation. Pivot correction is a separate cue above.
         let world = SIMD3<Float>(origin.x + Float(vector[0] * 2), origin.y + Float(vector[1] * 2), origin.z + Float(vector[2] * 2))
         let local = viewMatrix * SIMD4<Float>(Float(vector[0]), Float(vector[1]), Float(vector[2]), 0)
@@ -595,11 +638,22 @@ final class GuidedPanoramaCaptureController: UIViewController, @preconcurrency A
         if visible {
             target.center = cameraView.convert(projected, to: view)
         }
-        if update?.guidanceMode == .steady {
-            direction.text = "Hold still · \(Int((update?.steadyProgress ?? 0) * 100))%"
+        if returning {
+            // A camera-relative XYZ correction flips as someone turns or tilts.
+            // Keep one coarse instruction and leave the next photo visible.
+            direction.text = "Pause and tuck your elbows in. Hold the phone near where you began; keep your feet in place."
+        } else if update?.guidanceMode == .steady {
+            direction.text = "On target — hold still · \(Int((update?.steadyProgress ?? 0) * 100))%"
         } else {
-            direction.text = StationCapturePolicy.captureAimDirection(cameraToWorld: CaptureGeometry.rows(frame.camera.transform), targetDirection: vector,
-                                                                      angularErrorDegrees: update?.angularErrorDegrees)?.instruction ?? "Follow the next target"
+            let cue = StationCapturePolicy.captureAimDirection(cameraToWorld: CaptureGeometry.rows(frame.camera.transform), targetDirection: vector,
+                                                               angularErrorDegrees: update?.angularErrorDegrees)?.instruction ?? "Turn toward the yellow camera target"
+            if update?.target?.id == "ceiling" || update?.target?.id.hasPrefix("upper-") == true {
+                direction.text = cue + ". Tilt the phone, not your back. A short tap means the photo saved."
+            } else if update?.target?.id == "floor" || update?.target?.id.hasPrefix("lower-") == true {
+                direction.text = cue + ". Keep your back upright and tilt the phone down. A short tap means the photo saved."
+            } else {
+                direction.text = cue + ". Stay where you are; do not walk to the target."
+            }
         }
     }
 
