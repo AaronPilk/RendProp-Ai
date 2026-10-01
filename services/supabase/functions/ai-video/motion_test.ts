@@ -487,8 +487,8 @@ Deno.test("aerial: every aerial move has text", () => {
 
 const INDEX_SRC = Deno.readTextFileSync(new URL("./index.ts", import.meta.url));
 const REEL_ROUTE = INDEX_SRC.slice(
-  INDEX_SRC.indexOf('seg[0] === "reel-clip"'),
-  INDEX_SRC.indexOf('seg[0] === "status"'),
+  INDEX_SRC.indexOf("// ---- POST /ai-video/reel-clip ----"),
+  INDEX_SRC.indexOf("// ---- POST /ai-video/drift ----"),
 );
 
 Deno.test("wiring: the reel route actually chooses a motion and builds from it", () => {

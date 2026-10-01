@@ -1,0 +1,5 @@
+# Exact historical false positives: these are SHA-256 file checksums, not keys.
+# Both values were recomputed from Networking/ReflectionAPI.swift and matched.
+# Current receipts separate path and sha256 fields to avoid the API-name heuristic.
+a6826e25b2c6e956ae96fbbae531b1b9db531cf2:tools/audit/call-20260919/reflection-controller/receipt-fixed.json:generic-api-key:5
+a6826e25b2c6e956ae96fbbae531b1b9db531cf2:tools/audit/call-20260919/reflection-controller/receipt-baseline.json:generic-api-key:5

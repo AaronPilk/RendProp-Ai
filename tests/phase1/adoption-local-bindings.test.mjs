@@ -74,6 +74,9 @@ enum FileStore {
  var hasLoaded=false; var isRestoring=false; var syncInFlight:Set<UUID>=[]; var publishInFlight:Set<UUID>=[]
  var serverCreationInFlight:Set<UUID>=[]; var identityOwnerUserID:UUID?
  var adoptionBindings:AdoptionLocalBindings?; var adoptionBindingsUnreadable=false; let api=FixtureAPI()
+ // Business-type preferences/notifications are outside metadata adoption.
+ // Keep this dependency inert instead of touching the host's preferences.
+ static func markSpaceTypeOutOfSync() {}
  func syncDirtyListings() async {}
  func resumePendingPublishes() async {}
 ${methods}

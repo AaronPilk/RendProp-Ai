@@ -15,7 +15,7 @@
 // naming the task, never a vendor's raw error.
 
 import { type ErrorCode, HttpError } from "../http.ts";
-import { type RouteContext, type RouteStep, reportOutcome, resolveRoute } from "../router.ts";
+import { type RouteContext, type RouteStep, reportOutcome, resolveRoute, requiresActivePhotoRoute } from "../router.ts";
 import { ProviderError, errorClassOf } from "./common.ts";
 
 /**
@@ -52,7 +52,9 @@ export interface ChainResult<T> {
  * resolveRoute() answers `[]` when the routing table is unreadable or a task
  * has no legacy row seeded. That must NOT take a shipped feature down, so the
  * caller passes the step its own constants describe — literally today's
- * provider/model/price — and the flag-off path survives a database outage.
+ * provider/model/price — and the non-photo flag-off path survives a database outage.
+ * Shipped photo tools fail closed: constants cannot bypass a disabled route,
+ * retirement, privacy, plan or capability restriction.
  */
 export async function resolveChain(
   task: string,
@@ -61,6 +63,10 @@ export async function resolveChain(
 ): Promise<RouteStep[]> {
   const steps = await resolveRoute(task, ctx);
   if (steps.length > 0) return steps;
+  if (requiresActivePhotoRoute(task)) {
+    console.warn(`router: no enabled eligible route for ${task}; refusing photo fallback`);
+    throw new HttpError(503, "This photo editing tool is temporarily unavailable. Please try again later.", "upstream");
+  }
   console.warn(`router: no steps for ${task}; using the function's own legacy constants`);
   return [fallback];
 }

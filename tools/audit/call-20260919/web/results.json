@@ -1,0 +1,321 @@
+{
+  "target_commit": "7bcc624",
+  "comparison_baseline": "8d32f85",
+  "browser": {
+    "assertions": 14,
+    "track": {
+      "duration": 410,
+      "height": 22272,
+      "viewport": 768
+    },
+    "skip": {
+      "targetY": 0.109375,
+      "scrollY": 24449
+    },
+    "home": {
+      "p": "0%",
+      "value": "0",
+      "text": "0% edited version shown",
+      "clip": "inset(0px 0px 0px 0%)"
+    },
+    "end": {
+      "p": "100%",
+      "value": "100",
+      "text": "100% edited version shown",
+      "clip": "inset(0px 0px 0px 100%)"
+    },
+    "unbranded": {
+      "slider": true,
+      "forms": 0,
+      "skip": false,
+      "html": false
+    },
+    "mobile": {
+      "width": 308,
+      "height": 410.65625,
+      "naturalWidth": 1200,
+      "naturalHeight": 900,
+      "horizontalFractionVisible": 0.5625142683205235,
+      "touchAction": "pan-y",
+      "x": 195,
+      "y": 433.703125,
+      "scrollY": 25408,
+      "scrollAfter": 25234
+    },
+    "nojs": {
+      "on": false,
+      "role": null,
+      "figures": 2,
+      "images": 2,
+      "display": "grid",
+      "open": true,
+      "captions": [
+        "Before \u2014 how it really looks",
+        "After \u2014 digitally decluttered"
+      ]
+    },
+    "dates": [
+      {
+        "date": "2026-09-17T23:30:00-04:00",
+        "note": "This tour was published on September 18, 2026. Ask the agent before assuming anything shown here is still current."
+      },
+      {
+        "date": "invalid",
+        "note": null
+      },
+      {
+        "date": "2019-01-01",
+        "note": null
+      },
+      {
+        "date": "2999-01-01",
+        "note": null
+      }
+    ],
+    "browser": "Dedicated Chromium, synthetic fixture only",
+    "limitations": "No physical iPhone/Safari touch proof"
+  },
+  "photo": {
+    "assertions": 273,
+    "matrix": [
+      {
+        "space_type": "real_estate",
+        "edit": "twilight",
+        "status": 200,
+        "promptLength": 1685
+      },
+      {
+        "space_type": "real_estate",
+        "edit": "sky",
+        "status": 200,
+        "promptLength": 1575
+      },
+      {
+        "space_type": "real_estate",
+        "edit": "lawn",
+        "status": 200,
+        "promptLength": 1551
+      },
+      {
+        "space_type": "real_estate",
+        "edit": "declutter",
+        "status": 200,
+        "promptLength": 2002
+      },
+      {
+        "space_type": "real_estate",
+        "edit": "stage",
+        "status": 200,
+        "promptLength": 1994
+      },
+      {
+        "space_type": "real_estate",
+        "edit": "custom",
+        "status": 200,
+        "promptLength": 1423
+      },
+      {
+        "space_type": "venue",
+        "edit": "twilight",
+        "status": 200,
+        "promptLength": 1691
+      },
+      {
+        "space_type": "venue",
+        "edit": "sky",
+        "status": 200,
+        "promptLength": 1584
+      },
+      {
+        "space_type": "venue",
+        "edit": "lawn",
+        "status": 200,
+        "promptLength": 1585
+      },
+      {
+        "space_type": "venue",
+        "edit": "declutter",
+        "status": 200,
+        "promptLength": 2000
+      },
+      {
+        "space_type": "venue",
+        "edit": "stage",
+        "status": 200,
+        "promptLength": 2128
+      },
+      {
+        "space_type": "venue",
+        "edit": "custom",
+        "status": 200,
+        "promptLength": 1427
+      },
+      {
+        "space_type": "restaurant",
+        "edit": "twilight",
+        "status": 200,
+        "promptLength": 1695
+      },
+      {
+        "space_type": "restaurant",
+        "edit": "sky",
+        "status": 200,
+        "promptLength": 1588
+      },
+      {
+        "space_type": "restaurant",
+        "edit": "lawn",
+        "status": 200,
+        "promptLength": 1589
+      },
+      {
+        "space_type": "restaurant",
+        "edit": "declutter",
+        "status": 200,
+        "promptLength": 1988
+      },
+      {
+        "space_type": "restaurant",
+        "edit": "stage",
+        "status": 200,
+        "promptLength": 2103
+      },
+      {
+        "space_type": "restaurant",
+        "edit": "custom",
+        "status": 200,
+        "promptLength": 1426
+      },
+      {
+        "space_type": "retail",
+        "edit": "twilight",
+        "status": 200,
+        "promptLength": 1688
+      },
+      {
+        "space_type": "retail",
+        "edit": "sky",
+        "status": 200,
+        "promptLength": 1581
+      },
+      {
+        "space_type": "retail",
+        "edit": "lawn",
+        "status": 200,
+        "promptLength": 1600
+      },
+      {
+        "space_type": "retail",
+        "edit": "declutter",
+        "status": 200,
+        "promptLength": 1989
+      },
+      {
+        "space_type": "retail",
+        "edit": "stage",
+        "status": 200,
+        "promptLength": 2108
+      },
+      {
+        "space_type": "retail",
+        "edit": "custom",
+        "status": 200,
+        "promptLength": 1428
+      },
+      {
+        "space_type": "fitness",
+        "edit": "twilight",
+        "status": 200,
+        "promptLength": 1692
+      },
+      {
+        "space_type": "fitness",
+        "edit": "sky",
+        "status": 200,
+        "promptLength": 1585
+      },
+      {
+        "space_type": "fitness",
+        "edit": "lawn",
+        "status": 200,
+        "promptLength": 1588
+      },
+      {
+        "space_type": "fitness",
+        "edit": "declutter",
+        "status": 200,
+        "promptLength": 1995
+      },
+      {
+        "space_type": "fitness",
+        "edit": "stage",
+        "status": 200,
+        "promptLength": 2093
+      },
+      {
+        "space_type": "fitness",
+        "edit": "custom",
+        "status": 200,
+        "promptLength": 1430
+      },
+      {
+        "space_type": "other",
+        "edit": "twilight",
+        "status": 200,
+        "promptLength": 1690
+      },
+      {
+        "space_type": "other",
+        "edit": "sky",
+        "status": 200,
+        "promptLength": 1583
+      },
+      {
+        "space_type": "other",
+        "edit": "lawn",
+        "status": 200,
+        "promptLength": 1570
+      },
+      {
+        "space_type": "other",
+        "edit": "declutter",
+        "status": 200,
+        "promptLength": 1957
+      },
+      {
+        "space_type": "other",
+        "edit": "stage",
+        "status": 200,
+        "promptLength": 1962
+      },
+      {
+        "space_type": "other",
+        "edit": "custom",
+        "status": 200,
+        "promptLength": 1432
+      }
+    ],
+    "outputGap": [
+      {
+        "revision": "8d32f85",
+        "status": 200,
+        "prompt": "Add a family in the living room",
+        "outputDeniedByActualGuard": true
+      },
+      {
+        "revision": "7bcc624",
+        "status": 200,
+        "prompt": "Add a family in the living room",
+        "outputDeniedByActualGuard": true
+      }
+    ],
+    "externalNetworkRequests": 0,
+    "providerCalls": "mocked only",
+    "qualityAcceptance": "Not measured: real images/model calls required"
+  },
+  "source_sha256": {
+    "services/edge/tour-host/src/player.ts": "79626c4063937708de51797e0991feea162fedd5f117e67fe66e64dd954566c0",
+    "services/supabase/functions/ai-photo/index.ts": "305856812f6c3d6a381892c81e31df4f2ab4b240ff4b5ee2d79456a392ae6150",
+    "services/supabase/functions/_shared/fairhousing.ts": "9a5a36739a2cbf166d89b9e816910f24abe7336043f6d398052da48a4e9eedeb"
+  }
+}

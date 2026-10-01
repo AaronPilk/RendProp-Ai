@@ -1171,7 +1171,10 @@ begin
   insert into _inv(name, pass, note) values ('an admin reads the rate_limits usage counters across orgs', n = 2, n::text);
 
   set role authenticated; select count(*) into n from plan_entitlements; reset role;
-  insert into _inv(name, pass, note) values ('an admin reads plan_entitlements', n = 6, n::text);
+  set role authenticated;
+  select array_agg(plan order by plan)=array['brokerage','free','pro','solo','starter','team','trial'] into b from plan_entitlements;
+  reset role;
+  insert into _inv(name, pass, note) values ('an admin reads plan_entitlements', n = 7 and b, n::text || ' exact known plans including brokerage');
 
   set role authenticated; select is_admin() into b; reset role;
   insert into _inv(name, pass, note) values ('is_admin() is true for an allowlisted owner', b is true, b::text);
@@ -1279,9 +1282,12 @@ from plan_routing_policy;
 -- The flag-off answer is looked up by `note = 'legacy'` with LIMIT 1, so a
 -- second row would make "what runs today" depend on a sort order.
 insert into _inv(name, pass, note)
-select 'at most ONE legacy row per task, and every legacy row is disabled',
+select 'at most ONE legacy row per task; photo fallback active, non-photo legacy disabled',
        coalesce(bool_and(n = 1), true) and
-       (select coalesce(bool_and(not enabled), true) from ai_routes where note = 'legacy'),
+       (select coalesce(bool_and(case
+          when task in ('photo.sky','photo.twilight','photo.lawn','photo.declutter','photo.stage','photo.custom')
+            then enabled and provider='gemini' and model='gemini-3.1-flash-image'
+          else not enabled end), true) from ai_routes where note = 'legacy'),
        coalesce(string_agg(task || '=' || n, ', '), 'no legacy rows')
 from (select task, count(*) n from ai_routes where note = 'legacy' group by task) s;
 
@@ -2726,30 +2732,24 @@ begin
 
   insert into _inv(name, pass, note)
     values ('every notification RPC is SECURITY DEFINER and service-role only',
-            not exists (select 1 from unnest(array[
-                  'public.notification_register_device(uuid,text,text,text,text,text)',
-                  'public.notification_set_preferences(uuid,jsonb)',
-                  'public.notification_preferences_for(uuid)',
-                  'public.notification_enqueue(uuid,uuid,text,jsonb,text,timestamptz)',
-                  'public.notification_claim_batch(integer)',
-                  'public.notification_mark(uuid,text,text,text)',
-                  'public.notification_sweep()',
-                  'public.notification_disable_device(text,text)',
-                  'public.notification_tick()']) f
-                 where has_function_privilege('authenticated', f, 'EXECUTE')
-                    or has_function_privilege('anon', f, 'EXECUTE'))
-              and (select bool_and(has_function_privilege('service_role', f, 'EXECUTE'))
-                     from unnest(array[
-                       'public.notification_register_device(uuid,text,text,text,text,text)',
-                       'public.notification_set_preferences(uuid,jsonb)',
-                       'public.notification_enqueue(uuid,uuid,text,jsonb,text,timestamptz)',
-                       'public.notification_claim_batch(integer)',
-                       'public.notification_mark(uuid,text,text,text)',
-                       'public.notification_sweep()',
-                       'public.notification_tick()']) f)
-              and (select bool_and(p.prosecdef) from pg_proc p
-                    where p.pronamespace = 'public'::regnamespace
-                      and p.proname like 'notification\_%'),
+            -- Callable RPCs and trigger functions have different privilege models.
+            -- Redaction is deliberately SECURITY INVOKER; it can only be fired
+            -- through its terminal-state outbox trigger, never called as an RPC.
+            (select count(*)=11 and bool_and(p.prosecdef
+                    and not has_function_privilege('authenticated',p.oid,'EXECUTE')
+                    and not has_function_privilege('anon',p.oid,'EXECUTE')
+                    and has_function_privilege('service_role',p.oid,'EXECUTE'))
+               from pg_proc p where p.pronamespace='public'::regnamespace
+                 and p.proname like 'notification\_%'
+                 and p.prorettype<>'trigger'::regtype)
+              and (select not p.prosecdef and p.prorettype='trigger'::regtype
+                     from pg_proc p where p.oid='public.notification_redact_code()'::regprocedure)
+              and exists(select 1 from pg_trigger t where t.tgrelid='public.notification_outbox'::regclass
+                    and t.tgfoid='public.notification_redact_code()'::regprocedure
+                    and t.tgname='notification_redact_code_trg' and t.tgenabled='O'
+                    and (t.tgtype::integer & 19)=19)
+              and (select p.prosecdef and p.prorettype='trigger'::regtype
+                     from pg_proc p where p.oid='public.notification_on_lead_insert()'::regprocedure),
             '');
 
   -- notification_log is the PERMANENT record. 0022 schedules purge_app_events()

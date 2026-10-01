@@ -11,7 +11,9 @@
 // The master flag `app_config.ai_router.enabled` defaults to FALSE, and while
 // it is false resolveRoute() returns exactly ONE step: the row tagged
 // `note = 'legacy'` for that task, which carries the provider/model the shipped
-// edge functions hardcode TODAY. Behaviour is byte-for-byte unchanged, and the
+// edge functions hardcode TODAY. Photo fallbacks additionally require an
+// enabled, eligible row (0056); disabled rows never authorize photo execution.
+// Non-photo legacy behavior is unchanged, and the
 // legacy answer comes out of the database rather than out of a second copy of
 // the model ids in TypeScript — so there is only ever one place to look.
 //
@@ -27,7 +29,7 @@
 // 2. DO NOT RE-FILTER THE CHAIN. Everything returned is a step you may run
 //    right now: plan, capabilities, retirement, privacy and the flag have all
 //    already been applied. In particular do not filter on `step.enabled` — the
-//    resolver has done it (and the flag-off legacy step is reported enabled
+//    resolver has done it (and the non-photo flag-off legacy step is reported enabled
 //    precisely so a defensive caller cannot accidentally drop the only step it
 //    was given).
 //
@@ -250,6 +252,11 @@ async function defaultPolicyFor(plan: string): Promise<"best" | "cheapest"> {
 
 // ── resolveRoute ────────────────────────────────────────────────────────────
 
+/** Every photo task requires live database authorization, even with the router off. */
+export function requiresActivePhotoRoute(task: string): boolean {
+  return task.trim().startsWith("photo.");
+}
+
 /**
  * Ordered, filtered, circuit-aware chain for `task`.
  *
@@ -265,7 +272,7 @@ export async function resolveRoute(task: string, ctx: RouteContext): Promise<Rou
   const t = String(task ?? "").trim();
   if (!t) return [];
 
-  if (!(await routerEnabled())) return await legacyChain(t);
+  if (!(await routerEnabled())) return await legacyChain(t, ctx);
 
   let rows: RouteRow[];
   try {
@@ -279,12 +286,12 @@ export async function resolveRoute(task: string, ctx: RouteContext): Promise<Rou
     rows = (data ?? []) as RouteRow[];
   } catch (e) {
     console.error(`router: route read failed for ${t}, falling back to legacy:`, msg(e));
-    return await legacyChain(t);
+    return await legacyChain(t, ctx);
   }
 
   // A task with the flag on but no enabled rows still has a legacy answer in
   // most cases; using it beats returning nothing.
-  if (rows.length === 0) return await legacyChain(t);
+  if (rows.length === 0) return await legacyChain(t, ctx);
 
   const steps = rows.map(toStep);
   const health = await readHealth();
@@ -292,17 +299,19 @@ export async function resolveRoute(task: string, ctx: RouteContext): Promise<Rou
 }
 
 /**
- * THE FLAG-OFF PATH. One row, looked up by note, returned verbatim except that
- * `enabled` is reported true — see rule 2 in the header: every step a caller is
- * handed is a step it may run.
+ * Photo fallback requires the exact marker AND an enabled, eligible row.
+ * Non-photo legacy behavior remains unchanged outside this repair's scope.
  */
-async function legacyChain(task: string): Promise<RouteStep[]> {
+async function legacyChain(task: string, ctx: RouteContext): Promise<RouteStep[]> {
   try {
-    const { data, error } = await db()
+    const activePhoto = requiresActivePhotoRoute(task);
+    let query = db()
       .from("ai_routes")
       .select(SELECT_COLS)
       .eq("task", task)
-      .eq("note", "legacy")
+      .eq("note", "legacy");
+    if (activePhoto) query = query.eq("enabled", true);
+    const { data, error } = await query
       .order("position", { ascending: true })
       .limit(1);
     if (error) throw new Error(error.message);
@@ -310,6 +319,10 @@ async function legacyChain(task: string): Promise<RouteStep[]> {
     if (!row) {
       console.error(`router: no legacy step seeded for task ${task}`);
       return [];
+    }
+    if (activePhoto) {
+      if (row.enabled !== true) return [];
+      return orderSteps([toStep(row)], ctx, new Map());
     }
     return [{ ...toStep(row), enabled: true }];
   } catch (e) {

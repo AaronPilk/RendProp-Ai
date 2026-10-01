@@ -145,6 +145,7 @@ def main():
     connection = ["-h", str(sockets), "-p", "55439", "-U", "postgres"]
     psql = [bins["psql"], "-X", "--no-password", *connection, "-d", "rendprop_audit",
             "-v", "ON_ERROR_STOP=1"]
+    audit_psql = psql
     started = False
     prior_handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGHUP)}
     def interrupted(signum, _frame):
@@ -169,10 +170,22 @@ def main():
         receipt["invariantRuns"] = []
         for phase in ("initial", "replayed"):
             if phase == "replayed":
-                replay = [p for p in migrations if p.name.startswith(("0005b_", "0008b_")) or p.name >= "0009"]
-                for migration in replay:
-                    run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
+                # Reapply each historical version where it actually existed.
+                # Replaying0050 against0051's replacement overload is not a
+                # supported production migration order; do not rewrite history
+                # merely to make that artificial state accept old SQL.
+                run("createdb-replay", [bins["createdb"], "--no-password", *connection, "rendprop_replay"])
+                psql = [bins["psql"], "-X", "--no-password", *connection, "-d", "rendprop_replay",
+                        "-v", "ON_ERROR_STOP=1"]
+                run("bootstrap-replay", psql + ["-q", "-f", str(sqlroot / "tests/ci-bootstrap.sql")])
+                replay = []
+                for migration in migrations:
+                    run("historical-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
+                    if migration.name.startswith(("0005b_", "0008b_")) or migration.name >= "0009":
+                        run("replay-" + migration.stem, psql + ["-q", "-1", "-f", str(migration)])
+                        replay.append(migration)
                 receipt["replayedMigrations"] = len(replay)
+                receipt["replayMode"] = "second clean database; each replayable migration twice at its historical schema point"
             output = run("invariants-" + phase, psql + ["-f", str(sqlroot / "tests/invariants.sql")], expected=(0, 3))
             # Preserve a genuine red suite, but still test migration replay.
             # A SQL/load error is not a completed red suite and aborts here.
@@ -188,6 +201,10 @@ def main():
                                              "staleKeptRed": stale})
             counts.append(len(names))
         require(counts[0] == counts[1], "Invariant count changed on replay")
+        # Destructive negative fixtures deliberately accept only the original
+        # owned audit database. Restore that connection after replay inventory
+        # checks; do not weaken the fixtures' independent database-name guard.
+        psql = audit_psql
         paid = run("negative-paid-gates", psql + ["-f", str(sqlroot / "tests/negative_astra_paid_gates.sql")])
         require("PASS: exact paid-plan predicates registered 6 expected outcomes across baseline and 2 negative fixtures; all mutations rolled back." in paid,
                 "Paid gate negative fixture did not complete")
