@@ -106,6 +106,12 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         req.httpMethod = method
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         req.setValue(Config.supabaseAnonKey, forHTTPHeaderField: "apikey")
+        // Active-context endpoints must never follow a server-side workspace
+        // change from another device while this request is in flight.
+        let mePath = base.appendingPathComponent("me").path
+        if (url.path == mePath || url.path.hasPrefix(mePath + "/")), let org = WorkspaceContext.selectedOrgID {
+            req.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        }
         if let token = AuthStore.currentAccessToken {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
@@ -182,22 +188,38 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     /// Send, verify 2xx, decode the error envelope otherwise. Refreshes the JWT
     /// first (never sends a token we know is expired), and on a 401 forces ONE
     /// refresh + retry; a 401 after that means the session is dead → sign out.
-    private func execute(_ req: URLRequest, session: URLSession? = nil) async throws -> Data {
+    @MainActor private func execute(_ req: URLRequest, session: URLSession? = nil) async throws -> Data {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        // The request can have been assembled before a hop to this actor. Its
+        // old bearer identifies the intended account; refresh may replace an
+        // expired token, but never replace that account with another one.
+        if Config.enableAuth, let header = req.value(forHTTPHeaderField: "Authorization"), header.hasPrefix("Bearer "),
+           let expected = AnonymousAdoptionRecovery.identity(String(header.dropFirst(7)))?.id,
+           actor.flatMap(UUID.init(uuidString:)) != expected { throw CloudSyncError.identityChanged }
+        let mePath = base.appendingPathComponent("me").path
+        let workspaceRead = req.httpMethod == "GET" && req.url?.path == mePath
+        let workspaceWrite = req.url?.path == mePath + "/brand" || req.url?.path.hasPrefix(mePath + "/compliance") == true
+        if Config.enableAuth, workspaceRead || workspaceWrite,
+           req.value(forHTTPHeaderField: "X-Org-Id") == nil { throw CloudSyncError.identityChanged }
         let client = session ?? self.session
         var request = req
         if Config.enableAuth, let token = await AuthStore.validAccessToken() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         let (data, resp) = try await client.data(for: request)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
         guard let http = resp as? HTTPURLResponse else { throw APIError.badResponse(-1) }
         if (200..<300).contains(http.statusCode) { return data }
 
         if http.statusCode == 401, Config.enableAuth, AuthStore.shared.isSignedIn {
             let refreshed = await AuthStore.shared.forceRefresh()
+            guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
             if refreshed, let fresh = AuthStore.storedAccessToken() {
                 request.setValue("Bearer \(fresh)", forHTTPHeaderField: "Authorization")
                 let (data2, resp2) = try await client.data(for: request)
+                guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
                 guard let http2 = resp2 as? HTTPURLResponse else { throw APIError.badResponse(-1) }
                 if (200..<300).contains(http2.statusCode) { return data2 }
                 if http2.statusCode == 401 {
@@ -514,8 +536,11 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
     }
 
     func createListing(_ listing: Listing) async throws -> Listing {
-        let data = try await execute(makeRequest(url: url(["listings"]), method: "POST",
-                                                 json: listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())")))
+        guard let org = listing.cloudDraftOrgID else { throw CloudSyncError.identityChanged }
+        var request = makeRequest(url: url(["listings"]), method: "POST",
+                                  json: listingBody(listing, forPatch: false), idempotency: .key("listing-create:\(listing.id.uuidString.lowercased())"))
+        request.setValue(org.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        let data = try await execute(request)
         return mapListing(try decode(data))
     }
 
@@ -1495,10 +1520,18 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
         // PATCH /me/brand — the org brand kit is what the PUBLIC tour/portfolio
         // pages render as the agent card, so this is what puts the agent's
         // identity on every hosted share link (2026-08-26 audit P0-1).
-        _ = try await execute(makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields))
+        guard let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+        try await updateBrand(fields, orgID: org)
     }
 
-    func me() async throws -> UsageSummary {
+    @MainActor func updateBrand(_ fields: [String: String], orgID: UUID) async throws {
+        var request = makeRequest(url: url(["me", "brand"]), method: "PATCH", json: fields)
+        request.setValue(orgID.uuidString.lowercased(), forHTTPHeaderField: "X-Org-Id")
+        _ = try await execute(request)
+    }
+
+    @MainActor func me() async throws -> UsageSummary {
+        let actor = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
         let data = try await execute(makeRequest(url: url(["me"])))
         let dto: MeDTO = try decode(data)
         // /me returns `plan` (effective), `plan_raw`, `trial_ends_at`,
@@ -1551,7 +1584,8 @@ final class LiveAPIClient: APIClient, WorkspaceSyncAPI, ProductionSyncAPI {
             isAdmin: adminFlag,
             role: serverRole)
         // Let the Account row show the server-side name (never an email).
-        await AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
+        guard AuthStore.shared.userID == actor, AuthStore.shared.syncSessionRevision == revision else { throw CloudSyncError.identityChanged }
+        AuthStore.shared.applyServerIdentity(userName: summary.userName, orgName: summary.orgName)
         return summary
     }
 

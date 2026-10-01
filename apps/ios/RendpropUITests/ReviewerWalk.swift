@@ -220,7 +220,7 @@ final class ReviewerWalk: XCTestCase {
                     photographedPicker = true
                     // Accept the pre-selected "Real estate" the way a reviewer
                     // would, and leave the intro.
-                    if let start = find(ids: [], labels: ["Get started"], timeout: shortTimeout) {
+                    if let start = find(ids: ["onboarding.explore"], labels: ["Explore the app first"], timeout: shortTimeout) {
                         tap(start)
                     } else {
                         note("The type picker had no \"Get started\" button — onboarding cannot be left.")

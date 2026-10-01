@@ -87,3 +87,13 @@ Deno.test("knowledge: known defective account statement is rejected", () => {
   }
   assert(rejected, "negative control did not reject stale policy");
 });
+
+Deno.test("knowledge: introductory trial requires Apple's subscription confirmation", () => {
+  const trial = fact("Free trial");
+  for (const required of ["7-day", "choosing a subscription", "confirming it in Apple's purchase sheet", "does not start that trial", "selected plan's allowances", "renews at the displayed subscription price", "original end date"]) {
+    assert(trial.includes(required), `trial policy omitted: ${required}`);
+  }
+  const block = knowledgeBlock();
+  assert(block.includes(trial), "actual guidance must contain the trial policy");
+  assert(block.includes("never on signup"), "allowances summary must not grant an automatic trial");
+});

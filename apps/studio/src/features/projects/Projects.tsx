@@ -139,14 +139,15 @@ export default function Projects(props:Props){
    fence();
    if(sync.current?.hasUnsavedWork)throw new Error("Finish syncing the current project before saving another copy.");
    const title=projectName(name||current.current.draft.title||"Untitled video"),key=projectKey(crypto.randomUUID());setBusy(true);setMessage("");
-   next=new DocumentSync(services,workspace.org.id,key,setState,{listingId:null});tentative.current.add(next);await next.open();fence();
+   next=new DocumentSync(services,workspace.org.id,key,value=>{if(sync.current===next)setState(value);},{listingId:null});tentative.current.add(next);await next.open();fence();
    const payload=decodeProject({...current.current,name:title,archived:false});next.queue(payload as unknown as Record<string,unknown>);await next.flush();fence();
+   if(next.writeRejection)throw next.writeRejection;
    if(next.state!=="saved"){
     // Retain the uncertain writer and its exact key. Retrying reconciles it,
     // instead of purchasing storage or creating another project identity.
-    sync.current?.dispose();sync.current=next;selectedRef.current=key;setSelected(key);current.current=payload;backup(key,payload);throw new Error("Project save is awaiting confirmation. Retry sync before creating another copy.");
+    sync.current?.dispose();sync.current=next;setState(next.state);selectedRef.current=key;setSelected(key);current.current=payload;backup(key,payload);throw new Error("Project save is awaiting confirmation. Retry sync before creating another copy.");
    }
-   sync.current?.dispose();sync.current=next;selectedRef.current=key;setSelected(key);current.current=payload;setName(title);backup(key,payload);
+   sync.current?.dispose();sync.current=next;setState(next.state);selectedRef.current=key;setSelected(key);current.current=payload;setName(title);backup(key,payload);
    for(const hash of usedHashes()){const file=files.current.get(hash)??await readProjectFile(scope,hash,controller.current.signal);if(file)await keepFile(hash,file);}
    await refreshIndex();setMessage([...usedHashes()].every(hash=>cloud.current.has(hash))?"Your project and originals are saved to your account.":"Project saved. Reselect the missing originals to finish uploading them for other devices.");
   }catch(error){if(next&&next!==sync.current)next.dispose();if(mounted.current&&!signal.aborted)setMessage(error instanceof Error?error.message:"This project could not be saved.");}

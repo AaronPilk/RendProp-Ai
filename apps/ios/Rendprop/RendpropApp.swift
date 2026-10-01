@@ -151,9 +151,11 @@ final class AppModel: ObservableObject {
     private var adoptionBindingsUnreadable = false
     private var uploadObserver: NSObjectProtocol?
     private var spaceTypeObserver: NSObjectProtocol?
+    private var workspaceObserver: NSObjectProtocol?
     /// The `space.type` raw value a PATCH /me/brand is carrying right now, so
     /// two sync points firing together send one request, not two.
     private var spaceTypeSyncInFlight: String?
+    private var spaceTypeSyncOperation: UUID?
 
     init() {
         renderCoordinator.model = self
@@ -178,6 +180,16 @@ final class AppModel: ObservableObject {
             let serverListingID = note.userInfo?["listingID"] as? UUID
             Task { @MainActor [weak self] in
                 await self?.handleUploadCompleted(assetID: assetID, serverListingID: serverListingID)
+            }
+        }
+        workspaceObserver = NotificationCenter.default.addObserver(forName: .rendpropWorkspaceChanged, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.cloudRefreshTask?.cancel(); self.cloudRefreshTask = nil; self.cloudRefreshOperation = nil
+                self.isCloudSyncing = false; self.cloudSyncError = nil; self.lastCloudSyncAt = nil
+                self.spaceTypeSyncInFlight = nil; self.spaceTypeSyncOperation = nil
+                self.objectWillChange.send()
+                await self.refreshCloudWorkspace()
             }
         }
         // Somebody found out the server does not have the business type (an
@@ -240,6 +252,7 @@ final class AppModel: ObservableObject {
     /// ready or source cloud writes have not settled; never race their replies.
     func prepareLocalAdoption(_ pending: AnonymousAdoptionRecovery.Pending) -> Bool {
         guard hasLoaded, !adoptionBindingsUnreadable, syncInFlight.isEmpty,
+              !ProductionVideoLibrary.shared.isBusy(owner: pending.sourceUserID.uuidString.lowercased()),
               publishInFlight.isEmpty, serverCreationInFlight.isEmpty,
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.sourceUserID,
               identityOwnerUserID == nil || identityOwnerUserID == pending.sourceUserID else { return false }
@@ -262,7 +275,8 @@ final class AppModel: ObservableObject {
               journal.matches(pending),
               AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == pending.destinationUserID else { return false }
         if journal.appliedToCurrentState, let confirmed = journal.confirmedOrgID {
-            return confirmed == orgID && identityOwnerUserID == pending.destinationUserID
+            guard confirmed == orgID && identityOwnerUserID == pending.destinationUserID else { return false }
+            return restoreAdoptedProductionLibrary()
         }
         do {
             var restored = try journal.restoring(listings, pending: pending,
@@ -273,6 +287,12 @@ final class AppModel: ObservableObject {
             }
             let previousListings = listings, previousOwner = identityOwnerUserID
             var confirmed = journal; confirmed.confirmedOrgID = orgID; confirmed.appliedToCurrentState = true
+            try AdoptionProductionLibrary.restore(confirmed, survivingIDs: Set(restored.filter { !$0.isSample }.map(\.id)),
+                documents: FileStore.documents)
+            confirmed.productionTransferred = true
+            ProductionVideoLibrary.shared.reloadAdopted(owner: pending.destinationUserID.uuidString.lowercased(),
+                listingIDs: Set(confirmed.productionLocalIDs ?? confirmed.entries.map(\.localID)))
+            for id in confirmed.productionLocalIDs ?? confirmed.entries.map(\.localID) { ProductionPlanSyncStore.shared.remove(id) }
             isRestoring = true
             listings = restored; adoptionBindings = confirmed; identityOwnerUserID = pending.destinationUserID
             isRestoring = false
@@ -282,6 +302,31 @@ final class AppModel: ObservableObject {
             isRestoring = false
             return false
         } catch { return false }
+    }
+
+    /// Upgrade a previously confirmed receipt once. Old bindings can recover
+    /// their known server-backed properties; new bindings also name offline drafts.
+    @discardableResult func restoreAdoptedProductionLibrary() -> Bool {
+        guard var journal = adoptionBindings, journal.appliedToCurrentState,
+              journal.confirmedOrgID != nil, identityOwnerUserID == journal.destinationUserID,
+              AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) == journal.destinationUserID else { return false }
+        if journal.productionTransferred == true { return true }
+        do {
+            try AdoptionProductionLibrary.restore(journal, survivingIDs: Set(listings.filter { !$0.isSample }.map(\.id)),
+                documents: FileStore.documents)
+            journal.productionTransferred = true
+            let previous = adoptionBindings
+            adoptionBindings = journal
+            if persist() {
+                let ids = Set(journal.productionLocalIDs ?? journal.entries.map(\.localID))
+                ProductionVideoLibrary.shared.reloadAdopted(owner: journal.destinationUserID.uuidString.lowercased(), listingIDs: ids)
+                for id in ids { ProductionPlanSyncStore.shared.remove(id) }
+                return true
+            }
+            adoptionBindings = previous
+        } catch { }
+        AuthStore.shared.reportProductionRecoveryProblem()
+        return false
     }
 
     private func pendingAdoptionBlocksServerListing(_ id: UUID) -> Bool {
@@ -349,6 +394,7 @@ final class AppModel: ObservableObject {
         //    reconciled snapshot once.
         reseedSamples()
         persist()
+        if adoptionBindings?.appliedToCurrentState == true { _ = restoreAdoptedProductionLibrary() }
 
         // 3. In the background: push local edits the server hasn't seen and
         //    finish any publish that was interrupted.
@@ -439,7 +485,7 @@ final class AppModel: ObservableObject {
 
     /// UserDefaults key: the raw `space.type` the server last accepted on this
     /// device. Absent until the first successful PATCH.
-    private static let syncedSpaceTypeKey = "space.type.synced"
+    private static var syncedSpaceTypeKey: String { WorkspaceContext.storagePrefix + "space.type.synced" }
 
     /// Forget that the server has the current type and ask for it to be sent
     /// again — a new org (account switch), or `/me` reporting a different
@@ -460,23 +506,30 @@ final class AppModel: ObservableObject {
         guard Config.useLiveBackend else { return }
         guard UserDefaults.standard.bool(forKey: "hasOnboarded") else { return }
         guard AuthStore.shared.isSignedIn else { return }
+        guard let org = WorkspaceContext.selectedOrgID, UserDefaults.standard.bool(forKey: WorkspaceContext.storagePrefix + "brand.initialized") else { return }
+        let owner = AuthStore.shared.userID, revision = AuthStore.shared.syncSessionRevision
+        let marker = Self.syncedSpaceTypeKey
         let raw = SpaceType.current.rawValue
         guard UserDefaults.standard.string(forKey: Self.syncedSpaceTypeKey) != raw else { return }
         guard spaceTypeSyncInFlight != raw else { return }
         spaceTypeSyncInFlight = raw
+        let operation = UUID(); spaceTypeSyncOperation = operation
         Task { [weak self] in
             guard let self else { return }
+            defer { if self.spaceTypeSyncOperation == operation { self.spaceTypeSyncInFlight = nil; self.spaceTypeSyncOperation = nil } }
             do {
                 // The mock client answers this with a no-op (offline dev, the
                 // UI walk), which counts as accepted: there is no server to tell.
-                try await self.api.updateBrand(["space_type": raw])
-                UserDefaults.standard.set(raw, forKey: Self.syncedSpaceTypeKey)
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
+                if let live = self.api as? LiveAPIClient { try await live.updateBrand(["space_type": raw], orgID: org) }
+                else { try await self.api.updateBrand(["space_type": raw]) }
+                guard AuthStore.shared.userID == owner, AuthStore.shared.syncSessionRevision == revision else { return }
+                UserDefaults.standard.set(raw, forKey: marker)
             } catch {
                 // Offline, a 401 before the token settled, an older server that
                 // does not know the field: keep quiet, keep the marker clear,
                 // and the next sync point retries.
             }
-            if self.spaceTypeSyncInFlight == raw { self.spaceTypeSyncInFlight = nil }
         }
     }
 
@@ -490,6 +543,7 @@ final class AppModel: ObservableObject {
         var draft = listing
         if !draft.isSample {
             draft.needsServerSync = true
+            draft.cloudDraftOrgID = draft.cloudDraftOrgID ?? WorkspaceContext.selectedOrgID
             if AuthStore.shared.isIdentified { draft.cloudSyncOwnerID = AuthStore.shared.userID.flatMap(UUID.init(uuidString:)) }
         }
         listings.insert(draft, at: 0)   // persists via didSet
@@ -750,6 +804,30 @@ final class AppModel: ObservableObject {
         if cloudRefreshOperation == operation { cloudRefreshTask = nil; cloudRefreshOperation = nil }
     }
 
+    var workspaceSwitchIsBusy: Bool {
+        !syncInFlight.isEmpty || !publishInFlight.isEmpty || !serverCreationInFlight.isEmpty ||
+        ProductionVideoLibrary.shared.isBusy(owner: AuthStore.shared.userID?.lowercased() ?? "") ||
+        listings.contains { $0.status == .processing || $0.status == .uploading }
+    }
+
+    /// Bind older/offline drafts to the outgoing workspace before selecting a
+    /// different one. Nothing is removed or re-created in the new workspace.
+    func prepareWorkspaceSwitch() -> Bool {
+        guard !workspaceSwitchIsBusy else { return false }
+        if let org = WorkspaceContext.selectedOrgID {
+            for i in listings.indices where !listings[i].isSample && listings[i].serverID == nil && listings[i].cloudDraftOrgID == nil && (listings[i].cloudSyncOwnerID == nil || listings[i].cloudSyncOwnerID == AuthStore.shared.userID.flatMap(UUID.init(uuidString:))) {
+                listings[i].cloudDraftOrgID = org
+            }
+        }
+        return persist()
+    }
+
+    func isInSelectedWorkspace(_ listing: Listing) -> Bool {
+        guard Config.useLiveBackend, let selected = WorkspaceContext.selectedOrgID else { return true }
+        guard !listing.isSample, let org = listing.serverOrgID ?? listing.cloudDraftOrgID else { return true }
+        return org == selected
+    }
+
     // MARK: - Cloud publish (local-first + cloud-publish, contract §4)
 
     enum PublishError: LocalizedError {
@@ -781,9 +859,15 @@ final class AppModel: ObservableObject {
         let requestedOwner = AuthStore.shared.userID
         if Config.useLiveBackend { _ = await AuthStore.validAccessToken() }
         guard AuthStore.shared.userID == requestedOwner else { throw CloudSyncError.identityChanged }
-        let identity = CloudDraftCreation.Identity(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision)
         // Sync using the freshest local copy (address/details may have changed).
         var live = listings.first(where: { $0.id == localID }) ?? listing
+        if Config.useLiveBackend, live.cloudDraftOrgID == nil {
+            if WorkspaceContext.selectedOrgID == nil { await WorkspaceStore.shared.refresh() }
+            guard AuthStore.shared.userID == requestedOwner, let org = WorkspaceContext.selectedOrgID else { throw CloudSyncError.identityChanged }
+            live.cloudDraftOrgID = org
+            if let i = index(of: localID) { listings[i].cloudDraftOrgID = org }
+        }
+        let identity = CloudDraftCreation.Identity(userID: AuthStore.shared.userID, revision: AuthStore.shared.syncSessionRevision)
         if live.cloudCreateFingerprint == nil { live.cloudCreateFingerprint = try CloudDraftCreation.fingerprint(live) }
         if let i = index(of: localID), AuthStore.shared.isIdentified {
             listings[i].cloudSyncOwnerID = identity.userID.flatMap(UUID.init(uuidString:))
@@ -2610,6 +2694,8 @@ struct RendpropApp: App {
 // This is the ONE place samples are re-derived when the business type changes
 // (Home menu, Settings, or a re-pick in the intro all land here).
 struct RootTabView: View {
+    @ObservedObject private var workspace = WorkspaceStore.shared
+    @ObservedObject private var workspaceAuth = AuthStore.shared
     @EnvironmentObject var model: AppModel
     @AppStorage("space.type") private var spaceTypeRaw = SpaceType.realEstate.rawValue
     @State private var tab = 0
@@ -2632,6 +2718,7 @@ struct RootTabView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
                 .tag(3)
         }
+        .id("\(workspaceAuth.userID ?? "guest"):\(workspace.selected?.id.uuidString ?? "unselected")")
         .task {
             await model.load()        // idempotent
             model.reseedSamples()     // the intro may have changed the type before this mounted
@@ -2750,6 +2837,7 @@ struct HomeDashboardView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 26) {
+                WorkspaceEntry()
                 // A brand-new user gets the guide FIRST. The owner's stepdad —
                 // an older broker, exactly the person this has to work for —
                 // opened the app and followed none of the instructions, and the
@@ -4007,7 +4095,7 @@ extension AppModel {
     /// type's, still active. Samples are excluded on purpose — every tool is a
     /// no-op on a sample, so offering one as a destination would be a lie.
     var realProjects: [Listing] {
-        listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isSold }
+        listings.filter { !$0.isSample && $0.belongsToCurrentType && !$0.isSold && isInSelectedWorkspace($0) }
     }
 
     /// Start a home from just its name or address, so a feature always has one

@@ -1,11 +1,23 @@
 # Rendprop — tour-host (Cloudflare Worker)
 
+The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
+deployed the subscription-confirmation wording. Worker version
+`04672590-71c3-49dd-b79e-580b482d2ffb` serves the verified home, pricing and legal
+pages; routes, bindings and compatibility date are unchanged.
+
+
 Serves Rendprop's public marketing, tour and portfolio pages, plus the spatial
 viewer shell and permission-checked artifact proxy. This is separate from the
 [Studio static Worker](../../../apps/studio/README.md). Studio's
 [24 September release](../../../docs/handoff/CODEX-STUDIO-LIVE-20260924.md)
 updated its website and Supabase read handlers; it does not establish a new
 tour-host deployment version.
+
+Current pricing, structured data and terms describe a seven-day introductory
+trial only after confirmation of an eligible Apple subscription in the iPhone
+app. Downloading or signing in does not activate a trial. Prices and plan
+allowances are unchanged. Source-copy updates require a new Worker/static-asset
+deployment; this README alone does not establish that the live site changed.
 
 Routes implemented in the current source:
 

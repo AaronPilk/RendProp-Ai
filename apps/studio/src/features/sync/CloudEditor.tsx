@@ -14,7 +14,7 @@ import {decodeNativeReel, nativeReelShots, nativeCaptionStyle, type NativeReel} 
 import { mapShotMotion, reviewShotPlan } from "./shot-plan";
 import ReelMediaPicker from "./ReelMediaPicker";
 import "./reel.css";
-import { earlierReels, propertyReelKey, reelPayload, type EarlierReel, type ReelPayload } from "./property-reels";
+import { earlierReels, isPristineReelDraft, propertyReelKey, reelPayload, type EarlierReel, type ReelPayload } from "./property-reels";
 import {downloadNarration} from "./narration";
 import CapturePlan from "../production/CapturePlan";
 import ReviewPanel from "../production/ReviewPanel";
@@ -97,6 +97,10 @@ export default function CloudEditor(props: CloudEditorProps) {
   const localKey = `${scopeKey(workspace.user.id, workspace.org.id)}:${documentKey}`;
   const queue = useCallback(() => {
     if (!currentDraft.current) return;
+    // Merely opening a property must not create a cloud edit. A first actual
+    // change or conversation message starts saving; saved empty edits still sync.
+    if (session.current?.confirmedRevision === 0 && !sources.current.length &&
+      isPristineReelDraft(currentDraft.current, conversation.current)) return;
     const payload = { draft: currentDraft.current, listingId: selected.current || null, sources: activeSourceRefs(currentDraft.current, sources.current, selected.current),...(conversation.current?.draftId===currentDraft.current.id?{conversation:conversation.current}:{}) };
     try { localStorage.setItem(`${localKey}:cloud-backup`, JSON.stringify(payload)); }
     catch { setMessage("Browser backup is unavailable. Keep this tab open until cloud saving finishes."); }

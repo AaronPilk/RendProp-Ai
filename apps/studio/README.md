@@ -6,6 +6,13 @@ workspace model as iOS. **Create** is the default destination; My homes/spaces,
 Media and Business remain primary navigation. Home, AI tools and Content planner
 are available under More tools.
 
+The [1 October core release](../../docs/handoff/CORE-READINESS-20261001.md) is
+live: rejected project creation/copy keeps the current edit, empty drafts no
+longer create phantom recovery prompts, and billing copy explains subscription
+activation. All 30 deployed files match the tested build; live saved-project
+restoration and playback passed. iPhone 1.0.3 (34) carries the related workspace
+and billing changes; real-phone acceptance remains separate.
+
 The [27 September release checkpoint](../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 confirms the new website, database migrations and Studio API v12 are deployed.
 All 30 website files and 44 API runtime files match their release source. Bounded
@@ -89,6 +96,13 @@ recording or LiDAR scan. Camera capture and physical phone acceptance remain
 on-device tests. The release verified the existing signed-in browser workspace
 and a synthetic saved-project AI/edit/export path. It did not perform a fresh
 Apple sign-in, second-browser production restoration or phone-to-browser run.
+
+Start, upgrade or change an Apple plan in Rendprop for iPhone under **Settings →
+Plan & usage**. The seven-day introductory trial starts only after the customer
+confirms an eligible Apple subscription offer; downloading or signing in does not
+activate a trial. Apple determines eligibility and displays the renewal price.
+Studio uses that same account/workspace subscription and offers a link to Apple's
+subscription management; it does not run a separate web checkout.
 
 ## Develop and verify
 

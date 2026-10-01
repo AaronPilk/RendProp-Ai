@@ -164,6 +164,10 @@ struct ProductionPlanView: View {
         let expected = identity
         let context = videoContext
         return ProductionVideoPicker(onStart: { importingVideos = true }, onFile: { url, name in
+            // This URL is the picker-owned private copy, never the Photos
+            // original. Successful import moves it; an interrupted account or
+            // failed metadata read must not leave an unindexed full-size copy.
+            defer { try? FileManager.default.removeItem(at: url) }
             guard identity == expected, model.listings.contains(where: { $0.id == context.listingID }) else { return }
             do { try await videoLibrary.importFile(url, name: name, context: context) }
             catch { self.error = error.localizedDescription }

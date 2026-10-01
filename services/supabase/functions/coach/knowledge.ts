@@ -149,13 +149,14 @@ export const KNOWLEDGE: KnowledgeEntry[] = [
   },
   {
     topic: "Free trial",
-    source: "description.txt + migration 0044 (plan_entitlement_overrides)",
+    source: "Subscription-confirmed trial policy (2026-10-01)",
     fact:
-      "Every plan starts with a 7-day free trial, available once per Apple ID. Any unused " +
-      "portion of a trial is forfeited if the person buys a subscription before it ends. The " +
-      "free week is sized to the business: a real-estate workspace can publish 3 tours during " +
-      "it; a single-location business (venue, restaurant, retail, gym or studio, other) can " +
-      "publish 1 tour. Photo edits, reels and the aerial intro are included in both.",
+      "Eligible customers can start a 7-day introductory trial by choosing a subscription " +
+      "and confirming it in Apple's purchase sheet. Apple determines eligibility; creating " +
+      "an account or installing Rendprop does not start that trial. The selected plan's " +
+      "allowances apply after confirmation. It renews at the displayed subscription price " +
+      "unless cancelled through Apple. Existing previously granted trial windows keep their " +
+      "original end date. Plan & usage shows the current access and Apple's offer terms.",
   },
   {
     topic: "Deleting an account",
@@ -242,8 +243,8 @@ export function knowledgeBlock(): string {
     facts,
     "",
     "• Plan allowances (NEVER state a price — every price comes from the App Store, never from " +
-      "you): " + allowances + " Every plan includes a 7-day free trial, once per Apple ID: 3 " +
-      "tours for a real-estate workspace, 1 tour for a single-location business. For " +
+      "you): " + allowances + " An eligible 7-day introductory trial starts only after the " +
+      "user selects a subscription and confirms Apple's purchase sheet, never on signup. For " +
       "the current plan, this month's usage, or any price, tell the user to open Plan & usage.",
   ].join("\n");
 }

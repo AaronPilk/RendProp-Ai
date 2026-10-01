@@ -7,6 +7,13 @@ See [backend architecture](../../../docs/BACKEND-ARCHITECTURE.md),
 [upload/publication contract](../../../docs/UPLOAD-AND-PUBLISH-CONTRACT.md), and
 [CI](../../../.github/workflows/ci.yml) for contracts and executable checks.
 
+The [1 October core release](../../../docs/handoff/CORE-READINESS-20261001.md)
+deployed **team v16, me v42, coach v19 and listings v36**, all ACTIVE with JWT
+verification on. The three trial/invitation/workspace migrations are applied;
+45/45 runtime source copies and migration payload hashes match the reviewed
+source. Existing grants are preserved. The report maps source filenames to
+live migration timestamps; do not apply these migrations twice.
+
 The [27 September release checkpoint](../../../docs/handoff/CODEX-STUDIO-COMPLETION-20260927.md)
 records Studio API **v12 ACTIVE**, JWT verification enabled, and all **44 runtime
 source files** matching the release source. The four new project/media/music/text
@@ -91,6 +98,70 @@ Typical codes include `validation`, `unauthorized`, `forbidden`, `not_found`,
 `conflict`, `plan_required`, `quota_exceeded`, `rate_limited`, `upstream` and
 `internal`. RPC `RPnnn:` errors are mapped in `_shared/http.ts`; unknown server
 errors should not expose credentials or internal records.
+
+## Subscription and team readiness (deployed 1 October)
+
+New workspaces start on `free`, with no trial expiry or trial source. An eligible
+7-day App Store introductory trial begins after the customer confirms a
+subscription in Apple's purchase sheet; the selected plan's allowances and
+Apple's expiry then apply. Existing trial, manual and Apple grants retain their
+current values. This change is prospective and requires migration
+`20261001143615_subscription_confirmed_trial_start.sql`.
+
+`GET /me` includes `billing` for the same resolved workspace as its entitlement:
+`org_id`, `org_name`, `role`, `can_manage_subscription` and `source`. Native clients
+show that workspace before a purchase and send `expected_org_id` to
+`POST /me/entitlement`; a changed workspace fails with 409 instead of binding the
+receipt elsewhere. A verified Apple transaction whose account token belongs to
+an adopted guest is accepted only with the exact, still-authorized adoption
+receipt. Membership in someone else's team is not purchase-ownership proof.
+
+Team invitation responses distinguish creating a valid code from queuing its
+email. `email_queued` and legacy `emailed` mean the outbox accepted the message,
+not inbox delivery; bulk `emails_queued` counts successful acknowledgements.
+Migration `20261001142823_team_invite_delivery_confirmation.sql` fixes the queue
+function's profile-name column reference. It does not resend existing codes.
+Standard Team includes two seats; separately provisioned brokerage contracts use
+their contracted seat count. A disposable 100-seat contract is covered by the
+regression below; this does not prove a live email provider or phone workflow.
+
+Explicit workspace selection is available through `GET /me/workspaces`
+(`active_org_id`, `workspaces: [{id,name,role}]`) and `POST /me/workspace`
+(`{org_id}` → `{ok,org_id,org_name,role}`). `GET /me` also includes `workspaces`.
+Migration `20261001145730_workspace_selection.sql` verifies live membership and
+account/deletion state in service-only functions; selection changes only the
+session default, never existing listing ownership or roles.
+
+Clients capture `X-Org-Id` before starting workspace work and preserve it through
+refresh/retry. Explicit IDs fail closed if membership disappears. A legacy
+`GET /listings` without that header deliberately remains a complete snapshot of
+all authorized memberships; native cloud reconciliation depends on this. A
+request with the header is filtered to the verified workspace, and explicit
+listing edits cannot target another workspace. Draft creation must retain its
+original workspace and idempotency key, even when another device switches the
+active default. Native selection and stale-response handling require the
+corresponding app build.
+
+For authorized purchasers, `billing.original_transaction_ids` lists the selected
+Apple-paid workspace's active/grace subscription bindings. Before an upgrade,
+compare StoreKit's verified original ID with these bindings. An empty list does
+not establish that an existing device subscription is unbound; restore/resolve
+its workspace first. Agents and marketing members receive no subscription IDs.
+
+Run from the repository root:
+
+```bash
+python3 tools/audit/run_workspace_selection.py
+python3 tools/audit/run_team_readiness.py
+python3 tools/audit/run_subscription_trial_regression.py
+```
+
+These create socket-only disposable PostgreSQL, test the old failure before the
+fix and its replay, and run network-denied handler tests. They never send real
+invites, call Apple or make purchases. The subscription suite preserves the
+known owner-retained Astra ceiling invariant failure separately from its passing
+policy checks. Deployment status and live timestamp mappings are recorded in
+the [release receipt](../../../docs/handoff/CORE-READINESS-20261001.md).
 
 ## Develop and verify
 

@@ -1262,9 +1262,9 @@ export default function App({ servicesFactory }: {
                       </div>
                     </dl>
                     <p className="muted small">
-                      Plans and purchases remain managed by the existing
-                      Rendprop app. Studio does not create a second
-                      subscription.
+                      Choose or change your plan in the iPhone app under Settings → Plan &amp; usage.
+                      A 7-day trial starts only after you confirm an eligible Apple subscription offer.
+                      Signing in does not start a trial; Studio uses that same subscription.
                     </p>
                     <button onClick={() => void signOut()} disabled={authBusy}>
                       {authBusy ? "Signing out…" : "Sign out"}

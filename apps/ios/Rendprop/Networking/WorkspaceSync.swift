@@ -42,6 +42,7 @@ struct CloudBrand {
                        current: () -> Listing?, activeIdentity: () -> Identity,
                        save: (Listing) -> Void, deleteRemoved: (UUID) async -> Void) async throws -> UUID {
         let created = try await create(snapshot)
+        if let intended = snapshot.cloudDraftOrgID, created.serverOrgID != intended { throw CloudSyncError.invalidResponse }
         try Task.checkCancellation()
         guard activeIdentity() == identity else { throw CloudSyncError.identityChanged }
         guard var latest = current() else {
@@ -176,7 +177,7 @@ enum CloudSyncError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidResponse: return "Rendprop couldn't read this cloud update. Pull to refresh and try again."
-        case .identityChanged: return "The account changed while syncing. Refresh from your current account."
+        case .identityChanged: return "The account or workspace changed while syncing. Refresh from your current workspace."
         case .incomplete: return "The cloud library changed while loading. Your saved work is safe; pull to refresh again."
         case .expired: return "This private file link expired. Refresh the cloud files and try again."
         case .cloudMissing: return "This listing was removed from the cloud or your team access changed. Your files on this iPhone are still available."

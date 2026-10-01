@@ -51,6 +51,10 @@ jobs:
           "$production_test_dir/production-plan-tests"
       - name: Phone production autosync survives lost replies and relaunch
         run: bash apps/ios/tests/run-production-writer.sh
+      - name: Phone production work survives anonymous-account adoption
+        run: bash apps/ios/tests/run-adoption-production.sh
+      - name: Subscription offer disclosures and durable workspace intent
+        run: bash apps/ios/tests/run-subscription-policy.sh
       - name: Guided scan storage, pose epochs and native depth packing
         run: bash tools/spatial-spike/capture-ios/verify-station.sh
       - name: Panorama projection, coverage and cancellation on synthetic images
@@ -179,6 +183,8 @@ jobs:
       - name: Property switching, recovery and listing completion
         run: |
           node tests/property-reels-browser.mjs
+          node tests/reel-media-browser.mjs
+          node tests/brand-browser.mjs
           node tests/editor-recipes-browser.mjs
           node tests/production-browser.mjs
           node tests/listing-finish-browser.mjs
@@ -571,6 +577,9 @@ jobs:
           export PATH="/usr/lib/postgresql/16/bin:$PATH"
           python3 tools/audit/run_deletion_regression.py --provider-commit "$GITHUB_SHA"
           python3 tools/audit/run_adoption_regression.py
+          python3 tools/audit/run_team_readiness.py
+          python3 tools/audit/run_subscription_trial_regression.py
+          python3 tools/audit/run_workspace_selection.py
           python3 tools/audit/run_spatial_regression.py
           python3 tools/audit/run_spatial_provider_regression.py
           python3 tools/audit/run_deletion_handler_regression.py

@@ -19,6 +19,10 @@ struct AdoptionLocalBindings: Codable, Equatable {
     var entries: [Entry]
     var confirmedOrgID: UUID?
     var appliedToCurrentState = false
+    /// Includes offline-only properties so signing in preserves their production drafts.
+    /// Optional for bindings written before the production companion shipped.
+    var productionLocalIDs: [UUID]? = nil
+    var productionTransferred: Bool? = nil
 
     enum Failure: Error { case invalid, conflict, tooLarge }
 
@@ -31,7 +35,8 @@ struct AdoptionLocalBindings: Codable, Equatable {
         guard version == 1, sourceUserID != destinationUserID,
               !appliedToCurrentState || confirmedOrgID != nil,
               Set(entries.map(\.localID)).count == entries.count,
-              Set(entries.map(\.serverID)).count == entries.count else { throw Failure.invalid }
+              Set(entries.map(\.serverID)).count == entries.count,
+              productionLocalIDs == nil || Set(productionLocalIDs!).count == productionLocalIDs!.count else { throw Failure.invalid }
         // Metadata only: cap optional sign-in's journal, never truncate a
         // library or block capture. A large library can keep using its source
         // session until a deliberate recovery path is available.
@@ -40,19 +45,20 @@ struct AdoptionLocalBindings: Codable, Equatable {
 
     static func capture(_ pending: AnonymousAdoptionRecovery.Pending,
                         listings: [Listing]) throws -> Self {
-        let value = Self(version: 1, operationID: pending.operationID,
+        var value = Self(version: 1, operationID: pending.operationID,
                          sourceUserID: pending.sourceUserID, destinationUserID: pending.destinationUserID,
                          entries: listings.filter { !$0.isSample && $0.serverID != nil }.map {
             Entry(localID: $0.id, serverID: $0.serverID!, shareSlug: $0.shareSlug,
                   shareURL: $0.shareURL, unbrandedShareURL: $0.unbrandedShareURL,
                   publishedRenderID: $0.publishedRenderID)
         }, confirmedOrgID: nil)
+        value.productionLocalIDs = listings.filter { !$0.isSample }.map(\.id)
         try value.validate()
         return value
     }
 
     func blocks(_ localID: UUID, currentUserID: UUID?) -> Bool {
-        !appliedToCurrentState && currentUserID != sourceUserID && entries.contains { $0.localID == localID }
+        !appliedToCurrentState && currentUserID != sourceUserID && (entries.contains { $0.localID == localID } || productionLocalIDs?.contains(localID) == true)
     }
 
     /// Keychain removal may fail AFTER a successful rebind. If the person then

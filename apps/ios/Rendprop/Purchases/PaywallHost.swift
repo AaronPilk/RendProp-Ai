@@ -47,7 +47,7 @@ enum PaywallReason: Equatable, Sendable {
         case .quota(let feature):
             return "You've used all your \(PaywallReason.featureNoun(feature)) this month. Pick a plan to keep going."
         case .trialEnded:
-            return "Your free week has ended. Pick a plan to keep making tours."
+            return "Your trial access has ended. Choose a subscription and confirm it with Apple to continue."
         case .featureLocked(let name):
             return "\(name) isn't in your current plan. Pick a plan that includes it."
         }

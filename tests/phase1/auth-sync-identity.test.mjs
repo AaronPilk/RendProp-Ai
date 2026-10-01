@@ -36,6 +36,7 @@ final class UserDefaults {
  func set(_ value: Any?, forKey key: String) { values[key] = value }
  func removeObject(forKey key: String) { values[key] = nil }
  func dictionaryRepresentation() -> [String: Any] { values }
+ func synchronize() -> Bool { true }
 }
 enum Config {
  static let enableAuth = true

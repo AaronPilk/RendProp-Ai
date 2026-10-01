@@ -1,5 +1,11 @@
 # App Review Information — Rendprop 1.0.1 (build 22)
 
+**Historical review record.** The October 1 trial policy supersedes the automatic
+free-week claims below. Current upload text is in
+[`metadata/en-US/review_notes.txt`](metadata/en-US/review_notes.txt); the current
+contract is [LAUNCH-CONTRACT](../LAUNCH-CONTRACT.md). Updating these repository
+files does not update App Store Connect or submit an app for review.
+
 Everything App Store Connect asks for on the "App Review Information" panel, as of
 **2026-09-12** (first written 2026-09-05 for 1.0; reworked for build 22 with the new plan
 allowances and the per-industry free week). This supersedes the template in
@@ -22,7 +28,7 @@ is no invite list and no allow-list.
 
 ## Notes field — copy-paste
 
-> The text Apple actually receives lives in `metadata/en-US/review_notes.txt` (≤ 4000 characters; `asc.py review apply` uploads that file, never this one). Keep the two in step — the block below is a verbatim copy.
+> The text Apple actually receives lives in `metadata/en-US/review_notes.txt` (≤ 4000 characters; `asc.py review apply` uploads that file, never this one). The block below preserves the build-22 submission and is no longer the current upload text.
 
 > Rendprop turns an iPhone walkthrough into a smooth "drone-style" property tour, hosted as a web link the user shares with clients.
 >

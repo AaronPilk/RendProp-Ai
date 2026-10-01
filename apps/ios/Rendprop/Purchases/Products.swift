@@ -9,20 +9,10 @@ import Foundation
 // actually enforces — if that table changes, change these in the same commit
 // or the paywall starts lying.
 //
-// The free week (server plan `trial`) is NOT here: it is sized per industry
-// (`orgs.space_type`) and the app reads its numbers from `GET /me` — see
-// `SpaceType.freeWeekLine` for the offline fallback.
-//
-// PRICES ARE NOT HERE, ON PURPOSE. Every price the user sees comes from
-// StoreKit (`Product.displayPrice`), so it is correct in their currency, on
-// their storefront, after any App Store price change — and there is nothing to
-// keep in sync. Never hardcode a price string in this app.
-//
-// Server plan `trial` is the FREE WEEK every new org starts on — no product,
-// no card, sized per industry (see above). It is a different thing from the
-// 7-day introductory offer Apple attaches to each paid product, which is the
-// only thing the app may call a "free trial". `free` is the lapsed floor (no
-// product). `solo` is a legacy alias of `starter` that is never sold.
+// A subscription trial begins only after Apple confirmation and server
+// verification. New workspaces start on the free plan. Existing historical
+// server trials may retain their original expiry, but are never newly granted
+// by this app. Prices come exclusively from StoreKit's Product.displayPrice.
 
 /// A sellable plan. Raw value === the `orgs.plan` / `plan_entitlements.plan`
 /// string the server uses, so `activePlan` and `/me` speak the same language.
@@ -278,6 +268,8 @@ enum PaywallLegal {
     static let autoRenewDisclosure =
         "Renews automatically until cancelled. Cancel anytime in Settings → Apple ID → Subscriptions."
 
+    /// Legacy copy retained for old clients; current UI uses the selected
+    /// product's localized price in SubscriptionOfferPolicy.disclosure.
     /// Shown under a trial button so nobody is surprised by the first charge.
     /// "At least 24 hours": Apple bills the first period unless the
     /// subscription is cancelled at least a day before the offer ends.

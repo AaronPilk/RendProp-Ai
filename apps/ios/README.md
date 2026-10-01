@@ -8,9 +8,19 @@ backend; this is no longer an offline-only prototype.
 
 ## Release status
 
+Internal **TestFlight 1.0.3 (34)** is available to the existing Rendprop team,
+verified **1 October 2026 at 15:30:20 UTC**. It adds subscription-confirmed trials,
+**Settings → Plan & usage** controls, explicit personal/team workspace selection,
+and account/draft/branding recovery fixes. Apple reports `VALID`, `INTERNAL_ONLY`
+and `IN_BETA_TESTING`; all 12 source CI jobs passed. See the
+[core audit and phone checklist](../../docs/handoff/CORE-READINESS-20261001.md) and
+[delivery receipt](../../docs/releases/TESTFLIGHT-34-20261001.json). Actual Apple
+sandbox purchase/restore and camera acceptance remain phone tests. The existing
+guided room-tour lab is retained unchanged.
+
 The [1 October guided room-tour build](../../docs/handoff/GUIDED-PANORAMA-TESTFLIGHT-20261001.md)
 adds stationary scan positions, optional native LiDAR depth, local 4K panorama
-previews and saved-tour export. Internal TestFlight **1.0.3 (33)** is available to the existing Rendprop team,
+previews and saved-tour export. Internal TestFlight **1.0.3 (33)** was delivered to the existing Rendprop team,
 verified **1 October 2026 at 13:37:54 UTC**. Apple reports `VALID`,
 `INTERNAL_ONLY` and `IN_BETA_TESTING`; all 12 CI jobs passed. The
 [delivery receipt](../../docs/releases/TESTFLIGHT-33-20261001.json) binds source,

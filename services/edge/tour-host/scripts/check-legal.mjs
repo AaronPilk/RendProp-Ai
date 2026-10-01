@@ -2,6 +2,7 @@
 // Exercise the emitted pages, not a second copy of their text. These checks
 // establish disclosure coverage, not vendor contracts or legal compliance.
 import { buildSrc } from "./build-src.mjs";
+import {readFileSync} from "node:fs";
 
 globalThis.fetch = () => { throw new Error("unexpected network in legal-page check"); };
 const load = buildSrc("legal-flow-check-20260910");
@@ -47,6 +48,17 @@ for (const [label, html] of [["Privacy", privacy], ["Terms", terms]]) {
 }
 expect(t.includes("without your written consent") && p.includes("without your written consent"), "Written-consent commitment retained");
 expect(t.includes("Starter and Pro, billed monthly") && t.includes("Team, billed monthly"), "Payment terms not rewritten");
+expect(t.includes("by confirming an Apple subscription") && t.includes("Downloading or signing in does not activate a trial"), "Trial requires eligible Apple subscription activation");
+expect(t.includes("One introductory") || t.includes("one introductory offer per subscription group"), "Trial eligibility remains Apple subscription-group scoped");
+for (const filename of ["index.html", "pricing.html", "llms.txt"]) {
+  const copy = readFileSync(new URL(`../public/${filename}`, import.meta.url), "utf8");
+  expect(!/every (?:new install|plan) (?:also gets|starts with)|free week with no card/i.test(copy), `${filename}: no automatic signup-week or universal trial promise`);
+  expect(/eligible/i.test(copy) && /confirm/i.test(copy) && /Apple/i.test(copy), `${filename}: eligibility and subscription activation disclosed`);
+  if (filename.endsWith(".html")) for (const [, json] of copy.matchAll(/<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g)) {
+    try { JSON.parse(json); expect(true, `${filename}: valid structured data`); }
+    catch { expect(false, `${filename}: valid structured data`); }
+  }
+}
 expect(p.includes("deleted 180 days") && p.includes("short, fixed schedule"), "Retention claims unchanged and still require operational approval");
 expect(privacy.includes('aria-label="Service providers and data processing"'), "Responsive table keeps a descriptive name");
 expect((privacy.match(/role="row"/g) || []).length === 10, "All header/provider rows retain explicit roles");

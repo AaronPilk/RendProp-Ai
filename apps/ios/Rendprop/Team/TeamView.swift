@@ -54,6 +54,10 @@ struct TeamView: View {
                 Task { await load() }
             }
             .onChange(of: auth.isIdentified) { identified in if !identified { summary = nil; createdInvite = nil; pendingRemoval = nil } }
+            .onReceive(NotificationCenter.default.publisher(for: .rendpropWorkspaceChanged)) { _ in
+                summary = nil; createdInvite = nil; pendingRemoval = nil; actionError = nil
+                Task { await load() }
+            }
             .refreshable { await load() }
             .sheet(isPresented: $showSignIn) {
                 SignInView.optionalUpgrade { Task { await load() } }
@@ -258,7 +262,7 @@ struct TeamView: View {
         } header: {
             Text(s.invites.isEmpty ? "Invite" : "Waiting to join")
         } footer: {
-            Text("They get an email with a link. Tapping it opens Rendprop with the code already filled in — there is nothing for them to type.")
+            Text("Add an email to request an invitation, or share the code yourself. We show whether the email was queued. The invitation link opens Rendprop with the code filled in.")
         }
         .sheet(isPresented: $showInvite) {
             NewInviteView { email, role in
@@ -301,44 +305,55 @@ struct TeamView: View {
 
     @MainActor
     private func invite(email: String?, role: String) async {
+        let actor = auth.userID, revision = auth.syncSessionRevision
         busy = true
         defer { busy = false }
         do {
-            createdInvite = try await TeamAPI.invite(email: email, role: role)
+            let invite = try await TeamAPI.invite(email: email, role: role)
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            createdInvite = invite
             Haptics.success()
             await load()
         } catch let f as TeamAPI.Failure {
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             // A full team is not an error to apologise for — it is the paywall,
             // reached the only way Apple allows.
             if f.isSeatLimit { showPaywall = true } else { actionError = f.message }
         } catch {
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             actionError = "Couldn't create the invite. Try again."
         }
     }
 
     @MainActor
     private func revoke(_ invite: TeamSummary.Invite) async {
+        let actor = auth.userID, revision = auth.syncSessionRevision
         busy = true
         defer { busy = false }
         do {
             try await TeamAPI.revoke(inviteId: invite.id)
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             Haptics.selection()
             await load()
         } catch {
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             actionError = (error as? TeamAPI.Failure)?.message ?? "Couldn't revoke that invite."
         }
     }
 
     @MainActor
     private func remove(_ member: TeamSummary.Member) async {
+        let actor = auth.userID, revision = auth.syncSessionRevision
         pendingRemoval = nil
         busy = true
         defer { busy = false }
         do {
             try await TeamAPI.remove(userId: member.userId)
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             Haptics.selection()
             await load()
         } catch {
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
             actionError = (error as? TeamAPI.Failure)?.message ?? "Couldn't remove them."
         }
     }
@@ -411,6 +426,11 @@ private struct InviteCodeView: View {
                     .textSelection(.enabled)
                     .padding(.horizontal)
                     .multilineTextAlignment(.center)
+                if let queued = invite.emailQueued, invite.email != nil {
+                    Text(queued ? "Invitation email queued. You can also share this code." : "The invitation is ready, but its email couldn’t be queued. Share this code directly.")
+                        .font(.rpCaption).foregroundStyle(queued ? Theme.inkDim : Theme.warn)
+                        .multilineTextAlignment(.center).padding(.horizontal, 28)
+                }
                 Text("Send this to \(invite.email ?? "them"). They enter it in Rendprop under Settings → Team → Join a team.")
                     .font(.rpBody)
                     .foregroundStyle(Theme.inkDim)
@@ -453,6 +473,7 @@ private struct InviteCodeView: View {
 // MARK: - Join with a code
 
 struct JoinTeamView: View {
+    @EnvironmentObject private var model: AppModel
     /// Filled in when the sheet was opened by an invite link rather than by
     /// someone navigating here themselves (DeepLink.join). The whole point of
     /// the link is that this is already correct and nobody types anything.
@@ -529,16 +550,36 @@ struct JoinTeamView: View {
 
     @MainActor
     private func join() async {
+        let originalActor = auth.userID
+        if WorkspaceContext.selectedOrgID == nil { await WorkspaceStore.shared.refresh() }
+        guard auth.userID == originalActor, !Config.useLiveBackend || WorkspaceContext.selectedOrgID != nil else {
+            errorMessage = "Connect to Rendprop and choose your current workspace before joining another team."
+            return
+        }
+        guard model.prepareWorkspaceSwitch() else {
+            errorMessage = "Finish current uploads and saves before joining another team. Your existing work stays in its current workspace."
+            return
+        }
+        let actor = auth.userID, revision = auth.syncSessionRevision
         joining = true
         defer { joining = false }
         do {
             let joined = try await TeamAPI.join(code: code)
+            guard auth.userID == actor, auth.syncSessionRevision == revision else { return }
+            await WorkspaceStore.shared.refresh()
+            guard auth.userID == actor else { return }
+            if let membership = WorkspaceStore.shared.workspaces.first(where: { $0.id.uuidString.lowercased() == joined.orgId.lowercased() }) {
+                _ = await WorkspaceStore.shared.select(membership)
+            }
+            guard auth.userID == actor else { return }
             Haptics.success()
             joinedName = joined.orgName ?? "the team"
             errorMessage = nil
         } catch let f as TeamAPI.Failure {
+            guard auth.userID == actor else { return }
             errorMessage = f.message
         } catch {
+            guard auth.userID == actor else { return }
             errorMessage = "Couldn't join with that code. Check it and try again."
         }
     }

@@ -347,8 +347,9 @@ enum CoachOffline {
         // account) and Apple's introductory offer on a paid plan (the only
         // "free trial" in the app — see OnboardingView).
         Topic(keywords: ["trial", "free week", "first week"], reply:
-            "Your first week is on us — no card, no account needed. After that, every paid plan " +
-            "starts with a 7-day free trial, once per Apple ID."),
+            "Open Settings → Plan & usage → View plans. Eligible subscriptions offer 7 days free, " +
+            "but the trial starts only after you confirm the subscription with Apple. Apple shows " +
+            "the renewal price before you confirm. Manage or cancel it in Settings → Plan & usage."),
         Topic(keywords: ["reel", "social video"], reply:
             "Reels turn a handful of your photos into a short vertical video — a gliding camera " +
             "move on each photo, a voiceover, and captions that land on the beat."),
