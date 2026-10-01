@@ -224,9 +224,16 @@ try {
   check(Math.abs((await snapshot()).time - pausedAt) < .08, "Real media pause stops the playhead");
   await video.focus(); await page.keyboard.press("Space");
   await page.waitForFunction(() => !document.querySelector("#flythrough-video").paused);
-  await page.waitForTimeout(450);
+  // paused=false records playback intent, not advancement of the media clock.
+  // Require the actual media clock to advance, with a bounded stall failure,
+  // instead of racing decoder startup against a fixed wall-clock sleep.
+  await page.waitForFunction((time) => {
+    const v = document.querySelector("#flythrough-video");
+    return !v.paused && v.currentTime > time + .2;
+  }, pausedAt, { timeout: 4000 });
   check((await snapshot()).time > pausedAt + .2, "Native keyboard play control advances normal playback independently of page scroll");
   await page.keyboard.press("Space");
+  await page.waitForFunction(() => document.querySelector("#flythrough-video").paused, undefined, { timeout: 2000 });
   check((await snapshot()).paused, "Native keyboard pause control works");
   await page.evaluate(() => { const v = document.querySelector("#flythrough-video"); v.pause(); v.currentTime = 1; });
   await page.waitForFunction(() => Math.abs(document.querySelector("#flythrough-video").currentTime - 1) < .08 && !document.querySelector("#flythrough-video").seeking);
