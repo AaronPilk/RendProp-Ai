@@ -2763,6 +2763,9 @@ struct HomeDashboardView: View {
                 }
                 heroCard
                     .modifier(Reveal(index: 0, on: revealed))
+#if SPATIAL_CAPTURE_LAB
+                GuidedPanoramaEntryCard()
+#endif
                 // Which plan you are on, said where somebody will actually read
                 // it. Draws nothing until /me answers and nothing at all if it
                 // fails — an empty space beats a wrong claim about their money.

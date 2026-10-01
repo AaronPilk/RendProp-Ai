@@ -1,5 +1,12 @@
 # Phase A local iPhone capture
 
+The separate [guided scan-position prototype](../../../docs/handoff/GUIDED-PANORAMA-TESTFLIGHT-20261001.md)
+is integrated into the app's explicit TestFlight overlay. Its `StationCapture*`
+archive and `Panorama*` preview sources are excluded from this older standalone
+diagnostic target. Walking archives and station archives remain distinct; neither
+is silently converted into the other's upload format. Run `verify-station.sh`
+and `verify-panorama.sh` for their synthetic software checks.
+
 This local capture implementation supplies the input for the one-room spatial
 spike. The owner chose delivery inside the existing Rendprop TestFlight app
 (`com.rendprop.app`), using the explicit `SPATIAL_CAPTURE_LAB` build overlay.

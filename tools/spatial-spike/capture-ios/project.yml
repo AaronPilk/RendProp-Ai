@@ -16,6 +16,12 @@ targets:
     platform: iOS
     sources:
       - path: Sources
+        # Guided station capture ships only in Rendprop's explicit iOS 16+
+        # TestFlight overlay. Keep this older iOS 15 walking-capture diagnostic
+        # target and its local-only privacy declaration scoped to its own code.
+        excludes:
+          - "Station*.swift"
+          - "Panorama*.swift"
       - path: Resources/Assets.xcassets
       - path: Resources/PrivacyInfo.xcprivacy
     settings:
